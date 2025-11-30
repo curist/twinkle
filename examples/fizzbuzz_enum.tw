@@ -1,0 +1,29 @@
+enum FB {
+  Fizz,
+  Buzz,
+  FizzBuzz,
+  Num(int),
+}
+
+fn classify(i: int) -> FB {
+  if i % 15 == 0 {
+    .FizzBuzz
+  } else if i % 3 == 0 {
+    .Fizz
+  } else if i % 5 == 0 {
+    .Buzz
+  } else {
+    .Num(i)
+  }
+}
+
+fn fizzbuzz_enum(n: int) -> void {
+  for i in range_from(1, n + 1) {
+    case classify(i) {
+      .Fizz => println("Fizz"),
+      .Buzz => println("Buzz"),
+      .FizzBuzz => println("FizzBuzz"),
+      .Num(x) => println("${x}"),
+    }
+  }
+}

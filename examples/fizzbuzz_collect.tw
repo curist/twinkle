@@ -1,0 +1,13 @@
+fn fizzbuzz_list(n: int) -> array<string> {
+  collect i in range_from(1, n + 1) {
+    if i % 15 == 0 {
+      "FizzBuzz"
+    } else if i % 3 == 0 {
+      "Fizz"
+    } else if i % 5 == 0 {
+      "Buzz"
+    } else {
+      "${i}"
+    }
+  }
+}
