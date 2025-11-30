@@ -1,0 +1,76 @@
+fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B> {
+  collect x in xs { f(x) }
+}
+
+fn filter<T>(xs: array<T>, pred: (T) -> bool) -> array<T> {
+  collect x in xs {
+    if pred(x) {
+      x
+    } else {
+      continue
+    }
+  }
+}
+
+fn sum(xs: array<int>) -> int {
+  total := 0
+  for x in xs {
+    total += x
+  }
+  total
+}
+
+fn fold<T, A>(xs: array<T>, init: A, f: (A, T) -> A) -> A {
+  acc := init
+  for x in xs {
+    acc = f(acc, x)
+  }
+  acc
+}
+
+fn double(x: int) -> int {
+  x * 2
+}
+
+fn is_even(x: int) -> bool {
+  x % 2 == 0
+}
+
+fn add(a: int, b: int) -> int {
+  a + b
+}
+
+impl Show(array<int>) {
+  fn show(xs: array<int>) -> string {
+    if len(xs) == 0 {
+      "[]"
+    } else {
+      result := "["
+      for x, i in xs {
+        if i > 0 {
+          result = "${result}, ${x}"
+        } else {
+          result = "${result}${x}"
+        }
+      }
+      "${result}]"
+    }
+  }
+}
+
+fn main() -> void {
+  numbers := [1, 2, 3, 4, 5]
+
+  doubled := map(numbers, double)
+  println("Original: ${numbers}")
+  println("Doubled:  ${doubled}")
+
+  evens := filter(numbers, is_even)
+  println("Evens:    ${evens}")
+
+  total := sum(numbers)
+  println("Sum:      ${total}")
+
+  product := fold(numbers, 1, fn(a: int, b: int) -> int { a * b })
+  println("Product:  ${product}")
+}

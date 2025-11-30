@@ -1,0 +1,39 @@
+fn safe_divide(a: int, b: int) -> Result<int, string> {
+  if b == 0 {
+    .Err("division by zero")
+  } else {
+    .Ok(a / b)
+  }
+}
+
+fn safe_sqrt(x: int) -> Result<int, string> {
+  if x < 0 {
+    .Err("cannot sqrt negative number")
+  } else {
+    .Ok(x)
+  }
+}
+
+fn compute(a: int, b: int, c: int) -> Result<int, string> {
+  x := try safe_divide(a, b)
+  y := try safe_divide(x, c)
+  try safe_sqrt(y)
+}
+
+fn print_result(r: Result<int, string>) -> void {
+  case r {
+    .Ok(result) => println("Result: ${result}"),
+    .Err(msg) => println("Error: ${msg}"),
+  }
+}
+
+fn main() -> void {
+  println("Computing 100 / 5 / 2:")
+  print_result(compute(100, 5, 2))
+
+  println("\nComputing 100 / 0 / 2:")
+  print_result(compute(100, 0, 2))
+
+  println("\nComputing 100 / (-5) / 2:")
+  print_result(compute(100, -5, 2))
+}

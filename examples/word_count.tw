@@ -1,0 +1,73 @@
+fn count_words(words: array<string>) -> dict<string, int> {
+  counts: dict<string, int> = dict.new()
+
+  for word in words {
+    case counts[word] {
+      .Some(n) => counts[word] = n + 1,
+      .None => counts[word] = 1,
+    }
+  }
+
+  counts
+}
+
+fn print_counts(counts: dict<string, int>) -> void {
+  keys := counts.keys()
+
+  for word in keys {
+    case counts[word] {
+      .Some(n) => println("  ${word}: ${n}"),
+      .None => {},
+    }
+  }
+}
+
+fn most_common(counts: dict<string, int>) -> string? {
+  keys := counts.keys()
+
+  if len(keys) == 0 {
+    .None
+  } else {
+    best_word := keys[0]
+    best_count := 0
+
+    case counts[best_word] {
+      .Some(n) => best_count = n,
+      .None => {},
+    }
+
+    for word in keys {
+      case counts[word] {
+        .Some(n) => {
+          if n > best_count {
+            best_count = n
+            best_word = word
+          }
+        },
+        .None => {},
+      }
+    }
+
+    .Some(best_word)
+  }
+}
+
+fn main() -> void {
+  words := ["the", "quick", "brown", "fox", "jumps", "over",
+            "the", "lazy", "dog", "the", "fox", "was", "quick"]
+
+  counts := count_words(words)
+
+  println("Word counts:")
+  print_counts(counts)
+
+  case most_common(counts) {
+    .Some(word) => {
+      case counts[word] {
+        .Some(n) => println("\nMost common: '${word}' (${n} times)"),
+        .None => {},
+      }
+    },
+    .None => println("\nNo words found"),
+  }
+}

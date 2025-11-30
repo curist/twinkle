@@ -1,0 +1,69 @@
+enum Tree<T> {
+  Empty,
+  Node(T, Tree<T>, Tree<T>),
+}
+
+fn sum(t: Tree<int>) -> int {
+  case t {
+    .Empty => 0,
+    .Node(val, left, right) => val + sum(left) + sum(right),
+  }
+}
+
+fn depth<T>(t: Tree<T>) -> int {
+  case t {
+    .Empty => 0,
+    .Node(_, left, right) => {
+      l := depth(left)
+      r := depth(right)
+      if l > r { l + 1 } else { r + 1 }
+    },
+  }
+}
+
+fn count<T>(t: Tree<T>) -> int {
+  case t {
+    .Empty => 0,
+    .Node(_, left, right) => 1 + count(left) + count(right),
+  }
+}
+
+fn contains(t: Tree<int>, target: int) -> bool {
+  case t {
+    .Empty => false,
+    .Node(val, left, right) => {
+      if val == target {
+        true
+      } else {
+        contains(left, target) || contains(right, target)
+      }
+    },
+  }
+}
+
+fn main() -> void {
+  // Build a tree:     5
+  //                 /   \
+  //                3     8
+  //               / \   /
+  //              1   4 7
+  empty: Tree<int> = Tree.Empty
+  tree := Tree.Node(5,
+    Tree.Node(3,
+      Tree.Node(1, empty, empty),
+      Tree.Node(4, empty, empty)
+    ),
+    Tree.Node(8,
+      Tree.Node(7, empty, empty),
+      empty
+    )
+  )
+
+  println("Sum:   ${sum(tree)}")
+  println("Depth: ${depth(tree)}")
+  println("Count: ${count(tree)}")
+
+  println("\nSearching for values:")
+  println("Contains 4? ${contains(tree, 4)}")
+  println("Contains 9? ${contains(tree, 9)}")
+}

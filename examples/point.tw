@@ -1,0 +1,36 @@
+type Point = .{ x: float, y: float }
+
+pub fn add(p1: Point, p2: Point) -> Point {
+  Point{ x: p1.x + p2.x, y: p1.y + p2.y }
+}
+
+pub fn scale(p: Point, factor: float) -> Point {
+  Point{ x: p.x * factor, y: p.y * factor }
+}
+
+pub fn distance_squared(p1: Point, p2: Point) -> float {
+  dx := p2.x - p1.x
+  dy := p2.y - p1.y
+  dx * dx + dy * dy
+}
+
+impl Show(Point) {
+  fn show(p: Point) -> string {
+    "(${p.x}, ${p.y})"
+  }
+}
+
+fn main() -> void {
+  p1 := Point{ x: 1.0, y: 2.0 }
+  p2 := Point{ x: 3.0, y: 4.0 }
+
+  // Demonstrates dot syntax for inherent methods
+  sum := p1.add(p2)
+  println("${p1} + ${p2} = ${sum}")
+
+  scaled := p1.scale(2.0)
+  println("${p1} * 2 = ${scaled}")
+
+  dist_sq := p1.distance_squared(p2)
+  println("distance² from ${p1} to ${p2} = ${dist_sq}")
+}
