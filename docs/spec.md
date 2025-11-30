@@ -103,8 +103,8 @@ Enum example:
 
 ```tw
 enum Shape {
-  Circle(r: float),
-  Rect(w: float, h: float),
+  Circle(float),
+  Rect(float, float),
   UnitSquare,
 }
 ```
@@ -120,7 +120,7 @@ Pattern:
 ```tw
 case s {
   .Circle(r) => r*r*3.14159,
-  .Rect(w,h) => w*h,
+  .Rect(w, h) => w*h,
   .UnitSquare => 1.0,
 }
 ```
@@ -131,23 +131,25 @@ Match must be exhaustive unless `_ => ...`.
 
 ## 6. Records
 
-Record literal:
-
-```tw
-p := .{ x: 10, y: 20 }
-```
-
-Field access: `p.x`
-
-Named record:
+Named record type:
 
 ```tw
 type Point = .{ x: int, y: int }
 ```
 
-Closed shape; no row polymorphism in MVP.
+Record literal (two forms):
 
-For detailed spec, refer to `docs/records.md`.
+```tw
+// Anonymous (requires expected type from context)
+p: Point = .{ x: 10, y: 20 }
+
+// Named constructor (explicit type)
+p := Point{ x: 10, y: 20 }
+```
+
+Field access: `p.x`
+
+Closed shape; no row polymorphism in MVP.
 
 ---
 
@@ -366,7 +368,7 @@ trait Iterable(T) {
 ```tw
 enum Step<S, A> {
   Done,
-  Yield(value: A, state: S),
+  Yield(A, S),
 }
 ```
 
@@ -396,17 +398,18 @@ Inherent helpers allowed via module of array type:
 * `array.pop(a)`
 * etc.
 
-Array literals is presented by `[1, 2, 3] // array<int>`
+Array literals:
 
-or
+```tw
+[1, 2, 3]  // array<int>
 
+xs: array<int> = []  // empty array requires type annotation
 ```
-[] : array<T>    // T must come from context
-```
-If context can't determine T => compiler error
 
-```
-[x, y, z]  // array literal containing differnt types of value is compile error
+If context can't determine element type => compiler error.
+
+```tw
+[x, y, z]  // all elements must have the same type
 ```
 
 
@@ -435,8 +438,10 @@ Used by `for` and `collect`.
 Creation:
 
 ```tw
-m := dict.new(KeyType, ValueType)
+m: dict<string, int> = dict.new()
 ```
+
+Type parameters are inferred from the annotation.
 
 Inherent methods:
 
@@ -446,7 +451,10 @@ Inherent methods:
 * `m.keys() -> array<K>`
 * `len(m)`
 
-`m[k]` syntax planned later.
+Indexing syntax:
+
+* `m[k]` returns `V?` (Option<V>) for safe access
+* `m[k] = v` inserts or updates the value
 
 ---
 

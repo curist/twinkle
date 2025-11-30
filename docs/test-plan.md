@@ -251,14 +251,14 @@ Test harness: either load those from disk or build a fake “module provider” 
 
 ```tw
 enum Shape {
-  Circle(r: float),
-  Rect(w: float, h: float),
+  Circle(float),
+  Rect(float, float),
 }
 
 fn area(s: Shape) -> float {
   case s {
     .Circle(r) => r * r * 3.14,
-    .Rect(w,h) => w * h,
+    .Rect(w, h) => w * h,
   }
 }
 ```

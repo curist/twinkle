@@ -128,7 +128,7 @@ Operators are backed by traits but remain inaccessible:
 ### Enums & Pattern Matching
 ```tw
 enum Option<T> { None, Some(T) }
-enum Shape { Circle(r: float), Rect(w: float, h: float), UnitSquare }
+enum Shape { Circle(float), Rect(float, float), UnitSquare }
 ```
 
 Pattern matching must be exhaustive unless using `_ => ...`.

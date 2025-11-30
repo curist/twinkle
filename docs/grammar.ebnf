@@ -1,0 +1,360 @@
+(*
+ * Twinkle Language Grammar (Complete)
+ *
+ * This is the complete EBNF grammar for the Twinkle programming language.
+ * Twinkle is a statically typed language targeting WebAssembly GC with
+ * Hindley-Milner type inference, traits-as-contracts, and a lightweight syntax.
+ *
+ * Implementation Strategy:
+ * For staged implementation, build the language in this order:
+ * 1. Core expressions, literals, operators, functions, blocks, control flow (if)
+ * 2. Records, modules (import, pub), string interpolation, generics
+ * 3. Enums, pattern matching (case), try expressions, loops, collect, arrays
+ * 4. Traits, impl blocks, associated types, trait bounds
+ *
+ * See docs/plan.md and docs/test-plan.md for detailed guidance.
+ *
+ * Operator Precedence (lowest to highest):
+ * 1. Assignment: =, :=, +=, -=, *=, /=, %=
+ * 2. Logical OR: ||
+ * 3. Logical AND: &&
+ * 4. Equality: ==, !=
+ * 5. Comparison: <, <=, >, >=
+ * 6. Additive: +, -
+ * 7. Multiplicative: *, /, %
+ * 8. Unary: -, !
+ * 9. Postfix: (), [], .
+ *
+ * Keywords (Complete List):
+ * fn, if, else, true, false,
+ * int, float, bool, string, void, array, dict,
+ * import, pub, type, enum, case, try,
+ * for, in, collect, break, continue,
+ * trait, impl
+ *
+ * Built-in Functions (in prelude, not keywords):
+ * print, println, len, error
+ * range, range_from, range_step
+ *
+ * Comments:
+ * - Line comments: // comment until end of line
+ *)
+
+(* ===== Program Structure ===== *)
+
+Program = { TopLevel } ;
+
+TopLevel = ImportDecl
+         | TypeDecl
+         | EnumDecl
+         | TraitDecl
+         | ImplDecl
+         | FunctionDecl ;
+
+ImportDecl = "import" StringLiteral ;
+
+(* ===== Type Declarations ===== *)
+
+TypeDecl = [ "pub" ] "type" Identifier [ TypeParams ] "=" TypeDef ;
+
+TypeDef = RecordTypeDef
+        | Type ;  (* Type alias *)
+
+RecordTypeDef = "." "{" [ RecordFieldDecls ] "}" ;
+
+RecordFieldDecls = RecordFieldDecl { "," RecordFieldDecl } [ "," ] ;
+
+RecordFieldDecl = Identifier ":" Type ;
+
+(* ===== Enum Declarations ===== *)
+
+EnumDecl = [ "pub" ] "enum" Identifier [ TypeParams ] "{" [ VariantList ] "}" ;
+
+VariantList = Variant { "," Variant } [ "," ] ;
+
+Variant = Identifier [ VariantPayload ] ;
+
+VariantPayload = "(" TypeList ")" ;
+
+(* ===== Trait Declarations ===== *)
+
+TraitDecl = [ "pub" ] "trait" Identifier "(" Identifier ")" "{" { TraitItem } "}" ;
+
+TraitItem = AssociatedType
+          | TraitMethod ;
+
+AssociatedType = "type" Identifier ;
+
+TraitMethod = "fn" Identifier "(" [ ParamList ] ")" [ "->" Type ] ;
+
+(* ===== Trait Implementations ===== *)
+
+ImplDecl = "impl" Identifier "(" Type ")" "{" { ImplItem } "}" ;
+
+ImplItem = TypeBinding
+         | ImplMethod ;
+
+TypeBinding = "type" Identifier "=" Type ;
+
+ImplMethod = "fn" Identifier "(" [ ParamList ] ")" [ "->" Type ] Block ;
+
+(* ===== Functions ===== *)
+
+FunctionDecl = [ "pub" ] "fn" Identifier [ TypeParams ] "(" [ ParamList ] ")" [ "->" Type ] Block ;
+
+TypeParams = "<" TypeParam { "," TypeParam } ">" ;
+
+TypeParam = Identifier [ ":" TraitBounds ] ;
+
+TraitBounds = TraitBound { "+" TraitBound } ;
+
+TraitBound = Identifier ;
+
+ParamList = Param { "," Param } ;
+
+Param = Identifier ":" Type ;
+
+(* ===== Expressions ===== *)
+
+Expr = AssignExpr ;
+
+AssignExpr = LogicalOrExpr [ AssignOp LogicalOrExpr ] ;
+
+AssignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+
+LogicalOrExpr = LogicalAndExpr { "||" LogicalAndExpr } ;
+
+LogicalAndExpr = EqualityExpr { "&&" EqualityExpr } ;
+
+EqualityExpr = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
+
+ComparisonExpr = AdditiveExpr { ( "<" | "<=" | ">" | ">=" ) AdditiveExpr } ;
+
+AdditiveExpr = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
+
+MultiplicativeExpr = UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
+
+UnaryExpr = ( "-" | "!" ) UnaryExpr
+          | CallExpr ;
+
+CallExpr = PrimaryExpr { Call | FieldAccess | Index } ;
+
+Call = "(" [ ArgList ] ")" ;
+
+FieldAccess = "." Identifier ;
+
+Index = "[" Expr "]" ;
+
+ArgList = Expr { "," Expr } ;
+
+PrimaryExpr = Literal
+            | RecordLiteral
+            | ArrayLiteral
+            | Identifier
+            | Block
+            | IfExpr
+            | CaseExpr
+            | TryExpr
+            | ForExpr
+            | CollectExpr
+            | "(" Expr ")" ;
+
+(* Note: Enum constructors, qualified names, and method calls are all parsed
+ * as general postfix expressions (Identifier + FieldAccess + Call) and
+ * resolved during type checking.
+ *)
+
+(* ===== Pattern Matching ===== *)
+
+CaseExpr = "case" Expr "{" CaseArms "}" ;
+
+CaseArms = CaseArm { "," CaseArm } [ "," ] ;
+
+CaseArm = Pattern "=>" ( Expr | Block ) ;
+
+Pattern = EnumPattern
+        | WildcardPattern
+        | LiteralPattern
+        | IdentifierPattern ;
+
+EnumPattern = "." Identifier [ "(" PatternList ")" ] ;
+
+PatternList = Pattern { "," Pattern } ;
+
+WildcardPattern = "_" ;
+
+LiteralPattern = IntLiteral | BoolLiteral | StringLiteral ;
+
+IdentifierPattern = Identifier ;
+
+(* ===== Try Expression ===== *)
+
+TryExpr = "try" Expr ;
+
+(* ===== Loop Constructs ===== *)
+
+ForExpr = "for" ForCondition Block ;
+
+ForCondition = Expr
+             | Identifier "in" Expr
+             | Identifier "," Identifier "in" Expr ;
+
+CollectExpr = "collect" Identifier "in" Expr Block ;
+
+(* ===== Record Literals ===== *)
+
+RecordLiteral = AnonymousRecordLiteral
+              | NamedRecordLiteral ;
+
+AnonymousRecordLiteral = "." "{" [ RecordFields ] "}" ;
+
+NamedRecordLiteral = TypeName "{" [ RecordFields ] "}" ;
+
+RecordFields = RecordField { "," RecordField } [ "," ] ;
+
+RecordField = Identifier ":" Expr ;
+
+(* ===== Array Literals ===== *)
+
+ArrayLiteral = "[" [ ArrayElements ] "]" ;
+
+ArrayElements = Expr { "," Expr } [ "," ] ;
+
+(* ===== Type Names ===== *)
+
+(* Type names in declarations and constructors.
+ * Qualified names are parsed as general postfix expressions.
+ *)
+
+TypeName = Identifier ;
+
+(* ===== Blocks and Control Flow ===== *)
+
+Block = "{" { Statement } [ Expr ] "}" ;
+
+Statement = LetBinding ";"
+          | Expr ";"
+          | BreakStmt ";"
+          | ContinueStmt ";" ;
+
+LetBinding = Identifier ":=" Expr
+           | Identifier ":" Type "=" Expr ;
+
+BreakStmt = "break" ;
+
+ContinueStmt = "continue" ;
+
+IfExpr = "if" Expr Block [ "else" ( IfExpr | Block ) ] ;
+
+(* ===== Literals ===== *)
+
+Literal = IntLiteral
+        | FloatLiteral
+        | StringLiteral
+        | BoolLiteral ;
+
+IntLiteral = [ "-" ] Digit { Digit } ;
+
+FloatLiteral = [ "-" ] Digit { Digit } "." Digit { Digit } ;
+
+StringLiteral = '"' { StringChar } '"' ;
+
+StringChar = ? any character except '"' and '\' ?
+           | "\\" ( "n" | "t" | "r" | '"' | "\\" | "${" )
+           | "${" Expr "}" ;
+
+BoolLiteral = "true" | "false" ;
+
+(* ===== Types ===== *)
+
+Type = BaseType [ "?" ] ;
+
+BaseType = PrimitiveType
+         | RecordType
+         | ArrayType
+         | DictType
+         | FunctionType
+         | GenericType
+         | TypeName ;
+
+PrimitiveType = "int" | "float" | "bool" | "string" | "void" ;
+
+RecordType = TypeName ;
+
+ArrayType = "array" "<" Type ">" ;
+
+DictType = "dict" "<" Type "," Type ">" ;
+
+FunctionType = "(" [ TypeList ] ")" "->" Type ;
+
+GenericType = TypeName "<" TypeArgs ">" ;
+
+TypeArgs = Type { "," Type } ;
+
+TypeList = Type { "," Type } ;
+
+(* ===== Identifiers ===== *)
+
+Identifier = Letter { Letter | Digit | "_" } ;
+
+Letter = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j"
+       | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t"
+       | "u" | "v" | "w" | "x" | "y" | "z"
+       | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J"
+       | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T"
+       | "U" | "V" | "W" | "X" | "Y" | "Z" ;
+
+Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+
+(* ===== Notes ===== *)
+
+(* Traits:
+ * - Trait methods are NOT callable from user code
+ * - They exist only as contracts for compiler features:
+ *   - Show: for string interpolation ${x}
+ *   - Iterable: for 'for' loops and 'collect'
+ *   - Eq, Ord: for comparison operators
+ *   - Add, Sub, Mul, Div, Rem, Neg: for arithmetic operators
+ *   - Index, IndexMut: for indexing operators []
+ * - Traits are nominal: one impl per (Trait, TypeHead) pair
+ * - Associated types (type Item, type Output) defined in trait, bound in impl
+ * - Trait bounds appear in type parameters: <T: Show>, <T: Show + Eq>
+ *)
+
+(* Standard Prelude Traits:
+ * trait Show(T) { fn show(x: T) -> string }
+ * trait Iterable(T) { type Item; type State; fn init(...); fn next(...) }
+ * trait Eq(T) { fn eq(a: T, b: T) -> bool }
+ * trait Ord(T) { fn compare(a: T, b: T) -> Ordering }
+ * trait Add(T) { type Output; fn add(a: T, b: T) -> Output }
+ * trait Sub(T) { type Output; fn sub(a: T, b: T) -> Output }
+ * trait Mul(T) { type Output; fn mul(a: T, b: T) -> Output }
+ * trait Div(T) { type Output; fn div(a: T, b: T) -> Output }
+ * trait Rem(T) { type Output; fn rem(a: T, b: T) -> Output }
+ * trait Neg(T) { fn neg(x: T) -> T }
+ * trait Index(T, I) { type Output; fn get(t: T, i: I) -> Output }
+ * trait IndexMut(T, I) { type Output; fn set(t: T, i: I, v: Output) -> void }
+ *)
+
+(* Records:
+ * - Anonymous record literals .{} require contextual type information
+ * - Named constructors Type{} always produce that specific type
+ * - Dot syntax p.method(...) desugars to module.method(p, ...)
+ *)
+
+(* Pattern Matching:
+ * - Must be exhaustive or include wildcard _
+ * - Enum patterns use dot prefix: .Some(x), .None
+ *)
+
+(* Other Notes:
+ * - try expr only works with Result<T, E> types
+ * - T? is syntactic sugar for Option<T>
+ * - for loops always return void
+ * - collect always returns array<T>
+ * - break/continue only valid inside loops
+ * - String interpolation ${expr} requires Show trait (validated during type checking)
+ * - Module names come from import paths (last segment without .tw extension)
+ * - Qualified names (module.Type, module.function) are parsed as postfix
+ *   field access expressions and resolved during type checking
+ *)
