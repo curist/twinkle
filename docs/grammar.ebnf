@@ -102,7 +102,7 @@ ImplMethod = "fn" Identifier "(" [ ParamList ] ")" [ "->" Type ] Block ;
 
 FunctionDecl = [ "pub" ] "fn" Identifier [ TypeParams ] "(" [ ParamList ] ")" [ "->" Type ] Block ;
 
-TypeParams = "<" TypeParam { "," TypeParam } ">" ;
+TypeParams = "<" TypeParam { "," TypeParam } [ "," ] ">" ;
 
 TypeParam = Identifier [ ":" TraitBounds ] ;
 
@@ -110,7 +110,7 @@ TraitBounds = TraitBound { "+" TraitBound } ;
 
 TraitBound = Identifier ;
 
-ParamList = Param { "," Param } ;
+ParamList = Param { "," Param } [ "," ] ;
 
 Param = Identifier ":" Type ;
 
@@ -118,9 +118,14 @@ Param = Identifier ":" Type ;
 
 Expr = AssignExpr ;
 
-AssignExpr = LogicalOrExpr [ AssignOp LogicalOrExpr ] ;
+AssignExpr = Assignable AssignOp LogicalOrExpr
+           | LogicalOrExpr ;
 
 AssignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+
+Assignable = Identifier
+           | Expr "." Identifier
+           | Expr "[" Expr "]" ;
 
 LogicalOrExpr = LogicalAndExpr { "||" LogicalAndExpr } ;
 
@@ -145,7 +150,7 @@ FieldAccess = "." Identifier ;
 
 Index = "[" Expr "]" ;
 
-ArgList = Expr { "," Expr } ;
+ArgList = Expr { "," Expr } [ "," ] ;
 
 PrimaryExpr = Literal
             | RecordLiteral
@@ -155,7 +160,6 @@ PrimaryExpr = Literal
             | IfExpr
             | CaseExpr
             | TryExpr
-            | ForExpr
             | CollectExpr
             | "(" Expr ")" ;
 
@@ -170,7 +174,7 @@ CaseExpr = "case" Expr "{" CaseArms "}" ;
 
 CaseArms = CaseArm { "," CaseArm } [ "," ] ;
 
-CaseArm = Pattern "=>" ( Expr | Block ) ;
+CaseArm = Pattern "=>" Expr ;
 
 Pattern = EnumPattern
         | WildcardPattern
@@ -179,7 +183,7 @@ Pattern = EnumPattern
 
 EnumPattern = "." Identifier [ "(" PatternList ")" ] ;
 
-PatternList = Pattern { "," Pattern } ;
+PatternList = Pattern { "," Pattern } [ "," ] ;
 
 WildcardPattern = "_" ;
 
@@ -192,8 +196,6 @@ IdentifierPattern = Identifier ;
 TryExpr = "try" Expr ;
 
 (* ===== Loop Constructs ===== *)
-
-ForExpr = "for" ForCondition Block ;
 
 ForCondition = Expr
              | Identifier "in" Expr
@@ -232,10 +234,13 @@ TypeName = Identifier ;
 
 Block = "{" { Statement } [ Expr ] "}" ;
 
-Statement = LetBinding ";"
+Statement = ForStmt
+          | LetBinding ";"
           | Expr ";"
           | BreakStmt ";"
           | ContinueStmt ";" ;
+
+ForStmt = "for" ForCondition Block ;
 
 LetBinding = Identifier ":=" Expr
            | Identifier ":" Type "=" Expr ;
@@ -289,9 +294,9 @@ FunctionType = "(" [ TypeList ] ")" "->" Type ;
 
 GenericType = TypeName "<" TypeArgs ">" ;
 
-TypeArgs = Type { "," Type } ;
+TypeArgs = Type { "," Type } [ "," ] ;
 
-TypeList = Type { "," Type } ;
+TypeList = Type { "," Type } [ "," ] ;
 
 (* ===== Identifiers ===== *)
 

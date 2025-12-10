@@ -1,0 +1,5 @@
+fn test() -> void {
+  for i < 10 {
+    println("${i}")
+  }
+}
