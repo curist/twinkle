@@ -350,9 +350,143 @@ q             // still { y: 0 }
 
 Twinkle has **value semantics**, not reference semantics.
 
+### 7.7 Closure Capture
+
+A function expression (`fn (...) { ... }`) may reference names defined in its surrounding lexical scopes.
+When such a function is **defined**, Twinkle captures the **current value** of each free variable.
+Closures capture *values*, not mutable cells.
+
+This section formalizes the capture model.
+
 ---
 
-If you want, I can also cleanly integrate this into a fully revised “Bindings & Mutation Model” chapter later, or produce diagrams showing rebinding propagation and shadowing resolution.
+#### 7.7.1 Capture-by-Value (Definition-Site Semantics)
+
+When a closure is created:
+
+* Each free variable `x` is resolved to the **innermost visible binding**.
+* The **value** of that binding at the point of the closure's definition is captured.
+* This captured value is final and does not change, even if the name is later rebound in the same scope.
+
+Example:
+
+```tw
+x := 1
+f := fn() Int { x }
+x = 2
+
+f()    // returns 1
+```
+
+Explanation:
+
+* `f` captures the value `1` (the value of the `x` binding at definition time).
+* `x = 2` introduces a new shadowing binding for later code, but does not affect `f`.
+
+---
+
+#### 7.7.2 Shadowing and Captured Variables
+
+Closures always capture the **innermost lexical binding** visible at their definition site.
+
+```tw
+x := 0
+
+fn outer() fn() Int {
+  x := 10                // new shadowing binding
+  fn() Int { x }         // captures the inner x = 10
+}
+
+f := outer()
+x = 99                   // rebinding the outer x
+
+f()                      // returns 10
+```
+
+* Inner `x` shadows outer `x`.
+* The closure sees only the shadowing `x = 10`.
+
+---
+
+#### 7.7.3 Rebinding After Closure Creation Does Not Affect Closures
+
+Rebinding (`x = expr`) is sugar for introducing a new shadowing binding.
+Therefore, closures created **before** the rebinding continue to see the old binding.
+
+```tw
+x := 1
+
+f := fn() Int { x }   // captures x = 1
+
+x = 2                 // new binding shadows the old
+
+f()                  // returns 1
+```
+
+This follows directly from capture-by-value semantics.
+
+---
+
+#### 7.7.4 Closures Cannot Rebind Captured Variables
+
+Because closures capture **values**, not cells, they cannot assign to variables defined outside their own function.
+
+The following is an error:
+
+```tw
+x := 1
+
+fn bad() {
+  x = x + 1   // error: cannot rebind variable defined in outer scope
+}
+```
+
+Compile-time rule:
+
+> A closure may reference captured variables, but may **not** rebind them using `=` or compound assignment.
+
+If mutation-like behavior is desired in the future, it must be expressed explicitly using a type such as `Cell<T>` rather than via closures.
+
+---
+
+#### 7.7.5 Loop Variables Produce Fresh Bindings per Iteration
+
+In `for` loops, loop variables are newly bound for each iteration.
+Thus each closure created inside the loop captures the **iteration’s** value, not a shared accumulator.
+
+```tw
+fns := collect i in range(3) {
+  fn() Int { i }
+}
+
+fns[0]()    // 0
+fns[1]()    // 1
+fns[2]()    // 2
+```
+
+Rationale:
+
+* Each iteration introduces a new binding `i`.
+* Closures capture the value of `i` at their own definition point.
+
+This avoids common “loop capture traps” seen in other languages.
+
+---
+
+#### 7.7.6 Summary of Closure Capture Rules
+
+| Behavior                  | Rule                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| What is captured?         | The **value** of each free variable at closure definition time.                             |
+| Shadowing                 | Closures capture the **innermost visible** binding.                                         |
+| Rebinding afterwards      | Does **not** affect existing closures; it creates a new shadowing binding.                  |
+| Assigning inside closures | Cannot rebind captured variables (compile-time error).                                      |
+| Loops                     | Fresh binding per iteration; closures capture the iteration’s value.                        |
+| Mutation                  | Not supported implicitly; must use explicit types (e.g. future `Cell<T>`) for shared state. |
+
+This model is simple, predictable, and strictly functional in semantics, while still supporting scripting-friendly rebinding syntax.
+
+---
 
 ## 8. Modules & Imports
 

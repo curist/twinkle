@@ -1,0 +1,629 @@
+/**
+ * @file Twinkle grammar for tree-sitter
+ * @author curist <curist.cyc@gmail.com>
+ * @license MIT
+ */
+
+/// <reference types="tree-sitter-cli/dsl" />
+// @ts-check
+
+module.exports = grammar({
+  name: "twinkle",
+
+  externals: $ => [],
+
+  extras: $ => [
+    /[ \t\r\n]/,
+    $.comment,
+  ],
+
+  word: $ => $.identifier,
+
+  rules: {
+    // ===== Program Structure =====
+
+    source_file: $ => repeat(seq(
+      $._top_level,
+      optional($._terminator),
+    )),
+
+    _top_level: $ => choice(
+      $.import_declaration,
+      $.type_declaration,
+      $.function_declaration,
+      $._top_level_statement,
+    ),
+
+    import_declaration: $ => seq(
+      'import',
+      $.string_literal,
+    ),
+
+    _top_level_statement: $ => choice(
+      $.let_binding,
+      $._expression,
+    ),
+
+    // Statement terminator in tree-sitter: newline or semicolon.
+    // (EOF is treated as an implicit terminator by the real Twinkle parser.)
+    _terminator: $ => choice('\n', ';'),
+
+    // ===== Type Declarations =====
+
+    type_declaration: $ => seq(
+      optional('pub'),
+      'type',
+      field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      '=',
+      field('definition', $._type_definition),
+    ),
+
+    _type_definition: $ => choice(
+      $.record_type_def,
+      $.sum_type_def,
+      $.type,
+    ),
+
+    record_type_def: $ => seq(
+      '.',
+      '{',
+      optional($.record_field_declarations),
+      '}',
+    ),
+
+    record_field_declarations: $ => seq(
+      $.record_field_declaration,
+      repeat(seq(',', $.record_field_declaration)),
+      optional(','),
+    ),
+
+    record_field_declaration: $ => seq(
+      field('name', $.identifier),
+      ':',
+      field('type', $.type),
+    ),
+
+    sum_type_def: $ => seq(
+      '{',
+      $.variant_definition_list,
+      '}',
+    ),
+
+    variant_definition_list: $ => seq(
+      $.variant_definition,
+      repeat(seq(',', $.variant_definition)),
+      optional(','),
+    ),
+
+    variant_definition: $ => seq(
+      field('name', $.identifier),
+      optional(seq('(', $.type_list, ')')),
+    ),
+
+    // ===== Functions =====
+
+    function_declaration: $ => seq(
+      optional('pub'),
+      'fn',
+      field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      field('parameters', $.parameter_list),
+      optional(field('return_type', $.type)),
+      field('body', $.block),
+    ),
+
+    function_expression: $ => seq(
+      'fn',
+      field('parameters', $.parameter_list),
+      optional(field('return_type', $.type)),
+      field('body', $.block),
+    ),
+
+    type_parameters: $ => seq(
+      '<',
+      $.type_parameter,
+      repeat(seq(',', $.type_parameter)),
+      optional(','),
+      '>',
+    ),
+
+    type_parameter: $ => $.identifier,
+
+    parameter_list: $ => seq(
+      '(',
+      optional($.parameters),
+      ')',
+    ),
+
+    parameters: $ => seq(
+      $.parameter,
+      repeat(seq(',', $.parameter)),
+      optional(','),
+    ),
+
+    parameter: $ => seq(
+      field('name', $.identifier),
+      optional(seq(':', field('type', $.type))),
+    ),
+
+    // ===== Expressions =====
+    // Expressions are structured hierarchically by precedence
+
+    _expression: $ => $.assignment_expression,
+
+    assignment_expression: $ => choice(
+      prec.right('assign', seq(
+        field('left', $._lvalue),
+        field('operator', choice('=', '+=', '-=', '*=', '/=', '%=')),
+        field('right', $._expression),
+      )),
+      $.logical_or_expression,
+    ),
+
+    _lvalue: $ => choice(
+      $.identifier,
+      $.field_access,
+      $.index_access,
+    ),
+
+    logical_or_expression: $ => choice(
+      prec.left('or', seq(
+        field('left', $.logical_or_expression),
+        'or',
+        field('right', $.logical_and_expression),
+      )),
+      $.logical_and_expression,
+    ),
+
+    logical_and_expression: $ => choice(
+      prec.left('and', seq(
+        field('left', $.logical_and_expression),
+        'and',
+        field('right', $.equality_expression),
+      )),
+      $.equality_expression,
+    ),
+
+    equality_expression: $ => choice(
+      prec.left('equality', seq(
+        field('left', $.equality_expression),
+        field('operator', choice('==', '!=')),
+        field('right', $.comparison_expression),
+      )),
+      $.comparison_expression,
+    ),
+
+    comparison_expression: $ => choice(
+      prec.left('comparison', seq(
+        field('left', $.comparison_expression),
+        field('operator', choice('<', '<=', '>', '>=')),
+        field('right', $.additive_expression),
+      )),
+      $.additive_expression,
+    ),
+
+    additive_expression: $ => choice(
+      prec.left('additive', seq(
+        field('left', $.additive_expression),
+        field('operator', choice('+', '-')),
+        field('right', $.multiplicative_expression),
+      )),
+      $.multiplicative_expression,
+    ),
+
+    multiplicative_expression: $ => choice(
+      prec.left('multiplicative', seq(
+        field('left', $.multiplicative_expression),
+        field('operator', choice('*', '/', '%')),
+        field('right', $.unary_expression),
+      )),
+      $.unary_expression,
+    ),
+
+    unary_expression: $ => choice(
+      prec('unary', seq(
+        field('operator', choice('-', '!', 'try')),
+        field('operand', $.unary_expression),
+      )),
+      $._postfix_expression,
+    ),
+
+    _postfix_expression: $ => choice(
+      $.call_expression,
+      $.field_access,
+      $.index_access,
+      $._primary_expression,
+    ),
+
+    call_expression: $ => prec('postfix', seq(
+      field('function', $._postfix_expression),
+      field('arguments', $.argument_list),
+    )),
+
+    argument_list: $ => seq(
+      '(',
+      optional($.arguments),
+      ')',
+    ),
+
+    arguments: $ => seq(
+      $._expression,
+      repeat(seq(',', $._expression)),
+      optional(','),
+    ),
+
+    field_access: $ => prec('postfix', seq(
+      field('object', $._postfix_expression),
+      '.',
+      field('field', $.identifier),
+    )),
+
+    index_access: $ => prec('postfix', seq(
+      field('object', $._postfix_expression),
+      '[',
+      field('index', $._expression),
+      ']',
+    )),
+
+    _primary_expression: $ => choice(
+      $._literal,
+      $.identifier,
+      $.variant_expression,
+      $.function_expression,
+      $.block,
+      $.if_expression,
+      $.case_expression,
+      $.collect_expression,
+      $.parenthesized_expression,
+    ),
+
+    parenthesized_expression: $ => seq(
+      '(',
+      $._expression,
+      ')',
+    ),
+
+    variant_expression: $ => seq(
+      '.',
+      field('variant', $.identifier),
+      optional(seq('(', $.arguments, ')')),
+    ),
+
+    // ===== Pattern Matching =====
+
+    case_expression: $ => seq(
+      'case',
+      field('value', $._expression),
+      '{',
+      $.case_arms,
+      '}',
+    ),
+
+    case_arms: $ => seq(
+      $.case_arm,
+      repeat(seq(',', $.case_arm)),
+      optional(','),
+    ),
+
+    case_arm: $ => seq(
+      field('pattern', $._pattern),
+      '=>',
+      field('value', $._expression),
+    ),
+
+    _pattern: $ => choice(
+      $.enum_pattern,
+      $.wildcard_pattern,
+      $.literal_pattern,
+      $.identifier_pattern,
+    ),
+
+    enum_pattern: $ => choice(
+      $.shorthand_enum_pattern,
+      $.qualified_enum_pattern,
+    ),
+
+    shorthand_enum_pattern: $ => seq(
+      '.',
+      field('variant', $.identifier),
+      optional(seq('(', $.pattern_list, ')')),
+    ),
+
+    qualified_enum_pattern: $ => seq(
+      field('type', $.type_name),
+      '.',
+      field('variant', $.identifier),
+      optional(seq('(', $.pattern_list, ')')),
+    ),
+
+    pattern_list: $ => seq(
+      $._pattern,
+      repeat(seq(',', $._pattern)),
+      optional(','),
+    ),
+
+    wildcard_pattern: $ => '_',
+
+    literal_pattern: $ => choice(
+      $.int_literal,
+      $.float_literal,
+      $.bool_literal,
+      $.string_literal,
+    ),
+
+    identifier_pattern: $ => $.identifier,
+
+    // ===== Control Flow =====
+
+    if_expression: $ => seq(
+      'if',
+      field('condition', $._expression),
+      field('consequence', $.block),
+      optional(seq('else', field('alternative', choice($.if_expression, $.block)))),
+    ),
+
+    // ===== Loops =====
+
+    for_statement: $ => seq(
+      'for',
+      field('condition', $._for_condition),
+      field('body', $.block),
+    ),
+
+    _for_condition: $ => choice(
+      $.for_in_condition,
+      $.for_while_condition,
+    ),
+
+    for_in_condition: $ => seq(
+      field('binding', $.identifier),
+      optional(seq(',', field('index', $.identifier))),
+      'in',
+      field('iterable', $._expression),
+    ),
+
+    for_while_condition: $ => field('condition', $._expression),
+
+    collect_expression: $ => seq(
+      'collect',
+      field('binding', $.identifier),
+      'in',
+      field('iterable', $._expression),
+      field('body', $.block),
+    ),
+
+    // ===== Literals =====
+
+    _literal: $ => choice(
+      prec.dynamic(5, $.string_literal), // prefer strings so the lexer chooses them early
+      $.int_literal,
+      $.float_literal,
+      $.bool_literal,
+      $.record_literal,
+      $.array_literal,
+    ),
+
+    record_literal: $ => choice(
+      $.anonymous_record_literal,
+      $.named_record_literal,
+    ),
+
+    anonymous_record_literal: $ => seq(
+      '.',
+      '{',
+      optional($.record_fields),
+      '}',
+    ),
+
+    named_record_literal: $ => seq(
+      field('type', $.type_name),
+      '.',
+      '{',
+      optional($.record_fields),
+      '}',
+    ),
+
+    record_fields: $ => seq(
+      $.record_field,
+      repeat(seq(',', $.record_field)),
+      optional(','),
+    ),
+
+    record_field: $ => seq(
+      field('name', $.identifier),
+      ':',
+      field('value', $._expression),
+    ),
+
+    array_literal: $ => seq(
+      '[',
+      optional($.array_elements),
+      ']',
+    ),
+
+    array_elements: $ => seq(
+      $._expression,
+      repeat(seq(',', $._expression)),
+      optional(','),
+    ),
+
+    // String literals with interpolation support
+    string_literal: $ => seq(
+      '"',
+      repeat(choice(
+        $.string_content,
+        $.escape_sequence,
+        $.interpolation,
+        token.immediate('$'),
+      )),
+      '"',
+    ),
+
+    string_content: $ => token.immediate(/[^\n"\\$]+/),
+
+    escape_sequence: $ => token.immediate(seq(
+      '\\',
+      choice(
+        '"',
+        '\\',
+        'n',
+        't',
+        'r',
+      ),
+    )),
+
+    interpolation: $ => seq(
+      token.immediate('${'),
+      $._expression,
+      token.immediate('}'),
+    ),
+
+    int_literal: $ => /\d+/,
+
+    float_literal: $ => /\d+\.\d+/,
+
+    bool_literal: $ => choice('true', 'false'),
+
+    // ===== Blocks and Statements =====
+
+    block: $ => seq(
+      '{',
+      // Zero or more statements, each followed by one or more terminators
+      repeat(seq(
+        $._statement,
+        repeat1($._terminator),
+      )),
+      // Optional trailing expression (no terminator)
+      optional($._expression),
+      '}',
+    ),
+
+    _statement: $ => choice(
+      $.for_statement,
+      $.let_binding,
+      $.break_statement,
+      $.continue_statement,
+      $.return_statement,
+      $._expression,
+    ),
+
+    let_binding: $ => choice(
+      seq(
+        field('name', $.identifier),
+        ':=',
+        field('value', $._expression),
+      ),
+      seq(
+        field('name', $.identifier),
+        ':',
+        field('type', $.type),
+        '=',
+        field('value', $._expression),
+      ),
+    ),
+
+    break_statement: $ => 'break',
+
+    continue_statement: $ => 'continue',
+
+    return_statement: $ => seq(
+      'return',
+      field('value', $._expression),
+    ),
+
+    // ===== Types =====
+
+    type: $ => seq(
+      choice(
+        $.function_type,
+        $._base_type,
+      ),
+      optional('?'),
+    ),
+
+    // Make function_type right-associative:
+    // fn(A) fn(B) C  ==> fn(A) (fn(B) C)
+    function_type: $ => prec.right(seq(
+      'fn',
+      '(',
+      optional($.type_list),
+      ')',
+      optional($.type),
+    )),
+
+    _base_type: $ => choice(
+      $.primitive_type,
+      $.generic_type,
+      $.type_name,
+    ),
+
+    primitive_type: $ => choice(
+      'Int',
+      'Float',
+      'Bool',
+      'String',
+      'Void',
+    ),
+
+    generic_type: $ => seq(
+      field('name', $.type_name),
+      '<',
+      field('arguments', $.type_arguments),
+      '>',
+    ),
+
+    type_arguments: $ => seq(
+      $.type,
+      repeat(seq(',', $.type)),
+      optional(','),
+    ),
+
+    type_list: $ => seq(
+      $.type,
+      repeat(seq(',', $.type)),
+      optional(','),
+    ),
+
+    type_name: $ => sep1($.identifier, '.'),
+
+    // ===== Lexical Rules =====
+
+    identifier: $ => /[a-zA-Z][a-zA-Z0-9_]*/,
+
+    comment: $ => token(seq('//', /.*/)),
+  },
+
+  precedences: $ => [
+    [
+      'assign',
+      'or',
+      'and',
+      'equality',
+      'comparison',
+      'additive',
+      'multiplicative',
+      'unary',
+      'postfix',
+    ],
+  ],
+
+  conflicts: $ => [
+    // Expected conflicts for ambiguous syntax
+    [$._primary_expression, $.type_name],
+    [$.variant_expression],
+    [$.type_name],
+    [$.type],
+    // Binary precedence edge cases
+    [$.comparison_expression, $.additive_expression],
+    // Postfix vs unary (e.g. -x.y, -f(), -a[0])
+    [$.unary_expression, $.field_access],
+    [$.unary_expression, $.call_expression],
+    [$.unary_expression, $.index_access],
+  ],
+});
+
+// Helper function for separated lists
+function sep1(rule, separator) {
+  return seq(rule, repeat(seq(separator, rule)));
+}

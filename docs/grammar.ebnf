@@ -16,7 +16,7 @@
 (* ===== Program Structure ===== *)
 
 Program =
-    { TopLevel } ;
+    { TopLevel [ Terminator ] } ;
 
 TopLevel =
       ImportDecl
@@ -312,7 +312,12 @@ ArrayElements =
 (* ===== Blocks and Control Flow ===== *)
 
 Block =
-    "{" { Statement } [ Expr ] "}" ;
+    "{"
+        { Terminator }                       (* allow leading blank lines *)
+        { Statement Terminator { Terminator } }  (* allow multiple terminators between statements *)
+        [ Expr ]                             (* trailing expression must be last; no terminator after it *)
+        "}" ;
+(* Note: if a trailing Expr is present, no Terminator follows before "}". *)
 (* Implementation note:
    - If Block ends with Expr and no `return`, that Expr is the block’s value
      (for expression contexts, including function bodies).
@@ -320,18 +325,15 @@ Block =
 
 Statement =
       ForStmt
-    | LetBinding ";"
-    | Expr ";"
-    | BreakStmt ";"
-    | ContinueStmt ";"
-    | ReturnStmt ";" ;
-(* Implementation note:
-   - The grammar requires `;` tokens, but the lexer performs
-     Automatic Semicolon Insertion (ASI) at newlines; see ASI section. *)
+    | LetBinding
+    | Expr
+    | BreakStmt
+    | ContinueStmt
+    | ReturnStmt ;
 
 TopLevelStmt =
-      LetBinding ";"
-    | Expr ";" ;
+      LetBinding
+    | Expr ;
 
 LetBinding =
       Identifier ":=" Expr
@@ -463,6 +465,17 @@ Letter =
 Digit =
     "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 
+Terminator =
+      ";"
+    | Newline ;
+
+Newline =
+    "\n" ;
+(* Notes:
+   - Statements/case arms are separated by Terminator; EOF also ends the last one.
+   - Multiple statements on the same line require an explicit ";"
+   - Newlines inside (), [], {} do not terminate expressions; they act as whitespace. *)
+
 (* ===== Keywords (reference) ===== *)
 
 (*
@@ -476,66 +489,4 @@ Implementation note:
   - These must not be recognized as Identifiers by the lexer.
   - Built-in prelude functions (`print`, `println`, `len`, `error`,
     `range`, `range_from`, `range_step`) are NOT keywords.
-*)
-
-(* ===== Semicolons & Automatic Semicolon Insertion (ASI) ===== *)
-
-(*
-Semicolons in the grammar:
-  - The grammar requires `;` after each Statement and TopLevelStmt:
-      Statement    ::= ... | LetBinding ";" | Expr ";" | ...
-      TopLevelStmt ::= LetBinding ";" | Expr ";"
-  - However, programmers normally omit semicolons at end of line.
-  - The lexer performs Automatic Semicolon Insertion (ASI) at newlines.
-
-ASI rule (lexer-level, Go-style):
-
-  Before producing a newline token, the lexer inserts a semicolon token `;`
-  if ALL of the following hold:
-
-    1. The current token stream is not inside an unclosed:
-         - parenthesis: '(' ... ')'
-         - bracket:     '[' ... ']'
-         - block:       '{' ... '}'
-         - string literal or interpolation
-
-    2. The last non-whitespace token on the line is one of:
-         - an Identifier
-         - a Literal (int, float, string, bool)
-         - ')', ']', or '}'
-         - 'break' or 'continue'
-
-  In effect, the following source:
-
-      x := 1
-      y := 2
-      println(x + y)
-
-  is tokenized as:
-
-      x := 1 ;
-      y := 2 ;
-      println(x + y) ;
-
-  Multiple statements on the same line require explicit semicolons:
-
-      x := 1; y := 2; println(x + y)
-
-  The lexer does NOT insert semicolons after tokens that cannot legally
-  end a statement (e.g. binary operators, ',', '(', '[', '{', '.', 'and',
-  'or'), so multi-line expressions remain valid:
-
-      result :=
-        1 +
-        2 +
-        3
-
-      point :=
-        Point.{ x: 1,
-                y: 2 }
-
-  If a line cannot be parsed as a complete Statement or final Expr even
-  after ASI (for example: `x := f() g()` on a single line), it is a syntax
-  error; the language does not automatically split such lines into multiple
-  statements.
 *)

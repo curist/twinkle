@@ -1,0 +1,39 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "twinkle",
+      "camelcase": "Twinkle",
+      "title": "Twinkle",
+      "scope": "source.twinkle",
+      "file-types": [
+        "twinkle"
+      ],
+      "injection-regex": "^twinkle$",
+      "class-name": "TreeSitterTwinkle"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Twinkle grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "curist",
+        "email": "curist.cyc@gmail.com"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-twinkle"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true,
+    "zig": false
+  }
+}
