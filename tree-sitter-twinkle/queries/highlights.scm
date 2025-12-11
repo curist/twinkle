@@ -85,7 +85,8 @@
   name: (identifier) @type.definition)
 
 ; Type parameters
-(type_parameter) @type.parameter
+(type_parameter
+  (identifier) @type.parameter)
 
 ; Function definitions - higher priority
 (function_declaration
