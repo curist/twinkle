@@ -1,8 +1,8 @@
-fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> {
+fn map<A, B>(xs: Array<A>, f: fn(A) B) Array<B> {
   collect x in xs { f(x) }
 }
 
-fn filter<T>(xs: array<T>, pred: fn(T) Bool) array<T> {
+fn filter<T>(xs: Array<T>, pred: fn(T) Bool) Array<T> {
   collect x in xs {
     if pred(x) {
       x
@@ -12,7 +12,7 @@ fn filter<T>(xs: array<T>, pred: fn(T) Bool) array<T> {
   }
 }
 
-fn sum(xs: array<Int>) Int {
+fn sum(xs: Array<Int>) Int {
   total := 0
   for x in xs {
     total += x
@@ -20,7 +20,7 @@ fn sum(xs: array<Int>) Int {
   total
 }
 
-fn fold<T, A>(xs: array<T>, init: A, f: fn(A, T) A) A {
+fn fold<T, A>(xs: Array<T>, init: A, f: fn(A, T) A) A {
   acc := init
   for x in xs {
     acc = f(acc, x)
@@ -40,7 +40,7 @@ fn add(a: Int, b: Int) Int {
   a + b
 }
 
-fn array_to_string(xs: array<Int>) String {
+fn array_to_string(xs: Array<Int>) String {
   if len(xs) == 0 {
     "[]"
   } else {

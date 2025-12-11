@@ -211,6 +211,11 @@ Pattern =
     | WildcardPattern
     | LiteralPattern
     | IdentifierPattern ;
+(* Implementation note:
+   - When a pattern starts with `Identifier`, the parser must look ahead:
+       - If the next token is `"."`, it must parse a QualifiedEnumPattern.
+       - Otherwise, it parses an IdentifierPattern (binding).
+   - This requires 1-token lookahead but keeps the surface syntax simple. *)
 
 EnumPattern =
       ShorthandEnumPattern
@@ -255,20 +260,23 @@ ForStmt =
     "for" ForCondition Block ;
 
 ForCondition =
-      Identifier "," Identifier "in" Expr
-    | Identifier "in" Expr
+      Identifier ( "," Identifier )? "in" Expr
     | Expr ;
 (* Implementation note:
    - `for key, value in expr`  (dict / pair iteration)
    - `for x in expr`          (iterator / range / array)
    - `for expr`               (while-style loop; condition is expr)
+   - Parsers typically:
+       - If the first token is `Identifier` and later on the same header line
+         there is an `in`, parse as a binding-form condition.
+       - Otherwise, parse as a generic Expr condition.
    - `in` is *not* an infix operator in Expr grammar, so `x in y`
      is not a valid Expr and cannot conflict. *)
 
 CollectExpr =
     "collect" Identifier "in" Expr Block ;
 (* Implementation note:
-   - `collect x in expr { ... }` produces `array<T>`.
+   - `collect x in expr { ... }` produces `Array<T>`.
    - Binding `x` is scoped within the block. *)
 
 (* ===== Record Literals ===== *)
@@ -343,9 +351,7 @@ ReturnStmt =
     "return" Expr ;
 (* Implementation note:
    - `return expr` allowed in any function; type must match function return.
-   - For `void` returns, use `return {}` (empty block evaluates to `void`).
-   - Functions may also implicitly return the last expression in the Block
-     if control reaches the end without `return`. *)
+   - For `void` returns, use `return {}` (empty block evaluates to `void`). *)
 
 IfExpr =
     "if" Expr Block [ "else" ( IfExpr | Block ) ] ;
@@ -359,10 +365,10 @@ Literal =
     | BoolLiteral ;
 
 IntLiteral =
-    [ "-" ] Digit { Digit } ;
+    Digit { Digit } ;
 
 FloatLiteral =
-    [ "-" ] Digit { Digit } "." Digit { Digit } ;
+    Digit { Digit } "." Digit { Digit } ;
 
 StringLiteral =
     '"' { StringChar } '"' ;
@@ -379,6 +385,11 @@ StringChar =
 BoolLiteral =
     "true" | "false" ;
 
+(* Implementation note (numeric literals & negation):
+   - `-1` and `-3.14` are parsed as UnaryExpr: `-` applied to IntLiteral/FloatLiteral.
+   - The lexer never needs a separate "negative literal" token; it only
+     produces the `-` operator token and a positive numeric literal. *)
+
 (* ===== Types ===== *)
 
 Type =
@@ -393,7 +404,7 @@ FunctionType =
    - Parameter types are positional; no parameter *names* in types.
    - Examples:
        `fn(Int) Int`
-       `fn(Int, String) bool`
+       `fn(Int, String) Bool`
        `fn() fn(Int) Int`
    - Combined with `?`:
        `fn(Int) Int?` etc. *)
@@ -401,23 +412,20 @@ FunctionType =
 BaseType =
       PrimitiveType
     | RecordType
-    | ArrayType
-    | DictType
     | GenericType
     | TypeName ;
 
-PrimitiveType = "Int" | "Float" | "Bool" | "String" | "Void" ;
+PrimitiveType =
+      "Int"
+    | "Float"
+    | "Bool"
+    | "String"
+    | "Void" ;
 
 RecordType =
     TypeName ;
 (* Implementation note:
    - Records are nominal; `TypeName` refers to a declared `type` with record body. *)
-
-ArrayType =
-    "array" "<" Type ">" ;
-
-DictType =
-    "dict" "<" Type "," Type ">" ;
 
 FunctionTypeAlias =
     TypeName ; (* See FunctionType; usually you just use TypeName for aliases. *)
@@ -475,7 +483,7 @@ Implementation note:
 (*
 Semicolons in the grammar:
   - The grammar requires `;` after each Statement and TopLevelStmt:
-      Statement   ::= ... | LetBinding ";" | Expr ";" | ...
+      Statement    ::= ... | LetBinding ";" | Expr ";" | ...
       TopLevelStmt ::= LetBinding ";" | Expr ";"
   - However, programmers normally omit semicolons at end of line.
   - The lexer performs Automatic Semicolon Insertion (ASI) at newlines.
@@ -495,8 +503,7 @@ ASI rule (lexer-level, Go-style):
          - an Identifier
          - a Literal (int, float, string, bool)
          - ')', ']', or '}'
-         - 'break', 'continue', or 'return' (when no expression follows
-           on the same line)
+         - 'break' or 'continue'
 
   In effect, the following source:
 

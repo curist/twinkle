@@ -39,9 +39,9 @@ Source files end with `.tw`.
 ### References (GC)
 
 * `String` — immutable text.
-* `array<T>` — immutable GC array; element unboxed/ref depending on `T`.
+* `Array<T>` — immutable GC array; element unboxed/ref depending on `T`.
 * `record` — immutable closed struct shape.
-* `dict<K,V>` — immutable hash map reference.
+* `Dict<K,V>` — immutable hash map reference.
 * `function` — closure with captured environment (GC).
 
 ### `Void`
@@ -56,7 +56,7 @@ Source files end with `.tw`.
 Parametric polymorphism:
 
 ```tw
-fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> { ... }
+fn map<A, B>(xs: Array<A>, f: fn(A) B) Array<B> { ... }
 ```
 
 No higher-kinded types.
@@ -314,7 +314,7 @@ arr[i] = value
 Desugars to:
 
 ```tw
-arr = array.set(arr, i, value)
+arr = Array.set(arr, i, value)
 ```
 
 #### Compound assignment
@@ -475,7 +475,7 @@ A function that needs "anything that can be shown" is written by taking both:
 **Example: Generic printing**
 
 ```tw
-fn print_all<T>(xs: array<T>, show: Show<T>) {
+fn print_all<T>(xs: Array<T>, show: Show<T>) {
   for x in xs {
     println(show.to_string(x))
   }
@@ -499,7 +499,7 @@ ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-users: array<User> = ...
+users: Array<User> = ...
 print_all(users, ShowUser)
 ```
 
@@ -535,7 +535,7 @@ debug_value(user, ShowUser)  // ✅
 This applies uniformly:
 
 * No automatic wrapping of `T` into `Show<T>` (or similar),
-* No automatic rewriting of `array<T>` into `array<Show<T>>`,
+* No automatic rewriting of `Array<T>` into `Array<Show<T>>`,
 * No chained or inferred conversions.
 
 All adapter logic, if any, is explicit in user code.
@@ -551,7 +551,7 @@ type Eq<T> = .{
   equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) Bool {
+fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
   for x in xs {
     if eq.equals(x, needle) {
       return true
@@ -566,7 +566,7 @@ EqPoint: Eq<Point> = .{
   equals(a, b) => a.x == b.x && a.y == b.y,
 }
 
-points: array<Point> = ...
+points: Array<Point> = ...
 p: Point = .{ x: 1, y: 2 }
 found := contains(points, p, EqPoint)
 ```
@@ -576,7 +576,7 @@ found := contains(points, p, EqPoint)
 Instead of a general "Iterable" trait, provide small, concrete helpers:
 
 ```tw
-fn sum_array(xs: array<Int>) Int {
+fn sum_array(xs: Array<Int>) Int {
   acc := 0
   for x in xs {
     acc = acc + x
@@ -698,16 +698,16 @@ for x,i in coll { body }
 
 The `for x in coll` syntax is supported only for a **closed set** of built-in collection types:
 
-* `array<T>` — homogeneous indexable arrays,
+* `Array<T>` — homogeneous indexable arrays,
 * `Range`    — integer ranges (e.g. `0..10`),
-* `dict<K, V>` — dictionaries (iterates over key-value pairs),
+* `Dict<K, V>` — dictionaries (iterates over key-value pairs),
 * `Iterator<T>` — an explicit iterator type from the standard library.
 
 The compiler performs a **type-directed** lowering:
 
-* If `coll` has type `array<T>`, the loop is lowered to an indexed loop over the array length.
+* If `coll` has type `Array<T>`, the loop is lowered to an indexed loop over the array length.
 * If `coll` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
-* If `coll` has type `dict<K, V>`, the loop is lowered to iteration over key–value pairs.
+* If `coll` has type `Dict<K, V>`, the loop is lowered to iteration over key–value pairs.
 * If `coll` has type `Iterator<T>`, the loop is lowered to repeated `next` calls until the iterator is exhausted.
 
 Any value used in `for x in coll` whose type is not one of the supported built-ins is a **compile-time error**.
@@ -740,6 +740,27 @@ fn sum_tree(t: Tree<Int>) Int {
 }
 ```
 
+### Diverging expressions
+
+Some expressions do not complete normally, for example:
+
+* `return expr`
+* `error("message")`
+* infinite loops (e.g. `loop { ... }`)
+
+Such expressions are allowed in any expression position.
+
+When type-checking an expression with multiple branches (e.g. `if` or `case`), branches that do not complete normally do not affect the resulting type. The type of the whole expression is determined only by branches that complete normally.
+
+```tw
+x := case opt {
+  .Some(v) => v,
+  .None => return {},
+}
+```
+
+Here the `.None` branch never returns, so the `case` expression has the type of the `.Some` branch.
+
 ---
 
 ## 13. Collect Comprehension
@@ -750,7 +771,7 @@ xs := collect x in range(10) { x * x }
 
 Rules:
 
-* Produces `array<T>`.
+* Produces `Array<T>`.
 * Works with the same built-in collection types as `for` loops (see Section 12).
 * `continue` skips emission.
 * `break` ends early, returns partial array.
@@ -761,12 +782,12 @@ Example:
 
 ```tw
 squares := collect x in range(1, 10) { x * x }
-// squares: array<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
+// squares: Array<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
 
 evens := collect x in range(1, 20) {
   if x % 2 == 0 { x } else { continue }
 }
-// evens: array<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
+// evens: Array<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
 
 ---
@@ -785,18 +806,18 @@ len(arr)
 
 Array operations via module functions (all return new arrays):
 
-* `array.set(arr, index, value) array<T>` — returns new array with element at index replaced
-* `array.append(arr, value) array<T>` — returns new array with value appended
-* `array.concat(arr1, arr2) array<T>` — returns new array combining both
-* `array.slice(arr, start, end) array<T>` — returns new array with subset of elements
+* `Array.set(arr, index, value) Array<T>` — returns new array with element at index replaced
+* `Array.append(arr, value) Array<T>` — returns new array with value appended
+* `Array.concat(arr1, arr2) Array<T>` — returns new array combining both
+* `Array.slice(arr, start, end) Array<T>` — returns new array with subset of elements
 * etc.
 
 Array literals:
 
 ```tw
-[1, 2, 3]  // array<Int>
+[1, 2, 3]  // Array<Int>
 
-xs: array<Int> = []  // empty array requires type annotation
+xs: Array<Int> = []  // empty array requires type annotation
 ```
 
 If context can't determine element type => compiler error.
@@ -814,7 +835,7 @@ arr[i] = value
 Desugars to:
 
 ```tw
-arr = array.set(arr, i, value)
+arr = Array.set(arr, i, value)
 ```
 
 
@@ -856,24 +877,24 @@ Dicts are **immutable** hash maps.
 Creation:
 
 ```tw
-m: dict<String, Int> = dict.new()
+m: Dict<String, Int> = Dict.new()
 ```
 
 Type parameters are inferred from the annotation.
 
 Dict operations via module functions (all return new dicts):
 
-* `dict.set(m, k, v) dict<K, V>` — returns new dict with key-value pair added/updated
-* `dict.remove(m, k) dict<K, V>` — returns new dict with key removed
-* `dict.get(m, k) V?` — returns Option<V> for safe access
-* `dict.has(m, k) Bool` — checks if key exists
-* `dict.keys(m) array<K>` — returns array of keys
+* `Dict.set(m, k, v) Dict<K, V>` — returns new dict with key-value pair added/updated
+* `Dict.remove(m, k) Dict<K, V>` — returns new dict with key removed
+* `Dict.get(m, k) V?` — returns Option<V> for safe access
+* `Dict.has(m, k) Bool` — checks if key exists
+* `Dict.keys(m) Array<K>` — returns array of keys
 * `len(m)` — returns number of entries
 
 Indexing syntax:
 
 * `m[k]` returns `V?` (Option<V>) for safe read access
-* `m[k] = v` desugars to `m = dict.set(m, k, v)`
+* `m[k] = v` desugars to `m = Dict.set(m, k, v)`
 
 ---
 
@@ -914,13 +935,10 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `len`, `error`
-* types: `Int`, `Float`, `String`, `Bool`, `Void`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
-* range functions: `range`, `range_from`, `range_step`
-* array module: `array.set`, `array.append`, `array.concat`, etc.
-* dict module: `dict.new`, `dict.set`, `dict.get`, etc.
-* string module: `string.concat`, `string.of_int`, `string.of_float`, `string.of_bool`, etc.
-
-The prelude does not include any traits or implicit conversions.
+* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`
+* range functions: `range`
+* array module: `Array.set`, `Array.append`, `Array.concat`, etc.
+* dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 
 ---
 
@@ -977,7 +995,7 @@ note: dot syntax only resolves record fields and inherent methods from the defin
 
 ```
 error: cannot iterate over value of type Tree<Int>
-note: for loops only support array<T>, Range, dict<K,V>, and Iterator<T>
+note: for loops only support Array<T>, Range, Dict<K,V>, and Iterator<T>
 help: consider defining a helper function that returns Iterator<Int>
 ```
 

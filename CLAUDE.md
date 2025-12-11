@@ -8,7 +8,6 @@ Twinkle is a statically typed programming language targeting WebAssembly GC. It 
 
 **Key Design Principles:**
 - Lightweight, scripting-like syntax with `.tw` file extension
-- No trait methods callable from user code (traits = contracts only)
 - Inherent methods only via module functions
 - Small runtime relying on WebAssembly GC's `struct`, `array`, and reference types
 
@@ -115,19 +114,6 @@ Pattern matching must be exhaustive unless using `_ => ...`.
   - `for x,i in coll { body }`
 - `collect` comprehension: `collect x in range(10) { x * x }` produces `array<T>`
 
-## Implementation Stages (from docs/plan.md)
-
-The project follows a staged development approach:
-
-**Stage 0:** Repo skeleton + test harness
-**Stage 1:** Parser for expressions only (no types yet) with pretty-printer
-**Stage 2:** Monomorphic typechecker (no generics, no traits)
-**Stage 3:** Records, modules, inherent methods
-**Stage 4:** Enums, `Option`, `Result`, `case`, `try`
-**Stage 5:** Traits (contract only) + `Show` + string interpolation
-**Stage 6:** Generics (HM polymorphism) + trait constraints
-**Stage 7:** Backend (interpreter or WebAssembly GC text output)
-
 ## Testing Strategy (from docs/test-plan.md)
 
 ### Test Categories
@@ -135,7 +121,6 @@ The project follows a staged development approach:
 - **Type tests:** Both positive (valid programs) and negative (type errors) cases
 - **Module tests:** Cross-module resolution, inherent method desugaring
 - **Pattern matching tests:** Exhaustiveness checking, type consistency across arms
-- **Trait tests:** Constraint checking, Show implementation verification
 - **Generic tests:** Polymorphic functions with/without constraints, instantiation
 
 ### Test Organization
@@ -151,39 +136,10 @@ Use golden/snapshot tests (consider `insta` crate) for expected outputs.
 
 **Critical:** Never delete old tests; each stage's tests should keep passing as new features are added.
 
-## Important Type System Details
-
-### String Interpolation
-`"hello ${x}"` requires `x: Show`. This is the ONLY user-facing stringification facility. No `to_string` function exists.
-
-### Iterable Trait
-```tw
-trait Iterable(T) {
-  type Item
-  type State
-  fn init(x: T) -> State
-  fn next(s: State) -> Step<State, Item>
-}
-```
-
-Used internally by compiler for `for` loops and `collect`. User never calls these methods.
 
 ### Prelude
 Implicitly imported, includes:
 - Primitive functions: `print`, `println`, `len`, `error`
 - Types: `Int`, `Float`, `String`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
-- Builtin traits: `Show`, `Iterable`, `Eq`, `Ord`, arithmetic traits, indexing traits
-- Range functions: `range`, `range_from`, `range_step`
+- Range functions: `range`
 
-Does NOT include trait methods exposed to user or any implicit global dispatch functions.
-
-## Current Project Status
-
-The project is in initial setup phase (Stage 0). The Cargo.toml specifies:
-- Package name: `twinkle`
-- Rust edition: 2024
-- No dependencies yet
-
-Source structure:
-- `src/main.rs`: Currently contains only a "Hello, world!" placeholder
-- `docs/`: Comprehensive specifications and implementation plans
