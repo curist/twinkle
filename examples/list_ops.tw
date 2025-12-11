@@ -1,8 +1,8 @@
-fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B> {
+fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> {
   collect x in xs { f(x) }
 }
 
-fn filter<T>(xs: array<T>, pred: (T) -> bool) -> array<T> {
+fn filter<T>(xs: array<T>, pred: fn(T) Bool) array<T> {
   collect x in xs {
     if pred(x) {
       x
@@ -12,7 +12,7 @@ fn filter<T>(xs: array<T>, pred: (T) -> bool) -> array<T> {
   }
 }
 
-fn sum(xs: array<int>) -> int {
+fn sum(xs: array<Int>) Int {
   total := 0
   for x in xs {
     total += x
@@ -20,7 +20,7 @@ fn sum(xs: array<int>) -> int {
   total
 }
 
-fn fold<T, A>(xs: array<T>, init: A, f: (A, T) -> A) -> A {
+fn fold<T, A>(xs: array<T>, init: A, f: fn(A, T) A) A {
   acc := init
   for x in xs {
     acc = f(acc, x)
@@ -28,19 +28,19 @@ fn fold<T, A>(xs: array<T>, init: A, f: (A, T) -> A) -> A {
   acc
 }
 
-fn double(x: int) -> int {
+fn double(x: Int) Int {
   x * 2
 }
 
-fn is_even(x: int) -> bool {
+fn is_even(x: Int) Bool {
   x % 2 == 0
 }
 
-fn add(a: int, b: int) -> int {
+fn add(a: Int, b: Int) Int {
   a + b
 }
 
-fn array_to_string(xs: array<int>) -> string {
+fn array_to_string(xs: array<Int>) String {
   if len(xs) == 0 {
     "[]"
   } else {
@@ -56,7 +56,7 @@ fn array_to_string(xs: array<int>) -> string {
   }
 }
 
-fn main() -> void {
+fn main() Void {
   numbers := [1, 2, 3, 4, 5]
 
   doubled := map(numbers, double)
@@ -69,6 +69,6 @@ fn main() -> void {
   total := sum(numbers)
   println("Sum:      ${total}")
 
-  product := fold(numbers, 1, fn(a: int, b: int) -> int { a * b })
+  product := fold(numbers, 1, fn(a: Int, b: Int) Int { a * b })
   println("Product:  ${product}")
 }

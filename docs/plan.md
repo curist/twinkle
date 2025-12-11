@@ -499,7 +499,7 @@ pub fn typecheck_expr(expr: &Expr, env: &Env) -> Result<Type, TypeError> {
 - Record literals (both forms):
   ```tw
   p: Point = .{ x: 1, y: 2 }      // Anonymous
-  p := Point{ x: 1, y: 2 }        // Named constructor
+  p := Point.{ x: 1, y: 2 }        // Named constructor
   ```
 - Field access: `p.x`, `p.y`
 - Modules + imports:
@@ -511,7 +511,7 @@ pub fn typecheck_expr(expr: &Expr, env: &Env) -> Result<Type, TypeError> {
   // main.tw
   import "point"
   fn main() -> void {
-    p := Point{ x: 1, y: 2 }
+    p := Point.{ x: 1, y: 2 }
     p2 := p.translate(3, 4)  // Desugars to point.translate(p, 3, 4)
   }
   ```

@@ -1,34 +1,36 @@
-type Point = .{ x: float, y: float }
+type Point = .{ x: Float, y: Float }
 
-pub fn add(p1: Point, p2: Point) -> Point {
-  Point{ x: p1.x + p2.x, y: p1.y + p2.y }
+fn add(p1: Point, p2: Point) Point {
+  Point.{ x: p1.x + p2.x, y: p1.y + p2.y }
 }
 
-pub fn scale(p: Point, factor: float) -> Point {
-  Point{ x: p.x * factor, y: p.y * factor }
+fn scale(p: Point, factor: Float) Point {
+  // anonymous record at return position, when return type is known
+  .{ x: p.x * factor, y: p.y * factor }
 }
 
-pub fn distance_squared(p1: Point, p2: Point) -> float {
+fn distance_squared(p1: Point, p2: Point) Float {
   dx := p2.x - p1.x
   dy := p2.y - p1.y
   dx * dx + dy * dy
 }
 
-pub fn to_string(p: Point) -> string {
+fn to_string(p: Point) String {
   "(${p.x}, ${p.y})"
 }
 
-fn main() -> void {
-  p1 := Point{ x: 1.0, y: 2.0 }
-  p2 := Point{ x: 3.0, y: 4.0 }
+// program logic with wrapping in a main function
+// to better support scripting
 
-  // Demonstrates dot syntax for inherent methods
-  sum := p1.add(p2)
-  println("${p1.to_string()} + ${p2.to_string()} = ${sum.to_string()}")
+p1 := Point.{ x: 1.0, y: 2.0 }
+p2 := Point.{ x: 3.0, y: 4.0 }
 
-  scaled := p1.scale(2.0)
-  println("${p1.to_string()} * 2 = ${scaled.to_string()}")
+// Demonstrates dot syntax for inherent methods
+sum := p1.add(p2)
+println("${p1.to_string()} + ${p2.to_string()} = ${sum.to_string()}")
 
-  dist_sq := p1.distance_squared(p2)
-  println("distance² from ${p1.to_string()} to ${p2.to_string()} = ${dist_sq}")
-}
+scaled := p1.scale(2.0)
+println("${p1.to_string()} * 2 = ${scaled.to_string()}")
+
+dist_sq := p1.distance_squared(p2)
+println("distance² from ${p1.to_string()} to ${p2.to_string()} = ${dist_sq}")

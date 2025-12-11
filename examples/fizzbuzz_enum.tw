@@ -1,11 +1,11 @@
-enum FB {
+type FB = {
   Fizz,
   Buzz,
   FizzBuzz,
-  Num(int),
+  Num(Int),
 }
 
-fn classify(i: int) -> FB {
+fn classify(i: Int) FB {
   if i % 15 == 0 {
     .FizzBuzz
   } else if i % 3 == 0 {
@@ -17,7 +17,7 @@ fn classify(i: int) -> FB {
   }
 }
 
-fn fizzbuzz_enum(n: int) -> void {
+fn fizzbuzz_enum(n: Int) Void {
   for i in range_from(1, n + 1) {
     case classify(i) {
       .Fizz => println("Fizz"),

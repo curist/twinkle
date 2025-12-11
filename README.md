@@ -7,7 +7,7 @@ A lightweight statically typed programming language targeting WebAssembly GC.
 Twinkle combines the elegance of functional programming with the practicality of modern systems languages:
 
 - **Hindley-Milner type inference** (Gleam/OCaml style)
-- **Traits as contracts** - not callable methods, pure compile-time constraints
+- **Capability records over traits** - no global typeclass resolution
 - **Unboxed primitives** with GC-managed references
 - **WebAssembly GC target** - leveraging `struct`, `array`, and reference types
 - **Lightweight syntax** - scripting-like feel with static safety
@@ -15,26 +15,24 @@ Twinkle combines the elegance of functional programming with the practicality of
 ## Quick Example
 
 ```tw
-type Point = .{ x: float, y: float }
+type Point = .{ x: Float, y: Float }
 
-pub fn distance_squared(p1: Point, p2: Point) -> float {
+pub fn distance_squared(p1: Point, p2: Point) Float {
   dx := p2.x - p1.x
   dy := p2.y - p1.y
   dx * dx + dy * dy
 }
 
-impl Show(Point) {
-  fn show(p: Point) -> string {
-    "(${p.x}, ${p.y})"
-  }
+pub fn to_string(p: Point) String {
+  "(${p.x}, ${p.y})"
 }
 
-fn main() -> void {
-  p1 := Point{ x: 1.0, y: 2.0 }
-  p2 := Point{ x: 4.0, y: 6.0 }
+fn main() Void {
+  p1 := Point.{ x: 1.0, y: 2.0 }
+  p2 := Point.{ x: 4.0, y: 6.0 }
 
   dist := p1.distance_squared(p2)
-  println("${p1} to ${p2}: distance² = ${dist}")
+  println("${p1.to_string()} to ${p2.to_string()}: distance² = ${dist}")
 }
 ```
 
@@ -42,11 +40,11 @@ fn main() -> void {
 
 ### Records & Modules
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 // Inherent methods via module functions
-pub fn translate(p: Point, dx: int, dy: int) -> Point {
-  Point{ x: p.x + dx, y: p.y + dy }
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
+  Point.{ x: p.x + dx, y: p.y + dy }
 }
 
 // Dot syntax desugars: p.translate(1,2) → point.translate(p,1,2)
@@ -54,12 +52,12 @@ pub fn translate(p: Point, dx: int, dy: int) -> Point {
 
 ### Enums & Pattern Matching
 ```tw
-enum Tree<T> {
+type Tree<T> = {
   Empty,
   Node(T, Tree<T>, Tree<T>),
 }
 
-fn sum(t: Tree<int>) -> int {
+fn sum(t: Tree<Int>) Int {
   case t {
     .Empty => 0,
     .Node(val, left, right) => val + sum(left) + sum(right),
@@ -69,7 +67,7 @@ fn sum(t: Tree<int>) -> int {
 
 ### Error Handling
 ```tw
-fn safe_divide(a: int, b: int) -> Result<int, string> {
+fn safe_divide(a: Int, b: Int) Result<Int, String> {
   if b == 0 {
     .Err("division by zero")
   } else {
@@ -77,22 +75,23 @@ fn safe_divide(a: int, b: int) -> Result<int, string> {
   }
 }
 
-fn compute() -> Result<int, string> {
+fn compute() Result<Int, String> {
   x := try safe_divide(10, 2)  // Early return on Err
   y := try safe_divide(x, 0)
   .Ok(y)
 }
 ```
 
-### Generics & Traits
+### Generics & Capabilities
 ```tw
-fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B> {
+fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> {
   collect x in xs { f(x) }
 }
 
-// Trait constraints
-fn log<T: Show>(x: T) -> void {
-  println("${x}")  // String interpolation requires Show trait
+type Show<T> = .{ to_string: fn(T) String }
+
+fn log<T>(x: T, show: Show<T>) Void {
+  println(show.to_string(x))
 }
 ```
 
@@ -104,13 +103,8 @@ fn log<T: Show>(x: T) -> void {
 
 ## Design Principles
 
-- **No trait methods in user code** - Traits define contracts for compiler features only
-  - `Show` → string interpolation (`"${x}"`)
-  - `Iterable` → for loops and collect
-  - `Eq`, `Ord`, `Add`, etc. → operators
-
+- **No traits** - capabilities are explicit records of functions
 - **Module-based inherent methods** - Dot syntax desugars to module function calls
-
 - **Explicit over implicit** - No hidden method resolution or dynamic dispatch
 
 ## License

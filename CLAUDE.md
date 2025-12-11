@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Twinkle is a statically typed programming language targeting WebAssembly GC. It features Hindley-Milner type inference (similar to Gleam/OCaml), unboxed primitives, GC-managed references, and a trait system where traits serve as contracts rather than callable methods.
+Twinkle is a statically typed programming language targeting WebAssembly GC. It features Hindley-Milner type inference (similar to Gleam/OCaml), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
 
 **Key Design Principles:**
 - Lightweight, scripting-like syntax with `.tw` file extension
@@ -32,12 +32,12 @@ cargo test
 ## Language Architecture
 
 ### Value Model
-- **Primitives (unboxed):** `int` (i64), `float` (f64), `bool` (i32), `void`
-- **References (GC):** `string`, `array<T>`, records, `dict<K,V>`, closures
+- **Primitives (unboxed):** `Int` (i64), `Float` (f64), `Bool` (i32), `Void`
+- **References (GC):** `String`, `array<T>`, records, `dict<K,V>`, closures
 
 ### Type System
-- Hindley-Milner type inference with trait constraints
-- Parametric polymorphism: `fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B>`
+- Hindley-Milner type inference
+- Parametric polymorphism: `fn map<A, B>(xs: array<A>, f: fn(A) B) array<B>`
 - No higher-kinded types in MVP
 - Type aliases don't create distinct nominal types
 
@@ -46,7 +46,7 @@ Records are **nominal types** mapping to WebAssembly GC `struct` types.
 
 **Declaration:**
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 ```
 
 **Construction (two equivalent forms):**
@@ -55,7 +55,7 @@ type Point = .{ x: int, y: int }
 p: Point = .{ x: 1, y: 2 }
 
 // Named constructor form (always produces Point)
-p := Point{ x: 1, y: 2 }
+p := Point.{ x: 1, y: 2 }
 ```
 
 **Important:** Anonymous `.{ ... }` literals are ONLY allowed where an expected record type is known (annotated bindings, function parameters, return expressions, record fields). They do NOT create structural types.
@@ -74,8 +74,8 @@ Dot syntax supports:
 **Example:**
 ```tw
 // point.tw
-pub type Point = .{ x: int, y: int }
-pub fn translate(p: Point, dx: int, dy: int) -> Point { ... }
+pub type Point = .{ x: Int, y: Int }
+pub fn translate(p: Point, dx: Int, dy: Int) Point { ... }
 ```
 
 **Desugaring:**
@@ -85,50 +85,18 @@ p.translate(1,2)  →  point.translate(p,1,2)
 
 **Resolution order:** Check record fields first, then module inherent methods. Field vs inherent name collision is illegal.
 
-### Traits (Contract-Only, Not Callable)
-Traits define capabilities but methods are **NOT** user-callable.
+### Capabilities (Explicit Records)
+Twinkle does not have traits. Capabilities are passed explicitly as records of functions:
 
 ```tw
-trait Show(T) {
-  fn show(x: T) -> string
-}
-
-impl Show(Point) {
-  fn show(p: Point) -> string { "Point(${p.x}, ${p.y})" }
-}
+type Show<T> = .{ to_string: fn(T) String }
+fn log<T>(x: T, show: Show<T>) { println(show.to_string(x)) }
 ```
-
-**Key rules:**
-- Trait methods are invisible in user code
-- Not callable directly
-- Not accessible via dot syntax
-- Compiler calls them only for specific language features:
-  - String interpolation (`${x}`) → requires `Show`
-  - `for` / `collect` → requires `Iterable`
-- One implementation per `(Trait, TypeHead)` pair (coherence)
-
-### Operators (Trait-Backed)
-Operators are backed by traits but remain inaccessible:
-
-**Equality/Ordering:** `Eq`, `Ord` traits
-- `a == b`, `a != b` require `Eq(T)`
-- `a < b`, `a <= b`, `a > b`, `a >= b` require `Ord(T)`
-
-**Arithmetic:** `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg` traits with associated `Output` types
-- Binary: `+`, `-`, `*`, `/`, `%`
-- Unary: `-x`
-- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=` (pure syntactic sugar)
-
-**Indexing:** `Index`, `IndexMut` traits
-- `a[i]` requires `Index(T, I)`
-- `a[i] = v` requires `IndexMut(T, I)`
-
-**Non-overloadable:** Logical operators (`!`, `&&`, `||`), assignment, control flow
 
 ### Enums & Pattern Matching
 ```tw
-enum Option<T> { None, Some(T) }
-enum Shape { Circle(float), Rect(float, float), UnitSquare }
+type Option<T> = { None, Some(T) }
+type Shape = { Circle(Float), Rect(Float, Float), UnitSquare }
 ```
 
 Pattern matching must be exhaustive unless using `_ => ...`.
@@ -203,7 +171,7 @@ Used internally by compiler for `for` loops and `collect`. User never calls thes
 ### Prelude
 Implicitly imported, includes:
 - Primitive functions: `print`, `println`, `len`, `error`
-- Types: `int`, `float`, `string`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
+- Types: `Int`, `Float`, `String`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
 - Builtin traits: `Show`, `Iterable`, `Eq`, `Ord`, arithmetic traits, indexing traits
 - Range functions: `range`, `range_from`, `range_step`
 

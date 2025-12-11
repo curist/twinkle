@@ -36,7 +36,7 @@ A capability is a nominal type that captures a set of operations on some data ty
 
 ```twinkle
 type Show<T> = .{
-  to_string: fn(T) -> string,
+  to_string: fn(T) String,
 }
 ```
 
@@ -58,17 +58,17 @@ fn print_all<T>(xs: array<T>, show: Show<T>) {
 Usage:
 
 ```twinkle
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 
-fn show_user(u: User) -> string {
-  u.name + " (" + int.to_string(u.age) + ")"
+fn show_user(u: User) String {
+  u.name + " (" + "${u.age}" + ")"
 }
 
-let ShowUser: Show<User> = .{
+ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-let users: array<User> = ...
+users: array<User> = ...
 print_all(users, ShowUser)
 ```
 
@@ -220,12 +220,12 @@ type Tree<T> =
   | Leaf(T)
   | Node(Tree<T>, Tree<T>)
 
-fn tree_preorder_iter<T>(t: Tree<T>) -> Iterator<T> {
+fn tree_preorder_iter<T>(t: Tree<T>) Iterator<T> {
   // implementation creates an Iterator<T> over the tree
 }
 
-fn sum_tree(t: Tree<int>) -> int {
-  let acc = 0
+fn sum_tree(t: Tree<Int>) Int {
+  acc := 0
   for x in tree_preorder_iter(t) {
     acc = acc + x
   }
@@ -246,7 +246,7 @@ This pattern is preferred over adding a trait-style “Iterable” system.
 
 ### 12.1. Overview
 
-Twinkle supports string interpolation of the form:
+Twinkle supports String interpolation of the form:
 
 ```twinkle
 "Value = ${expr}"
@@ -258,19 +258,19 @@ Interpolation is **not** driven by a `Show` trait or interface. Instead, it is d
 
 In Twinkle v1, the expression inside `${...}` may have one of the following types:
 
-* `string` — used as-is,
-* `int`    — converted via a core `string.of_int` function,
-* `float`  — converted via `string.of_float`,
-* `bool`   — converted via `string.of_bool`.
+* `String` — used as-is,
+* `Int`    — converted via a core `String.of_int` function,
+* `Float`  — converted via `String.of_float`,
+* `Bool`   — converted via `String.of_bool`.
 
 Attempting to interpolate a value of any other type is a **compile-time error**.
 
 Example:
 
 ```twinkle
-let name: string = "Twinkle"
-let n: int = 42
-let ok: bool = true
+let name: String = "Twinkle"
+let n: Int = 42
+let ok: Bool = true
 
 let s = "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
 
@@ -280,7 +280,7 @@ let s2 = "user=${user}"                    // ❌ error: User not interpolable
 
 ### 12.3. Informal Desugaring
 
-String literals with interpolation are desugared into calls on core string utilities.
+String literals with interpolation are desugared into calls on core String utilities.
 
 For example:
 
@@ -291,13 +291,13 @@ For example:
 is conceptually lowered to:
 
 ```twinkle
-string.concat_many([
+String.concat_many([
   "n=",
-  string.of_int(n),
+  String.of_int(n),
 ])
 ```
 
-Exact library function naming (e.g. `string.concat` or `string.concat_many`) may vary, but:
+Exact library function naming (e.g. `String.concat` or `String.concat_many`) may vary, but:
 
 * desugaring is **local and explicit**, and
 * interpolation does **not** perform implicit conversions for arbitrary types.
@@ -307,14 +307,14 @@ Exact library function naming (e.g. `string.concat` or `string.concat_many`) may
 To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
 
 ```twinkle
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 
-fn user_to_string(u: User) -> string {
-  u.name + " (" + int.to_string(u.age) + ")"
+fn user_to_string(u: User) String {
+  "${u.name} (${u.age})"
 }
 
-let user: User = .{ name: "Ada", age: 30 }
-let s = "user=${user_to_string(user)}"    // ✅ ok
+user: User = .{ name: "Ada", age: 30 }
+s := "user=${user_to_string(user)}"    // ✅ ok
 ```
 
 There is no automatic association between `User` and `user_to_string`. The choice of conversion is explicit at the call site.
@@ -329,7 +329,7 @@ This section illustrates common patterns Twinkle programmers should prefer inste
 
 ```twinkle
 type Show<T> = .{
-  to_string: fn(T) -> string,
+  to_string: fn(T) String,
 }
 
 fn print_all<T>(xs: array<T>, show: Show<T>) {
@@ -342,10 +342,10 @@ fn print_all<T>(xs: array<T>, show: Show<T>) {
 Usage:
 
 ```twinkle
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 
-fn show_user(u: User) -> string {
-  u.name + " (" + int.to_string(u.age) + ")"
+fn show_user(u: User) String {
+  u.name + " (" + Int.to_string(u.age) + ")"
 }
 
 let ShowUser: Show<User> = .{
@@ -362,10 +362,10 @@ Instead of `Eq`/`Ord` traits, define concrete capability records and pass them e
 
 ```twinkle
 type Eq<T> = .{
-  equals: fn(T, T) -> bool,
+  equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) -> bool {
+fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) Bool {
   let i = 0
   let len = array.length(xs)
   while i < len {
@@ -377,7 +377,7 @@ fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) -> bool {
   false
 }
 
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 let EqPoint: Eq<Point> = .{
   equals(a, b) => a.x == b.x and a.y == b.y,
@@ -393,7 +393,7 @@ let found = contains(points, p, EqPoint)
 Instead of a general “Iterable” trait, provide small, concrete helpers:
 
 ```twinkle
-fn sum_array(xs: array<int>) -> int {
+fn sum_array(xs: array<Int>) Int {
   let acc = 0
   for x in xs {
     acc = acc + x
@@ -401,7 +401,7 @@ fn sum_array(xs: array<int>) -> int {
   acc
 }
 
-fn sum_range(r: Range) -> int {
+fn sum_range(r: Range) Int {
   let acc = 0
   for i in r {
     acc = acc + i
@@ -413,7 +413,7 @@ fn sum_range(r: Range) -> int {
 Or, via an explicit iterator type:
 
 ```twinkle
-fn sum_iter(it: Iterator<int>) -> int {
+fn sum_iter(it: Iterator<Int>) Int {
   let acc = 0
   for x in it {
     acc = acc + x
@@ -434,4 +434,4 @@ Twinkle may evolve syntactic conveniences to make constructing and passing capab
 * Twinkle will **not** introduce implicit conversions or trait-like instance search,
 * All capability passing will remain **explicit** in function signatures and at call sites.
 
-This preserves Twinkle’s design goals: a small, predictable, statically typed language with a scripting feel, where data and functions are the primary abstraction mechanisms, and built-ins provide a small amount of carefully delimited “magic” (`for` and string interpolation) without a general trait or interface system.
+This preserves Twinkle’s design goals: a small, predictable, statically typed language with a scripting feel, where data and functions are the primary abstraction mechanisms, and built-ins provide a small amount of carefully delimited “magic” (`for` and String interpolation) without a general trait or interface system.

@@ -1,4 +1,4 @@
-fn safe_divide(a: int, b: int) -> Result<int, string> {
+fn safe_divide(a: Int, b: Int) Result<Int, String> {
   if b == 0 {
     .Err("division by zero")
   } else {
@@ -6,7 +6,7 @@ fn safe_divide(a: int, b: int) -> Result<int, string> {
   }
 }
 
-fn safe_sqrt(x: int) -> Result<int, string> {
+fn safe_sqrt(x: Int) Result<Int, String> {
   if x < 0 {
     .Err("cannot sqrt negative number")
   } else {
@@ -14,20 +14,20 @@ fn safe_sqrt(x: int) -> Result<int, string> {
   }
 }
 
-fn compute(a: int, b: int, c: int) -> Result<int, string> {
+fn compute(a: Int, b: Int, c: Int) Result<Int, String> {
   x := try safe_divide(a, b)
   y := try safe_divide(x, c)
   try safe_sqrt(y)
 }
 
-fn print_result(r: Result<int, string>) -> void {
+fn print_result(r: Result<Int, String>) Void {
   case r {
     .Ok(result) => println("Result: ${result}"),
     .Err(msg) => println("Error: ${msg}"),
   }
 }
 
-fn main() -> void {
+fn main() {
   println("Computing 100 / 5 / 2:")
   print_result(compute(100, 5, 2))
 

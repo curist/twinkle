@@ -1,5 +1,5 @@
-fn count_words(words: array<string>) -> dict<string, int> {
-  counts: dict<string, int> = dict.new()
+fn count_words(words: array<String>) dict<String, Int> {
+  counts: dict<String, Int> = dict.new()
 
   for word in words {
     case counts[word] {
@@ -11,7 +11,7 @@ fn count_words(words: array<string>) -> dict<string, int> {
   counts
 }
 
-fn print_counts(counts: dict<string, int>) -> void {
+fn print_counts(counts: dict<String, Int>) Void {
   keys := counts.keys()
 
   for word in keys {
@@ -22,37 +22,38 @@ fn print_counts(counts: dict<string, int>) -> void {
   }
 }
 
-fn most_common(counts: dict<string, int>) -> string? {
+fn most_common(counts: dict<String, Int>) String? {
   keys := counts.keys()
 
   if len(keys) == 0 {
-    .None
-  } else {
-    best_word := keys[0]
-    best_count := 0
+    // early return
+    return .None
+  }
 
-    case counts[best_word] {
-      .Some(n) => best_count = n,
+  best_word := keys[0]
+  best_count := 0
+
+  case counts[best_word] {
+    .Some(n) => best_count = n,
+    .None => {},
+  }
+
+  for word in keys {
+    case counts[word] {
+      .Some(n) => {
+        if n > best_count {
+          best_count = n
+          best_word = word
+        }
+      },
       .None => {},
     }
-
-    for word in keys {
-      case counts[word] {
-        .Some(n) => {
-          if n > best_count {
-            best_count = n
-            best_word = word
-          }
-        },
-        .None => {},
-      }
-    }
-
-    .Some(best_word)
   }
+
+  .Some(best_word)
 }
 
-fn main() -> void {
+fn main() {
   words := ["the", "quick", "brown", "fox", "jumps", "over",
             "the", "lazy", "dog", "the", "fox", "was", "quick"]
 

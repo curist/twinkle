@@ -1,4 +1,4 @@
-fn fizzbuzz(n: int) -> void {
+fn fizzbuzz(n: Int) Void {
   for i in range_from(1, n + 1) {
     if i % 15 == 0 {
       println("FizzBuzz")

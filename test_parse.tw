@@ -1,4 +1,4 @@
-fn test() -> void {
+fn test() Void {
   for i < 10 {
     println("${i}")
   }

@@ -8,7 +8,7 @@ Design goals:
 
 * Lightweight, scripting-like syntax.
 * Hindley–Milner type inference (Gleam/OCaml style).
-* Unboxed primitives (`int = i64`, `float = f64`, `bool`).
+* Unboxed primitives (`Int = i64`, `Float = f64`, `Bool`).
 * GC-managed references for strings, arrays, records, dicts.
 * Small runtime; rely on `struct`, `array`, reference types.
 * Inherent methods only via module functions.
@@ -31,20 +31,20 @@ Source files end with `.tw`.
 
 ### Primitives (unboxed)
 
-* `int` → wasm `i64`
-* `float` → wasm `f64`
-* `bool` →  wasm `i32`, 0/1
-* `void` → effect-only (no value).
+* `Int` → wasm `i64`
+* `Float` → wasm `f64`
+* `Bool` →  wasm `i32`, 0/1
+* `Void` → effect-only (no value).
 
 ### References (GC)
 
-* `string` — immutable text.
+* `String` — immutable text.
 * `array<T>` — immutable GC array; element unboxed/ref depending on `T`.
 * `record` — immutable closed struct shape.
 * `dict<K,V>` — immutable hash map reference.
 * `function` — closure with captured environment (GC).
 
-### `void`
+### `Void`
 
 * Used as function return type & block with no final expression.
 * No literal and cannot be stored/bound.
@@ -56,7 +56,7 @@ Source files end with `.tw`.
 Parametric polymorphism:
 
 ```tw
-fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B> { ... }
+fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> { ... }
 ```
 
 No higher-kinded types.
@@ -66,7 +66,7 @@ No trait constraints. Capabilities are passed as explicit function parameters (s
 Type alias:
 
 ```tw
-type ID = int
+type ID = Int
 ```
 
 Type alias doesn't create new distinct nominal type.
@@ -78,7 +78,7 @@ Type alias doesn't create new distinct nominal type.
 `Option<T>` defined as:
 
 ```tw
-enum Option<T> { None, Some(T) }
+type Option<T> = { None, Some(T) }
 ```
 
 Sugar:
@@ -107,9 +107,9 @@ case x {
 Enum example:
 
 ```tw
-enum Shape {
-  Circle(float),
-  Rect(float, float),
+type Shape = {
+  Circle(Float),
+  Rect(Float, Float),
   UnitSquare,
 }
 ```
@@ -139,7 +139,7 @@ Match must be exhaustive unless `_ => ...`.
 Named record type:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 ```
 
 Record literal (two forms):
@@ -169,7 +169,7 @@ Anonymous record literal .{ field₁: e₁, ..., fieldₙ: eₙ } introduces a f
 * stored in array/dict
 * included in record fields
 * passed to another function
-* assigned to a let-binding without annotation
+* assigned to a binding introduced with `:=` (no annotation)
 
 ---
 
@@ -178,13 +178,15 @@ Anonymous record literal .{ field₁: e₁, ..., fieldₙ: eₙ } introduces a f
 ### 7.1 Function Declaration
 
 ```tw
-fn f(x: int, y: int) -> int { x + y }
+fn f(x: Int, y: Int) Int { x + y }
 ```
 
 Functions are pure: they cannot mutate caller-visible state.
 All “updates” create new values and rebind local names.
 
 Parameters are ordinary local bindings and may be rebound within the function body (see §7.3).
+
+The return type is written after the parameter list (no `->`). It may be omitted when inference suffices; when omitted, the function body’s value determines the return type.
 
 Functions form **lexical scope boundaries**: names defined outside a function cannot be rebound inside the function.
 
@@ -195,8 +197,8 @@ Functions form **lexical scope boundaries**: names defined outside a function ca
 #### Initial binding
 
 ```tw
-let x = expr
-let x: T = expr
+x := expr
+x: T = expr
 ```
 
 * Introduces a **new binding** `x` in the **current lexical scope**.
@@ -230,12 +232,12 @@ x = expr
 5. It is a compile-time error to use `x = expr` if no such binding exists.
 6. Rebinding cannot cross function boundaries. A function cannot rebind variables defined in its caller or outer functions.
 
-Thus, rebinding is always contained within the function where the corresponding `let` appears.
+Thus, rebinding is always contained within the function where the corresponding `:=`/typed binding appears.
 
 Example:
 
 ```tw
-fn bump(n: int) -> int {
+fn bump(n: Int) Int {
   n = n + 1   // rebinds parameter 'n'
   n
 }
@@ -250,7 +252,7 @@ Control-flow constructs (`if`, `for`, `case`, blocks `{ ... }`) **do not** intro
 Inside a `for` loop, rebinding targets the same lexical binding as outside the loop:
 
 ```tw
-let acc = 0
+acc := 0
 for x in xs {
   acc = acc + x      // rebinds the acc defined above
 }
@@ -260,10 +262,10 @@ acc                   // sees the final value
 Nested bindings behave as expected with shadowing:
 
 ```tw
-let acc = 0
+acc := 0
 
 if cond {
-  let acc = 10       // new inner binding
+  acc := 10          // new inner binding
   acc = acc + 1      // rebinds inner acc (11)
 }
 
@@ -273,7 +275,7 @@ if cond {
 Pattern-bound names follow the same rules:
 
 ```tw
-let x = 1
+x := 1
 
 case opt {
   .Some(x) => {      // new binding shadows outer x
@@ -327,20 +329,9 @@ Desugars to:
 x = x + y
 ```
 
-#### Left-hand side restrictions
+#### Assignment targets
 
-Only **simple local names** may appear on the left of update or rebinding.
-You cannot update through an expression:
-
-* `foo().x = 1` — error
-* `user.profile = ...` — allowed only if `user` is a local binding and the update desugars to rebinding `user`.
-
-A *simple local name* is an identifier that resolves to a local binding in the current lexical scope and is not:
-
-* a field access,
-* an indexed expression,
-* a module-qualified name,
-* a function call.
+The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`/`+=`/etc. Field and index forms are still sugar that rebuild the owner value (see record/array desugarings above); implementations should evaluate the left-hand side once when lowering.
 
 ---
 
@@ -349,8 +340,8 @@ A *simple local name* is an identifier that resolves to a local binding in the c
 All values are immutable. Rebinding affects only the local name, not any other aliases:
 
 ```tw
-let p = .{ y: 0 }
-let q = p
+p := .{ y: 0 }
+q := p
 
 p.y = 1      // p = { p with y = 1 }
 
@@ -370,8 +361,8 @@ XXX: we may need to rethink about the syntax / semantic of our module system, if
 Module:
 
 ```tw
-pub fn foo() -> int { ... }
-fn bar() -> int { ... }   // private
+pub fn foo() Int { ... }
+fn bar() Int { ... }   // private
 ```
 
 Import:
@@ -409,9 +400,9 @@ A module may associate functions with a type by making them first-argument style
 
 ```tw
 // point.tw
-pub type Point = .{ x: int, y: int }
+pub type Point = .{ x: Int, y: Int }
 
-pub fn translate(p: Point, dx: int, dy: int) -> Point {
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
   .{ x: p.x + dx, y: p.y + dy }
 }
 ```
@@ -472,7 +463,7 @@ A capability is a nominal type that captures a set of operations on some data ty
 
 ```tw
 type Show<T> = .{
-  to_string: fn(T) -> string,
+  to_string: fn(T) String,
 }
 ```
 
@@ -494,9 +485,9 @@ fn print_all<T>(xs: array<T>, show: Show<T>) {
 **Usage:**
 
 ```tw
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 
-fn show_user(u: User) -> string {
+fn show_user(u: User) String {
   // yep, this is comment
   // twinkle will only have single line comment
   // twinkle currently doesn't support `s1 + s2`
@@ -557,10 +548,10 @@ All adapter logic, if any, is explicit in user code.
 
 ```tw
 type Eq<T> = .{
-  equals: fn(T, T) -> bool,
+  equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) -> bool {
+fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) Bool {
   for x in xs {
     if eq.equals(x, needle) {
       return true
@@ -569,7 +560,7 @@ fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) -> bool {
   false
 }
 
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 EqPoint: Eq<Point> = .{
   equals(a, b) => a.x == b.x && a.y == b.y,
@@ -585,7 +576,7 @@ found := contains(points, p, EqPoint)
 Instead of a general "Iterable" trait, provide small, concrete helpers:
 
 ```tw
-fn sum_array(xs: array<int>) -> int {
+fn sum_array(xs: array<Int>) Int {
   acc := 0
   for x in xs {
     acc = acc + x
@@ -612,23 +603,23 @@ Interpolation is **not** driven by a capability or trait. Instead, it is defined
 
 In Twinkle, the expression inside `${...}` may have one of the following types:
 
-* `string` — used as-is,
-* `int`    — converted via a core `string.of_int` function,
-* `float`  — converted via `string.of_float`,
-* `bool`   — converted via `string.of_bool`.
+* `String` — used as-is,
+* `Int`    — converted via a core `string.of_int` function,
+* `Float`  — converted via `string.of_float`,
+* `Bool`   — converted via `string.of_bool`.
 
 Attempting to interpolate a value of any other type is a **compile-time error**.
 
 ### Example
 
 ```tw
-name: string = "Twinkle"
-n: int = 42
-ok: bool = true
+name: String = "Twinkle"
+n: Int = 42
+ok: Bool = true
 
 s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
 
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 user: User = .{ name: "Ada", age: 30 }
 s2 := "user=${user}"                    // ❌ error: User not interpolable
 ```
@@ -659,10 +650,10 @@ string.concat_many([
 To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
 
 ```tw
-type User = .{ name: string, age: int }
+type User = .{ name: String, age: Int }
 
-fn user_to_string(u: User) -> string {
-  u.name + " (" + int.to_string(u.age) + ")"
+fn user_to_string(u: User) String {
+  "${u.name} (${u.age})"
 }
 
 user: User = .{ name: "Ada", age: 30 }
@@ -691,7 +682,7 @@ On primitives: must include `_`.
 
 ### Loops
 
-All `for` loops are statements returning `void`.
+ All `for` loops are statements returning `Void`.
 
 Forms:
 
@@ -723,7 +714,7 @@ Any value used in `for x in coll` whose type is not one of the supported built-i
 
 **Indexed form:**
 
-* `i: int` starts from 0 and increments each iteration.
+* `i: Int` starts from 0 and increments each iteration.
 * Independent of the underlying iterator state.
 * Break/continue as usual.
 
@@ -735,12 +726,12 @@ To iterate over a custom type, users define a **helper function** that produces 
 // tree.tw
 type Tree<T> = ...
 
-pub fn iter<T>(t: Tree<T>) -> Iterator<T> {
+pub fn iter<T>(t: Tree<T>) Iterator<T> {
   // implementation creates an Iterator<T> over the tree
 }
 
 // usage
-fn sum_tree(t: Tree<int>) -> int {
+fn sum_tree(t: Tree<Int>) Int {
   acc := 0
   for x in t.iter() {    // desugars to: tree.iter(t)
     acc = acc + x
@@ -763,19 +754,19 @@ Rules:
 * Works with the same built-in collection types as `for` loops (see Section 12).
 * `continue` skips emission.
 * `break` ends early, returns partial array.
-* If the body returns void → error, because collect expects a value to push.
+* If the body returns `Void` → error, because collect expects a value to push.
 * The element type is inferred as the type of the body expression; all iterations must unify to same type; otherwise type error.
 
 Example:
 
 ```tw
 squares := collect x in range(1, 10) { x * x }
-// squares: array<int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
+// squares: array<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
 
 evens := collect x in range(1, 20) {
   if x % 2 == 0 { x } else { continue }
 }
-// evens: array<int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
+// evens: array<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
 
 ---
@@ -794,18 +785,18 @@ len(arr)
 
 Array operations via module functions (all return new arrays):
 
-* `array.set(arr, index, value) -> array<T>` — returns new array with element at index replaced
-* `array.append(arr, value) -> array<T>` — returns new array with value appended
-* `array.concat(arr1, arr2) -> array<T>` — returns new array combining both
-* `array.slice(arr, start, end) -> array<T>` — returns new array with subset of elements
+* `array.set(arr, index, value) array<T>` — returns new array with element at index replaced
+* `array.append(arr, value) array<T>` — returns new array with value appended
+* `array.concat(arr1, arr2) array<T>` — returns new array combining both
+* `array.slice(arr, start, end) array<T>` — returns new array with subset of elements
 * etc.
 
 Array literals:
 
 ```tw
-[1, 2, 3]  // array<int>
+[1, 2, 3]  // array<Int>
 
-xs: array<int> = []  // empty array requires type annotation
+xs: array<Int> = []  // empty array requires type annotation
 ```
 
 If context can't determine element type => compiler error.
@@ -839,11 +830,11 @@ String interpolation is recommended for string assembly (see Section 11).
 
 String operations via module functions (all return new strings):
 
-* `string.concat(s1, s2) -> string`
-* `string.substring(s, start, end) -> string`
-* `string.of_int(n: int) -> string`
-* `string.of_float(f: float) -> string`
-* `string.of_bool(b: bool) -> string`
+* `string.concat(s1, s2) String`
+* `string.substring(s, start, end) String`
+* `string.of_int(n: Int) String`
+* `string.of_float(f: Float) String`
+* `string.of_bool(b: Bool) String`
 * etc.
 
 ---
@@ -865,18 +856,18 @@ Dicts are **immutable** hash maps.
 Creation:
 
 ```tw
-m: dict<string, int> = dict.new()
+m: dict<String, Int> = dict.new()
 ```
 
 Type parameters are inferred from the annotation.
 
 Dict operations via module functions (all return new dicts):
 
-* `dict.set(m, k, v) -> dict<K, V>` — returns new dict with key-value pair added/updated
-* `dict.remove(m, k) -> dict<K, V>` — returns new dict with key removed
-* `dict.get(m, k) -> V?` — returns Option<V> for safe access
-* `dict.has(m, k) -> bool` — checks if key exists
-* `dict.keys(m) -> array<K>` — returns array of keys
+* `dict.set(m, k, v) dict<K, V>` — returns new dict with key-value pair added/updated
+* `dict.remove(m, k) dict<K, V>` — returns new dict with key removed
+* `dict.get(m, k) V?` — returns Option<V> for safe access
+* `dict.has(m, k) Bool` — checks if key exists
+* `dict.keys(m) array<K>` — returns array of keys
 * `len(m)` — returns number of entries
 
 Indexing syntax:
@@ -899,7 +890,7 @@ Unrecoverable = trap:
 Recoverable via `Result<T,E>`:
 
 ```tw
-enum Result<T, E> { Ok(T), Err(E) }
+type Result<T, E> = { Ok(T), Err(E) }
 ```
 
 `try` sugar:
@@ -910,8 +901,8 @@ try expr
 
 * Only for `Result<T,E>`.
 * Returns early with `Err(e)` on error.
-* For `Result<void,E>` the `Ok` branch carries no value.
-* `.Ok({})` is the way to present `void` return for `Result`, as `{}` evals to `void`.
+* For `Result<Void,E>` the `Ok` branch carries no value.
+* `.Ok({})` is the way to present `Void` return for `Result`, as `{}` evals to `Void`.
 * Cannot be applied to non-Result types (compile-time error).
 
 ---
@@ -923,7 +914,7 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `len`, `error`
-* types: `int`, `float`, `string`, `bool`, `void`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
+* types: `Int`, `Float`, `String`, `Bool`, `Void`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
 * range functions: `range`, `range_from`, `range_step`
 * array module: `array.set`, `array.append`, `array.concat`, etc.
 * dict module: `dict.new`, `dict.set`, `dict.get`, etc.
@@ -943,7 +934,7 @@ Standard Hindley–Milner type inference:
 
 Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
 
-String interpolation is type-checked by verifying the expression type is one of: `string`, `int`, `float`, `bool`.
+String interpolation is type-checked by verifying the expression type is one of: `String`, `Int`, `Float`, `Bool`.
 
 ---
 
@@ -971,7 +962,7 @@ Examples:
 
 ```
 error: cannot interpolate value of type SocialPost
-note: string interpolation only supports string, int, float, and bool
+note: string interpolation only supports String, Int, Float, and Bool
 help: consider using an explicit conversion function: "${post_to_string(post)}"
 ```
 
@@ -985,17 +976,17 @@ note: dot syntax only resolves record fields and inherent methods from the defin
 **Invalid for loop collection**:
 
 ```
-error: cannot iterate over value of type Tree<int>
+error: cannot iterate over value of type Tree<Int>
 note: for loops only support array<T>, Range, dict<K,V>, and Iterator<T>
-help: consider defining a helper function that returns Iterator<int>
+help: consider defining a helper function that returns Iterator<Int>
 ```
 
 **Mutation attempt on non-name**:
 
 ```
-error: cannot update expression that is not a simple local name
-note: only local variables can be updated; expressions like 'foo().x = 1' are not allowed
-help: bind to a local variable first: 'tmp := foo(); tmp.x = 1'
+error: cannot update expression that is not an assignable lvalue
+note: only identifiers, field accesses, or indexed expressions can appear to the left of '='
+help: bind to a local variable first if you need to reuse a computed value: 'tmp := foo(); tmp.x = 1'
 ```
 
 ---

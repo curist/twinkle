@@ -1,5 +1,7 @@
 ## Stage 0 – Skeleton & Harness
 
+> Note: This plan predates the shift from traits to explicit capability records. When you see trait constraints below, reinterpret them as passing capability records explicitly (see `docs/spec.md`), and use the grammar syntax (return type after params, `Type.{ ... }` constructors, capitalized primitives).
+
 **Goal:** Have a way to add Twinkle snippets + expected outputs and run `cargo test`.
 
 ### What to test
@@ -17,7 +19,7 @@
   ```rust
   #[test]
   fn smoke_compiler_runs() {
-      let src = "fn main() -> void { }";
+      let src = "fn main() Void { }";
       let out = twinklec::compile_to_debug_string(src).unwrap();
       assert!(out.contains("OK"));
   }
@@ -63,13 +65,13 @@ Example:
 `tests/parser/simple_fn.tw`:
 
 ```tw
-fn add(x: int, y: int) -> int { x + y }
+fn add(x: Int, y: Int) Int { x + y }
 ```
 
 `tests/parser/simple_fn.out`:
 
 ```tw
-fn add(x: int, y: int) -> int {
+fn add(x: Int, y: Int) Int {
   x + y
 }
 ```
@@ -108,11 +110,11 @@ Folder: `tests/type_ok/`
 Each file might contain 1–3 small functions:
 
 ```tw
-fn add(x: int, y: int) -> int {
+fn add(x: Int, y: Int) Int {
   x + y
 }
 
-fn negate(b: bool) -> bool {
+fn negate(b: Bool) Bool {
   if b { false } else { true }
 }
 ```
@@ -141,7 +143,7 @@ Folder: `tests/type_err/`
 Example `if_mismatch.tw`:
 
 ```tw
-fn bad(x: int) -> int {
+fn bad(x: Int) Int {
   if x > 0 { 1 } else { "oops" }
 }
 ```
@@ -180,13 +182,13 @@ You don’t need perfect error text yet — “error happens at right place” i
 `tests/type_ok/records.tw`:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
-fn origin() -> Point {
+fn origin() Point {
   .{ x: 0, y: 0 }
 }
 
-fn shift_right(p: Point) -> Point {
+fn shift_right(p: Point) Point {
   .{ x: p.x + 1, y: p.y }
 }
 ```
@@ -203,9 +205,9 @@ Simulate a “filesystem” in tests or use real files:
 `point.tw`:
 
 ```tw
-pub type Point = .{ x: int, y: int }
+pub type Point = .{ x: Int, y: Int }
 
-pub fn translate(p: Point, dx: int, dy: int) -> Point {
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
   .{ x: p.x + dx, y: p.y + dy }
 }
 ```
@@ -215,9 +217,9 @@ pub fn translate(p: Point, dx: int, dy: int) -> Point {
 ```tw
 import "point"
 
-fn main() -> void {
-  let p := .{ x: 1, y: 2 }
-  let q := p.translate(3, 4)
+fn main() Void {
+  p := .{ x: 1, y: 2 }
+  q := p.translate(3, 4)
 }
 ```
 
@@ -250,12 +252,12 @@ Test harness: either load those from disk or build a fake “module provider” 
 `tests/type_ok/enums.tw`:
 
 ```tw
-enum Shape {
-  Circle(float),
-  Rect(float, float),
+type Shape = {
+  Circle(Float),
+  Rect(Float, Float),
 }
 
-fn area(s: Shape) -> float {
+fn area(s: Shape) Float {
   case s {
     .Circle(r) => r * r * 3.14,
     .Rect(w, h) => w * h,
@@ -270,11 +272,11 @@ Check typechecking success.
 `tests/type_err/non_exhaustive.tw`:
 
 ```tw
-enum Token {
+type Token = {
   A, B
 }
 
-fn bad(t: Token) -> int {
+fn bad(t: Token) Int {
   case t {
     .A => 1,
   }
@@ -288,16 +290,16 @@ Check that you get an error with a message containing “non-exhaustive” / “
 Positive:
 
 ```tw
-enum Result<T, E> { Ok(T), Err(E) }
+type Result<T, E> = { Ok(T), Err(E) }
 
-fn div(x: int, y: int) -> Result<int, string> {
-  if y == 0 { Result.Err("div by zero") }
-  else      { Result.Ok(x / y) }
+fn div(x: Int, y: Int) Result<Int, String> {
+  if y == 0 { .Err("div by zero") }
+  else      { .Ok(x / y) }
 }
 
-fn use_div(x: int, y: int) -> Result<int, string> {
-  let v := try div(x, y)
-  Result.Ok(v + 1)
+fn use_div(x: Int, y: Int) Result<Int, String> {
+  v := try div(x, y)
+  .Ok(v + 1)
 }
 ```
 
@@ -310,96 +312,67 @@ Negative:
 
 ---
 
-## Stage 5 – Traits + `Show` + `${x}`
+## Stage 5 – Capabilities + `${x}`
 
-**Goal:** Check that trait constraints & compiler-only methods work.
+**Goal:** Check that capability records drive interpolation.
 
 ### What to test
 
-1. `Show` impls for base types.
-2. `Show` impl for user type.
-3. Interpolation works iff `Show` exists.
+1. Show-like capability for base types.
+2. Show-like capability for a user type.
+3. Interpolation works only when a capability is provided.
 
 ### How
 
-At this stage, you might *not* generate real strings yet; you can just test constraint checking.
+At this stage, you might *not* generate real strings yet; you can just test capability plumbing.
 
 **1. Positive Show**
 
 `tests/type_ok/show_point.tw`:
 
 ```tw
-trait Show(T) { fn show(x: T) -> string }
+type Show<T> = .{ to_string: fn(T) String }
 
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
-impl Show(Point) {
-  fn show(p: Point) -> string {
-    "Point(${p.x}, ${p.y})"
-  }
+ShowPoint: Show<Point> = .{
+  to_string: fn(p: Point) String { "Point(${p.x}, ${p.y})" },
 }
 
-fn log(p: Point) -> void {
-  println("p = ${p}")
+fn log(p: Point) {
+  println("${ShowPoint.to_string(p)}")
 }
 ```
 
-Typechecking should succeed:
-
-* when you see `"p = ${p}"` you add constraint `Point : Show`.
-* find `impl Show(Point)`.
+Typechecking should succeed.
 
 **2. Missing Show error**
 
 `tests/type_err/show_missing.tw`:
 
 ```tw
-trait Show(T) { fn show(x: T) -> string }
+type Foo = .{ n: Int }
 
-type Foo = .{ n: int }
-
-fn log(f: Foo) -> void {
-  println("f = ${f}")
+fn log(f: Foo) {
+  println("f = ${f}")  // should error: no interpolation for Foo
 }
 ```
 
-Expect type error:
+Expect type error: interpolation only supports `String`, `Int`, `Float`, `Bool` unless an explicit conversion is provided.
 
-* message: `Foo does not implement Show` or similar.
-
-**3. Multi-trait same method name (sanity)**
-
-You can add:
-
-```tw
-trait Show(T) { fn show(x: T) -> string }
-trait Debug(T) { fn show(x: T) -> string }
-
-type Point = .{ x:int, y:int }
-
-impl Show(Point) { fn show(p: Point) -> string { "Point(${p.x},${p.y})" } }
-impl Debug(Point){ fn show(p: Point) -> string { "DBG(${p.x},${p.y})" } }
-
-fn log(p: Point) {
-  println("p = ${p}")  // uses Show, not Debug
-}
-```
-
-This should typecheck fine (no ambiguity; only `Show` is used for `${p}`).
-
-> ✅ After Stage 5, trait constraints + `${x}` semantics are test-covered.
+> ✅ After Stage 5, capability-driven `${x}` semantics are test-covered.
 
 ---
 
-## Stage 6 – Generics + Constraints (HM)
+## Stage 6 – Generics + Capabilities (HM)
 
-**Goal:** Test polymorphic functions and trait constraints.
+**Goal:** Test polymorphic functions and explicit capability arguments.
 
 ### What to test
 
-1. Generic functions **without** constraints.
-2. Generic functions **with** constraints.
-3. Missing constraints cause errors.
+1. Generic functions **without** capabilities.
+2. Generic functions **with** capability parameters.
+3. Missing capability arguments cause errors.
 4. Instantiation with different concrete types.
 
 ### How
@@ -409,49 +382,47 @@ This should typecheck fine (no ambiguity; only `Show` is used for `${p}`).
 `tests/type_ok/generic_id.tw`:
 
 ```tw
-fn id<T>(x: T) -> T { x }
+fn id<T>(x: T) T { x }
 
-fn use_id() -> int {
+fn use_id() Int {
   id(5)
 }
 ```
 
-* Check type inference: `id(5)` typed as `int`.
+* Check type inference: `id(5)` typed as `Int`.
 
-**2. Generic with `Show` constraint**
+**2. Generic with capability parameter**
 
 ```tw
-trait Show(T) { fn show(x:T) -> string }
+type Show<T> = .{ to_string: fn(T) String }
 
-impl Show(int) { fn show(x:int) -> string { "int" } }
-
-fn print_twice<T: Show>(x: T) -> void {
-  println("${x}, ${x}")
+fn print_twice<T>(x: T, show: Show<T>) {
+  println("${show.to_string(x)}, ${show.to_string(x)}")
 }
 
 fn main() {
-  print_twice(42)
+  print_twice(42, .{ to_string: fn(n: Int) String { "${n}" } })
 }
 ```
 
 Should typecheck.
 
-**3. Missing constraint**
+**3. Missing capability**
 
 ```tw
-fn bad<T>(x: T) -> void {
+fn bad<T>(x: T) {
   println("${x}")
 }
 ```
 
-Should fail with “T requires Show” or similar.
+Should fail: no interpolation for arbitrary `T`.
 
 **4. Cross-module generic use**
 
 * `lib.tw` defines `fn log<T: Show>(x:T) -> void`.
 * `main.tw` imports it and uses it with various types; those that lack `Show` should fail.
 
-> ✅ After Stage 6, you trust your generic + trait constraint story.
+> ✅ After Stage 6, you trust your generic + capability story.
 
 ---
 
@@ -511,7 +482,7 @@ Depending on backend:
 
 * **Tag tests logically**:
 
-  * `parser_*`, `type_*`, `trait_*`, `runtime_*`.
+  * `parser_*`, `type_*`, `capability_*`, `runtime_*`.
 
 * **Keep some “canonical examples”**:
 
@@ -525,4 +496,3 @@ Depending on backend:
   * Every time you add a rule in the spec, ask:
 
     > “How do I show this fails gracefully when violated?”
-

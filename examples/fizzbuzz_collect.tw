@@ -1,4 +1,4 @@
-fn fizzbuzz_list(n: int) -> array<string> {
+fn fizzbuzz_list(n: Int) array<String> {
   collect i in range_from(1, n + 1) {
     if i % 15 == 0 {
       "FizzBuzz"

@@ -8,18 +8,18 @@ Record types map directly to wasm GC `struct` types.
 A record type is declared with:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 ```
 
 This introduces a **new nominal type** `Point`:
 
-* The shape is fixed and closed: fields are exactly `x: int` and `y: int`.
+* The shape is fixed and closed: fields are exactly `x: Int` and `y: Int`.
 
 * Two record types with the same fields are still **distinct**:
 
   ```tw
-  type Point = .{ x: int, y: int }
-  type Vec2  = .{ x: int, y: int }
+  type Point = .{ x: Int, y: Int }
+  type Vec2  = .{ x: Int, y: Int }
   // Point and Vec2 are different types, even though shapes match
   ```
 
@@ -34,7 +34,7 @@ Field names live in the type’s namespace; they are accessed via dot on values,
 Given:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 ```
 
 You can construct a `Point` in **two equivalent ways**.
@@ -46,11 +46,11 @@ Use `.{ ... }` where an **expected record type** is known:
 ```tw
 p: Point = .{ x: 1, y: 2 }
 
-fn origin() -> Point {
+fn origin() Point {
   .{ x: 0, y: 0 }
 }
 
-fn move(p: Point) -> Point {
+fn move(p: Point) Point {
   .{ x: p.x + 1, y: p.y }
 }
 
@@ -65,7 +65,7 @@ Rules:
 * It is valid iff:
 
   * `Point` has fields `x` and `y` (no missing/extra fields), and
-  * `expr1` has type `int`, `expr2` has type `int` (compatible with field types).
+  * `expr1` has type `Int`, `expr2` has type `Int` (compatible with field types).
 * If the expected type is not a record, or fields/types don’t match, it is a type error.
 
 Anonymous record literals **do not introduce new structural types**. They are just a convenient literal form when you already know which record type is expected.
@@ -75,21 +75,21 @@ Anonymous record literals **do not introduce new structural types**. They are ju
 You can also use a **named constructor syntax** that always produces a specific record type:
 
 ```tw
-p := Point{ x: 1, y: 2 }
-q := Point{ x: 1 + 10, y: 2 + 20 }
+p := Point.{ x: 1, y: 2 }
+q := Point.{ x: 1 + 10, y: 2 + 20 }
 
-fn origin() -> Point {
-  Point{ x: 0, y: 0 }
+fn origin() Point {
+  Point.{ x: 0, y: 0 }
 }
 
 fn main() {
-  move(Point{ x: 1, y: 2 })
+  move(Point.{ x: 1, y: 2 })
 }
 ```
 
 Rules:
 
-* `Point{ field: expr, ... }` always has type `Point`.
+* `Point.{ field: expr, ... }` always has type `Point`.
 * The compiler checks that:
 
   * the fields exist on `Point`,
@@ -102,7 +102,7 @@ These two are equivalent:
 
 ```tw
 p: Point = .{ x: 1, y: 2 }
-p2 := Point{ x: 1, y: 2 }
+p2 := Point.{ x: 1, y: 2 }
 ```
 
 Both produce a `Point` value; only the syntax differs.
@@ -133,14 +133,14 @@ Anonymous record literals are only allowed in **contexts with an expected record
 
 1. **Annotated bindings**:
 
-   ```tw
+```tw
    p: Point = .{ x: 1, y: 2 }
    ```
 
 2. **Function arguments**, when parameter type is a record:
 
    ```tw
-   fn move(p: Point) -> Point { ... }
+   fn move(p: Point) Point { ... }
 
    move(.{ x: 1, y: 2 })
    ```
@@ -148,7 +148,7 @@ Anonymous record literals are only allowed in **contexts with an expected record
 3. **Return expressions**, when function returns a record:
 
    ```tw
-   fn origin() -> Point {
+   fn origin() Point {
      .{ x: 0, y: 0 }
    }
    ```
@@ -158,7 +158,7 @@ Anonymous record literals are only allowed in **contexts with an expected record
    ```tw
    type Box = .{
      p: Point,
-     name: string,
+     name: String,
    }
 
    b: Box = .{
@@ -182,27 +182,27 @@ p := .{ x: 1, y: 2 }    // ❌ no expected type → error in MVP
 The compiler will not invent structural record types. If you want a record value there, either:
 
 ```tw
-let p: Point = .{ x: 1, y: 2 }
+p: Point = .{ x: 1, y: 2 }
 ```
 
 or:
 
 ```tw
-let p := Point{ x: 1, y: 2 }
+p := Point.{ x: 1, y: 2 }
 ```
 
 Similarly, anonymous record **types** are not allowed in type positions in the MVP:
 
 ```tw
-fn f(p: .{ x: int, y: int }) -> int { ... }  // ❌ not allowed
+fn f(p: .{ x: Int, y: Int }) Int { ... }  // ❌ not allowed
 ```
 
 You must declare a named type:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
-fn f(p: Point) -> int { ... }                // ✅
+fn f(p: Point) Int { ... }                // ✅
 ```
 
 ---
@@ -214,14 +214,14 @@ If the expected type is ambiguous (more than one candidate record type fits), th
 Example:
 
 ```tw
-type Point = .{ x: int, y: int }
-type Vec2  = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
+type Vec2  = .{ x: Int, y: Int }
 
-fn use_point(p: Point) -> void { ... }
-fn use_vec(v: Vec2)  -> void { ... }
+fn use_point(p: Point) Void { ... }
+fn use_vec(v: Vec2)  Void { ... }
 
 fn main() {
-  let v: Vec2 = .{ x: 1, y: 2 }        // ✅ explicit annotation: Vec2
+  v: Vec2 = .{ x: 1, y: 2 }        // ✅ explicit annotation: Vec2
 
   use_point(.{ x: 1, y: 2 })          // ✅ expected type = Point
   use_vec(.{ x: 1, y: 2 })            // ✅ expected type = Vec2
@@ -238,7 +238,7 @@ In practice, you only get ambiguity if you write code with missing type informat
 ### 7. Interaction with dot methods and traits
 
 * Dot method resolution **does not** depend on record literals; it uses the static record type (`Point`, `Vec2`, etc.).
-* Traits (e.g., `Show(Point)`) work on the nominal type; whether you constructed a `Point` via `.{ ... }` or `Point{ ... }` makes no difference.
+* Traits (e.g., `Show(Point)`) work on the nominal type; whether you constructed a `Point` via `.{ ... }` or `Point.{ ... }` makes no difference.
 * There is no structural record trait dispatch: traits always attach to named types.
 
 ---
@@ -248,10 +248,10 @@ In practice, you only get ambiguity if you write code with missing type informat
 ### ✅ Good: annotated binding
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 fn demo() {
-  let p: Point = .{ x: 1, y: 2 }
+  p: Point = .{ x: 1, y: 2 }
   println("p = (${p.x}, ${p.y})")
 }
 ```
@@ -259,10 +259,10 @@ fn demo() {
 ### ✅ Good: constructor form
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 fn demo() {
-  let p := Point{ x: 1, y: 2 }
+  p := Point.{ x: 1, y: 2 }
   println("p = (${p.x}, ${p.y})")
 }
 ```
@@ -270,25 +270,25 @@ fn demo() {
 ### ✅ Good: call-site literal (contextual)
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
-fn move(p: Point) -> Point {
+fn move(p: Point) Point {
   .{ x: p.x + 1, y: p.y }
 }
 
 fn main() {
   move(.{ x: 1, y: 2 })
-  move(Point{ x: 10, y: 20 })
+  move(Point.{ x: 10, y: 20 })
 }
 ```
 
 ### ✅ Good: literal in record field
 
 ```tw
-type Point = .{ x: int, y: int }
-type Box = .{ p: Point, label: string }
+type Point = .{ x: Int, y: Int }
+type Box = .{ p: Point, label: String }
 
-fn make_box() -> Box {
+fn make_box() Box {
   .{
     p: .{ x: 1, y: 2 },     // expected type for p is Point
     label: "hello",
@@ -301,10 +301,10 @@ fn make_box() -> Box {
 ### ❌ Bad: no expected type
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 fn demo() {
-  let p := .{ x: 1, y: 2 }   // ERROR: no expected record type
+  p := .{ x: 1, y: 2 }   // ERROR: no expected record type
 }
 ```
 
@@ -312,9 +312,9 @@ Fix:
 
 ```tw
 fn demo() {
-  let p: Point = .{ x: 1, y: 2 }
+  p: Point = .{ x: 1, y: 2 }
   // or:
-  let p := Point{ x: 1, y: 2 }
+  p := Point.{ x: 1, y: 2 }
 }
 ```
 
@@ -323,11 +323,11 @@ fn demo() {
 ### ❌ Bad: wrong shape
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 fn demo() {
-  let p: Point = .{ x: 1 }       // ERROR: missing field y
-  let q: Point = .{ x: 1, y: 2, z: 3 }  // ERROR: extra field z
+  p: Point = .{ x: 1 }       // ERROR: missing field y
+  q: Point = .{ x: 1, y: 2, z: 3 }  // ERROR: extra field z
 }
 ```
 
@@ -336,10 +336,10 @@ fn demo() {
 ### ❌ Bad: wrong field type
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
 fn demo() {
-  let p: Point = .{ x: "1", y: 2 }  // ERROR: x expects int, got string
+  p: Point = .{ x: "1", y: 2 }  // ERROR: x expects Int, got String
 }
 ```
 
@@ -348,15 +348,15 @@ fn demo() {
 ### ❌ Bad: anonymous record type in signature (MVP)
 
 ```tw
-fn translate(p: .{ x: int, y: int }) -> .{ x: int, y: int } { ... }  // ERROR in MVP
+fn translate(p: .{ x: Int, y: Int }) .{ x: Int, y: Int } { ... }  // ERROR in MVP
 ```
 
 Fix:
 
 ```tw
-type Point = .{ x: int, y: int }
+type Point = .{ x: Int, y: Int }
 
-fn translate(p: Point) -> Point { ... }                             // ✅
+fn translate(p: Point) Point { ... }                             // ✅
 ```
 
 fn greeter() {
@@ -365,5 +365,3 @@ fn greeter() {
 
 greet := greeter()
 greet.hello()
-
-
