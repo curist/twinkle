@@ -1,0 +1,20 @@
+// This is a comment
+// ^^^^^^^^^^^^^^^^^^^ comment
+
+// Multiple comment lines
+// ^^^^^^^^^^^^^^^^^^^^^^^ comment
+// are highlighted
+// ^^^^^^^^^^^^^^^^^ comment
+
+fn test() {
+  // Inline comment
+//^^^^^^^^^^^^^^^^^ comment
+  x := 42  // End of line comment
+//         ^^^^^^^^^^^^^^^^^^^^^^^ comment
+}
+
+// TODO: implement this feature
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comment
+
+// FIXME: bug here
+// ^^^^^^^^^^^^^^^^ comment

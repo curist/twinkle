@@ -1,0 +1,46 @@
+// Numbers
+x := 42
+//   ^^ number
+
+y := 3.14
+//   ^^^^ number.float
+
+z := 0
+//   ^ number
+
+// Booleans
+a := true
+//   ^^^^ boolean
+
+b := false
+//   ^^^^^ boolean
+
+// Strings
+simple := "hello world"
+//        ^^^^^^^^^^^^^ string
+
+// String interpolation
+name := "Alice"
+greeting := "Hello, ${name}!"
+//          ^^^^^^^^ string
+//                  ^^ punctuation.special
+//                        ^^^ string
+//                           ^ punctuation.special
+
+// Complex interpolation
+count := 5
+message := "You have ${count} items"
+//                    ^^ punctuation.special
+//                           ^ punctuation.special
+
+// Arrays
+nums := [1, 2, 3]
+//       ^ number
+//          ^ number
+//             ^ number
+
+// Records
+point := Point.{ x: 10, y: 20 }
+//       ^^^^^ type
+//                  ^^ number
+//                          ^^ number

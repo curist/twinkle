@@ -1,0 +1,34 @@
+// Keywords
+fn test() Void {
+// <- keyword
+//^ keyword
+  if true {
+//^^ keyword
+    return 42
+//  ^^^^^^ keyword
+  }
+
+  for x in range(10) {
+//^^^ keyword
+//    ^ variable
+//      ^^ keyword
+    break
+//  ^^^^^ keyword
+  }
+
+  case x {
+//^^^^ keyword
+    _ => continue,
+//       ^^^^^^^^ keyword
+  }
+}
+
+pub type MyType = Int
+//^ keyword
+//  ^^^^ keyword
+
+import "std"
+//^^^^ keyword
+
+try foo()
+//^ keyword

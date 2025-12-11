@@ -1,0 +1,64 @@
+// Arithmetic operators
+x := 1 + 2
+//     ^ operator
+
+y := 3 - 1
+//     ^ operator
+
+z := 4 * 5
+//     ^ operator
+
+w := 10 / 2
+//      ^ operator
+
+m := 10 % 3
+//      ^ operator
+
+// Assignment operators
+x = 5
+//^ operator
+
+x += 1
+//^^ operator
+
+x -= 1
+//^^ operator
+
+x *= 2
+//^^ operator
+
+x /= 2
+//^^ operator
+
+// Comparison operators
+a := x == y
+//     ^^ operator
+
+b := x != y
+//     ^^ operator
+
+c := x < y
+//     ^ operator
+
+d := x <= y
+//     ^^ operator
+
+e := x > y
+//     ^ operator
+
+f := x >= y
+//     ^^ operator
+
+// Logical operators
+g := true and false
+//        ^^^ operator
+
+h := true or false
+//        ^^ operator
+
+i := !true
+//   ^ operator
+
+// Optional type operator
+type Maybe = Int?
+//               ^ operator

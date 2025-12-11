@@ -1,0 +1,42 @@
+// Enum patterns and variants
+type Result<T, E> = { Ok(T), Err(E) }
+//                    ^^ constructor
+//                           ^^^ constructor
+
+fn handle(r: Result<Int, String>) Void {
+  case r {
+    .Ok(value) => {
+//  ^^^ constructor
+//      ^^^^^ variable
+      println(value)
+    },
+    .Err(msg) => {
+//  ^^^^ constructor
+//       ^^^ variable
+      println(msg)
+    },
+    _ => {},
+//  ^ variable.builtin
+  }
+}
+
+// Qualified enum patterns
+case result {
+  Result.Ok(x) => x,
+//       ^^ constructor
+  Result.Err(e) => 0,
+//       ^^^ constructor
+}
+
+// Variant expressions
+success := .Ok(42)
+//         ^^^ constructor
+
+failure := .Err("error")
+//         ^^^^ constructor
+
+// Wildcard pattern
+case x {
+  _ => 0,
+//^ variable.builtin
+}

@@ -1,0 +1,38 @@
+// Type declarations
+type Point = .{ x: Int, y: Int }
+//   ^^^^^ type.definition
+//                 ^^^ type.builtin
+//                        ^^^ type.builtin
+
+type Option<T> = { Some(T), None }
+//   ^^^^^^ type.definition
+//          ^ type.parameter
+//               ^ punctuation.bracket
+
+// Primitive types
+x: Int = 42
+// ^^^ type.builtin
+
+y: Float = 3.14
+// ^^^^^ type.builtin
+
+b: Bool = true
+// ^^^^ type.builtin
+
+s: String = "hello"
+// ^^^^^^ type.builtin
+
+// Generic types in type declarations
+type IntList = Array<Int>
+//             ^^^^^ type
+//                   ^^^ type.builtin
+
+type StringIntMap = Dict<String, Int>
+//                  ^^^^ type
+//                       ^^^^^^ type.builtin
+//                               ^^^ type.builtin
+
+// Optional types
+type MaybeString = String?
+//                 ^^^^^^ type.builtin
+//                       ^ operator
