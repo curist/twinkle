@@ -1,338 +1,534 @@
 (*
- * Twinkle Language Grammar (Complete)
+ * Twinkle Language Grammar
  *
- * This is the complete EBNF grammar for the Twinkle programming language.
- * Twinkle is a statically typed language targeting WebAssembly GC with
- * Hindley-Milner type inference, capabilities via records of functions,
- * and a lightweight syntax.
- *
- * Implementation Strategy:
- * For staged implementation, build the language in this order:
- * 1. Core expressions, literals, operators, functions, blocks, control flow (if)
- * 2. Records, modules (import, pub), string interpolation, generics
- * 3. Enums, pattern matching (case), try expressions, loops, collect, arrays
- *
- * See docs/plan.md and docs/test-plan.md for detailed guidance.
- *
- * Operator Precedence (lowest to highest):
- * 1. Assignment: =, :=, +=, -=, *=, /=, %=
- * 2. Logical OR: ||
- * 3. Logical AND: &&
- * 4. Equality: ==, !=
- * 5. Comparison: <, <=, >, >=
- * 6. Additive: +, -
- * 7. Multiplicative: *, /, %
- * 8. Unary: -, !
- * 9. Postfix: (), [], .
- *
- * Keywords (Complete List):
- * fn, if, else, true, false,
- * int, float, bool, string, void, array, dict,
- * import, pub, type, enum, case, try,
- * for, in, collect, break, continue
- *
- * Built-in Functions (in prelude, not keywords):
- * print, println, len, error
- * range, range_from, range_step
- *
- * Comments:
- * - Line comments: // comment until end of line
+ * Key design points:
+ * - Two function forms:
+ *   - FunctionDecl: `fn name(...) [ReturnType] { ... }`  (supports mutual recursion)
+ *   - Value binding: `name [: Type] = Expr` or `name := Expr` (no mutual recursion)
+ * - Function *types* use `fn(...) Type` syntax (no `->`).
+ * - Top-level expressions are allowed for scripting.
+ * - Named record literals use `TypeName.{ ... }` to avoid ambiguity with blocks.
+ * - Sum types (enums) are defined with `type T = { Variant1, Variant2(T), ... }`.
+ * - Constructors are referenced as `TypeName.Variant` in expressions, with `.Variant`
+ *   shorthand where the type is known.
  *)
 
 (* ===== Program Structure ===== *)
 
-Program = { TopLevel } ;
+Program =
+    { TopLevel } ;
 
-TopLevel = ImportDecl
-         | TypeDecl
-         | EnumDecl
-         | FunctionDecl ;
+TopLevel =
+      ImportDecl
+    | TypeDecl
+    | FunctionDecl
+    | TopLevelStmt ;
 
-ImportDecl = "import" StringLiteral ;
+(* Implementation note:
+   - Top-level is a sequence of declarations + executable statements.
+   - Runtime semantics: top-level statements execute in order at module init. *)
+
+ImportDecl =
+    "import" StringLiteral ;
 
 (* ===== Type Declarations ===== *)
 
-TypeDecl = [ "pub" ] "type" Identifier [ TypeParams ] "=" TypeDef ;
+TypeDecl =
+    [ "pub" ] "type" Identifier [ TypeParams ] "=" TypeDef ;
 
-TypeDef = RecordTypeDef
-        | Type ;  (* Type alias *)
+TypeDef =
+      RecordTypeDef      (* .{ field: Type, ... } *)
+    | SumTypeDef         (* { Variant1, Variant2(T), ... } *)
+    | Type ;             (* Plain type alias: type T = ExistingType *)
 
-RecordTypeDef = "." "{" [ RecordFieldDecls ] "}" ;
+RecordTypeDef =
+    "." "{" [ RecordFieldDecls ] "}" ;
 
-RecordFieldDecls = RecordFieldDecl { "," RecordFieldDecl } [ "," ] ;
+RecordFieldDecls =
+    RecordFieldDecl { "," RecordFieldDecl } [ "," ] ;
 
-RecordFieldDecl = Identifier ":" Type ;
+RecordFieldDecl =
+    Identifier ":" Type ;
 
-(* ===== Enum Declarations ===== *)
+(* ===== Sum Types (Algebraic Data Types) ===== *)
 
-EnumDecl = [ "pub" ] "enum" Identifier [ TypeParams ] "{" [ VariantList ] "}" ;
+SumTypeDef =
+    "{" VariantDefList "}" ;
 
-VariantList = Variant { "," Variant } [ "," ] ;
+VariantDefList =
+    VariantDef { "," VariantDef } [ "," ] ;
 
-Variant = Identifier [ VariantPayload ] ;
+VariantDef =
+    Identifier [ "(" TypeList ")" ] ;
+(* Implementation note:
+   - `type Color = { Red, Green, Blue }`
+   - `type Result<T, E> = { Ok(T), Err(E) }`
+   - Payloads are positional, e.g. `Add(Expr, Expr)`.
+   - Constructors are exposed as `TypeName.Variant` in expressions
+     (e.g. `Result.Ok(42)`), and as `.Variant(...)` / `TypeName.Variant(...)`
+     in patterns (EnumPattern rules). *)
 
-VariantPayload = "(" TypeList ")" ;
+(* ===== Functions (Declarations & Function Types) ===== *)
 
-(* ===== Functions ===== *)
+FunctionDecl =
+    [ "pub" ] "fn" Identifier [ TypeParams ]
+    "(" [ ParamList ] ")"
+    [ Type ]          (* return type in declaration position *)
+    Block ;
 
-FunctionDecl = [ "pub" ] "fn" Identifier [ TypeParams ] "(" [ ParamList ] ")" [ "->" Type ] Block ;
+(* Implementation note:
+   - All FunctionDecl in the same scope form a mutually recursive group
+     (like `let rec` for functions only).
+   - `Type` here may itself be a function type, e.g. `fn(Int) Int`. *)
 
-TypeParams = "<" TypeParam { "," TypeParam } [ "," ] ">" ;
+TypeParams =
+    "<" TypeParam { "," TypeParam } [ "," ] ">" ;
 
-TypeParam = Identifier ;
+TypeParam =
+    Identifier ;
 
-ParamList = Param { "," Param } [ "," ] ;
+ParamList =
+    Param { "," Param } [ "," ] ;
 
-Param = Identifier ":" Type ;
+Param =
+    Identifier [ ":" Type ] ;
+(* Implementation note:
+   - Param types are optional; when omitted, type inference must infer them
+     from usage (HM-style). *)
+
+(* ===== Function Expressions (values) ===== *)
+
+FnExpr =
+    "fn" "(" [ ParamList ] ")"
+    [ Type ]          (* optional explicit return type *)
+    Block ;
+
+(* Implementation note:
+   - FnExpr is a value; no mutual recursion is implied.
+   - For mutual recursion, use FunctionDecls.
+   - Grammar disambiguates by context: `fn` in expression position = FnExpr,
+     `fn` as TopLevel/Statement start = FunctionDecl. *)
 
 (* ===== Expressions ===== *)
 
-Expr = AssignExpr ;
+Expr =
+    AssignExpr ;
 
-AssignExpr = Assignable AssignOp LogicalOrExpr
-           | LogicalOrExpr ;
+AssignExpr =
+      LValue AssignOp Expr
+    | LogicalOrExpr ;
 
-AssignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+AssignOp =
+      "="
+    | "+=" | "-=" | "*=" | "/=" | "%=" ;
+(* Implementation note:
+   - `:=` is *not* an assignment operator; it is only used in LetBinding.
+   - No chained `a = b = c` is supported; `=` is not associative in grammar. *)
 
-Assignable = Identifier
-           | Expr "." Identifier
-           | Expr "[" Expr "]" ;
+LValue =
+      Identifier
+    | PostfixExpr "." Identifier
+    | PostfixExpr "[" Expr "]" ;
+(* Implementation note:
+   - LValue is a restricted form of PostfixExpr; avoids left-recursion via Expr.
+   - Examples: `x`, `obj.field`, `arr[i]`. *)
 
-LogicalOrExpr = LogicalAndExpr { "||" LogicalAndExpr } ;
+LogicalOrExpr =
+    LogicalAndExpr { "or" LogicalAndExpr } ;
 
-LogicalAndExpr = EqualityExpr { "&&" EqualityExpr } ;
+LogicalAndExpr =
+    EqualityExpr { "and" EqualityExpr } ;
 
-EqualityExpr = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
+EqualityExpr =
+    ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
 
-ComparisonExpr = AdditiveExpr { ( "<" | "<=" | ">" | ">=" ) AdditiveExpr } ;
+ComparisonExpr =
+    AdditiveExpr { ( "<" | "<=" | ">" | ">=" ) AdditiveExpr } ;
 
-AdditiveExpr = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
+AdditiveExpr =
+    MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
 
-MultiplicativeExpr = UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
+MultiplicativeExpr =
+    UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
 
-UnaryExpr = ( "-" | "!" ) UnaryExpr
-          | CallExpr ;
+UnaryExpr =
+      ( "-" | "!" ) UnaryExpr
+    | PostfixExpr ;
 
-CallExpr = PrimaryExpr { Call | FieldAccess | Index } ;
+PostfixExpr =
+    PrimaryExpr { Call | FieldAccess | Index } ;
 
-Call = "(" [ ArgList ] ")" ;
+Call =
+    "(" [ ArgList ] ")" ;
 
-FieldAccess = "." Identifier ;
+FieldAccess =
+    "." Identifier ;
 
-Index = "[" Expr "]" ;
+Index =
+    "[" Expr "]" ;
 
-ArgList = Expr { "," Expr } [ "," ] ;
+ArgList =
+    Expr { "," Expr } [ "," ] ;
 
-PrimaryExpr = Literal
-            | RecordLiteral
-            | ArrayLiteral
-            | Identifier
-            | Block
-            | IfExpr
-            | CaseExpr
-            | TryExpr
-            | CollectExpr
-            | "(" Expr ")" ;
+PrimaryExpr =
+      Literal
+    | RecordLiteral
+    | ArrayLiteral
+    | Identifier
+    | VariantExpr        (* .Ok(…), shorthand constructor *)
+    | FnExpr
+    | Block
+    | IfExpr
+    | CaseExpr
+    | TryExpr
+    | CollectExpr
+    | "(" Expr ")" ;
 
-(* Note: Enum constructors, qualified names, and method calls are all parsed
- * as general postfix expressions (Identifier + FieldAccess + Call) and
- * resolved during type checking.
- *)
+VariantExpr =
+    "." Identifier [ "(" ArgList ")" ] ;
+(* Implementation note:
+   - Expression shorthand: `.Ok(42)` or `.None`.
+   - Resolved by *expected type* in context.
+   - If the expected type is a sum type `T = { Ok(T1), ... }`,
+     `.Ok(...)` is resolved as `T.Ok(...)`.
+   - If multiple sum types in scope have a variant `Ok`, or no
+     expected sum type is known, `.Ok(...)` must be rejected or
+     require the fully qualified form `TypeName.Ok(...)`. *)
 
 (* ===== Pattern Matching ===== *)
 
-CaseExpr = "case" Expr "{" CaseArms "}" ;
+CaseExpr =
+    "case" Expr "{" CaseArms "}" ;
 
-CaseArms = CaseArm { "," CaseArm } [ "," ] ;
+CaseArms =
+    CaseArm { "," CaseArm } [ "," ] ;
 
-CaseArm = Pattern "=>" Expr ;
+CaseArm =
+    Pattern "=>" Expr ;
 
-Pattern = EnumPattern
-        | WildcardPattern
-        | LiteralPattern
-        | IdentifierPattern ;
+Pattern =
+      EnumPattern
+    | WildcardPattern
+    | LiteralPattern
+    | IdentifierPattern ;
 
-EnumPattern = "." Identifier [ "(" PatternList ")" ] ;
+EnumPattern =
+      ShorthandEnumPattern
+    | QualifiedEnumPattern ;
 
-PatternList = Pattern { "," Pattern } [ "," ] ;
+ShorthandEnumPattern =
+    "." Identifier [ "(" PatternList ")" ] ;
 
-WildcardPattern = "_" ;
+QualifiedEnumPattern =
+    TypeName "." Identifier [ "(" PatternList ")" ] ;
+(* Implementation note:
+   - Supports both `.Some(x)` and `MyModule.Option.Some(x)`.
+   - `TypeName` here is typically the sum type or module+type. *)
 
-LiteralPattern = IntLiteral | BoolLiteral | StringLiteral ;
+PatternList =
+    Pattern { "," Pattern } [ "," ] ;
 
-IdentifierPattern = Identifier ;
+WildcardPattern =
+    "_" ;
+
+LiteralPattern =
+      IntLiteral
+    | BoolLiteral
+    | StringLiteral ;
+
+IdentifierPattern =
+    Identifier ;
+(* Implementation note:
+   - `Identifier` in pattern position is a binding, not a reference. *)
 
 (* ===== Try Expression ===== *)
 
-TryExpr = "try" Expr ;
+TryExpr =
+    "try" Expr ;
+(* Implementation note:
+   - Semantics: works only with `Result<T, E>`; `try` propagates `Err`.
+   - Enforced in type checking, not grammar. *)
 
 (* ===== Loop Constructs ===== *)
 
-ForCondition = Expr
-             | Identifier "in" Expr
-             | Identifier "," Identifier "in" Expr ;
+ForStmt =
+    "for" ForCondition Block ;
 
-CollectExpr = "collect" Identifier "in" Expr Block ;
+ForCondition =
+      Identifier "," Identifier "in" Expr
+    | Identifier "in" Expr
+    | Expr ;
+(* Implementation note:
+   - `for key, value in expr`  (dict / pair iteration)
+   - `for x in expr`          (iterator / range / array)
+   - `for expr`               (while-style loop; condition is expr)
+   - `in` is *not* an infix operator in Expr grammar, so `x in y`
+     is not a valid Expr and cannot conflict. *)
+
+CollectExpr =
+    "collect" Identifier "in" Expr Block ;
+(* Implementation note:
+   - `collect x in expr { ... }` produces `array<T>`.
+   - Binding `x` is scoped within the block. *)
 
 (* ===== Record Literals ===== *)
 
-RecordLiteral = AnonymousRecordLiteral
-              | NamedRecordLiteral ;
+RecordLiteral =
+      AnonymousRecordLiteral
+    | NamedRecordLiteral ;
 
-AnonymousRecordLiteral = "." "{" [ RecordFields ] "}" ;
+AnonymousRecordLiteral =
+    "." "{" [ RecordFields ] "}" ;
 
-NamedRecordLiteral = TypeName "{" [ RecordFields ] "}" ;
+NamedRecordLiteral =
+    TypeName "." "{" [ RecordFields ] "}" ;
+(* Implementation note:
+   - `Point.{ x: 1, y: 2 }` or `MyModule.Point.{ ... }`.
+   - Lexer should treat `. {` with no whitespace (or `.{"`) as start of
+     record-constructor, to avoid confusion with field access + block. *)
 
-RecordFields = RecordField { "," RecordField } [ "," ] ;
+RecordFields =
+    RecordField { "," RecordField } [ "," ] ;
 
-RecordField = Identifier ":" Expr ;
+RecordField =
+    Identifier ":" Expr ;
 
 (* ===== Array Literals ===== *)
 
-ArrayLiteral = "[" [ ArrayElements ] "]" ;
+ArrayLiteral =
+    "[" [ ArrayElements ] "]" ;
 
-ArrayElements = Expr { "," Expr } [ "," ] ;
-
-(* ===== Type Names ===== *)
-
-(* Type names in declarations and constructors.
- * Qualified names are parsed as general postfix expressions.
- *)
-
-TypeName = Identifier ;
+ArrayElements =
+    Expr { "," Expr } [ "," ] ;
 
 (* ===== Blocks and Control Flow ===== *)
 
-Block = "{" { Statement } [ Expr ] "}" ;
+Block =
+    "{" { Statement } [ Expr ] "}" ;
+(* Implementation note:
+   - If Block ends with Expr and no `return`, that Expr is the block’s value
+     (for expression contexts, including function bodies).
+   - `return` can override this. *)
 
-Statement = ForStmt
-          | LetBinding ";"
-          | Expr ";"
-          | BreakStmt ";"
-          | ContinueStmt ";" ;
+Statement =
+      ForStmt
+    | LetBinding ";"
+    | Expr ";"
+    | BreakStmt ";"
+    | ContinueStmt ";"
+    | ReturnStmt ";" ;
+(* Implementation note:
+   - The grammar requires `;` tokens, but the lexer performs
+     Automatic Semicolon Insertion (ASI) at newlines; see ASI section. *)
 
-ForStmt = "for" ForCondition Block ;
+TopLevelStmt =
+      LetBinding ";"
+    | Expr ";" ;
 
-LetBinding = Identifier ":=" Expr
-           | Identifier ":" Type "=" Expr ;
+LetBinding =
+      Identifier ":=" Expr
+    | Identifier ":" Type "=" Expr ;
+(* Implementation note:
+   - `x := expr`    : inferred-typed binding.
+   - `x: T = expr`  : explicitly-typed binding.
+   - These bindings do *not* form mutually recursive groups. *)
 
-BreakStmt = "break" ;
+BreakStmt =
+    "break" ;
 
-ContinueStmt = "continue" ;
+ContinueStmt =
+    "continue" ;
 
-IfExpr = "if" Expr Block [ "else" ( IfExpr | Block ) ] ;
+ReturnStmt =
+    "return" Expr ;
+(* Implementation note:
+   - `return expr` allowed in any function; type must match function return.
+   - For `void` returns, use `return {}` (empty block evaluates to `void`).
+   - Functions may also implicitly return the last expression in the Block
+     if control reaches the end without `return`. *)
+
+IfExpr =
+    "if" Expr Block [ "else" ( IfExpr | Block ) ] ;
 
 (* ===== Literals ===== *)
 
-Literal = IntLiteral
-        | FloatLiteral
-        | StringLiteral
-        | BoolLiteral ;
+Literal =
+      IntLiteral
+    | FloatLiteral
+    | StringLiteral
+    | BoolLiteral ;
 
-IntLiteral = [ "-" ] Digit { Digit } ;
+IntLiteral =
+    [ "-" ] Digit { Digit } ;
 
-FloatLiteral = [ "-" ] Digit { Digit } "." Digit { Digit } ;
+FloatLiteral =
+    [ "-" ] Digit { Digit } "." Digit { Digit } ;
 
-StringLiteral = '"' { StringChar } '"' ;
+StringLiteral =
+    '"' { StringChar } '"' ;
 
-StringChar = ? any character except '"' and '\' ?
-           | "\\" ( "n" | "t" | "r" | '"' | "\\" | "${" )
-           | "${" Expr "}" ;
+StringChar =
+      ? any character except '"' and '\' ?
+    | "\\" ( "n" | "t" | "r" | '"' | "\\" | "${" )
+    | "${" Expr "}" ;
+(* Implementation note:
+   - In practice, interpolation is handled lexically:
+     string segments + `${` Expr `}` + string segments.
+   - Type checker restricts `${Expr}` to primitive types or explicit conversions. *)
 
-BoolLiteral = "true" | "false" ;
+BoolLiteral =
+    "true" | "false" ;
 
 (* ===== Types ===== *)
 
-Type = BaseType [ "?" ] ;
+Type =
+    ( FunctionType | BaseType ) [ "?" ] ;
+(* Implementation note:
+   - T? is sugar for Option<T>.
+   - `fn(Int) Int?` means `fn(Int) Option<Int>`. *)
 
-BaseType = PrimitiveType
-         | RecordType
-         | ArrayType
-         | DictType
-         | FunctionType
-         | GenericType
-         | TypeName ;
+FunctionType =
+    "fn" "(" [ TypeList ] ")" [ Type ] ;
+(* Implementation note:
+   - Parameter types are positional; no parameter *names* in types.
+   - Examples:
+       `fn(Int) Int`
+       `fn(Int, String) bool`
+       `fn() fn(Int) Int`
+   - Combined with `?`:
+       `fn(Int) Int?` etc. *)
 
-PrimitiveType = "int" | "float" | "bool" | "string" | "void" ;
+BaseType =
+      PrimitiveType
+    | RecordType
+    | ArrayType
+    | DictType
+    | GenericType
+    | TypeName ;
 
-RecordType = TypeName ;
+PrimitiveType = "Int" | "Float" | "Bool" | "String" | "Void" ;
 
-ArrayType = "array" "<" Type ">" ;
+RecordType =
+    TypeName ;
+(* Implementation note:
+   - Records are nominal; `TypeName` refers to a declared `type` with record body. *)
 
-DictType = "dict" "<" Type "," Type ">" ;
+ArrayType =
+    "array" "<" Type ">" ;
 
-FunctionType = "(" [ TypeList ] ")" "->" Type ;
+DictType =
+    "dict" "<" Type "," Type ">" ;
 
-GenericType = TypeName "<" TypeArgs ">" ;
+FunctionTypeAlias =
+    TypeName ; (* See FunctionType; usually you just use TypeName for aliases. *)
 
-TypeArgs = Type { "," Type } [ "," ] ;
+GenericType =
+    TypeName "<" TypeArgs ">" ;
 
-TypeList = Type { "," Type } [ "," ] ;
+TypeArgs =
+    Type { "," Type } [ "," ] ;
+
+TypeList =
+    Type { "," Type } [ "," ] ;
+
+(* ===== Type Names ===== *)
+
+TypeName =
+    Identifier { "." Identifier } ;
+(* Implementation note:
+   - Supports module-qualified types: `Point`, `MyModule.Point`, `pkg.time.Time`.
+   - Resolution of whether the first segment is a module or type is semantic. *)
 
 (* ===== Identifiers ===== *)
 
-Identifier = Letter { Letter | Digit | "_" } ;
+Identifier =
+    Letter { Letter | Digit | "_" } ;
 
-Letter = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j"
-       | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t"
-       | "u" | "v" | "w" | "x" | "y" | "z"
-       | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J"
-       | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T"
-       | "U" | "V" | "W" | "X" | "Y" | "Z" ;
+Letter =
+      "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j"
+    | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t"
+    | "u" | "v" | "w" | "x" | "y" | "z"
+    | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J"
+    | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T"
+    | "U" | "V" | "W" | "X" | "Y" | "Z" ;
 
-Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+Digit =
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 
-(* ===== Notes ===== *)
+(* ===== Keywords (reference) ===== *)
 
-(* Capabilities:
- * - Twinkle does not have traits or interfaces
- * - Capabilities are expressed via records of functions
- * - Example: Show<T> = .{ to_string: fn(T) -> string }
- * - Functions requiring capabilities take them as explicit parameters
- * - No implicit resolution or automatic dispatch
- *)
+(*
+Keywords (reserved):
+  fn, if, else, true, false,
+  import, pub, type, case, try,
+  and, or, for, in, collect,
+  break, continue, return
 
-(* String Interpolation:
- * - ${expr} is supported only for primitive types:
- *   - string (used as-is)
- *   - int (converted via string.of_int)
- *   - float (converted via string.of_float)
- *   - bool (converted via string.of_bool)
- * - For custom types, use explicit conversion functions:
- *   "${user_to_string(user)}"
- * - This is validated during type checking
- *)
+Implementation note:
+  - These must not be recognized as Identifiers by the lexer.
+  - Built-in prelude functions (`print`, `println`, `len`, `error`,
+    `range`, `range_from`, `range_step`) are NOT keywords.
+*)
 
-(* For Loops:
- * - 'for x in coll' works with a closed set of built-in types:
- *   - array<T>
- *   - Range (from range(), range_from(), range_step())
- *   - dict<K,V> (iterates over key-value pairs)
- *   - Iterator<T>
- * - Custom types must provide helper functions that return one of these types
- * - Example: tree.iter(t) returns Iterator<T>
- *)
+(* ===== Semicolons & Automatic Semicolon Insertion (ASI) ===== *)
 
-(* Records:
- * - Anonymous record literals .{} require contextual type information
- * - Named constructors Type{} always produce that specific type
- * - Dot syntax p.method(...) desugars to module.method(p, ...)
- * - Records are nominal types, not structural
- *)
+(*
+Semicolons in the grammar:
+  - The grammar requires `;` after each Statement and TopLevelStmt:
+      Statement   ::= ... | LetBinding ";" | Expr ";" | ...
+      TopLevelStmt ::= LetBinding ";" | Expr ";"
+  - However, programmers normally omit semicolons at end of line.
+  - The lexer performs Automatic Semicolon Insertion (ASI) at newlines.
 
-(* Pattern Matching:
- * - Must be exhaustive or include wildcard _
- * - Enum patterns use dot prefix: .Some(x), .None
- *)
+ASI rule (lexer-level, Go-style):
 
-(* Other Notes:
- * - try expr only works with Result<T, E> types
- * - T? is syntactic sugar for Option<T>
- * - for loops always return void
- * - collect always returns array<T>
- * - break/continue only valid inside loops
- * - Module names come from import paths (last segment without .tw extension)
- * - Qualified names (module.Type, module.function) are parsed as postfix
- *   field access expressions and resolved during type checking
- * - All values are immutable; update syntax desugars to rebuilding + rebinding
- *)
+  Before producing a newline token, the lexer inserts a semicolon token `;`
+  if ALL of the following hold:
+
+    1. The current token stream is not inside an unclosed:
+         - parenthesis: '(' ... ')'
+         - bracket:     '[' ... ']'
+         - block:       '{' ... '}'
+         - string literal or interpolation
+
+    2. The last non-whitespace token on the line is one of:
+         - an Identifier
+         - a Literal (int, float, string, bool)
+         - ')', ']', or '}'
+         - 'break', 'continue', or 'return' (when no expression follows
+           on the same line)
+
+  In effect, the following source:
+
+      x := 1
+      y := 2
+      println(x + y)
+
+  is tokenized as:
+
+      x := 1 ;
+      y := 2 ;
+      println(x + y) ;
+
+  Multiple statements on the same line require explicit semicolons:
+
+      x := 1; y := 2; println(x + y)
+
+  The lexer does NOT insert semicolons after tokens that cannot legally
+  end a statement (e.g. binary operators, ',', '(', '[', '{', '.', 'and',
+  'or'), so multi-line expressions remain valid:
+
+      result :=
+        1 +
+        2 +
+        3
+
+      point :=
+        Point.{ x: 1,
+                y: 2 }
+
+  If a line cannot be parsed as a complete Statement or final Expr even
+  after ASI (for example: `x := f() g()` on a single line), it is a syntax
+  error; the language does not automatically split such lines into multiple
+  statements.
+*)
