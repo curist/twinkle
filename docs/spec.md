@@ -12,12 +12,22 @@ Design goals:
 * GC-managed references for strings, arrays, records, dicts.
 * Small runtime; rely on `struct`, `array`, reference types.
 * Inherent methods only via module functions.
+* Immutable values with rebindable names.
+* No trait system; capabilities via records of functions.
 
 Source files end with `.tw`.
 
 ---
 
 ## 2. Value Model
+
+### Immutability
+
+**All values in Twinkle are immutable.**
+
+* Primitives, strings, arrays, records, dicts, and functions cannot be mutated in place.
+* There is no observable in-place mutation of values in the language model.
+* Updates are expressed through rebinding: constructing a new value and binding a name to it.
 
 ### Primitives (unboxed)
 
@@ -29,9 +39,9 @@ Source files end with `.tw`.
 ### References (GC)
 
 * `string` — immutable text.
-* `array<T>` — GC array; element unboxed/ref depending on `T`.
-* `record` — closed struct shape.
-* `dict<K,V>` — hash map reference.
+* `array<T>` — immutable GC array; element unboxed/ref depending on `T`.
+* `record` — immutable closed struct shape.
+* `dict<K,V>` — immutable hash map reference.
 * `function` — closure with captured environment (GC).
 
 ### `void`
@@ -49,13 +59,9 @@ Parametric polymorphism:
 fn map<A, B>(xs: array<A>, f: (A) -> B) -> array<B> { ... }
 ```
 
-Constraints allowed:
-
-```tw
-fn log<T: Show>(x: T) -> void { ... }
-```
-
 No higher-kinded types.
+
+No trait constraints. Capabilities are passed as explicit function parameters (see Section 10).
 
 Type alias:
 
@@ -111,7 +117,7 @@ enum Shape {
 Usage:
 
 ```tw
-let s = Shape.Circle(3.0)
+s := Shape.Circle(3.0)
 ```
 
 Pattern:
@@ -143,7 +149,7 @@ Record literal (two forms):
 p: Point = .{ x: 10, y: 20 }
 
 // Named constructor (explicit type)
-let p = Point{ x: 10, y: 20 }
+p := Point.{ x: 10, y: 20 }
 ```
 
 Field access: `p.x`
@@ -155,32 +161,207 @@ Anonymous record literal .{ field₁: e₁, ..., fieldₙ: eₙ } introduces a f
 * τ must be a nominal struct type whose declared fields are exactly { fieldᵢ: type(eᵢ) }.
 * During type inference, τ may be unified with a concrete nominal struct type (e.g. Person). This succeeds iff that struct’s field set and field types match the constraint.
 * All uses of the variable must agree on a single nominal struct type; otherwise, inference fails.
-* If, after solving, τ is still unconstrained (no nominal type chosen) and the value escapes the function or is otherwise observable at an interface boundary, an explicit type annotation is required.
+* If, after solving, τ is still unconstrained (no nominal type chosen) and the value **escapes** the function or is otherwise observable at an interface boundary, an explicit type annotation is required.
 * This mechanism does not introduce structural record types into the language; it is solely a constraint-solving aid for anonymous record literals.
+
+**escape** means:
+* returned from function
+* stored in array/dict
+* included in record fields
+* passed to another function
+* assigned to a let-binding without annotation
 
 ---
 
-## 7. Functions & Bindings
+## **7. Functions, Bindings, and Rebinding**
 
-Declaration:
+### 7.1 Function Declaration
 
 ```tw
 fn f(x: int, y: int) -> int { x + y }
 ```
 
-Bindings:
+Functions are pure: they cannot mutate caller-visible state.
+All “updates” create new values and rebind local names.
 
-```tw
-let x = expr // immutable
-let x: int = expr
-y = something    // reassignment
-```
+Parameters are ordinary local bindings and may be rebound within the function body (see §7.3).
 
-Blocks are expressions; final expression determines type.
-
-Only syntactic values that contain no allocations (ints, floats, bools, enum constructors, `.{ ... }` with value-only fields, etc.) are generalized. Ref-y values (arrays, strings, dicts, closures) get monomorphic type variables.
+Functions form **lexical scope boundaries**: names defined outside a function cannot be rebound inside the function.
 
 ---
+
+### 7.2 Bindings
+
+#### Initial binding
+
+```tw
+let x = expr
+let x: T = expr
+```
+
+* Introduces a **new binding** `x` in the **current lexical scope**.
+* If a binding with the same name exists in an outer scope, the new binding **shadows** it.
+* Bindings refer to **immutable values**; the value cannot be changed in place.
+
+Lexical scopes are introduced by:
+
+* function bodies,
+* blocks created with braces,
+* pattern-bound names in `case` arms,
+* loop variables in `for`,
+* top-level module scope.
+
+---
+
+### 7.3 Rebinding
+
+Rebinding provides *syntactic convenience* for expressing new values that replace old ones.
+
+```tw
+x = expr
+```
+
+#### Rules
+
+1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function** (or at top-level).
+2. It **rebinds that binding**: i.e., reassigns the name to a new immutable value.
+3. Rebinding **does not** create a new binding.
+4. If multiple bindings of `x` exist due to shadowing, the **innermost** one is the target.
+5. It is a compile-time error to use `x = expr` if no such binding exists.
+6. Rebinding cannot cross function boundaries. A function cannot rebind variables defined in its caller or outer functions.
+
+Thus, rebinding is always contained within the function where the corresponding `let` appears.
+
+Example:
+
+```tw
+fn bump(n: int) -> int {
+  n = n + 1   // rebinds parameter 'n'
+  n
+}
+```
+
+---
+
+### 7.4 Rebinding and Control Flow
+
+Control-flow constructs (`if`, `for`, `case`, blocks `{ ... }`) **do not** introduce new rebinding scopes, except for any names they explicitly define (e.g., loop variables, pattern-bound names).
+
+Inside a `for` loop, rebinding targets the same lexical binding as outside the loop:
+
+```tw
+let acc = 0
+for x in xs {
+  acc = acc + x      // rebinds the acc defined above
+}
+acc                   // sees the final value
+```
+
+Nested bindings behave as expected with shadowing:
+
+```tw
+let acc = 0
+
+if cond {
+  let acc = 10       // new inner binding
+  acc = acc + 1      // rebinds inner acc (11)
+}
+
+// outer acc is still 0
+```
+
+Pattern-bound names follow the same rules:
+
+```tw
+let x = 1
+
+case opt {
+  .Some(x) => {      // new binding shadows outer x
+    x = x + 1        // rebinds pattern-bound x
+    println(x)
+  }
+}
+
+// outer x is unchanged (1)
+```
+
+---
+
+### 7.5 Update Syntax (Desugaring)
+
+Twinkle provides update-like syntax for ergonomics, but all updates are expressed as **rebinding to newly constructed values**.
+
+#### Record field update
+
+```tw
+r.field = expr
+```
+
+Desugars to:
+
+```tw
+r = { r with field = expr }
+```
+
+#### Array index update
+
+```tw
+arr[i] = value
+```
+
+Desugars to:
+
+```tw
+arr = array.set(arr, i, value)
+```
+
+#### Compound assignment
+
+```tw
+x += y
+```
+
+Desugars to:
+
+```tw
+x = x + y
+```
+
+#### Left-hand side restrictions
+
+Only **simple local names** may appear on the left of update or rebinding.
+You cannot update through an expression:
+
+* `foo().x = 1` — error
+* `user.profile = ...` — allowed only if `user` is a local binding and the update desugars to rebinding `user`.
+
+A *simple local name* is an identifier that resolves to a local binding in the current lexical scope and is not:
+
+* a field access,
+* an indexed expression,
+* a module-qualified name,
+* a function call.
+
+---
+
+### 7.6 Aliasing and Value Semantics
+
+All values are immutable. Rebinding affects only the local name, not any other aliases:
+
+```tw
+let p = .{ y: 0 }
+let q = p
+
+p.y = 1      // p = { p with y = 1 }
+
+q             // still { y: 0 }
+```
+
+Twinkle has **value semantics**, not reference semantics.
+
+---
+
+If you want, I can also cleanly integrate this into a fully revised “Bindings & Mutation Model” chapter later, or produce diagrams showing rebinding propagation and shadowing resolution.
 
 ## 8. Modules & Imports
 
@@ -256,163 +437,164 @@ point.translate(p,1,2)
 
 ---
 
-# **10. Traits (Capabilities With Callable Namespace Functions)**
+# **10. Capabilities via Records of Functions**
 
-Traits define **capabilities** for types.
-They introduce *functions* that may be implemented for a specific type, and may optionally be called by user code **through the trait’s namespace**, never via dot.
+Twinkle **does not** support traits, interfaces, or typeclass-style implicit capability systems.
 
-Rationale of the calling convention of trait methods:
-
-* Keep dot resolution trivial.
-* Avoid typeclass-style global function overloading.
-* Make trait dispatch visually obvious (Show.show(x)).
-* Prevent method collision between traits.
+Instead, Twinkle uses **records of functions** to model capabilities.
 
 ---
 
-## **10.1 Declaration**
+## **10.1 No Traits or Interfaces**
+
+* There is **no** syntax for declaring traits/interfaces (e.g. `trait Show`, `interface Iterable`).
+* There is **no** way to write generic constraints such as `T: Show` or `T: Iterable`.
+* There is **no** implicit resolution of "methods provided by a trait" based on the static type of a value.
+
+All polymorphic behavior is expressed using:
+
+* Ordinary **functions**,
+* **Records of functions** (capability records),
+* Modules and first-class values.
+
+This keeps:
+
+* The type system Hindley–Milner–style and simple,
+* The compiler free from trait solvers, global coherence checks, and complex instance resolution.
+
+---
+
+## **10.2 Capabilities via Records of Functions**
+
+A capability is a nominal type that captures a set of operations on some data type `T`.
+
+**Example: Show capability**
 
 ```tw
-trait Show<T> {
-  fn show(x: T) -> string
+type Show<T> = .{
+  to_string: fn(T) -> string,
 }
 ```
 
-A trait defines:
+A function that needs "anything that can be shown" is written by taking both:
 
-* A set of **functions** (not methods bound to a value).
-* A single type parameter describing the implementing type.
+* the value(s),
+* and a corresponding capability record.
 
-Trait functions belong to the **trait namespace**, not the value’s namespace.
-
----
-
-## **10.2 Implementation**
+**Example: Generic printing**
 
 ```tw
-impl Show(Point) {
-  fn show(p: Point) -> string {
-    "Point(${p.x}, ${p.y})"
-  }
-}
-
-```
-
-Each implementation provides concrete definitions for the trait’s functions.
-
-A trait may be implemented for a type only once (coherence rules below).
-
----
-
-## **10.3 Calling Trait Functions**
-
-Trait functions **are callable**, but only through the trait name:
-
-```tw
-Show.show(p)
-Eq.eq(a, b)
-Ord.compare(x, y)
-```
-
-### **Not allowed:**
-
-```tw
-p.show()          // forbidden: trait functions are not dot methods
-eq(a, b)          // forbidden unless user defines such a function
-```
-
-Trait functions never participate in dot lookup.
-
-This preserves:
-
-* simple dot resolution (fields + inherent methods only),
-* no multi-trait method search,
-* no trait-based method overloading.
-
----
-
-## **10.4 Where Traits Are Used by the Compiler**
-
-Even though trait functions are callable by users, the compiler also relies on traits for certain built-in language features:
-
-* **String interpolation** → requires `Show<T>`
-* **Equality & ordering operators** → require `Eq<T>`, `Ord<T>`
-* **Arithmetic operators** → require `Add<T>`, `Sub<T>`, etc.
-* **Indexing** → requires `Index<T,I>` / `IndexMut<T,I>`
-* **`for` and `collect` loops** → require `Iterable<T>`
-
-These features are lowered to trait function calls, e.g.:
-
-```
-a == b   →   Eq.eq(a, b)
-a + b    →   Add.add(a, b)
-"${x}"   →   Show.show(x)
-```
-
-Trait functions used for lowering remain normal functions and can still be called explicitly by user code.
-
----
-
-## **10.5 Trait Constraints**
-
-Trait constraints appear on generics:
-
-```tw
-fn print_all<T: Show>(xs: array<T>) {
+fn print_all<T>(xs: array<T>, show: Show<T>) {
   for x in xs {
-    println(Show.show(x))
+    println(show.to_string(x))
   }
 }
 ```
 
-Constraints must be resolvable at compile time.
-If no implementation is available, the compiler reports an error at the usage site.
+**Usage:**
 
-Multiple traits may define functions with the same name; there is no conflict unless users qualify incorrectly.
+```tw
+type User = .{ name: string, age: int }
+
+fn show_user(u: User) -> string {
+  // yep, this is comment
+  // twinkle will only have single line comment
+  // twinkle currently doesn't support `s1 + s2`
+  // string concat pattern, so we use string interpolation here
+  "${u.name}(${u.age})"
+}
+
+ShowUser: Show<User> = .{
+  to_string: show_user,
+}
+
+users: array<User> = ...
+print_all(users, ShowUser)
+```
+
+**Key points:**
+
+* The compiler does **not** invent or find `Show<User>` automatically.
+* The call site is always **explicit** about which capability record is passed.
 
 ---
 
-## **10.6 Coherence Rules**
+## **10.3 No Implicit Conversions**
 
-To prevent ambiguous implementations:
+Twinkle does **not** perform implicit conversions to satisfy capability records.
 
-* **At most one** implementation is allowed for each `(Trait, TypeHead)` pair.
-* An implementation is allowed only if **either**:
+Given a parameter of type `Show<T>`:
 
-  * the trait or
-  * the type
-    is defined in the current module/package (the “orphan rule”).
+```tw
+fn debug_value<T>(x: T, show: Show<T>) { ... }
+```
 
-This ensures deterministic resolution and avoids cross-package conflicts.
+the call:
+
+```tw
+debug_value(user)       // ❌ illegal: missing Show<User>
+```
+
+is rejected. The caller must explicitly supply a value of type `Show<User>`:
+
+```tw
+debug_value(user, ShowUser)  // ✅
+```
+
+This applies uniformly:
+
+* No automatic wrapping of `T` into `Show<T>` (or similar),
+* No automatic rewriting of `array<T>` into `array<Show<T>>`,
+* No chained or inferred conversions.
+
+All adapter logic, if any, is explicit in user code.
 
 ---
 
-## **10.7 Trait Functions vs Dot Syntax**
+## **10.4 Common Capability Patterns**
 
-Dot resolution **never** looks at traits.
-
-Valid:
+### Equality and Ordering
 
 ```tw
-p.x                // record field
-point.translate(p) // inherent method desugared
-p.translate(1,2)   // dot sugar → point.translate(p, 1, 2)
-Show.show(p)       // explicit trait function call
+type Eq<T> = .{
+  equals: fn(T, T) -> bool,
+}
+
+fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) -> bool {
+  for x in xs {
+    if eq.equals(x, needle) {
+      return true
+    }
+  }
+  false
+}
+
+type Point = .{ x: int, y: int }
+
+EqPoint: Eq<Point> = .{
+  equals(a, b) => a.x == b.x && a.y == b.y,
+}
+
+points: array<Point> = ...
+p: Point = .{ x: 1, y: 2 }
+found := contains(points, p, EqPoint)
 ```
 
-Invalid:
+### Collection-Specific Helpers
+
+Instead of a general "Iterable" trait, provide small, concrete helpers:
 
 ```tw
-p.show()           // trait methods are not dot-callable
-p.eq(q)            // no trait methods in dot namespace
+fn sum_array(xs: array<int>) -> int {
+  acc := 0
+  for x in xs {
+    acc = acc + x
+  }
+  acc
+}
 ```
 
-This separation ensures:
-
-* predictable name resolution,
-* no hidden dispatch pathways,
-* no trait-object behavior,
-* simpler reasoning about code generation.
+User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Iterator<T>`) from explicit functions.
 
 ---
 
@@ -420,68 +602,74 @@ This separation ensures:
 
 String interpolation uses:
 
-```
+```tw
 "hello ${x}"
 ```
 
-For an expression `x`:
+Interpolation is **not** driven by a capability or trait. Instead, it is defined only for a **small, fixed set** of primitive types.
 
-1. The compiler introduces a constraint `Show<T>` where `T = type(x)`.
+### Supported Types
 
-2. Interpolation desugars to:
+In Twinkle, the expression inside `${...}` may have one of the following types:
 
-   ```tw
-   Show.show(x)
-   ```
+* `string` — used as-is,
+* `int`    — converted via a core `string.of_int` function,
+* `float`  — converted via `string.of_float`,
+* `bool`   — converted via `string.of_bool`.
 
-3. The resulting strings are concatenated in evaluation order.
+Attempting to interpolate a value of any other type is a **compile-time error**.
 
 ### Example
 
 ```tw
-let name = "Ada"
-n = 3
+name: string = "Twinkle"
+n: int = 42
+ok: bool = true
 
-let message = "Hello ${name}, you have ${n} messages."
+s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
+
+type User = .{ name: string, age: int }
+user: User = .{ name: "Ada", age: 30 }
+s2 := "user=${user}"                    // ❌ error: User not interpolable
 ```
 
-Desugaring (conceptual):
+### Desugaring
+
+String literals with interpolation are desugared into calls on core string utilities.
+
+For example:
 
 ```tw
-let message =
-  String.concat([
-    "Hello ",
-    Show.show(name),
-    ", you have ",
-    Show.show(n),
-    " messages."
-  ])
+"n=${n}"
 ```
 
-(Exact lowering left to the implementation.)
-
-### Errors
-
-If no `Show<T>` implementation exists:
-
-```
-error: cannot interpolate value of type SocialPost
-note: string interpolation requires an implementation of Show<SocialPost>
-```
-
-### User invocation of trait functions
-
-Users may also call trait functions directly:
+is conceptually lowered to:
 
 ```tw
-println( Show.show(x) )
+string.concat_many([
+  "n=",
+  string.of_int(n),
+])
 ```
 
-Dot-call syntax is forbidden:
+(Exact library function naming may vary.)
+
+### Extension: Explicit Conversion Functions
+
+To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
 
 ```tw
-x.show()        // invalid
+type User = .{ name: string, age: int }
+
+fn user_to_string(u: User) -> string {
+  u.name + " (" + int.to_string(u.age) + ")"
+}
+
+user: User = .{ name: "Ada", age: 30 }
+s := "user=${user_to_string(user)}"    // ✅ ok
 ```
+
+There is no automatic association between `User` and `user_to_string`. The choice of conversion is explicit at the call site.
 
 
 ---
@@ -515,61 +703,88 @@ for x in coll { body }
 for x,i in coll { body }
 ```
 
+**Supported Collection Types:**
+
+The `for x in coll` syntax is supported only for a **closed set** of built-in collection types:
+
+* `array<T>` — homogeneous indexable arrays,
+* `Range`    — integer ranges (e.g. `0..10`),
+* `dict<K, V>` — dictionaries (iterates over key-value pairs),
+* `Iterator<T>` — an explicit iterator type from the standard library.
+
+The compiler performs a **type-directed** lowering:
+
+* If `coll` has type `array<T>`, the loop is lowered to an indexed loop over the array length.
+* If `coll` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
+* If `coll` has type `dict<K, V>`, the loop is lowered to iteration over key–value pairs.
+* If `coll` has type `Iterator<T>`, the loop is lowered to repeated `next` calls until the iterator is exhausted.
+
+Any value used in `for x in coll` whose type is not one of the supported built-ins is a **compile-time error**.
+
+**Indexed form:**
+
 * `i: int` starts from 0 and increments each iteration.
-* Independent of the underlying Iterable.State.
+* Independent of the underlying iterator state.
 * Break/continue as usual.
+
+**User Extensions:**
+
+To iterate over a custom type, users define a **helper function** that produces a built-in collection or iterator:
+
+```tw
+// tree.tw
+type Tree<T> = ...
+
+pub fn iter<T>(t: Tree<T>) -> Iterator<T> {
+  // implementation creates an Iterator<T> over the tree
+}
+
+// usage
+fn sum_tree(t: Tree<int>) -> int {
+  acc := 0
+  for x in t.iter() {    // desugars to: tree.iter(t)
+    acc = acc + x
+  }
+  acc
+}
+```
 
 ---
 
 ## 13. Collect Comprehension
 
 ```tw
-let xs = collect x in range(10) { x * x }
+xs := collect x in range(10) { x * x }
 ```
 
 Rules:
 
 * Produces `array<T>`.
+* Works with the same built-in collection types as `for` loops (see Section 12).
 * `continue` skips emission.
 * `break` ends early, returns partial array.
 * If the body returns void → error, because collect expects a value to push.
 * The element type is inferred as the type of the body expression; all iterations must unify to same type; otherwise type error.
 
----
-
-## 14. Iterable Trait
+Example:
 
 ```tw
-trait Iterable<T> {
-  type Item
-  type State
-  fn init(x: T) -> State
-  fn next(s: State) -> Step<State, Item>
+squares := collect x in range(1, 10) { x * x }
+// squares: array<int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
+
+evens := collect x in range(1, 20) {
+  if x % 2 == 0 { x } else { continue }
 }
+// evens: array<int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
-
-`Step<S, A>`:
-
-```tw
-enum Step<S, A> {
-  Done,
-  Yield(A, S),
-}
-```
-
-User never calls these.
-Compiler uses them for:
-
-* `for x in coll {…}`
-* `collect`
-
-Std lib implements Iterable for arrays, strings, dicts, ranges, options.
 
 ---
 
-## 15. Arrays
+## 14. Arrays
 
-`arr[i]` indexing, 0-based.
+Arrays are **immutable** sequences.
+
+`arr[i]` indexing, 0-based (read-only access).
 
 Built-in:
 
@@ -577,10 +792,12 @@ Built-in:
 len(arr)
 ```
 
-Inherent helpers allowed via module of array type:
+Array operations via module functions (all return new arrays):
 
-* `array.push(a, x)`
-* `array.pop(a)`
+* `array.set(arr, index, value) -> array<T>` — returns new array with element at index replaced
+* `array.append(arr, value) -> array<T>` — returns new array with value appended
+* `array.concat(arr1, arr2) -> array<T>` — returns new array combining both
+* `array.slice(arr, start, end) -> array<T>` — returns new array with subset of elements
 * etc.
 
 Array literals:
@@ -597,28 +814,53 @@ If context can't determine element type => compiler error.
 [x, y, z]  // all elements must have the same type
 ```
 
+**Update syntax:**
+
+```tw
+arr[i] = value
+```
+
+Desugars to:
+
+```tw
+arr = array.set(arr, i, value)
+```
+
 
 ---
 
-## 16. Strings
+## 15. Strings
 
-Immutable, `len(str)` valid.
+Strings are **immutable**.
 
-Interpolation recommended for assembly.
+`len(str)` returns the length of the string.
+
+String interpolation is recommended for string assembly (see Section 11).
+
+String operations via module functions (all return new strings):
+
+* `string.concat(s1, s2) -> string`
+* `string.substring(s, start, end) -> string`
+* `string.of_int(n: int) -> string`
+* `string.of_float(f: float) -> string`
+* `string.of_bool(b: bool) -> string`
+* etc.
 
 ---
 
-## 17. Range
+## 16. Range
 
 `range(10)` → 0..9
-`range_from(a,b)`
+`range_from(a,b)` -> [a, b)
 `range_step(a,b,step)`
 
 Used by `for` and `collect`.
 
 ---
 
-## 18. Dict
+## 17. Dict
+
+Dicts are **immutable** hash maps.
 
 Creation:
 
@@ -628,22 +870,23 @@ m: dict<string, int> = dict.new()
 
 Type parameters are inferred from the annotation.
 
-Inherent methods:
+Dict operations via module functions (all return new dicts):
 
-* `m.put(k,v)`
-* `m.get(k) -> V?`
-* `m.has(k)`
-* `m.keys() -> array<K>`
-* `len(m)`
+* `dict.set(m, k, v) -> dict<K, V>` — returns new dict with key-value pair added/updated
+* `dict.remove(m, k) -> dict<K, V>` — returns new dict with key removed
+* `dict.get(m, k) -> V?` — returns Option<V> for safe access
+* `dict.has(m, k) -> bool` — checks if key exists
+* `dict.keys(m) -> array<K>` — returns array of keys
+* `len(m)` — returns number of entries
 
 Indexing syntax:
 
-* `m[k]` returns `V?` (Option<V>) for safe access
-* `m[k] = v` inserts or updates the value
+* `m[k]` returns `V?` (Option<V>) for safe read access
+* `m[k] = v` desugars to `m = dict.set(m, k, v)`
 
 ---
 
-## 19. Error Handling
+## 18. Error Handling
 
 No exceptions.
 
@@ -673,79 +916,63 @@ try expr
 
 ---
 
-## 20. Prelude
+## 19. Prelude
 
 Implicitly imported.
 
 Includes:
 
-* primitive functions: `print`, `println`, `len`
-* types: `int`, `float`, `string`, `array<T>`, `dict<K,V>`
-* builtin traits used by compiler:
+* primitive functions: `print`, `println`, `len`, `error`
+* types: `int`, `float`, `string`, `bool`, `void`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
+* range functions: `range`, `range_from`, `range_step`
+* array module: `array.set`, `array.append`, `array.concat`, etc.
+* dict module: `dict.new`, `dict.set`, `dict.get`, etc.
+* string module: `string.concat`, `string.of_int`, `string.of_float`, `string.of_bool`, etc.
 
-  * `Show`
-  * `Iterable`
-  * `Eq`, `Ord`
-* range functions
-
-The standard library provides Show impls for core collections and enums (with some default formatting).
-
-We may want to have a `Lenable` trait, so `len()` work on user custom types.
+The prelude does not include any traits or implicit conversions.
 
 ---
 
-## 21. Type Inference (HM + Traits)
+## 20. Type Inference
 
-* Standard Hindley–Milner with:
+Standard Hindley–Milner type inference:
 
-  * unification
-  * let-generalization (value restriction applies for refs)
-  * trait constraints as simple class constraints
+* Unification
+* Let-generalization (value restriction applies for refs)
+* No trait constraints
 
-Interpolation introduces trait constraints:
+Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
 
-```
-"${x}"  →  x : Show
-```
-
-Generic function:
-
-```tw
-fn f<T: Show>(x: T) -> string {
-  "${x}"
-}
-```
-
-Trait method bodies type-check normally but are not callable.
-
-Inference never performs method-name search — traits do not leak into the value namespace.
+String interpolation is type-checked by verifying the expression type is one of: `string`, `int`, `float`, `bool`.
 
 ---
 
-## 22. Compilation to WebAssembly GC
+## 21. Compilation to WebAssembly GC
 
 * Primitives → unboxed `i64/f64`
-* Records → `struct`
-* Arrays → `array`
+* Records → immutable `struct` (new values created via structural sharing where possible)
+* Arrays → immutable `array` (new values created via structural sharing where possible)
+* Dicts → immutable hash map structures (structural sharing where possible)
 * Functions → closures allocated as small structs
 * Options:
 
   * ref types → nullable refs
   * value types → tagged struct
-* Interpolation → compiler calls into Show impl
-* Iterable lowering → loops over State + next()
+* String interpolation → compiler inserts calls to `string.of_int`, `string.of_float`, `string.of_bool`
+* For loops → type-directed lowering to primitive loops based on collection type
 
 ---
 
-## 23. Error Messages
+## 22. Error Messages
 
 Examples:
 
-**No `Show` impl**:
+**Invalid string interpolation**:
 
 ```
 error: cannot interpolate value of type SocialPost
-note: string interpolation requires an implementation of Show(SocialPost)
+note: string interpolation only supports string, int, float, and bool
+help: consider using an explicit conversion function: "${post_to_string(post)}"
 ```
 
 **No inherent method**:
@@ -755,738 +982,20 @@ error: no method 'translate' for type Point
 note: dot syntax only resolves record fields and inherent methods from the defining module
 ```
 
----
-
-### 24. Operators
-
-Twinkle provides a small, fixed set of operators.
-Operators are **desugared into trait function calls**, where traits define the required behavior for the operator.
-
-Traits remain **namespace-qualified function providers**, not dot methods.
-Example:
-
-```tw
-a + b     →    Add.add(a, b)
-a == b    →    Eq.eq(a, b)
-a[i]      →    Index.get(a, i)
-```
-
-Operators never trigger trait-based method lookup on values.
-
----
-
-## **24.1 Operator Categories**
-
-Operators fall into these groups:
-
-1. Equality and ordering operators
-2. Arithmetic operators
-3. Indexing operators
-4. Non-overloadable operators (logical, assignment)
-
-Only categories (1–3) rely on trait functions.
-
----
-
-# **24.2 Equality and Ordering Operators**
-
-Equality and ordering depend on these traits:
-
-```tw
-trait Eq<T> {
-  fn eq(a: T, b: T) -> bool
-}
-
-enum Ordering { Lt, Eq, Gt }
-
-trait Ord<T> {
-  fn compare(a: T, b: T) -> Ordering
-}
-```
-
-### **24.2.1 Equality operators**
+**Invalid for loop collection**:
 
 ```
-a == b
-a != b
+error: cannot iterate over value of type Tree<int>
+note: for loops only support array<T>, Range, dict<K,V>, and Iterator<T>
+help: consider defining a helper function that returns Iterator<int>
 ```
 
-Typing rule:
-
-* Let `T = type(a) = type(b)`
-* Requires constraint `Eq<T>`
-
-Desugaring:
-
-```tw
-a == b    →    Eq.eq(a, b)
-a != b    →    !Eq.eq(a, b)
-```
-
-Users may call:
-
-```tw
-Eq.eq(a, b)
-```
-
-directly when needed.
-
----
-
-### **24.2.2 Ordering operators**
+**Mutation attempt on non-name**:
 
 ```
-a <  b
-a <= b
-a >  b
-a >= b
+error: cannot update expression that is not a simple local name
+note: only local variables can be updated; expressions like 'foo().x = 1' are not allowed
+help: bind to a local variable first: 'tmp := foo(); tmp.x = 1'
 ```
-
-Typing rule:
-
-* Let `T = type(a) = type(b)`
-* Requires `Ord<T>`
-
-Desugaring pattern:
-
-```tw
-let cmp = Ord.compare(a, b)
-
-a <  b   →   cmp == .Lt
-a <= b   →   cmp == .Lt || cmp == .Eq
-a >  b   →   cmp == .Gt
-a >= b   →   cmp == .Gt || cmp == .Eq
-```
-
-Users may call `Ord.compare(a, b)` explicitly in generic functions.
-
----
-
-# **24.3 Arithmetic Operators**
-
-Backed by numeric traits with associated output types:
-
-```tw
-trait Add<T> {
-  type Output
-  fn add(a: T, b: T) -> Output
-}
-```
-
-(And similar for `Sub`, `Mul`, `Div`, `Rem`, `Neg`.)
-
-### Supported operators:
-
-```
-+   -   *   /   %   unary -
-```
-
-Typing rule:
-
-```
-a + b   requires Add<T>, yields Add.Output<T>
-```
-
-Desugaring example:
-
-```tw
-a + b     →    Add.add(a, b)
--x        →    Neg.neg(x)
-```
-
-Trait functions may be called by users:
-
-```tw
-let y = Add.add(a, b)
-```
-
----
-
-# **24.4 Indexing Operators**
-
-Indexing is expressed through `Index` and `IndexMut` traits:
-
-```tw
-trait Index<T, I> {
-  type Output
-  fn get(target: T, index: I) -> Output
-}
-
-trait IndexMut<T, I> {
-  type Output
-  fn set(target: T, index: I, value: Output) -> void
-}
-```
-
-### Read:
-
-```
-a[i]    →   Index.get(a, i)
-```
-
-### Write:
-
-```
-a[i] = v    →   IndexMut.set(a, i, v)
-```
-
-Users may call these functions explicitly:
-
-```tw
-Index.get(arr, 2)
-IndexMut.set(map, "k", 10)
-```
-
----
-
-# **24.5 Non-Overloadable Operators**
-
-* Logical: `!x`, `x && y`, `x || y` (bool only)
-* Assignment: `=`, `x: T = expr`
-* No user-defined operator syntax
-
----
-
-# **24.6 Type Inference with Operator Constraints**
-
-Operators inject trait constraints into HM inference:
-
-```
-a == b     →   Eq<T>
-a < b      →   Ord<T>
-a + b      →   Add<T>
-a[i]       →   Index<T,I>
-a[i] = v   →   IndexMut<T,I>
-```
-
-If constraints cannot be solved, the compiler errors at the operator site.
-
----
-
-# **25. Trait Resolution**
-
-Twinkle’s trait system is designed to be **simple, deterministic, and fast**:
-
-* Coherent (no overlapping impls).
-* HM-friendly.
-* Powerful enough for operator lowering and “derived” impls (e.g. `Index<Option<T>, I> where Index(T, I)`).
-* Still small compared to Rust/Haskell style solvers.
-
-This section defines how trait implementations are matched and how trait constraints are solved.
-
----
-
-## **25.1 Coherence**
-
-For any given trait and type head, Twinkle enforces:
-
-> **At most one `impl` per `(Trait, TypeHead)` pair.**
-
-* The **type head** is the outer constructor of the implementing type (e.g. `array<T>`, `Dict<K, V>`, `Option<T>`, `Point`).
-* No overlapping impls are allowed.
-
-Consequences:
-
-* Impl selection is always a **single, unambiguous match**.
-* There is no backtracking or global “best candidate” search.
-
----
-
-## **25.2 Generic Implementations**
-
-Impls may be generic over type parameters:
-
-```tw
-impl<T> Show(array<T>) {
-  fn show(xs: array<T>) -> string { ... }
-}
-
-impl<K, V> Index(Dict<K, V>, K) {
-  fn get(m: Dict<K, V>, k: K) -> Option<V> { ... }
-}
-```
-
-Rules:
-
-* Type parameters are introduced in `impl<...>`.
-* They are instantiated by **unification** with the concrete types at the usage site.
-* Associated types declared in the trait (e.g. `type Output`) are **determined by the impl**, usually via function signatures (see 25.3).
-
----
-
-## **25.3 Associated Types in Impls**
-
-Traits may declare associated types:
-
-```tw
-trait Index<T, I> {
-  type Output
-  fn get(target: T, index: I) -> Output
-}
-```
-
-In an `impl`, associated types are typically determined by the function signatures:
-
-```tw
-impl<T> Index(array<T>, int) {
-  fn get(xs: array<T>, i: int) -> Option<T> {
-    ...
-  }
-}
-```
-
-Here, the compiler infers:
-
-```tw
-Index.Output(array<T>, int) = Option<T>
-```
-
-You may optionally write the associated type explicitly:
-
-```tw
-impl<T> Index(array<T>, int) {
-  type Output = Option<T>
-  fn get(xs: array<T>, i: int) -> Option<T> { ... }
-}
-```
-
-but this is usually redundant; the function return type will be unified with the associated type.
-
----
-
-## **25.4 `where` Constraints**
-
-Impls may declare **explicit trait dependencies** using `where`:
-
-```tw
-impl<T> Index(Option<T>, int) where Index(T, int) {
-  fn get(opt: Option<T>, i: int) -> Index.Output(T, int) {
-    match opt {
-      Some(inner) -> Index.get(inner, i)
-      None        -> None
-    }
-  }
-}
-```
-
-Meaning:
-
-* To use `Index(Option<T>, int)`, the solver must also resolve `Index(T, int)`.
-
-Restrictions (v1):
-
-* `where` clauses may only mention traits applied to the impl’s type parameters (e.g. `Index(T, int)`, `Ord(T)`).
-* No exotic forms (no higher-rank / nested type-level logic).
-
----
-
-## **25.5 Constraint Solving Algorithm**
-
-Trait solving is a **small, memoized graph walk**.
-
-When the typechecker needs a constraint like:
-
-```tw
-Index(T0, I0)
-```
-
-it:
-
-1. **Lookup impl head**
-
-   * Find the unique `impl` whose head matches `Index(…, …)`.
-   * Unify the impl’s type parameters with `(T0, I0)`.
-
-2. **Collect `where` dependencies**
-
-   * For an impl:
-
-     ```tw
-     impl<T> Index(Option<T>, int) where Index(T, int) { ... }
-     ```
-
-     and a usage `Index(Option<Row>, int)`, the solver adds a new obligation `Index(Row, int)`.
-
-3. **Solve dependencies recursively**
-
-   * Each `where` constraint is solved using the same process (lookup → unify → recurse).
-
-4. **Memoize**
-
-   * Results are cached per `(Trait, ConcreteTypes)`, so each unique constraint is solved at most once.
-
-5. **Cycle detection**
-
-   * If solving `C` requires solving `C` again (directly or indirectly), the compiler reports a **cyclic trait dependency** error.
-   * Cycles are illegal.
-
-Because there is:
-
-* exactly one matching impl per head (coherence), and
-* a finite, acyclic graph of dependencies in well-formed programs,
-
-this process is deterministic and linear in the size of the constraint graph.
-
----
-
-## **25.6 Interaction with Operators**
-
-Operators are desugared to trait functions (see Section 24):
-
-```tw
-a + b   →   Add.add(a, b)
-a[i]    →   Index.get(a, i)
-a == b  →   Eq.eq(a, b)
-```
-
-These desugarings introduce trait constraints such as:
-
-* `Add(T)` for `a + b`
-* `Index(T, I)` for `a[i]`
-* `Eq(T)` for `a == b`
-
-The constraint solver described above is used to resolve these in the same way as explicit calls like `Index.get(a, i)`.
-
----
-
-## **25.7 Allowed & Disallowed Patterns (v1)**
-
-**Allowed:**
-
-* Simple, “leaf” impls:
-
-  ```tw
-  impl<K, V> Index(Dict<K, V>, K) {
-    fn get(m: Dict<K, V>, k: K) -> Option<V> { ... }
-  }
-  ```
-
-* Derived impls with explicit `where` dependencies:
-
-  ```tw
-  impl<T> Index(Option<T>, int) where Index(T, int) {
-    fn get(opt: Option<T>, i: int) -> Index.Output(T, int) { ... }
-  }
-  ```
-
-* Traits with associated types used to tie result types to the implementing type (e.g. `Iterable<T> { type Item; ... }`).
-
-**Disallowed / rejected (v1):**
-
-* Overlapping impls for the same `(Trait, TypeHead)`.
-* Cyclic `where` dependency graphs.
-* Higher-order or higher-rank trait constraints.
-
-These restrictions keep resolution simple, predictable, and friendly to fast HM-style compilation.
-
----
-
-# **26. Iterable and Loop Lowering**
-
-This section defines Twinkle’s iteration model: how containers provide iteration, how `for` loops desugar, and how `collect` drives comprehension-like expressions.
-
-Twinkle does **not** use trait-based method lookup. Iteration is expressed through the `Iterable` trait, whose functions live in its namespace.
-
----
-
-## **26.1 The `Step` enum**
-
-Iteration is driven by a small control enum:
-
-```tw
-enum Step<S, I> {
-  Done
-  Yield(I, S)
-}
-```
-
-Meaning:
-
-* `Done` — iteration has completed
-* `Yield(item, next_state)` — produce one element and continue with updated state
-
-This corresponds to a simple pull-based iterator.
-
----
-
-## **26.2 The `Iterable<T>` Trait**
-
-Iteration capability for a type `T` is provided by:
-
-```tw
-trait Iterable<T> {
-  type Item     // the produced item type
-  type State    // the internal iteration state
-
-  fn init(x: T) -> State
-  fn next(s: State) -> Step<State, Item>
-}
-```
-
-Notes:
-
-* `State` is an associated type to allow optimized state (e.g. an index for arrays, a cursor for strings, a hash-bucket cursor for Dict).
-* `Item` is an associated type determined by the container element type.
-* Nothing requires that `State = T`.
-
----
-
-## 26.3 `for` Loop Syntax and Lowering
-
-Twinkle supports two `for` forms:
-
-```tw
-for x in xs { body }
-for x, i in xs { body }
-```
-
-Where:
-
-* `x` is a pattern matching the element (`Iterable.Item<XsType>`),
-* `i` is an integer index starting from 0 and incrementing by 1 on each iteration,
-* `i` is **independent** of the underlying `Iterable.State`.
-
----
-
-### 26.3.1 `for x in xs { ... }`
-
-As before:
-
-```tw
-for x in xs {
-  body
-}
-```
-
-Desugars to:
-
-```tw
-{
-  let _state: Iterable.State(type_of(xs)) = Iterable.init(xs)
-  loop {
-    match Iterable.next(_state) {
-      .Done ->
-        break
-      .Yield(x, next_state) -> {
-        _state = next_state
-        body
-      }
-    }
-  }
-}
-```
-
-Typing:
-
-* Constraint: `Iterable<XsType>`
-* `x` pattern must match `Iterable.Item<XsType>`.
-
----
-
-### 26.3.2 `for x, i in xs { ... }` (indexed form)
-
-```tw
-for x, i in xs {
-  body
-}
-```
-
-Desugars to:
-
-```tw
-{
-  let _state: Iterable.State(type_of(xs)) = Iterable.init(xs)
-  let _i: int = 0
-
-  loop {
-    match Iterable.next(_state) {
-      .Done ->
-        break
-      .Yield(x, next_state) -> {
-        let i: int = _i      // bind user-visible index
-        _i = _i + 1
-        _state = next_state
-        body
-      }
-    }
-  }
-}
-```
-
-Notes:
-
-* `i` is **always** a zero-based sequential counter:
-
-  * starts at 0,
-  * increments by 1 per successful `Yield`,
-  * does **not** depend on `Iterable.State` or how the container internally tracks progress.
-* Even if `Iterable.State` is non-integer (like a cursor, pointer, or opaque handle), `i` is still just a simple `int` counter.
-
-Typing:
-
-* Constraint: `Iterable<XsType>`
-* `x` pattern must match `Iterable.Item<XsType>`.
-* `i` must be a pattern compatible with `int` (usually a simple identifier).
-
----
-
-## **26.4 The `collect` Expression**
-
-Twinkle allows:
-
-```tw
-collect for x in xs { expr }
-```
-
-This builds a new array containing the result of evaluating `expr` for each element.
-
-Lowering:
-
-```tw
-{
-  let builder = array_builder_new<ItemType>
-  let state = Iterable.init(xs)
-
-  loop {
-    match Iterable.next(state) {
-      .Done -> break
-      .Yield(x, next) -> {
-        state = next
-        let element: ItemType = expr
-        array_builder_push(builder, element)
-      }
-    }
-  }
-
-  array_builder_finish(builder)
-}
-```
-
-Where:
-
-* `ItemType = type_of(expr)`
-* No short-circuiting; strict evaluation for each step.
-
-This behaves like array comprehensions, but with explicit lowering.
-
----
-
-## **26.5 Example: Arrays**
-
-```tw
-impl<T> Iterable<array<T>> {
-  type Item  = T
-  type State = int  // index
-
-  fn init(xs: array<T>) -> int { 0 }
-
-  fn next(i: int) -> Step<int, T> {
-    if i < array.length(xs) {
-      Step.Yield(xs[i], i + 1)
-    } else {
-      Step.Done
-    }
-  }
-}
-```
-
-This matches languages where arrays are trivially iterable.
-
----
-
-## **26.6 Example: Option<T>**
-
-You may choose to make `Option<T>` iterable over 0–1 elements:
-
-```tw
-impl<T> Iterable<Option<T>> {
-  type Item  = T
-  type State = Option<T>
-
-  fn init(opt: Option<T>) -> Option<T> { opt }
-
-  fn next(s: Option<T>) -> Step<Option<T>, T> {
-    match s {
-      Some(v) -> Step.Yield(v, None)
-      None    -> Step.Done
-    }
-  }
-}
-```
-
-This is useful for chaining with `collect` or for ergonomically handling optional values.
-
----
-
-## **26.7 Example: Strings**
-
-Assuming UTF-8 iteration produces full decoded characters (`char`):
-
-```tw
-impl Iterable<string> {
-  type Item  = char
-  type State = int   // byte position
-
-  fn init(s: string) -> int { 0 }
-
-  fn next(i: int) -> Step<int, char> {
-    if i < string.byte_length(s) {
-      let (ch, next_i) = decode_next_utf8(s, i)
-      Step.Yield(ch, next_i)
-    } else {
-      Step.Done
-    }
-  }
-}
-```
-
----
-
-## **26.8 Derived Iterable: `Option<T>` or other wrappers**
-
-Derived impls may depend on the underlying type using `where`:
-
-```tw
-impl<T> Iterable<Result<T, E>> where Iterable<T> {
-  type Item  = T
-  type State = Iterable.State(T)
-
-  fn init(r: Result<T, E>) -> State {
-    match r {
-      Ok(v) -> Iterable.init(v)
-      Err(_) -> Iterable.init(empty_container<T>)
-    }
-  }
-
-  fn next(s: State) -> Step<State, Item> {
-    Iterable.next(s)
-  }
-}
-```
-
-This shows that derived iterable types are easy to express without special syntax.
-
----
-
-## **26.9 Disallowed Patterns**
-
-To preserve predictable trait resolution:
-
-* No overlapping `Iterable` impls for the same type head.
-* No cyclic `where` dependencies (enforced by trait solver).
-* No implicit lifting of iteration through nested types (must be spelled out explicitly with `where`).
-
----
-
-## **26.10 Summary**
-
-Twinkle’s iteration system is:
-
-* **Explicit** — iteration capability must be provided by the `Iterable` trait.
-* **Efficient** — each container controls its own optimized `State`.
-* **Predictable** — compiler lowering is transparent, no hidden dispatch.
-* **Generic** — works for arrays, strings, maps, options, and user-defined containers.
-
-This design maintains Twinkle’s simplicity while providing powerful, ergonomic iteration with zero magic.
 
 ---

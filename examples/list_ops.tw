@@ -40,21 +40,19 @@ fn add(a: int, b: int) -> int {
   a + b
 }
 
-impl Show(array<int>) {
-  fn show(xs: array<int>) -> string {
-    if len(xs) == 0 {
-      "[]"
-    } else {
-      result := "["
-      for x, i in xs {
-        if i > 0 {
-          result = "${result}, ${x}"
-        } else {
-          result = "${result}${x}"
-        }
+fn array_to_string(xs: array<int>) -> string {
+  if len(xs) == 0 {
+    "[]"
+  } else {
+    result := "["
+    for x, i in xs {
+      if i > 0 {
+        result = "${result}, ${x}"
+      } else {
+        result = "${result}${x}"
       }
-      "${result}]"
     }
+    "${result}]"
   }
 }
 
@@ -62,11 +60,11 @@ fn main() -> void {
   numbers := [1, 2, 3, 4, 5]
 
   doubled := map(numbers, double)
-  println("Original: ${numbers}")
-  println("Doubled:  ${doubled}")
+  println("Original: ${array_to_string(numbers)}")
+  println("Doubled:  ${array_to_string(doubled)}")
 
   evens := filter(numbers, is_even)
-  println("Evens:    ${evens}")
+  println("Evens:    ${array_to_string(evens)}")
 
   total := sum(numbers)
   println("Sum:      ${total}")

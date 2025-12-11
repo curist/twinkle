@@ -3,14 +3,14 @@
  *
  * This is the complete EBNF grammar for the Twinkle programming language.
  * Twinkle is a statically typed language targeting WebAssembly GC with
- * Hindley-Milner type inference, traits-as-contracts, and a lightweight syntax.
+ * Hindley-Milner type inference, capabilities via records of functions,
+ * and a lightweight syntax.
  *
  * Implementation Strategy:
  * For staged implementation, build the language in this order:
  * 1. Core expressions, literals, operators, functions, blocks, control flow (if)
  * 2. Records, modules (import, pub), string interpolation, generics
  * 3. Enums, pattern matching (case), try expressions, loops, collect, arrays
- * 4. Traits, impl blocks, associated types, trait bounds
  *
  * See docs/plan.md and docs/test-plan.md for detailed guidance.
  *
@@ -29,8 +29,7 @@
  * fn, if, else, true, false,
  * int, float, bool, string, void, array, dict,
  * import, pub, type, enum, case, try,
- * for, in, collect, break, continue,
- * trait, impl
+ * for, in, collect, break, continue
  *
  * Built-in Functions (in prelude, not keywords):
  * print, println, len, error
@@ -47,8 +46,6 @@ Program = { TopLevel } ;
 TopLevel = ImportDecl
          | TypeDecl
          | EnumDecl
-         | TraitDecl
-         | ImplDecl
          | FunctionDecl ;
 
 ImportDecl = "import" StringLiteral ;
@@ -76,39 +73,13 @@ Variant = Identifier [ VariantPayload ] ;
 
 VariantPayload = "(" TypeList ")" ;
 
-(* ===== Trait Declarations ===== *)
-
-TraitDecl = [ "pub" ] "trait" Identifier "(" Identifier ")" "{" { TraitItem } "}" ;
-
-TraitItem = AssociatedType
-          | TraitMethod ;
-
-AssociatedType = "type" Identifier ;
-
-TraitMethod = "fn" Identifier "(" [ ParamList ] ")" [ "->" Type ] ;
-
-(* ===== Trait Implementations ===== *)
-
-ImplDecl = "impl" Identifier "(" Type ")" "{" { ImplItem } "}" ;
-
-ImplItem = TypeBinding
-         | ImplMethod ;
-
-TypeBinding = "type" Identifier "=" Type ;
-
-ImplMethod = "fn" Identifier "(" [ ParamList ] ")" [ "->" Type ] Block ;
-
 (* ===== Functions ===== *)
 
 FunctionDecl = [ "pub" ] "fn" Identifier [ TypeParams ] "(" [ ParamList ] ")" [ "->" Type ] Block ;
 
 TypeParams = "<" TypeParam { "," TypeParam } [ "," ] ">" ;
 
-TypeParam = Identifier [ ":" TraitBounds ] ;
-
-TraitBounds = TraitBound { "+" TraitBound } ;
-
-TraitBound = Identifier ;
+TypeParam = Identifier ;
 
 ParamList = Param { "," Param } [ "," ] ;
 
@@ -313,38 +284,40 @@ Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 
 (* ===== Notes ===== *)
 
-(* Traits:
- * - Trait methods are NOT callable from user code
- * - They exist only as contracts for compiler features:
- *   - Show: for string interpolation ${x}
- *   - Iterable: for 'for' loops and 'collect'
- *   - Eq, Ord: for comparison operators
- *   - Add, Sub, Mul, Div, Rem, Neg: for arithmetic operators
- *   - Index, IndexMut: for indexing operators []
- * - Traits are nominal: one impl per (Trait, TypeHead) pair
- * - Associated types (type Item, type Output) defined in trait, bound in impl
- * - Trait bounds appear in type parameters: <T: Show>, <T: Show + Eq>
+(* Capabilities:
+ * - Twinkle does not have traits or interfaces
+ * - Capabilities are expressed via records of functions
+ * - Example: Show<T> = .{ to_string: fn(T) -> string }
+ * - Functions requiring capabilities take them as explicit parameters
+ * - No implicit resolution or automatic dispatch
  *)
 
-(* Standard Prelude Traits:
- * trait Show(T) { fn show(x: T) -> string }
- * trait Iterable(T) { type Item; type State; fn init(...); fn next(...) }
- * trait Eq(T) { fn eq(a: T, b: T) -> bool }
- * trait Ord(T) { fn compare(a: T, b: T) -> Ordering }
- * trait Add(T) { type Output; fn add(a: T, b: T) -> Output }
- * trait Sub(T) { type Output; fn sub(a: T, b: T) -> Output }
- * trait Mul(T) { type Output; fn mul(a: T, b: T) -> Output }
- * trait Div(T) { type Output; fn div(a: T, b: T) -> Output }
- * trait Rem(T) { type Output; fn rem(a: T, b: T) -> Output }
- * trait Neg(T) { fn neg(x: T) -> T }
- * trait Index(T, I) { type Output; fn get(t: T, i: I) -> Output }
- * trait IndexMut(T, I) { type Output; fn set(t: T, i: I, v: Output) -> void }
+(* String Interpolation:
+ * - ${expr} is supported only for primitive types:
+ *   - string (used as-is)
+ *   - int (converted via string.of_int)
+ *   - float (converted via string.of_float)
+ *   - bool (converted via string.of_bool)
+ * - For custom types, use explicit conversion functions:
+ *   "${user_to_string(user)}"
+ * - This is validated during type checking
+ *)
+
+(* For Loops:
+ * - 'for x in coll' works with a closed set of built-in types:
+ *   - array<T>
+ *   - Range (from range(), range_from(), range_step())
+ *   - dict<K,V> (iterates over key-value pairs)
+ *   - Iterator<T>
+ * - Custom types must provide helper functions that return one of these types
+ * - Example: tree.iter(t) returns Iterator<T>
  *)
 
 (* Records:
  * - Anonymous record literals .{} require contextual type information
  * - Named constructors Type{} always produce that specific type
  * - Dot syntax p.method(...) desugars to module.method(p, ...)
+ * - Records are nominal types, not structural
  *)
 
 (* Pattern Matching:
@@ -358,8 +331,8 @@ Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
  * - for loops always return void
  * - collect always returns array<T>
  * - break/continue only valid inside loops
- * - String interpolation ${expr} requires Show trait (validated during type checking)
  * - Module names come from import paths (last segment without .tw extension)
  * - Qualified names (module.Type, module.function) are parsed as postfix
  *   field access expressions and resolved during type checking
+ * - All values are immutable; update syntax desugars to rebuilding + rebinding
  *)
