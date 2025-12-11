@@ -1,3 +1,9 @@
+; Parse errors - highlight syntax errors
+(ERROR) @error
+
+; Generic identifier - FIRST, so specific captures can override
+(identifier) @variable
+
 ; Keywords
 [
   "fn"
@@ -64,7 +70,7 @@
 ; Comments
 (comment) @comment
 
-; Types
+; Types - higher priority for type contexts
 (primitive_type) @type.builtin
 
 (type_name
@@ -74,13 +80,20 @@
   name: (type_name
     (identifier) @type))
 
-; Function definitions
+; Type declarations
+(type_declaration
+  name: (identifier) @type.definition)
+
+; Type parameters
+(type_parameter) @type.parameter
+
+; Function definitions - higher priority
 (function_declaration
   name: (identifier) @function)
 
 (function_expression) @function
 
-; Function calls
+; Function calls - higher priority
 (call_expression
   function: (identifier) @function.call)
 
@@ -88,21 +101,13 @@
   function: (field_access
     field: (identifier) @function.method.call))
 
-; Type declarations
-(type_declaration
-  name: (identifier) @type.definition)
-
 ; Parameters
 (parameter
   name: (identifier) @variable.parameter)
 
-(type_parameter) @type.parameter
-
-; Variables
+; Let bindings
 (let_binding
   name: (identifier) @variable)
-
-(identifier) @variable
 
 ; Fields
 (field_access
@@ -114,7 +119,7 @@
 (record_field_declaration
   name: (identifier) @property)
 
-; Variants
+; Variants - high priority for constructors
 (variant_expression
   variant: (identifier) @constructor)
 
@@ -126,6 +131,9 @@
 
 (qualified_enum_pattern
   variant: (identifier) @constructor)
+
+; Wildcard pattern
+(wildcard_pattern) @variable.builtin
 
 ; Punctuation
 [
@@ -147,6 +155,3 @@
 
 ; Special
 "?" @operator
-
-; Wildcard pattern
-(wildcard_pattern) @variable.builtin

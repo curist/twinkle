@@ -416,13 +416,13 @@ module.exports = grammar({
       '}',
     ),
 
-    named_record_literal: $ => seq(
+    named_record_literal: $ => prec.dynamic(1, seq(
       field('type', $.type_name),
       '.',
       '{',
       optional($.record_fields),
       '}',
-    ),
+    )),
 
     record_fields: $ => seq(
       $.record_field,
