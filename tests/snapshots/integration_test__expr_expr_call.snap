@@ -1,0 +1,50 @@
+---
+source: tests/integration_test.rs
+expression: ast
+---
+SourceFile {
+    items: [
+        Stmt(
+            Expr(
+                Expr {
+                    kind: Call {
+                        callee: Expr {
+                            kind: Ident(
+                                "foo",
+                            ),
+                            span: 0:0..3,
+                        },
+                        args: [
+                            Expr {
+                                kind: Literal(
+                                    Int(
+                                        1,
+                                    ),
+                                ),
+                                span: 0:4..5,
+                            },
+                            Expr {
+                                kind: Literal(
+                                    Int(
+                                        2,
+                                    ),
+                                ),
+                                span: 0:7..8,
+                            },
+                            Expr {
+                                kind: Literal(
+                                    Int(
+                                        3,
+                                    ),
+                                ),
+                                span: 0:10..11,
+                            },
+                        ],
+                    },
+                    span: 0:0..12,
+                },
+            ),
+        ),
+    ],
+    span: 0:0..12,
+}

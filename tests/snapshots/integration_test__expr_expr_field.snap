@@ -1,0 +1,25 @@
+---
+source: tests/integration_test.rs
+expression: ast
+---
+SourceFile {
+    items: [
+        Stmt(
+            Expr(
+                Expr {
+                    kind: FieldAccess {
+                        base: Expr {
+                            kind: Ident(
+                                "point",
+                            ),
+                            span: 0:0..5,
+                        },
+                        field: "x",
+                    },
+                    span: 0:0..7,
+                },
+            ),
+        ),
+    ],
+    span: 0:0..7,
+}

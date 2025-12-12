@@ -1,0 +1,17 @@
+type Option<T> = { None, Some(T) }
+
+fn unwrap_or<T>(opt: Option<T>, default: T) T {
+  case opt {
+    .None => default,
+    .Some(value) => value,
+  }
+}
+
+type Tree = { Leaf(Int), Node(Tree, Int, Tree) }
+
+fn sum_tree(tree: Tree) Int {
+  case tree {
+    .Leaf(n) => n,
+    .Node(left, val, right) => sum_tree(left) + val + sum_tree(right),
+  }
+}

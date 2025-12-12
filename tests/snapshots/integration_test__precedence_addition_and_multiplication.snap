@@ -1,0 +1,49 @@
+---
+source: tests/integration_test.rs
+expression: ast
+---
+SourceFile {
+    items: [
+        Stmt(
+            Expr(
+                Expr {
+                    kind: Binary {
+                        op: Add,
+                        left: Expr {
+                            kind: Literal(
+                                Int(
+                                    1,
+                                ),
+                            ),
+                            span: 0:0..1,
+                        },
+                        right: Expr {
+                            kind: Binary {
+                                op: Mul,
+                                left: Expr {
+                                    kind: Literal(
+                                        Int(
+                                            2,
+                                        ),
+                                    ),
+                                    span: 0:4..5,
+                                },
+                                right: Expr {
+                                    kind: Literal(
+                                        Int(
+                                            3,
+                                        ),
+                                    ),
+                                    span: 0:8..9,
+                                },
+                            },
+                            span: 0:4..9,
+                        },
+                    },
+                    span: 0:0..9,
+                },
+            ),
+        ),
+    ],
+    span: 0:0..9,
+}

@@ -1,0 +1,61 @@
+---
+source: tests/integration_test.rs
+expression: ast
+---
+SourceFile {
+    items: [
+        Stmt(
+            Expr(
+                Expr {
+                    kind: Binary {
+                        op: Add,
+                        left: Expr {
+                            kind: Call {
+                                callee: Expr {
+                                    kind: Ident(
+                                        "foo",
+                                    ),
+                                    span: 0:0..3,
+                                },
+                                args: [
+                                    Expr {
+                                        kind: Literal(
+                                            Int(
+                                                1,
+                                            ),
+                                        ),
+                                        span: 0:4..5,
+                                    },
+                                ],
+                            },
+                            span: 0:0..6,
+                        },
+                        right: Expr {
+                            kind: Call {
+                                callee: Expr {
+                                    kind: Ident(
+                                        "bar",
+                                    ),
+                                    span: 0:9..12,
+                                },
+                                args: [
+                                    Expr {
+                                        kind: Literal(
+                                            Int(
+                                                2,
+                                            ),
+                                        ),
+                                        span: 0:13..14,
+                                    },
+                                ],
+                            },
+                            span: 0:9..15,
+                        },
+                    },
+                    span: 0:0..15,
+                },
+            ),
+        ),
+    ],
+    span: 0:0..15,
+}

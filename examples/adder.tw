@@ -1,0 +1,15 @@
+fn adder(a: Int) fn(Int) Int {
+  fn(b) { a + b }
+}
+add5 := adder(5)
+println("${add5(10)}") // 15
+
+// ========================================
+// same thing, different style.
+// oh, also adder2 won't support mutual recursion though
+
+type Adder = fn(Int) fn(Int) Int
+adder2 : Adder = fn(a) { fn(b) { a + b } }
+add10 := adder2(10)
+println("${add10(32)}") // 42
+
