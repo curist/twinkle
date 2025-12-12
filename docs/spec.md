@@ -165,6 +165,7 @@ Anonymous record literal .{ field₁: e₁, ..., fieldₙ: eₙ } introduces a f
 * This mechanism does not introduce structural record types into the language; it is solely a constraint-solving aid for anonymous record literals.
 
 **escape** means:
+
 * returned from function
 * stored in array/dict
 * included in record fields
@@ -317,6 +318,18 @@ Desugars to:
 arr = Array.set(arr, i, value)
 ```
 
+#### Dict index update
+
+```tw
+m[k] = v
+```
+
+Desugars to:
+
+```tw
+m = Dict.set(m, k, v)
+```
+
 #### Compound assignment
 
 ```tw
@@ -331,7 +344,7 @@ x = x + y
 
 #### Assignment targets
 
-The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`/`+=`/etc. Field and index forms are still sugar that rebuild the owner value (see record/array desugarings above); implementations should evaluate the left-hand side once when lowering.
+The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`/`+=`/etc. Field and index forms are still sugar that rebuild the owner value (see record/array/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
 
 ---
 
@@ -509,17 +522,17 @@ Exports accessed as `math.f`, `math.Type`.
 
 Prelude is implicitly imported.
 
-- The last path segment (without extension) is the module identifier.
-- No aliasing or destructuring in MVP.
-- Resolution: string-literal paths (relative to the current working dir) with per-path caching; package/name resolution and richer import forms can be added later.
-- Namespacing:
-- Exported values and types are referred to with the module name (e.g., `math.add`, `math.Point`).
-- Separate namespaces for values and types:
-- A module may export both a type and a value/function with the same name.
-- They are distinguished by context and never conflict.
-- Example: `option.Option<T>`, `option.Some`, `option.None`.
-- Future extensions:
-- `import "mod" .{ Foo, Bar }` to bring specific exports into local scope (not in MVP).
+* The last path segment (without extension) is the module identifier.
+* No aliasing or destructuring in MVP.
+* Resolution: string-literal paths (relative to the current working dir) with per-path caching; package/name resolution and richer import forms can be added later.
+* Namespacing:
+* Exported values and types are referred to with the module name (e.g., `math.add`, `math.Point`).
+* Separate namespaces for values and types:
+* A module may export both a type and a value/function with the same name.
+* They are distinguished by context and never conflict.
+* Example: `option.Option<T>`, `option.Some`, `option.None`.
+* Future extensions:
+* `import "mod" .{ Foo, Bar }` to bring specific exports into local scope (not in MVP).
 
 ---
 
@@ -552,6 +565,24 @@ desugars to:
 ```tw
 point.translate(p,1,2)
 ```
+
+### Built-in inherent methods
+
+Some built-in types define compiler-known inherent methods.
+
+#### Length
+
+Length is exposed only via an inherent method:
+
+```tw
+value.len()
+```
+
+Defined for:
+
+* `Array<T>.len() Int` — number of elements
+* `String.len() Int` — length of the string
+* `Dict<K,V>.len() Int` — number of entries
 
 ### Dot resolution rules
 
@@ -796,7 +827,6 @@ s := "user=${user_to_string(user)}"    // ✅ ok
 
 There is no automatic association between `User` and `user_to_string`. The choice of conversion is explicit at the call site.
 
-
 ---
 
 ## 12. Control Flow
@@ -816,7 +846,7 @@ On primitives: must include `_`.
 
 ### Loops
 
- All `for` loops are statements returning `Void`.
+All `for` loops are statements returning `Void`.
 
 Forms:
 
@@ -932,18 +962,13 @@ Arrays are **immutable** sequences.
 
 `arr[i]` indexing, 0-based (read-only access).
 
-Built-in:
-
-```tw
-len(arr)
-```
-
 Array operations via module functions (all return new arrays):
 
 * `Array.set(arr, index, value) Array<T>` — returns new array with element at index replaced
 * `Array.append(arr, value) Array<T>` — returns new array with value appended
 * `Array.concat(arr1, arr2) Array<T>` — returns new array combining both
 * `Array.slice(arr, start, end) Array<T>` — returns new array with subset of elements
+* `Array.len(arr) Int` — returns length of array
 * etc.
 
 Array literals:
@@ -972,14 +997,13 @@ Desugars to:
 arr = Array.set(arr, i, value)
 ```
 
-
 ---
 
 ## 15. Strings
 
 Strings are **immutable**.
 
-`len(str)` returns the length of the string.
+`str.len()` returns the length of the string.
 
 String interpolation is recommended for string assembly (see Section 11).
 
@@ -1023,7 +1047,7 @@ Dict operations via module functions (all return new dicts):
 * `Dict.get(m, k) V?` — returns Option<V> for safe access
 * `Dict.has(m, k) Bool` — checks if key exists
 * `Dict.keys(m) Array<K>` — returns array of keys
-* `len(m)` — returns number of entries
+* `Dict.len(m) Int` — returns length of keys
 
 Indexing syntax:
 
@@ -1068,7 +1092,7 @@ Implicitly imported.
 
 Includes:
 
-* primitive functions: `print`, `println`, `len`, `error`
+* primitive functions: `print`, `println`, `error`
 * types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`
 * range functions: `range`
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
