@@ -88,7 +88,7 @@ pub fn translate(p: Point, dx: Int, dy: Int) Point { ... }
 
 **Desugaring:**
 ```tw
-p.translate(1,2)  →  point.translate(p,1,2)
+p.translate(1,2)  →  Point.translate(p,1,2)
 ```
 
 **Resolution order:** Check record fields first, then module inherent methods. Field vs inherent name collision is illegal.

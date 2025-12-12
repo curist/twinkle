@@ -1,0 +1,9 @@
+// Test wrong arity error
+
+fn add(x: Int, y: Int) Int {
+    x + y
+}
+
+fn main() {
+    add(1, 2, 3)  // Error: expects 2 arguments, got 3
+}

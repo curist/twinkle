@@ -1,0 +1,5 @@
+// Test undefined variable error
+
+fn test() Int {
+    foo  // Error: foo is not defined
+}

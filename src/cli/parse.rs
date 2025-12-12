@@ -7,7 +7,7 @@ pub fn parse_file(file_path: &str) -> Result<()> {
     let source = fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read file: {}", file_path))?;
 
-    let ast = crate::syntax::parse_source(&source, file_path)
+    let (ast, _registry) = crate::syntax::parse_source(&source, file_path)
         .with_context(|| format!("Failed to parse: {}", file_path))?;
 
     println!("✓ Parse successful\n");

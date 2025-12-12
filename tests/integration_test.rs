@@ -43,7 +43,7 @@ fn test_parser_expression_cases() {
             result.err()
         );
 
-        let ast = result.unwrap();
+        let (ast, _registry) = result.unwrap();
         assert_debug_snapshot!(snapshot_name, ast);
 
         println!("✓ Parsed and snapshotted: {}", file_name);
@@ -68,7 +68,7 @@ fn test_operator_precedence_snapshots() {
         let result = twinkle::syntax::parse_source(source, "test.tw");
         assert!(result.is_ok(), "Failed to parse: {}", source);
 
-        let ast = result.unwrap();
+        let (ast, _registry) = result.unwrap();
         assert_debug_snapshot!(format!("precedence_{}", name), ast);
         println!("✓ Snapshotted precedence: {}", name);
     }

@@ -1,0 +1,21 @@
+// Test primitive types and literals
+
+fn test_int() Int {
+    42
+}
+
+fn test_float() Float {
+    3.14
+}
+
+fn test_bool() Bool {
+    true
+}
+
+fn test_string() String {
+    "hello"
+}
+
+fn test_void() Void {
+    println("test")
+}

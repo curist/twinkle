@@ -12,7 +12,8 @@ use span::FileRegistry;
 use ast::SourceFile;
 
 /// Parse a Twinkle source file into an AST
-pub fn parse_source(source: &str, file_name: &str) -> Result<SourceFile> {
+/// Returns both the AST and the FileRegistry for error formatting
+pub fn parse_source(source: &str, file_name: &str) -> Result<(SourceFile, FileRegistry)> {
     let mut registry = FileRegistry::new();
     let file_id = registry.add_file(file_name.to_string(), source.to_string());
 
@@ -25,7 +26,7 @@ pub fn parse_source(source: &str, file_name: &str) -> Result<SourceFile> {
     let source_file = parser.parse_source_file()
         .map_err(|e| format_parse_error(&registry, e))?;
 
-    Ok(source_file)
+    Ok((source_file, registry))
 }
 
 fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {
@@ -98,6 +99,6 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
 /// Legacy stub for Stage 0 compatibility
 /// TODO: Remove once integration tests are updated
 pub fn parse(source: &str) -> Result<()> {
-    parse_source(source, "test.tw")?;
+    let (_ast, _registry) = parse_source(source, "test.tw")?;
     Ok(())
 }

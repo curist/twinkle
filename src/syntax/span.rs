@@ -61,10 +61,12 @@ impl fmt::Display for Span {
 }
 
 /// Registry for managing source files
+#[derive(Debug)]
 pub struct FileRegistry {
     files: Vec<SourceFile>,
 }
 
+#[derive(Debug)]
 struct SourceFile {
     name: String,
     source: String,

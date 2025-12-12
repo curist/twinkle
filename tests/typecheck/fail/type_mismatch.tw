@@ -1,0 +1,5 @@
+// Test type mismatch error
+
+fn add(x: Int, y: Int) Int {
+    x + "hello"  // Error: can't add Int and String
+}
