@@ -1,498 +1,514 @@
-## Stage 0 – Skeleton & Harness
+# Twinkle Compiler Test Plan
 
-> Note: This plan predates the shift from traits to explicit capability records. When you see trait constraints below, reinterpret them as passing capability records explicitly (see `docs/spec.md`), and use the grammar syntax (return type after params, `Type.{ ... }` constructors, capitalized primitives).
+Comprehensive Testing Strategy for All Compiler Stages
 
-**Goal:** Have a way to add Twinkle snippets + expected outputs and run `cargo test`.
+This document defines the complete testing methodology for the Twinkle compiler ecosystem.
+It is designed to:
 
-### What to test
+* guarantee correctness of all compiler stages,
+* ensure long-term stability of IR formats and semantics,
+* support self-hosting,
+* support multi-runtime (wasmtime, Node, Deno, browser),
+* operate efficiently in CI.
 
-* That the compiler *plumbing* works:
-
-  * Can read a `.tw` file.
-  * Can produce *some* debug string (even just “OK: parsed 0 items”).
-* Test harness itself, not language features.
-
-### How
-
-* Add one test like:
-
-  ```rust
-  #[test]
-  fn smoke_compiler_runs() {
-      let src = "fn main() Void { }";
-      let out = twinklec::compile_to_debug_string(src).unwrap();
-      assert!(out.contains("OK"));
-  }
-  ```
-
-* If you use snapshot/golden tests:
-
-  * `tests/snapshots/smoke.snap` with whatever output you print now.
-  * You’ll rewrite later, but this proves the harness works.
-
-> ✅ After Stage 0, you have the *workflow*: add input → run tests → see diff.
+This plan must be followed for all new features and changes.
 
 ---
 
-## Stage 1 – Parser + Pretty-Printer
+# 1. Test Philosophy
 
-**Goal:** Verify that source → AST → pretty-source is correct.
+Twinkle’s compiler is designed to be:
 
-### What to test
+* small,
+* predictable,
+* deterministic,
+* self-hosted.
 
-1. **Round-trip**: parsing + pretty-printing doesn’t break structure.
-2. **Operator precedence & associativity**.
-3. **Error reporting** for malformed input.
+Our testing philosophy follows from these constraints:
 
-### How
+1. **Always test syntax + semantics + IR + execution.**
+   No single-layer tests are sufficient.
 
-**1. Golden “parse/format” tests**
+2. **Golden tests are authoritative.**
+   AST, Core IR, ANF, WAT output, diagnostics — all are snapshot-validated.
 
-* Directory: `tests/parser/`
+3. **All tests run on at least two compilers:**
 
-  * `simple_fn.tw`
-  * `binary_ops.tw`
-  * `blocks.tw`
-* Each test:
+   * Rust bootstrap compiler (`twinkle-bootstrap`)
+   * Self-hosted compiler (`twinkle-compiler.wasm`)
 
-  * Read `.tw`
-  * Parse to AST
-  * Pretty-print (normalized format)
-  * Compare to expected `.out` or snapshot.
+4. **All produced Wasm must be identical.**
+   This prevents divergent semantics between bootstrap and self-hosted builds.
 
-Example:
+5. **All executed output must match across runtimes:**
 
-`tests/parser/simple_fn.tw`:
+   * wasmtime
+   * Node+Deno WASI backends
+   * browser polyfill (future CI)
 
-```tw
-fn add(x: Int, y: Int) Int { x + y }
-```
-
-`tests/parser/simple_fn.out`:
-
-```tw
-fn add(x: Int, y: Int) Int {
-  x + y
-}
-```
-
-**2. Error tests**
-
-* `tests/parser_errors/` with bad code:
-
-  * Unclosed string
-  * Missing `}` / `)` etc.
-* Check:
-
-  * `parse` returns `Err`
-  * Error spans and messages are sane (`"expected '}'"` etc.)
-
-> ✅ After Stage 1, you can trust your parser for a small subset and have concrete Twinkle syntax examples.
+6. **Tests must be hermetic:**
+   No random numbers, no time, no nondeterministic ordering, no external I/O beyond WASI-mocked FS.
 
 ---
 
-## Stage 2 – Monomorphic Typechecker (No Generics/Traits)
+# 2. Test Categories
 
-**Goal:** Expression-level typechecking for primitives + basic functions.
+Twinkle has 8 major test categories.
 
-### What to test
-
-1. **Success cases**: type inference matches annotations.
-2. **Failure cases**: obvious type errors produce good messages.
-3. **Edge cases**: `if` type mismatch, wrong arg counts, etc.
-
-### How
-
-**1. Positive type tests**
-
-Folder: `tests/type_ok/`
-
-Each file might contain 1–3 small functions:
-
-```tw
-fn add(x: Int, y: Int) Int {
-  x + y
-}
-
-fn negate(b: Bool) Bool {
-  if b { false } else { true }
-}
+```
+tests/
+  lexer/
+  parser/
+  pretty/
+  typecheck/
+  lower/
+  ir/
+  codegen/
+  execute/
+  wasi/
+  selfhost/
 ```
 
-Compiler function:
-
-```rust
-fn typecheck_module(src: &str) -> Result<TypecheckedModule, Error>;
-```
-
-Test:
-
-```rust
-#[test]
-fn type_ok_add_and_negate() {
-    let src = include_str!("type_ok/add_and_negate.tw");
-    let typed = typecheck_module(src).unwrap();
-    // Optional: snapshot the pretty-printed typed AST
-}
-```
-
-**2. Negative type tests**
-
-Folder: `tests/type_err/`
-
-Example `if_mismatch.tw`:
-
-```tw
-fn bad(x: Int) Int {
-  if x > 0 { 1 } else { "oops" }
-}
-```
-
-Test:
-
-```rust
-#[test]
-fn type_error_if_mismatch() {
-    let src = include_str!("type_err/if_mismatch.tw");
-    let err = typecheck_module(src).unwrap_err();
-    assert!(err.to_string().contains("branch types do not match"));
-}
-```
-
-You don’t need perfect error text yet — “error happens at right place” is enough.
-
-> ✅ After Stage 2, you’re confident basic type checking works and errors are visible.
+We describe them in detail below.
 
 ---
 
-## Stage 3 – Records, Modules, Inherent Methods
+# 3. Lexer Tests
 
-**Goal:** Test dot sugar and cross-module resolution.
+### Purpose
 
-### What to test
+Validate that the lexer produces correct tokens and source spans.
 
-1. **Record creation and field access**.
-2. **Module import + type resolution**.
-3. **Inherent method desugaring** `p.m()` → `module.m(p, ...)`.
+### Format
 
-### How
-
-**1. Record tests**
-
-`tests/type_ok/records.tw`:
-
-```tw
-type Point = .{ x: Int, y: Int }
-
-fn origin() Point {
-  .{ x: 0, y: 0 }
-}
-
-fn shift_right(p: Point) Point {
-  .{ x: p.x + 1, y: p.y }
-}
+```
+tests/lexer/xxx.tw
+tests/lexer/xxx.tokens
 ```
 
-Check it typechecks.
+`.tokens` is a golden snapshot containing:
 
-**2. Multi-module test**
+* token kinds
+* lexemes
+* spans (start/end indices)
 
-Simulate a “filesystem” in tests or use real files:
+### Examples
 
-* `tests/modules/point.tw`
-* `tests/modules/use_point.tw`
-
-`point.tw`:
-
-```tw
-pub type Point = .{ x: Int, y: Int }
-
-pub fn translate(p: Point, dx: Int, dy: Int) Point {
-  .{ x: p.x + dx, y: p.y + dy }
-}
-```
-
-`use_point.tw`:
-
-```tw
-import "point"
-
-fn main() Void {
-  p := .{ x: 1, y: 2 }
-  q := p.translate(3, 4)
-}
-```
-
-Test harness: either load those from disk or build a fake “module provider” that maps `"point"` to a string.
-
-**3. Error tests**
-
-* Calling unknown method: `p.rotate()`.
-* Using record with missing field.
-
-> ✅ After Stage 3, the “object-ish” story (`Point` + `p.method`) is fully tested.
+* integer literals
+* float literals
+* string escapes
+* identifiers
+* operators & punctuators
+* comments
+* error cases (unterminated string, unexpected char)
 
 ---
 
-## Stage 4 – Enums, `Option`, `Result`, `case`, `try`
+# 4. Parser Tests
 
-**Goal:** Algebraic data types and pattern matching semantics.
+### Structure
 
-### What to test
-
-1. Enum construction + usage.
-2. Exhaustive `case` on enums.
-3. `Option`/`Result` patterns.
-4. `try` sugar rewrite.
-
-### How
-
-**1. Enum + case**
-
-`tests/type_ok/enums.tw`:
-
-```tw
-type Shape = {
-  Circle(Float),
-  Rect(Float, Float),
-}
-
-fn area(s: Shape) Float {
-  case s {
-    .Circle(r) => r * r * 3.14,
-    .Rect(w, h) => w * h,
-  }
-}
+```
+tests/parser/xxx.tw
+tests/parser/xxx.ast.json
 ```
 
-Check typechecking success.
+`.ast.json` contains:
 
-**2. Non-exhaustive match error**
+* full AST
+* spans
+* no type information
 
-`tests/type_err/non_exhaustive.tw`:
+### Test Subtypes
 
-```tw
-type Token = {
-  A, B
-}
-
-fn bad(t: Token) Int {
-  case t {
-    .A => 1,
-  }
-}
-```
-
-Check that you get an error with a message containing “non-exhaustive” / “missing B”.
-
-**3. `Result` + `try`**
-
-Positive:
-
-```tw
-type Result<T, E> = { Ok(T), Err(E) }
-
-fn div(x: Int, y: Int) Result<Int, String> {
-  if y == 0 { .Err("div by zero") }
-  else      { .Ok(x / y) }
-}
-
-fn use_div(x: Int, y: Int) Result<Int, String> {
-  v := try div(x, y)
-  .Ok(v + 1)
-}
-```
-
-Negative:
-
-* Use `try` on `int` (not `Result`) → error.
-* Use `try` in a function whose return type is not `Result<_,E>`.
-
-> ✅ After Stage 4, your ADTs + pattern matching + `try` are validated.
+* precedence parsing
+* block desugaring
+* operator associativity
+* if/else
+* lambda syntax
+* record syntax
+* enum and pattern syntax
+* error recovery tests (parser must produce partial AST + diagnostics)
 
 ---
 
-## Stage 5 – Capabilities + `${x}`
+# 5. Pretty-Printer Tests (Formatter Baseline)
 
-**Goal:** Check that capability records drive interpolation.
+### Purpose
 
-### What to test
+Ensure parse → format → parse is idempotent.
 
-1. Show-like capability for base types.
-2. Show-like capability for a user type.
-3. Interpolation works only when a capability is provided.
+### Rules
 
-### How
+For each file:
 
-At this stage, you might *not* generate real strings yet; you can just test capability plumbing.
-
-**1. Positive Show**
-
-`tests/type_ok/show_point.tw`:
-
-```tw
-type Show<T> = .{ to_string: fn(T) String }
-
-type Point = .{ x: Int, y: Int }
-
-ShowPoint: Show<Point> = .{
-  to_string: fn(p: Point) String { "Point(${p.x}, ${p.y})" },
-}
-
-fn log(p: Point) {
-  println("${ShowPoint.to_string(p)}")
-}
+```
+formatted1 = format(src)
+formatted2 = format(formatted1)
+assert(formatted2 == formatted1)
 ```
 
-Typechecking should succeed.
+### Fixtures
 
-**2. Missing Show error**
-
-`tests/type_err/show_missing.tw`:
-
-```tw
-type Foo = .{ n: Int }
-
-fn log(f: Foo) {
-  println("f = ${f}")  // should error: no interpolation for Foo
-}
+```
+tests/pretty/original.tw
+tests/pretty/original.formatted.tw
 ```
 
-Expect type error: interpolation only supports `String`, `Int`, `Float`, `Bool` unless an explicit conversion is provided.
-
-> ✅ After Stage 5, capability-driven `${x}` semantics are test-covered.
+The `.formatted.tw` is a golden file.
 
 ---
 
-## Stage 6 – Generics + Capabilities (HM)
+# 6. Typechecker Tests
 
-**Goal:** Test polymorphic functions and explicit capability arguments.
+### Files
 
-### What to test
+```
+tests/type_ok/*.tw
+tests/type_ok/*.typed.json
 
-1. Generic functions **without** capabilities.
-2. Generic functions **with** capability parameters.
-3. Missing capability arguments cause errors.
-4. Instantiation with different concrete types.
-
-### How
-
-**1. Generic identity**
-
-`tests/type_ok/generic_id.tw`:
-
-```tw
-fn id<T>(x: T) T { x }
-
-fn use_id() Int {
-  id(5)
-}
+tests/type_err/*.tw
+tests/type_err/*.error
 ```
 
-* Check type inference: `id(5)` typed as `Int`.
+### Type OK Tests (`type_ok`)
 
-**2. Generic with capability parameter**
+* Produce typed AST (`.typed.json`) including inferred types.
+* Must match golden snapshot exactly.
 
-```tw
-type Show<T> = .{ to_string: fn(T) String }
+### Type Error Tests (`type_err`)
 
-fn print_twice<T>(x: T, show: Show<T>) {
-  println("${show.to_string(x)}, ${show.to_string(x)}")
-}
+* Exact diagnostic messages must match `.error`.
+* Error location spans must match exactly.
+* Tests include:
 
-fn main() {
-  print_twice(42, .{ to_string: fn(n: Int) String { "${n}" } })
-}
-```
-
-Should typecheck.
-
-**3. Missing capability**
-
-```tw
-fn bad<T>(x: T) {
-  println("${x}")
-}
-```
-
-Should fail: no interpolation for arbitrary `T`.
-
-**4. Cross-module generic use**
-
-* `lib.tw` defines `fn log<T: Show>(x:T) -> void`.
-* `main.tw` imports it and uses it with various types; those that lack `Show` should fail.
-
-> ✅ After Stage 6, you trust your generic + capability story.
+  * unification failures
+  * unknown identifiers
+  * invalid field access
+  * non-exhaustive pattern matches
+  * trait-constraint failures (`Show`, generics)
+  * wrong arity
 
 ---
 
-## Stage 7 – Backend / Execution
+# 7. Lowering Tests (AST → Core IR → ANF IR)
 
-**Goal:** At least some tiny Twinkle programs can run and produce real output.
+### Files
 
-### What to test
+```
+tests/lower_core/*.tw
+tests/lower_core/*.core.json
 
-1. Single-file programs that use:
+tests/lower_anf/*.tw
+tests/lower_anf/*.anf.json
+```
 
-   * `main() -> void`
-   * `println`
-   * basic arithmetic, strings, interpolation.
-2. Multi-module programs.
-3. A small “integration suite” that you can run end-to-end.
+### Core IR Tests
 
-### How
+Verify:
 
-Depending on backend:
+* no surface sugar remains
+* implicit return is gone
+* `try` desugared into match
+* `collect` lowered to loop
+* `for x in` lowered to explicit iterator
+* all identifiers replaced by locals
+* variant + record constructors resolved
 
-**If interpreter:**
+### ANF Tests
 
-* Run Twinkle code and assert on runtime output:
+Verify:
 
-  * capture stdout.
-  * Example:
-
-    ```tw
-    fn main() -> void {
-      println("hello")
-    }
-    ```
-  * Test: assert stdout == "hello\n".
-
-**If Wasm text (`.wat`) backend:**
-
-* Golden tests:
-
-  * Source `.tw` → expected `.wat` snippet.
-* Or run through wasmtime/wasmer in tests (if you want):
-
-  ```rust
-  let wat = compile_to_wat(src);
-  let wasm = wat::parse_str(&wat).unwrap();
-  let output = run_wasm_main(&wasm);
-  assert_eq!(output, "hello\n");
-  ```
-
-> ✅ After Stage 7, Twinkle programs are not only typechecked but actually *run* in tests.
+* every non-atomic subexpression is let-bound
+* evaluation order is explicit
+* no nested calls or nested ops remaining
 
 ---
 
-## Cross-cutting Testing Practices
+# 8. IR Interpretation Tests
 
-* **Never delete old tests**: each stage’s tests should keep passing as you add features.
+These ensure semantics of Core IR and ANF IR are correct even before Wasm backend exists.
 
-* **Tag tests logically**:
+### Files
 
-  * `parser_*`, `type_*`, `capability_*`, `runtime_*`.
+```
+tests/ir/xxx.tw
+tests/ir/xxx.result
+```
 
-* **Keep some “canonical examples”**:
+The test pipeline is:
 
-  * `examples/point.tw`
-  * `examples/option_result.tw`
-  * `examples/show_and_iterable.tw`
-  * Use them as both docs and tests.
+```
+twinkle-bootstrap parse+typecheck+lower_core xxx.tw → core.ir
+run-internal-core-interpreter core.ir → result
+compare result to xxx.result
+```
 
-* **Error tests are as important as success tests**:
+This guarantees:
 
-  * Every time you add a rule in the spec, ask:
+* interpreter defines semantics,
+* backend must match the interpreter exactly.
 
-    > “How do I show this fails gracefully when violated?”
+---
+
+# 9. Codegen Tests (WAT + Wasm)
+
+### Files
+
+```
+tests/codegen/xxx.tw
+tests/codegen/xxx.wat         (golden)
+tests/codegen/xxx.stdout      (execution result)
+```
+
+### Requirements
+
+1. Lowered ANF IR → WAT must match golden `.wat`.
+2. Compiling `.wat` → Wasm → executing → stdout must match `.stdout`.
+
+### Codegen Cases
+
+* numeric ops
+* boolean logic
+* closures and lambda capture
+* arrays, dicts, records
+* variant construction & match
+* loops
+* try/Result
+* large integer values
+* branching and nested blocks
+
+---
+
+# 10. Execution Tests (End-to-End)
+
+These focus on real-world semantic behaviors.
+
+### Files
+
+```
+tests/execute/xxx.tw
+tests/execute/xxx.stdout
+```
+
+Execution must match across all runtimes:
+
+* wasmtime
+* self-hosted wasm
+* Node (WASI)
+* Deno (WASI)
+
+Each test runs:
+
+```
+twinkle-bootstrap compile xxx.tw → xxx.wasm
+wasmtime xxx.wasm > out1
+
+twinkle-compiler.wasm compile xxx.tw → xxx2.wasm
+wasmtime xxx2.wasm > out2
+
+assert(out1 == out2)
+assert(out1 == golden)
+```
+
+---
+
+# 11. WASI Contract Tests
+
+These validate the Host ABI contract (file I/O, args, env, fs operations).
+
+### Files
+
+```
+tests/wasi/*.tw
+tests/wasi/*.stdout
+tests/wasi/fs/   (fixture FS hierarchy)
+```
+
+### Requirements
+
+All runtimes must produce identical results:
+
+* wasmtime
+* Node WASI
+* Deno WASI
+* browser polyfill
+
+All WASI tests must be self-contained with a virtual filesystem.
+
+---
+
+# 12. Self-Hosting Compatibility Tests
+
+The most important long-term stability test.
+
+### Files
+
+```
+tests/selfhost/*.tw
+tests/selfhost/*.expected.wasm
+tests/selfhost/*.expected.stdout
+```
+
+### Procedure
+
+For every test:
+
+#### Step A — Using Bootstrap Compiler
+
+```
+bootstrap_compile test.tw → out1.wasm
+```
+
+#### Step B — Using Self-Hosted Compiler
+
+```
+selfhost_compile test.tw → out2.wasm
+```
+
+#### Step C — Output Comparison
+
+```
+diff out1.wasm out2.wasm   (must be byte-for-byte identical)
+```
+
+#### Step D — Execution Comparison
+
+```
+wasmtime out1.wasm → r1
+wasmtime out2.wasm → r2
+assert(r1 == r2)
+assert(r1 == golden_stdout)
+```
+
+---
+
+# 13. Performance Tests (Optional)
+
+Benchmarks are not part of CI correctness, but tracked:
+
+* lexer speed
+* parser throughput
+* type checker throughput with large files
+* ANF + codegen timing
+* end-to-end compile speed
+* wasm execution microbenchmarks
+
+Stored under:
+
+```
+benchmarks/
+```
+
+---
+
+# 14. CI Testing Matrix
+
+### Build matrix includes:
+
+| Stage                   | Rust | Self-hosted | wasmtime | Node | Deno | Browser |
+| ----------------------- | ---- | ----------- | -------- | ---- | ---- | ------- |
+| Lexer tests             | ✓    | —           | —        | —    | —    | —       |
+| Parser tests            | ✓    | —           | —        | —    | —    | —       |
+| Typechecker             | ✓    | —           | —        | —    | —    | —       |
+| IR tests                | ✓    | ✓           | —        | —    | —    | —       |
+| Codegen                 | ✓    | ✓           | ✓        | —    | —    | —       |
+| Execute                 | ✓    | ✓           | ✓        | ✓    | ✓    | ✓       |
+| WASI                    | ✓    | ✓           | ✓        | ✓    | ✓    | ✓       |
+| Self-host compatibility | ✓    | ✓           | ✓        | —    | —    | —       |
+
+The self-host compiler must compile itself once per CI run.
+
+---
+
+# 15. Directory Layout
+
+```
+tests/
+  lexer/
+  parser/
+  pretty/
+  type_ok/
+  type_err/
+  lower_core/
+  lower_anf/
+  ir/
+  codegen/
+  execute/
+  wasi/
+    fs/
+  selfhost/
+benchmarks/
+```
+
+---
+
+# 16. Test Tooling
+
+We use:
+
+* **golden snapshots** (insta for Rust bootstrap, custom harness for Twinkle)
+* `.json` for AST, Core IR, ANF IR
+* `.wat` for WAT golden outputs
+* `.stdout` for execution outputs
+* deterministic sorting rules inside pretty-printer and dict iteration
+
+A test harness is provided:
+
+```
+cargo test            # bootstrap tests
+twinkle test tests/   # self-hosted test runner
+```
+
+---
+
+# 17. Stability Guarantees
+
+This test suite guarantees:
+
+1. **Surface semantics never regress**
+   thanks to golden AST + Core IR + execution tests.
+
+2. **IR formats remain backward compatible**
+   any change requires updating golden tests explicitly.
+
+3. **Self-hosted compiler is trustworthy**
+   byte-for-byte identical outputs must hold at every version.
+
+4. **Multi-runtime consistency**
+   (Node/Deno/wasmtime/browser) environments behave identically.
+
+5. **Deterministic codegen**
+   no nondeterminism in wasm output.
+
+---
+
+# 18. How to Add a New Feature
+
+A PR must include:
+
+* tests for parsing,
+* tests for typechecking,
+* tests for IR lowering,
+* tests for ANF (if applicable),
+* codegen tests for new ops,
+* execution tests,
+* selfhost tests if it affects output.
+
+No change is accepted without complete coverage across the stack.
+
+---
+
+# 19. Summary
+
+This test plan ensures:
+
+* correctness at every layer,
+* deterministic compilation,
+* stable IR semantics,
+* reliable self-hosting,
+* cross-platform WASI compatibility,
+* safe evolution of the language.
+
+Together with `docs/ir.md`, this establishes a robust foundation for Twinkle’s long-term health.
+

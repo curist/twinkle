@@ -42,18 +42,18 @@ fn add(a: Int, b: Int) Int {
 
 fn array_to_string(xs: Array<Int>) String {
   if len(xs) == 0 {
-    "[]"
-  } else {
-    result := "["
-    for x, i in xs {
-      if i > 0 {
-        result = "${result}, ${x}"
-      } else {
-        result = "${result}${x}"
-      }
-    }
-    "${result}]"
+    return "[]"
   }
+
+  result := "["
+  for x, i in xs {
+    if i > 0 {
+      result = "${result}, ${x}"
+    } else {
+      result = "${result}${x}"
+    }
+  }
+  "${result}]"
 }
 
 fn main() Void {

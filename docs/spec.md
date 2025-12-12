@@ -633,7 +633,7 @@ ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-users: Array<User> = ...
+users: Array<User> = [...]
 print_all(users, ShowUser)
 ```
 
@@ -700,7 +700,7 @@ EqPoint: Eq<Point> = .{
   equals(a, b) => a.x == b.x && a.y == b.y,
 }
 
-points: Array<Point> = ...
+points: Array<Point> = [...]
 p: Point = .{ x: 1, y: 2 }
 found := contains(points, p, EqPoint)
 ```
