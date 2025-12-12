@@ -1,0 +1,4 @@
+// Simple hello world test case
+fn main() {
+    println("Hello, Twinkle!")
+}

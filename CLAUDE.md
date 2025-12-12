@@ -28,6 +28,15 @@ cargo run
 cargo test
 ```
 
+## Communication Guidelines
+
+**Focus on substance, not metrics:**
+- ❌ Don't count: line numbers, test counts, assertion counts, file sizes, etc.
+- ✅ Do explain: what changed, why it matters, how it works
+- In documentation and commit messages, focus on **what/why/how**, not quantitative details
+- Example: Instead of "Added 7 tests with 16 assertions", write "Added tests covering nested scopes, closures, and variable shadowing"
+
+
 ## Language Architecture
 
 ### Value Model
@@ -113,33 +122,4 @@ Pattern matching must be exhaustive unless using `_ => ...`.
   - `for x in coll { body }`
   - `for x,i in coll { body }`
 - `collect` comprehension: `collect x in range(10) { x * x }` produces `array<T>`
-
-## Testing Strategy (from docs/test-plan.md)
-
-### Test Categories
-- **Parser tests:** Round-trip parsing + pretty-printing, operator precedence, error reporting
-- **Type tests:** Both positive (valid programs) and negative (type errors) cases
-- **Module tests:** Cross-module resolution, inherent method desugaring
-- **Pattern matching tests:** Exhaustiveness checking, type consistency across arms
-- **Generic tests:** Polymorphic functions with/without constraints, instantiation
-
-### Test Organization
-```
-tests/
-  parser_cases/
-  type_ok/         # Programs that should typecheck
-  type_err/        # Programs that should fail with specific errors
-  parser_errors/   # Malformed syntax
-```
-
-Use golden/snapshot tests (consider `insta` crate) for expected outputs.
-
-**Critical:** Never delete old tests; each stage's tests should keep passing as new features are added.
-
-
-### Prelude
-Implicitly imported, includes:
-- Primitive functions: `print`, `println`, `len`, `error`
-- Types: `Int`, `Float`, `String`, `array<T>`, `dict<K,V>`, `Option<T>`, `Result<T,E>`
-- Range functions: `range`
 
