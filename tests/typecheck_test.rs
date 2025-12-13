@@ -56,7 +56,7 @@ fn test_typecheck_pass_cases() {
 
         // Type check
         match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
-            Ok(()) => {
+            Ok((_type_map, _type_env)) => {
                 passed += 1;
             }
             Err(errors) => {
@@ -134,7 +134,7 @@ fn test_typecheck_fail_cases() {
                 // Expected to fail
                 passed += 1;
             }
-            Ok(()) => {
+            Ok((_type_map, _type_env)) => {
                 failed.push(format!(
                     "{}: Expected type checking to fail, but it succeeded",
                     file_name

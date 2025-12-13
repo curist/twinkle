@@ -23,7 +23,7 @@ pub fn check_file(file_path: &str) -> Result<()> {
 
     // Type check
     match crate::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
-        Ok(()) => {
+        Ok((_type_map, _type_env)) => {
             println!("✓ Type checking succeeded: {}", file_path);
             Ok(())
         }

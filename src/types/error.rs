@@ -99,6 +99,13 @@ pub enum TypeError {
         actual_type: MonoType,
         span: Span,
     },
+
+    /// Field and method with the same name on a type
+    FieldMethodCollision {
+        type_name: String,
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -252,6 +259,15 @@ impl TypeError {
                 *span,
                 &format!("Case scrutinee must be a sum type"),
                 Some(&format!("Found type: {}", fmt_type(actual_type))),
+            ),
+            TypeError::FieldMethodCollision { type_name, name, span } => self.format_error(
+                registry,
+                *span,
+                &format!("Field and method collision on type '{}'", type_name),
+                Some(&format!(
+                    "Both a field and a method named '{}' exist on this type. This is not allowed.",
+                    name
+                )),
             ),
         }
     }

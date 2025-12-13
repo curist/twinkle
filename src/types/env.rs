@@ -13,6 +13,9 @@ pub struct TypeEnv {
     record_fields: HashMap<(TypeId, String), usize>,
     // For sum types: map (TypeId, variant_name) -> variant index
     sum_variants: HashMap<(TypeId, String), usize>,
+    // For inherent methods: map (TypeId, method_name) -> function name
+    // Methods are functions whose first parameter is the receiver type
+    methods: HashMap<(TypeId, String), String>,
 }
 
 impl TypeEnv {
@@ -22,6 +25,7 @@ impl TypeEnv {
             type_names: HashMap::new(),
             record_fields: HashMap::new(),
             sum_variants: HashMap::new(),
+            methods: HashMap::new(),
         }
 
         // Note: Built-in types (Int, Float, Bool, String, Void, Array) are handled
@@ -243,6 +247,28 @@ impl TypeEnv {
                 })
             }
         }
+    }
+
+    /// Register a method for a type
+    /// Methods are functions whose first parameter is the receiver type
+    pub fn add_method(&mut self, type_id: TypeId, method_name: String, func_name: String) {
+        self.methods.insert((type_id, method_name), func_name);
+    }
+
+    /// Check if a type has a method with the given name
+    pub fn has_method(&self, type_id: TypeId, method_name: &str) -> bool {
+        self.methods.contains_key(&(type_id, method_name.to_string()))
+    }
+
+    /// Get the function name for a method
+    /// Returns None if the method doesn't exist
+    pub fn get_method_function(&self, type_id: TypeId, method_name: &str) -> Option<&String> {
+        self.methods.get(&(type_id, method_name.to_string()))
+    }
+
+    /// Check if a type has a field with the given name (for collision detection)
+    pub fn has_field(&self, type_id: TypeId, field_name: &str) -> bool {
+        self.record_fields.contains_key(&(type_id, field_name.to_string()))
     }
 }
 

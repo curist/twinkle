@@ -7,12 +7,21 @@ SourceFile {
         Stmt(
             Expr(
                 Expr {
+                    id: ExprId(
+                        3,
+                    ),
                     kind: Binary {
                         op: Mul,
                         left: Expr {
+                            id: ExprId(
+                                1,
+                            ),
                             kind: Unary {
                                 op: Neg,
                                 expr: Expr {
+                                    id: ExprId(
+                                        0,
+                                    ),
                                     kind: Ident(
                                         "x",
                                     ),
@@ -22,6 +31,9 @@ SourceFile {
                             span: 0:0..2,
                         },
                         right: Expr {
+                            id: ExprId(
+                                2,
+                            ),
                             kind: Literal(
                                 Int(
                                     2,

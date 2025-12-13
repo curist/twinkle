@@ -1,6 +1,7 @@
 use crate::syntax::ast::*;
 use crate::syntax::span::{FileId, Span};
 use crate::syntax::tokens::{Token, TokenKind};
+use super::ast::ExprId;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -50,6 +51,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     file_id: FileId,
+    next_expr_id: u32,
 }
 
 impl Parser {
@@ -58,7 +60,15 @@ impl Parser {
             tokens,
             pos: 0,
             file_id,
+            next_expr_id: 0,
         }
+    }
+
+    /// Allocate a new unique ExprId
+    fn alloc_expr_id(&mut self) -> ExprId {
+        let id = ExprId(self.next_expr_id);
+        self.next_expr_id += 1;
+        id
     }
 
     // Core token navigation
@@ -417,6 +427,7 @@ impl Parser {
                 let span = lhs.span.merge(&rhs.span);
 
                 lhs = Expr::new(
+                    self.alloc_expr_id(),
                     ExprKind::Binary {
                         op: token_to_binop(op_kind),
                         left: Box::new(lhs),
@@ -508,7 +519,7 @@ impl Parser {
                 token.span
             ))?;
 
-        Ok(Expr::new(ExprKind::Literal(Literal::Int(value)), token.span))
+        Ok(Expr::new(self.alloc_expr_id(), ExprKind::Literal(Literal::Int(value)), token.span))
     }
 
     fn parse_float_literal(&mut self) -> ParseResult<Expr> {
@@ -525,6 +536,7 @@ impl Parser {
             ))?;
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Literal(Literal::Float(value)),
             token.span,
         ))
@@ -533,6 +545,7 @@ impl Parser {
     fn parse_string_literal(&mut self) -> ParseResult<Expr> {
         let token = self.expect(TokenKind::StringLit)?;
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Literal(Literal::String(token.text.clone())),
             token.span,
         ))
@@ -560,7 +573,7 @@ impl Parser {
                         parts.push(StringPart::Literal(token.text.clone()));
                     }
                     let span = start.merge(&token.span);
-                    return Ok(Expr::new(ExprKind::StringInterpolation { parts }, span));
+                    return Ok(Expr::new(self.alloc_expr_id(), ExprKind::StringInterpolation { parts }, span));
                 }
                 _ => {
                     return Err(ParseError::unexpected_token(
@@ -576,6 +589,7 @@ impl Parser {
         let token = self.advance().unwrap();
         let value = token.kind == TokenKind::True;
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Literal(Literal::Bool(value)),
             token.span,
         ))
@@ -583,7 +597,7 @@ impl Parser {
 
     fn parse_ident(&mut self) -> ParseResult<Expr> {
         let token = self.expect(TokenKind::Ident)?;
-        Ok(Expr::new(ExprKind::Ident(token.text.clone()), token.span))
+        Ok(Expr::new(self.alloc_expr_id(), ExprKind::Ident(token.text.clone()), token.span))
     }
 
     // Operators
@@ -600,6 +614,7 @@ impl Parser {
         let span = op_token.span.merge(&expr.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Unary {
                 op,
                 expr: Box::new(expr),
@@ -634,6 +649,7 @@ impl Parser {
         let span = start.merge(&end.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Call {
                 callee: Box::new(callee),
                 args,
@@ -649,6 +665,7 @@ impl Parser {
         let span = start.merge(&field.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::FieldAccess {
                 base: Box::new(base),
                 field: field.text.clone(),
@@ -665,6 +682,7 @@ impl Parser {
         let span = start.merge(&end.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Index {
                 base: Box::new(base),
                 index: Box::new(index),
@@ -690,7 +708,7 @@ impl Parser {
         let end = self.expect(TokenKind::RBracket)?;
         let span = start.span.merge(&end.span);
 
-        Ok(Expr::new(ExprKind::Array { elements }, span))
+        Ok(Expr::new(self.alloc_expr_id(), ExprKind::Array { elements }, span))
     }
 
     fn parse_dot_prefix(&mut self) -> ParseResult<Expr> {
@@ -723,6 +741,7 @@ impl Parser {
             let span = dot.span.merge(&end.span);
 
             Ok(Expr::new(
+                self.alloc_expr_id(),
                 ExprKind::VariantLit {
                     name: variant_name,
                     fields,
@@ -733,6 +752,7 @@ impl Parser {
             // .Variant (no fields)
             let span = dot.span.merge(&name.span);
             Ok(Expr::new(
+                self.alloc_expr_id(),
                 ExprKind::VariantLit {
                     name: variant_name,
                     fields: Vec::new(),
@@ -765,7 +785,7 @@ impl Parser {
         let end = self.expect(TokenKind::RBrace)?;
         let span = start.merge(&end.span);
 
-        Ok(Expr::new(ExprKind::RecordLit { name, fields }, span))
+        Ok(Expr::new(self.alloc_expr_id(), ExprKind::RecordLit { name, fields }, span))
     }
 
     fn parse_if(&mut self) -> ParseResult<Expr> {
@@ -790,6 +810,7 @@ impl Parser {
         };
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::If {
                 cond: Box::new(cond),
                 then_branch: Box::new(then_branch),
@@ -817,6 +838,7 @@ impl Parser {
         let span = start.span.merge(&end.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Case {
                 scrutinee: Box::new(scrutinee),
                 arms,
@@ -841,7 +863,7 @@ impl Parser {
     fn parse_block_expr(&mut self) -> ParseResult<Expr> {
         let block = self.parse_block()?;
         let span = block.span;
-        Ok(Expr::new(ExprKind::Block(block), span))
+        Ok(Expr::new(self.alloc_expr_id(), ExprKind::Block(block), span))
     }
 
     fn parse_function_expr(&mut self) -> ParseResult<Expr> {
@@ -870,6 +892,7 @@ impl Parser {
         let span = start.span.merge(&body.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Function(FunctionExpr {
                 params,
                 return_type,
@@ -889,6 +912,7 @@ impl Parser {
         let span = start.span.merge(&body.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Collect {
                 pattern,
                 iter: Box::new(iter),
@@ -904,6 +928,7 @@ impl Parser {
         let span = start.span.merge(&expr.span);
 
         Ok(Expr::new(
+            self.alloc_expr_id(),
             ExprKind::Try {
                 expr: Box::new(expr),
             },

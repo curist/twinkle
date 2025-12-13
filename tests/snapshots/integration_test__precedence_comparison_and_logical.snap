@@ -7,18 +7,30 @@ SourceFile {
         Stmt(
             Expr(
                 Expr {
+                    id: ExprId(
+                        6,
+                    ),
                     kind: Binary {
                         op: And,
                         left: Expr {
+                            id: ExprId(
+                                2,
+                            ),
                             kind: Binary {
                                 op: Lt,
                                 left: Expr {
+                                    id: ExprId(
+                                        0,
+                                    ),
                                     kind: Ident(
                                         "a",
                                     ),
                                     span: 0:0..1,
                                 },
                                 right: Expr {
+                                    id: ExprId(
+                                        1,
+                                    ),
                                     kind: Ident(
                                         "b",
                                     ),
@@ -28,15 +40,24 @@ SourceFile {
                             span: 0:0..5,
                         },
                         right: Expr {
+                            id: ExprId(
+                                5,
+                            ),
                             kind: Binary {
                                 op: Gt,
                                 left: Expr {
+                                    id: ExprId(
+                                        3,
+                                    ),
                                     kind: Ident(
                                         "c",
                                     ),
                                     span: 0:10..11,
                                 },
                                 right: Expr {
+                                    id: ExprId(
+                                        4,
+                                    ),
                                     kind: Ident(
                                         "d",
                                     ),

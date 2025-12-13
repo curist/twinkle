@@ -292,6 +292,7 @@ mod tests {
         let arms = vec![CaseArm {
             pattern: Pattern::Wildcard(Span::new(FileId(0), 0, 1)),
             body: crate::syntax::ast::Expr::new(
+                crate::syntax::ast::ExprId(0),
                 crate::syntax::ast::ExprKind::Literal(Literal::Int(0)),
                 Span::new(FileId(0), 0, 1),
             ),
@@ -336,6 +337,7 @@ mod tests {
                 span: Span::new(FileId(0), 0, 4),
             },
             body: crate::syntax::ast::Expr::new(
+                crate::syntax::ast::ExprId(0),
                 crate::syntax::ast::ExprKind::Literal(Literal::Int(0)),
                 Span::new(FileId(0), 0, 1),
             ),

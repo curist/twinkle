@@ -7,6 +7,7 @@ use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::MonoType;
+use super::type_map::TypeMap;
 
 /// Bidirectional type checker
 ///
@@ -16,6 +17,7 @@ pub struct TypeChecker {
     value_env: ValueEnv,
     local_env: LocalEnv,
     errors: Vec<TypeError>,
+    type_map: TypeMap,
 
     // Track current function's return type for return statement checking
     current_function_ret: Option<MonoType>,
@@ -23,17 +25,18 @@ pub struct TypeChecker {
 
 impl TypeChecker {
     /// Type-check a complete module (source file)
-    /// Returns Ok(()) if type checking succeeds, or a list of errors
+    /// Returns Ok((TypeMap, TypeEnv)) if type checking succeeds, or a list of errors
     pub fn check_module(
         ast: &SourceFile,
         type_env: TypeEnv,
         value_env: ValueEnv,
-    ) -> Result<(), Vec<TypeError>> {
+    ) -> Result<(TypeMap, TypeEnv), Vec<TypeError>> {
         let mut checker = TypeChecker {
             type_env,
             value_env,
             local_env: LocalEnv::new(),
             errors: Vec::new(),
+            type_map: TypeMap::new(),
             current_function_ret: None,
         };
 
@@ -102,7 +105,7 @@ impl TypeChecker {
         }
 
         if checker.errors.is_empty() {
-            Ok(())
+            Ok((checker.type_map, checker.type_env))
         } else {
             Err(checker.errors)
         }
@@ -191,6 +194,13 @@ impl TypeChecker {
     //
 
     fn synth_expr(&mut self, expr: &Expr) -> Result<MonoType, ()> {
+        let ty = self.synth_expr_inner(expr)?;
+        // Record the type in the TypeMap
+        self.type_map.set_expr_type(expr.id, ty.clone());
+        Ok(ty)
+    }
+
+    fn synth_expr_inner(&mut self, expr: &Expr) -> Result<MonoType, ()> {
         match &expr.kind {
             ExprKind::Literal(lit) => Ok(self.synth_literal(lit)),
 
@@ -297,7 +307,7 @@ impl TypeChecker {
     //
 
     fn check_expr(&mut self, expr: &Expr, expected: &MonoType) -> Result<(), ()> {
-        match &expr.kind {
+        let result = match &expr.kind {
             // Anonymous record literals REQUIRE checking mode
             ExprKind::RecordLit { name: None, fields } => {
                 self.check_anon_record_lit(fields, expected, expr.span)
@@ -313,7 +323,14 @@ impl TypeChecker {
                 let actual = self.synth_expr(expr)?;
                 self.unify(&actual, expected, expr.span)
             }
+        };
+
+        // Record the expected type in the TypeMap if checking succeeded
+        if result.is_ok() {
+            self.type_map.set_expr_type(expr.id, expected.clone());
         }
+
+        result
     }
 
     //
@@ -609,6 +626,23 @@ impl TypeChecker {
 
         match base_ty {
             MonoType::Named { type_id, .. } => {
+                // Check for field/method collision
+                let has_field = self.type_env.has_field(type_id, field);
+                let has_method = self.type_env.has_method(type_id, field);
+
+                if has_field && has_method {
+                    let type_name = self.type_env.get_def(type_id)
+                        .map(|d| d.name().to_string())
+                        .unwrap_or_else(|| format!("Type#{}", type_id.0));
+
+                    self.errors.push(TypeError::FieldMethodCollision {
+                        type_name,
+                        name: field.to_string(),
+                        span,
+                    });
+                    return Err(());
+                }
+
                 // Look up the record fields
                 if let Some(fields) = self.type_env.get_record_fields(type_id) {
                     // Find the field
@@ -618,7 +652,19 @@ impl TypeChecker {
                         }
                     }
 
-                    // Field not found
+                    // Field not found - check if it's a method
+                    if has_method {
+                        // TODO: This is a method call, but we're treating it as field access
+                        // For now, return an error. Full method support comes in Stage 3.
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "inherent method calls",
+                            span,
+                            note: format!("Method '{}' exists but method calls are not yet fully implemented", field),
+                        });
+                        return Err(());
+                    }
+
+                    // Neither field nor method
                     let record_name = self.type_env.get_def(type_id)
                         .map(|d| d.name().to_string())
                         .unwrap_or_else(|| format!("Type#{}", type_id.0));

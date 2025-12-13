@@ -7,11 +7,20 @@ SourceFile {
         Stmt(
             Expr(
                 Expr {
+                    id: ExprId(
+                        3,
+                    ),
                     kind: Binary {
                         op: Add,
                         left: Expr {
+                            id: ExprId(
+                                1,
+                            ),
                             kind: FieldAccess {
                                 base: Expr {
+                                    id: ExprId(
+                                        0,
+                                    ),
                                     kind: Ident(
                                         "obj",
                                     ),
@@ -22,6 +31,9 @@ SourceFile {
                             span: 0:0..9,
                         },
                         right: Expr {
+                            id: ExprId(
+                                2,
+                            ),
                             kind: Literal(
                                 Int(
                                     1,

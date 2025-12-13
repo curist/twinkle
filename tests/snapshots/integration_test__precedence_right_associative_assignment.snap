@@ -7,24 +7,39 @@ SourceFile {
         Stmt(
             Expr(
                 Expr {
+                    id: ExprId(
+                        4,
+                    ),
                     kind: Binary {
                         op: Assign,
                         left: Expr {
+                            id: ExprId(
+                                0,
+                            ),
                             kind: Ident(
                                 "x",
                             ),
                             span: 0:0..1,
                         },
                         right: Expr {
+                            id: ExprId(
+                                3,
+                            ),
                             kind: Binary {
                                 op: Assign,
                                 left: Expr {
+                                    id: ExprId(
+                                        1,
+                                    ),
                                     kind: Ident(
                                         "y",
                                     ),
                                     span: 0:4..5,
                                 },
                                 right: Expr {
+                                    id: ExprId(
+                                        2,
+                                    ),
                                     kind: Literal(
                                         Int(
                                             5,

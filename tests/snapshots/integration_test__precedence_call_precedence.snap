@@ -7,11 +7,20 @@ SourceFile {
         Stmt(
             Expr(
                 Expr {
+                    id: ExprId(
+                        6,
+                    ),
                     kind: Binary {
                         op: Add,
                         left: Expr {
+                            id: ExprId(
+                                2,
+                            ),
                             kind: Call {
                                 callee: Expr {
+                                    id: ExprId(
+                                        0,
+                                    ),
                                     kind: Ident(
                                         "foo",
                                     ),
@@ -19,6 +28,9 @@ SourceFile {
                                 },
                                 args: [
                                     Expr {
+                                        id: ExprId(
+                                            1,
+                                        ),
                                         kind: Literal(
                                             Int(
                                                 1,
@@ -31,8 +43,14 @@ SourceFile {
                             span: 0:0..6,
                         },
                         right: Expr {
+                            id: ExprId(
+                                5,
+                            ),
                             kind: Call {
                                 callee: Expr {
+                                    id: ExprId(
+                                        3,
+                                    ),
                                     kind: Ident(
                                         "bar",
                                     ),
@@ -40,6 +58,9 @@ SourceFile {
                                 },
                                 args: [
                                     Expr {
+                                        id: ExprId(
+                                            4,
+                                        ),
                                         kind: Literal(
                                             Int(
                                                 2,

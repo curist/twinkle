@@ -1,0 +1,20 @@
+// This test documents the expected behavior for field/method collision detection
+// Once inherent methods are implemented in Stage 3, this should fail with TypeError::FieldMethodCollision
+
+type Point = .{ x: Int, y: Int, len: Int }
+
+// This function would be an inherent method once Stage 3 is implemented
+// because its first parameter is Point (the type defined in this module)
+fn len(p: Point) Int {
+    p.x + p.y
+}
+
+fn main() {
+    p := Point.{ x: 1, y: 2, len: 3 };
+
+    // This should eventually trigger FieldMethodCollision error
+    // because 'len' exists as both:
+    // 1. A field on Point
+    // 2. An inherent method (the len function above)
+    val := p.len;
+}

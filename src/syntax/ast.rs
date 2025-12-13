@@ -1,5 +1,9 @@
 use crate::syntax::span::Span;
 
+/// Unique identifier for expressions (used for type annotation)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExprId(pub u32);
+
 /// Top-level source file
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
@@ -81,16 +85,17 @@ pub struct Param {
 // Expressions
 //
 
-/// Expression with span
+/// Expression with span and unique ID
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
+    pub id: ExprId,
     pub kind: ExprKind,
     pub span: Span,
 }
 
 impl Expr {
-    pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span }
+    pub fn new(id: ExprId, kind: ExprKind, span: Span) -> Self {
+        Self { id, kind, span }
     }
 }
 
