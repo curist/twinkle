@@ -136,6 +136,15 @@ pub enum CoreExprKind {
         base: Box<CoreExpr>,
         index: Box<CoreExpr>,
     },
+
+    /// Functional record update: produces a new record with one field replaced.
+    /// Semantics: new_record = { ...base, field: value }
+    /// A future optimization pass may lower this to struct.set when provably safe.
+    RecordUpdate {
+        base: Box<CoreExpr>,
+        field: FieldId,
+        value: Box<CoreExpr>,
+    },
 }
 
 /// Match arm in Core IR

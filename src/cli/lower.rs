@@ -160,5 +160,11 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
             print_core_expr(base, indent + 2);
             print_core_expr(index, indent + 2);
         }
+        RecordUpdate { base, field, value } => {
+            println!("{}RecordUpdate .{} : {:?}", pad, field.0, expr.ty);
+            print_core_expr(base, indent + 2);
+            println!("{}  value:", pad);
+            print_core_expr(value, indent + 4);
+        }
     }
 }

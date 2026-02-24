@@ -1131,8 +1131,49 @@ impl TypeChecker {
             Err(()) => return,
         };
 
-        let elem_ty = match iter_ty {
-            MonoType::Array(elem) => *elem,
+        self.local_env.push_scope();
+
+        match iter_ty {
+            MonoType::Array(elem) => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns"
+                                .to_string(),
+                        });
+                    }
+                }
+                // index_pattern binds Int index
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
+            MonoType::Dict(key_ty, val_ty) => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns"
+                                .to_string(),
+                        });
+                    }
+                }
+                // index_pattern binds the value type (not an integer index)
+                if let Some(val_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = val_pat {
+                        self.local_env.bind(name.clone(), *val_ty);
+                    }
+                }
+            }
             other => {
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Array(Box::new(MonoType::Int)),
@@ -1140,26 +1181,6 @@ impl TypeChecker {
                     span: iter.span,
                 });
                 return;
-            }
-        };
-
-        self.local_env.push_scope();
-
-        match pattern {
-            Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
-            Pattern::Wildcard(_) => {}
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "complex pattern in for loop",
-                    span: iter.span,
-                    note: "Only simple identifiers are supported in for loop patterns".to_string(),
-                });
-            }
-        }
-
-        if let Some(idx_pat) = index_pattern {
-            if let Pattern::Ident(name, _) = idx_pat {
-                self.local_env.bind(name.clone(), MonoType::Int);
             }
         }
 
