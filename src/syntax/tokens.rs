@@ -56,11 +56,6 @@ pub enum TokenKind {
     // Assignment
     Eq,      // =
     ColonEq, // :=
-    PlusEq,  // +=
-    MinusEq, // -=
-    StarEq,  // *=
-    SlashEq, // /=
-    PercentEq, // %=
 
     // Punctuation
     LParen,   // (
@@ -191,11 +186,6 @@ impl TokenKind {
             TokenKind::Bang => "!",
             TokenKind::Eq => "=",
             TokenKind::ColonEq => ":=",
-            TokenKind::PlusEq => "+=",
-            TokenKind::MinusEq => "-=",
-            TokenKind::StarEq => "*=",
-            TokenKind::SlashEq => "/=",
-            TokenKind::PercentEq => "%=",
             TokenKind::LParen => "(",
             TokenKind::RParen => ")",
             TokenKind::LBrace => "{",

@@ -1306,7 +1306,7 @@ fn infix_binding_power(op: TokenKind) -> Option<(u8, u8)> {
     use TokenKind::*;
     Some(match op {
         // Assignment (right-associative)
-        Eq | ColonEq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq => (2, 1),
+        Eq | ColonEq => (2, 1),
         // Logical OR
         Or => (3, 4),
         // Logical AND
@@ -1352,11 +1352,6 @@ fn token_to_binop(kind: TokenKind) -> BinOp {
         And => BinOp::And,
         Or => BinOp::Or,
         Eq => BinOp::Assign,
-        PlusEq => BinOp::AddAssign,
-        MinusEq => BinOp::SubAssign,
-        StarEq => BinOp::MulAssign,
-        SlashEq => BinOp::DivAssign,
-        PercentEq => BinOp::ModAssign,
         _ => unreachable!("token_to_binop called with non-binary-op token"),
     }
 }

@@ -92,11 +92,11 @@ impl Lexer {
             'a'..='z' | 'A'..='Z' | '_' => self.lex_ident_or_keyword(),
 
             // Operators and punctuation
-            '+' => self.lex_char_or_eq(TokenKind::Plus, TokenKind::PlusEq),
-            '-' => self.lex_char_or_eq(TokenKind::Minus, TokenKind::MinusEq),
-            '*' => self.lex_char_or_eq(TokenKind::Star, TokenKind::StarEq),
-            '/' => self.lex_char_or_eq(TokenKind::Slash, TokenKind::SlashEq),
-            '%' => self.lex_char_or_eq(TokenKind::Percent, TokenKind::PercentEq),
+            '+' => self.lex_single(TokenKind::Plus),
+            '-' => self.lex_single(TokenKind::Minus),
+            '*' => self.lex_single(TokenKind::Star),
+            '/' => self.lex_single(TokenKind::Slash),
+            '%' => self.lex_single(TokenKind::Percent),
             '=' => self.lex_char_or_double(TokenKind::Eq, '=', TokenKind::EqEq, '>',  TokenKind::FatArrow),
             '!' => self.lex_char_or_double(TokenKind::Bang, '=', TokenKind::BangEq, '\0', TokenKind::Error),
             '<' => self.lex_char_or_double(TokenKind::Lt, '=', TokenKind::LtEq, '\0', TokenKind::Error),
@@ -129,20 +129,6 @@ impl Lexer {
         let ch = self.advance();
         let span = Span::new(self.file_id, start as u32, self.pos as u32);
         Token::new(kind, span, ch.to_string())
-    }
-
-    fn lex_char_or_eq(&mut self, single: TokenKind, with_eq: TokenKind) -> Token {
-        let start = self.pos;
-        let ch = self.advance();
-
-        if self.peek() == '=' {
-            self.advance();
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
-            Token::new(with_eq, span, format!("{}=", ch))
-        } else {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
-            Token::new(single, span, ch.to_string())
-        }
     }
 
     fn lex_char_or_double(&mut self, single: TokenKind, next1: char, double1: TokenKind, next2: char, double2: TokenKind) -> Token {
@@ -456,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_lex_operators() {
-        let tokens = lex_simple("+ - * / % == != < <= > >= := += =>");
+        let tokens = lex_simple("+ - * / % == != < <= > >= := =>");
         assert_eq!(tokens[0].kind, TokenKind::Plus);
         assert_eq!(tokens[1].kind, TokenKind::Minus);
         assert_eq!(tokens[2].kind, TokenKind::Star);
@@ -469,8 +455,7 @@ mod tests {
         assert_eq!(tokens[9].kind, TokenKind::Gt);
         assert_eq!(tokens[10].kind, TokenKind::GtEq);
         assert_eq!(tokens[11].kind, TokenKind::ColonEq);
-        assert_eq!(tokens[12].kind, TokenKind::PlusEq);
-        assert_eq!(tokens[13].kind, TokenKind::FatArrow);
+        assert_eq!(tokens[12].kind, TokenKind::FatArrow);
     }
 
     #[test]

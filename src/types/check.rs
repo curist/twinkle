@@ -387,10 +387,6 @@ impl TypeChecker {
                 self.synth_assign(left, right, span)
             }
 
-            BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign
-            | BinOp::DivAssign | BinOp::ModAssign => {
-                self.synth_compound_assign(op, left, right, span)
-            }
         }
     }
 
@@ -699,12 +695,19 @@ impl TypeChecker {
     fn synth_index(&mut self, base: &Expr, index: &Expr, _span: Span) -> Result<MonoType, ()> {
         let base_ty = self.synth_expr(base)?;
 
-        // Index must be Int
-        self.check_expr(index, &MonoType::Int)?;
-
         match base_ty {
-            MonoType::Array(elem_ty) => Ok(*elem_ty),
-            MonoType::String => Ok(MonoType::String), // String indexing returns String (single char)
+            MonoType::Array(elem_ty) => {
+                self.check_expr(index, &MonoType::Int)?;
+                Ok(*elem_ty)
+            }
+            MonoType::String => {
+                self.check_expr(index, &MonoType::Int)?;
+                Ok(MonoType::String) // String indexing returns a single-char String
+            }
+            MonoType::Dict(k_ty, v_ty) => {
+                self.check_expr(index, &k_ty)?;
+                Ok(*v_ty) // Direct indexing — traps on missing key
+            }
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Array(Box::new(MonoType::Int)), // Dummy
@@ -1077,12 +1080,18 @@ impl TypeChecker {
                 }
             }
             ExprKind::Index { base, index } => {
-                // arr[i] = v — base must be Array<T>, index Int, v must be T
                 let base_ty = self.synth_expr(base)?;
-                self.check_expr(index, &MonoType::Int)?;
                 match base_ty {
                     MonoType::Array(elem_ty) => {
+                        // arr[i] = v — index must be Int, value must match element type
+                        self.check_expr(index, &MonoType::Int)?;
                         self.check_expr(right, &elem_ty)?;
+                        Ok(MonoType::Void)
+                    }
+                    MonoType::Dict(k_ty, v_ty) => {
+                        // m[k] = v — index must match K, value must match V
+                        self.check_expr(index, &k_ty)?;
+                        self.check_expr(right, &v_ty)?;
                         Ok(MonoType::Void)
                     }
                     other => {
@@ -1100,46 +1109,6 @@ impl TypeChecker {
                     feature: "complex assignment target",
                     span,
                     note: "Only identifiers, field accesses, and index expressions can be assigned".to_string(),
-                });
-                Err(())
-            }
-        }
-    }
-
-    fn synth_compound_assign(&mut self, _op: BinOp, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
-        // x += y is sugar for x = x + y — LHS must be ident for now
-        match &left.kind {
-            ExprKind::Ident(name) => {
-                let existing_ty = if let Some(ty) = self.local_env.lookup(name) {
-                    ty.clone()
-                } else if let Some(ty) = self.value_env.lookup(name) {
-                    ty
-                } else {
-                    self.errors.push(TypeError::UndefinedVariable {
-                        name: name.clone(),
-                        span: left.span,
-                    });
-                    return Err(());
-                };
-                let right_ty = self.synth_expr(right)?;
-                match (&existing_ty, &right_ty) {
-                    (MonoType::Int, MonoType::Int) => Ok(MonoType::Void),
-                    (MonoType::Float, MonoType::Float) => Ok(MonoType::Void),
-                    _ => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: existing_ty,
-                            actual: right_ty,
-                            span: right.span,
-                        });
-                        Err(())
-                    }
-                }
-            }
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "complex compound-assignment target",
-                    span,
-                    note: "Only simple identifiers support compound assignment".to_string(),
                 });
                 Err(())
             }

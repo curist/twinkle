@@ -659,15 +659,7 @@ impl Lowerer {
             // --- Binary / Unary ---
             ExprKind::Binary { op, left, right } => {
                 // Handle rebinding assignments: produce Void
-                if matches!(
-                    op,
-                    BinOp::Assign
-                        | BinOp::AddAssign
-                        | BinOp::SubAssign
-                        | BinOp::MulAssign
-                        | BinOp::DivAssign
-                        | BinOp::ModAssign
-                ) {
+                if matches!(op, BinOp::Assign) {
                     // These are handled at the Stmt::Expr level as rebindings.
                     // If they appear as expressions (not statements), produce Void.
                     let _ = self.lower_expr(right)?;

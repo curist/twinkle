@@ -233,11 +233,6 @@ pub enum BinOp {
 
     // Assignment
     Assign,
-    AddAssign,
-    SubAssign,
-    MulAssign,
-    DivAssign,
-    ModAssign,
 }
 
 /// Unary operators
