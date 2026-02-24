@@ -38,6 +38,9 @@ pub enum MonoType {
     /// Array type (GC-managed, immutable)
     Array(Box<MonoType>),
 
+    /// Dict type (GC-managed, persistent hash map)
+    Dict(Box<MonoType>, Box<MonoType>),
+
     /// Function type
     Function {
         params: Vec<MonoType>,
@@ -111,6 +114,9 @@ impl MonoType {
             MonoType::Array(elem_ty) => {
                 format!("Array<{}>", elem_ty.format_with_names(type_env))
             }
+            MonoType::Dict(k, v) => {
+                format!("Dict<{}, {}>", k.format_with_names(type_env), v.format_with_names(type_env))
+            }
             MonoType::Function { params, ret } => {
                 let params_str = params
                     .iter()
@@ -149,6 +155,7 @@ impl fmt::Display for MonoType {
                 }
             }
             MonoType::Array(elem_ty) => write!(f, "Array<{}>", elem_ty),
+            MonoType::Dict(k, v) => write!(f, "Dict<{}, {}>", k, v),
             MonoType::Function { params, ret } => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {

@@ -1,0 +1,18 @@
+// Type aliases expand transparently; they are not new nominal types
+
+type Score = Int
+type Name = String
+
+fn double_score(s: Score) Score {
+    s + s
+}
+
+fn greet(n: Name) Void {
+    println(n)
+}
+
+fn main() {
+    // Aliases unify with their target types
+    x: Int = double_score(10)
+    greet("hello")
+}

@@ -208,6 +208,23 @@ impl TypeEnv {
                         let elem_ty = self.resolve_type(&args[0], errors)?;
                         Ok(MonoType::Array(Box::new(elem_ty)))
                     }
+                    "Dict" => {
+                        // Dict<K, V> requires exactly two type arguments
+                        if args.len() != 2 {
+                            errors.push(TypeError::UndefinedType {
+                                name: if args.is_empty() {
+                                    "Dict (missing type arguments)".to_string()
+                                } else {
+                                    format!("Dict<...> (expected 2 type arguments, found {})", args.len())
+                                },
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let k_ty = self.resolve_type(&args[0], errors)?;
+                        let v_ty = self.resolve_type(&args[1], errors)?;
+                        Ok(MonoType::Dict(Box::new(k_ty), Box::new(v_ty)))
+                    }
                     _ => {
                         // User-defined type
                         if !args.is_empty() {
@@ -222,7 +239,14 @@ impl TypeEnv {
 
                         // Look up in type environment
                         match self.lookup_type(name) {
-                            Some(type_id) => Ok(MonoType::named(type_id)),
+                            Some(type_id) => {
+                                // Expand aliases transparently: aliases are not nominal types
+                                if let Some(TypeDef::Alias { target, .. }) = self.get_def(type_id) {
+                                    Ok(target.clone())
+                                } else {
+                                    Ok(MonoType::named(type_id))
+                                }
+                            }
                             None => {
                                 errors.push(TypeError::UndefinedType {
                                     name: name.clone(),
