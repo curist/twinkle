@@ -317,9 +317,54 @@ Deliverables:
 
 ---
 
-### Stage 4 — Core IR Interpreter ⬅ Next
+### Stage 4 — Module System & Inherent Method Desugaring ⬅ Next
 
-**Goal:** Run Twinkle programs by interpreting Core IR.
+**Goal:** Enable multi-file programs and complete dot-syntax method resolution.
+
+These two features are implemented together because user-defined inherent methods
+(`p.translate(1,2)` → `point.translate(p,1,2)`) require knowing which module
+defines the receiver type — they are fundamentally coupled.
+
+Features:
+
+* **Module system:**
+
+  * `import "path/to/file"` — loads and compiles the target file.
+  * `pub fn` / `pub type` — visibility: public vs private.
+  * Module identifier = last path segment without extension.
+  * Qualified access: `math.add`, `math.Point`.
+  * Per-path caching (compile each file once).
+  * No aliasing or destructuring in MVP.
+
+* **Inherent method resolution (full):**
+
+  * Type checker resolves `receiver.method(args)` by looking up the module
+    that defines the receiver's type, finding a matching first-argument function,
+    and recording its `FuncId` in `TypeMap`.
+  * Lowerer reads that `FuncId` and emits `Call(GlobalFunc(id), [receiver, ...args])`.
+  * Field-vs-method collision detection finalised.
+
+* **FuncId assignment across modules:**
+
+  * Prelude functions retain FuncId 1–11.
+  * User functions across all imported modules are assigned FuncIds in
+    deterministic order (import order, then source order within each file).
+
+Deliverables:
+
+* Multi-file programs compile and run through `twk lower`.
+* `p.translate(1,2)` correctly desugars in Core IR output.
+* Tests for import resolution, pub/private visibility, and inherent method calls.
+
+---
+
+### Stage 5 — Core IR Interpreter
+
+**Goal:** Run real Twinkle programs (including multi-file) by interpreting Core IR.
+
+The interpreter operates entirely on Core IR — it has no knowledge of source files
+or modules. By Stage 5, the pipeline (resolver → type checker → lowerer) already
+produces a complete, self-contained `CoreModule`, so the interpreter just walks it.
 
 Runtime representation:
 
@@ -334,45 +379,32 @@ Runtime representation:
 
 * Environment & stack:
 
-  * Map `LocalId → Value` within each frame,
-  * Simple call stack for function calls.
-
-Evaluator:
-
-* Evaluate:
-
-  * literals and locals,
-  * `Let`/`Block`,
-  * `If`, `Match`,
-  * `Loop` with `Break`/`Continue`,
-  * function calls (`Call`),
-  * records/variants and field/variant access.
+  * Flat `HashMap<LocalId, Value>` per call frame (LocalIds are unique per function).
+  * `Assign` mutates in place; `Let` inserts a new entry.
+  * Control flow signals: `Break(Option<Value>)`, `Continue`, `Return(Option<Value>)`
+    bubble up through the expression tree and are caught at `Loop` / call boundaries.
 
 * Built-ins:
 
-  * Handle a small set of built-ins in a native table:
-
-    * `println`, `print`, `len`, maybe `error`.
-  * Represent them as `Value::Builtin(BuiltinId)` and dispatch in `Call`.
+  * Prelude FuncIds 1–11 dispatched natively in `call_builtin`.
+  * User functions looked up in `CoreModule.functions` by `FuncId`.
 
 CLI:
 
 ```bash
-twk run file.tw   # parse + typecheck + Core IR + interpret
+twk run file.tw   # parse + typecheck + lower + interpret
 ```
 
 Deliverables:
 
-* A non-trivial subset of Twinkle runs end-to-end.
-* Interpreter tests:
-
-  * Small arithmetic programs.
-  * `if`/`case`.
-  * simple loops, `collect`, and `try`.
+* Real multi-file Twinkle programs run end-to-end.
+* Closure capture-by-value test (`tests/closure/capture_by_value.tw`) passes.
+* Interpreter tests: arithmetic, if/case, loops, collect, records, variants,
+  inherent method calls across modules.
 
 ---
 
-### Stage 5 — Generics & Hindley–Milner Type Inference
+### Stage 6 — Generics & Hindley–Milner Type Inference
 
 **Goal:** Upgrade typechecker to support generics and inference.
 
@@ -409,7 +441,7 @@ Deliverables:
 
 ---
 
-### Stage 6 — ANF IR (Backend-Oriented, Optional)
+### Stage 7 — ANF IR (Backend-Oriented, Optional)
 
 **Goal:** Add an ANF representation for backend use.
 
@@ -442,7 +474,7 @@ Deliverables:
 
 ---
 
-### Stage 7 — WAT Backend
+### Stage 8 — WAT Backend
 
 **Goal:** Compile Twinkle programs to human-readable WAT (WebAssembly text format).
 
@@ -484,7 +516,7 @@ Deliverables:
 
 ---
 
-### Stage 8 — Wasm Execution Integration
+### Stage 9 — Wasm Execution Integration
 
 **Goal:** Integrate a Wasm runtime (e.g. Wasmtime) so Twinkle can run via Wasm as well as via interpreter.
 
@@ -512,7 +544,7 @@ Deliverables:
 
 ---
 
-### Stage 9 — Self-Hosted Compiler in Twinkle
+### Stage 10 — Self-Hosted Compiler in Twinkle
 
 **Goal:** Re-implement the compiler pipeline in Twinkle itself.
 
