@@ -113,6 +113,14 @@ Expr =
 
     | Let { local: LocalId, value: Box<Expr>, body: Box<Expr> }
 
+    // Mutation: updates an existing local's value (no new binding introduced).
+    // Used for `x = expr` rebinding and loop index/accumulator updates.
+    // Maps to Wasm local.set.
+    | Assign { local: LocalId, value: Box<Expr> }
+
+    | BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> }
+    | UnOp  { op: UnOp,  expr: Box<Expr> }
+
     | Call { callee: Box<Expr>, args: Vec<Expr> }
 
     | Lambda { params: Vec<LocalId>, body: Box<Expr> }
@@ -163,7 +171,32 @@ Pattern =
 
 ---
 
-## 2.4 Core IR Invariants
+## 2.4 Prelude FuncId Assignments
+
+Prelude functions have fixed, deterministic FuncIds:
+
+| FuncId | Function             |
+|--------|----------------------|
+| 1      | print                |
+| 2      | println              |
+| 3      | error                |
+| 4      | int_to_string        |
+| 5      | float_to_string      |
+| 6      | bool_to_string       |
+| 7      | string_to_string     |
+| 8      | string_len           |
+| 9      | string_concat        |
+| 10     | array_len            |
+| 11     | array_append         |
+| 12+    | user-defined (source order) |
+
+Inherent method calls (`x.method(args)`) are **not** a distinct IR node.
+They lower to `Call { callee: GlobalFunc(func_id), args: [receiver, ...rest] }`.
+There is no string-based dispatch in Core IR.
+
+---
+
+## 2.5 Core IR Invariants
 
 Core IR must satisfy:
 

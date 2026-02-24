@@ -135,7 +135,7 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 
 ## Stages
 
-### Stage 0 — Skeleton & Testing Infrastructure
+### Stage 0 — Skeleton & Testing Infrastructure ✅
 
 **Goal:** Basic structure and a test harness.
 
@@ -160,7 +160,7 @@ Deliverable:
 
 ---
 
-### Stage 1 — Lexer, Parser, Spans
+### Stage 1 — Lexer, Parser, Spans ✅
 
 **Goal:** Parse full Twinkle surface syntax into an AST with precise spans.
 
@@ -215,7 +215,7 @@ Deliverables:
 
 ---
 
-### Stage 2 — Name Resolution & Monomorphic Typechecking
+### Stage 2 — Name Resolution & Monomorphic Typechecking ✅
 
 **Goal:** Typecheck non-generic programs with basic types and declarations.
 
@@ -266,7 +266,7 @@ Deliverables:
 
 ---
 
-### Stage 3 — Core IR Design & Lowering
+### Stage 3 — Core IR Design & Lowering ✅
 
 **Goal:** Introduce a Core IR that captures Twinkle semantics with a small set of constructs, and lower typed AST into it.
 
@@ -317,7 +317,7 @@ Deliverables:
 
 ---
 
-### Stage 4 — Core IR Interpreter
+### Stage 4 — Core IR Interpreter ⬅ Next
 
 **Goal:** Run Twinkle programs by interpreting Core IR.
 
