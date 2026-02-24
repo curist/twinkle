@@ -371,6 +371,12 @@ The interpreter operates entirely on Core IR — it has no knowledge of source f
 or modules. By Stage 5, the pipeline (resolver → type checker → lowerer) already
 produces a complete, self-contained `CoreModule`, so the interpreter just walks it.
 
+Ordering note:
+
+* Keep interpreter-first semantics as the primary oracle.
+* ANF/CFG and optimization work stays later in the pipeline so semantic regressions
+  can be validated against the Core IR interpreter.
+
 Runtime representation:
 
 * `Value` enum with variants:
@@ -455,6 +461,12 @@ Deliverables:
 
 **Goal:** Add an ANF representation for backend use.
 
+Ordering note:
+
+* Keep ANF at this stage (after interpreter + generics), not before Stage 5.
+* This keeps execution semantics anchored by Core IR first, then introduces
+  backend-oriented normalization.
+
 ANF IR:
 
 * Same semantics as Core IR, but:
@@ -484,13 +496,58 @@ Deliverables:
 
 ---
 
+### Stage 7.5 — Mid-End CFG & Optimization (Recommended)
+
+**Goal:** Introduce a control-flow-aware optimization layer after ANF, while preserving Twinkle's immutable language semantics.
+
+Pipeline:
+
+* `Core IR → ANF IR → CFG (optionally SSA) → optimized ANF/CFG → backend`.
+
+Initial passes (safe + high value):
+
+* Constant folding / algebraic simplification.
+* Copy propagation.
+* Dead code elimination.
+* Branch simplification.
+* Loop-invariant code motion (conservative).
+
+Functional-update optimization (key feature):
+
+* Rewrite persistent update patterns to in-place backend ops where provably safe:
+  * `RecordUpdate(...)`
+  * `Array.set(...)`
+  * `Dict.set/remove(...)`
+* This is an implementation optimization only; user-visible semantics remain immutable/value-based.
+
+Safety gates for destructive rewrite:
+
+* No live aliases to the pre-update value at the rewrite point.
+* No later observable use of the pre-update value.
+* Evaluation order and trap behavior remain unchanged.
+* If proof fails, keep the original persistent operation.
+
+SSA strategy:
+
+* Start with CFG + dataflow (liveness/use-count/escape summaries).
+* Add SSA form if/when it simplifies global optimization and codegen.
+* Treat SSA as an internal optimization representation, not a user-visible IR contract.
+
+Deliverables:
+
+* `twk opt file.tw` (or equivalent debug mode) can dump pre/post optimization IR.
+* Differential tests: optimized vs unoptimized execution must match interpreter semantics.
+* Targeted tests for update-rewrite safety (aliases, closures, branch joins, loop-carried values).
+
+---
+
 ### Stage 8 — WAT Backend
 
 **Goal:** Compile Twinkle programs to human-readable WAT (WebAssembly text format).
 
 Backend:
 
-* Consume Core IR or ANF IR (whichever feels cleaner).
+* Consume optimized ANF/CFG output (with fallback path from plain ANF during migration).
 * Emit `.wat` with:
 
   * type section,
@@ -602,4 +659,3 @@ Once the core compiler is stable and (preferably) self-hosted, build:
 * **Package manager**, **test runner**, **doc generator**, **build system**, etc.
 
 These tools are separate concerns and plug into the pipeline via the existing compiler API (parse, typecheck, IR, codegen).
-
