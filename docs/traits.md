@@ -36,7 +36,7 @@ Instead of traits, Twinkle uses **records of functions** to model capabilities.
 
 A capability is a nominal type that captures a set of operations on some data type `T`. For example, a “Show”-like capability:
 
-```twinkle
+```tw
 type Show<T> = .{
   to_string: fn(T) String,
 }
@@ -49,7 +49,7 @@ A function that needs “anything that can be shown” is written by taking both
 
 Example:
 
-```twinkle
+```tw
 fn print_all<T>(xs: Array<T>, show: Show<T>) {
   for x in xs {
     println(show.to_string(x))
@@ -59,7 +59,7 @@ fn print_all<T>(xs: Array<T>, show: Show<T>) {
 
 Usage:
 
-```twinkle
+```tw
 type User = .{ name: String, age: Int }
 
 fn show_user(u: User) String {
@@ -85,19 +85,19 @@ Twinkle does **not** perform implicit conversions to satisfy capability records.
 
 Given a parameter of type `Show<T>`:
 
-```twinkle
+```tw
 fn debug_value<T>(x: T, show: Show<T>) { ... }
 ```
 
 the call:
 
-```twinkle
+```tw
 debug_value(user)       // ❌ illegal: missing Show<User>
 ```
 
 is rejected. The caller must explicitly supply a value of type `Show<User>`:
 
-```twinkle
+```tw
 debug_value(user, ShowUser)  // ✅
 ```
 
@@ -119,7 +119,7 @@ Twinkle may introduce future **syntactic sugar** to make it more convenient to c
 
 The `for` syntax in Twinkle:
 
-```twinkle
+```tw
 for x in collection {
   body
 }
@@ -165,7 +165,7 @@ To iterate over a custom type without direct `for` support, users define a **hel
 
 Example: iterate over a `Tree<T>` using an explicit iterator.
 
-```twinkle
+```tw
 type Tree<T> =
   | Leaf(T)
   | Node(Tree<T>, Tree<T>)
@@ -198,7 +198,7 @@ This pattern is preferred over adding a trait-style “Iterable” system.
 
 Twinkle supports String interpolation of the form:
 
-```twinkle
+```tw
 "Value = ${expr}"
 ```
 
@@ -234,13 +234,13 @@ String literals with interpolation are desugared into calls on core String utili
 
 For example:
 
-```twinkle
+```tw
 "n=${n}"
 ```
 
 is conceptually lowered to:
 
-```twinkle
+```tw
 String.concat_many([
   "n=",
   String.of_int(n),
@@ -277,7 +277,7 @@ This section illustrates common patterns Twinkle programmers should prefer inste
 
 ### 13.1. Generic Pretty-Printing via Capability Records
 
-```twinkle
+```tw
 type Show<T> = .{
   to_string: fn(T) String,
 }
@@ -291,7 +291,7 @@ fn print_all<T>(xs: Array<T>, show: Show<T>) {
 
 Usage:
 
-```twinkle
+```tw
 type User = .{ name: String, age: Int }
 
 fn show_user(u: User) String {
@@ -310,7 +310,7 @@ print_all(users, ShowUser)
 
 Instead of `Eq`/`Ord` traits, define concrete capability records and pass them explicitly:
 
-```twinkle
+```tw
 type Eq<T> = .{
   equals: fn(T, T) Bool,
 }

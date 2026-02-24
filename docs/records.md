@@ -239,7 +239,7 @@ In practice, you only get ambiguity if you write code with missing type informat
 
 * Dot method resolution **does not** depend on how the record was constructed; it uses the static record type (`Point`, `Vec2`, etc.).
 * Whether you constructed a `Point` via `.{ ... }` or `Point.{ ... }` makes no difference for method resolution.
-* Twinkle has no traits; capabilities are explicit records of functions (see §10 of the spec).
+* Twinkle has no traits; capabilities are explicit records of functions (see **Capabilities via Records of Functions** in the spec).
 
 ---
 

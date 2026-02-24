@@ -210,7 +210,7 @@ x = expr
 
 1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function** (or at top-level).
 2. It introduces a **fresh binding identity** for `x` — the name now refers to a new immutable value. It does not mutate a stored cell; it changes what future references to the name resolve to.
-3. Rebinding targets the **same scope** as the existing binding: it does not introduce an additional scope layer or shadowing entry.
+3. Rebinding introduces a fresh binding identity for `x` that replaces the previous one for the remainder of the current lexical region; it does not introduce an additional scope layer.
 4. If multiple bindings of `x` exist due to shadowing, the **innermost** one is the target.
 5. It is a compile-time error to use `x = expr` if no such binding exists.
 6. Rebinding cannot cross function boundaries. A function cannot rebind variables defined in its caller or outer functions.
@@ -315,6 +315,18 @@ m = Dict.set(m, k, v)
 #### Assignment targets
 
 The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`. Field and index forms are still sugar that rebuild the owner value (see record/array/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
+
+Nested field chains (`a.b.c = x`) are supported and desugar recursively from the inside out:
+
+```tw
+a.b.c = x
+// desugars to:
+a.b = { a.b with c = x }
+// which desugars to:
+a = { a with b = { a.b with c = x } }
+```
+
+The root of the chain must be a local identifier. Chains starting with expressions (e.g., `foo().x = 1`) are not allowed.
 
 ---
 

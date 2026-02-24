@@ -12,7 +12,7 @@
 
 > There is no observable in-place mutation of values in the language model.
 
-### 1.2 Bindings can be rebound (local “mutation”)
+### 1.2 Bindings can be rebound (local "mutation")
 
 * A `:=` binding introduces a name bound to a value:
 
@@ -20,17 +20,17 @@
   x := expr
   ```
 
-* Within the same scope, the **same name** may appear on the left-hand side of `=` again, which introduces a **fresh binding identity** for that name:
+* Within the same **function body**, `x = expr2` introduces a **fresh binding identity** for the *nearest visible* binding of `x` (innermost shadow wins):
 
   ```tw
   x = expr2     // x now refers to a new immutable value
   ```
 
-* Semantically, this introduces a new binding identity `x₁` that replaces `x₀` going forward in the same scope:
+* Semantically, this introduces a new binding identity `x₁` that replaces `x₀` for the remainder of the current lexical region:
 
   ```tw
   x₀ := expr
-  x = expr2    // x₁: same scope, future references see expr2
+  x = expr2    // x₁: same function; subsequent references in this lexical region see expr2
   ```
 
 No other name is implicitly updated when you rebind `x`.
@@ -39,7 +39,7 @@ No other name is implicitly updated when you rebind `x`.
 
 ## 🧾 2. Update Statements (Field and Index Assignment)
 
-Update-like syntax is provided for ergonomics but **always desugars to “build new value + rebind name”**.
+Update-like syntax is provided for ergonomics but **always desugars to "build new value + rebind name"**.
 
 ### 2.1 Record field update: `x.field = expr`
 
@@ -193,7 +193,7 @@ ui_config.theme = "dark"
 
 ### 5.1 Allowed patterns
 
-#### (A) Local “mutation” of a record
+#### (A) Local "mutation" of a record
 
 ```tw
 type Point = .{ x: Int, y: Int }
@@ -209,12 +209,12 @@ p.y = 42
 ```tw
 type Config = .{ theme: String, font_size: Int }
 
-base := Config.{ theme: “light”, font_size: 14 }
+base := Config.{ theme: "light", font_size: 14 }
 ui   := foo.derive_ui_config(base)   // any pure function
 
-ui.theme = “dark”
-// base.theme == “light”
-// ui.theme   == “dark”
+ui.theme = "dark"
+// base.theme == "light"
+// ui.theme   == "dark"
 ```
 
 #### (C) Updating array elements
@@ -292,9 +292,9 @@ foo().x = 1          // ❌ not allowed: expression, not a name
 
 ---
 
-#### (3) Expecting “shared object” behavior
+#### (3) Expecting "shared object" behavior
 
-Code that *assumes* “update through one name affects all aliases” is **not supported**:
+Code that *assumes* "update through one name affects all aliases" is **not supported**:
 
 ```tw
 type Config = .{ theme: String }
@@ -324,7 +324,7 @@ There is **no way** to write code where:
 Any pattern that relies on that is simply impossible in the language:
 
 * No `Ref<T>` / pointer types in the core model.
-* No “global config object that everyone mutates in place”.
+* No "global config object that everyone mutates in place".
 
 If you ever want such a thing, it should be via an **explicit mutable cell** abstraction (e.g. `Cell<T>`, `Atom<T>`), not plain records/arrays.
 
@@ -336,6 +336,6 @@ You can wrap this whole thing up in a short paragraph:
 
 > **Update semantics.**
 > Twinkle uses immutable values with rebindable names.
-> Assignment-like syntax (`x = e`, `x.field = e`, `arr[i] = e`) is sugar for “construct a new value and bind the name to it”.
+> Assignment-like syntax (`x = e`, `x.field = e`, `arr[i] = e`) is sugar for "construct a new value and bind the name to it".
 > Values themselves are never mutated, and no update through one name can implicitly change what another name sees.
 > Functions cannot mutate caller-visible state; they only return new values.
