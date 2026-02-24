@@ -1,5 +1,4 @@
 > Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
-> Examples here may use older surface syntax.
 
 ## 🧾 1. Values, Bindings, and Assignment
 
@@ -15,23 +14,23 @@
 
 ### 1.2 Bindings can be rebound (local “mutation”)
 
-* A `let` binding introduces a name bound to a value:
+* A `:=` binding introduces a name bound to a value:
 
   ```tw
-  let x = expr
+  x := expr
   ```
 
-* Within the same block, the **same name** may appear on the left-hand side of `=` again, which is treated as **rebinding** / shadowing:
+* Within the same scope, the **same name** may appear on the left-hand side of `=` again, which introduces a **fresh binding identity** for that name:
 
   ```tw
-  x = expr2     // new value, old x is no longer used in this scope
+  x = expr2     // x now refers to a new immutable value
   ```
 
-* Semantically, this is equivalent to introducing a new binding `x₁` that hides `x₀`:
+* Semantically, this introduces a new binding identity `x₁` that replaces `x₀` going forward in the same scope:
 
   ```tw
-  let x₀ = expr
-  let x₁ = expr2   // written as `x = expr2`
+  x₀ := expr
+  x = expr2    // x₁: same scope, future references see expr2
   ```
 
 No other name is implicitly updated when you rebind `x`.
@@ -80,7 +79,7 @@ So only the binding `x` changes; any other names that referred to the old value 
 * **Constraints:**
 
   * `arr` must be a simple local name bound in the current scope.
-  * `arr` must have an indexable type (e.g. `Array<T>` or `Map<K, V>`).
+  * `arr` must have an indexable type (e.g. `Array<T>` or `Dict<K, V>`).
   * `index` is an expression of the appropriate index type.
 
 * **Desugaring (array example):**
@@ -123,20 +122,22 @@ x = x + y
 Example:
 
 ```tw
-fn bump(n: Int) -> Int {
+fn bump(n: Int) Int {
   n = n + 1      // allowed; n is rebound locally
   n
 }
 
-let x = 10
-let y = bump(x)
+x := 10
+y := bump(x)
 // x is still 10, y is 11
 ```
 
 Same for records:
 
 ```tw
-fn darken(ui: Config) -> Config {
+type Config = .{ theme: String, font_size: Int }
+
+fn darken(ui: Config) Config {
   ui.theme = "dark"   // ui = { ui with theme = "dark" }
   ui
 }
@@ -145,8 +146,8 @@ fn darken(ui: Config) -> Config {
 * The caller’s `Config` is untouched; they must accept the new value explicitly:
 
   ```tw
-  let cfg = { theme: "light" }
-  let cfg2 = darken(cfg)
+  cfg := Config.{ theme: "light", font_size: 14 }
+  cfg2 := darken(cfg)
   ```
 
 ---
@@ -155,18 +156,19 @@ fn darken(ui: Config) -> Config {
 
 Because values are immutable:
 
-* `let z = x` creates a **second name for the same value**.
+* `z := x` creates a **second name for the same value**.
 * Any update to `x` is really a rebinding:
 
   ```tw
-  let x = { y: 0 }
-  let z = x
+  type Pt = .{ y: Int }
+  x := Pt.{ y: 0 }
+  z := x
 
-  x.y = 1      // x = { x with y = 1 }
+  x.y = 1      // x = Pt.{ y: 1 }
 
   // Now:
-  //   x == { y: 1 }
-  //   z == { y: 0 }
+  //   x == Pt.{ y: 1 }
+  //   z == Pt.{ y: 0 }
   ```
 
 This is **legal and well-defined**:
@@ -175,9 +177,11 @@ records (and other non-primitive values) are **by value**, *not* by reference.
 If you want multiple values updated, you must explicitly build them:
 
 ```tw
-let config      = { theme: "light" }
-let ui_config   = config
-let ui_config   = { ui_config with theme = "dark" }
+type Config = .{ theme: String, font_size: Int }
+
+config    := Config.{ theme: "light", font_size: 14 }
+ui_config := config
+ui_config.theme = "dark"
 
 // config.theme    == "light"
 // ui_config.theme == "dark"
@@ -192,27 +196,31 @@ let ui_config   = { ui_config with theme = "dark" }
 #### (A) Local “mutation” of a record
 
 ```tw
-let p = { x: 0, y: 0 }
+type Point = .{ x: Int, y: Int }
+
+p := Point.{ x: 0, y: 0 }
 p.x = p.x + 1
 p.y = 42
-// p == { x: 1, y: 42 }
+// p == Point.{ x: 1, y: 42 }
 ```
 
 #### (B) Deriving a variant config
 
 ```tw
-let base = { theme: "light", font_size: 14 }
-let ui   = foo.derive_ui_config(base)   // any pure function
+type Config = .{ theme: String, font_size: Int }
 
-ui.theme = "dark"
-// base.theme == "light"
-// ui.theme   == "dark"
+base := Config.{ theme: “light”, font_size: 14 }
+ui   := foo.derive_ui_config(base)   // any pure function
+
+ui.theme = “dark”
+// base.theme == “light”
+// ui.theme   == “dark”
 ```
 
 #### (C) Updating array elements
 
 ```tw
-let arr = [0, 0, 0]
+arr: Array<Int> = [0, 0, 0]
 arr[1] = 42
 // arr == [0, 42, 0]
 ```
@@ -220,7 +228,7 @@ arr[1] = 42
 #### (D) Rebinding in loops
 
 ```tw
-let total = 0
+total := 0
 for n in numbers {
   total = total + n
 }
@@ -229,13 +237,15 @@ for n in numbers {
 #### (E) Updating a parameter locally and returning
 
 ```tw
-fn bump_point(p: Point) -> Point {
+type Point = .{ x: Int, y: Int }
+
+fn bump_point(p: Point) Point {
   p.x = p.x + 1
   p
 }
 
-let p0 = { x: 0, y: 0 }
-let p1 = bump_point(p0)
+p0 := Point.{ x: 0, y: 0 }
+p1 := bump_point(p0)
 // p0.x == 0
 // p1.x == 1
 ```
@@ -259,33 +269,26 @@ get_config().theme = "dark"  // ❌ not allowed
 You must instead bind to a name:
 
 ```tw
-let cfg = get_config()
+cfg := get_config()
 cfg.theme = "dark"
 ```
 
 ---
 
-#### (2) Updating nested projections in one shot (if you choose to keep v1 simple)
+#### (2) Updating nested projections
 
-Depending on how simple you want v1, you might **forbid complex LHS**:
-
-```tw
-user.profile.name = "Bob"   // ❌ v1: too much magic
-```
-
-and require explicit nested updates:
+Nested LHS like `a.b.c = x` is supported and desugars recursively:
 
 ```tw
-user =
-  { user
-  with profile =
-      { user.profile with name = "Bob" }
-  }
+// a.b.c = x  desugars to:
+// a = { a with b = { a.b with c = x } }
 ```
 
-(or via a helper function).
+The root variable (`a`) must be a simple local name. The lvalue chain may not start with an expression:
 
-This keeps desugaring simple and predictable.
+```tw
+foo().x = 1          // ❌ not allowed: expression, not a name
+```
 
 ---
 
@@ -294,8 +297,10 @@ This keeps desugaring simple and predictable.
 Code that *assumes* “update through one name affects all aliases” is **not supported**:
 
 ```tw
-let config    = { theme: "light" }
-let ui_config = config
+type Config = .{ theme: String }
+
+config    := Config.{ theme: "light" }
+ui_config := config
 
 ui_config.theme = "dark"
 

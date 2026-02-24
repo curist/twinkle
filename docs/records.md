@@ -235,11 +235,11 @@ In practice, you only get ambiguity if you write code with missing type informat
 
 ---
 
-### 7. Interaction with dot methods and traits
+### 7. Interaction with dot methods
 
-* Dot method resolution **does not** depend on record literals; it uses the static record type (`Point`, `Vec2`, etc.).
-* Traits (e.g., `Show(Point)`) work on the nominal type; whether you constructed a `Point` via `.{ ... }` or `Point.{ ... }` makes no difference.
-* There is no structural record trait dispatch: traits always attach to named types.
+* Dot method resolution **does not** depend on how the record was constructed; it uses the static record type (`Point`, `Vec2`, etc.).
+* Whether you constructed a `Point` via `.{ ... }` or `Point.{ ... }` makes no difference for method resolution.
+* Twinkle has no traits; capabilities are explicit records of functions (see §10 of the spec).
 
 ---
 
@@ -359,9 +359,3 @@ type Point = .{ x: Int, y: Int }
 fn translate(p: Point) Point { ... }                             // ✅
 ```
 
-fn greeter() {
-  .{ hello: fn() { println("hello world!!") } }
-}
-
-greet := greeter()
-greet.hello()

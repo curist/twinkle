@@ -1,5 +1,4 @@
 > Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
-> Examples here may use older surface syntax.
 
 Traits are all about callee-side magic.
 Records-of-functions are all about caller-side adaptation.
@@ -64,7 +63,7 @@ Usage:
 type User = .{ name: String, age: Int }
 
 fn show_user(u: User) String {
-  u.name + " (" + "${u.age}" + ")"
+  "${u.name} (${u.age})"
 }
 
 ShowUser: Show<User> = .{
@@ -150,67 +149,15 @@ Any value used in `for x in collection` whose type is not one of the supported b
 
 ### 11.3. Example Lowerings (Informal)
 
-For arrays:
+The compiler performs type-directed lowering for each supported collection. The exact IR is described in `docs/ir.md`; the following is informal pseudocode only.
 
-```twinkle
-for x in xs {
-  body
-}
-```
+For `Array<T>`: lowered to an indexed loop over length, binding each element in turn.
 
-is conceptually lowered to:
+For `Range`: lowered to a simple integer loop over the range bounds.
 
-```twinkle
-let len = Array.len(xs)
-let i = 0
-while i < len {
-  let x = xs[i]
-  body
-  i = i + 1
-}
-```
+For `Dict<K,V>`: lowered to a loop over `Dict.keys(d)`, binding the key and optionally looking up the value.
 
-For ranges:
-
-```twinkle
-for i in 0..n {
-  body
-}
-```
-
-is conceptually lowered to:
-
-```twinkle
-let start = 0
-let end = n
-let i = start
-while i < end {
-  let i_value = i
-  body
-  i = i + 1
-}
-```
-
-For iterators:
-
-```twinkle
-for x in iter {
-  body
-}
-```
-
-is conceptually lowered to:
-
-```twinkle
-let current = Iterator.next(iter)
-while current.is_some() {
-  let x = Option.unwrap(current)
-  body
-  current = Iterator.next(iter)
-}
-```
-
-(Exact iterator API naming may differ.)
+For `Iterator<T>`: lowered to repeated `next` calls until exhausted.
 
 ### 11.4. Idiomatic User Extensions Without Traits
 
@@ -270,15 +217,15 @@ Attempting to interpolate a value of any other type is a **compile-time error**.
 
 Example:
 
-```twinkle
-let name: String = "Twinkle"
-let n: Int = 42
-let ok: Bool = true
+```tw
+name: String = "Twinkle"
+n: Int = 42
+ok: Bool = true
 
-let s = "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
+s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
 
-let user: User = .{ name: "Ada", age: 30 }
-let s2 = "user=${user}"                    // ❌ error: User not interpolable
+user: User = .{ name: "Ada", age: 30 }
+s2 := "user=${user}"                    // ❌ error: User not interpolable
 ```
 
 ### 12.3. Informal Desugaring
@@ -309,7 +256,7 @@ Canonical surface names use the `String.*` namespace (e.g. `String.concat`, `Str
 
 To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
 
-```twinkle
+```tw
 type User = .{ name: String, age: Int }
 
 fn user_to_string(u: User) String {
@@ -348,14 +295,14 @@ Usage:
 type User = .{ name: String, age: Int }
 
 fn show_user(u: User) String {
-  u.name + " (" + Int.to_string(u.age) + ")"
+  "${u.name} (${u.age})"
 }
 
-let ShowUser: Show<User> = .{
+ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-let users: Array<User> = ...
+users: Array<User> = ...
 print_all(users, ShowUser)
 ```
 
@@ -369,45 +316,34 @@ type Eq<T> = .{
 }
 
 fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
-  let i = 0
-  let len = Array.len(xs)
-  while i < len {
-    if eq.equals(xs[i], needle) {
+  for x in xs {
+    if eq.equals(x, needle) {
       return true
     }
-    i = i + 1
   }
   false
 }
 
 type Point = .{ x: Int, y: Int }
 
-let EqPoint: Eq<Point> = .{
-  equals(a, b) => a.x == b.x and a.y == b.y,
+EqPoint: Eq<Point> = .{
+  equals: fn(a: Point, b: Point) Bool { a.x == b.x && a.y == b.y },
 }
 
-let points: Array<Point> = ...
-let p: Point = .{ x: 1, y: 2 }
-let found = contains(points, p, EqPoint)
+points: Array<Point> = ...
+p: Point = .{ x: 1, y: 2 }
+found := contains(points, p, EqPoint)
 ```
 
 ### 13.3. Collection-Specific Helpers
 
 Instead of a general “Iterable” trait, provide small, concrete helpers:
 
-```twinkle
+```tw
 fn sum_array(xs: Array<Int>) Int {
-  let acc = 0
+  acc := 0
   for x in xs {
     acc = acc + x
-  }
-  acc
-}
-
-fn sum_range(r: Range) Int {
-  let acc = 0
-  for i in r {
-    acc = acc + i
   }
   acc
 }
@@ -415,9 +351,9 @@ fn sum_range(r: Range) Int {
 
 Or, via an explicit iterator type:
 
-```twinkle
+```tw
 fn sum_iter(it: Iterator<Int>) Int {
-  let acc = 0
+  acc := 0
   for x in it {
     acc = acc + x
   }

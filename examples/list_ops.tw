@@ -15,7 +15,7 @@ fn filter<T>(xs: Array<T>, pred: fn(T) Bool) Array<T> {
 fn sum(xs: Array<Int>) Int {
   total := 0
   for x in xs {
-    total += x
+    total = total + x
   }
   total
 }

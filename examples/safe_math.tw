@@ -27,7 +27,7 @@ fn print_result(r: Result<Int, String>) Void {
   }
 }
 
-fn main() {
+fn main() Void {
   println("Computing 100 / 5 / 2:")
   print_result(compute(100, 5, 2))
 

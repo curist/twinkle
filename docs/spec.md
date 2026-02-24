@@ -154,24 +154,6 @@ p := Point.{ x: 10, y: 20 }
 
 Field access: `p.x`
 
-consider below as extension, and is outside of the scope of MVP
-
-Anonymous record literal .{ field₁: e₁, ..., fieldₙ: eₙ } introduces a fresh type variable τ with a constraint:
-
-* τ must be a nominal struct type whose declared fields are exactly { fieldᵢ: type(eᵢ) }.
-* During type inference, τ may be unified with a concrete nominal struct type (e.g. Person). This succeeds iff that struct’s field set and field types match the constraint.
-* All uses of the variable must agree on a single nominal struct type; otherwise, inference fails.
-* If, after solving, τ is still unconstrained (no nominal type chosen) and the value **escapes** the function or is otherwise observable at an interface boundary, an explicit type annotation is required.
-* This mechanism does not introduce structural record types into the language; it is solely a constraint-solving aid for anonymous record literals.
-
-**escape** means:
-
-* returned from function
-* stored in array/dict
-* included in record fields
-* passed to another function
-* assigned to a binding introduced with `:=` (no annotation)
-
 ---
 
 ## **7. Functions, Bindings, and Rebinding**
@@ -227,8 +209,8 @@ x = expr
 #### Rules
 
 1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function** (or at top-level).
-2. It **rebinds that binding**: i.e., reassigns the name to a new immutable value.
-3. Rebinding **does not** create a new binding.
+2. It introduces a **fresh binding identity** for `x` — the name now refers to a new immutable value. It does not mutate a stored cell; it changes what future references to the name resolve to.
+3. Rebinding targets the **same scope** as the existing binding: it does not introduce an additional scope layer or shadowing entry.
 4. If multiple bindings of `x` exist due to shadowing, the **innermost** one is the target.
 5. It is a compile-time error to use `x = expr` if no such binding exists.
 6. Rebinding cannot cross function boundaries. A function cannot rebind variables defined in its caller or outer functions.
@@ -341,12 +323,14 @@ The grammar allows identifiers, field accesses, and indexed expressions on the l
 All values are immutable. Rebinding affects only the local name, not any other aliases:
 
 ```tw
-p := .{ y: 0 }
+type Pt = .{ y: Int }
+
+p := Pt.{ y: 0 }
 q := p
 
-p.y = 1      // p = { p with y = 1 }
+p.y = 1      // p = Pt.{ y: 1 }
 
-q             // still { y: 0 }
+q             // still Pt.{ y: 0 }
 ```
 
 Twinkle has **value semantics**, not reference semantics.
@@ -1096,8 +1080,25 @@ Includes:
 Standard Hindley–Milner type inference:
 
 * Unification
-* Let-generalization (current MVP has no mutable references; value restriction is reserved for future explicit mutable cells/refs)
+* Generalization at function declarations (not at local bindings)
 * No trait constraints
+
+### Generalization Rules
+
+1. **`fn` declarations are generalized** — type variables in the signature are universally quantified:
+   ```tw
+   fn id<A>(x: A) A { x }   // polymorphic; A is generic
+   ```
+
+2. **`:=` bindings are monomorphic** — the inferred type is instantiated to a specific monotype at the binding site:
+   ```tw
+   f := id     // error: cannot infer monomorphic type for polymorphic binding
+               // help: annotate, e.g.  f: fn(Int) Int = id
+   ```
+
+3. **Type-annotated bindings** (`x: T = e`) use the annotation directly with no generalization.
+
+This avoids value-restriction complexity and keeps local bindings simple. If you need a name for a polymorphic function, define it with `fn`.
 
 Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
 
