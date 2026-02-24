@@ -6,7 +6,7 @@
  *   - FunctionDecl: `fn name(...) [ReturnType] { ... }`  (supports mutual recursion)
  *   - Value binding: `name [: Type] = Expr` or `name := Expr` (no mutual recursion)
  * - Function *types* use `fn(...) Type` syntax (no `->`).
- * - Top-level expressions are allowed for scripting.
+ * - Top-level value bindings and expression statements are allowed at module scope.
  * - Named record literals use `TypeName.{ ... }` to avoid ambiguity with blocks.
  * - Sum types (enums) are defined with `type T = { Variant1, Variant2(T), ... }`.
  * - Constructors are referenced as `TypeName.Variant` in expressions, with `.Variant`
@@ -26,7 +26,12 @@ TopLevel =
 
 (* Implementation note:
    - Top-level is a sequence of declarations + executable statements.
-   - Runtime semantics: top-level statements execute in order at module init. *)
+   - TypeDecl and FunctionDecl are available everywhere in the module (no
+     forward-declaration restriction).
+   - TopLevelStmt (value bindings and expression statements) execute in
+     source order at module initialization time.
+   - There is no special entry-point function; the init sequence is the program.
+     A fn named `main` has no distinguished status. *)
 
 ImportDecl =
     "import" StringLiteral ;
@@ -93,8 +98,8 @@ ParamList =
 Param =
     Identifier [ ":" Type ] ;
 (* Implementation note:
-   - Param types are optional; when omitted, type inference must infer them
-     from usage (HM-style). *)
+   - Param types are optional; when omitted, bidirectional type checking
+     must infer them from usage context. *)
 
 (* ===== Function Expressions (values) ===== *)
 
@@ -331,8 +336,8 @@ Statement =
     | ReturnStmt ;
 
 TopLevelStmt =
-      LetBinding
-    | Expr ;
+      [ "pub" ] LetBinding   (* value binding, optionally exported; no rebinding at module scope *)
+    | Expr ;                  (* side-effecting expression; type must be Void *)
 
 LetBinding =
       Identifier ":=" Expr
