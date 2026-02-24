@@ -21,6 +21,11 @@ enum Commands {
         /// Path to the .tw file
         file: String,
     },
+    /// Lower a Twinkle source file to Core IR and display it
+    Lower {
+        /// Path to the .tw file
+        file: String,
+    },
     /// Run a Twinkle program using the interpreter
     Run {
         /// Path to the .tw file
@@ -45,6 +50,9 @@ fn main() -> Result<()> {
         }
         Commands::Check { file } => {
             twinkle::cli::check::check_file(&file)?;
+        }
+        Commands::Lower { file } => {
+            twinkle::cli::lower::lower_file(&file)?;
         }
         Commands::Run { file } => {
             twinkle::cli::run::run_file(&file)?;

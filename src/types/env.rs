@@ -270,6 +270,11 @@ impl TypeEnv {
     pub fn has_field(&self, type_id: TypeId, field_name: &str) -> bool {
         self.record_fields.contains_key(&(type_id, field_name.to_string()))
     }
+
+    /// Number of registered types (for iterating all TypeIds)
+    pub fn type_count(&self) -> usize {
+        self.types.len()
+    }
 }
 
 impl Default for TypeEnv {

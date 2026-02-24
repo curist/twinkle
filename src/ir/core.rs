@@ -43,11 +43,18 @@ pub enum CoreExprKind {
     Local(LocalId),
     GlobalFunc(FuncId),
 
-    // Binding
+    // Binding (introduces a new variable; purely functional)
     Let {
         local: LocalId,
         value: Box<CoreExpr>,
         body: Box<CoreExpr>,
+    },
+
+    // Mutation (updates an existing variable; maps to Wasm local.set)
+    // Used for rebinding inside loops and explicit `x = expr` rebinding.
+    Assign {
+        local: LocalId,
+        value: Box<CoreExpr>,
     },
 
     // Binary operation

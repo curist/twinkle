@@ -3,6 +3,7 @@
 pub mod core;
 pub mod error;
 pub mod local_allocator;
+pub mod lower;
 
 // Re-export commonly used types
 pub use core::{
@@ -11,3 +12,4 @@ pub use core::{
 };
 pub use error::LowerError;
 pub use local_allocator::LocalAllocator;
+pub use lower::Lowerer;

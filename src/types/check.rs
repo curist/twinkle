@@ -282,13 +282,8 @@ impl TypeChecker {
                 Err(())
             }
 
-            ExprKind::Collect { .. } => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "collect expressions",
-                    span: expr.span,
-                    note: "Collect will be supported after IR lowering in Stage 3".to_string(),
-                });
-                Err(())
+            ExprKind::Collect { pattern, iter, body } => {
+                self.synth_collect(pattern, iter, body, expr.span)
             }
 
             ExprKind::Try { .. } => {
@@ -387,15 +382,14 @@ impl TypeChecker {
                 Ok(MonoType::Bool)
             }
 
-            // Assignment operators - not allowed in Stage 2
-            BinOp::Assign | BinOp::AddAssign | BinOp::SubAssign
-            | BinOp::MulAssign | BinOp::DivAssign | BinOp::ModAssign => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "assignment operators",
-                    span,
-                    note: "Twinkle uses immutable bindings only in Stage 2".to_string(),
-                });
-                Err(())
+            // Assignment / rebinding operators
+            BinOp::Assign => {
+                self.synth_assign(left, right, span)
+            }
+
+            BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign
+            | BinOp::DivAssign | BinOp::ModAssign => {
+                self.synth_compound_assign(op, left, right, span)
             }
         }
     }
@@ -527,20 +521,22 @@ impl TypeChecker {
                     }
                     result_ty = MonoType::Void;
                 }
-                Stmt::For { .. } | Stmt::ForCond { .. } => {
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "for loops",
-                        span: self.stmt_span(stmt),
-                        note: "For loops will be supported in later phases".to_string(),
-                    });
+                Stmt::For { pattern, index_pattern, iter, body, .. } => {
+                    self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
                     result_ty = MonoType::Void;
                 }
-                Stmt::Break { .. } | Stmt::Continue { .. } => {
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "break/continue",
-                        span: self.stmt_span(stmt),
-                        note: "Break/continue will be supported with for loops".to_string(),
-                    });
+                Stmt::ForCond { cond, body, .. } => {
+                    let _ = self.check_expr(cond, &MonoType::Bool);
+                    let _ = self.synth_block(body);
+                    result_ty = MonoType::Void;
+                }
+                Stmt::Break { value, .. } => {
+                    if let Some(val) = value {
+                        let _ = self.synth_expr(val);
+                    }
+                    result_ty = MonoType::Void;
+                }
+                Stmt::Continue { .. } => {
                     result_ty = MonoType::Void;
                 }
             }
@@ -1019,5 +1015,227 @@ impl TypeChecker {
             });
             Err(())
         }
+    }
+
+    //
+    // Assignment / rebinding
+    //
+
+    fn synth_assign(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
+        match &left.kind {
+            ExprKind::Ident(name) => {
+                let existing_ty = if let Some(ty) = self.local_env.lookup(name) {
+                    ty.clone()
+                } else if let Some(ty) = self.value_env.lookup(name) {
+                    ty
+                } else {
+                    self.errors.push(TypeError::UndefinedVariable {
+                        name: name.clone(),
+                        span: left.span,
+                    });
+                    return Err(());
+                };
+                self.check_expr(right, &existing_ty)?;
+                Ok(MonoType::Void)
+            }
+            ExprKind::FieldAccess { base, field } => {
+                // r.field = expr — type-check both sides conservatively
+                let base_ty = self.synth_expr(base)?;
+                match base_ty {
+                    MonoType::Named { type_id, .. } => {
+                        if let Some(fields) = self.type_env.get_record_fields(type_id) {
+                            let field_ty = fields.iter().find(|f| f.name == *field)
+                                .map(|f| f.ty.clone());
+                            if let Some(fty) = field_ty {
+                                self.check_expr(right, &fty)?;
+                                Ok(MonoType::Void)
+                            } else {
+                                self.errors.push(TypeError::NoSuchField {
+                                    record_type: type_id.0.to_string(),
+                                    field: field.clone(),
+                                    span,
+                                });
+                                Err(())
+                            }
+                        } else {
+                            self.errors.push(TypeError::UnsupportedFeature {
+                                feature: "field assignment on non-record type",
+                                span,
+                                note: "Field assignment requires a record type".to_string(),
+                            });
+                            Err(())
+                        }
+                    }
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "field assignment on non-record",
+                            span,
+                            note: "Field assignment requires a record type".to_string(),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            ExprKind::Index { base, index } => {
+                // arr[i] = v — base must be Array<T>, index Int, v must be T
+                let base_ty = self.synth_expr(base)?;
+                self.check_expr(index, &MonoType::Int)?;
+                match base_ty {
+                    MonoType::Array(elem_ty) => {
+                        self.check_expr(right, &elem_ty)?;
+                        Ok(MonoType::Void)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Array(Box::new(MonoType::Int)),
+                            actual: other,
+                            span: base.span,
+                        });
+                        Err(())
+                    }
+                }
+            }
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "complex assignment target",
+                    span,
+                    note: "Only identifiers, field accesses, and index expressions can be assigned".to_string(),
+                });
+                Err(())
+            }
+        }
+    }
+
+    fn synth_compound_assign(&mut self, _op: BinOp, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
+        // x += y is sugar for x = x + y — LHS must be ident for now
+        match &left.kind {
+            ExprKind::Ident(name) => {
+                let existing_ty = if let Some(ty) = self.local_env.lookup(name) {
+                    ty.clone()
+                } else if let Some(ty) = self.value_env.lookup(name) {
+                    ty
+                } else {
+                    self.errors.push(TypeError::UndefinedVariable {
+                        name: name.clone(),
+                        span: left.span,
+                    });
+                    return Err(());
+                };
+                let right_ty = self.synth_expr(right)?;
+                match (&existing_ty, &right_ty) {
+                    (MonoType::Int, MonoType::Int) => Ok(MonoType::Void),
+                    (MonoType::Float, MonoType::Float) => Ok(MonoType::Void),
+                    _ => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: existing_ty,
+                            actual: right_ty,
+                            span: right.span,
+                        });
+                        Err(())
+                    }
+                }
+            }
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "complex compound-assignment target",
+                    span,
+                    note: "Only simple identifiers support compound assignment".to_string(),
+                });
+                Err(())
+            }
+        }
+    }
+
+    //
+    // For loop type checking
+    //
+
+    fn check_for_stmt(
+        &mut self,
+        pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
+        iter: &Expr,
+        body: &Block,
+    ) {
+        let iter_ty = match self.synth_expr(iter) {
+            Ok(ty) => ty,
+            Err(()) => return,
+        };
+
+        let elem_ty = match iter_ty {
+            MonoType::Array(elem) => *elem,
+            other => {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected: MonoType::Array(Box::new(MonoType::Int)),
+                    actual: other,
+                    span: iter.span,
+                });
+                return;
+            }
+        };
+
+        self.local_env.push_scope();
+
+        match pattern {
+            Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
+            Pattern::Wildcard(_) => {}
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "complex pattern in for loop",
+                    span: iter.span,
+                    note: "Only simple identifiers are supported in for loop patterns".to_string(),
+                });
+            }
+        }
+
+        if let Some(idx_pat) = index_pattern {
+            if let Pattern::Ident(name, _) = idx_pat {
+                self.local_env.bind(name.clone(), MonoType::Int);
+            }
+        }
+
+        let _ = self.synth_block(body);
+        self.local_env.pop_scope();
+    }
+
+    //
+    // Collect expression type checking
+    //
+
+    fn synth_collect(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr, span: Span) -> Result<MonoType, ()> {
+        let iter_ty = self.synth_expr(iter)?;
+
+        let elem_ty = match iter_ty {
+            MonoType::Array(elem) => *elem,
+            other => {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected: MonoType::Array(Box::new(MonoType::Int)),
+                    actual: other,
+                    span: iter.span,
+                });
+                return Err(());
+            }
+        };
+
+        self.local_env.push_scope();
+
+        match pattern {
+            Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
+            Pattern::Wildcard(_) => {}
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "complex pattern in collect",
+                    span,
+                    note: "Only simple identifiers are supported in collect patterns".to_string(),
+                });
+                self.local_env.pop_scope();
+                return Err(());
+            }
+        }
+
+        let body_ty = self.synth_expr(body)?;
+        self.local_env.pop_scope();
+
+        Ok(MonoType::Array(Box::new(body_ty)))
     }
 }
