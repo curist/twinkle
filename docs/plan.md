@@ -54,7 +54,7 @@ Runtime / distribution:
    * File I/O, CLI, and host integration live in thin wrappers.
 
 2. **Core IR as semantic backbone**
-   Twinkle features (`collect`, `try`, `.Variant`, `for x in`, etc.) are desugared into a **Core IR** that directly expresses the semantics in a small set of constructs:
+   Twinkle features (`collect`, `try`, `.Variant`, `for x in`, etc.) are desugared into a **Core IR** that directly expresses the semantics in a small set of constructs (spec §7.5, §12, §13, §18):
 
    * `Let`, `If`, `Match`, `Loop`, `Call`, `Record`, `Variant`, etc.
 
@@ -175,19 +175,19 @@ Features:
 
   * `//` line comments,
   * possibly doc comments (`/// ...`).
-* String interpolation:
+* String interpolation (spec §11):
 
   * Lexed as alternating `STRING_SEGMENT` + `${` *Expr* `}` tokens.
 * Parser:
 
   * Expressions with precedence (`or` < `and` < `==` < `<` < `+ -` < `* / %`).
   * Blocks `{ ... }` as expression-with-statements.
-  * `if` expressions.
-  * `case` expressions.
-  * `for` / `collect`.
-  * Function declarations (`fn name(...) [ReturnType] Block`).
-  * Type declarations (records + sum types + type aliases).
-  * Top-level statements and expressions.
+  * `if` expressions (spec §12).
+  * `case` expressions (spec §5, §12).
+  * `for` / `collect` (spec §12, §13).
+  * Function declarations (`fn name(...) [ReturnType] Block`) (spec §7.1).
+  * Type declarations (records + sum types + type aliases) (spec §3, §5, §6).
+  * Top-level statements and expressions (spec §8.1).
 
 Every AST node carries a `Span`:
 
@@ -223,12 +223,12 @@ Features:
 
 * Type representation (monomorphic for now):
 
-  * Primitive: `Int`, `Float`, `Bool`, `Str`, `Void`.
-  * Records: nominal record types with fields.
-  * Sum types: nominal variants (`type Result = { Ok(Int), Err(Str) }`).
-  * Arrays & dicts: `Arr<T>`, `Dict<K,V>`.
-  * Functions: `fn(T1, T2, ...) Tret`.
-  * Type aliases: `type ID = Int` — expands transparently, not a new nominal type.
+  * Primitive: `Int`, `Float`, `Bool`, `Str`, `Void` (spec §2).
+  * Records: nominal record types with fields (spec §6).
+  * Sum types: nominal variants (`type Result = { Ok(Int), Err(Str) }`) (spec §5).
+  * Arrays & dicts: `Arr<T>`, `Dict<K,V>` (spec §14, §17).
+  * Functions: `fn(T1, T2, ...) Tret` (spec §7.1).
+  * Type aliases: `type ID = Int` — expands transparently, not a new nominal type (spec §3).
 
 * Name resolution:
 
@@ -236,19 +236,19 @@ Features:
 
     * `type` declarations,
     * `fn` declarations,
-    * top-level values.
+    * top-level values (spec §8.1, §8.2).
   * Basic support for qualified names in types and expressions (e.g. `Module.Point`).
 
 * Typechecker:
 
   * Expression typechecking.
-  * Let bindings:
+  * Let bindings (spec §7.2, §7.3):
 
     * `x := expr` (inferred).
     * `x: T = expr` (checked).
   * Function declarations and calls.
-  * `if` expressions (branch type agreement).
-  * `case` expressions:
+  * `if` expressions (branch type agreement) (spec §12).
+  * `case` expressions (spec §5, §12):
 
     * scrutinee type must be a sum type.
     * arms must all produce a compatible result type.
@@ -302,11 +302,11 @@ Lowering steps:
 
 * Desugar:
 
-  * `collect` into loops and explicit array building.
-  * `for` forms (`x in xs`, `key, value in dict`, `for expr`) into `Loop`.
-  * `try expr` into a `Match` over `Result` plus early-return/propagation.
-  * `.Variant(...)` shorthand into `Variant { type_id, variant_id, ... }` using type info.
-  * Lvalue assignment forms into rebinding + functional update calls:
+  * `collect` into loops and explicit array building (spec §13).
+  * `for` forms (`x in xs`, `key, value in dict`, `for expr`) into `Loop` (spec §12).
+  * `try expr` into a `Match` over `Result` plus early-return/propagation (spec §18).
+  * `.Variant(...)` shorthand into `Variant { type_id, variant_id, ... }` using type info (spec §5).
+  * Lvalue assignment forms into rebinding + functional update calls (spec §7.5):
     * `r.field = expr` → `r = RecordUpdate(r, field, expr)`
     * `arr[i] = expr` → `arr = Array.set(arr, i, expr)`
     * `m[k] = expr` → `m = Dict.set(m, k, expr)`
@@ -332,16 +332,16 @@ defines the receiver type — they are fundamentally coupled.
 
 Features:
 
-* **Module system:**
+* **Module system** (spec §8):
 
   * `import "path/to/file"` — loads and compiles the target file.
-  * `pub fn` / `pub type` — visibility: public vs private.
+  * `pub fn` / `pub type` — visibility: public vs private (spec §8.2).
   * Module identifier = last path segment without extension.
   * Qualified access: `math.add`, `math.Point`.
   * Per-path caching (compile each file once).
   * No aliasing or destructuring in MVP.
 
-* **Inherent method resolution (full):**
+* **Inherent method resolution (full)** (spec §9):
 
   * Type checker resolves `receiver.method(args)` by looking up the module
     that defines the receiver's type, finding a matching first-argument function,
@@ -431,15 +431,15 @@ Features:
   * type variables (`TypeVar`),
   * schemes: universally quantified types for polymorphic functions and types.
 
-* Type checking:
+* Type checking (spec §20):
 
   * bidirectional Damas–Milner with:
 
     * unification,
-    * generalization at `fn` declarations (not local bindings),
+    * generalization at `fn` declarations (not local bindings) (spec §20 Generalization Rules),
     * instantiation at use sites.
 
-* Generic functions and sum/record types:
+* Generic functions and sum/record types (spec §3):
 
   * `type Option<T> = { None, Some(T) }`
   * `fn map<A, B>(xs: Arr<A>, f: fn(A) B) -> Arr<B> { ... }`
@@ -562,9 +562,10 @@ Representation of Twinkle types in Wasm:
 
 * Start simple:
 
-  * map primitives (`Int`, `Bool`, `Float`) to numeric Wasm types.
+  * map primitives (`Int`, `Bool`, `Float`) to numeric Wasm types (spec §2, §21).
   * map `Str`, `Arr`, `Dict`, `Record`, `Variant` to a runtime representation (e.g. indices into a linear memory managed by a small runtime).
-* Later, experiment with Wasm GC (`struct`, `array`, `variant`) as the design stabilizes.
+* Later, experiment with Wasm GC (`struct`, `array`, `variant`) as the design stabilizes (spec §21).
+* Entry point: top-level init sequence lowers to a Wasm start function (spec §8.1).
 
 CLI:
 
