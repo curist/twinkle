@@ -21,7 +21,7 @@ Compiler pipeline:
 Twinkle source
   → Lexer
   → Parser (AST with spans)
-  → Typechecker (HM-style)
+  → Typechecker (bidirectional)
   → Core IR (expression+block, loops, match, variants)
   → ANF IR (optional, backend-oriented)
   → Backend(s):
@@ -420,7 +420,7 @@ Deliverables:
 
 ---
 
-### Stage 6 — Generics & Hindley–Milner Type Inference
+### Stage 6 — Generics & Bidirectional Type Checking
 
 **Goal:** Upgrade typechecker to support generics and inference.
 
@@ -431,12 +431,12 @@ Features:
   * type variables (`TypeVar`),
   * schemes: universally quantified types for polymorphic functions and types.
 
-* Type inference:
+* Type checking:
 
-  * standard HM with:
+  * bidirectional Damas–Milner with:
 
     * unification,
-    * generalization at let-bindings,
+    * generalization at `fn` declarations (not local bindings),
     * instantiation at use sites.
 
 * Generic functions and sum/record types:

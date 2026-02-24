@@ -8,7 +8,7 @@ Provide a single, explicit way to model **mutable state**, without changing:
 
 * the immutable value model for arrays/records/etc.,
 * the “update = rebinding” semantics,
-* or the type system (still plain HM).
+* or the type system (still Damas–Milner with bidirectional checking).
 
 **Definition (informal):**
 
@@ -266,7 +266,7 @@ The compiler doesn’t need special typing rules:
 
 * `Cell<T>` is just another parametric type.
 * `Cell.get/set/update` are ordinary functions (or intrinsics with known effects).
-* Your type inference remains plain HM.
+* Your type checking remains bidirectional Damas–Milner.
 
 The only extra thing the compiler/runtime needs is:
 

@@ -6,7 +6,7 @@ A lightweight statically typed programming language targeting WebAssembly GC.
 
 Twinkle combines the elegance of functional programming with the practicality of modern systems languages:
 
-- **Hindley-Milner type inference** (Gleam/OCaml style)
+- **Rank-1 polymorphic type system with bidirectional type checking** (Gleam/Elm style)
 - **Capability records over traits** - no global typeclass resolution
 - **Unboxed primitives** with GC-managed references
 - **WebAssembly GC target** - leveraging `struct`, `array`, and reference types

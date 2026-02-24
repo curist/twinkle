@@ -7,7 +7,7 @@ Twinkle is a small statically typed language targeting **WebAssembly GC**.
 Design goals:
 
 * Lightweight, scripting-like syntax.
-* Hindley–Milner type inference (Gleam/OCaml style).
+* Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking.
 * Unboxed primitives (`Int = i64`, `Float = f64`, `Bool`).
 * GC-managed references for strings, arrays, records, dicts.
 * Small runtime; rely on `struct`, `array`, reference types.
@@ -599,7 +599,7 @@ All polymorphic behavior is expressed using:
 
 This keeps:
 
-* The type system Hindley–Milner–style and simple,
+* The type system rank-1 polymorphic (Damas–Milner) and simple,
 * The compiler free from trait solvers, global coherence checks, and complex instance resolution.
 
 ---
@@ -1087,13 +1087,26 @@ Includes:
 
 ---
 
-## 20. Type Inference
+## 20. Type System and Checking
 
-Standard Hindley–Milner type inference:
+### Type System
 
-* Unification
-* Generalization at function declarations (not at local bindings)
-* No trait constraints
+Twinkle has a rank-1 polymorphic (Damas–Milner) type system: unification-based, principal types, no higher-ranked quantification, no trait constraints.
+
+### Type Checking
+
+Type checking is bidirectional:
+
+* Most expressions **synthesize** a type bottom-up (classic HM inference).
+* Certain expressions are **checked** against an expected type from context.
+
+Expressions that require contextual type information:
+
+* **Anonymous record literals** (`.{ ... }`) — the expected record type must be known from the surrounding context.
+* **Annotated bindings** (`x: T = e`) — `e` is checked against `T` rather than synthesized.
+* **Function arguments** — the argument is checked against the declared parameter type.
+
+This is the same approach used by Gleam, Elm, and modern OCaml. The type system (what is typable) is unchanged from Damas–Milner; only the inference procedure is bidirectional rather than pure Algorithm W.
 
 ### Generalization Rules
 

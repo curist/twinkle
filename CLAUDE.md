@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Twinkle is a statically typed programming language targeting WebAssembly GC. It features Hindley-Milner type inference (similar to Gleam/OCaml), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
+Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
 
 **Key Design Principles:**
 - Lightweight, scripting-like syntax with `.tw` file extension
@@ -44,7 +44,7 @@ cargo test
 - **References (GC):** `String`, `array<T>`, records, `dict<K,V>`, closures
 
 ### Type System
-- Hindley-Milner type inference
+- Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking
 - Parametric polymorphism: `fn map<A, B>(xs: array<A>, f: fn(A) B) array<B>`
 - No higher-kinded types in MVP
 - Type aliases don't create distinct nominal types

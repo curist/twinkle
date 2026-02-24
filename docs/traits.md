@@ -27,7 +27,7 @@ All polymorphic behavior is expressed using:
 
 This keeps:
 
-* The type system Hindley–Milner–style and simple,
+* The type system rank-1 polymorphic (Damas–Milner) and simple,
 * The compiler free from trait solvers, global coherence checks, and complex instance resolution.
 
 ### 10.2. Capabilities via Records of Functions
