@@ -8,32 +8,21 @@ or built as part of upcoming stages.
 ## Stage 2 — Type Checker
 
 ### Type alias expansion
-**Status:** Parser produces `TypeDef::Alias { ty }` correctly. Type checker silently
-ignores it (`TypeDef::Alias { .. } => {}` in `env.rs` lines 54 & 87).
-
-**Work:**
-- Register alias in `TypeEnv` so the alias name resolves to its underlying type.
-- Expand aliases transparently during type checking (alias names unify with the
-  target type; they are not new nominal types).
+**Status:** Done. `resolve_type` in `env.rs` now expands aliases at resolution
+time — looking up an alias name returns the target `MonoType` directly, so aliases
+are transparent to `unify`. Test: `tests/typecheck/pass/type_alias.tw`.
 
 ### Dict index assignment type checking
-**Status:** `synth_assign` handles `ExprKind::Index` but only for `Array<T>`.
-`m[k] = v` on a `Dict<K,V>` falls to the type mismatch error path.
-
-**Work:**
-- Add a `MonoType::Dict(k, v)` arm in `synth_assign`'s `ExprKind::Index` branch.
-- Check: index type matches `K`, value type matches `V`, result is `Void`.
+**Status:** Done. Added `MonoType::Dict(Box<MonoType>, Box<MonoType>)` to the type
+system with full `Display`/`format_with_names` support and `"Dict"` keyword in
+`resolve_type`. Both `synth_index` (read) and `synth_assign` (write) now handle Dict
+correctly.
 
 ### Compound assignment cleanup
-**Status:** `BinOp::AddAssign/SubAssign/MulAssign/DivAssign/ModAssign` and
-`synth_compound_assign` still exist even though compound assignment was dropped
-from the spec.
-
-**Work:**
-- Remove `PlusEq/MinusEq/StarEq/SlashEq/PercentEq` tokens from lexer.
-- Remove `AddAssign/SubAssign/MulAssign/DivAssign/ModAssign` from `BinOp` in AST.
-- Remove `synth_compound_assign` from type checker.
-- Remove the `PlusEq =>` mapping in parser.
+**Status:** Done. Removed `PlusEq/MinusEq/StarEq/SlashEq/PercentEq` tokens,
+`AddAssign/SubAssign/MulAssign/DivAssign/ModAssign` BinOps, `synth_compound_assign`,
+and all parser/lowerer references. Arithmetic operators now always lex as single
+chars (`+` never combines with `=`).
 
 ---
 
@@ -108,6 +97,6 @@ has no native implementation.
 
 ## Cleanup (no specific stage)
 
-- Remove compound assignment from lexer/parser/AST/type checker (see Stage 2 item above).
+- ~~Remove compound assignment from lexer/parser/AST/type checker~~ Done.
 - Ensure `field_method_collision.tw` test correctly fails once inherent method
   registration lands in Stage 4.
