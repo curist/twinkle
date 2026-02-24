@@ -330,21 +330,9 @@ Desugars to:
 m = Dict.set(m, k, v)
 ```
 
-#### Compound assignment
-
-```tw
-x += y
-```
-
-Desugars to:
-
-```tw
-x = x + y
-```
-
 #### Assignment targets
 
-The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`/`+=`/etc. Field and index forms are still sugar that rebuild the owner value (see record/array/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
+The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`. Field and index forms are still sugar that rebuild the owner value (see record/array/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
 
 ---
 
@@ -456,7 +444,7 @@ fn bad() {
 
 Compile-time rule:
 
-> A closure may reference captured variables, but may **not** rebind them using `=` or compound assignment.
+> A closure may reference captured variables, but may **not** rebind them using `=`.
 
 If mutation-like behavior is desired in the future, it must be expressed explicitly using a type such as `Cell<T>` rather than via closures.
 

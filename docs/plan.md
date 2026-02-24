@@ -186,8 +186,9 @@ Features:
   * `case` expressions.
   * `for` / `collect`.
   * Function declarations (`fn name(...) [ReturnType] Block`).
-  * Type declarations (records + sum types).
+  * Type declarations (records + sum types + type aliases).
   * Top-level statements and expressions.
+  * Lvalue assignment targets: `r.field = expr`, `arr[i] = expr`, `m[k] = expr`.
 
 Every AST node carries a `Span`:
 
@@ -228,6 +229,7 @@ Features:
   * Sum types: nominal variants (`type Result = { Ok(Int), Err(Str) }`).
   * Arrays & dicts: `Arr<T>`, `Dict<K,V>`.
   * Functions: `fn(T1, T2, ...) Tret`.
+  * Type aliases: `type ID = Int` — expands transparently, not a new nominal type.
 
 * Name resolution:
 
@@ -305,6 +307,10 @@ Lowering steps:
   * `for` forms (`x in xs`, `key, value in dict`, `for expr`) into `Loop`.
   * `try expr` into a `Match` over `Result` plus early-return/propagation.
   * `.Variant(...)` shorthand into `Variant { type_id, variant_id, ... }` using type info.
+  * Lvalue assignment forms into rebinding + functional update calls:
+    * `r.field = expr` → `r = RecordUpdate(r, field, expr)`
+    * `arr[i] = expr` → `arr = Array.set(arr, i, expr)`
+    * `m[k] = expr` → `m = Dict.set(m, k, expr)`
 * Convert blocks with statements into nested `Let` chains or keep a `Block` node in Core and only eliminate it later.
 
 Deliverables:
@@ -387,6 +393,11 @@ Runtime representation:
 * Built-ins:
 
   * Prelude FuncIds 1–11 dispatched natively in `call_builtin`.
+  * Full stdlib implemented as native builtins:
+    * `Array`: `set`, `concat`, `slice` (in addition to `len`, `append`).
+    * `Dict`: `new`, `set`, `remove`, `get`, `has`, `keys`, `len`.
+    * `String`: `substring`, `of_int`, `of_float`, `of_bool`, `concat`, `len`.
+    * `Range`: `range`, `range_from`, `range_step`.
   * User functions looked up in `CoreModule.functions` by `FuncId`.
 
 CLI:
@@ -400,7 +411,7 @@ Deliverables:
 * Real multi-file Twinkle programs run end-to-end.
 * Closure capture-by-value test (`tests/closure/capture_by_value.tw`) passes.
 * Interpreter tests: arithmetic, if/case, loops, collect, records, variants,
-  inherent method calls across modules.
+  inherent method calls across modules, dict operations, lvalue assignment forms.
 
 ---
 
