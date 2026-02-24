@@ -55,7 +55,7 @@ Core IR must:
 
 ### Modules
 
-A module is a list of **function definitions** and **top-level expressions** (already lowered to `main()` or similar by the front end).
+A module is a list of **function definitions**, **module globals** (top-level value bindings), and a synthetic **init function** containing the top-level expression statements in source order.
 
 ```
 Module = { FunctionDef }

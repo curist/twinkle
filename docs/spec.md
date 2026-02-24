@@ -524,12 +524,42 @@ Type and function declarations are available everywhere in the module (no forwar
 
 #### Entry point
 
-If the module defines a `fn main()`, it is called after all top-level initialization has completed. A file with no `main` is a valid library module (or a script whose top-level expressions are its entire effect).
+The entry point of a program is its top-level initialization sequence. There is no special `main` function — `fn main()` has no distinguished status and is not called automatically.
+
+To run code, place it at the top level:
 
 ```tw
-// no main — top-level expressions are the program
+// top-level expressions are the program
 println("hello")
 ```
+
+For larger programs, define a function and call it from the top level:
+
+```tw
+fn run() Void {
+  // ...
+}
+
+run()
+```
+
+A module with no top-level expression statements is a library module; its value and function exports are available to importers.
+
+#### WebAssembly entry point
+
+When compiling to WebAssembly, the top-level initialization sequence is lowered into a synthetic `__init__` function. This function is designated as the Wasm [start function](https://webassembly.github.io/spec/core/syntax/modules.html#start-function), so it runs automatically when the module is instantiated by the host (browser, Wasmtime, etc.).
+
+There is no exported `main` symbol. If a host needs to call a specific function by name (e.g. for embedding), export it explicitly:
+
+```tw
+pub fn run() Void {
+  // ...
+}
+
+run()   // also runs at startup via __init__
+```
+
+The host can then call `run()` again on demand via the Wasm export.
 
 ### 8.2 Visibility
 

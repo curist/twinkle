@@ -54,9 +54,7 @@ fn move(p: Point) Point {
   .{ x: p.x + 1, y: p.y }
 }
 
-fn main() {
-  move(.{ x: 1, y: 2 })  // expected param type is Point
-}
+move(.{ x: 1, y: 2 })  // expected param type is Point
 ```
 
 Rules:
@@ -82,9 +80,7 @@ fn origin() Point {
   Point.{ x: 0, y: 0 }
 }
 
-fn main() {
-  move(Point.{ x: 1, y: 2 })
-}
+move(Point.{ x: 1, y: 2 })
 ```
 
 Rules:
@@ -220,15 +216,13 @@ type Vec2  = .{ x: Int, y: Int }
 fn use_point(p: Point) Void { ... }
 fn use_vec(v: Vec2)  Void { ... }
 
-fn main() {
-  v: Vec2 = .{ x: 1, y: 2 }        // ✅ explicit annotation: Vec2
+v: Vec2 = .{ x: 1, y: 2 }        // ✅ explicit annotation: Vec2
 
-  use_point(.{ x: 1, y: 2 })          // ✅ expected type = Point
-  use_vec(.{ x: 1, y: 2 })            // ✅ expected type = Vec2
+use_point(.{ x: 1, y: 2 })          // ✅ expected type = Point
+use_vec(.{ x: 1, y: 2 })            // ✅ expected type = Vec2
 
-  // But this is ambiguous:
-  fn id_record(r) { r }               // ❌ not allowed in MVP (no type)
-}
+// But this is ambiguous:
+fn id_record(r) { r }               // ❌ not allowed in MVP (no type)
 ```
 
 In practice, you only get ambiguity if you write code with missing type information. The MVP keeps things simple by requiring expected record types for `.{ ... }`.
@@ -276,10 +270,8 @@ fn move(p: Point) Point {
   .{ x: p.x + 1, y: p.y }
 }
 
-fn main() {
-  move(.{ x: 1, y: 2 })
-  move(Point.{ x: 10, y: 20 })
-}
+move(.{ x: 1, y: 2 })
+move(Point.{ x: 10, y: 20 })
 ```
 
 ### ✅ Good: literal in record field
