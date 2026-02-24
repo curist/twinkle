@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
 
 **Key Design Principles:**
-- Lightweight, scripting-like syntax with `.tw` file extension
+- Concise, low-ceremony syntax with `.tw` file extension
 - Inherent methods only via module functions
 - Small runtime relying on WebAssembly GC's `struct`, `array`, and reference types
 

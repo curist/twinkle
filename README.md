@@ -10,7 +10,7 @@ Twinkle combines the elegance of functional programming with the practicality of
 - **Capability records over traits** - no global typeclass resolution
 - **Unboxed primitives** with GC-managed references
 - **WebAssembly GC target** - leveraging `struct`, `array`, and reference types
-- **Lightweight syntax** - scripting-like feel with static safety
+- **Low-ceremony syntax** - concise and direct with static safety
 
 ## Quick Example
 

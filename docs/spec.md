@@ -6,7 +6,7 @@ Twinkle is a small statically typed language targeting **WebAssembly GC**.
 
 Design goals:
 
-* Lightweight, scripting-like syntax.
+* Concise, low-ceremony syntax.
 * Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking.
 * Unboxed primitives (`Int = i64`, `Float = f64`, `Bool`).
 * GC-managed references for strings, arrays, records, dicts.
@@ -481,13 +481,13 @@ This avoids common “loop capture traps” seen in other languages.
 | Loops                     | Fresh binding per iteration; closures capture the iteration’s value.                        |
 | Mutation                  | Not supported implicitly; must use explicit types (e.g. future `Cell<T>`) for shared state. |
 
-This model is simple, predictable, and strictly functional in semantics, while still supporting scripting-friendly rebinding syntax.
+This model is simple, predictable, and strictly functional in semantics, while still supporting direct rebinding syntax.
 
 ---
 
 ## 8. Modules & Imports
 
-XXX: we may need to rethink about the syntax / semantic of our module system, if we want Twinkle to be scripting friendly. in another word, without proper project setup, and we could drop a source code everywhere, even support shebang, etc.
+XXX: module system design is not yet finalized.
 
 Module:
 

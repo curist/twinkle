@@ -373,4 +373,4 @@ Twinkle may evolve syntactic conveniences to make constructing and passing capab
 * Twinkle will **not** introduce implicit conversions or trait-like instance search,
 * All capability passing will remain **explicit** in function signatures and at call sites.
 
-This preserves Twinkle’s design goals: a small, predictable, statically typed language with a scripting feel, where data and functions are the primary abstraction mechanisms, and built-ins provide a small amount of carefully delimited “magic” (`for` and String interpolation) without a general trait or interface system.
+This preserves Twinkle’s design goals: a small, predictable, statically typed language where data and functions are the primary abstraction mechanisms, and built-ins provide a small amount of carefully delimited “magic” (`for` and String interpolation) without a general trait or interface system.
