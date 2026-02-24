@@ -188,7 +188,6 @@ Features:
   * Function declarations (`fn name(...) [ReturnType] Block`).
   * Type declarations (records + sum types + type aliases).
   * Top-level statements and expressions.
-  * Lvalue assignment targets: `r.field = expr`, `arr[i] = expr`, `m[k] = expr`.
 
 Every AST node carries a `Span`:
 
