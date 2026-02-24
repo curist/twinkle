@@ -487,13 +487,57 @@ This model is simple, predictable, and strictly functional in semantics, while s
 
 ## 8. Modules & Imports
 
-XXX: module system design is not yet finalized.
+### 8.1 Top-Level Items
 
-Module:
+A Twinkle source file is a module. The following items are allowed at the top level, in any order:
+
+* **Type declarations** (`type`) — define nominal record or enum types.
+* **Function declarations** (`fn`) — define named functions.
+* **Value bindings** (`:=` or `: T =`) — module-level names bound to values.
+* **Expression statements** — side-effecting expressions (must be `Void`).
+
+#### Value bindings
+
+```tw
+PI: Float = 3.14159
+MAX_RETRIES := 5
+```
+
+Module-level value bindings are **module globals**:
+
+* Their names are in scope for all functions in the module, regardless of source order.
+* They can be marked `pub` to export them.
+* They are evaluated once at module initialization time, top-to-bottom.
+* Rebinding (`=`) is not allowed at module scope — each name may only be bound once.
+
+#### Expression statements
+
+```tw
+println("module loaded")
+```
+
+Top-level expression statements execute at initialization time and introduce no name. They must have type `Void`. They run in source order, interleaved with value binding evaluation.
+
+#### Initialization order
+
+Type and function declarations are available everywhere in the module (no forward-declaration restriction). Value bindings and expression statements execute top-to-bottom in the order they appear.
+
+#### Entry point
+
+If the module defines a `fn main()`, it is called after all top-level initialization has completed. A file with no `main` is a valid library module (or a script whose top-level expressions are its entire effect).
+
+```tw
+// no main — top-level expressions are the program
+println("hello")
+```
+
+### 8.2 Visibility
 
 ```tw
 pub fn foo() Int { ... }
 fn bar() Int { ... }   // private
+
+pub PI: Float = 3.14159   // exported constant
 ```
 
 Import:
