@@ -180,14 +180,14 @@ Prelude functions have fixed, deterministic FuncIds:
 | 1      | print                |
 | 2      | println              |
 | 3      | error                |
-| 4      | int_to_string        |
-| 5      | float_to_string      |
-| 6      | bool_to_string       |
-| 7      | string_to_string     |
-| 8      | string_len           |
-| 9      | string_concat        |
-| 10     | array_len            |
-| 11     | array_append         |
+| 4      | `String.of_int` (intrinsic: `int_to_string`) |
+| 5      | `String.of_float` (intrinsic: `float_to_string`) |
+| 6      | `String.of_bool` (intrinsic: `bool_to_string`) |
+| 7      | `String.to_string` (intrinsic: `string_to_string`) |
+| 8      | `String.len` (intrinsic: `string_len`) |
+| 9      | `String.concat` (intrinsic: `string_concat`) |
+| 10     | `Array.len` (intrinsic: `array_len`) |
+| 11     | `Array.append` (intrinsic: `array_append`) |
 | 12+    | user-defined (source order) |
 
 Inherent method calls (`x.method(args)`) are **not** a distinct IR node.

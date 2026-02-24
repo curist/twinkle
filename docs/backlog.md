@@ -77,8 +77,7 @@ has no native implementation.
 **Work — String module:**
 - `String.substring(s, start, end) String`.
 - `String.of_int(n) String`, `String.of_float(f) String`, `String.of_bool(b) String`.
-  (Note: `int_to_string` etc. at FuncId 4–6 are the same things under different names;
-  resolve naming consistency.)
+  (Canonical surface names are `String.of_*`; `int_to_string`/friends are intrinsic aliases.)
 
 **Work — Range:**
 - `range(n) Array<Int>` — 0..n-1.

@@ -757,9 +757,9 @@ Interpolation is **not** driven by a capability or trait. Instead, it is defined
 In Twinkle, the expression inside `${...}` may have one of the following types:
 
 * `String` — used as-is,
-* `Int`    — converted via a core `string.of_int` function,
-* `Float`  — converted via `string.of_float`,
-* `Bool`   — converted via `string.of_bool`.
+* `Int`    — converted via a core `String.of_int` function,
+* `Float`  — converted via `String.of_float`,
+* `Bool`   — converted via `String.of_bool`.
 
 Attempting to interpolate a value of any other type is a **compile-time error**.
 
@@ -790,13 +790,13 @@ For example:
 is conceptually lowered to:
 
 ```tw
-string.concat_many([
+String.concat_many([
   "n=",
-  string.of_int(n),
+  String.of_int(n),
 ])
 ```
 
-(Exact library function naming may vary.)
+(Canonical surface names use the `String.*` module namespace.)
 
 ### Extension: Explicit Conversion Functions
 
@@ -997,11 +997,11 @@ String interpolation is recommended for string assembly (see Section 11).
 
 String operations via module functions (all return new strings):
 
-* `string.concat(s1, s2) String`
-* `string.substring(s, start, end) String`
-* `string.of_int(n: Int) String`
-* `string.of_float(f: Float) String`
-* `string.of_bool(b: Bool) String`
+* `String.concat(s1, s2) String`
+* `String.substring(s, start, end) String`
+* `String.of_int(n: Int) String`
+* `String.of_float(f: Float) String`
+* `String.of_bool(b: Bool) String`
 * etc.
 
 ---
@@ -1085,6 +1085,9 @@ Includes:
 * range functions: `range`
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
+* string module: `String.concat`, `String.substring`, `String.of_int`, etc.
+* naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics may use snake_case.
+* stage0 compatibility aliases may still exist (e.g. `int_to_string`); prefer `String.*` names in user-facing docs.
 
 ---
 
@@ -1093,7 +1096,7 @@ Includes:
 Standard Hindley–Milner type inference:
 
 * Unification
-* Let-generalization (value restriction applies for refs)
+* Let-generalization (current MVP has no mutable references; value restriction is reserved for future explicit mutable cells/refs)
 * No trait constraints
 
 Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
@@ -1113,7 +1116,7 @@ String interpolation is type-checked by verifying the expression type is one of:
 
   * ref types → nullable refs
   * value types → tagged struct
-* String interpolation → compiler inserts calls to `string.of_int`, `string.of_float`, `string.of_bool`
+* String interpolation → compiler inserts calls to `String.of_int`, `String.of_float`, `String.of_bool`
 * For loops → type-directed lowering to primitive loops based on collection type
 
 ---

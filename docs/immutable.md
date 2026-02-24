@@ -1,3 +1,6 @@
+> Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
+> Examples here may use older surface syntax.
+
 ## 🧾 1. Values, Bindings, and Assignment
 
 ### 1.1 Values are immutable
@@ -5,7 +8,7 @@
 * All user-visible values are immutable:
 
   * primitives (`int`, `float`, `bool`),
-  * arrays, maps, strings,
+  * arrays, dicts, strings,
   * records and user-defined types.
 
 > There is no observable in-place mutation of values in the language model.
@@ -92,29 +95,19 @@ So only the binding `x` changes; any other names that referred to the old value 
 
 * `Array.set` is a pure function returning a new array value; the previous array value is unchanged.
 
-(Same idea for maps: `Map.set` / `Map.insert`.)
+(Same idea for dictionaries: `Dict.set`.)
 
 ---
 
-### 2.3 Numeric compound assignment: `x += y` (optional but consistent)
+### 2.3 Compound Assignment
 
-* **Syntax:**
+Compound assignment operators such as `+=`, `-=`, `*=`, `/=`, and `%=` are not part of Twinkle.
 
-  ```tw
-  x += y
-  ```
+Use explicit rebinding instead:
 
-* **Constraints:**
-
-  * `x` must be a simple local name of a numeric type.
-
-* **Desugaring:**
-
-  ```tw
-  x += y    // ->  x = x + y
-  ```
-
-Again: pure arithmetic; `+` returns a new number.
+```tw
+x = x + y
+```
 
 ---
 
@@ -338,7 +331,6 @@ You can wrap this whole thing up in a short paragraph:
 
 > **Update semantics.**
 > Twinkle uses immutable values with rebindable names.
-> Assignment-like syntax (`x = e`, `x.field = e`, `arr[i] = e`, `x += e`) is sugar for “construct a new value and bind the name to it”.
+> Assignment-like syntax (`x = e`, `x.field = e`, `arr[i] = e`) is sugar for “construct a new value and bind the name to it”.
 > Values themselves are never mutated, and no update through one name can implicitly change what another name sees.
 > Functions cannot mutate caller-visible state; they only return new values.
-

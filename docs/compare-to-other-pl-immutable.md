@@ -1,3 +1,6 @@
+> Note: This is a comparison/design note, not a normative syntax reference.
+> Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
+
 You’re not alone in this territory 🙂 What you’ve converged on is *very* close to how a bunch of “mostly functional but not masochistic” languages think — you’re just choosing a slightly different mix of:
 
 * **Value semantics** (no observable mutation),
@@ -150,7 +153,7 @@ In terms of **surface language design**, you’re doing a fairly distinct thing:
   ```tw
   x.y = foo
   arr[i] = bar
-  x += 1
+  x = x + 1
   ```
 
   with a strong, simple guarantee:

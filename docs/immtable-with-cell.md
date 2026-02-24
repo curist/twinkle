@@ -1,3 +1,6 @@
+> Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
+> Examples here may use older surface syntax.
+
 ## 1. `Cell<T>`: Overview
 
 **Goal:**
@@ -122,7 +125,6 @@ All the “nice” update rules stay as they are:
 
 * `x.y = v` → `x = { x with y = v }`
 * `arr[i] = v` → `arr = Array.set(arr, i, v)`
-* `x += 1` → `x = x + 1`
 
 They **never** mutate a `Cell` for you.
 If a record has a cell field:
@@ -270,4 +272,3 @@ The only extra thing the compiler/runtime needs is:
 
 * a way to represent `Cell<T>` references,
 * and handle them in the garbage collector like any other heap node.
-

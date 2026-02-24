@@ -1,3 +1,6 @@
+> Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
+> Examples here may use older surface syntax.
+
 Traits are all about callee-side magic.
 Records-of-functions are all about caller-side adaptation.
 
@@ -48,7 +51,7 @@ A function that needs “anything that can be shown” is written by taking both
 Example:
 
 ```twinkle
-fn print_all<T>(xs: array<T>, show: Show<T>) {
+fn print_all<T>(xs: Array<T>, show: Show<T>) {
   for x in xs {
     println(show.to_string(x))
   }
@@ -68,7 +71,7 @@ ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-users: array<User> = ...
+users: Array<User> = ...
 print_all(users, ShowUser)
 ```
 
@@ -102,7 +105,7 @@ debug_value(user, ShowUser)  // ✅
 This applies uniformly:
 
 * No automatic wrapping of `T` into `Show<T>` (or similar),
-* No automatic rewriting of `array<T>` into `array<Show<T>>`,
+* No automatic rewriting of `Array<T>` into `Array<Show<T>>`,
 * No chained or inferred conversions.
 
 All adapter logic, if any, is explicit in user code.
@@ -131,16 +134,16 @@ There is **no** general “Iterable” trait or interface that user types can im
 
 In Twinkle v1, `for` is defined for the following core types (exact names may be adjusted as the core library evolves):
 
-* `array<T>` — homogeneous indexable arrays,
+* `Array<T>` — homogeneous indexable arrays,
 * `Range`    — integer ranges (e.g. `0..10`),
-* `dict<K, V>` — dictionaries (if present),
+* `Dict<K, V>` — dictionaries (if present),
 * `Iterator<T>` — an explicit iterator type from the standard library (if present).
 
 The compiler performs a **type-directed** lowering:
 
-* If `collection` has type `array<T>`, the loop is lowered to an indexed loop over the array length.
+* If `collection` has type `Array<T>`, the loop is lowered to an indexed loop over the array length.
 * If `collection` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
-* If `collection` has type `dict<K, V>`, the loop is lowered to iteration over key–value pairs.
+* If `collection` has type `Dict<K, V>`, the loop is lowered to iteration over key–value pairs.
 * If `collection` has type `Iterator<T>`, the loop is lowered to repeated `next` calls until the iterator is exhausted.
 
 Any value used in `for x in collection` whose type is not one of the supported built-ins is a **compile-time error**.
@@ -158,7 +161,7 @@ for x in xs {
 is conceptually lowered to:
 
 ```twinkle
-let len = array.length(xs)
+let len = Array.len(xs)
 let i = 0
 while i < len {
   let x = xs[i]
@@ -297,7 +300,7 @@ String.concat_many([
 ])
 ```
 
-Exact library function naming (e.g. `String.concat` or `String.concat_many`) may vary, but:
+Canonical surface names use the `String.*` namespace (e.g. `String.concat`, `String.of_int`); desugaring may use helpers like `String.concat_many`, but:
 
 * desugaring is **local and explicit**, and
 * interpolation does **not** perform implicit conversions for arbitrary types.
@@ -332,7 +335,7 @@ type Show<T> = .{
   to_string: fn(T) String,
 }
 
-fn print_all<T>(xs: array<T>, show: Show<T>) {
+fn print_all<T>(xs: Array<T>, show: Show<T>) {
   for x in xs {
     println(show.to_string(x))
   }
@@ -352,7 +355,7 @@ let ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-let users: array<User> = ...
+let users: Array<User> = ...
 print_all(users, ShowUser)
 ```
 
@@ -365,9 +368,9 @@ type Eq<T> = .{
   equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: array<T>, needle: T, eq: Eq<T>) Bool {
+fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
   let i = 0
-  let len = array.length(xs)
+  let len = Array.len(xs)
   while i < len {
     if eq.equals(xs[i], needle) {
       return true
@@ -383,7 +386,7 @@ let EqPoint: Eq<Point> = .{
   equals(a, b) => a.x == b.x and a.y == b.y,
 }
 
-let points: array<Point> = ...
+let points: Array<Point> = ...
 let p: Point = .{ x: 1, y: 2 }
 let found = contains(points, p, EqPoint)
 ```
@@ -393,7 +396,7 @@ let found = contains(points, p, EqPoint)
 Instead of a general “Iterable” trait, provide small, concrete helpers:
 
 ```twinkle
-fn sum_array(xs: array<Int>) Int {
+fn sum_array(xs: Array<Int>) Int {
   let acc = 0
   for x in xs {
     acc = acc + x

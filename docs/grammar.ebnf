@@ -119,8 +119,7 @@ AssignExpr =
     | LogicalOrExpr ;
 
 AssignOp =
-      "="
-    | "+=" | "-=" | "*=" | "/=" | "%=" ;
+      "=" ;
 (* Implementation note:
    - `:=` is *not* an assignment operator; it is only used in LetBinding.
    - No chained `a = b = c` is supported; `=` is not associative in grammar. *)
