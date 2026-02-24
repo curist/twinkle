@@ -1,0 +1,16 @@
+// Closure capture-by-value semantics (spec §7.7)
+//
+// A closure captures the *value* of a free variable at definition time.
+// Subsequent rebinding of that variable must not affect the captured value.
+//
+// Expected output:
+//   0
+//   1
+
+fn main() {
+    acc := 0
+    f := fn() Int { acc }   // captures value 0
+    acc = acc + 1
+    println(int_to_string(f()))   // must print 0, not 1
+    println(int_to_string(acc))   // prints 1
+}

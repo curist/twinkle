@@ -156,3 +156,16 @@ fn test_typecheck_fail_cases() {
 
     println!("✓ All {} failing test cases failed as expected", passed);
 }
+
+// Closure capture-by-value semantics (spec §7.7).
+// A closure must capture the value at definition time; later rebinding of
+// the source variable must not affect the captured value.
+//
+// Activate when the interpreter lands (Stage 4) and wires up tests/closure/.
+#[test]
+#[ignore = "requires interpreter (Stage 4)"]
+fn test_closure_capture_by_value() {
+    // Expected program output: "0\n1\n"
+    // See tests/closure/capture_by_value.tw for the source.
+    todo!("run capture_by_value.tw through interpreter and assert stdout == \"0\\n1\\n\"")
+}
