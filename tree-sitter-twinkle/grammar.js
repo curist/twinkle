@@ -40,8 +40,13 @@ module.exports = grammar({
     ),
 
     _top_level_statement: $ => choice(
-      $.let_binding,
+      $.top_level_let_binding,
       $._expression,
+    ),
+
+    top_level_let_binding: $ => seq(
+      optional('pub'),
+      $.let_binding,
     ),
 
     // Statement terminator in tree-sitter: newline or semicolon.
@@ -155,7 +160,7 @@ module.exports = grammar({
     assignment_expression: $ => choice(
       prec.right('assign', seq(
         field('left', $._lvalue),
-        field('operator', choice('=', '+=', '-=', '*=', '/=', '%=')),
+        field('operator', '='),
         field('right', $._expression),
       )),
       $.logical_or_expression,

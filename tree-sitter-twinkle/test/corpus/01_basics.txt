@@ -7,17 +7,18 @@ x := 1
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
 
 ================================================================================
 Comment only
@@ -39,17 +40,18 @@ x := 42
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
 
 ================================================================================
 Let binding with explicit type
@@ -60,19 +62,20 @@ x: Int = 42
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_binding
-    name: (identifier)
-    type: (type
-      (primitive_type))
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      type: (type
+        (primitive_type))
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
 
 ================================================================================
 ASI - newline acts as semicolon
@@ -84,28 +87,30 @@ y := 2
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal))))))))))
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
 
 ================================================================================
 Explicit semicolon
@@ -117,28 +122,30 @@ y := 2;
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal))))))))))
-  (let_binding
-    name: (identifier)
-    value: (assignment_expression
-      (logical_or_expression
-        (logical_and_expression
-          (equality_expression
-            (comparison_expression
-              (additive_expression
-                (multiplicative_expression
-                  (unary_expression
-                    (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal)))))))))))
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
 
 ================================================================================
 Import declaration
@@ -152,3 +159,27 @@ import "math"
   (import_declaration
     (string_literal
       (string_content))))
+
+================================================================================
+Pub let binding
+================================================================================
+
+pub PI: Float = 3.14159
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      type: (type
+        (primitive_type))
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (float_literal))))))))))))
