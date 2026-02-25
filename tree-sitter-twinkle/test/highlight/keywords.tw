@@ -26,8 +26,9 @@ pub type MyType = Int
 //^ keyword
 //  ^^^^ keyword
 
-import "std"
-//^^^^ keyword
+use math.vector as vec
+//^ keyword
+//              ^^ keyword
 
 try foo()
 //^ keyword

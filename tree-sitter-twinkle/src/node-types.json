@@ -923,21 +923,6 @@
     }
   },
   {
-    "type": "import_declaration",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "string_literal",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "index_access",
     "named": true,
     "fields": {
@@ -1172,6 +1157,21 @@
       "types": [
         {
           "type": "logical_and_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]
@@ -1572,15 +1572,15 @@
           "named": true
         },
         {
-          "type": "import_declaration",
-          "named": true
-        },
-        {
           "type": "top_level_let_binding",
           "named": true
         },
         {
           "type": "type_declaration",
+          "named": true
+        },
+        {
+          "type": "use_declaration",
           "named": true
         }
       ]
@@ -1894,6 +1894,32 @@
     }
   },
   {
+    "type": "use_declaration",
+    "named": true,
+    "fields": {
+      "alias": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "module_path",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "variant_definition",
     "named": true,
     "fields": {
@@ -2065,6 +2091,10 @@
     "named": false
   },
   {
+    "type": "@",
+    "named": false
+  },
+  {
     "type": "Bool",
     "named": false
   },
@@ -2094,6 +2124,10 @@
   },
   {
     "type": "and",
+    "named": false
+  },
+  {
+    "type": "as",
     "named": false
   },
   {
@@ -2150,10 +2184,6 @@
     "named": false
   },
   {
-    "type": "import",
-    "named": false
-  },
-  {
     "type": "in",
     "named": false
   },
@@ -2187,6 +2217,10 @@
   },
   {
     "type": "type",
+    "named": false
+  },
+  {
+    "type": "use",
     "named": false
   },
   {

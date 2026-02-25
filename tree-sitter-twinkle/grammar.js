@@ -28,16 +28,23 @@ module.exports = grammar({
     )),
 
     _top_level: $ => choice(
-      $.import_declaration,
+      $.use_declaration,
       $.type_declaration,
       $.function_declaration,
       $._top_level_statement,
     ),
 
-    import_declaration: $ => seq(
-      'import',
-      $.string_literal,
+    use_declaration: $ => seq(
+      'use',
+      field('path', $.module_path),
+      optional(seq('as', field('alias', $.identifier))),
     ),
+
+    module_path: $ => prec.right(seq(
+      optional('@'),
+      $.identifier,
+      repeat(seq('.', $.identifier)),
+    )),
 
     _top_level_statement: $ => choice(
       $.top_level_let_binding,

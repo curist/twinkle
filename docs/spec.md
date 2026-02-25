@@ -561,36 +561,91 @@ run()   // also runs at startup via __init__
 
 The host can then call `run()` again on demand via the Wasm export.
 
-### 8.2 Visibility
+### 8.2 Imports
+
+> **Design rationale:** See [docs/module.md](module.md) entries D-001 through D-009.
+
+#### Syntax
+
+```tw
+use foo.bar           // import foo/bar.tw, bound as "bar"
+use foo.bar as baz    // import foo/bar.tw, bound as "baz"
+use utils             // import utils.tw at project root
+use @array            // stdlib module, bound as "array"
+use @std.json as json // stdlib module with alias
+```
+
+#### Filesystem mapping
+
+A dot-separated path `a.b.c` maps to `<root>/a/b/c.tw`. The module identifier is
+the last segment (`c`), or the alias if `as name` is provided.
+
+#### Project root resolution
+
+1. Walk up from the entry file's directory until `twinkle.toml` is found.
+2. `TWINKLE_ROOT` environment variable overrides with an absolute path.
+3. If neither is found, the entry file's directory is the root (single-file scripts).
+
+#### Stdlib modules
+
+Stdlib modules are prefixed with `@`. The prelude (primitive types, `println`,
+`Array`, `Dict`, `String`, `Range`, etc.) is always implicitly in scope — no
+`use` needed. Richer stdlib modules require an explicit `use @...`.
+
+#### Aliasing
+
+`use foo.bar as baz` binds the module under `baz`. Aliasing is required when two
+imports share the same last-segment name:
+
+```tw
+use math.vector as mvec
+use graphics.vector as gvec
+```
+
+Importing two modules with the same identifier without `as` is a compile-time error.
+
+#### Visibility
 
 ```tw
 pub fn foo() Int { ... }
-fn bar() Int { ... }   // private
+fn bar() Int { ... }      // private
 
 pub PI: Float = 3.14159   // exported constant
 ```
 
-Import:
+Exported names are accessed qualified: `math.add`, `math.Point`.
+
+Separate namespaces exist for values and types — a module may export both a type
+and a value with the same name; they are distinguished by context and never conflict
+(e.g. `option.Option<T>`, `option.Some`, `option.None`).
+
+#### Re-exports
+
+No special re-export syntax. Use explicit `pub` rebinding:
 
 ```tw
-import "math"
+use math.vector
+pub translate := vector.translate
 ```
 
-Exports accessed as `math.f`, `math.Type`.
+#### Circular imports
 
-Prelude is implicitly imported.
+Circular imports are a compile-time error.
 
-* The last path segment (without extension) is the module identifier.
-* No aliasing or destructuring in MVP.
-* Resolution: string-literal paths (relative to the current working dir) with per-path caching; package/name resolution and richer import forms can be added later.
-* Namespacing:
-* Exported values and types are referred to with the module name (e.g., `math.add`, `math.Point`).
-* Separate namespaces for values and types:
-* A module may export both a type and a value/function with the same name.
-* They are distinguished by context and never conflict.
-* Example: `option.Option<T>`, `option.Some`, `option.None`.
-* Future extensions:
-* `import "mod" .{ Foo, Bar }` to bring specific exports into local scope (not in MVP).
+#### Destructuring (future, not in MVP)
+
+Bringing specific names directly into scope is not supported in MVP. Future syntax:
+
+```tw
+use math.vector.{translate, scale}
+use math.vector.{translate as tr, scale}
+
+// to both alias the module and destructure, use two statements:
+use math.vector as vec
+use math.vector.{translate, scale}
+```
+
+Wildcard imports (`use foo.*`) will never be supported.
 
 ---
 

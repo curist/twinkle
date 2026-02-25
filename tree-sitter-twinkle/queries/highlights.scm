@@ -8,7 +8,8 @@
 [
   "fn"
   "type"
-  "import"
+  "use"
+  "as"
   "pub"
   "if"
   "else"

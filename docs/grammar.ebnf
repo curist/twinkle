@@ -34,7 +34,19 @@ TopLevel =
      A fn named `main` has no distinguished status. *)
 
 ImportDecl =
-    "import" StringLiteral ;
+    "use" ModulePath [ "as" Identifier ] ;
+
+ModulePath =
+      "@" Identifier { "." Identifier }   (* stdlib module: @array, @std.json *)
+    | Identifier { "." Identifier } ;     (* user module:   foo.bar, utils *)
+(* Implementation note:
+   - `use foo.bar`        → loads <root>/foo/bar.tw, bound as "bar"
+   - `use foo.bar as baz` → same file, bound as "baz"
+   - `use @array`         → stdlib module, bound as "array"
+   - `use utils`          → loads <root>/utils.tw, bound as "utils"
+   - Project root: nearest ancestor directory containing twinkle.toml;
+     overridable via TWINKLE_ROOT env var.
+   - No wildcard or destructuring in MVP (see docs/module.md D-006). *)
 
 (* ===== Type Declarations ===== *)
 
@@ -485,12 +497,13 @@ Newline =
 (*
 Keywords (reserved):
   fn, if, else, true, false,
-  import, pub, type, case, try,
+  use, as, pub, type, case, try,
   and, or, for, in, collect,
   break, continue, return
 
 Implementation note:
   - These must not be recognized as Identifiers by the lexer.
+  - `as` is only meaningful in ImportDecl; it is reserved to avoid ambiguity.
   - Built-in prelude functions (`print`, `println`, `len`, `error`,
     `range`, `range_from`, `range_step`) are NOT keywords.
 *)

@@ -330,16 +330,29 @@ These two features are implemented together because user-defined inherent method
 (`p.translate(1,2)` → `point.translate(p,1,2)`) require knowing which module
 defines the receiver type — they are fundamentally coupled.
 
+> **Full design rationale:** See [docs/module.md](module.md) D-001 through D-009.
+
 Features:
 
 * **Module system** (spec §8):
 
-  * `import "path/to/file"` — loads and compiles the target file.
-  * `pub fn` / `pub type` — visibility: public vs private (spec §8.2).
-  * Module identifier = last path segment without extension.
+  * `use foo.bar` — loads `<root>/foo/bar.tw`, binds module as `bar`.
+  * `use foo.bar as baz` — loads same file, binds module as `baz`.
+  * `use @array` — stdlib module (via `@` sigil); resolved from stdlib path.
+  * `pub fn` / `pub type` / `pub name :=` — visibility: public vs private.
+  * Module identifier = last path segment (without extension), or the `as` alias.
   * Qualified access: `math.add`, `math.Point`.
   * Per-path caching (compile each file once).
-  * No aliasing or destructuring in MVP.
+  * No destructuring in MVP (`use foo.{a,b}` is a future feature).
+
+  * **Project root resolution:**
+    1. Walk up from entry file's directory to find `twinkle.toml`.
+    2. `TWINKLE_ROOT` env var overrides with an absolute path.
+    3. No manifest found → entry file's directory is root (single-file scripts).
+
+  * **Collision & error rules:**
+    * Same module identifier bound twice without `as` → compile error with hint.
+    * Circular imports → compile error listing the cycle.
 
 * **Inherent method resolution (full)** (spec §9):
 
@@ -351,7 +364,7 @@ Features:
 
 * **FuncId assignment across modules:**
 
-  * Prelude functions retain FuncId 1–11.
+  * Prelude functions retain FuncId 1–14.
   * User functions across all imported modules are assigned FuncIds in
     deterministic order (import order, then source order within each file).
 
@@ -359,7 +372,8 @@ Deliverables:
 
 * Multi-file programs compile and run through `twk lower`.
 * `p.translate(1,2)` correctly desugars in Core IR output.
-* Tests for import resolution, pub/private visibility, and inherent method calls.
+* Tests for: import resolution, pub/private visibility, aliasing, collision errors,
+  circular import error, and inherent method calls across modules.
 
 ---
 
