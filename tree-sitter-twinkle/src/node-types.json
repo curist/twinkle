@@ -1568,6 +1568,10 @@
           "named": true
         },
         {
+          "type": "for_statement",
+          "named": true
+        },
+        {
           "type": "function_declaration",
           "named": true
         },
