@@ -47,15 +47,13 @@ has no native implementation.
 
 ## Stage 4 Cleanup
 
-### Multi-segment module paths in type annotations not supported
+### Multi-segment module paths in type annotations — ✅ fixed
 
-`parse_type` handles exactly one level of qualification (`module.Type`) but not
-deeper paths (`module.sub.Type`).  `resolve_module_path` already supports
-multi-segment paths (e.g. `["math", "vector"]`), and `expr_as_type_name` in the
-parser handles arbitrary depth for record constructors, so this is an inconsistency.
-
-**Fix:** extend the qualified-type loop in `parse_type` (parser.rs ~line 1289) to
-consume additional `.Ident` segments until the next token is not a dot-followed-by-ident.
+`parse_type` previously handled exactly one level of qualification (`module.Type`).
+Fixed to use a `while` loop so deeper paths parse correctly.  Note: module aliases
+are always single identifiers (last path segment or explicit `as alias`), so in
+practice type annotations only ever need one dot (`vec.Vec2` from `use math.vec`).
+The fix keeps the parser consistent with `expr_as_type_name` in record constructors.
 
 ---
 

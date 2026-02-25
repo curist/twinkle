@@ -147,3 +147,25 @@ fn test_module_inherent_method_lower() {
         result.err()
     );
 }
+
+/// multi-segment module path: `use math.vec` loads math/vec.tw;
+/// the module alias is the last segment so types are accessed as `vec.Vec2`
+#[test]
+fn test_module_multiseg_check() {
+    let result = check("multiseg/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected multi-segment module path to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_multiseg_lower() {
+    let result = lower("multiseg/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected multi-segment module lower to pass: {:?}",
+        result.err()
+    );
+}

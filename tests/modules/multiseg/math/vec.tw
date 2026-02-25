@@ -1,0 +1,5 @@
+pub type Vec2 = .{ x: Float, y: Float }
+
+pub fn length_sq(v: Vec2) Float {
+    v.x * v.x + v.y * v.y
+}

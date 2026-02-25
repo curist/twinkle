@@ -1286,15 +1286,15 @@ impl Parser {
             let mut name = name_token.text.clone();
             let mut end_span = name_token.span;
 
-            // Support qualified type names: module.Type (but not module.{ which is record literal)
-            if self.peek_is(TokenKind::Dot) {
-                // Check if after dot there's an Ident (qualified type)
-                if matches!(self.tokens.get(self.pos + 1).map(|t| t.kind), Some(TokenKind::Ident)) {
-                    self.advance(); // consume dot
-                    let type_seg = self.expect(TokenKind::Ident)?;
-                    name = format!("{}.{}", name, type_seg.text);
-                    end_span = type_seg.span;
-                }
+            // Support qualified type names: module.Type or module.sub.Type
+            // Stop before module.{ (record literal) or module.<T> (type arg list on base name)
+            while self.peek_is(TokenKind::Dot)
+                && matches!(self.tokens.get(self.pos + 1).map(|t| t.kind), Some(TokenKind::Ident))
+            {
+                self.advance(); // consume dot
+                let type_seg = self.expect(TokenKind::Ident)?;
+                name = format!("{}.{}", name, type_seg.text);
+                end_span = type_seg.span;
             }
 
             // Optional type arguments: <T1, T2>
