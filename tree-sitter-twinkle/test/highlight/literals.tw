@@ -31,7 +31,7 @@ greeting := "Hello, ${name}!"
 count := 5
 message := "You have ${count} items"
 //                    ^^ punctuation.special
-//                           ^ punctuation.special
+//                          ^ punctuation.special
 
 // Arrays
 nums := [1, 2, 3]

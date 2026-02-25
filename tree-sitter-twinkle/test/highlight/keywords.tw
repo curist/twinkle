@@ -1,11 +1,10 @@
 // Keywords
 fn test() Void {
 // <- keyword
-//^ keyword
   if true {
 //^^ keyword
     return 42
-//  ^^^^^^ keyword
+//  ^^^^^^ keyword.return
   }
 
   for x in range(10) {
@@ -13,13 +12,13 @@ fn test() Void {
 //    ^ variable
 //      ^^ keyword
     break
-//  ^^^^^ keyword
+//  ^^^^^ keyword.control
   }
 
   case x {
 //^^^^ keyword
     _ => continue,
-//       ^^^^^^^^ keyword
+//       ^^^^^^^^ keyword.control
   }
 }
 

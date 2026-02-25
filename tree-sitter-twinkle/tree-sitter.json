@@ -7,8 +7,10 @@
       "title": "Twinkle",
       "scope": "source.twinkle",
       "file-types": [
+        "tw",
         "twinkle"
       ],
+      "highlights": "queries/highlights.scm",
       "injection-regex": "^twinkle$",
       "class-name": "TreeSitterTwinkle"
     }

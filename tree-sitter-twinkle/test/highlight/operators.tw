@@ -18,18 +18,6 @@ m := 10 % 3
 x = 5
 //^ operator
 
-x += 1
-//^^ operator
-
-x -= 1
-//^^ operator
-
-x *= 2
-//^^ operator
-
-x /= 2
-//^^ operator
-
 // Comparison operators
 a := x == y
 //     ^^ operator

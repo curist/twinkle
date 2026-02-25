@@ -341,6 +341,14 @@
           {
             "type": "assignment_expression",
             "named": true
+          },
+          {
+            "type": "break_statement",
+            "named": true
+          },
+          {
+            "type": "continue_statement",
+            "named": true
           }
         ]
       }

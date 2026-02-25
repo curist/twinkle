@@ -30,11 +30,6 @@
 [
   "="
   ":="
-  "+="
-  "-="
-  "*="
-  "/="
-  "%="
   "+"
   "-"
   "*"
@@ -61,11 +56,6 @@
 ; Strings
 (string_literal) @string
 (string_content) @string
-
-; String interpolation delimiters
-(interpolation
-  "${" @punctuation.special
-  "}" @punctuation.special)
 
 ; Comments
 (comment) @comment
@@ -94,14 +84,6 @@
 
 (function_expression) @function
 
-; Function calls - higher priority
-(call_expression
-  function: (identifier) @function.call)
-
-(call_expression
-  function: (field_access
-    field: (identifier) @function.method.call))
-
 ; Parameters
 (parameter
   name: (identifier) @variable.parameter)
@@ -119,6 +101,14 @@
 
 (record_field_declaration
   name: (identifier) @property)
+
+; Function calls - after fields so method calls take priority over property
+(call_expression
+  function: (identifier) @function.call)
+
+(call_expression
+  function: (field_access
+    field: (identifier) @function.method.call))
 
 ; Variants - high priority for constructors
 (variant_expression
@@ -153,6 +143,11 @@
   ";"
   "=>"
 ] @punctuation.delimiter
+
+; String interpolation delimiters - after brackets so } takes priority over punctuation.bracket
+(interpolation
+  "${" @punctuation.special
+  "}" @punctuation.special)
 
 ; Special
 "?" @operator

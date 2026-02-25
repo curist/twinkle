@@ -241,10 +241,10 @@ module.exports = grammar({
       $._primary_expression,
     ),
 
-    call_expression: $ => prec('postfix', seq(
+    call_expression: $ => prec.dynamic(1, prec('postfix', seq(
       field('function', $._postfix_expression),
       field('arguments', $.argument_list),
-    )),
+    ))),
 
     argument_list: $ => seq(
       '(',
@@ -289,11 +289,11 @@ module.exports = grammar({
       ')',
     ),
 
-    variant_expression: $ => seq(
+    variant_expression: $ => prec.dynamic(-1, seq(
       '.',
       field('variant', $.identifier),
       optional(seq('(', $.arguments, ')')),
-    ),
+    )),
 
     // ===== Pattern Matching =====
 
@@ -314,7 +314,7 @@ module.exports = grammar({
     case_arm: $ => seq(
       field('pattern', $._pattern),
       '=>',
-      field('value', $._expression),
+      field('value', choice($.break_statement, $.continue_statement, $._expression)),
     ),
 
     _pattern: $ => choice(

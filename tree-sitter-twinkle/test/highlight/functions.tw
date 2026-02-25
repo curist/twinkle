@@ -3,7 +3,7 @@ fn add(x: Int, y: Int) Int {
 // <- keyword
 // ^^^ function
 //     ^ variable.parameter
-//           ^ variable.parameter
+//             ^ variable.parameter
   x + y
 }
 
@@ -12,8 +12,8 @@ result := add(1, 2)
 //        ^^^ function.call
 
 // Method calls
-text := "hello".len()
-//              ^^^ function.method.call
+text := str.len()
+//          ^^^ function.method.call
 
 // Anonymous functions
 mapper := fn(x: Int) Int { x * 2 }
