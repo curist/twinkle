@@ -1,0 +1,4 @@
+// Expected output:
+//   hello, Twinkle!
+
+println("hello, Twinkle!")

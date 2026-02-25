@@ -1,0 +1,22 @@
+// Expected output:
+//   0
+//   3
+//   4
+//   3
+//   25
+
+use vec2
+
+a: vec2.Vec2 = vec2.make(0, 3)
+b: vec2.Vec2 = vec2.make(4, 0)
+
+println("${a.x}")
+println("${a.y}")
+
+// Inherent method call: desugars to vec2.add(a, b)
+c := a.add(b)
+println("${c.x}")
+println("${c.y}")
+
+// Inherent method call: desugars to vec2.magnitude_sq(c)
+println("${c.magnitude_sq()}")

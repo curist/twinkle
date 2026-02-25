@@ -1,0 +1,28 @@
+// Expected output:
+//   1
+//   4
+//   9
+//   16
+//   25
+//   2
+//   4
+
+fn squares(xs: Array<Int>) Array<Int> {
+    collect x in xs { x * x }
+}
+
+fn evens(xs: Array<Int>) Array<Int> {
+    collect x in xs {
+        if x % 2 == 0 { x } else { continue }
+    }
+}
+
+nums: Array<Int> = [1, 2, 3, 4, 5]
+
+for n in squares(nums) {
+    println("${n}")
+}
+
+for n in evens(nums) {
+    println("${n}")
+}

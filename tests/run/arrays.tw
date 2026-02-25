@@ -1,0 +1,22 @@
+// Expected output:
+//   3
+//   1
+//   2
+//   3
+//   4
+//   99
+//   4
+
+xs: Array<Int> = [1, 2, 3]
+println("${xs.len()}")
+
+// append returns a new array; rebind xs
+xs = xs.append(4)
+for x in xs {
+    println("${x}")
+}
+
+// Index update desugars to: xs = Array.set(xs, 0, 99)
+xs[0] = 99
+println("${xs[0]}")
+println("${xs.len()}")

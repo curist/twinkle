@@ -396,10 +396,12 @@ Runtime representation:
 * `Value` enum with variants:
 
   * `Int(i64)`, `Float(f64)`, `Bool(bool)`, `Str(String)`,
-  * `Arr(Vec<Value>)`, `Dict(...)`,
+  * `Arr(Vec<Value>)`, `Dict(Vec<(Value, Value)>)`,
   * `Record(TypeId, Vec<Value>)`,
   * `Variant(TypeId, VariantId, Vec<Value>)`,
-  * `Closure(FuncId, Env)`,
+  * `Closure(FuncId, HashMap<LocalId, Value>)` — FuncId of the hoisted lambda body,
+    plus a snapshot of captured free-variable values (capture-by-value, spec §7.7).
+    Named functions used as first-class values produce `Closure(func_id, empty_map)`.
   * `Void`.
 
 * Environment & stack:
@@ -408,24 +410,54 @@ Runtime representation:
   * `Assign` mutates in place; `Let` inserts a new entry.
   * Control flow signals: `Break(Option<Value>)`, `Continue`, `Return(Option<Value>)`
     bubble up through the expression tree and are caught at `Loop` / call boundaries.
+  * `GlobalFunc(FuncId)` evaluates to `Closure(func_id, HashMap::new())` — a named
+    function reference with no captured env.
 
-* Built-ins:
+* Lambda hoisting (lowerer work):
 
-  * Prelude FuncIds 1–14 dispatched natively in `call_builtin`.
-  * Full stdlib implemented as native builtins:
+  * When lowering `fn(params) RetTy { body }` in expression position, the lowerer:
+    1. Walks `body` to collect all `Local(id)` references not in `params` → `free_vars`.
+    2. Hoists the lambda as a new `FunctionDef` with a fresh `FuncId`.
+    3. Emits `MakeClosure { func_id, free_vars }` at the use site.
+  * At runtime, `MakeClosure` snapshots `free_vars` from the current frame into
+    `Closure(func_id, captured)`.
 
-    * `Array`: `set(arr, i, val) Array<T>`, `concat(arr1, arr2) Array<T>`, `slice(arr, start, end) Array<T>`.
-    * `Dict`: `new() Dict<K,V>`, `set(m, k, v) Dict<K,V>`, `remove(m, k) Dict<K,V>`, `get(m, k) Option<V>`, `has(m, k) Bool`, `keys(m) Array<K>`, `len(m) Int`.
-    * `String`: `substring(s, start, end) String`, `of_int(n) String`, `of_float(f) String`, `of_bool(b) String`.
-      (Surface names are `String.of_*`; `int_to_string`/`float_to_string`/`bool_to_string` are intrinsic aliases already registered in `ValueEnv`.)
-    * `Range`: `range(n) Array<Int>` (0..n−1), `range_from(a, b) Array<Int>`, `range_step(a, b, step) Array<Int>`.
+* Built-ins (add only as needed by tests):
+
+  * FuncIds 1–14 dispatched natively in `call_builtin` (already assigned in `lower.rs`).
+  * Additional stdlib builtins assigned starting at FuncId 15; `USER_FUNC_START`
+    advances past them. Add only when a test requires them:
+    * `Dict.new() Dict<K,V>` — needed for any dict test; also requires type-checker
+      support (special-case `Dict.new` in `check.rs` similarly to how `len` is handled).
+    * `Dict.get(m, k) Option<V>` — deferred to Stage 6 (requires generics for `Option<V>`).
+    * `Dict.has`, `Dict.remove`, `Dict.len` — add when needed.
+    * `Array.concat`, `Array.slice` — add when needed.
+    * `String.substring` — add when needed.
+    * `range(n) Array<Int>`, `range_from`, `range_step` — add when needed.
   * User functions looked up in `CoreModule.functions` by `FuncId`.
 
-* `Dict` runtime representation decision (open):
+* `Dict` runtime representation: `Vec<(Value, Value)>` — no `Hash` bound needed;
+  linear scan is fine for stage0. Long-term: restrict `K` to `Int` or `String`
+  at the type-checker level (compiler-known closed set; `Bool` excluded).
 
-  * `HashMap<Value, Value>` — requires `Value: Hash + Eq`; efficient but constrains `Value`.
-  * `Vec<(Value, Value)>` — simpler, no constraints; fine for small dicts in stage0.
-  * Recommended: start with `Vec<(Value, Value)>` and revisit if performance matters.
+* Module-level value bindings referenced across functions (e.g. `PI: Float = 3.14`
+  used inside `fn area(r: Float) Float { PI * r * r }`) require a global store
+  separate from call frames. **Deferred for Stage 5**: the init sequence supports
+  top-level let bindings and expression statements, but functions referencing
+  module-level globals need a cross-frame lookup mechanism not yet designed.
+  For now, module globals can only be used within `__init__` itself; functions
+  that need shared constants should take them as parameters.
+
+Entry point:
+
+* Per spec §8.1, there is **no special `main` function**. The program entry is
+  the **top-level initialization sequence**: all top-level `Item::Stmt` items
+  (value bindings and expression statements) lowered into a synthetic `__init__`
+  function, called automatically by the interpreter. The lowerer currently
+  ignores `Item::Stmt` — fixing this is a required part of Stage 5.
+* `__init__` has `Void` return type. Existing test files that define `fn run()` or
+  `fn main()` need a top-level call (e.g. `run()`) to produce output.
+* When compiling to Wasm, `__init__` becomes the Wasm start function.
 
 CLI:
 
@@ -433,12 +465,17 @@ CLI:
 twk run file.tw   # parse + typecheck + lower + interpret
 ```
 
+Example programs are in `tests/run/` — each has expected output in a leading comment
+and uses top-level expression statements as the entry point (no `fn main()` magic).
+
 Deliverables:
 
-* Real multi-file Twinkle programs run end-to-end.
-* Closure capture-by-value test (`tests/closure/capture_by_value.tw`) passes.
-* Interpreter tests: arithmetic, if/case, loops, collect, records, variants,
-  inherent method calls across modules, dict operations, lvalue assignment forms.
+* All `tests/run/*.tw` example programs produce the expected output.
+* Top-level expression statements and let bindings execute in source order.
+* Lambda hoisting and closure capture-by-value pass (`tests/closure/capture_by_value.tw`
+  and `tests/run/closures.tw`).
+* Cross-module programs run end-to-end (existing `tests/modules/` tests pass after
+  adding top-level calls).
 
 ---
 

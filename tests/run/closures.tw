@@ -1,0 +1,32 @@
+// Tests closure capture-by-value semantics (spec §7.7).
+//
+// Expected output:
+//   0
+//   1
+//   10
+//   10
+//   0
+//   1
+//   2
+
+// Basic capture-by-value: rebinding after closure creation does not affect the closure.
+acc := 0
+f := fn() Int { acc }
+acc = acc + 1
+println("${f()}")    // 0 — captured value at definition time
+println("${acc}")    // 1
+
+// Shadowing: closure captures the innermost binding visible at definition time.
+fn make_adder(base: Int) fn(Int) Int {
+    fn(n: Int) Int { base + n }
+}
+
+add10 := make_adder(10)
+println("${add10(0)}")    // 10
+println("${add10(0)}")    // 10 — same closure, same captured base
+
+// Loop variable capture: each iteration's closure captures its own i value.
+fns := collect i in [0, 1, 2] { fn() Int { i } }
+for f in fns {
+    println("${f()}")    // 0, 1, 2
+}

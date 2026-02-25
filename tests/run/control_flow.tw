@@ -1,0 +1,46 @@
+// Expected output:
+//   positive
+//   zero
+//   negative
+//   one
+//   many
+//   other
+//   found: 7
+//   not found
+
+fn sign(n: Int) String {
+    if n > 0 { "positive" }
+    else if n == 0 { "zero" }
+    else { "negative" }
+}
+
+type Count = { Zero, One, Many(Int) }
+
+fn describe(c: Count) String {
+    case c {
+        .Zero    => "zero",
+        .One     => "one",
+        .Many(n) => if n > 10 { "many" } else { "other" },
+    }
+}
+
+// Early return from a function
+fn find_first_gt(xs: Array<Int>, threshold: Int) String {
+    for x in xs {
+        if x > threshold {
+            return "found: ${x}"
+        }
+    }
+    "not found"
+}
+
+println(sign(5))
+println(sign(0))
+println(sign(-3))
+println(describe(Count.One))
+println(describe(Count.Many(99)))
+println(describe(Count.Many(5)))
+
+nums: Array<Int> = [1, 3, 5, 7, 9]
+println(find_first_gt(nums, 6))
+println(find_first_gt(nums, 10))

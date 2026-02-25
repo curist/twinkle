@@ -5,5 +5,5 @@ fn main() {
     // Bare `Color` is ambiguous — must fail after bare names are scoped to
     // the module that defined them.
     c: Color = mod_a.red()
-    println(int_to_string(c.r))
+    println("${c.r}")
 }

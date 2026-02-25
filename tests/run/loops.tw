@@ -1,0 +1,40 @@
+// Expected output:
+//   15
+//   120
+//   0: a
+//   1: b
+//   2: c
+//   done
+
+fn sum(xs: Array<Int>) Int {
+    acc := 0
+    for x in xs {
+        acc = acc + x
+    }
+    acc
+}
+
+fn product(xs: Array<Int>) Int {
+    acc := 1
+    for x in xs {
+        acc = acc * x
+    }
+    acc
+}
+
+nums: Array<Int> = [1, 2, 3, 4, 5]
+println("${sum(nums)}")
+println("${product(nums)}")
+
+// Indexed for loop: for elem, idx in coll
+words: Array<String> = ["a", "b", "c"]
+for w, i in words {
+    println("${i}: ${w}")
+}
+
+// While-style loop
+n := 3
+for n > 0 {
+    n = n - 1
+}
+println("done")

@@ -1,0 +1,30 @@
+// Expected output:
+//   3
+//   4
+//   25
+//   4
+//   6
+//   72
+
+type Point = .{ x: Int, y: Int }
+
+fn magnitude_sq(p: Point) Int {
+    p.x * p.x + p.y * p.y
+}
+
+fn translate(p: Point, dx: Int, dy: Int) Point {
+    Point.{ x: p.x + dx, y: p.y + dy }
+}
+
+p := Point.{ x: 3, y: 4 }
+println("${p.x}")
+println("${p.y}")
+println("${magnitude_sq(p)}")
+
+// Field update desugars to: p = RecordUpdate(p, x, 4)
+p.x = 4
+println("${p.x}")
+
+q := translate(p, 2, 2)
+println("${q.x}")
+println("${magnitude_sq(q)}")

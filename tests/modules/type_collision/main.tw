@@ -6,6 +6,6 @@ fn main() {
     // and each name must map to its own TypeId.
     c1: mod_a.Color = mod_a.red()
     c2: mod_b.Color = mod_b.full_hue()
-    println(int_to_string(c1.r))
-    println(float_to_string(c2.h))
+    println("${c1.r}")
+    println("${c2.h}")
 }

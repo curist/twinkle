@@ -1,0 +1,22 @@
+// Expected output:
+//   hello, world
+//   12
+//   hello, world
+//   Ada is 30 years old
+//   pi is approximately 3.14
+
+a := "hello"
+b := ", world"
+joined := a.concat(b)
+println(joined)
+println("${joined.len()}")
+
+// to_string() as inherent method on String
+println(joined.to_string())
+
+// string interpolation — idiomatic way to embed values in strings
+name := "Ada"
+age := 30
+pi := 3.14
+println("${name} is ${age} years old")
+println("pi is approximately ${pi}")

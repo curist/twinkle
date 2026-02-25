@@ -1145,6 +1145,11 @@ Used by `for` and `collect`.
 
 Dicts are **immutable** hash maps.
 
+**Key type constraint:** `K` must be `Int` or `String`. No other types are allowed
+as dict keys. `Bool` keys are excluded (a two-entry dict should be expressed as a
+plain record). Since Twinkle has no trait system, this constraint is enforced as a
+compiler-known closed set rather than a generic bound.
+
 Creation:
 
 ```tw
@@ -1211,8 +1216,8 @@ Includes:
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * string module: `String.concat`, `String.substring`, `String.of_int`, etc.
-* naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics may use snake_case.
-* stage0 compatibility aliases may still exist (e.g. `int_to_string`); prefer `String.*` names in user-facing docs.
+* naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
+* snake_case intrinsics (e.g. `int_to_string`, `string_concat`) exist in the stage0 implementation but are not user-facing; user code uses `.to_string()`, `.len()`, `.concat()`, string interpolation, and `String.*` / `Array.*` / `Dict.*` module functions instead.
 
 ---
 

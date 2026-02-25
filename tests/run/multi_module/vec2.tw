@@ -1,0 +1,13 @@
+pub type Vec2 = .{ x: Int, y: Int }
+
+pub fn make(x: Int, y: Int) Vec2 {
+    Vec2.{ x: x, y: y }
+}
+
+pub fn add(a: Vec2, b: Vec2) Vec2 {
+    Vec2.{ x: a.x + b.x, y: a.y + b.y }
+}
+
+pub fn magnitude_sq(v: Vec2) Int {
+    v.x * v.x + v.y * v.y
+}

@@ -55,10 +55,15 @@ Core IR must:
 
 ### Modules
 
-A module is a list of **function definitions**, **module globals** (top-level value bindings), and a synthetic **init function** containing the top-level expression statements in source order.
+A module is a list of **function definitions** plus a synthetic **`__init__` function**
+that contains all top-level value bindings and expression statements in source order.
+
+Per spec §8.1, there is **no special `main` function**. The entry point of a program is
+the `__init__` function. `fn main()` has no distinguished status and is not called
+automatically. When compiling to Wasm, `__init__` becomes the Wasm start function.
 
 ```
-Module = { FunctionDef }
+Module = { FunctionDef }   // includes the synthetic __init__ function
 ```
 
 ### Values
@@ -69,7 +74,12 @@ Core IR does not define a runtime; but the interpreter uses:
 * arrays, dicts,
 * records (nominal),
 * variants (nominal),
-* closures (captured env + function id),
+* closures — `Closure(FuncId, HashMap<LocalId, Value>)`:
+  * `FuncId` points to the hoisted lambda body (a regular `FunctionDef`).
+  * `HashMap<LocalId, Value>` is a snapshot of the free variables captured
+    at closure-creation time (capture-by-value, spec §7.7).
+  * When calling a closure, the captured env is merged into the call frame
+    before binding the parameters.
 * void.
 
 ### Local Identifiers
@@ -123,7 +133,10 @@ Expr =
 
     | Call { callee: Box<Expr>, args: Vec<Expr> }
 
-    | Lambda { params: Vec<LocalId>, body: Box<Expr> }
+    // Closure creation: lambda body is hoisted to a FunctionDef with func_id.
+    // free_vars lists the LocalIds from the enclosing scope that the closure captures.
+    // At runtime, their current values are snapshotted into the Closure value.
+    | MakeClosure { func_id: FuncId, free_vars: Vec<LocalId> }
 
     | If { cond: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr> }
 
@@ -133,8 +146,16 @@ Expr =
     | Break { value: Option<Box<Expr>> }
     | Continue
 
+    // Early exit from a function; bubbles up to the nearest call boundary.
+    // Return { value: None } is used for Void returns.
+    | Return { value: Option<Box<Expr>> }
+
     | Record { type_id: TypeId, fields: Vec<(FieldId, Expr)> }
     | RecordGet { target: Box<Expr>, field: FieldId }
+
+    // Functional record update: produces a new record with one field replaced.
+    // No in-place mutation; a future optimization pass may lower to struct.set.
+    | RecordUpdate { base: Box<Expr>, field: FieldId, value: Box<Expr> }
 
     | Variant { type_id: TypeId, variant: VariantId, args: Vec<Expr> }
 
@@ -188,7 +209,16 @@ Prelude functions have fixed, deterministic FuncIds:
 | 9      | `String.concat` (intrinsic: `string_concat`) |
 | 10     | `Array.len` (intrinsic: `array_len`) |
 | 11     | `Array.append` (intrinsic: `array_append`) |
-| 12+    | user-defined (source order) |
+| 12     | `Array.set(arr, idx, val)` (intrinsic: `array_set`) |
+| 13     | `Dict.set(m, k, v)` (intrinsic: `dict_set`) |
+| 14     | `Dict.keys(m)` (intrinsic: `dict_keys`) |
+| 15+    | user-defined (deterministic source order) |
+
+Additional stdlib builtins (`Array.concat`, `Array.slice`, `Dict.new`, `Dict.get`,
+`Dict.has`, `Dict.remove`, `Dict.len`, `String.substring`, `Range.range`, etc.) are
+added as fixed FuncIds only when needed by tests or language features. They slot into
+the range above user functions and the `USER_FUNC_START` constant in `lower.rs`
+advances accordingly.
 
 Inherent method calls (`x.method(args)`) are **not** a distinct IR node.
 They lower to `Call { callee: GlobalFunc(func_id), args: [receiver, ...rest] }`.
@@ -411,7 +441,7 @@ AOp =
     | AArrayLit(Vec<Atom>)
     | AIndex { base: Atom, index: Atom }
 
-    | ALambda { params: Vec<LocalId>, body: ANFExpr }
+    | AMakeClosure { func_id: FuncId, free_vars: Vec<Atom> }
 ```
 
 ### ANF Match Arm
@@ -470,9 +500,10 @@ Scrutinee lowered to an atom before the `Match`.
 
 Loop body lowered independently into ANF form.
 
-### Rule A5: Lambda
+### Rule A5: MakeClosure
 
-Body becomes its own ANFExpr; closure capture analysis happens later.
+`MakeClosure` is already atomic (it only references locals and a FuncId).
+The hoisted lambda body (`FunctionDef`) is lowered to ANF independently.
 
 ---
 
@@ -489,15 +520,44 @@ Body becomes its own ANFExpr; closure capture analysis happens later.
 The reference interpreter operates directly on Core IR.
 Semantics are:
 
+* **Entry point**: call the `__init__` function (the synthetic top-level init).
+  There is no special `main` function (spec §8.1).
+
 * **Call-by-value**, left-to-right evaluation.
+
 * **Lexically scoped** closures.
+  * `MakeClosure { func_id, free_vars }` snapshots the listed locals from the
+    current frame into a `Closure(func_id, captured_env)` value.
+  * Calling a `Closure` merges `captured_env` into the new call frame first,
+    then binds the parameters.
+
+* **Control flow signals** bubble up through the expression tree as Rust enum
+  variants (not panics):
+  * `Break(Option<Value>)` — caught by the enclosing `Loop`.
+  * `Continue` — caught by the enclosing `Loop`.
+  * `Return(Option<Value>)` — caught at the function call boundary (the point
+    where `Call` is evaluated); escapes any nested loops.
+
+* **Environment**:
+  * One flat `HashMap<LocalId, Value>` per call frame.
+  * `Let { local, value, body }` — evaluate `value`, insert `local → result`
+    into env, then evaluate `body`.
+  * `Assign { local, value }` — evaluate `value`, overwrite `local` in env,
+    return `Void`. (Maps to Wasm `local.set`.)
+
 * **Loop** forms are structural:
-
   * `Loop { body }` repeatedly evaluates body until `Break`.
-* **Match** evaluation:
 
+* **Match** evaluation:
   * First matching pattern wins.
   * Variant patterns check `type_id` + `variant_id`.
+
+* **Dict** runtime representation: `Vec<(Value, Value)>` in Stage 5
+  (linear scan, no hashing needed). Key equality uses structural `==`.
+  Note: `Dict<K,V>` currently has no compile-time constraint on K.
+  Restricting K to `Int` or `String` is the intended long-term policy; the
+  type-checker will enforce this in a later stage. `Bool` keys are excluded
+  (a two-entry dict is just a pair).
 
 Interpreter behavior defines Twinkle semantics.
 

@@ -1,0 +1,19 @@
+// Expected output:
+//   7
+//   -3
+//   12
+//   2
+//   true
+//   false
+//   3.5
+
+fn add(x: Int, y: Int) Int { x + y }
+fn mul(x: Int, y: Int) Int { x * y }
+
+println("${add(3, 4)}")
+println("${add(2, -5)}")
+println("${mul(3, 4)}")
+println("${10 / 4}")        // integer division
+println("${10 > 5}")
+println("${3 > 7}")
+println("${7.0 / 2.0}")

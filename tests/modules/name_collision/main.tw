@@ -5,6 +5,6 @@ fn main() {
     // Both modules have a function named 'process' — must use qualified calls
     a := util_a.process(5)
     b := util_b.process(5)
-    println(int_to_string(a))
-    println(int_to_string(b))
+    println("${a}")
+    println("${b}")
 }
