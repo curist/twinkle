@@ -57,7 +57,7 @@ The fix keeps the parser consistent with `expr_as_type_name` in record construct
 
 ---
 
-### Same-named types across imported modules silently collide
+### Same-named types across imported modules silently collide — ✅ fixed
 
 `TypeEnv.type_names` is a flat `HashMap<String, TypeId>`.  When two imported
 modules both declare a type with the same unqualified name (e.g. `type Point`),

@@ -148,6 +148,37 @@ fn test_module_inherent_method_lower() {
     );
 }
 
+/// two modules with same-named types: qualified access resolves each to the correct TypeId
+#[test]
+fn test_module_type_collision_qualified_check() {
+    let result = check("type_collision/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected qualified access to same-named types to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_type_collision_qualified_lower() {
+    let result = lower("type_collision/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected qualified access to same-named types to lower: {:?}",
+        result.err()
+    );
+}
+
+/// bare (unqualified) use of a type name that exists in two imports must be rejected
+#[test]
+fn test_module_type_collision_bare_rejected() {
+    let result = check("type_collision/main_bare.tw");
+    assert!(
+        result.is_err(),
+        "Expected bare ambiguous type name to fail, but check succeeded"
+    );
+}
+
 /// multi-segment module path: `use math.vec` loads math/vec.tw;
 /// the module alias is the last segment so types are accessed as `vec.Vec2`
 #[test]

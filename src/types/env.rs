@@ -101,6 +101,17 @@ impl TypeEnv {
         self.type_names.insert(qualified_name, type_id);
     }
 
+    /// Remove a bare (unqualified) type name from the lookup table.
+    ///
+    /// Used after a dependency module finishes compiling so that its bare type
+    /// names do not leak into subsequent modules' resolution.  The TypeId and
+    /// TypeDef remain intact; only the bare-name lookup entry is removed.
+    /// Cross-module access must always go through qualified aliases
+    /// ("module.TypeName") registered via `register_type_alias`.
+    pub fn remove_bare_type_name(&mut self, name: &str) {
+        self.type_names.remove(name);
+    }
+
     /// Get a type definition by ID
     pub fn get_def(&self, type_id: TypeId) -> Option<&TypeDef> {
         self.types.get(type_id.0 as usize)

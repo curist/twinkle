@@ -1,0 +1,5 @@
+pub type Color = .{ r: Int, g: Int, b: Int }
+
+pub fn red() Color {
+    Color.{ r: 255, g: 0, b: 0 }
+}

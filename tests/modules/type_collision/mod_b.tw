@@ -1,0 +1,5 @@
+pub type Color = .{ h: Float, s: Float, v: Float }
+
+pub fn full_hue() Color {
+    Color.{ h: 0.0, s: 1.0, v: 1.0 }
+}

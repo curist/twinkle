@@ -142,6 +142,18 @@ pub fn compile_module(
         }
     }
 
+    // Remove this module's bare type names from the shared TypeEnv.
+    // They were needed during resolve and typecheck, but must not persist into
+    // subsequent modules' resolution — otherwise two modules declaring a type
+    // with the same name would silently overwrite each other's TypeId.
+    // Cross-module access goes through qualified aliases ("module.TypeName")
+    // registered by the importing module via register_module_exports.
+    for item in &ast.items {
+        if let Item::TypeDecl(decl) = item {
+            ctx.type_env.remove_bare_type_name(&decl.name);
+        }
+    }
+
     // Lower (if requested)
     if do_lower {
         let lowerer = Lowerer::new_with_context(type_map, ctx);
