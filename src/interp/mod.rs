@@ -1,1 +1,5 @@
-// Core IR interpreter - Stage 4
+mod value;
+mod eval;
+
+pub use value::Value;
+pub use eval::Interpreter;

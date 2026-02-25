@@ -46,6 +46,8 @@ pub struct CompilationContext {
     pub all_functions: Vec<FunctionDef>,
     /// Next FuncId to assign (starts after prelude)
     pub next_func_id: u32,
+    /// FuncId of the __init__ function (top-level statements), if any
+    pub init_func_id: Option<FuncId>,
 }
 
 impl CompilationContext {
@@ -77,6 +79,7 @@ impl CompilationContext {
             module_cache: HashMap::new(),
             all_functions: Vec::new(),
             next_func_id: prelude::USER_FUNC_START,
+            init_func_id: None,
         }
     }
 

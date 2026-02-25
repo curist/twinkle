@@ -377,7 +377,7 @@ Deliverables:
 
 ---
 
-### Stage 5 — Core IR Interpreter ⬅ Next
+### Stage 5 — Core IR Interpreter ✅
 
 **Goal:** Run real Twinkle programs (including multi-file) by interpreting Core IR.
 
@@ -479,7 +479,7 @@ Deliverables:
 
 ---
 
-### Stage 6 — Generics & Bidirectional Type Checking
+### Stage 6 — Generics & Bidirectional Type Checking ⬅ Next
 
 **Goal:** Upgrade typechecker to support generics and inference.
 

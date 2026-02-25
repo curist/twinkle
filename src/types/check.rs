@@ -82,11 +82,8 @@ impl TypeChecker {
                         });
                     }
                 } else {
-                    // Non-let statements at top-level
-                    checker.errors.push(TypeError::InvalidTopLevelItem {
-                        span: checker.stmt_span(stmt),
-                        note: "Only let bindings are allowed at top-level".to_string(),
-                    });
+                    // For loops and other side-effectful statements at top-level
+                    checker.check_top_level_stmt(stmt);
                 }
             }
         }
@@ -168,10 +165,8 @@ impl TypeChecker {
                         });
                     }
                 } else {
-                    checker.errors.push(TypeError::InvalidTopLevelItem {
-                        span: checker.stmt_span(stmt),
-                        note: "Only let bindings are allowed at top-level".to_string(),
-                    });
+                    // For loops and other side-effectful statements at top-level
+                    checker.check_top_level_stmt(stmt);
                 }
             }
         }
@@ -256,16 +251,87 @@ impl TypeChecker {
         self.local_env.pop_scope();
     }
 
-    fn stmt_span(&self, stmt: &Stmt) -> Span {
+    /// Type-check a top-level statement that is not a let binding.
+    /// Allows for-loops, expression statements, break, continue, and return.
+    fn check_top_level_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { span, .. } => *span,
-            Stmt::For { span, .. } => *span,
-            Stmt::ForCond { span, .. } => *span,
-            Stmt::Expr(e) => e.span,
-            Stmt::Break { span, .. } => *span,
-            Stmt::Continue { span } => *span,
-            Stmt::Return { span, .. } => *span,
+            Stmt::Expr(e) => {
+                let _ = self.synth_expr(e);
+            }
+            Stmt::For { pattern, index_pattern, iter, body, .. } => {
+                self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
+            }
+            Stmt::ForCond { cond, body, .. } => {
+                let _ = self.check_expr(cond, &MonoType::Bool);
+                let _ = self.synth_block(body);
+            }
+            Stmt::Break { value, .. } => {
+                if let Some(val) = value {
+                    let _ = self.synth_expr(val);
+                }
+            }
+            Stmt::Continue { .. } => {}
+            Stmt::Return { value, span } => {
+                if let Some(val) = value {
+                    let _ = self.synth_expr(val);
+                }
+                // Return at top-level is technically invalid but we'll let the
+                // lowerer handle it (it becomes part of __init__)
+                let _ = span;
+            }
+            Stmt::Let { .. } => {
+                // Should not happen here; handled in Pass 1
+            }
         }
+    }
+
+    fn synth_function_expr(&mut self, fe: &crate::syntax::ast::FunctionExpr, span: Span) -> Result<MonoType, ()> {
+        // Resolve param types — annotations required for lambdas in Stage 5
+        let mut param_types = Vec::new();
+        for p in &fe.params {
+            match &p.ty {
+                Some(ann) => {
+                    let t = self.resolve_type(ann)?;
+                    param_types.push(t);
+                }
+                None => {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "lambda with unannotated parameters",
+                        span,
+                        note: "All lambda parameters must have type annotations in Stage 5".to_string(),
+                    });
+                    return Err(());
+                }
+            }
+        }
+
+        let expected_ret = match &fe.return_type {
+            Some(t) => Some(self.resolve_type(t)?),
+            None => None,
+        };
+
+        self.local_env.push_scope();
+        for (p, ty) in fe.params.iter().zip(&param_types) {
+            self.local_env.bind(p.name.clone(), ty.clone());
+        }
+        let saved = self.current_function_ret.take();
+        self.current_function_ret = expected_ret.clone();
+
+        let body_ty = match &expected_ret {
+            Some(exp) => {
+                self.check_expr(&fe.body, exp)?;
+                exp.clone()
+            }
+            None => self.synth_expr(&fe.body)?,
+        };
+
+        self.local_env.pop_scope();
+        self.current_function_ret = saved;
+
+        Ok(MonoType::Function {
+            params: param_types,
+            ret: Box::new(body_ty),
+        })
     }
 
     /// Resolve an AST type annotation to a MonoType
@@ -357,14 +423,8 @@ impl TypeChecker {
                 Ok(MonoType::String)
             }
 
-            // Unsupported features
-            ExprKind::Function(_) => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "lambda expressions",
-                    span: expr.span,
-                    note: "Lambda expressions will be supported in later phases".to_string(),
-                });
-                Err(())
+            ExprKind::Function(fe) => {
+                self.synth_function_expr(fe, expr.span)
             }
 
             ExprKind::Collect { pattern, iter, body } => {
@@ -545,6 +605,37 @@ impl TypeChecker {
                     let method_name = method_name.clone();
                     let callee_id = callee.id;
                     return self.synth_module_call(&alias, &method_name, args, span, callee_id);
+                }
+
+                // TypeName.Variant(args) — variant construction with type prefix
+                if let Some(type_id) = self.type_env.lookup_type(alias) {
+                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name) {
+                        let named_ty = MonoType::Named { type_id, args: vec![] };
+                        self.type_map.set_expr_type(base.id, named_ty.clone());
+                        let variants = self.type_env.get_variants(type_id)
+                            .expect("variant exists, variants must exist");
+                        let variant_fields = variants[variant_idx].fields.clone();
+                        // Check arity
+                        if variant_fields.len() != args.len() {
+                            self.errors.push(TypeError::WrongArity {
+                                expected: variant_fields.len(),
+                                actual: args.len(),
+                                span,
+                            });
+                            return Err(());
+                        }
+                        for (arg, expected_ty) in args.iter().zip(variant_fields.iter()) {
+                            self.check_expr(arg, expected_ty)?;
+                        }
+                        // Record callee type (constructor function)
+                        let ctor_ty = if variant_fields.is_empty() {
+                            named_ty.clone()
+                        } else {
+                            MonoType::Function { params: variant_fields, ret: Box::new(named_ty.clone()) }
+                        };
+                        self.type_map.set_expr_type(callee.id, ctor_ty);
+                        return Ok(named_ty);
+                    }
                 }
             }
 
@@ -812,10 +903,10 @@ impl TypeChecker {
                     if let Some(val) = value {
                         let _ = self.synth_expr(val);
                     }
-                    result_ty = MonoType::Void;
+                    result_ty = MonoType::Never;
                 }
                 Stmt::Continue { .. } => {
-                    result_ty = MonoType::Void;
+                    result_ty = MonoType::Never;
                 }
             }
         }
@@ -883,7 +974,8 @@ impl TypeChecker {
         if let Some(else_expr) = else_branch {
             let else_ty = self.synth_expr(else_expr)?;
             self.unify(&then_ty, &else_ty, else_expr.span)?;
-            Ok(then_ty)
+            // If one branch diverges (Never), use the other branch's type
+            if then_ty == MonoType::Never { Ok(else_ty) } else { Ok(then_ty) }
         } else {
             // No else branch - result type is Void
             self.unify(&then_ty, &MonoType::Void, then_branch.span)?;
@@ -896,6 +988,27 @@ impl TypeChecker {
     //
 
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
+        // Check for TypeName.Variant syntax: base is a type name, field is a variant
+        if let ExprKind::Ident(type_name) = &base.kind {
+            if let Some(type_id) = self.type_env.lookup_type(type_name) {
+                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
+                    let named_ty = MonoType::Named { type_id, args: vec![] };
+                    // Record type of the type-name base as Named (so lowerer can identify it)
+                    self.type_map.set_expr_type(base.id, named_ty.clone());
+                    let variants = self.type_env.get_variants(type_id)
+                        .expect("variant index exists, variants must exist");
+                    let variant_fields = variants[variant_idx].fields.clone();
+                    return if variant_fields.is_empty() {
+                        // Zero-arg variant — directly a value of the named type
+                        Ok(named_ty)
+                    } else {
+                        // Parameterized variant — a constructor function
+                        Ok(MonoType::Function { params: variant_fields, ret: Box::new(named_ty) })
+                    };
+                }
+            }
+        }
+
         let base_ty = self.synth_expr(base)?;
 
         match base_ty {
@@ -1290,6 +1403,10 @@ impl TypeChecker {
     //
 
     fn unify(&mut self, actual: &MonoType, expected: &MonoType, span: Span) -> Result<(), ()> {
+        // Never (bottom type) unifies with anything
+        if *actual == MonoType::Never || *expected == MonoType::Never {
+            return Ok(());
+        }
         if actual == expected {
             Ok(())
         } else {

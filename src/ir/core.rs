@@ -76,10 +76,11 @@ pub enum CoreExprKind {
         args: Vec<CoreExpr>,
     },
 
-    // Lambda/closure
-    Lambda {
-        params: Vec<LocalId>,
-        body: Box<CoreExpr>,
+    // Lambda/closure — hoisted to a FunctionDef at the top level; this node
+    // captures the free variables by value at the point of creation.
+    MakeClosure {
+        func_id: FuncId,
+        free_vars: Vec<LocalId>,
     },
 
     // Control flow
@@ -184,5 +185,5 @@ pub struct FunctionDef {
 pub struct CoreModule {
     pub functions: Vec<FunctionDef>,
     pub type_env: TypeEnv,
-    pub main_func_id: Option<FuncId>,
+    pub init_func_id: Option<FuncId>,
 }

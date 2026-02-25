@@ -28,6 +28,10 @@ pub enum MonoType {
     /// Void/unit type
     Void,
 
+    /// Bottom/never type — produced by diverging expressions (break/continue/return)
+    /// Unifies with any type
+    Never,
+
     /// User-defined nominal type (record or sum type)
     /// args is empty in Stage 2 but prepared for Stage 5 generics
     Named {
@@ -93,6 +97,7 @@ impl MonoType {
             MonoType::Bool => "Bool".to_string(),
             MonoType::String => "String".to_string(),
             MonoType::Void => "Void".to_string(),
+            MonoType::Never => "Never".to_string(),
             MonoType::Named { type_id, args } => {
                 if let Some(def) = type_env.get_def(*type_id) {
                     let name = def.name();
@@ -140,6 +145,7 @@ impl fmt::Display for MonoType {
             MonoType::Bool => write!(f, "Bool"),
             MonoType::String => write!(f, "String"),
             MonoType::Void => write!(f, "Void"),
+            MonoType::Never => write!(f, "Never"),
             MonoType::Named { type_id, args } => {
                 if args.is_empty() {
                     write!(f, "Type#{}", type_id.0)

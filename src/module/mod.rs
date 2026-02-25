@@ -158,7 +158,12 @@ pub fn compile_module(
     if do_lower {
         let lowerer = Lowerer::new_with_context(type_map, ctx);
         match lowerer.lower_module_funcs(&ast) {
-            Ok(functions) => ctx.all_functions.extend(functions),
+            Ok((functions, init_func_id)) => {
+                ctx.all_functions.extend(functions);
+                if let Some(id) = init_func_id {
+                    ctx.init_func_id = Some(id);
+                }
+            }
             Err(errs) => {
                 let msgs: Vec<String> =
                     errs.iter().map(|e| e.format(&file_registry)).collect();
@@ -202,12 +207,11 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
         .to_string();
     let mut ctx = CompilationContext::new();
     let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], true)?;
-    let main_func_id = ctx.func_table.get("main").copied();
     Ok((
         CoreModule {
             functions: ctx.all_functions,
             type_env: ctx.type_env,
-            main_func_id,
+            init_func_id: ctx.init_func_id,
         },
         registry,
     ))

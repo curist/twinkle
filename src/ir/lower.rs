@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::syntax::ast::{
     BinOp, Block, CaseArm, Expr, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile,
@@ -56,10 +56,14 @@ pub struct Lowerer {
     /// Map from function name to its assigned FuncId
     func_table: HashMap<String, FuncId>,
     /// Set of module alias names (for cross-module call dispatch)
-    module_aliases: std::collections::HashSet<String>,
+    module_aliases: HashSet<String>,
     errors: Vec<LowerError>,
     /// Per-function local variable allocator (reset for each function)
     local_allocator: LocalAllocator,
+    /// Next FuncId for hoisted lambdas and __init__ (assigned after all user funcs)
+    next_hoisted_id: u32,
+    /// Hoisted lambda functions (and __init__) collected during lowering
+    hoisted_functions: Vec<FunctionDef>,
 }
 
 impl Lowerer {
@@ -77,9 +81,11 @@ impl Lowerer {
             type_map,
             type_env,
             func_table,
-            module_aliases: std::collections::HashSet::new(),
+            module_aliases: HashSet::new(),
             errors: Vec::new(),
             local_allocator: LocalAllocator::new(),
+            next_hoisted_id: prelude::USER_FUNC_START, // updated after user-func pass
+            hoisted_functions: Vec::new(),
         }
     }
 
@@ -96,6 +102,8 @@ impl Lowerer {
             module_aliases: ctx.module_aliases.clone(),
             errors: Vec::new(),
             local_allocator: LocalAllocator::new(),
+            next_hoisted_id: ctx.next_func_id,
+            hoisted_functions: Vec::new(),
         }
     }
 
@@ -118,6 +126,7 @@ impl Lowerer {
                 }
             }
         }
+        self.next_hoisted_id = next_func_id;
 
         // Second pass: lower each function
         let mut functions = Vec::new();
@@ -129,23 +138,32 @@ impl Lowerer {
             }
         }
 
-        let main_func_id = self.func_table.get("main").copied();
+        // Lower top-level statements into __init__
+        let init_func_id = self.lower_init_stmts(ast).map(|init_def| {
+            let id = init_def.func_id;
+            self.hoisted_functions.push(init_def);
+            id
+        });
+
+        // Include hoisted lambdas and __init__ in the function list
+        functions.extend(self.hoisted_functions.drain(..));
 
         if self.errors.is_empty() {
             Ok(CoreModule {
                 functions,
                 type_env: self.type_env,
-                main_func_id,
+                init_func_id,
             })
         } else {
             Err(self.errors)
         }
     }
 
-    /// Lower only the functions of a source file, returning them as a Vec.
-    /// FuncIds must already be pre-assigned in `self.func_table`.
+    /// Lower only the functions of a source file, returning them as a Vec along
+    /// with the Optional FuncId of the __init__ function (top-level stmts).
+    /// FuncIds for user functions must already be pre-assigned in `self.func_table`.
     /// Used by the multi-module pipeline.
-    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<Vec<FunctionDef>, Vec<LowerError>> {
+    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>), Vec<LowerError>> {
         let mut functions = Vec::new();
         for item in &ast.items {
             if let Item::Function(decl) = item {
@@ -154,11 +172,64 @@ impl Lowerer {
                 }
             }
         }
+
+        // Lower top-level statements into __init__
+        let init_func_id = self.lower_init_stmts(ast).map(|init_def| {
+            let id = init_def.func_id;
+            functions.push(init_def);
+            id
+        });
+
+        // Include any hoisted lambdas
+        functions.extend(self.hoisted_functions.drain(..));
+
         if self.errors.is_empty() {
-            Ok(functions)
+            Ok((functions, init_func_id))
         } else {
             Err(self.errors)
         }
+    }
+
+    /// Allocate the next FuncId for a hoisted function (lambda or __init__).
+    fn alloc_hoisted_id(&mut self) -> FuncId {
+        let id = FuncId(self.next_hoisted_id);
+        self.next_hoisted_id += 1;
+        id
+    }
+
+    /// Lower all top-level expression statements into a synthetic `__init__` function.
+    /// Returns `None` if there are no top-level statements.
+    fn lower_init_stmts(&mut self, ast: &SourceFile) -> Option<FunctionDef> {
+        // Collect all top-level statements in source order
+        let stmts: Vec<&Stmt> = ast.items.iter()
+            .filter_map(|item| if let Item::Stmt(s) = item { Some(s) } else { None })
+            .collect();
+
+        if stmts.is_empty() {
+            return None;
+        }
+
+        // Fresh allocator for the __init__ function
+        self.local_allocator = LocalAllocator::new();
+
+        // We need an owned Vec<Stmt> to call lower_stmts — clone for now
+        let stmts_owned: Vec<Stmt> = stmts.iter().map(|s| (*s).clone()).collect();
+
+        let span = match stmts_owned.first() {
+            Some(s) => stmt_span(s),
+            None => return None,
+        };
+
+        let body = self.lower_stmts(&stmts_owned, span)?;
+        let func_id = self.alloc_hoisted_id();
+
+        Some(FunctionDef {
+            func_id,
+            name: "__init__".to_string(),
+            params: vec![],
+            return_ty: MonoType::Void,
+            body,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -562,38 +633,38 @@ impl Lowerer {
                     span: iter_span,
                 };
 
-                // Optionally bind user-visible index
-                let loop_tail = if let Some(user_idx) = idx_user {
-                    CoreExpr {
-                        kind: CoreExprKind::Let {
-                            local: user_idx,
-                            value: Box::new(idx_local_expr.clone()),
-                            body: Box::new(idx_rebind),
-                        },
-                        ty: MonoType::Void,
-                        span: iter_span,
-                    }
-                } else {
-                    idx_rebind
-                };
-
-                // body_then_tail: the body followed by loop_tail
-                let body_then_tail = CoreExpr {
+                // body_then_idx_rebind: body followed by idx increment+continue
+                let body_then_inc = CoreExpr {
                     kind: CoreExprKind::Let {
                         local: self.local_allocator.alloc(),
                         value: Box::new(body_expr),
-                        body: Box::new(loop_tail),
+                        body: Box::new(idx_rebind),
                     },
                     ty: MonoType::Void,
                     span: iter_span,
                 };
 
-                // Let(elem, elem_value, body_then_tail)
+                // Optionally bind user-visible index BEFORE the body
+                let loop_body_inner = if let Some(user_idx) = idx_user {
+                    CoreExpr {
+                        kind: CoreExprKind::Let {
+                            local: user_idx,
+                            value: Box::new(idx_local_expr.clone()),
+                            body: Box::new(body_then_inc),
+                        },
+                        ty: MonoType::Void,
+                        span: iter_span,
+                    }
+                } else {
+                    body_then_inc
+                };
+
+                // Let(elem, elem_value, loop_body_inner)
                 let elem_let = CoreExpr {
                     kind: CoreExprKind::Let {
                         local: elem_local,
                         value: Box::new(elem_value),
-                        body: Box::new(body_then_tail),
+                        body: Box::new(loop_body_inner),
                     },
                     ty: MonoType::Void,
                     span: iter_span,
@@ -1058,6 +1129,24 @@ impl Lowerer {
 
             // --- Field access → RecordGet or method call ---
             ExprKind::FieldAccess { base, field } => {
+                // TypeName.Variant (zero-arg variant construction)
+                if let ExprKind::Ident(type_name) = &base.kind {
+                    if self.local_allocator.lookup(type_name).is_none()
+                        && !self.func_table.contains_key(type_name.as_str())
+                    {
+                        // Base is a type name — look for a variant
+                        if let MonoType::Named { type_id, .. } = ty {
+                            if let Some(variant_idx) = self.type_env.get_variant_index(*type_id, field) {
+                                return Some(CoreExprKind::Variant {
+                                    type_id: *type_id,
+                                    variant: VariantId(variant_idx),
+                                    args: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+
                 let base_expr = self.lower_expr(base)?;
                 let base_ty = base_expr.ty.clone();
 
@@ -1229,13 +1318,35 @@ impl Lowerer {
                 self.lower_collect(pattern, iter, body, ty, span)
             }
 
-            // --- Lambda (non-capturing only, deferred) ---
-            ExprKind::Function(_) => {
-                self.errors.push(LowerError::UnsupportedFeature {
-                    feature: "lambda expressions",
-                    span,
-                });
-                None
+            // --- Lambda / closure ---
+            ExprKind::Function(fe) => {
+                // Bind lambda params in a new scope using the shared allocator
+                // (so LocalIds are unique across the enclosing function and lambda).
+                self.local_allocator.push_scope();
+                let lambda_params: Vec<LocalId> = fe.params.iter()
+                    .map(|p| self.local_allocator.alloc_and_bind(p.name.clone()))
+                    .collect();
+
+                let body = self.lower_expr(&fe.body)?;
+                self.local_allocator.pop_scope();
+
+                // Collect free variables: Local(id) refs not in lambda params
+                let param_set: HashSet<LocalId> = lambda_params.iter().copied().collect();
+                let free_vars = collect_local_refs(&body, &param_set);
+
+                // Hoist to a new FunctionDef
+                let func_id = self.alloc_hoisted_id();
+                let return_ty = body.ty.clone();
+                let hoisted = FunctionDef {
+                    func_id,
+                    name: format!("<lambda@{}>", span.start),
+                    params: lambda_params,
+                    body,
+                    return_ty,
+                };
+                self.hoisted_functions.push(hoisted);
+
+                Some(CoreExprKind::MakeClosure { func_id, free_vars })
             }
 
             // --- Try (deferred until generics) ---
@@ -1269,6 +1380,29 @@ impl Lowerer {
 
         // Field-access calls: module.func(args) or receiver.method(args)
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
+            // TypeName.Variant(args) — parameterized variant construction
+            if let ExprKind::Ident(type_name) = &base.kind {
+                if self.local_allocator.lookup(type_name).is_none()
+                    && !self.func_table.contains_key(type_name.as_str())
+                    && !self.module_aliases.contains(type_name.as_str())
+                {
+                    // Base is a type name — look for a variant with this name
+                    if let MonoType::Named { type_id, .. } = ret_ty {
+                        if let Some(variant_idx) = self.type_env.get_variant_index(*type_id, field) {
+                            let mut lowered_args = Vec::new();
+                            for a in args {
+                                lowered_args.push(self.lower_expr(a)?);
+                            }
+                            return Some(CoreExprKind::Variant {
+                                type_id: *type_id,
+                                variant: VariantId(variant_idx),
+                                args: lowered_args,
+                            });
+                        }
+                    }
+                }
+            }
+
             // Module-qualified call: alias.func(args)
             if let ExprKind::Ident(alias) = &base.kind {
                 if self.module_aliases.contains(alias.as_str()) {
@@ -1762,47 +1896,51 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Build from innermost: Assign(idx, idx+1); Continue
+        // Build innermost: Assign(acc, append(acc, val)); Continue
         let tmp1 = self.local_allocator.alloc();
         let tail = CoreExpr {
             kind: CoreExprKind::Let {
                 local: tmp1,
-                value: Box::new(idx_assign),
+                value: Box::new(acc_assign),
                 body: Box::new(continue_expr),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
 
-        // Assign(acc, append(acc, val)); tail
-        let tmp2 = self.local_allocator.alloc();
-        let with_acc = CoreExpr {
+        // Let(val, body, tail)
+        // If body produces Continue (e.g. `else { continue }`), the signal
+        // propagates before acc is appended, skipping this element.
+        let with_val = CoreExpr {
             kind: CoreExprKind::Let {
-                local: tmp2,
-                value: Box::new(acc_assign),
+                local: body_val_local,
+                value: Box::new(body_expr),
                 body: Box::new(tail),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
 
-        // Let(val, body, with_acc)
-        let with_val = CoreExpr {
+        // Assign(idx, idx+1); with_val
+        // Increment BEFORE evaluating the body so that if body hits `continue`
+        // the index is already advanced to the next element.
+        let tmp2 = self.local_allocator.alloc();
+        let with_idx = CoreExpr {
             kind: CoreExprKind::Let {
-                local: body_val_local,
-                value: Box::new(body_expr),
-                body: Box::new(with_acc),
+                local: tmp2,
+                value: Box::new(idx_assign),
+                body: Box::new(with_val),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
 
-        // Let(elem, arr[idx], with_val)
+        // Let(elem, arr[idx], with_idx)
         let with_elem = CoreExpr {
             kind: CoreExprKind::Let {
                 local: elem_local,
                 value: Box::new(elem_value),
-                body: Box::new(with_val),
+                body: Box::new(with_idx),
             },
             ty: MonoType::Void,
             span: iter_span,
@@ -2030,5 +2168,109 @@ fn stmt_span(stmt: &Stmt) -> Span {
         Stmt::Break { span, .. } => *span,
         Stmt::Continue { span } => *span,
         Stmt::Return { span, .. } => *span,
+    }
+}
+
+/// Walk a Core IR expression tree and collect all `Local(id)` references
+/// where `id` is NOT in the `exclude` set. Deduplicates while preserving
+/// first-occurrence order.
+fn collect_local_refs(expr: &CoreExpr, exclude: &HashSet<LocalId>) -> Vec<LocalId> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    collect_local_refs_inner(expr, exclude, &mut seen, &mut result);
+    result
+}
+
+fn collect_local_refs_inner(
+    expr: &CoreExpr,
+    exclude: &HashSet<LocalId>,
+    seen: &mut HashSet<LocalId>,
+    result: &mut Vec<LocalId>,
+) {
+    use CoreExprKind::*;
+    match &expr.kind {
+        Local(id) => {
+            if !exclude.contains(id) && seen.insert(*id) {
+                result.push(*id);
+            }
+        }
+        Let { local: _, value, body } => {
+            collect_local_refs_inner(value, exclude, seen, result);
+            collect_local_refs_inner(body, exclude, seen, result);
+        }
+        Assign { local: _, value } => {
+            collect_local_refs_inner(value, exclude, seen, result);
+        }
+        BinOp { left, right, .. } => {
+            collect_local_refs_inner(left, exclude, seen, result);
+            collect_local_refs_inner(right, exclude, seen, result);
+        }
+        UnOp { expr: inner, .. } => {
+            collect_local_refs_inner(inner, exclude, seen, result);
+        }
+        Call { callee, args } => {
+            collect_local_refs_inner(callee, exclude, seen, result);
+            for a in args {
+                collect_local_refs_inner(a, exclude, seen, result);
+            }
+        }
+        If { cond, then_branch, else_branch } => {
+            collect_local_refs_inner(cond, exclude, seen, result);
+            collect_local_refs_inner(then_branch, exclude, seen, result);
+            collect_local_refs_inner(else_branch, exclude, seen, result);
+        }
+        Match { scrutinee, arms } => {
+            collect_local_refs_inner(scrutinee, exclude, seen, result);
+            for arm in arms {
+                collect_local_refs_inner(&arm.body, exclude, seen, result);
+            }
+        }
+        Loop { body } => {
+            collect_local_refs_inner(body, exclude, seen, result);
+        }
+        Break { value: Some(v) } => {
+            collect_local_refs_inner(v, exclude, seen, result);
+        }
+        Return { value: Some(v) } => {
+            collect_local_refs_inner(v, exclude, seen, result);
+        }
+        Record { fields, .. } => {
+            for (_, f) in fields {
+                collect_local_refs_inner(f, exclude, seen, result);
+            }
+        }
+        RecordGet { target, .. } => {
+            collect_local_refs_inner(target, exclude, seen, result);
+        }
+        RecordUpdate { base, value, .. } => {
+            collect_local_refs_inner(base, exclude, seen, result);
+            collect_local_refs_inner(value, exclude, seen, result);
+        }
+        Variant { args, .. } => {
+            for a in args {
+                collect_local_refs_inner(a, exclude, seen, result);
+            }
+        }
+        ArrayLit { elements } => {
+            for e in elements {
+                collect_local_refs_inner(e, exclude, seen, result);
+            }
+        }
+        Index { base, index } => {
+            collect_local_refs_inner(base, exclude, seen, result);
+            collect_local_refs_inner(index, exclude, seen, result);
+        }
+        // MakeClosure's free_vars are LocalIds that must be visible to any wrapping lambda
+        MakeClosure { free_vars, .. } => {
+            for id in free_vars {
+                if !exclude.contains(id) && seen.insert(*id) {
+                    result.push(*id);
+                }
+            }
+        }
+        // These don't contain Local refs
+        LitInt(_) | LitFloat(_) | LitBool(_) | LitStr(_) | LitVoid
+        | GlobalFunc(_) | Break { value: None }
+        | Return { value: None } | Continue => {}
     }
 }

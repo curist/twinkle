@@ -5,8 +5,8 @@ pub fn lower_file(file_path: &str) -> Result<()> {
         Ok((core_module, _registry)) => {
             println!("// Core IR for: {}", file_path);
             println!("// {} function(s)", core_module.functions.len());
-            if let Some(main_id) = core_module.main_func_id {
-                println!("// main = FuncId({})", main_id.0);
+            if let Some(init_id) = core_module.init_func_id {
+                println!("// init = FuncId({})", init_id.0);
             }
             println!();
             for func in &core_module.functions {
@@ -66,9 +66,8 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
                 print_core_expr(arg, indent + 4);
             }
         }
-        Lambda { params, body } => {
-            println!("{}Lambda params={:?}", pad, params);
-            print_core_expr(body, indent + 2);
+        MakeClosure { func_id, free_vars } => {
+            println!("{}MakeClosure FuncId({}) free_vars={:?}", pad, func_id.0, free_vars);
         }
         If { cond, then_branch, else_branch } => {
             println!("{}If : {:?}", pad, expr.ty);
