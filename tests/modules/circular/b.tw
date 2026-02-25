@@ -1,0 +1,5 @@
+use a
+
+pub fn func_b(x: Int) Int {
+    a.func_a(x) + 1
+}

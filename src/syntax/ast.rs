@@ -20,11 +20,25 @@ pub enum Item {
     Stmt(Stmt),
 }
 
-/// Import declaration
+/// Import declaration (use foo.bar [as alias])
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
-    pub path: String,
+    pub module_path: Vec<String>, // ["foo", "bar"] from `use foo.bar`
+    pub is_stdlib: bool,          // true if @ prefix
+    pub alias: Option<String>,    // Some("baz") from `use foo.bar as baz`
     pub span: Span,
+}
+
+impl ImportDecl {
+    /// Returns the effective module alias name
+    /// If `as alias` is present, returns that; otherwise returns the last path segment
+    pub fn module_name(&self) -> &str {
+        if let Some(ref a) = self.alias {
+            a.as_str()
+        } else {
+            self.module_path.last().map(|s| s.as_str()).unwrap_or("")
+        }
+    }
 }
 
 /// Type declaration

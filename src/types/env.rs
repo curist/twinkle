@@ -95,6 +95,12 @@ impl TypeEnv {
         self.type_names.get(name).copied()
     }
 
+    /// Register an additional name alias for an existing type (e.g. "module.TypeName" -> TypeId)
+    /// Used to register qualified type names for imported modules.
+    pub fn register_type_alias(&mut self, qualified_name: String, type_id: TypeId) {
+        self.type_names.insert(qualified_name, type_id);
+    }
+
     /// Get a type definition by ID
     pub fn get_def(&self, type_id: TypeId) -> Option<&TypeDef> {
         self.types.get(type_id.0 as usize)
@@ -343,6 +349,50 @@ impl ValueEnv {
             MonoType::Function {
                 params: vec![MonoType::String],
                 ret: Box::new(MonoType::Void), // Actually never returns, but Void for now
+            },
+        );
+
+        // Type conversion builtins
+        env.builtins.insert(
+            "int_to_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "float_to_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Float],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "bool_to_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Bool],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "string_to_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "string_len".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+        env.builtins.insert(
+            "string_concat".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String, MonoType::String],
+                ret: Box::new(MonoType::String),
             },
         );
 

@@ -45,6 +45,51 @@ has no native implementation.
 
 ---
 
+## Stage 4 Cleanup
+
+### Multi-segment module paths in type annotations not supported
+
+`parse_type` handles exactly one level of qualification (`module.Type`) but not
+deeper paths (`module.sub.Type`).  `resolve_module_path` already supports
+multi-segment paths (e.g. `["math", "vector"]`), and `expr_as_type_name` in the
+parser handles arbitrary depth for record constructors, so this is an inconsistency.
+
+**Fix:** extend the qualified-type loop in `parse_type` (parser.rs ~line 1289) to
+consume additional `.Ident` segments until the next token is not a dot-followed-by-ident.
+
+---
+
+### Same-named types across imported modules silently collide
+
+`TypeEnv.type_names` is a flat `HashMap<String, TypeId>`.  When two imported
+modules both declare a type with the same unqualified name (e.g. `type Point`),
+the second registration silently overwrites the first.  The collision only causes
+wrong behaviour if an importing module uses the bare name — which is inherently
+ambiguous — but there is no error reported: the wrong `TypeId` is returned silently.
+
+**Detection point:** The resolver, in `collect_declarations_for_context`, adds each
+module's own types to the shared `TypeEnv` via `add_type`.  The right place to
+detect the collision is here (or in `register_module_exports`), by tracking which
+module contributed each bare name and reporting an error when a second module
+tries to register the same name.
+
+**Fix options (in order of invasiveness):**
+
+1. *Track ownership in TypeEnv* — add a `type_name_owner: HashMap<String, String>`
+   (bare name → module alias).  On `add_type`, if the name already has a different
+   owner, emit an error.  The importing module must then always use `module.Type`.
+
+2. *Scope bare names per module* — after resolving a module, remove its bare type
+   names from the shared `TypeEnv` so they cannot leak.  Cross-module references
+   must always go through qualified aliases.  This aligns with the language design
+   (module access is always explicit).
+
+This must be fixed before Stage 5 (the interpreter trusts that `TypeId`s are
+correct; silent misidentification would produce wrong runtime dispatch for variant
+patterns and record construction).
+
+---
+
 ## Cleanup (no specific stage)
 
 - Ensure `field_method_collision.tw` test correctly fails once inherent method

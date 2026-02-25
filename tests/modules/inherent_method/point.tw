@@ -1,0 +1,9 @@
+pub type Point = .{ x: Int, y: Int }
+
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
+    Point.{ x: p.x + dx, y: p.y + dy }
+}
+
+pub fn magnitude_sq(p: Point) Int {
+    p.x * p.x + p.y * p.y
+}

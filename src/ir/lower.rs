@@ -55,6 +55,8 @@ pub struct Lowerer {
     type_env: TypeEnv,
     /// Map from function name to its assigned FuncId
     func_table: HashMap<String, FuncId>,
+    /// Set of module alias names (for cross-module call dispatch)
+    module_aliases: std::collections::HashSet<String>,
     errors: Vec<LowerError>,
     /// Per-function local variable allocator (reset for each function)
     local_allocator: LocalAllocator,
@@ -75,6 +77,23 @@ impl Lowerer {
             type_map,
             type_env,
             func_table,
+            module_aliases: std::collections::HashSet::new(),
+            errors: Vec::new(),
+            local_allocator: LocalAllocator::new(),
+        }
+    }
+
+    /// Construct a Lowerer using a pre-built CompilationContext.
+    /// The func_table, type_env, and module_aliases are taken from the context.
+    pub fn new_with_context(
+        type_map: TypeMap,
+        ctx: &crate::module::context::CompilationContext,
+    ) -> Self {
+        Self {
+            type_map,
+            type_env: ctx.type_env.clone(),
+            func_table: ctx.func_table.clone(),
+            module_aliases: ctx.module_aliases.clone(),
             errors: Vec::new(),
             local_allocator: LocalAllocator::new(),
         }
@@ -83,12 +102,20 @@ impl Lowerer {
     /// Lower a complete source file to Core IR
     pub fn lower_module(mut self, ast: &SourceFile) -> Result<CoreModule, Vec<LowerError>> {
         // First pass: assign FuncIds to all user functions (source order)
+        // Skip any that are already in the func_table (pre-assigned by context)
         let mut next_func_id = prelude::USER_FUNC_START;
         for item in &ast.items {
             if let Item::Function(decl) = item {
-                let func_id = FuncId(next_func_id);
-                next_func_id += 1;
-                self.func_table.insert(decl.name.clone(), func_id);
+                if !self.func_table.contains_key(&decl.name) {
+                    let func_id = FuncId(next_func_id);
+                    self.func_table.insert(decl.name.clone(), func_id);
+                }
+                // Advance counter past any pre-assigned IDs
+                if let Some(existing) = self.func_table.get(&decl.name) {
+                    if existing.0 >= next_func_id {
+                        next_func_id = existing.0 + 1;
+                    }
+                }
             }
         }
 
@@ -110,6 +137,25 @@ impl Lowerer {
                 type_env: self.type_env,
                 main_func_id,
             })
+        } else {
+            Err(self.errors)
+        }
+    }
+
+    /// Lower only the functions of a source file, returning them as a Vec.
+    /// FuncIds must already be pre-assigned in `self.func_table`.
+    /// Used by the multi-module pipeline.
+    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<Vec<FunctionDef>, Vec<LowerError>> {
+        let mut functions = Vec::new();
+        for item in &ast.items {
+            if let Item::Function(decl) = item {
+                if let Some(func_def) = self.lower_function(decl) {
+                    functions.push(func_def);
+                }
+            }
+        }
+        if self.errors.is_empty() {
+            Ok(functions)
         } else {
             Err(self.errors)
         }
@@ -1221,9 +1267,41 @@ impl Lowerer {
             }
         }
 
-        // Method call via FieldAccess: x.method(args)
-        // e.g. arr.append(v) → Call(GlobalFunc(ARRAY_APPEND), [arr, v])
+        // Field-access calls: module.func(args) or receiver.method(args)
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
+            // Module-qualified call: alias.func(args)
+            if let ExprKind::Ident(alias) = &base.kind {
+                if self.module_aliases.contains(alias.as_str()) {
+                    let qualified = format!("{}.{}", alias, field);
+                    if let Some(&func_id) = self.func_table.get(&qualified) {
+                        let mut lowered_args = Vec::new();
+                        for a in args {
+                            lowered_args.push(self.lower_expr(a)?);
+                        }
+                        let func_ty = MonoType::Function {
+                            params: lowered_args.iter().map(|a| a.ty.clone()).collect(),
+                            ret: Box::new(ret_ty.clone()),
+                        };
+                        let func_expr = CoreExpr {
+                            kind: CoreExprKind::GlobalFunc(func_id),
+                            ty: func_ty,
+                            span,
+                        };
+                        return Some(CoreExprKind::Call {
+                            callee: Box::new(func_expr),
+                            args: lowered_args,
+                        });
+                    } else {
+                        self.errors.push(LowerError::InternalError {
+                            message: format!("no FuncId for '{}'", qualified),
+                            span,
+                        });
+                        return None;
+                    }
+                }
+            }
+
+            // Method call via FieldAccess: receiver.method(args)
             return self.lower_method_call(base, field, args, ret_ty, span);
         }
 
@@ -1303,6 +1381,33 @@ impl Lowerer {
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
             (MonoType::String, "to_string") => prelude::STRING_TO_STRING,
+            (MonoType::Named { type_id, .. }, _) => {
+                // User-defined inherent method: look up via TypeEnv → func_table
+                let type_id = *type_id;
+                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
+                    if let Some(&func_id) = self.func_table.get(&func_name) {
+                        func_id
+                    } else {
+                        self.errors.push(LowerError::InternalError {
+                            message: format!(
+                                "no FuncId for method '{}' (resolved to '{}')",
+                                method, func_name
+                            ),
+                            span,
+                        });
+                        return None;
+                    }
+                } else {
+                    self.errors.push(LowerError::InternalError {
+                        message: format!(
+                            "no inherent method '{}' for type Type#{}",
+                            method, type_id.0
+                        ),
+                        span,
+                    });
+                    return None;
+                }
+            }
             _ => {
                 self.errors.push(LowerError::InternalError {
                     message: format!(

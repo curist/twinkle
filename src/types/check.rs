@@ -1,6 +1,6 @@
 use crate::syntax::ast::{
-    BinOp, Block, Expr, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
-    StringPart, Type as AstType, UnOp,
+    BinOp, Block, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile,
+    Stmt, StringPart, Type as AstType, UnOp,
 };
 use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
@@ -8,6 +8,8 @@ use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::MonoType;
 use super::type_map::TypeMap;
+use std::collections::HashSet;
+use std::mem;
 
 /// Bidirectional type checker
 ///
@@ -21,6 +23,9 @@ pub struct TypeChecker {
 
     // Track current function's return type for return statement checking
     current_function_ret: Option<MonoType>,
+
+    // Module aliases (for cross-module call resolution)
+    module_aliases: HashSet<String>,
 }
 
 impl TypeChecker {
@@ -38,6 +43,7 @@ impl TypeChecker {
             errors: Vec::new(),
             type_map: TypeMap::new(),
             current_function_ret: None,
+            module_aliases: HashSet::new(),
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -106,6 +112,85 @@ impl TypeChecker {
 
         if checker.errors.is_empty() {
             Ok((checker.type_map, checker.type_env))
+        } else {
+            Err(checker.errors)
+        }
+    }
+
+    /// Type-check a module using a shared CompilationContext (multi-module mode).
+    /// Returns Ok(TypeMap) on success; the shared TypeEnv/ValueEnv in ctx are
+    /// updated with any new functions whose return types are inferred.
+    pub fn check_module_with_context(
+        ast: &SourceFile,
+        ctx: &mut crate::module::context::CompilationContext,
+    ) -> Result<TypeMap, Vec<TypeError>> {
+        // Move shared envs out of ctx
+        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
+        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
+        let module_aliases = ctx.module_aliases.clone();
+
+        let mut checker = TypeChecker {
+            type_env,
+            value_env,
+            local_env: LocalEnv::new(),
+            errors: Vec::new(),
+            type_map: TypeMap::new(),
+            current_function_ret: None,
+            module_aliases,
+        };
+
+        // Pass 1: top-level lets
+        for item in &ast.items {
+            if let Item::Stmt(stmt) = item {
+                if let Stmt::Let { pattern, ty, value, span } = stmt {
+                    if let Pattern::Ident(name, _) = pattern {
+                        let value_ty = if let Some(ann_ty) = ty {
+                            let expected = match checker.resolve_type(ann_ty) {
+                                Ok(t) => t,
+                                Err(()) => continue,
+                            };
+                            match checker.check_expr(value, &expected) {
+                                Ok(()) => expected,
+                                Err(()) => continue,
+                            }
+                        } else {
+                            match checker.synth_expr(value) {
+                                Ok(t) => t,
+                                Err(()) => continue,
+                            }
+                        };
+                        checker.value_env.add_value(name.clone(), value_ty);
+                    } else {
+                        checker.errors.push(TypeError::UnsupportedFeature {
+                            feature: "pattern matching in top-level let bindings",
+                            span: *span,
+                            note: "Only simple identifiers are supported for top-level lets".to_string(),
+                        });
+                    }
+                } else {
+                    checker.errors.push(TypeError::InvalidTopLevelItem {
+                        span: checker.stmt_span(stmt),
+                        note: "Only let bindings are allowed at top-level".to_string(),
+                    });
+                }
+            }
+        }
+
+        // Pass 2: functions
+        for item in &ast.items {
+            match item {
+                Item::TypeDecl(_) | Item::Import(_) => {}
+                Item::Function(decl) => checker.check_function(decl),
+                Item::Stmt(_) => {}
+            }
+        }
+
+        // Write back
+        ctx.type_env = checker.type_env;
+        ctx.value_env = checker.value_env;
+
+        if checker.errors.is_empty() {
+            Ok(checker.type_map)
         } else {
             Err(checker.errors)
         }
@@ -450,6 +535,26 @@ impl TypeChecker {
             }
         }
 
+        // Special case: field-access calls — handles both module-qualified
+        // calls (module.func(args)) and method calls (receiver.method(args)).
+        if let ExprKind::FieldAccess { base, field: method_name } = &callee.kind {
+            // Check for module-qualified call FIRST (before synthesising base type)
+            if let ExprKind::Ident(alias) = &base.kind {
+                if self.module_aliases.contains(alias.as_str()) {
+                    let alias = alias.clone();
+                    let method_name = method_name.clone();
+                    let callee_id = callee.id;
+                    return self.synth_module_call(&alias, &method_name, args, span, callee_id);
+                }
+            }
+
+            // Method call on a value: synthesise base type, then dispatch
+            let base_ty = self.synth_expr(base)?;
+            let method_name = method_name.clone();
+            let callee_id = callee.id;
+            return self.synth_method_call(base, base_ty, &method_name, args, span, callee_id);
+        }
+
         // Normal function call
         let callee_ty = self.synth_expr(callee)?;
 
@@ -476,6 +581,183 @@ impl TypeChecker {
                 self.errors.push(TypeError::NotAFunction {
                     ty: callee_ty,
                     span: callee.span,
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle module-qualified calls: `module.func(args)`.
+    fn synth_module_call(
+        &mut self,
+        alias: &str,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+        _callee_id: ExprId,
+    ) -> Result<MonoType, ()> {
+        let qualified = format!("{}.{}", alias, func_name);
+        match self.value_env.lookup(&qualified) {
+            Some(MonoType::Function { params, ret }) => {
+                if params.len() != args.len() {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: params.len(),
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                for (arg, expected_ty) in args.iter().zip(params.iter()) {
+                    self.check_expr(arg, expected_ty)?;
+                }
+                Ok(*ret)
+            }
+            Some(ty) => {
+                self.errors.push(TypeError::NotAFunction { ty, span });
+                Err(())
+            }
+            None => {
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: qualified,
+                    span,
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle method calls: `receiver.method(args)`.
+    /// Dispatches to builtin methods (Array, String, primitives) or user-defined
+    /// inherent methods registered in TypeEnv.
+    fn synth_method_call(
+        &mut self,
+        base: &Expr,
+        base_ty: MonoType,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+        _callee_id: ExprId,
+    ) -> Result<MonoType, ()> {
+        match base_ty.clone() {
+            MonoType::Array(ref elem_ty) => {
+                let elem_ty = *elem_ty.clone();
+                match method {
+                    "len" => {
+                        if !args.is_empty() {
+                            self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                            return Err(());
+                        }
+                        Ok(MonoType::Int)
+                    }
+                    "append" => {
+                        if args.len() != 1 {
+                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &elem_ty)?;
+                        Ok(base_ty)
+                    }
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "unknown array method",
+                            span,
+                            note: format!("Array has no method '{}'", method),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            MonoType::String => match method {
+                "len" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        return Err(());
+                    }
+                    Ok(MonoType::Int)
+                }
+                "concat" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        return Err(());
+                    }
+                    self.check_expr(&args[0], &MonoType::String)?;
+                    Ok(MonoType::String)
+                }
+                "to_string" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        return Err(());
+                    }
+                    Ok(MonoType::String)
+                }
+                _ => {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "unknown string method",
+                        span,
+                        note: format!("String has no method '{}'", method),
+                    });
+                    Err(())
+                }
+            },
+            MonoType::Int | MonoType::Float | MonoType::Bool => {
+                if method == "to_string" {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        return Err(());
+                    }
+                    Ok(MonoType::String)
+                } else {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "method on primitive type",
+                        span,
+                        note: format!("Type {:?} has no method '{}'", base_ty, method),
+                    });
+                    Err(())
+                }
+            }
+            MonoType::Named { type_id, .. } => {
+                // Look up user-defined inherent method
+                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
+                    if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+                        // all_args: receiver + explicit args
+                        let explicit_count = args.len();
+                        let expected_count = sig.params.len().saturating_sub(1);
+                        if explicit_count != expected_count {
+                            self.errors.push(TypeError::WrongArity {
+                                expected: expected_count,
+                                actual: explicit_count,
+                                span,
+                            });
+                            return Err(());
+                        }
+                        // Check receiver
+                        if let Some(recv_ty) = sig.params.first() {
+                            self.check_expr(base, recv_ty)?;
+                        }
+                        // Check remaining args
+                        for (arg, expected_ty) in args.iter().zip(sig.params.iter().skip(1)) {
+                            self.check_expr(arg, expected_ty)?;
+                        }
+                        return Ok(sig.ret.unwrap_or(MonoType::Void));
+                    }
+                }
+
+                // No method found — report as missing field
+                let type_name = self.type_env.get_def(type_id)
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_else(|| format!("Type#{}", type_id.0));
+                self.errors.push(TypeError::NoSuchField {
+                    record_type: type_name,
+                    field: method.to_string(),
+                    span,
+                });
+                Err(())
+            }
+            _ => {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected: MonoType::Int, // dummy
+                    actual: base_ty,
+                    span: base.span,
                 });
                 Err(())
             }

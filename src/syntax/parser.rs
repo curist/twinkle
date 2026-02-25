@@ -167,18 +167,18 @@ impl Parser {
         };
 
         match self.peek_kind() {
-            Some(TokenKind::Import) => {
+            Some(TokenKind::Use) => {
                 if is_pub {
-                    // Pub import not currently in grammar, but we'll allow it
+                    // pub use not supported — silently ignore pub modifier
                 }
-                Ok(Item::Import(self.parse_import_decl()?))
+                Ok(Item::Import(self.parse_use_decl()?))
             }
             Some(TokenKind::Type) => Ok(Item::TypeDecl(self.parse_type_decl(is_pub)?)),
             Some(TokenKind::Fn) => Ok(Item::Function(self.parse_function_decl(is_pub)?)),
             _ => {
                 if is_pub {
                     return Err(ParseError::unexpected_token(
-                        vec!["import", "type", "fn"],
+                        vec!["use", "type", "fn"],
                         self.peek().unwrap(),
                     ));
                 }
@@ -188,13 +188,52 @@ impl Parser {
         }
     }
 
-    fn parse_import_decl(&mut self) -> ParseResult<ImportDecl> {
-        let start = self.expect(TokenKind::Import)?;
-        let path_token = self.expect(TokenKind::Ident)?;
-        let span = start.span.merge(&path_token.span);
+    fn parse_use_decl(&mut self) -> ParseResult<ImportDecl> {
+        let start = self.expect(TokenKind::Use)?;
+
+        // Optional @ prefix for stdlib
+        let is_stdlib = if self.peek_is(TokenKind::At) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // Parse dot-separated path: foo.bar.baz
+        let first = self.expect(TokenKind::Ident)?;
+        let mut module_path = vec![first.text.clone()];
+        let mut last_span = first.span;
+
+        while self.peek_is(TokenKind::Dot) {
+            // Peek ahead to see if after the dot there's an Ident (not { or .)
+            let next_after_dot = self.tokens.get(self.pos + 1);
+            match next_after_dot.map(|t| t.kind) {
+                Some(TokenKind::Ident) => {
+                    self.advance(); // consume dot
+                    let seg = self.expect(TokenKind::Ident)?;
+                    module_path.push(seg.text.clone());
+                    last_span = seg.span;
+                }
+                _ => break,
+            }
+        }
+
+        // Optional alias: as alias_name
+        let alias = if self.peek_is(TokenKind::As) {
+            self.advance(); // consume 'as'
+            let alias_tok = self.expect(TokenKind::Ident)?;
+            last_span = alias_tok.span;
+            Some(alias_tok.text.clone())
+        } else {
+            None
+        };
+
+        let span = start.span.merge(&last_span);
 
         Ok(ImportDecl {
-            path: path_token.text.clone(),
+            module_path,
+            is_stdlib,
+            alias,
             span,
         })
     }
@@ -661,6 +700,14 @@ impl Parser {
     fn parse_field_access(&mut self, base: Expr) -> ParseResult<Expr> {
         let start = base.span;
         self.expect(TokenKind::Dot)?;
+
+        // Named record constructor: Type.{ ... } or module.Type.{ ... }
+        if self.peek_is(TokenKind::LBrace) {
+            if let Some(type_name) = expr_as_type_name(&base) {
+                return self.parse_record_literal(Some(type_name), start);
+            }
+        }
+
         let field = self.expect(TokenKind::Ident)?;
         let span = start.merge(&field.span);
 
@@ -1234,10 +1281,21 @@ impl Parser {
                 span,
             })
         } else {
-            // Named type: Ident or Ident<T1, T2>
+            // Named type: Ident or Ident<T1, T2> or module.Type
             let name_token = self.expect(TokenKind::Ident)?;
-            let name = name_token.text.clone();
+            let mut name = name_token.text.clone();
             let mut end_span = name_token.span;
+
+            // Support qualified type names: module.Type (but not module.{ which is record literal)
+            if self.peek_is(TokenKind::Dot) {
+                // Check if after dot there's an Ident (qualified type)
+                if matches!(self.tokens.get(self.pos + 1).map(|t| t.kind), Some(TokenKind::Ident)) {
+                    self.advance(); // consume dot
+                    let type_seg = self.expect(TokenKind::Ident)?;
+                    name = format!("{}.{}", name, type_seg.text);
+                    end_span = type_seg.span;
+                }
+            }
 
             // Optional type arguments: <T1, T2>
             let args = if self.peek_is(TokenKind::Lt) {
@@ -1333,6 +1391,20 @@ fn postfix_binding_power(op: TokenKind) -> Option<u8> {
 
 fn prefix_binding_power() -> u8 {
     14 // Same as multiplicative, higher than additive
+}
+
+/// Extract a dotted type name from an expression for use in named record literals.
+/// `Ident("Vec2")` → `Some("Vec2")`
+/// `FieldAccess { base: Ident("pt"), field: "Point" }` → `Some("pt.Point")`
+fn expr_as_type_name(expr: &crate::syntax::ast::Expr) -> Option<String> {
+    use crate::syntax::ast::ExprKind;
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess { base, field } => {
+            expr_as_type_name(base).map(|prefix| format!("{}.{}", prefix, field))
+        }
+        _ => None,
+    }
 }
 
 fn token_to_binop(kind: TokenKind) -> BinOp {

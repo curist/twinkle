@@ -1,0 +1,7 @@
+use secret
+
+fn main() {
+    // Accessing private function should fail
+    result := secret.private_fn(10)
+    println(int_to_string(result))
+}

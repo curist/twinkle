@@ -1,0 +1,9 @@
+pub type Vec2 = .{ x: Float, y: Float }
+
+pub fn scale(v: Vec2, factor: Float) Vec2 {
+    Vec2.{ x: v.x * factor, y: v.y * factor }
+}
+
+pub fn dot(a: Vec2, b: Vec2) Float {
+    a.x * b.x + a.y * b.y
+}

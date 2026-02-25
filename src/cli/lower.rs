@@ -1,39 +1,8 @@
 use anyhow::Result;
-use std::fs;
 
 pub fn lower_file(file_path: &str) -> Result<()> {
-    let source = fs::read_to_string(file_path)?;
-
-    // Parse
-    let (ast, file_registry) = crate::syntax::parse_source(&source, file_path)?;
-
-    // Resolve names
-    let (type_env, value_env) = match crate::types::Resolver::resolve(&ast) {
-        Ok(envs) => envs,
-        Err(errors) => {
-            for error in &errors {
-                eprintln!("{}", error.format(&file_registry, None));
-            }
-            anyhow::bail!("Name resolution failed with {} errors", errors.len());
-        }
-    };
-
-    // Type check — returns TypeMap and TypeEnv
-    let (type_map, checked_type_env) =
-        match crate::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
-            Ok(result) => result,
-            Err(errors) => {
-                for error in &errors {
-                    eprintln!("{}", error.format(&file_registry, Some(&type_env)));
-                }
-                anyhow::bail!("Type checking failed with {} errors", errors.len());
-            }
-        };
-
-    // Lower to Core IR
-    let lowerer = crate::ir::Lowerer::new(type_map, checked_type_env);
-    match lowerer.lower_module(&ast) {
-        Ok(core_module) => {
+    match crate::module::compile_entry(file_path) {
+        Ok((core_module, _registry)) => {
             println!("// Core IR for: {}", file_path);
             println!("// {} function(s)", core_module.functions.len());
             if let Some(main_id) = core_module.main_func_id {
@@ -41,7 +10,10 @@ pub fn lower_file(file_path: &str) -> Result<()> {
             }
             println!();
             for func in &core_module.functions {
-                println!("fn {}  [FuncId({})]  params={:?}", func.name, func.func_id.0, func.params);
+                println!(
+                    "fn {}  [FuncId({})]  params={:?}",
+                    func.name, func.func_id.0, func.params
+                );
                 println!("  return_ty: {:?}", func.return_ty);
                 println!("  body:");
                 print_core_expr(&func.body, 4);
@@ -49,11 +21,9 @@ pub fn lower_file(file_path: &str) -> Result<()> {
             }
             Ok(())
         }
-        Err(errors) => {
-            for error in &errors {
-                eprintln!("{}", error.format(&file_registry));
-            }
-            anyhow::bail!("Lowering failed with {} errors", errors.len());
+        Err(e) => {
+            eprintln!("{}", e);
+            anyhow::bail!("Lower failed");
         }
     }
 }
@@ -144,7 +114,10 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
             print_core_expr(target, indent + 2);
         }
         Variant { type_id, variant, args } => {
-            println!("{}Variant(Type#{} .{}) : {:?}", pad, type_id.0, variant.0, expr.ty);
+            println!(
+                "{}Variant(Type#{} .{}) : {:?}",
+                pad, type_id.0, variant.0, expr.ty
+            );
             for arg in args {
                 print_core_expr(arg, indent + 2);
             }

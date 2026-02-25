@@ -1,0 +1,7 @@
+use geometry as pt
+
+fn main() {
+    p: pt.Point = pt.translate(pt.Point.{ x: 0, y: 0 }, 3, 4)
+    println(int_to_string(p.x))
+    println(int_to_string(p.y))
+}

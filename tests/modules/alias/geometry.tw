@@ -1,0 +1,11 @@
+pub type Point = .{ x: Int, y: Int }
+
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
+    Point.{ x: p.x + dx, y: p.y + dy }
+}
+
+pub fn distance_sq(a: Point, b: Point) Int {
+    dx := a.x - b.x
+    dy := a.y - b.y
+    dx * dx + dy * dy
+}

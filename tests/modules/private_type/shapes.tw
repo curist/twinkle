@@ -1,0 +1,8 @@
+pub type Circle = .{ radius: Float }
+
+// Not exported — should be inaccessible from outside this module
+type Internal = .{ x: Int }
+
+pub fn area(c: Circle) Float {
+    c.radius * c.radius
+}

@@ -1,0 +1,7 @@
+pub fn process(x: Int) Int {
+    x * 10
+}
+
+pub fn only_in_b(x: Int) Int {
+    x + 100
+}

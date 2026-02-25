@@ -113,6 +113,7 @@ impl Lexer {
             '.' => self.lex_single(TokenKind::Dot),
             '?' => self.lex_single(TokenKind::Question),
             ';' => self.lex_single(TokenKind::Semi),
+            '@' => self.lex_single(TokenKind::At),
 
             _ => {
                 self.advance();

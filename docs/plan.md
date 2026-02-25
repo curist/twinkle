@@ -322,7 +322,7 @@ Deliverables:
 
 ---
 
-### Stage 4 — Module System & Inherent Method Desugaring ⬅ Next
+### Stage 4 — Module System & Inherent Method Desugaring ✅
 
 **Goal:** Enable multi-file programs and complete dot-syntax method resolution.
 
@@ -377,7 +377,7 @@ Deliverables:
 
 ---
 
-### Stage 5 — Core IR Interpreter
+### Stage 5 — Core IR Interpreter ⬅ Next
 
 **Goal:** Run real Twinkle programs (including multi-file) by interpreting Core IR.
 

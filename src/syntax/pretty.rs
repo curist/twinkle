@@ -16,7 +16,13 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
     let prefix = " ".repeat(indent);
     match item {
         Item::Import(decl) => {
-            writeln!(out, "{}Import: {}", prefix, decl.path).unwrap();
+            let path = if decl.is_stdlib {
+                format!("@{}", decl.module_path.join("."))
+            } else {
+                decl.module_path.join(".")
+            };
+            let alias_str = decl.alias.as_deref().map(|a| format!(" as {}", a)).unwrap_or_default();
+            writeln!(out, "{}Import: {}{}", prefix, path, alias_str).unwrap();
         }
         Item::TypeDecl(decl) => {
             write!(out, "{}TypeDecl", prefix).unwrap();

@@ -1,0 +1,11 @@
+use vector as vec
+
+fn main() {
+    v: vec.Vec2 = vec.Vec2.{ x: 3.0, y: 4.0 }
+    // Inherent method call via module imported with 'as' alias:
+    // v.scale(2.0) should desugar to vec.scale(v, 2.0)
+    v2 := v.scale(2.0)
+    d := v2.dot(v)
+    println(float_to_string(v2.x))
+    println(float_to_string(d))
+}

@@ -4,7 +4,7 @@ use std::fmt;
 /// All token types in Twinkle
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
-    // Keywords (16 total)
+    // Keywords (17 total)
     Fn,
     If,
     Else,
@@ -16,7 +16,8 @@ pub enum TokenKind {
     Break,
     Continue,
     Return,
-    Import,
+    Use,
+    As,
     Pub,
     Try,
     And,
@@ -74,6 +75,7 @@ pub enum TokenKind {
 
     // Special
     DollarBrace, // ${ for string interpolation
+    At,          // @ for stdlib prefix
 
     // Meta
     Eof,
@@ -96,7 +98,8 @@ impl TokenKind {
                 | TokenKind::Break
                 | TokenKind::Continue
                 | TokenKind::Return
-                | TokenKind::Import
+                | TokenKind::Use
+                | TokenKind::As
                 | TokenKind::Pub
                 | TokenKind::Try
                 | TokenKind::And
@@ -133,7 +136,8 @@ impl TokenKind {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "return" => TokenKind::Return,
-            "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
+            "as" => TokenKind::As,
             "pub" => TokenKind::Pub,
             "try" => TokenKind::Try,
             "and" => TokenKind::And,
@@ -158,7 +162,8 @@ impl TokenKind {
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Return => "return",
-            TokenKind::Import => "import",
+            TokenKind::Use => "use",
+            TokenKind::As => "as",
             TokenKind::Pub => "pub",
             TokenKind::Try => "try",
             TokenKind::And => "and",
@@ -200,6 +205,7 @@ impl TokenKind {
             TokenKind::FatArrow => "=>",
             TokenKind::Underscore => "_",
             TokenKind::DollarBrace => "${",
+            TokenKind::At => "@",
             TokenKind::Eof => "end of file",
             TokenKind::Error => "error",
         }
@@ -273,6 +279,8 @@ mod tests {
     fn test_keyword_recognition() {
         assert_eq!(TokenKind::from_keyword("fn"), Some(TokenKind::Fn));
         assert_eq!(TokenKind::from_keyword("if"), Some(TokenKind::If));
+        assert_eq!(TokenKind::from_keyword("use"), Some(TokenKind::Use));
+        assert_eq!(TokenKind::from_keyword("as"), Some(TokenKind::As));
         assert_eq!(TokenKind::from_keyword("true"), Some(TokenKind::True));
         assert_eq!(TokenKind::from_keyword("false"), Some(TokenKind::False));
         assert_eq!(TokenKind::from_keyword("not_a_keyword"), None);

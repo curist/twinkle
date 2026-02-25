@@ -1,0 +1,7 @@
+use shapes
+
+fn main() {
+    // Accessing a private type should fail
+    x: shapes.Internal = shapes.Internal.{ x: 1 }
+    println("should not reach here")
+}
