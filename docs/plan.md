@@ -411,13 +411,21 @@ Runtime representation:
 
 * Built-ins:
 
-  * Prelude FuncIds 1–11 dispatched natively in `call_builtin`.
+  * Prelude FuncIds 1–14 dispatched natively in `call_builtin`.
   * Full stdlib implemented as native builtins:
-    * `Array`: `set`, `concat`, `slice` (in addition to `len`, `append`).
-    * `Dict`: `new`, `set`, `remove`, `get`, `has`, `keys`, `len`.
-    * `String`: `substring`, `of_int`, `of_float`, `of_bool`, `concat`, `len`.
-    * `Range`: `range`, `range_from`, `range_step`.
+
+    * `Array`: `set(arr, i, val) Array<T>`, `concat(arr1, arr2) Array<T>`, `slice(arr, start, end) Array<T>`.
+    * `Dict`: `new() Dict<K,V>`, `set(m, k, v) Dict<K,V>`, `remove(m, k) Dict<K,V>`, `get(m, k) Option<V>`, `has(m, k) Bool`, `keys(m) Array<K>`, `len(m) Int`.
+    * `String`: `substring(s, start, end) String`, `of_int(n) String`, `of_float(f) String`, `of_bool(b) String`.
+      (Surface names are `String.of_*`; `int_to_string`/`float_to_string`/`bool_to_string` are intrinsic aliases already registered in `ValueEnv`.)
+    * `Range`: `range(n) Array<Int>` (0..n−1), `range_from(a, b) Array<Int>`, `range_step(a, b, step) Array<Int>`.
   * User functions looked up in `CoreModule.functions` by `FuncId`.
+
+* `Dict` runtime representation decision (open):
+
+  * `HashMap<Value, Value>` — requires `Value: Hash + Eq`; efficient but constrains `Value`.
+  * `Vec<(Value, Value)>` — simpler, no constraints; fine for small dicts in stage0.
+  * Recommended: start with `Vec<(Value, Value)>` and revisit if performance matters.
 
 CLI:
 
