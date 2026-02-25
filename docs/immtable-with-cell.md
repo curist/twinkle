@@ -33,7 +33,7 @@ type Cell<T>   // opaque, provided by the standard library
 ### 2.1 Construction
 
 ```tw
-fn Cell.new<T>(initial: T) -> Cell<T>
+fn Cell.new<T>(initial: T) Cell<T>
 ```
 
 * Allocates a new cell containing `initial`.
@@ -41,7 +41,7 @@ fn Cell.new<T>(initial: T) -> Cell<T>
 Example:
 
 ```tw
-let counter = Cell.new(0)
+counter := Cell.new(0)
 ```
 
 ---
@@ -49,7 +49,7 @@ let counter = Cell.new(0)
 ### 2.2 Reading
 
 ```tw
-fn Cell.get<T>(cell: Cell<T>) -> T
+fn Cell.get<T>(cell: Cell<T>) T
 ```
 
 * Returns the *current* value stored in the cell.
@@ -58,7 +58,7 @@ fn Cell.get<T>(cell: Cell<T>) -> T
 Example:
 
 ```tw
-let n = Cell.get(counter)
+n := Cell.get(counter)
 println(n)
 ```
 
@@ -67,7 +67,7 @@ println(n)
 ### 2.3 Writing
 
 ```tw
-fn Cell.set<T>(cell: Cell<T>, value: T) -> Unit
+fn Cell.set<T>(cell: Cell<T>, value: T) Unit
 ```
 
 * Replaces the contents of `cell` with `value`.
@@ -84,7 +84,7 @@ Cell.set(counter, 42)
 ### 2.4 Modify (optional but ergonomic)
 
 ```tw
-fn Cell.update<T>(cell: Cell<T>, f: fn(T) -> T) -> Unit
+fn Cell.update<T>(cell: Cell<T>, f: fn(T) T) Unit
 ```
 
 * Reads the current `v = Cell.get(cell)`,
@@ -110,8 +110,8 @@ This is your “atomic” read-modify-write primitive at the language level.
 * You can have many names pointing to the same `Cell<T>`:
 
   ```tw
-  let counter = Cell.new(0)
-  let counter2 = counter
+  counter := Cell.new(0)
+  counter2 := counter
 
   Cell.update(counter, fn(n) { n + 1 })
   println(Cell.get(counter2))   // prints 1
@@ -132,7 +132,7 @@ If a record has a cell field:
 ```tw
 type Model = { count: Cell<Int> }
 
-let model = { count: Cell.new(0) }
+model := { count: Cell.new(0) }
 ```
 
 You **do not** write:
@@ -159,10 +159,10 @@ This keeps the semantic line crystal clear:
 ### 4.1 Simple counter
 
 ```tw
-fn make_counter() -> { inc: fn() -> Int } {
-  let cell = Cell.new(0)
+fn make_counter() { inc: fn() Int } {
+  cell := Cell.new(0)
 
-  let inc = fn() -> Int {
+  inc := fn() Int {
     Cell.update(cell, fn(n) { n + 1 })
     Cell.get(cell)
   }
@@ -171,7 +171,7 @@ fn make_counter() -> { inc: fn() -> Int } {
 }
 
 fn main() {
-  let c = make_counter()
+  c := make_counter()
   println(c.inc())  // 1
   println(c.inc())  // 2
 }
@@ -194,20 +194,20 @@ type Config = {
 
 type ConfigCell = Cell<Config>
 
-fn set_theme(cfg: ConfigCell, theme: String) -> Unit {
+fn set_theme(cfg: ConfigCell, theme: String) Unit {
   Cell.update(cfg, fn(c) {
-    let new = { c.current with theme = theme }
+    new := { c.current with theme = theme }
     { current = new, history = c.history.append(new) }
   })
 }
 
 fn main() {
-  let cfg = Cell.new({ current = default_config(), history = [] })
+  cfg := Cell.new({ current = default_config(), history = [] })
 
   set_theme(cfg, "dark")
   set_theme(cfg, "light")
 
-  let final = Cell.get(cfg)
+  final := Cell.get(cfg)
   println(final.current.theme)
 }
 ```
@@ -243,7 +243,7 @@ This is good both for humans and for tools (linters, docs).
 * You still **cannot** have:
 
   * “implicit” shared mutation via plain records/arrays.
-  * `let a = x; let b = x; a.y = ...` magically updating something `b` sees.
+  * `a := x; b := x; a.y = ...` magically updating something `b` sees.
 
 * You **still** don’t have:
 
