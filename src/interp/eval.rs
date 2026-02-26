@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
+use std::rc::Rc;
 
 use crate::ir::core::{
     CoreExpr, CoreExprKind, CorePattern, FuncId, FunctionDef, LocalId, MatchArm,
@@ -7,6 +9,7 @@ use crate::ir::core::{
 use crate::ir::CoreModule;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
+use crate::types::ty::OPTION_TYPE_ID;
 
 use super::value::Value;
 
@@ -71,8 +74,8 @@ impl<W: Write> Interpreter<W> {
         args: Vec<Value>,
         captured: Frame,
     ) -> EvalResult {
-        // Prelude / built-in functions (FuncId 1–14)
-        if func_id.0 <= 14 {
+        // Prelude / built-in functions (FuncId 1–16)
+        if func_id.0 < crate::ir::lower::prelude::USER_FUNC_START {
             return self.call_builtin(func_id, args);
         }
 
@@ -492,6 +495,82 @@ impl<W: Write> Interpreter<W> {
                     }
                     _ => panic!("dict_keys: expected Dict"),
                 }
+            }
+            15 => {
+                // range_from(start: Int, end: Int) array<Int>  — [start, start+1, ..., end-1]
+                match (&args[0], &args[1]) {
+                    (Value::Int(start), Value::Int(end)) => {
+                        let v: Vec<Value> = (*start..*end).map(Value::Int).collect();
+                        Ok(Value::Arr(v))
+                    }
+                    _ => panic!("range_from: expected two Ints"),
+                }
+            }
+            16 => {
+                // range(n: Int) array<Int>  — [0, 1, ..., n-1]
+                match &args[0] {
+                    Value::Int(n) => {
+                        let v: Vec<Value> = (0..*n).map(Value::Int).collect();
+                        Ok(Value::Arr(v))
+                    }
+                    _ => panic!("range: expected Int"),
+                }
+            }
+            17 => {
+                // Cell.new(value: T) Cell<T>
+                Ok(Value::Cell(Rc::new(RefCell::new(args.into_iter().next().unwrap_or(Value::Void)))))
+            }
+            18 => {
+                // Cell.get(cell: Cell<T>) T
+                match &args[0] {
+                    Value::Cell(inner) => Ok(inner.borrow().clone()),
+                    _ => panic!("Cell.get: expected Cell"),
+                }
+            }
+            19 => {
+                // Cell.set(cell: Cell<T>, value: T) Void
+                match &args[0] {
+                    Value::Cell(inner) => {
+                        *inner.borrow_mut() = args[1].clone();
+                        Ok(Value::Void)
+                    }
+                    _ => panic!("Cell.set: expected Cell"),
+                }
+            }
+            20 => {
+                // Cell.update(cell: Cell<T>, f: fn(T) T) Void
+                match (&args[0], &args[1]) {
+                    (Value::Cell(inner), Value::Closure(func_id, captured)) => {
+                        let old_val = inner.borrow().clone();
+                        let func_id = *func_id;
+                        let captured = captured.clone();
+                        let new_val = self.call_func(func_id, vec![old_val], captured)?;
+                        *inner.borrow_mut() = new_val;
+                        Ok(Value::Void)
+                    }
+                    _ => panic!("Cell.update: expected Cell and Closure"),
+                }
+            }
+            21 => {
+                // dict_get(m: Dict<K,V>, k: K) Option<V>
+                match args[0].clone() {
+                    Value::Dict(pairs) => {
+                        let key = &args[1];
+                        for (k, v) in &pairs {
+                            if k == key {
+                                // Some(v) — variant index 1
+                                return Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![v.clone()]));
+                            }
+                        }
+                        // None — variant index 0
+                        Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                    }
+                    _ => panic!("dict_get: expected Dict"),
+                }
+            }
+            22 => {
+                // Dict.new() Dict<K,V>
+                Ok(Value::Dict(vec![]))
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }

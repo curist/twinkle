@@ -73,6 +73,14 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
                         file_name, line, col, expected.join(", "))
                 }
             }
+            parser::ParseErrorKind::ConstructorInPostfix { name } => {
+                format!("{}:{}:{}: Constructor '.{}' cannot appear after an expression",
+                    file_name, line, col, name)
+            }
+            parser::ParseErrorKind::LowercaseVariant { name } => {
+                format!("{}:{}:{}: Variant name '{}' must start with an uppercase letter",
+                    file_name, line, col, name)
+            }
         };
 
         // Add source context

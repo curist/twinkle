@@ -20,6 +20,15 @@ pub enum ParseErrorKind {
     UnexpectedEof {
         expected: Vec<String>,
     },
+    /// `.Upper` appeared in postfix position (after an expression).
+    /// Variant/constructor names must appear in prefix form only.
+    ConstructorInPostfix {
+        name: String,
+    },
+    /// A variant literal used a lowercase name (must be PascalCase).
+    LowercaseVariant {
+        name: String,
+    },
 }
 
 impl ParseError {
@@ -482,6 +491,42 @@ impl Parser {
                 if bp < min_bp {
                     break;
                 }
+
+                // `.Upper` in postfix position is a hard error when the uppercase
+                // identifier is *terminal* (not followed by another `.`).
+                // An intermediate `.Upper.` is allowed as a qualified type prefix
+                // (e.g. `pt.Point.{ ... }` or `mod.Type.Variant`), but a terminal
+                // `.Upper` (`.Upper(...)` or `.Upper` at end) is a constructor and
+                // must appear in prefix form only.
+                if op_kind == TokenKind::Dot {
+                    let dot_tok = self.tokens.get(self.pos).unwrap();
+                    if let Some(next_tok) = self.tokens.get(self.pos + 1) {
+                        if next_tok.kind == TokenKind::Ident
+                            && next_tok.text.starts_with(|c: char| c.is_uppercase())
+                        {
+                            // `.Upper` on a new line — break so it parses as a new statement.
+                            if dot_tok.preceded_by_newline {
+                                break;
+                            }
+                            // Same line: if followed by another `.`, it's an intermediate
+                            // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise it's a
+                            // terminal constructor in postfix, which is a hard error.
+                            let followed_by_dot = matches!(
+                                self.tokens.get(self.pos + 2).map(|t| t.kind),
+                                Some(TokenKind::Dot)
+                            );
+                            if !followed_by_dot {
+                                let name = next_tok.text.clone();
+                                let span = next_tok.span;
+                                return Err(ParseError::new(
+                                    ParseErrorKind::ConstructorInPostfix { name },
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                }
+
                 lhs = self.parse_postfix(lhs)?;
                 continue;
             }
@@ -505,8 +550,16 @@ impl Parser {
             TokenKind::StringStart => self.parse_string_interpolation(),
             TokenKind::True | TokenKind::False => self.parse_bool_literal(),
 
-            // Identifier
-            TokenKind::Ident => self.parse_ident(),
+            // Identifier — if uppercase, greedily consume constructor path Upper(.Upper)*
+            TokenKind::Ident => {
+                let ident = self.parse_ident()?;
+                if let ExprKind::Ident(ref name) = ident.kind {
+                    if name.starts_with(|c: char| c.is_uppercase()) {
+                        return self.parse_constructor_path(ident);
+                    }
+                }
+                Ok(ident)
+            }
 
             // Unary operators
             TokenKind::Minus | TokenKind::Bang => self.parse_unary(),
@@ -639,6 +692,42 @@ impl Parser {
         Ok(Expr::new(self.alloc_expr_id(), ExprKind::Ident(token.text.clone()), token.span))
     }
 
+    /// Greedily extend `base` (an uppercase `Ident`) with any following `.Upper` segments,
+    /// forming a constructor path like `FB.Fizz` or `Http.Header.Variant`.
+    /// Only uppercase segments are consumed; the first lowercase `.lower` stops here
+    /// and is left for the postfix loop.
+    fn parse_constructor_path(&mut self, mut base: Expr) -> ParseResult<Expr> {
+        loop {
+            // Peek: next must be `.` and the token after that an uppercase Ident
+            let next_is_dot = self.peek_is(TokenKind::Dot);
+            if !next_is_dot {
+                break;
+            }
+            // Peek at the token after the dot
+            let after_dot = self.tokens.get(self.pos + 1);
+            match after_dot {
+                Some(t) if t.kind == TokenKind::Ident
+                    && t.text.starts_with(|c: char| c.is_uppercase()) => {}
+                _ => break, // lowercase or non-ident — stop, let postfix loop handle it
+            }
+
+            // Consume `.` and the uppercase ident
+            self.expect(TokenKind::Dot)?;
+            let seg = self.expect(TokenKind::Ident)?;
+            let span = base.span.merge(&seg.span);
+            base = Expr::new(
+                self.alloc_expr_id(),
+                ExprKind::FieldAccess {
+                    base: Box::new(base),
+                    field: seg.text.clone(),
+                },
+                span,
+            );
+        }
+        Ok(base)
+    }
+
+
     // Operators
 
     fn parse_unary(&mut self) -> ParseResult<Expr> {
@@ -768,8 +857,16 @@ impl Parser {
         }
 
         // Variant literal: .Variant or .Variant(...)
+        // Variant names must start with an uppercase letter.
         let name = self.expect(TokenKind::Ident)?;
         let variant_name = name.text.clone();
+
+        if variant_name.starts_with(|c: char| c.is_lowercase()) {
+            return Err(ParseError::new(
+                ParseErrorKind::LowercaseVariant { name: variant_name },
+                name.span,
+            ));
+        }
 
         if self.peek_is(TokenKind::LParen) {
             // .Variant(fields)
@@ -1241,6 +1338,22 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> ParseResult<Type> {
+        let base = self.parse_type_base()?;
+        // T? sugar for Option<T>
+        if self.peek_is(TokenKind::Question) {
+            let q = self.advance().unwrap();
+            let span = base.span().merge(&q.span);
+            Ok(Type::Named {
+                name: "Option".to_string(),
+                args: vec![base],
+                span,
+            })
+        } else {
+            Ok(base)
+        }
+    }
+
+    fn parse_type_base(&mut self) -> ParseResult<Type> {
         // Check for function type: fn(T1, T2) RetType
         if self.peek_is(TokenKind::Fn) {
             let start = self.expect(TokenKind::Fn)?;
@@ -1260,7 +1373,7 @@ impl Parser {
             // Return type (required for function types)
             let return_type = if !matches!(
                 self.peek_kind(),
-                Some(TokenKind::Comma | TokenKind::RBrace | TokenKind::RParen | TokenKind::Gt)
+                Some(TokenKind::Comma | TokenKind::RBrace | TokenKind::RParen | TokenKind::Gt | TokenKind::Question)
             ) {
                 Box::new(self.parse_type()?)
             } else {

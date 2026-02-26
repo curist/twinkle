@@ -11,3 +11,8 @@ fn fizzbuzz_list(n: Int) Array<String> {
     }
   }
 }
+
+result := fizzbuzz_list(20)
+for s in result {
+  println(s)
+}

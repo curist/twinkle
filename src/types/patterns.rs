@@ -2,7 +2,7 @@ use crate::syntax::ast::{CaseArm, Literal, Pattern};
 use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv};
 use super::error::TypeError;
-use super::ty::MonoType;
+use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID};
 use std::collections::HashSet;
 
 /// Pattern checking utilities for case expressions
@@ -67,7 +67,7 @@ impl<'a> PatternChecker<'a> {
             } => {
                 // Variant pattern must match a sum type
                 match expected {
-                    MonoType::Named { type_id, .. } => {
+                    MonoType::Named { type_id, args } => {
                         // Get the variant definition
                         let variants = match self.type_env.get_variants(*type_id) {
                             Some(v) => v,
@@ -87,10 +87,29 @@ impl<'a> PatternChecker<'a> {
 
                         match variant {
                             Some(v) => {
+                                // For Option<T> and Result<T,E>, the TypeDef holds placeholder
+                                // Void fields. Use the actual type args from the MonoType.
+                                let actual_field_tys: Vec<MonoType> =
+                                    if *type_id == OPTION_TYPE_ID {
+                                        match name.as_str() {
+                                            "None" => vec![],
+                                            "Some" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+                                            _ => v.fields.clone(),
+                                        }
+                                    } else if *type_id == RESULT_TYPE_ID {
+                                        match name.as_str() {
+                                            "Ok"  => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+                                            "Err" => vec![args.get(1).cloned().unwrap_or(MonoType::Void)],
+                                            _ => v.fields.clone(),
+                                        }
+                                    } else {
+                                        v.fields.clone()
+                                    };
+
                                 // Check arity
-                                if v.fields.len() != fields.len() {
+                                if actual_field_tys.len() != fields.len() {
                                     self.errors.push(TypeError::WrongArity {
-                                        expected: v.fields.len(),
+                                        expected: actual_field_tys.len(),
                                         actual: fields.len(),
                                         span: *span,
                                     });
@@ -98,7 +117,7 @@ impl<'a> PatternChecker<'a> {
                                 }
 
                                 // Check each field pattern
-                                for (field_pattern, field_ty) in fields.iter().zip(v.fields.iter())
+                                for (field_pattern, field_ty) in fields.iter().zip(actual_field_tys.iter())
                                 {
                                     self.check_pattern(field_pattern, field_ty)?;
                                 }

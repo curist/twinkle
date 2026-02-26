@@ -101,13 +101,28 @@ type Show<T> = .{ to_string: fn(T) String }
 fn log<T>(x: T, show: Show<T>) { println(show.to_string(x)) }
 ```
 
+### Naming Conventions (parser-enforced)
+
+The parser uses the **first character** of an identifier to determine its syntactic role. These are hard rules, not style suggestions:
+
+| Thing | Convention | Example |
+|---|---|---|
+| Types, variants | `PascalCase` (uppercase first) | `Point`, `Ok`, `SomeName` |
+| Functions, variables, fields, modules | `snake_case` (lowercase first) | `parse_int`, `my_var`, `pt` |
+
+**Postfix rule:** `expr.name` after an expression on the **same line**:
+- `.lowercase` → field access or method call ✓
+- `.Uppercase` (terminal, same line) → **parse error** — use `.lowercase` or put it on a new line
+- `.Uppercase.` (intermediate qualifier, same line) → allowed (e.g. `pt.Point.{ x: 1 }`)
+- `.Uppercase` on a **new line** → new statement (variant literal or constructor path) ✓
+
 ### Enums & Pattern Matching
 ```tw
 type Option<T> = { None, Some(T) }
 type Shape = { Circle(Float), Rect(Float, Float), UnitSquare }
 ```
 
-Pattern matching must be exhaustive unless using `_ => ...`.
+Variant names must be `PascalCase`. Pattern matching must be exhaustive unless using `_ => ...`.
 
 ### Error Handling
 - No exceptions

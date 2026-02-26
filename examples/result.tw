@@ -1,0 +1,44 @@
+// Result<T, E> and try expression examples
+
+fn parse_int(s: String) Result<Int, String> {
+  if s == "0" {
+    .Ok(0)
+  } else if s == "1" {
+    .Ok(1)
+  } else if s == "42" {
+    .Ok(42)
+  } else {
+    .Err("not a valid int: ${s}")
+  }
+}
+
+fn describe(r: Result<Int, String>) String {
+  case r {
+    .Ok(n)  => "ok: ${n}",
+    .Err(e) => "err: ${e}",
+  }
+}
+
+println(describe(parse_int("42")))   // ok: 42
+println(describe(parse_int("abc")))  // err: not a valid int: abc
+println(describe(parse_int("1")))    // ok: 1
+
+// Using try — .Variant on its own line is now correctly parsed as a variant literal
+fn double_parsed(s: String) Result<Int, String> {
+  n := try parse_int(s)
+  .Ok(n * 2)
+}
+
+println(describe(double_parsed("42")))   // ok: 84
+println(describe(double_parsed("bad")))  // err: not a valid int: bad
+
+// Chaining with try
+fn sum_parsed(a: String, b: String) Result<Int, String> {
+  x := try parse_int(a)
+  y := try parse_int(b)
+  .Ok(x + y)
+}
+
+println(describe(sum_parsed("1", "42")))    // ok: 43
+println(describe(sum_parsed("1", "bad")))   // err: not a valid int: bad
+println(describe(sum_parsed("bad", "42")))  // err: not a valid int: bad

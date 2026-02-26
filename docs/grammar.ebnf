@@ -76,14 +76,15 @@ VariantDefList =
     VariantDef { "," VariantDef } [ "," ] ;
 
 VariantDef =
-    Identifier [ "(" TypeList ")" ] ;
+    UpperIdent [ "(" TypeList ")" ] ;
 (* Implementation note:
    - `type Color = { Red, Green, Blue }`
    - `type Result<T, E> = { Ok(T), Err(E) }`
    - Payloads are positional, e.g. `Add(Expr, Expr)`.
    - Constructors are exposed as `TypeName.Variant` in expressions
      (e.g. `Result.Ok(42)`), and as `.Variant(...)` / `TypeName.Variant(...)`
-     in patterns (EnumPattern rules). *)
+     in patterns (EnumPattern rules).
+   - Variant names MUST start with an uppercase letter (UpperIdent). *)
 
 (* ===== Functions (Declarations & Function Types) ===== *)
 
@@ -201,15 +202,26 @@ PrimaryExpr =
     | "(" Expr ")" ;
 
 VariantExpr =
-    "." Identifier [ "(" ArgList ")" ] ;
+    "." UpperIdent [ "(" ArgList ")" ] ;
 (* Implementation note:
    - Expression shorthand: `.Ok(42)` or `.None`.
+   - The variant name MUST start with an uppercase letter (UpperIdent);
+     a lowercase name after `.` is a parse error.
    - Resolved by *expected type* in context.
    - If the expected type is a sum type `T = { Ok(T1), ... }`,
      `.Ok(...)` is resolved as `T.Ok(...)`.
    - If multiple sum types in scope have a variant `Ok`, or no
      expected sum type is known, `.Ok(...)` must be rejected or
      require the fully qualified form `TypeName.Ok(...)`. *)
+
+(* ===== Constructor paths (prefix) ===== *)
+(* When an expression begins with UpperIdent, the parser greedily consumes
+   further ".UpperIdent" segments to form a qualified constructor path:
+     Ok(1)                  -- bare variant reference (value-level: GlobalFunc)
+     Result.Ok(1)           -- qualified form; reads as FieldAccess chain
+     http.Header.ContentType -- multi-segment qualification
+   The chain terminates as soon as a segment is lowercase or a non-ident
+   token follows the dot. *)
 
 (* ===== Pattern Matching ===== *)
 
@@ -463,18 +475,54 @@ TypeName =
     Identifier { "." Identifier } ;
 (* Implementation note:
    - Supports module-qualified types: `Point`, `MyModule.Point`, `pkg.time.Time`.
-   - Resolution of whether the first segment is a module or type is semantic. *)
+   - Resolution of whether the first segment is a module or type is semantic.
+   - The final segment (the actual type name) is always UpperIdent.
+   - Leading segments may be lowercase module names (e.g. `http.Header`). *)
 
 (* ===== Identifiers ===== *)
+
+(* Naming conventions are ENFORCED BY THE PARSER, not merely style guidelines.
+   The first character determines the syntactic role of an identifier:
+     - Uppercase first char → type name, variant name, or constructor qualifier.
+     - Lowercase first char → variable, function, field, or module name.
+
+   Rules:
+     - Variant literals (.Foo, .Bar) and variant definitions require UpperIdent.
+     - Field access and method calls in postfix (expr.name) require LowerIdent.
+     - Type declarations (type Foo = ...) require UpperIdent.
+     - Function declarations, let bindings, parameters, record fields → LowerIdent.
+
+   Postfix disambiguation (same-line rule):
+     - expr.lowerIdent    → field access or method call (always valid in postfix).
+     - expr.UpperIdent.   → allowed only as an intermediate qualifier when followed
+                            immediately by another "." (e.g. pt.Point.{ ... }).
+     - expr.UpperIdent    → PARSE ERROR if UpperIdent is the terminal segment on the
+                            same line (ConstructorInPostfix error).
+     - \n.UpperIdent      → NOT postfix; the leading "." on a new line starts a fresh
+                            statement (VariantExpr or constructor path). *)
 
 Identifier =
     Letter { Letter | Digit | "_" } ;
 
+UpperIdent =
+    UpperLetter { Letter | Digit | "_" } ;
+(* Must start with an uppercase letter. Used for type names and variant names. *)
+
+LowerIdent =
+    LowerLetter { Letter | Digit | "_" } ;
+(* Must start with a lowercase letter. Used for functions, variables, and fields. *)
+
 Letter =
+      LowerLetter
+    | UpperLetter ;
+
+LowerLetter =
       "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j"
     | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t"
-    | "u" | "v" | "w" | "x" | "y" | "z"
-    | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J"
+    | "u" | "v" | "w" | "x" | "y" | "z" ;
+
+UpperLetter =
+      "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J"
     | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T"
     | "U" | "V" | "W" | "X" | "Y" | "Z" ;
 

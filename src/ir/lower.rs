@@ -6,7 +6,7 @@ use crate::syntax::ast::{
 };
 use crate::syntax::span::Span;
 use crate::types::env::TypeEnv;
-use crate::types::ty::MonoType;
+use crate::types::ty::{MonoType, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
 use super::core::{
@@ -42,8 +42,19 @@ pub mod prelude {
     pub const DICT_SET:  FuncId = FuncId(13); // Dict.set(m, k, v) -> Dict<K,V>
     pub const DICT_KEYS: FuncId = FuncId(14); // Dict.keys(m) -> Array<K>
 
+    pub const RANGE_FROM: FuncId = FuncId(15); // range_from(start, end) -> Array<Int>
+    pub const RANGE:      FuncId = FuncId(16); // range(n) -> Array<Int>  (0..n-1)
+
+    pub const CELL_NEW:    FuncId = FuncId(17); // Cell.new(v: T) Cell<T>
+    pub const CELL_GET:    FuncId = FuncId(18); // Cell.get(c: Cell<T>) T
+    pub const CELL_SET:    FuncId = FuncId(19); // Cell.set(c: Cell<T>, v: T) Void
+    pub const CELL_UPDATE: FuncId = FuncId(20); // Cell.update(c: Cell<T>, f: fn(T) T) Void
+
+    pub const DICT_GET: FuncId = FuncId(21); // dict_get(m, k) -> Option<V>
+    pub const DICT_NEW: FuncId = FuncId(22); // Dict.new() -> Dict<K,V>
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 15;
+    pub const USER_FUNC_START: u32 = 23;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,14 +85,25 @@ impl Lowerer {
         func_table.insert("print".to_string(), prelude::PRINT);
         func_table.insert("println".to_string(), prelude::PRINTLN);
         func_table.insert("error".to_string(), prelude::ERROR);
+        func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
+        func_table.insert("range".to_string(), prelude::RANGE);
+        func_table.insert("Cell.new".to_string(), prelude::CELL_NEW);
+        func_table.insert("Cell.get".to_string(), prelude::CELL_GET);
+        func_table.insert("Cell.set".to_string(), prelude::CELL_SET);
+        func_table.insert("Cell.update".to_string(), prelude::CELL_UPDATE);
+        func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
 
         // len is polymorphic and handled specially in lower_expr_call
+
+        let mut module_aliases = HashSet::new();
+        module_aliases.insert("Cell".to_string()); // built-in module alias
+        module_aliases.insert("Dict".to_string()); // built-in module alias
 
         Self {
             type_map,
             type_env,
             func_table,
-            module_aliases: HashSet::new(),
+            module_aliases,
             errors: Vec::new(),
             local_allocator: LocalAllocator::new(),
             next_hoisted_id: prelude::USER_FUNC_START, // updated after user-func pass
@@ -1099,12 +1121,27 @@ impl Lowerer {
 
             // --- Binary / Unary ---
             ExprKind::Binary { op, left, right } => {
-                // Handle rebinding assignments: produce Void
+                // Handle assignment expressions (e.g. as case arm bodies).
                 if matches!(op, BinOp::Assign) {
-                    // These are handled at the Stmt::Expr level as rebindings.
-                    // If they appear as expressions (not statements), produce Void.
-                    let _ = self.lower_expr(right)?;
-                    return Some(CoreExprKind::LitVoid);
+                    // Simple ident rebinding: x = expr
+                    if let ExprKind::Ident(name) = &left.kind {
+                        if let Some(existing_local) = self.local_allocator.lookup(name) {
+                            let value_expr = self.lower_expr(right)?;
+                            return Some(CoreExprKind::Assign {
+                                local: existing_local,
+                                value: Box::new(value_expr),
+                            });
+                        }
+                    }
+                    // Complex lvalue: r.field = val, arr[i] = val, m[k] = val
+                    let rhs_core = self.lower_expr(right)?;
+                    if let Some((root_local, update_expr)) = self.lower_lvalue_chain(left, rhs_core) {
+                        return Some(CoreExprKind::Assign {
+                            local: root_local,
+                            value: Box::new(update_expr),
+                        });
+                    }
+                    return None;
                 }
 
                 let l = self.lower_expr(left)?;
@@ -1178,12 +1215,31 @@ impl Lowerer {
 
             // --- Index ---
             ExprKind::Index { base, index } => {
+                let base_ty = self.type_map.get_expr_type(base.id).cloned();
                 let base_expr = self.lower_expr(base)?;
                 let index_expr = self.lower_expr(index)?;
-                Some(CoreExprKind::Index {
-                    base: Box::new(base_expr),
-                    index: Box::new(index_expr),
-                })
+
+                // Dict[key] lowers to dict_get(dict, key) → Option<V>
+                if matches!(base_ty, Some(MonoType::Dict(_, _))) {
+                    let func_ty = MonoType::Function {
+                        params: vec![base_expr.ty.clone(), index_expr.ty.clone()],
+                        ret: Box::new(base_expr.ty.clone()), // placeholder
+                    };
+                    let func_expr = CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(prelude::DICT_GET),
+                        ty: func_ty,
+                        span,
+                    };
+                    Some(CoreExprKind::Call {
+                        callee: Box::new(func_expr),
+                        args: vec![base_expr, index_expr],
+                    })
+                } else {
+                    Some(CoreExprKind::Index {
+                        base: Box::new(base_expr),
+                        index: Box::new(index_expr),
+                    })
+                }
             }
 
             // --- Array literal ---
@@ -1350,12 +1406,90 @@ impl Lowerer {
             }
 
             // --- Try (deferred until generics) ---
-            ExprKind::Try { .. } => {
-                self.errors.push(LowerError::UnsupportedFeature {
-                    feature: "try expressions",
+            ExprKind::Try { expr: inner_expr } => {
+                // try expr  desugas to:
+                //   let tmp = expr
+                //   match tmp {
+                //     .Ok(v)  => v,
+                //     .Err(e) => return .Err(e),
+                //   }
+                let inner = self.lower_expr(inner_expr)?;
+                let inner_ty = inner.ty.clone();
+
+                let tmp_local = self.local_allocator.alloc();
+                let v_local   = self.local_allocator.alloc();
+                let e_local   = self.local_allocator.alloc();
+
+                // Determine the Ok payload type from the inner type
+                let ok_ty = match &inner_ty {
+                    MonoType::Named { args, .. } => args.first().cloned().unwrap_or(MonoType::Void),
+                    _ => MonoType::Void,
+                };
+                let err_ty = match &inner_ty {
+                    MonoType::Named { args, .. } => args.get(1).cloned().unwrap_or(MonoType::Void),
+                    _ => MonoType::Void,
+                };
+
+                // Ok arm: bind v_local, return it
+                let ok_pattern = CorePattern::Variant {
+                    type_id: RESULT_TYPE_ID,
+                    variant: VariantId(0),
+                    fields: vec![CorePattern::Var(v_local)],
+                };
+                let ok_body = CoreExpr {
+                    kind: CoreExprKind::Local(v_local),
+                    ty: ok_ty.clone(),
                     span,
-                });
-                None
+                };
+
+                // Err arm: bind e_local, return Err(e_local)
+                let err_payload = CoreExpr {
+                    kind: CoreExprKind::Local(e_local),
+                    ty: err_ty.clone(),
+                    span,
+                };
+                let err_variant = CoreExpr {
+                    kind: CoreExprKind::Variant {
+                        type_id: RESULT_TYPE_ID,
+                        variant: VariantId(1),
+                        args: vec![err_payload],
+                    },
+                    ty: inner_ty.clone(),
+                    span,
+                };
+                let err_body = CoreExpr {
+                    kind: CoreExprKind::Return { value: Some(Box::new(err_variant)) },
+                    ty: MonoType::Never,
+                    span,
+                };
+
+                let err_pattern = CorePattern::Variant {
+                    type_id: RESULT_TYPE_ID,
+                    variant: VariantId(1),
+                    fields: vec![CorePattern::Var(e_local)],
+                };
+
+                let match_expr = CoreExpr {
+                    kind: CoreExprKind::Match {
+                        scrutinee: Box::new(CoreExpr {
+                            kind: CoreExprKind::Local(tmp_local),
+                            ty: inner_ty.clone(),
+                            span,
+                        }),
+                        arms: vec![
+                            MatchArm { pattern: ok_pattern,  body: ok_body  },
+                            MatchArm { pattern: err_pattern, body: err_body },
+                        ],
+                    },
+                    ty: ok_ty,
+                    span,
+                };
+
+                Some(CoreExprKind::Let {
+                    local: tmp_local,
+                    value: Box::new(inner),
+                    body:  Box::new(match_expr),
+                })
             }
         }
     }
@@ -1515,6 +1649,7 @@ impl Lowerer {
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
             (MonoType::String, "to_string") => prelude::STRING_TO_STRING,
+            (MonoType::Dict(_, _), "keys") => prelude::DICT_KEYS,
             (MonoType::Named { type_id, .. }, _) => {
                 // User-defined inherent method: look up via TypeEnv → func_table
                 let type_id = *type_id;

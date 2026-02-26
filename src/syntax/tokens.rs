@@ -224,11 +224,13 @@ pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
     pub text: String,
+    /// True if at least one newline appeared before this token (after the previous token).
+    pub preceded_by_newline: bool,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span, text: String) -> Self {
-        Self { kind, span, text }
+        Self { kind, span, text, preceded_by_newline: false }
     }
 
     /// Create an EOF token
@@ -237,6 +239,7 @@ impl Token {
             kind: TokenKind::Eof,
             span: Span::new(file_id, offset, offset),
             text: String::new(),
+            preceded_by_newline: false,
         }
     }
 
@@ -246,6 +249,7 @@ impl Token {
             kind: TokenKind::Error,
             span,
             text,
+            preceded_by_newline: false,
         }
     }
 }

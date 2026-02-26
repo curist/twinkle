@@ -71,7 +71,7 @@ impl Lexer {
             return self.lex_string_continuation(brace_depth);
         }
 
-        self.skip_whitespace_and_comments();
+        let saw_newline = self.skip_whitespace_and_comments();
 
         let start = self.pos;
 
@@ -81,7 +81,7 @@ impl Lexer {
 
         let ch = self.peek();
 
-        let token = match ch {
+        let mut token = match ch {
             // String literals
             '"' => self.lex_string()?,
 
@@ -122,6 +122,7 @@ impl Lexer {
             }
         };
 
+        token.preceded_by_newline = saw_newline;
         Ok(token)
     }
 
@@ -343,14 +344,19 @@ impl Lexer {
         }
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
+    /// Skips whitespace and line comments; returns true if at least one newline was consumed.
+    fn skip_whitespace_and_comments(&mut self) -> bool {
+        let mut saw_newline = false;
         while !self.is_eof() {
             let ch = self.peek();
 
-            if ch.is_whitespace() {
+            if ch == '\n' {
+                saw_newline = true;
+                self.advance();
+            } else if ch.is_whitespace() {
                 self.advance();
             } else if ch == '/' && self.peek_ahead(1) == '/' {
-                // Skip single-line comment
+                // Skip single-line comment (the newline that ends it will be caught next iter)
                 while !self.is_eof() && self.peek() != '\n' {
                     self.advance();
                 }
@@ -358,6 +364,7 @@ impl Lexer {
                 break;
             }
         }
+        saw_newline
     }
 
     fn is_ident_continue(&self, ch: char) -> bool {

@@ -6,7 +6,7 @@ use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
-use super::ty::MonoType;
+use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID};
 use super::type_map::TypeMap;
 use std::collections::HashSet;
 use std::mem;
@@ -224,13 +224,10 @@ impl TypeChecker {
         // Type-check the function body
         // The body is a Block, which should evaluate to the return type
         if let Some(expected_ret) = &sig.ret {
-            // Explicit return type - check body against it
-            let body_ty = self.synth_block(&decl.body);
-            if let Ok(ty) = body_ty {
-                if self.unify(&ty, expected_ret, decl.body.span).is_err() {
-                    // Error already recorded in unify
-                }
-            }
+            // Explicit return type — use bidirectional check so that the
+            // expected type flows into the last expression (e.g. anonymous
+            // record literals in return position).
+            let _ = self.check_block(&decl.body, expected_ret);
         } else {
             // No explicit return type - infer from body
             match self.synth_block(&decl.body) {
@@ -431,13 +428,25 @@ impl TypeChecker {
                 self.synth_collect(pattern, iter, body, expr.span)
             }
 
-            ExprKind::Try { .. } => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "try expressions",
-                    span: expr.span,
-                    note: "Try will be supported after IR lowering in Stage 3".to_string(),
-                });
-                Err(())
+            ExprKind::Try { expr: inner } => {
+                let inner_ty = self.synth_expr(inner)?;
+                match &inner_ty {
+                    MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID => {
+                        // try Result<T,E> → extracts T; propagates Err(E) via early return
+                        Ok(args.first().cloned().unwrap_or(MonoType::Void))
+                    }
+                    _ => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Named {
+                                type_id: RESULT_TYPE_ID,
+                                args: vec![MonoType::Void, MonoType::Void],
+                            },
+                            actual: inner_ty,
+                            span: expr.span,
+                        });
+                        Err(())
+                    }
+                }
             }
         }
     }
@@ -456,6 +465,76 @@ impl TypeChecker {
             // Variant literals can be checked against expected sum type
             ExprKind::VariantLit { name, fields } => {
                 self.check_variant_lit(name, fields, expected, expr.span)
+            }
+
+            // Blocks: thread expected type into the last expression
+            ExprKind::Block(block) => {
+                self.check_block(block, expected)
+            }
+
+            // If expressions: check both branches against expected type
+            ExprKind::If { cond, then_branch, else_branch } => {
+                self.check_expr(cond, &MonoType::Bool)?;
+                self.check_expr(then_branch, expected)?;
+                if let Some(else_b) = else_branch {
+                    self.check_expr(else_b, expected)?;
+                } else {
+                    let _ = self.unify(&MonoType::Void, expected, expr.span);
+                }
+                Ok(())
+            }
+
+            // Case: check each arm body against expected type
+            ExprKind::Case { scrutinee, arms } => {
+                let scrut_ty = self.synth_expr(scrutinee)?;
+                if !scrut_ty.is_sum(&self.type_env) {
+                    self.errors.push(TypeError::CaseScrutineeNotSumType {
+                        actual_type: scrut_ty.clone(),
+                        span: scrutinee.span,
+                    });
+                    return Err(());
+                }
+                if arms.is_empty() {
+                    self.errors.push(TypeError::NonExhaustiveMatch {
+                        missing: vec!["(all patterns)".to_string()],
+                        span: expr.span,
+                    });
+                    return Err(());
+                }
+                PatternChecker::check_exhaustiveness(
+                    &self.type_env, &mut self.errors, &scrut_ty, arms, expr.span,
+                )?;
+                for arm in arms {
+                    self.local_env.push_scope();
+                    let mut pc = PatternChecker::new(
+                        &self.type_env, &mut self.local_env, &mut self.errors,
+                    );
+                    pc.check_pattern(&arm.pattern, &scrut_ty)?;
+                    drop(pc);
+                    self.check_expr(&arm.body, expected)?;
+                    self.local_env.pop_scope();
+                }
+                Ok(())
+            }
+
+            // Dict.new() — type comes entirely from context annotation
+            ExprKind::Call { callee, args }
+                if args.is_empty() =>
+            {
+                if let ExprKind::FieldAccess { base, field } = &callee.kind {
+                    if let ExprKind::Ident(alias) = &base.kind {
+                        if alias == "Dict" && field == "new" {
+                            if let MonoType::Dict(_, _) = expected {
+                                self.type_map.set_expr_type(expr.id, expected.clone());
+                                self.type_map.set_expr_type(callee.id, expected.clone());
+                                self.type_map.set_expr_type(base.id, expected.clone());
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                let actual = self.synth_expr(expr)?;
+                self.unify(&actual, expected, expr.span)
             }
 
             // For most expressions, synthesize and unify
@@ -687,6 +766,14 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
+        // Special: Cell and Dict modules provide polymorphic operations.
+        if alias == "Cell" {
+            return self.synth_cell_call(func_name, args, span);
+        }
+        if alias == "Dict" {
+            return self.synth_dict_module_call(func_name, args, span);
+        }
+
         let qualified = format!("{}.{}", alias, func_name);
         match self.value_env.lookup(&qualified) {
             Some(MonoType::Function { params, ret }) => {
@@ -710,6 +797,117 @@ impl TypeChecker {
             None => {
                 self.errors.push(TypeError::UndefinedVariable {
                     name: qualified,
+                    span,
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle Cell.new / Cell.get / Cell.set / Cell.update polymorphically.
+    fn synth_cell_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        match func_name {
+            "new" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let inner = self.synth_expr(&args[0])?;
+                Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] })
+            }
+            "get" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let cell_ty = self.synth_expr(&args[0])?;
+                match cell_ty {
+                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                        Ok(cell_args.into_iter().next().unwrap_or(MonoType::Void))
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            actual: other,
+                            span,
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "set" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let cell_ty = self.synth_expr(&args[0])?;
+                match cell_ty {
+                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                        let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
+                        self.check_expr(&args[1], &inner)?;
+                        Ok(MonoType::Void)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            actual: other,
+                            span,
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "update" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let cell_ty = self.synth_expr(&args[0])?;
+                match cell_ty {
+                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                        let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
+                        let expected_fn = MonoType::Function {
+                            params: vec![inner.clone()],
+                            ret: Box::new(inner),
+                        };
+                        self.check_expr(&args[1], &expected_fn)?;
+                        Ok(MonoType::Void)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            actual: other,
+                            span,
+                        });
+                        Err(())
+                    }
+                }
+            }
+            _ => {
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: format!("Cell.{}", func_name),
+                    span,
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle Dict.new() — type comes entirely from the annotation context.
+    /// Called from synth_module_call; errors in synthesis mode (no context).
+    fn synth_dict_module_call(&mut self, func_name: &str, _args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        match func_name {
+            "new" => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "Dict.new() without type annotation",
+                    span,
+                    note: "Dict.new() requires a type annotation, e.g. `m: Dict<String, Int> = Dict.new()`".to_string(),
+                });
+                Err(())
+            }
+            other => {
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: format!("Dict.{}", other),
                     span,
                 });
                 Err(())
@@ -786,6 +984,23 @@ impl TypeChecker {
                         feature: "unknown string method",
                         span,
                         note: format!("String has no method '{}'", method),
+                    });
+                    Err(())
+                }
+            },
+            MonoType::Dict(k_ty, _v_ty) => match method {
+                "keys" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        return Err(());
+                    }
+                    Ok(MonoType::Array(k_ty))
+                }
+                _ => {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "unknown dict method",
+                        span,
+                        note: format!("Dict has no method '{}'", method),
                     });
                     Err(())
                 }
@@ -913,6 +1128,63 @@ impl TypeChecker {
 
         self.local_env.pop_scope();
         Ok(result_ty)
+    }
+
+    /// Bidirectional block check: processes all statements like `synth_block`
+    /// but uses `check_expr(last_expr, expected_ty)` for the final expression
+    /// statement so that expected types flow into anonymous record literals,
+    /// if-expressions, etc.
+    fn check_block(&mut self, block: &Block, expected_ty: &MonoType) -> Result<(), ()> {
+        self.local_env.push_scope();
+
+        // Index of the last Expr statement (if any)
+        let last_expr_idx = block.stmts.iter().rposition(|s| matches!(s, Stmt::Expr(_)));
+
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            match stmt {
+                Stmt::Let { pattern, ty, value, span: _ } => {
+                    self.check_let_stmt(pattern, ty.as_ref(), value);
+                }
+                Stmt::Expr(e) => {
+                    if last_expr_idx == Some(i) {
+                        // Final expression — check against expected return type
+                        self.check_expr(e, expected_ty)?;
+                    } else {
+                        let _ = self.synth_expr(e);
+                    }
+                }
+                Stmt::Return { value, span } => {
+                    if let Some(ret_ty) = self.current_function_ret.clone() {
+                        if let Some(val) = value {
+                            let _ = self.check_expr(val, &ret_ty);
+                        } else {
+                            let _ = self.unify(&MonoType::Void, &ret_ty, *span);
+                        }
+                    }
+                }
+                Stmt::For { pattern, index_pattern, iter, body, .. } => {
+                    self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
+                }
+                Stmt::ForCond { cond, body, .. } => {
+                    let _ = self.check_expr(cond, &MonoType::Bool);
+                    let _ = self.synth_block(body);
+                }
+                Stmt::Break { value, .. } => {
+                    if let Some(val) = value {
+                        let _ = self.synth_expr(val);
+                    }
+                }
+                Stmt::Continue { .. } => {}
+            }
+        }
+
+        // If there's no final Expr stmt, the block type is Void
+        if last_expr_idx.is_none() {
+            let _ = self.unify(&MonoType::Void, expected_ty, block.span);
+        }
+
+        self.local_env.pop_scope();
+        Ok(())
     }
 
     //
@@ -1101,7 +1373,11 @@ impl TypeChecker {
             }
             MonoType::Dict(k_ty, v_ty) => {
                 self.check_expr(index, &k_ty)?;
-                Ok(*v_ty) // Direct indexing — traps on missing key
+                // Dict indexing is safe: returns Option<V>
+                Ok(MonoType::Named {
+                    type_id: OPTION_TYPE_ID,
+                    args: vec![*v_ty],
+                })
             }
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
@@ -1269,7 +1545,7 @@ impl TypeChecker {
     fn check_variant_lit(&mut self, variant_name: &str, fields: &[Expr], expected: &MonoType, span: Span) -> Result<(), ()> {
         // Expected type must be a sum type
         match expected {
-            MonoType::Named { type_id, .. } => {
+            MonoType::Named { type_id, args } => {
                 // Get the variants for this sum type
                 let variants = match self.type_env.get_variants(*type_id) {
                     Some(v) => v,
@@ -1289,18 +1565,33 @@ impl TypeChecker {
 
                 match variant {
                     Some(v) => {
+                        // For Option<T> and Result<T,E>, the TypeDef holds Void placeholders.
+                        // Use the actual type args from the MonoType instead.
+                        let field_types: Vec<MonoType> = if *type_id == OPTION_TYPE_ID {
+                            match variant_name {
+                                "None" => vec![],
+                                "Some" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+                                _ => v.fields.clone(),
+                            }
+                        } else if *type_id == RESULT_TYPE_ID {
+                            match variant_name {
+                                "Ok"  => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+                                "Err" => vec![args.get(1).cloned().unwrap_or(MonoType::Void)],
+                                _ => v.fields.clone(),
+                            }
+                        } else {
+                            v.fields.clone()
+                        };
+
                         // Check arity
-                        if v.fields.len() != fields.len() {
+                        if field_types.len() != fields.len() {
                             self.errors.push(TypeError::WrongArity {
-                                expected: v.fields.len(),
+                                expected: field_types.len(),
                                 actual: fields.len(),
                                 span,
                             });
                             return Err(());
                         }
-
-                        // Clone field types before checking to avoid borrowing issues
-                        let field_types: Vec<MonoType> = v.fields.clone();
 
                         // Check each field
                         for (field_expr, field_ty) in fields.iter().zip(field_types.iter()) {

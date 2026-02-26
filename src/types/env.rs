@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant};
+use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID};
 use super::error::TypeError;
 use crate::syntax::ast::Type as AstType;
 
@@ -20,16 +20,53 @@ pub struct TypeEnv {
 
 impl TypeEnv {
     pub fn new() -> Self {
-        Self {
+        let mut env = Self {
             types: Vec::new(),
             type_names: HashMap::new(),
             record_fields: HashMap::new(),
             sum_variants: HashMap::new(),
             methods: HashMap::new(),
-        }
+        };
 
-        // Note: Built-in types (Int, Float, Bool, String, Void, Array) are handled
-        // specially in resolve_type - they don't need TypeDef entries
+        // Pre-register built-in parametric types with fixed TypeIds.
+        // These MUST be registered first so they always receive their expected IDs.
+        //
+        // TypeId(0) = Option<T>  — sum type with None and Some(T)
+        // TypeId(1) = Result<T,E> — sum type with Ok(T) and Err(E)
+        // TypeId(2) = Cell<T>   — opaque mutable container
+        //
+        // The variant field types below are placeholders; the type checker uses
+        // the args from MonoType::Named{type_id, args} to determine the actual
+        // payload types at each use site.
+        debug_assert_eq!(
+            env.add_type(TypeDef::Sum {
+                name: "Option".to_string(),
+                variants: vec![
+                    Variant { name: "None".to_string(), fields: vec![] },
+                    Variant { name: "Some".to_string(), fields: vec![MonoType::Void] },
+                ],
+            }),
+            OPTION_TYPE_ID,
+        );
+        debug_assert_eq!(
+            env.add_type(TypeDef::Sum {
+                name: "Result".to_string(),
+                variants: vec![
+                    Variant { name: "Ok".to_string(),  fields: vec![MonoType::Void] },
+                    Variant { name: "Err".to_string(), fields: vec![MonoType::Void] },
+                ],
+            }),
+            RESULT_TYPE_ID,
+        );
+        debug_assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Cell".to_string(),
+                fields: vec![],
+            }),
+            CELL_TYPE_ID,
+        );
+
+        env
     }
 
     /// Add a type definition and return its TypeId
@@ -242,6 +279,40 @@ impl TypeEnv {
                         let v_ty = self.resolve_type(&args[1], errors)?;
                         Ok(MonoType::Dict(Box::new(k_ty), Box::new(v_ty)))
                     }
+                    "Option" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("Option (expected 1 type argument, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let inner = self.resolve_type(&args[0], errors)?;
+                        return Ok(MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![inner] });
+                    }
+                    "Result" => {
+                        if args.len() != 2 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("Result (expected 2 type arguments, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let t = self.resolve_type(&args[0], errors)?;
+                        let e = self.resolve_type(&args[1], errors)?;
+                        return Ok(MonoType::Named { type_id: RESULT_TYPE_ID, args: vec![t, e] });
+                    }
+                    "Cell" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("Cell (expected 1 type argument, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let inner = self.resolve_type(&args[0], errors)?;
+                        return Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] });
+                    }
                     _ => {
                         // User-defined type
                         if !args.is_empty() {
@@ -407,6 +478,21 @@ impl ValueEnv {
             },
         );
 
+        env.builtins.insert(
+            "range_from".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int, MonoType::Int],
+                ret: Box::new(MonoType::Array(Box::new(MonoType::Int))),
+            },
+        );
+        env.builtins.insert(
+            "range".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Array(Box::new(MonoType::Int))),
+            },
+        );
+
         // Note: len() is intentionally NOT pre-registered as a builtin here.
         // It will be handled specially in check.rs::synth_call() to support both
         // String and Array<T> monomorphically (without requiring generics).
@@ -434,17 +520,14 @@ impl ValueEnv {
     pub fn lookup(&self, name: &str) -> Option<MonoType> {
         // Check functions first
         if let Some(sig) = self.functions.get(name) {
-            // Only return function type if return type is known
-            if let Some(ret) = &sig.ret {
-                return Some(MonoType::Function {
-                    params: sig.params.clone(),
-                    ret: Box::new(ret.clone()),
-                });
-            } else {
-                // Return type not yet inferred - this shouldn't happen in practice
-                // since we update signatures after inference
-                return None;
-            }
+            // If return type is not yet inferred (no explicit annotation), default to Void.
+            // This allows top-level expressions to call functions before their bodies are
+            // type-checked in pass 2; the actual return type is verified when the body is checked.
+            let ret = sig.ret.clone().unwrap_or(MonoType::Void);
+            return Some(MonoType::Function {
+                params: sig.params.clone(),
+                ret: Box::new(ret),
+            });
         }
 
         // Then values

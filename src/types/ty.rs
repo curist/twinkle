@@ -13,6 +13,13 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
 
+/// Pre-registered built-in parametric type IDs.
+/// These are the first three TypeDefs added to every fresh TypeEnv, so their
+/// IDs are fixed and may be used as constants throughout the compiler.
+pub const OPTION_TYPE_ID: TypeId = TypeId(0);
+pub const RESULT_TYPE_ID: TypeId = TypeId(1);
+pub const CELL_TYPE_ID:   TypeId = TypeId(2);
+
 /// Monomorphic type representation
 /// Stage 2: No generics - all type parameters must be monomorphic
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

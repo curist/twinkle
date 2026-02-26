@@ -1,0 +1,34 @@
+// Option<T> examples — nullable values without null pointers
+
+fn safe_div(a: Int, b: Int) Option<Int> {
+  if b == 0 {
+    .None
+  } else {
+    .Some(a / b)
+  }
+}
+
+fn describe(result: Option<Int>) String {
+  case result {
+    .None    => "no value",
+    .Some(n) => "got ${n}",
+  }
+}
+
+println(describe(safe_div(10, 2)))   // got 5
+println(describe(safe_div(7, 0)))    // no value
+println(describe(safe_div(9, 3)))    // got 3
+
+// Map over an Option manually
+fn option_map(opt: Option<Int>, f: fn(Int) Int) Option<Int> {
+  case opt {
+    .None    => .None,
+    .Some(n) => .Some(f(n)),
+  }
+}
+
+doubled := option_map(safe_div(8, 2), fn(n: Int) Int { n * 2 })
+println(describe(doubled))  // got 8
+
+none_doubled := option_map(safe_div(8, 0), fn(n: Int) Int { n * 2 })
+println(describe(none_doubled))  // no value

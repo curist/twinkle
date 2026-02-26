@@ -72,3 +72,5 @@ fn main() {
     .None => println("\nNo words found"),
   }
 }
+
+main()

@@ -11,3 +11,5 @@ fn fizzbuzz(n: Int) Void {
     }
   }
 }
+
+fizzbuzz(20)

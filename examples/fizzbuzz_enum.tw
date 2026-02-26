@@ -27,3 +27,5 @@ fn fizzbuzz_enum(n: Int) Void {
     }
   }
 }
+
+fizzbuzz_enum(20)

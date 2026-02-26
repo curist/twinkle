@@ -1,0 +1,60 @@
+// Demonstrates immutable value semantics with rebindable names.
+//
+// Expected output:
+// === Rebinding ===
+// x=10 y=11
+// === Record field update ===
+// alias still: (0, 0)
+// p after: (1, 42)
+// === Array update ===
+// arr after: 0 42 0
+// arr_alias: 0 0 0
+// === Rebinding in loop ===
+// sum=55
+// === Rebinding across if ===
+// outer n=0
+
+type Point = .{ x: Int, y: Int }
+
+fn point_str(p: Point) String {
+  "(${p.x}, ${p.y})"
+}
+
+println("=== Rebinding ===")
+x := 10
+y := x
+y = y + 1
+println("x=${x} y=${y}")   // x unchanged, y incremented
+
+println("=== Record field update ===")
+p := Point.{ x: 0, y: 0 }
+alias := p              // alias refers to same value
+p.x = 1
+p.y = 42
+alias_str := point_str(alias)
+p_str := point_str(p)
+println("alias still: ${alias_str}")   // alias sees old value
+println("p after: ${p_str}")
+
+println("=== Array update ===")
+arr: Array<Int> = [0, 0, 0]
+arr_alias := arr
+arr[1] = 42
+println("arr after: ${arr[0]} ${arr[1]} ${arr[2]}")
+println("arr_alias: ${arr_alias[0]} ${arr_alias[1]} ${arr_alias[2]}")
+
+println("=== Rebinding in loop ===")
+sum := 0
+for i in range_from(1, 11) {
+  sum = sum + i
+}
+println("sum=${sum}")
+
+println("=== Rebinding across if ===")
+n := 0
+if n == 0 {
+  n := 10         // new inner binding — shadows outer n
+  n = n + 1       // rebinds inner n (11), but outer n is unchanged
+}
+// outer n is still 0
+println("outer n=${n}")

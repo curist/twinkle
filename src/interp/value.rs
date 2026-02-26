@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use crate::ir::core::{FuncId, LocalId};
 use crate::types::ty::TypeId;
 
@@ -17,6 +19,8 @@ pub enum Value {
     Variant(TypeId, usize, Vec<Value>),
     /// Closure: func_id + captured free-variable bindings
     Closure(FuncId, HashMap<LocalId, Value>),
+    /// Mutable cell (interior mutability via Rc<RefCell<...>>)
+    Cell(Rc<RefCell<Value>>),
     Void,
 }
 
@@ -73,6 +77,7 @@ impl std::fmt::Display for Value {
                 Ok(())
             }
             Value::Closure(id, _) => write!(f, "<closure FuncId({})>", id.0),
+            Value::Cell(inner) => write!(f, "Cell({})", inner.borrow()),
         }
     }
 }

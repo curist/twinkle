@@ -12,6 +12,7 @@ use crate::syntax::ast::Item;
 use crate::syntax::span::FileRegistry;
 use crate::types::check::TypeChecker;
 use crate::types::resolve::Resolver;
+use crate::types::ty::{FunctionSignature, MonoType, TypeId};
 
 pub use context::{CompilationContext, ModuleExports};
 pub use loader::{find_project_root, resolve_module_path};
@@ -103,6 +104,38 @@ pub fn compile_module(
             .collect();
         importing_stack.pop();
         return Err(anyhow!("{}", msgs.join("\n")));
+    }
+
+    // Register current module's own functions as inherent methods so that
+    // p1.method() syntax works within the same file (not just cross-module).
+    // The resolver has already built function signatures into ctx.value_env.
+    // Two things are needed per method:
+    //   1. type_env.add_method(type_id, "add", "point.add") — for method lookup
+    //   2. value_env.add_function(qualified_sig) — so synth_method_call can
+    //      retrieve the signature by the qualified name
+    {
+        let registrations: Vec<(TypeId, String, FunctionSignature)> = ast.items.iter()
+            .filter_map(|item| {
+                if let Item::Function(decl) = item {
+                    if let Some(sig) = ctx.value_env.get_function(&decl.name) {
+                        if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
+                            let qname = format!("{}.{}", alias, &decl.name);
+                            let qsig = FunctionSignature {
+                                name: qname,
+                                params: sig.params.clone(),
+                                ret: sig.ret.clone(),
+                            };
+                            return Some((*type_id, decl.name.clone(), qsig));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        for (type_id, method_name, qsig) in registrations {
+            ctx.type_env.add_method(type_id, method_name, qsig.name.clone());
+            ctx.value_env.add_function(qsig);
+        }
     }
 
     // Type-check using shared context

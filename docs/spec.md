@@ -1221,7 +1221,70 @@ Includes:
 
 ---
 
-## 20. Type System and Checking
+## 20. Naming Conventions
+
+Twinkle enforces naming conventions **at the parser level** — they are not style
+lint but hard syntax rules. The parser uses the first character of an identifier
+to determine what it can mean.
+
+### Summary
+
+| Thing | Convention | Example |
+|---|---|---|
+| Types | `PascalCase` | `Point`, `Option`, `HttpRequest` |
+| Enum variants | `PascalCase` | `None`, `Ok`, `SomeLongName` |
+| Functions | `snake_case` | `parse_int`, `to_string` |
+| Local variables | `snake_case` | `result`, `my_count` |
+| Record fields | `snake_case` | `x`, `name`, `created_at` |
+| Module identifiers | `snake_case` | `math`, `http_client` |
+
+### Parser enforcement
+
+The distinction between variants (PascalCase) and fields/methods (lowercase) is
+enforced by the parser via the first character of each identifier:
+
+**Prefix position** — beginning of an expression:
+
+* `.Foo` → variant literal; `Foo` must start with an uppercase letter (parse error otherwise).
+* `Foo` → start of a qualified constructor path; further `.Bar` segments (all uppercase) are
+  consumed greedily until a lowercase segment or non-ident token is reached.
+  Examples: `Result.Ok(1)`, `http.Header.ContentType`.
+
+**Postfix position** — `.name` after an expression on the **same line**:
+
+* `.foo` → field access or method call (lowercase required).
+* `.Foo` on the **same line**, not followed by another `.` → **parse error**
+  (`ConstructorInPostfix`). Variant names never appear as the final component of
+  a postfix chain.
+* `.Foo.` on the same line, followed by more segments → allowed as an intermediate
+  qualifier. This makes `pt.Point.{ x: 1, y: 2 }` (named record constructor)
+  work even when the base `pt` is lowercase.
+
+**Newline boundary**:
+
+* `.Foo` that begins on a **new line** (the `.` has a newline before it) is **never**
+  treated as postfix. It is parsed as the start of a new statement — a variant literal
+  or qualified constructor path.
+
+This rule makes the following code unambiguous:
+
+```tw
+fn double_parsed(s: String) Result<Int, String> {
+  n := try parse_int(s)
+  .Ok(n * 2)          // new statement; NOT postfix of the line above
+}
+```
+
+### Rationale
+
+Capitalisation-based disambiguation removes the need for newline-sensitive parsing
+in the common case. Programs that place a `.Variant` on a new line after a `let`
+always work as intended. The only rule a user needs to remember is:
+**types and variants are PascalCase; everything else is lowercase**.
+
+---
+
+## 21. Type System and Checking
 
 ### Type System
 
@@ -1265,7 +1328,7 @@ String interpolation is type-checked by verifying the expression type is one of:
 
 ---
 
-## 21. Compilation to WebAssembly GC
+## 22. Compilation to WebAssembly GC
 
 * Primitives → unboxed `i64/f64`
 * Records → immutable `struct` (new values created via structural sharing where possible)
@@ -1281,7 +1344,7 @@ String interpolation is type-checked by verifying the expression type is one of:
 
 ---
 
-## 22. Error Messages
+## 23. Error Messages
 
 Examples:
 

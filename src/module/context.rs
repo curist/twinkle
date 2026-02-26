@@ -69,13 +69,26 @@ impl CompilationContext {
         func_table.insert("array_set".to_string(), prelude::ARRAY_SET);
         func_table.insert("dict_set".to_string(), prelude::DICT_SET);
         func_table.insert("dict_keys".to_string(), prelude::DICT_KEYS);
+        func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
+        func_table.insert("range".to_string(), prelude::RANGE);
+        func_table.insert("Cell.new".to_string(), prelude::CELL_NEW);
+        func_table.insert("Cell.get".to_string(), prelude::CELL_GET);
+        func_table.insert("Cell.set".to_string(), prelude::CELL_SET);
+        func_table.insert("Cell.update".to_string(), prelude::CELL_UPDATE);
+        func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
+
+        // Built-in module aliases: handled as module-qualified calls rather than
+        // method calls on values.
+        let mut module_aliases = HashSet::new();
+        module_aliases.insert("Cell".to_string());
+        module_aliases.insert("Dict".to_string());
 
         Self {
             type_env: TypeEnv::new(),
             value_env: ValueEnv::new(),
             func_table,
             module_registry: HashMap::new(),
-            module_aliases: HashSet::new(),
+            module_aliases,
             module_cache: HashMap::new(),
             all_functions: Vec::new(),
             next_func_id: prelude::USER_FUNC_START,

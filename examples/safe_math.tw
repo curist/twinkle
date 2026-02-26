@@ -17,7 +17,7 @@ fn safe_sqrt(x: Int) Result<Int, String> {
 fn compute(a: Int, b: Int, c: Int) Result<Int, String> {
   x := try safe_divide(a, b)
   y := try safe_divide(x, c)
-  try safe_sqrt(y)
+  safe_sqrt(y)
 }
 
 fn print_result(r: Result<Int, String>) Void {
@@ -27,13 +27,11 @@ fn print_result(r: Result<Int, String>) Void {
   }
 }
 
-fn main() {
-  println("Computing 100 / 5 / 2:")
-  print_result(compute(100, 5, 2))
+println("Computing 100 / 5 / 2:")
+print_result(compute(100, 5, 2))
 
-  println("\nComputing 100 / 0 / 2:")
-  print_result(compute(100, 0, 2))
+println("Computing 100 / 0 / 2:")
+print_result(compute(100, 0, 2))
 
-  println("\nComputing 100 / (-5) / 2:")
-  print_result(compute(100, -5, 2))
-}
+println("Computing 100 / -25 / 2:")
+print_result(compute(100, -25, 2))
