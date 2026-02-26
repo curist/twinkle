@@ -1,0 +1,25 @@
+// Expected output:
+//   a: 1
+//   b: 2
+//   c: 3
+//   keys only: x
+//   keys only: y
+
+// for k, v in dict iterates key-value pairs
+scores: Dict<String, Int> = Dict.new()
+scores["a"] = 1
+scores["b"] = 2
+scores["c"] = 3
+
+for k, v in scores {
+    println("${k}: ${v}")
+}
+
+// for k in dict iterates keys only
+lookup: Dict<String, Int> = Dict.new()
+lookup["x"] = 10
+lookup["y"] = 20
+
+for k in lookup {
+    println("keys only: ${k}")
+}

@@ -577,6 +577,21 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("range_step: expected three Ints"),
                 }
             }
+            24 => {
+                // dict_get_unsafe(m: Dict<K,V>, k: K) V  — internal use by for-loop lowering
+                match args[0].clone() {
+                    Value::Dict(pairs) => {
+                        let key = &args[1];
+                        for (k, v) in &pairs {
+                            if k == key {
+                                return Ok(v.clone());
+                            }
+                        }
+                        panic!("dict_get_unsafe: key not found (internal error)");
+                    }
+                    _ => panic!("dict_get_unsafe: expected Dict"),
+                }
+            }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
     }

@@ -55,8 +55,10 @@ pub mod prelude {
 
     pub const RANGE_STEP: FuncId = FuncId(23); // range_step(start, end, step) -> Range
 
+    pub const DICT_GET_UNSAFE: FuncId = FuncId(24); // internal: dict_get_unsafe(m, k) -> V  (panics if absent)
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 24;
+    pub const USER_FUNC_START: u32 = 25;
 }
 
 // ---------------------------------------------------------------------------
@@ -955,16 +957,27 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Optionally wrap with: Let(v, dict_tmp[k], body_then_tail)
+        // Optionally wrap with: Let(v, dict_get_unsafe(dict_tmp, k), body_then_tail)
         let loop_body_inner = if let Some(vl) = val_local {
+            let dict_get_unsafe_func = CoreExpr {
+                kind: CoreExprKind::GlobalFunc(prelude::DICT_GET_UNSAFE),
+                ty: MonoType::Function {
+                    params: vec![iter_expr.ty.clone(), key_ty.clone()],
+                    ret: Box::new(val_ty.clone()),
+                },
+                span: iter_span,
+            };
             let val_value = CoreExpr {
-                kind: CoreExprKind::Index {
-                    base: Box::new(dict_local_expr),
-                    index: Box::new(CoreExpr {
-                        kind: CoreExprKind::Local(key_local),
-                        ty: key_ty,
-                        span: iter_span,
-                    }),
+                kind: CoreExprKind::Call {
+                    callee: Box::new(dict_get_unsafe_func),
+                    args: vec![
+                        dict_local_expr,
+                        CoreExpr {
+                            kind: CoreExprKind::Local(key_local),
+                            ty: key_ty,
+                            span: iter_span,
+                        },
+                    ],
                 },
                 ty: val_ty,
                 span: iter_span,
