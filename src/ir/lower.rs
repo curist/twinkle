@@ -1350,9 +1350,10 @@ impl Lowerer {
             // --- Case expression → Match ---
             ExprKind::Case { scrutinee, arms } => {
                 let scrut_expr = self.lower_expr(scrutinee)?;
+                let scrut_ty = scrut_expr.ty.clone();
                 let mut lowered_arms = Vec::new();
                 for arm in arms {
-                    if let Some(la) = self.lower_case_arm(arm, &scrutinee.span) {
+                    if let Some(la) = self.lower_case_arm(arm, &scrut_ty) {
                         lowered_arms.push(la);
                     } else {
                         return None;
@@ -1713,15 +1714,17 @@ impl Lowerer {
     // Case arm / pattern lowering
     // -----------------------------------------------------------------------
 
-    fn lower_case_arm(&mut self, arm: &CaseArm, scrut_span: &Span) -> Option<MatchArm> {
+    fn lower_case_arm(&mut self, arm: &CaseArm, scrut_ty: &MonoType) -> Option<MatchArm> {
         self.local_allocator.push_scope();
-        let pattern = self.lower_pattern(&arm.pattern, scrut_span)?;
+        let pattern = self.lower_pattern(&arm.pattern, Some(scrut_ty))?;
         let body = self.lower_expr(&arm.body)?;
         self.local_allocator.pop_scope();
         Some(MatchArm { pattern, body })
     }
 
-    fn lower_pattern(&mut self, pattern: &Pattern, span: &Span) -> Option<CorePattern> {
+    /// Lower a pattern, using `scrutinee_ty` (when known) to resolve variant TypeIds
+    /// without an ambiguous name scan across all registered types.
+    fn lower_pattern(&mut self, pattern: &Pattern, scrutinee_ty: Option<&MonoType>) -> Option<CorePattern> {
         match pattern {
             Pattern::Wildcard(_) => Some(CorePattern::Wildcard),
 
@@ -1730,7 +1733,7 @@ impl Lowerer {
                 Some(CorePattern::Var(local))
             }
 
-            Pattern::Literal(lit, _) => Some(match lit {
+            Pattern::Literal(lit, span) => Some(match lit {
                 Literal::Int(n) => CorePattern::LitInt(*n),
                 Literal::Bool(b) => CorePattern::LitBool(*b),
                 Literal::String(s) => CorePattern::LitStr(s.clone()),
@@ -1744,13 +1747,63 @@ impl Lowerer {
             }),
 
             Pattern::Variant { name: variant_name, fields, span: pat_span } => {
-                // We need the type_id from context. For now, scan all types to find the variant.
-                // A more robust approach would pass the scrutinee type through.
-                let (type_id, variant_idx) = self.resolve_variant_in_any_type(variant_name, *pat_span)?;
+                // Resolve TypeId from the scrutinee's declared type — avoids the
+                // first-match scan that would pick the wrong type when variant names
+                // collide across sum types (e.g., two types both have `None`).
+                let (type_id, variant_idx) = match scrutinee_ty {
+                    Some(MonoType::Named { type_id, .. }) => {
+                        let type_id = *type_id;
+                        match self.type_env.get_variant_index(type_id, variant_name) {
+                            Some(idx) => (type_id, idx),
+                            None => {
+                                self.errors.push(LowerError::UnknownVariant {
+                                    name: variant_name.to_string(),
+                                    type_name: format!("Type#{}", type_id.0),
+                                    span: *pat_span,
+                                });
+                                return None;
+                            }
+                        }
+                    }
+                    _ => {
+                        // Fallback: scan all types (only reached if scrutinee type is unknown)
+                        let mut found = None;
+                        for i in 0..self.type_env.type_count() {
+                            let tid = crate::types::ty::TypeId(i as u32);
+                            if let Some(idx) = self.type_env.get_variant_index(tid, variant_name) {
+                                found = Some((tid, idx));
+                                break;
+                            }
+                        }
+                        match found {
+                            Some(pair) => pair,
+                            None => {
+                                self.errors.push(LowerError::UnknownVariant {
+                                    name: variant_name.to_string(),
+                                    type_name: "(unknown)".to_string(),
+                                    span: *pat_span,
+                                });
+                                return None;
+                            }
+                        }
+                    }
+                };
+
+                // Pass each field pattern the corresponding declared field type so
+                // nested variant patterns (e.g. `.Some(.Ok(x))`) also resolve correctly.
+                let field_types: Vec<MonoType> = self.type_env
+                    .get_variants(type_id)
+                    .and_then(|vs| vs.get(variant_idx))
+                    .map(|v| v.fields.clone())
+                    .unwrap_or_default();
 
                 let mut lowered_fields = Vec::new();
-                for f in fields {
-                    lowered_fields.push(self.lower_pattern(f, pat_span)?);
+                for (f, field_ty) in fields.iter().zip(&field_types) {
+                    lowered_fields.push(self.lower_pattern(f, Some(field_ty))?);
+                }
+                // Safety net for fields beyond declared count (caught by type-checker)
+                for f in fields.iter().skip(field_types.len()) {
+                    lowered_fields.push(self.lower_pattern(f, None)?);
                 }
 
                 Some(CorePattern::Variant {
@@ -1760,28 +1813,6 @@ impl Lowerer {
                 })
             }
         }
-    }
-
-    /// Find a variant by name across all known sum types.
-    /// Used when we don't have explicit type context in a pattern.
-    fn resolve_variant_in_any_type(
-        &mut self,
-        variant_name: &str,
-        span: Span,
-    ) -> Option<(crate::types::ty::TypeId, usize)> {
-        // Iterate over all registered types
-        for i in 0..self.type_env.type_count() {
-            let type_id = crate::types::ty::TypeId(i as u32);
-            if let Some(idx) = self.type_env.get_variant_index(type_id, variant_name) {
-                return Some((type_id, idx));
-            }
-        }
-        self.errors.push(LowerError::UnknownVariant {
-            name: variant_name.to_string(),
-            type_name: "(unknown)".to_string(),
-            span,
-        });
-        None
     }
 
     // -----------------------------------------------------------------------

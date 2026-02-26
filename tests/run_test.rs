@@ -98,3 +98,8 @@ fn closures() {
 fn multi_module() {
     check("tests/run/multi_module/main.tw");
 }
+
+#[test]
+fn variant_collision() {
+    check("tests/run/variant_collision.tw");
+}

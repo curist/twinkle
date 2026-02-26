@@ -1,0 +1,27 @@
+// Expected output:
+//   A: none
+//   A: some 42
+//   B: none
+//   B: all
+
+type A = { None, Some(Int) }
+type B = { None, All }
+
+fn describe_a(v: A) String {
+  case v {
+    .None => "A: none"
+    .Some(n) => "A: some ${n}"
+  }
+}
+
+fn describe_b(v: B) String {
+  case v {
+    .None => "B: none"
+    .All => "B: all"
+  }
+}
+
+println(describe_a(A.None))
+println(describe_a(A.Some(42)))
+println(describe_b(B.None))
+println(describe_b(B.All))

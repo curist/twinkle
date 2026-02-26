@@ -74,7 +74,7 @@ impl<W: Write> Interpreter<W> {
         args: Vec<Value>,
         captured: Frame,
     ) -> EvalResult {
-        // Prelude / built-in functions (FuncId 1–16)
+        // Prelude / built-in functions (FuncId 1–22)
         if func_id.0 < crate::ir::lower::prelude::USER_FUNC_START {
             return self.call_builtin(func_id, args);
         }
@@ -292,13 +292,8 @@ impl<W: Write> Interpreter<W> {
                         }
                         Ok(elems[i].clone())
                     }
-                    (Value::Dict(pairs), key) => {
-                        for (k, v) in &pairs {
-                            if k == &key {
-                                return Ok(v.clone());
-                            }
-                        }
-                        panic!("dict key not found: {:?}", key);
+                    (Value::Dict(_), _) => {
+                        unreachable!("dict[key] should be rewritten to DICT_GET by the lowerer")
                     }
                     (base, idx) => panic!("type error: index on {:?} with {:?}", base, idx),
                 }
