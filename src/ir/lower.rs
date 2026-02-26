@@ -57,8 +57,15 @@ pub mod prelude {
 
     pub const DICT_GET_UNSAFE: FuncId = FuncId(24); // internal: dict_get_unsafe(m, k) -> V  (panics if absent)
 
+    pub const ARRAY_CONCAT: FuncId = FuncId(25); // Array.concat(a, b) -> Array<T>
+    pub const ARRAY_SLICE:  FuncId = FuncId(26); // Array.slice(arr, start, end) -> Array<T>
+    pub const DICT_LEN:     FuncId = FuncId(27); // Dict.len(m) -> Int
+    pub const DICT_HAS:     FuncId = FuncId(28); // Dict.has(m, k) -> Bool
+    pub const DICT_REMOVE:  FuncId = FuncId(29); // Dict.remove(m, k) -> Dict<K,V>
+    pub const STRING_SUBSTR: FuncId = FuncId(30); // String.substring(s, start, end) -> String
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 25;
+    pub const USER_FUNC_START: u32 = 31;
 }
 
 // ---------------------------------------------------------------------------
@@ -1846,8 +1853,14 @@ impl Lowerer {
         let func_id = match (&base_ty, method) {
             (MonoType::Array(_), "len") => prelude::ARRAY_LEN,
             (MonoType::Array(_), "append") => prelude::ARRAY_APPEND,
+            (MonoType::Array(_), "concat") => prelude::ARRAY_CONCAT,
+            (MonoType::Array(_), "slice") => prelude::ARRAY_SLICE,
+            (MonoType::Dict(_, _), "len") => prelude::DICT_LEN,
+            (MonoType::Dict(_, _), "has") => prelude::DICT_HAS,
+            (MonoType::Dict(_, _), "remove") => prelude::DICT_REMOVE,
             (MonoType::String, "len") => prelude::STRING_LEN,
             (MonoType::String, "concat") => prelude::STRING_CONCAT,
+            (MonoType::String, "substring") => prelude::STRING_SUBSTR,
             (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
@@ -1872,6 +1885,24 @@ impl Lowerer {
                         });
                         return None;
                     }
+                } else if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
+                    // Function-typed record field: `record.fn_field(args)` — call the closure stored in the field
+                    let field_ty = self.type_env.get_record_fields(type_id)
+                        .and_then(|fields| fields.get(field_idx))
+                        .map(|f| f.ty.clone())
+                        .unwrap_or(MonoType::Void);
+                    let field_expr = CoreExpr {
+                        kind: CoreExprKind::RecordGet {
+                            target: Box::new(all_args[0].clone()),
+                            field: crate::ir::core::FieldId(field_idx),
+                        },
+                        ty: field_ty,
+                        span,
+                    };
+                    return Some(CoreExprKind::Call {
+                        callee: Box::new(field_expr),
+                        args: all_args.into_iter().skip(1).collect(),
+                    });
                 } else {
                     self.errors.push(LowerError::InternalError {
                         message: format!(

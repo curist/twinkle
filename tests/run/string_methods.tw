@@ -1,0 +1,13 @@
+// Expected output:
+//   hello
+//   world
+//   lo wo
+//
+
+s := "hello world"
+println(s.substring(0, 5))    // hello
+println(s.substring(6, 11))   // world
+println(s.substring(3, 8))    // lo wo
+
+// Out-of-bounds clamps to length
+println(s.substring(11, 20))  // "" (empty)

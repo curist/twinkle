@@ -1,0 +1,16 @@
+// Expected output:
+//   3
+//   4
+//   4
+//   6
+
+use geom as g
+
+p: g.Point = g.Point.{ x: 3, y: 4 }
+println("${p.x}")
+println("${p.y}")
+
+// Inherent method desugars to g.translate(p, 1, 2)
+q := p.translate(1, 2)
+println("${q.x}")
+println("${q.y}")

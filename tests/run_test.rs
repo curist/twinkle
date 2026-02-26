@@ -108,3 +108,63 @@ fn variant_collision() {
 fn range() {
     check("tests/run/range.tw");
 }
+
+#[test]
+fn dicts() {
+    check("tests/run/dicts.tw");
+}
+
+#[test]
+fn strings_escape() {
+    check("tests/run/strings_escape.tw");
+}
+
+#[test]
+fn for_break() {
+    check("tests/run/for_break.tw");
+}
+
+#[test]
+fn type_alias() {
+    check("tests/run/type_alias.tw");
+}
+
+#[test]
+fn mutual_recursion() {
+    check("tests/run/mutual_recursion.tw");
+}
+
+#[test]
+fn result_void() {
+    check("tests/run/result_void.tw");
+}
+
+#[test]
+fn capability_records() {
+    check("tests/run/capability_records.tw");
+}
+
+#[test]
+fn nested_field_update() {
+    check("tests/run/nested_field_update.tw");
+}
+
+#[test]
+fn array_methods() {
+    check("tests/run/array_methods.tw");
+}
+
+#[test]
+fn dict_methods() {
+    check("tests/run/dict_methods.tw");
+}
+
+#[test]
+fn string_methods() {
+    check("tests/run/string_methods.tw");
+}
+
+#[test]
+fn multi_module_alias() {
+    check("tests/run/multi_module_alias/main.tw");
+}

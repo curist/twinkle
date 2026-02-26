@@ -1,0 +1,18 @@
+// Expected output:
+//   2
+//   true
+//   false
+//   1
+//   false
+
+m: Dict<String, Int> = Dict.new()
+m["a"] = 1
+m["b"] = 2
+
+println("${m.len()}")       // 2
+println("${m.has("a")}")    // true
+println("${m.has("c")}")    // false
+
+m = m.remove("a")
+println("${m.len()}")       // 1
+println("${m.has("a")}")    // false

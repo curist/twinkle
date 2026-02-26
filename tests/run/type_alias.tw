@@ -1,0 +1,26 @@
+// Expected output:
+//   Hello, Alice
+//   42
+//   3
+
+// Type aliases expand transparently — ID is Int, Name is String
+type ID = Int
+type Name = String
+type IntArr = Array<Int>
+
+fn greet(name: Name) Void {
+    println("Hello, ${name}")
+}
+
+fn sum_arr(xs: IntArr) Int {
+    acc := 0
+    for x in xs {
+        acc = acc + x
+    }
+    acc
+}
+
+id: ID = 42
+greet("Alice")
+println("${id}")
+println("${sum_arr([1, 2])}")

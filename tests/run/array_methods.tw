@@ -1,0 +1,25 @@
+// Expected output:
+//   6
+//   1
+//   2
+//   3
+//   4
+//   5
+//   6
+//   3
+//   2
+//   3
+//   4
+
+a := [1, 2, 3]
+b := [4, 5, 6]
+
+// concat returns a new array with elements of b appended to a
+c := a.concat(b)
+println("${c.len()}")
+for x in c { println("${x}") }
+
+// slice(start, end) returns elements [start, end)
+d := c.slice(1, 4)
+println("${d.len()}")
+for x in d { println("${x}") }

@@ -1,0 +1,19 @@
+// Expected output:
+//   42
+//   hello
+//   100
+
+// A record with function fields acts as a capability / interface
+type Printer = .{ print_it: fn(Int) Void }
+type StrPrinter = .{ print_it: fn(String) Void }
+
+p: Printer = .{ print_it: fn(n: Int) Void { println("${n}") } }
+sp: StrPrinter = .{ print_it: fn(s: String) Void { println(s) } }
+
+// Call via direct field access
+p.print_it(42)
+sp.print_it("hello")
+
+// Extract the function into a variable and call it
+f := p.print_it
+f(100)

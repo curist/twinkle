@@ -1,0 +1,22 @@
+// Expected output:
+//   line1
+//   line2
+//   tab	end
+//   back\slash
+//   say "hi"
+//   price: $10
+
+// \n embeds a newline inside a string — print (not println) to verify
+print("line1\nline2\n")
+
+// \t produces a tab character
+println("tab\tend")
+
+// \\ produces a literal backslash
+println("back\\slash")
+
+// \" produces a literal double-quote
+println("say \"hi\"")
+
+// \$ produces a literal dollar sign, suppressing interpolation
+println("price: \$10")

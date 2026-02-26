@@ -1020,6 +1020,23 @@ impl TypeChecker {
                         self.check_expr(&args[0], &elem_ty)?;
                         Ok(base_ty)
                     }
+                    "concat" => {
+                        if args.len() != 1 {
+                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &base_ty)?;
+                        Ok(base_ty)
+                    }
+                    "slice" => {
+                        if args.len() != 2 {
+                            self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &MonoType::Int)?;
+                        self.check_expr(&args[1], &MonoType::Int)?;
+                        Ok(base_ty)
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "unknown array method",
@@ -1053,6 +1070,15 @@ impl TypeChecker {
                     }
                     Ok(MonoType::String)
                 }
+                "substring" => {
+                    if args.len() != 2 {
+                        self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                        return Err(());
+                    }
+                    self.check_expr(&args[0], &MonoType::Int)?;
+                    self.check_expr(&args[1], &MonoType::Int)?;
+                    Ok(MonoType::String)
+                }
                 _ => {
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "unknown string method",
@@ -1062,13 +1088,36 @@ impl TypeChecker {
                     Err(())
                 }
             },
-            MonoType::Dict(k_ty, _v_ty) => match method {
+            MonoType::Dict(k_ty, v_ty) => match method {
                 "keys" => {
                     if !args.is_empty() {
                         self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
                         return Err(());
                     }
                     Ok(MonoType::Array(k_ty))
+                }
+                "len" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        return Err(());
+                    }
+                    Ok(MonoType::Int)
+                }
+                "has" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        return Err(());
+                    }
+                    self.check_expr(&args[0], &k_ty)?;
+                    Ok(MonoType::Bool)
+                }
+                "remove" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        return Err(());
+                    }
+                    self.check_expr(&args[0], &k_ty)?;
+                    Ok(MonoType::Dict(k_ty, v_ty))
                 }
                 _ => {
                     self.errors.push(TypeError::UnsupportedFeature {
@@ -1159,6 +1208,28 @@ impl TypeChecker {
                             self.check_expr(arg, expected_ty)?;
                         }
                         return Ok(sig.ret.unwrap_or(MonoType::Void));
+                    }
+                }
+
+                // No inherent method — check if it's a function-typed record field
+                // (capability record call: `record.fn_field(args)`)
+                if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
+                    if let Some(fields) = self.type_env.get_record_fields(type_id) {
+                        let field_ty = fields[field_idx].ty.clone();
+                        if let MonoType::Function { params, ret } = field_ty {
+                            if params.len() != args.len() {
+                                self.errors.push(TypeError::WrongArity {
+                                    expected: params.len(),
+                                    actual: args.len(),
+                                    span,
+                                });
+                                return Err(());
+                            }
+                            for (arg, expected_ty) in args.iter().zip(params.iter()) {
+                                self.check_expr(arg, expected_ty)?;
+                            }
+                            return Ok(*ret);
+                        }
                     }
                 }
 

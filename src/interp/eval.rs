@@ -592,6 +592,66 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_get_unsafe: expected Dict"),
                 }
             }
+            25 => {
+                // Array.concat(a, b) -> Array<T>
+                match (args[0].clone(), args[1].clone()) {
+                    (Value::Arr(mut a), Value::Arr(b)) => {
+                        a.extend(b);
+                        Ok(Value::Arr(a))
+                    }
+                    _ => panic!("array_concat: expected two Arrays"),
+                }
+            }
+            26 => {
+                // Array.slice(arr, start, end) -> Array<T>
+                match (&args[0], &args[1], &args[2]) {
+                    (Value::Arr(elems), Value::Int(s), Value::Int(e)) => {
+                        let s = (*s as usize).min(elems.len());
+                        let e = (*e as usize).min(elems.len()).max(s);
+                        Ok(Value::Arr(elems[s..e].to_vec()))
+                    }
+                    _ => panic!("array_slice: expected Array and two Ints"),
+                }
+            }
+            27 => {
+                // Dict.len(m) -> Int
+                match &args[0] {
+                    Value::Dict(pairs) => Ok(Value::Int(pairs.len() as i64)),
+                    _ => panic!("dict_len: expected Dict"),
+                }
+            }
+            28 => {
+                // Dict.has(m, k) -> Bool
+                match &args[0] {
+                    Value::Dict(pairs) => {
+                        let found = pairs.iter().any(|(k, _)| k == &args[1]);
+                        Ok(Value::Bool(found))
+                    }
+                    _ => panic!("dict_has: expected Dict"),
+                }
+            }
+            29 => {
+                // Dict.remove(m, k) -> Dict<K,V>
+                match args[0].clone() {
+                    Value::Dict(mut pairs) => {
+                        pairs.retain(|(k, _)| k != &args[1]);
+                        Ok(Value::Dict(pairs))
+                    }
+                    _ => panic!("dict_remove: expected Dict"),
+                }
+            }
+            30 => {
+                // String.substring(s, start, end) -> String
+                match (&args[0], &args[1], &args[2]) {
+                    (Value::Str(s), Value::Int(start), Value::Int(end)) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        let s = (*start as usize).min(chars.len());
+                        let e = (*end as usize).min(chars.len()).max(s);
+                        Ok(Value::Str(chars[s..e].iter().collect()))
+                    }
+                    _ => panic!("string_substring: expected String and two Ints"),
+                }
+            }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
     }

@@ -1,0 +1,29 @@
+// Expected output:
+//   ok
+//   err: must be positive
+//   validated: 5
+
+// Result<Void, String>: Ok carries a Void payload (empty block {})
+fn validate(n: Int) Result<Void, String> {
+    if n > 0 { .Ok({}) } else { .Err("must be positive") }
+}
+
+fn describe(r: Result<Void, String>) String {
+    case r {
+        .Ok(_) => "ok"
+        .Err(msg) => "err: ${msg}"
+    }
+}
+
+println(describe(validate(5)))
+println(describe(validate(-1)))
+
+// try sugar: extracts Ok value (Void here) or propagates Err
+fn run_validated(n: Int) Result<Void, String> {
+    try validate(n)
+    println("validated: ${n}")
+    .Ok({})
+}
+
+describe(run_validated(5))
+describe(run_validated(-1))
