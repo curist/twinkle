@@ -517,6 +517,41 @@ impl TypeChecker {
                 Ok(())
             }
 
+            // Lambda: use expected Function type to supply unannotated param types
+            ExprKind::Function(fe) => {
+                if let MonoType::Function { params: expected_params, ret: expected_ret } = expected {
+                    if fe.params.len() != expected_params.len() {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: expected_params.len(),
+                            actual: fe.params.len(),
+                            span: expr.span,
+                        });
+                        return Err(());
+                    }
+                    let mut param_types = Vec::new();
+                    for (p, exp_ty) in fe.params.iter().zip(expected_params.iter()) {
+                        let ty = match &p.ty {
+                            Some(ann) => self.resolve_type(ann)?,
+                            None => exp_ty.clone(),
+                        };
+                        param_types.push(ty);
+                    }
+                    self.local_env.push_scope();
+                    for (p, ty) in fe.params.iter().zip(&param_types) {
+                        self.local_env.bind(p.name.clone(), ty.clone());
+                    }
+                    let saved = self.current_function_ret.take();
+                    self.current_function_ret = Some(*expected_ret.clone());
+                    let result = self.check_expr(&fe.body, expected_ret);
+                    self.local_env.pop_scope();
+                    self.current_function_ret = saved;
+                    result
+                } else {
+                    let actual = self.synth_expr(expr)?;
+                    self.unify(&actual, expected, expr.span)
+                }
+            }
+
             // Dict.new() — type comes entirely from context annotation
             ExprKind::Call { callee, args }
                 if args.is_empty() =>
