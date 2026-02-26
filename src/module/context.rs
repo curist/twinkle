@@ -120,6 +120,7 @@ impl CompilationContext {
             let qualified_name = format!("{}.{}", alias, func_name);
             let qualified_sig = FunctionSignature {
                 name: qualified_name.clone(),
+                type_params: sig.type_params.clone(),
                 params: sig.params.clone(),
                 ret: sig.ret.clone(),
             };

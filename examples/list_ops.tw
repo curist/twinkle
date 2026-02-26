@@ -72,3 +72,5 @@ fn main() Void {
   product := fold(numbers, 1, fn(a: Int, b: Int) Int { a * b })
   println("Product:  ${product}")
 }
+
+main()

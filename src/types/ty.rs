@@ -21,9 +21,11 @@ pub const RESULT_TYPE_ID: TypeId = TypeId(1);
 pub const CELL_TYPE_ID:   TypeId = TypeId(2);
 
 /// Monomorphic type representation
-/// Stage 2: No generics - all type parameters must be monomorphic
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MonoType {
+    /// Type variable — used inside generic function bodies and signatures.
+    /// Replaced by concrete types at call sites via substitution.
+    Var(String),
     /// Integer type (i64)
     Int,
     /// Floating point type (f64)
@@ -99,6 +101,7 @@ impl MonoType {
     /// This is used for error messages to show "Point" instead of "Type#0"
     pub fn format_with_names(&self, type_env: &crate::types::env::TypeEnv) -> String {
         match self {
+            MonoType::Var(name) => name.clone(),
             MonoType::Int => "Int".to_string(),
             MonoType::Float => "Float".to_string(),
             MonoType::Bool => "Bool".to_string(),
@@ -147,6 +150,7 @@ impl MonoType {
 impl fmt::Display for MonoType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            MonoType::Var(name) => write!(f, "{}", name),
             MonoType::Int => write!(f, "Int"),
             MonoType::Float => write!(f, "Float"),
             MonoType::Bool => write!(f, "Bool"),
@@ -242,6 +246,7 @@ pub struct Variant {
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub name: String,
+    pub type_params: Vec<String>, // generic type parameter names (e.g. ["A", "B"])
     pub params: Vec<MonoType>,
     pub ret: Option<MonoType>, // None means infer from body
 }

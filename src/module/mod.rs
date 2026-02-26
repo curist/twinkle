@@ -122,6 +122,7 @@ pub fn compile_module(
                             let qname = format!("{}.{}", alias, &decl.name);
                             let qsig = FunctionSignature {
                                 name: qname,
+                                type_params: sig.type_params.clone(),
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
                             };

@@ -8,7 +8,7 @@ use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID};
 use super::type_map::TypeMap;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::mem;
 
 /// Bidirectional type checker
@@ -26,6 +26,9 @@ pub struct TypeChecker {
 
     // Module aliases (for cross-module call resolution)
     module_aliases: HashSet<String>,
+
+    // Type variable scope — names in scope resolve to MonoType::Var
+    type_var_scope: Vec<String>,
 }
 
 impl TypeChecker {
@@ -44,6 +47,7 @@ impl TypeChecker {
             type_map: TypeMap::new(),
             current_function_ret: None,
             module_aliases: HashSet::new(),
+            type_var_scope: Vec::new(),
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -134,6 +138,7 @@ impl TypeChecker {
             type_map: TypeMap::new(),
             current_function_ret: None,
             module_aliases,
+            type_var_scope: Vec::new(),
         };
 
         // Pass 1: top-level lets
@@ -196,6 +201,9 @@ impl TypeChecker {
     //
 
     fn check_function(&mut self, decl: &FunctionDecl) {
+        // Push type variable scope for generic functions
+        let saved_type_vars = std::mem::replace(&mut self.type_var_scope, decl.type_params.clone());
+
         // Push a new scope for the function body
         self.local_env.push_scope();
 
@@ -246,6 +254,7 @@ impl TypeChecker {
         // Clean up
         self.current_function_ret = None;
         self.local_env.pop_scope();
+        self.type_var_scope = saved_type_vars;
     }
 
     /// Type-check a top-level statement that is not a let binding.
@@ -334,6 +343,12 @@ impl TypeChecker {
     /// Resolve an AST type annotation to a MonoType
     /// Delegates to TypeEnv's shared implementation
     fn resolve_type(&mut self, ty: &AstType) -> Result<MonoType, ()> {
+        // Check type var scope first
+        if let AstType::Named { name, args, .. } = ty {
+            if args.is_empty() && self.type_var_scope.contains(name) {
+                return Ok(MonoType::Var(name.clone()));
+            }
+        }
         self.type_env.resolve_type(ty, &mut self.errors)
     }
 
@@ -773,6 +788,30 @@ impl TypeChecker {
                         span,
                     });
                     return Err(());
+                }
+
+                // Generic call: params contain type variables — use substitution
+                if params.iter().any(type_contains_var) {
+                    let mut subst = HashMap::new();
+                    let mut ok = true;
+                    for arg in args.iter() {
+                        let _ = self.synth_expr(arg)?;
+                    }
+                    let arg_tys: Vec<MonoType> = args.iter()
+                        .filter_map(|a| self.type_map.get_expr_type(a.id).cloned())
+                        .collect();
+                    for (param_ty, arg_ty) in params.iter().zip(&arg_tys) {
+                        if !collect_subst(param_ty, arg_ty, &mut subst) {
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected: apply_subst(param_ty, &subst),
+                                actual: arg_ty.clone(),
+                                span,
+                            });
+                            ok = false;
+                        }
+                    }
+                    if !ok { return Err(()); }
+                    return Ok(apply_subst(&ret, &subst));
                 }
 
                 // Check each argument
@@ -1992,5 +2031,74 @@ impl TypeChecker {
         self.local_env.pop_scope();
 
         Ok(MonoType::Array(Box::new(body_ty)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic substitution helpers
+// ---------------------------------------------------------------------------
+
+/// Unify `expected` (which may contain Var) against `actual` (concrete).
+/// On success, adds substitutions to `subst`. Returns false on structural mismatch.
+fn collect_subst(expected: &MonoType, actual: &MonoType, subst: &mut HashMap<String, MonoType>) -> bool {
+    match (expected, actual) {
+        (MonoType::Var(name), _) => {
+            if let Some(existing) = subst.get(name) {
+                existing == actual
+            } else {
+                subst.insert(name.clone(), actual.clone());
+                true
+            }
+        }
+        (MonoType::Array(a), MonoType::Array(b)) => collect_subst(a, b, subst),
+        (MonoType::Dict(ak, av), MonoType::Dict(bk, bv)) => {
+            collect_subst(ak, bk, subst) && collect_subst(av, bv, subst)
+        }
+        (MonoType::Function { params: p1, ret: r1 }, MonoType::Function { params: p2, ret: r2 }) => {
+            p1.len() == p2.len()
+                && p1.iter().zip(p2.iter()).all(|(a, b)| collect_subst(a, b, subst))
+                && collect_subst(r1, r2, subst)
+        }
+        (MonoType::Named { type_id: id1, args: a1 }, MonoType::Named { type_id: id2, args: a2 }) => {
+            id1 == id2
+                && a1.len() == a2.len()
+                && a1.iter().zip(a2.iter()).all(|(a, b)| collect_subst(a, b, subst))
+        }
+        (MonoType::Never, _) | (_, MonoType::Never) => true,
+        (a, b) => a == b,
+    }
+}
+
+/// Apply a substitution map to a type, replacing all Var occurrences.
+pub fn apply_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType {
+    match ty {
+        MonoType::Var(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        MonoType::Array(elem) => MonoType::Array(Box::new(apply_subst(elem, subst))),
+        MonoType::Dict(k, v) => MonoType::Dict(
+            Box::new(apply_subst(k, subst)),
+            Box::new(apply_subst(v, subst)),
+        ),
+        MonoType::Function { params, ret } => MonoType::Function {
+            params: params.iter().map(|p| apply_subst(p, subst)).collect(),
+            ret: Box::new(apply_subst(ret, subst)),
+        },
+        MonoType::Named { type_id, args } => MonoType::Named {
+            type_id: *type_id,
+            args: args.iter().map(|a| apply_subst(a, subst)).collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn type_contains_var(ty: &MonoType) -> bool {
+    match ty {
+        MonoType::Var(_) => true,
+        MonoType::Array(e) => type_contains_var(e),
+        MonoType::Dict(k, v) => type_contains_var(k) || type_contains_var(v),
+        MonoType::Function { params, ret } => {
+            params.iter().any(type_contains_var) || type_contains_var(ret)
+        }
+        MonoType::Named { args, .. } => args.iter().any(type_contains_var),
+        _ => false,
     }
 }

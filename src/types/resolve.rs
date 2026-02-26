@@ -177,16 +177,6 @@ impl Resolver {
     }
 
     fn collect_function_decl(&mut self, decl: &FunctionDecl) {
-        // Reject generics in Stage 2
-        if !decl.type_params.is_empty() {
-            self.errors.push(TypeError::GenericNotSupported {
-                name: decl.name.clone(),
-                span: decl.span,
-                note: "Generic functions will be supported in Stage 5".to_string(),
-            });
-            return;
-        }
-
         // Check for duplicate function names
         if let Some(first_span) = self.function_spans.get(&decl.name) {
             self.errors.push(TypeError::DuplicateDefinition {
@@ -332,11 +322,13 @@ impl Resolver {
     }
 
     fn resolve_function_sig(&mut self, decl: &FunctionDecl) -> Result<FunctionSignature, ()> {
-        // Resolve parameter types
+        let type_params = decl.type_params.clone();
+
+        // Resolve parameter types (type param names resolve to Var)
         let mut params = Vec::new();
         for param in &decl.params {
             let ty = if let Some(param_ty) = &param.ty {
-                self.resolve_type(param_ty)?
+                self.resolve_type_with_vars(param_ty, &type_params)?
             } else {
                 // No type annotation - not allowed in Stage 2
                 self.errors.push(TypeError::UnsupportedFeature {
@@ -351,17 +343,68 @@ impl Resolver {
 
         // Resolve return type (or None if omitted for inference)
         let ret = if let Some(ret_ty) = &decl.return_type {
-            Some(self.resolve_type(ret_ty)?)
+            Some(self.resolve_type_with_vars(ret_ty, &type_params)?)
         } else {
-            // No explicit return type - will be inferred from body during type checking
             None
         };
 
         Ok(FunctionSignature {
             name: decl.name.clone(),
+            type_params,
             params,
             ret,
         })
+    }
+
+    fn resolve_type_with_vars(&mut self, ty: &AstType, type_vars: &[String]) -> Result<MonoType, ()> {
+        // If this is a bare name that matches a type variable, return Var(name)
+        if let AstType::Named { name, args, .. } = ty {
+            if args.is_empty() && type_vars.contains(name) {
+                return Ok(MonoType::Var(name.clone()));
+            }
+        }
+        // Recursively handle compound types with type vars
+        match ty {
+            AstType::Named { name, args, span } if !args.is_empty() => {
+                // Try built-in generic types (Array, Dict, etc.) with var-aware arg resolution
+                let resolved_args: Vec<MonoType> = args.iter()
+                    .map(|a| self.resolve_type_with_vars(a, type_vars))
+                    .collect::<Result<_, _>>()?;
+                // Re-use env's logic by building a synthetic type with resolved args
+                // For known built-ins, handle directly
+                match name.as_str() {
+                    "Array" if resolved_args.len() == 1 => Ok(MonoType::Array(Box::new(resolved_args.into_iter().next().unwrap()))),
+                    "Dict" if resolved_args.len() == 2 => {
+                        let mut it = resolved_args.into_iter();
+                        Ok(MonoType::Dict(Box::new(it.next().unwrap()), Box::new(it.next().unwrap())))
+                    }
+                    "Option" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: crate::types::ty::OPTION_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Result" if resolved_args.len() == 2 => Ok(MonoType::Named {
+                        type_id: crate::types::ty::RESULT_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Cell" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: crate::types::ty::CELL_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    _ => {
+                        // Fall through to normal resolution (will likely error on unknown generic)
+                        self.resolve_type(ty)
+                    }
+                }
+            }
+            AstType::Function { params, ret, .. } => {
+                let param_tys: Vec<MonoType> = params.iter()
+                    .map(|p| self.resolve_type_with_vars(p, type_vars))
+                    .collect::<Result<_, _>>()?;
+                let ret_ty = self.resolve_type_with_vars(ret, type_vars)?;
+                Ok(MonoType::Function { params: param_tys, ret: Box::new(ret_ty) })
+            }
+            _ => self.resolve_type(ty),
+        }
     }
 
     //
