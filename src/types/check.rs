@@ -458,6 +458,7 @@ impl TypeChecker {
                             },
                             actual: inner_ty,
                             span: expr.span,
+                            note: None,
                         });
                         Err(())
                     }
@@ -634,6 +635,7 @@ impl TypeChecker {
                             expected: left_ty.clone(),
                             actual: right_ty,
                             span: right.span,
+                    note: None,
                         });
                         Err(())
                     }
@@ -680,6 +682,7 @@ impl TypeChecker {
                             expected: MonoType::Int,
                             actual: ty,
                             span: expr.span,
+                    note: None,
                         });
                         Err(())
                     }
@@ -717,6 +720,7 @@ impl TypeChecker {
                             expected: MonoType::String,
                             actual: arg_ty,
                             span: args[0].span,
+                    note: None,
                         });
                         return Err(());
                     }
@@ -800,12 +804,18 @@ impl TypeChecker {
                     let arg_tys: Vec<MonoType> = args.iter()
                         .filter_map(|a| self.type_map.get_expr_type(a.id).cloned())
                         .collect();
-                    for (param_ty, arg_ty) in params.iter().zip(&arg_tys) {
+                    let callee_label = if let ExprKind::Ident(n) = &callee.kind {
+                        format!(" of call to `{}`", n)
+                    } else {
+                        String::new()
+                    };
+                    for (idx, (param_ty, arg_ty)) in params.iter().zip(&arg_tys).enumerate() {
                         if !collect_subst(param_ty, arg_ty, &mut subst) {
                             self.errors.push(TypeError::TypeMismatch {
                                 expected: apply_subst(param_ty, &subst),
                                 actual: arg_ty.clone(),
                                 span,
+                                note: Some(format!("argument {}{}", idx + 1, callee_label)),
                             });
                             ok = false;
                         }
@@ -814,9 +824,21 @@ impl TypeChecker {
                     return Ok(apply_subst(&ret, &subst));
                 }
 
-                // Check each argument
-                for (arg, expected_ty) in args.iter().zip(params.iter()) {
-                    self.check_expr(arg, expected_ty)?;
+                // Check each argument; on failure, patch in call context
+                for (idx, (arg, expected_ty)) in args.iter().zip(params.iter()).enumerate() {
+                    if let Err(()) = self.check_expr(arg, expected_ty) {
+                        if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut() {
+                            if note.is_none() {
+                                let label = if let ExprKind::Ident(n) = &callee.kind {
+                                    format!("argument {} of call to `{}`", idx + 1, n)
+                                } else {
+                                    format!("argument {} of call", idx + 1)
+                                };
+                                *note = Some(label);
+                            }
+                        }
+                        return Err(());
+                    }
                 }
 
                 Ok(*ret)
@@ -904,6 +926,7 @@ impl TypeChecker {
                             expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
                             actual: other,
                             span,
+                            note: None,
                         });
                         Err(())
                     }
@@ -926,6 +949,7 @@ impl TypeChecker {
                             expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
                             actual: other,
                             span,
+                            note: None,
                         });
                         Err(())
                     }
@@ -952,6 +976,7 @@ impl TypeChecker {
                             expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
                             actual: other,
                             span,
+                            note: None,
                         });
                         Err(())
                     }
@@ -1249,6 +1274,7 @@ impl TypeChecker {
                     expected: MonoType::Int, // dummy
                     actual: base_ty,
                     span: base.span,
+                    note: None,
                 });
                 Err(())
             }
@@ -1525,6 +1551,7 @@ impl TypeChecker {
                         expected: MonoType::Int, // Dummy
                         actual: base_ty,
                         span: base.span,
+                    note: None,
                     });
                     Err(())
                 }
@@ -1534,6 +1561,7 @@ impl TypeChecker {
                     expected: MonoType::Int, // Dummy
                     actual: base_ty,
                     span: base.span,
+                    note: None,
                 });
                 Err(())
             }
@@ -1569,6 +1597,7 @@ impl TypeChecker {
                     expected: MonoType::Array(Box::new(MonoType::Int)), // Dummy
                     actual: base_ty,
                     span: base.span,
+                    note: None,
                 });
                 Err(())
             }
@@ -1641,6 +1670,7 @@ impl TypeChecker {
                     expected: expected.clone(),
                     actual: MonoType::Void, // Dummy
                     span,
+                    note: None,
                 });
                 Err(())
             }
@@ -1655,6 +1685,7 @@ impl TypeChecker {
                     expected: MonoType::named(type_id),
                     actual: MonoType::Void, // Dummy
                     span,
+                    note: None,
                 });
                 return Err(());
             }
@@ -1740,6 +1771,7 @@ impl TypeChecker {
                             expected: expected.clone(),
                             actual: MonoType::Void, // Placeholder
                             span,
+                    note: None,
                         });
                         return Err(());
                     }
@@ -1807,6 +1839,7 @@ impl TypeChecker {
                     expected: expected.clone(),
                     actual: MonoType::Void, // Placeholder - we don't know the actual type
                     span,
+                    note: None,
                 });
                 Err(())
             }
@@ -1890,6 +1923,7 @@ impl TypeChecker {
                 expected: expected.clone(),
                 actual: actual.clone(),
                 span,
+                    note: None,
             });
             Err(())
         }
@@ -1974,6 +2008,7 @@ impl TypeChecker {
                             expected: MonoType::Array(Box::new(MonoType::Int)),
                             actual: other,
                             span: base.span,
+                    note: None,
                         });
                         Err(())
                     }
@@ -2074,6 +2109,7 @@ impl TypeChecker {
                     expected: MonoType::Array(Box::new(MonoType::Int)),
                     actual: other,
                     span: iter.span,
+                    note: None,
                 });
                 return;
             }
@@ -2098,6 +2134,7 @@ impl TypeChecker {
                     expected: MonoType::Array(Box::new(MonoType::Int)),
                     actual: other,
                     span: iter.span,
+                    note: None,
                 });
                 return Err(());
             }

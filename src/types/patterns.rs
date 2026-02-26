@@ -55,6 +55,7 @@ impl<'a> PatternChecker<'a> {
                         expected: expected.clone(),
                         actual: lit_ty,
                         span: *span,
+                    note: None,
                     });
                     Err(())
                 }
@@ -77,6 +78,7 @@ impl<'a> PatternChecker<'a> {
                                     expected: expected.clone(),
                                     actual: MonoType::Void, // Dummy
                                     span: *span,
+                    note: None,
                                 });
                                 return Err(());
                             }

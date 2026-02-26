@@ -364,7 +364,7 @@ impl<W: Write> Interpreter<W> {
     }
 
     // -----------------------------------------------------------------------
-    // Built-in functions (FuncId 1–14)
+    // Built-in functions (FuncId 1–30; USER_FUNC_START=31)
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {

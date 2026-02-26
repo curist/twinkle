@@ -21,6 +21,8 @@ pub enum TypeError {
         expected: MonoType,
         actual: MonoType,
         span: Span,
+        /// Optional extra context, e.g. "argument 2 of call to `foo`"
+        note: Option<String>,
     },
 
     /// Non-exhaustive pattern match
@@ -149,12 +151,14 @@ impl TypeError {
                 expected,
                 actual,
                 span,
-            } => self.format_error(
-                registry,
-                *span,
-                &format!("Type mismatch"),
-                Some(&format!("Expected: {}\nActual: {}", fmt_type(expected), fmt_type(actual))),
-            ),
+                note,
+            } => {
+                let mut full_note = format!("Expected: {}\nActual:   {}", fmt_type(expected), fmt_type(actual));
+                if let Some(ctx) = note {
+                    full_note.push_str(&format!("\n{}", ctx));
+                }
+                self.format_error(registry, *span, "Type mismatch", Some(&full_note))
+            }
             TypeError::NonExhaustiveMatch { missing, span } => self.format_error(
                 registry,
                 *span,

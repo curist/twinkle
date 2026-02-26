@@ -157,6 +157,44 @@ fn test_typecheck_fail_cases() {
     println!("✓ All {} failing test cases failed as expected", passed);
 }
 
+/// Run a program through parse → resolve → typecheck and return all formatted error messages.
+fn check_errors(src: &str) -> Vec<String> {
+    let (ast, registry) = twinkle::syntax::parse_source(src, "test.tw")
+        .expect("parse failed");
+    let (type_env, value_env) = match twinkle::types::Resolver::resolve(&ast) {
+        Ok(envs) => envs,
+        Err(errors) => {
+            return errors.iter().map(|e| e.format(&registry, None)).collect();
+        }
+    };
+    match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
+        Ok(_) => vec![],
+        Err(errors) => errors.iter().map(|e| e.format(&registry, Some(&type_env))).collect(),
+    }
+}
+
+#[test]
+fn test_error_note_regular_call() {
+    // Non-generic call: wrong arg type should include argument position and function name
+    let src = "fn add(x: Int, y: Int) Int { x + y }\nadd(1, \"hello\")";
+    let errors = check_errors(src);
+    assert!(!errors.is_empty(), "expected a type error");
+    let joined = errors.join("\n");
+    assert!(joined.contains("argument 2"), "expected 'argument 2' in error:\n{}", joined);
+    assert!(joined.contains("add"), "expected function name 'add' in error:\n{}", joined);
+}
+
+#[test]
+fn test_error_note_generic_call() {
+    // Generic call: type variable conflicts across arguments
+    let src = "fn first<A>(a: A, b: A) A { a }\nfirst(1, \"hello\")";
+    let errors = check_errors(src);
+    assert!(!errors.is_empty(), "expected a type error");
+    let joined = errors.join("\n");
+    assert!(joined.contains("argument 2"), "expected 'argument 2' in error:\n{}", joined);
+    assert!(joined.contains("first"), "expected function name 'first' in error:\n{}", joined);
+}
+
 // Closure capture-by-value semantics (spec §7.7).
 // A closure must capture the value at definition time; later rebinding of
 // the source variable must not affect the captured value.

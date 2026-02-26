@@ -151,12 +151,12 @@ impl Resolver {
     }
 
     fn collect_type_decl(&mut self, decl: &TypeDecl) {
-        // Reject generics in Stage 2
+        // User-defined generic types are not yet supported
         if !decl.type_params.is_empty() {
             self.errors.push(TypeError::GenericNotSupported {
                 name: decl.name.clone(),
                 span: decl.span,
-                note: "Generic types will be supported in Stage 5".to_string(),
+                note: "User-defined generic types are not yet supported. Use concrete types or the built-in Option<T>, Result<T,E>, Cell<T>.".to_string(),
             });
             return;
         }
