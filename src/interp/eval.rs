@@ -9,7 +9,7 @@ use crate::ir::core::{
 use crate::ir::CoreModule;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::OPTION_TYPE_ID;
+use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID};
 
 use super::value::Value;
 
@@ -492,22 +492,22 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             15 => {
-                // range_from(start: Int, end: Int) array<Int>  — [start, start+1, ..., end-1]
+                // range_from(start: Int, end: Int) Range
                 match (&args[0], &args[1]) {
-                    (Value::Int(start), Value::Int(end)) => {
-                        let v: Vec<Value> = (*start..*end).map(Value::Int).collect();
-                        Ok(Value::Arr(v))
-                    }
+                    (Value::Int(start), Value::Int(end)) => Ok(Value::Record(
+                        RANGE_TYPE_ID,
+                        vec![Value::Int(*start), Value::Int(*end), Value::Int(1)],
+                    )),
                     _ => panic!("range_from: expected two Ints"),
                 }
             }
             16 => {
-                // range(n: Int) array<Int>  — [0, 1, ..., n-1]
+                // range(n: Int) Range  — [0, n)
                 match &args[0] {
-                    Value::Int(n) => {
-                        let v: Vec<Value> = (0..*n).map(Value::Int).collect();
-                        Ok(Value::Arr(v))
-                    }
+                    Value::Int(n) => Ok(Value::Record(
+                        RANGE_TYPE_ID,
+                        vec![Value::Int(0), Value::Int(*n), Value::Int(1)],
+                    )),
                     _ => panic!("range: expected Int"),
                 }
             }
@@ -566,6 +566,16 @@ impl<W: Write> Interpreter<W> {
             22 => {
                 // Dict.new() Dict<K,V>
                 Ok(Value::Dict(vec![]))
+            }
+            23 => {
+                // range_step(start: Int, end: Int, step: Int) Range
+                match (&args[0], &args[1], &args[2]) {
+                    (Value::Int(start), Value::Int(end), Value::Int(step)) => Ok(Value::Record(
+                        RANGE_TYPE_ID,
+                        vec![Value::Int(*start), Value::Int(*end), Value::Int(*step)],
+                    )),
+                    _ => panic!("range_step: expected three Ints"),
+                }
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }

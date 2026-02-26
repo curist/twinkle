@@ -71,6 +71,7 @@ impl CompilationContext {
         func_table.insert("dict_keys".to_string(), prelude::DICT_KEYS);
         func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
         func_table.insert("range".to_string(), prelude::RANGE);
+        func_table.insert("range_step".to_string(), prelude::RANGE_STEP);
         func_table.insert("Cell.new".to_string(), prelude::CELL_NEW);
         func_table.insert("Cell.get".to_string(), prelude::CELL_GET);
         func_table.insert("Cell.set".to_string(), prelude::CELL_SET);

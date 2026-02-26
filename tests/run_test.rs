@@ -103,3 +103,8 @@ fn multi_module() {
 fn variant_collision() {
     check("tests/run/variant_collision.tw");
 }
+
+#[test]
+fn range() {
+    check("tests/run/range.tw");
+}

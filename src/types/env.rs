@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID};
+use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID};
 use super::error::TypeError;
 use crate::syntax::ast::Type as AstType;
 
@@ -64,6 +64,17 @@ impl TypeEnv {
                 fields: vec![],
             }),
             CELL_TYPE_ID,
+        );
+        debug_assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Range".to_string(),
+                fields: vec![
+                    RecordField { name: "start".to_string(), ty: MonoType::Int },
+                    RecordField { name: "end".to_string(),   ty: MonoType::Int },
+                    RecordField { name: "step".to_string(),  ty: MonoType::Int },
+                ],
+            }),
+            RANGE_TYPE_ID,
         );
 
         env
@@ -482,14 +493,21 @@ impl ValueEnv {
             "range_from".to_string(),
             MonoType::Function {
                 params: vec![MonoType::Int, MonoType::Int],
-                ret: Box::new(MonoType::Array(Box::new(MonoType::Int))),
+                ret: Box::new(MonoType::named(RANGE_TYPE_ID)),
             },
         );
         env.builtins.insert(
             "range".to_string(),
             MonoType::Function {
                 params: vec![MonoType::Int],
-                ret: Box::new(MonoType::Array(Box::new(MonoType::Int))),
+                ret: Box::new(MonoType::named(RANGE_TYPE_ID)),
+            },
+        );
+        env.builtins.insert(
+            "range_step".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int, MonoType::Int, MonoType::Int],
+                ret: Box::new(MonoType::named(RANGE_TYPE_ID)),
             },
         );
 

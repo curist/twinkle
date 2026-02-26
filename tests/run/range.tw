@@ -1,0 +1,54 @@
+// Expected output:
+//   0+1+2+3+4
+//   10+11+12
+//   0:0,1:1,2:2
+//   sum=10
+//   sq_sum=30
+//   even_sum=6
+//   step_sum=20
+
+// Inline range — join with +
+acc := ""
+for x in range(5) {
+  if acc == "" { acc = "${x}" } else { acc = "${acc}+${x}" }
+}
+println(acc)
+
+// range_from
+acc = ""
+for x in range_from(10, 13) {
+  if acc == "" { acc = "${x}" } else { acc = "${acc}+${x}" }
+}
+println(acc)
+
+// Indexed form: x==i since range(3) yields 0,1,2
+acc = ""
+for x, i in range(3) {
+  if acc == "" { acc = "${i}:${x}" } else { acc = "${acc},${i}:${x}" }
+}
+println(acc)
+
+// Range stored as a first-class value
+r := range(5)
+sum := 0
+for x in r {
+  sum = sum + x
+}
+println("sum=${sum}")
+
+// collect with range — squares 0..5; sum = 0+1+4+9+16 = 30
+squares := collect x in range(5) { x * x }
+sq_sum := 0
+for n in squares { sq_sum = sq_sum + n }
+println("sq_sum=${sq_sum}")
+
+// collect with range + continue — even numbers in 0..6; sum = 0+2+4 = 6
+evens := collect x in range(6) { if x % 2 == 0 { x } else { continue } }
+even_sum := 0
+for n in evens { even_sum = even_sum + n }
+println("even_sum=${even_sum}")
+
+// range_step — step of 2 over 0..10 yields 0,2,4,6,8; sum = 20
+step_sum := 0
+for x in range_step(0, 10, 2) { step_sum = step_sum + x }
+println("step_sum=${step_sum}")

@@ -6,7 +6,7 @@ use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
-use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID};
+use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID};
 use super::type_map::TypeMap;
 use std::collections::{HashSet, HashMap};
 use std::mem;
@@ -1958,6 +1958,26 @@ impl TypeChecker {
                     }
                 }
             }
+            MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Int),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns"
+                                .to_string(),
+                        });
+                    }
+                }
+                // index_pattern also binds Int (a simple counter)
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
             MonoType::Dict(key_ty, val_ty) => {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
@@ -2001,6 +2021,7 @@ impl TypeChecker {
 
         let elem_ty = match iter_ty {
             MonoType::Array(elem) => *elem,
+            MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => MonoType::Int,
             other => {
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Array(Box::new(MonoType::Int)),

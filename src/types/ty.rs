@@ -19,6 +19,7 @@ pub struct TypeId(pub u32);
 pub const OPTION_TYPE_ID: TypeId = TypeId(0);
 pub const RESULT_TYPE_ID: TypeId = TypeId(1);
 pub const CELL_TYPE_ID:   TypeId = TypeId(2);
+pub const RANGE_TYPE_ID:  TypeId = TypeId(3);
 
 /// Monomorphic type representation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

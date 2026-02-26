@@ -6,7 +6,7 @@ use crate::syntax::ast::{
 };
 use crate::syntax::span::Span;
 use crate::types::env::TypeEnv;
-use crate::types::ty::{MonoType, RESULT_TYPE_ID};
+use crate::types::ty::{MonoType, RANGE_TYPE_ID, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
 use super::core::{
@@ -42,8 +42,8 @@ pub mod prelude {
     pub const DICT_SET:  FuncId = FuncId(13); // Dict.set(m, k, v) -> Dict<K,V>
     pub const DICT_KEYS: FuncId = FuncId(14); // Dict.keys(m) -> Array<K>
 
-    pub const RANGE_FROM: FuncId = FuncId(15); // range_from(start, end) -> Array<Int>
-    pub const RANGE:      FuncId = FuncId(16); // range(n) -> Array<Int>  (0..n-1)
+    pub const RANGE_FROM: FuncId = FuncId(15); // range_from(start, end) -> Range
+    pub const RANGE:      FuncId = FuncId(16); // range(n) -> Range  (0..n)
 
     pub const CELL_NEW:    FuncId = FuncId(17); // Cell.new(v: T) Cell<T>
     pub const CELL_GET:    FuncId = FuncId(18); // Cell.get(c: Cell<T>) T
@@ -53,8 +53,10 @@ pub mod prelude {
     pub const DICT_GET: FuncId = FuncId(21); // dict_get(m, k) -> Option<V>
     pub const DICT_NEW: FuncId = FuncId(22); // Dict.new() -> Dict<K,V>
 
+    pub const RANGE_STEP: FuncId = FuncId(23); // range_step(start, end, step) -> Range
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 23;
+    pub const USER_FUNC_START: u32 = 24;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ impl Lowerer {
         func_table.insert("error".to_string(), prelude::ERROR);
         func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
         func_table.insert("range".to_string(), prelude::RANGE);
+        func_table.insert("range_step".to_string(), prelude::RANGE_STEP);
         func_table.insert("Cell.new".to_string(), prelude::CELL_NEW);
         func_table.insert("Cell.get".to_string(), prelude::CELL_GET);
         func_table.insert("Cell.set".to_string(), prelude::CELL_SET);
@@ -526,6 +529,11 @@ impl Lowerer {
                 let iter_ty = self.type_map.get_expr_type(iter.id).cloned();
                 if matches!(iter_ty, Some(MonoType::Dict(_, _))) {
                     return self.lower_dict_for_stmt(
+                        pattern, index_pattern.as_ref(), iter, body, rest, cont_span, for_span,
+                    );
+                }
+                if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == RANGE_TYPE_ID) {
+                    return self.lower_range_for_stmt(
                         pattern, index_pattern.as_ref(), iter, body, rest, cont_span, for_span,
                     );
                 }
@@ -1066,6 +1074,187 @@ impl Lowerer {
             },
             ty: cont_ty,
             span: for_span,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Range for-loop lowering
+    // -----------------------------------------------------------------------
+
+    /// Lower `for x in range_expr { body }` (and indexed form) where range_expr: Range.
+    ///
+    /// Emits a simple integer counter loop — no array allocation:
+    ///   Let(r, range_expr,
+    ///     Let(cur, r.start,
+    ///       Let(end, r.end,
+    ///         Let(step, r.step,
+    ///           Loop { If(cur >= end, Break,
+    ///                     Let(x, cur, [Let(i, cur,)] body; Assign(cur, cur+step); Continue) }))))
+    #[allow(clippy::too_many_arguments)]
+    fn lower_range_for_stmt(
+        &mut self,
+        pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
+        iter: &Expr,
+        body: &Block,
+        rest: &[Stmt],
+        cont_span: Span,
+        for_span: Span,
+    ) -> Option<CoreExpr> {
+        let iter_expr = self.lower_expr(iter)?;
+        let iter_span = iter.span;
+        let range_named_ty = MonoType::named(RANGE_TYPE_ID);
+
+        let r_tmp   = self.local_allocator.alloc_and_bind("__r".to_string());
+        let cur_tmp = self.local_allocator.alloc_and_bind("__cur".to_string());
+        let end_tmp = self.local_allocator.alloc_and_bind("__end".to_string());
+        let step_tmp = self.local_allocator.alloc_and_bind("__step".to_string());
+
+        // Field access: r.start (0), r.end (1), r.step (2)
+        let start_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty.clone(), span: iter_span }),
+                field: FieldId(0),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let end_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty.clone(), span: iter_span }),
+                field: FieldId(1),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let step_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty, span: iter_span }),
+                field: FieldId(2),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+
+        let cur_expr  = CoreExpr { kind: CoreExprKind::Local(cur_tmp),  ty: MonoType::Int, span: iter_span };
+        let end_expr  = CoreExpr { kind: CoreExprKind::Local(end_tmp),  ty: MonoType::Int, span: iter_span };
+        let step_expr = CoreExpr { kind: CoreExprKind::Local(step_tmp), ty: MonoType::Int, span: iter_span };
+
+        // Loop body
+        self.local_allocator.push_scope();
+
+        let elem_local = match pattern {
+            Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
+            _ => self.local_allocator.alloc(),
+        };
+
+        // Optional user-visible index variable (separate counter matching cur)
+        let idx_user = index_pattern.and_then(|ip| {
+            if let Pattern::Ident(name, _) = ip {
+                Some(self.local_allocator.alloc_and_bind(name.clone()))
+            } else {
+                None
+            }
+        });
+
+        let body_expr = self.lower_block(body)?;
+        self.local_allocator.pop_scope();
+
+        // cur = cur + step, then Continue
+        let cur_plus_step = CoreExpr {
+            kind: CoreExprKind::BinOp { op: BinOp::Add, left: Box::new(cur_expr.clone()), right: Box::new(step_expr) },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let continue_expr = CoreExpr { kind: CoreExprKind::Continue, ty: MonoType::Void, span: iter_span };
+        let cur_inc = CoreExpr {
+            kind: CoreExprKind::Assign { local: cur_tmp, value: Box::new(cur_plus_step) },
+            ty: MonoType::Void, span: iter_span,
+        };
+        let after_body = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(body_expr),
+                body: Box::new(CoreExpr {
+                    kind: CoreExprKind::Let {
+                        local: self.local_allocator.alloc(),
+                        value: Box::new(cur_inc),
+                        body: Box::new(continue_expr),
+                    },
+                    ty: MonoType::Void, span: iter_span,
+                }),
+            },
+            ty: MonoType::Void, span: iter_span,
+        };
+
+        // Optionally bind user-visible index before body
+        let loop_body_inner = if let Some(user_idx) = idx_user {
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: user_idx,
+                    value: Box::new(cur_expr.clone()),
+                    body: Box::new(after_body),
+                },
+                ty: MonoType::Void, span: iter_span,
+            }
+        } else {
+            after_body
+        };
+
+        // Let(x, cur, loop_body_inner)
+        let elem_let = CoreExpr {
+            kind: CoreExprKind::Let { local: elem_local, value: Box::new(cur_expr.clone()), body: Box::new(loop_body_inner) },
+            ty: MonoType::Void, span: iter_span,
+        };
+
+        // If(cur >= end, Break, elem_let)
+        let break_expr = CoreExpr { kind: CoreExprKind::Break { value: None }, ty: MonoType::Void, span: for_span };
+        let guard = CoreExpr {
+            kind: CoreExprKind::BinOp { op: BinOp::Ge, left: Box::new(cur_expr), right: Box::new(end_expr) },
+            ty: MonoType::Bool, span: iter_span,
+        };
+        let if_expr = CoreExpr {
+            kind: CoreExprKind::If { cond: Box::new(guard), then_branch: Box::new(break_expr), else_branch: Box::new(elem_let) },
+            ty: MonoType::Void, span: for_span,
+        };
+        let loop_expr = CoreExpr {
+            kind: CoreExprKind::Loop { body: Box::new(if_expr) },
+            ty: MonoType::Void, span: for_span,
+        };
+
+        // Add continuation after the loop
+        let continuation = self.lower_stmts(rest, cont_span)?;
+        let cont_ty = continuation.ty.clone();
+        let loop_then_cont = CoreExpr {
+            kind: CoreExprKind::Let { local: self.local_allocator.alloc(), value: Box::new(loop_expr), body: Box::new(continuation) },
+            ty: cont_ty.clone(), span: for_span,
+        };
+
+        // Wrap: Let(r, iter, Let(cur, start_get, Let(end, end_get, Let(step, step_get, loop_then_cont))))
+        Some(CoreExpr {
+            kind: CoreExprKind::Let {
+                local: r_tmp,
+                value: Box::new(iter_expr),
+                body: Box::new(CoreExpr {
+                    kind: CoreExprKind::Let {
+                        local: cur_tmp,
+                        value: Box::new(start_get),
+                        body: Box::new(CoreExpr {
+                            kind: CoreExprKind::Let {
+                                local: end_tmp,
+                                value: Box::new(end_get),
+                                body: Box::new(CoreExpr {
+                                    kind: CoreExprKind::Let {
+                                        local: step_tmp,
+                                        value: Box::new(step_get),
+                                        body: Box::new(loop_then_cont),
+                                    },
+                                    ty: cont_ty.clone(), span: for_span,
+                                }),
+                            },
+                            ty: cont_ty.clone(), span: for_span,
+                        }),
+                    },
+                    ty: cont_ty.clone(), span: for_span,
+                }),
+            },
+            ty: cont_ty, span: for_span,
         })
     }
 
@@ -1904,6 +2093,193 @@ impl Lowerer {
     // Collect expression desugaring
     // -----------------------------------------------------------------------
 
+    fn lower_range_collect(
+        &mut self,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Expr,
+        result_ty: &MonoType,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        // collect x in range(n) { body }
+        // →
+        // Let(r, iter,
+        //   Let(cur, r.start,
+        //     Let(end, r.end,
+        //       Let(step, r.step,
+        //         Let(acc, [],
+        //           Loop {
+        //             If(cur >= end, Break(acc),
+        //               Let(x, cur,
+        //                 Let(_, cur += step, ← advance BEFORE body so continue skips append
+        //                   Let(val, body,
+        //                     Let(_, acc_assign,
+        //                       Continue)))))
+        //           })))))
+
+        let iter_expr = self.lower_expr(iter)?;
+        let iter_span = iter.span;
+        let range_named_ty = MonoType::named(RANGE_TYPE_ID);
+
+        let r_tmp    = self.local_allocator.alloc_and_bind("__rc_r".to_string());
+        let cur_tmp  = self.local_allocator.alloc_and_bind("__rc_cur".to_string());
+        let end_tmp  = self.local_allocator.alloc_and_bind("__rc_end".to_string());
+        let step_tmp = self.local_allocator.alloc_and_bind("__rc_step".to_string());
+        let acc_local = self.local_allocator.alloc_and_bind("__rc_acc".to_string());
+
+        // Field access: r.start (0), r.end (1), r.step (2)
+        let start_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty.clone(), span: iter_span }),
+                field: FieldId(0),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let end_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty.clone(), span: iter_span }),
+                field: FieldId(1),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let step_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr { kind: CoreExprKind::Local(r_tmp), ty: range_named_ty, span: iter_span }),
+                field: FieldId(2),
+            },
+            ty: MonoType::Int, span: iter_span,
+        };
+
+        let cur_expr  = CoreExpr { kind: CoreExprKind::Local(cur_tmp),  ty: MonoType::Int,     span: iter_span };
+        let end_expr  = CoreExpr { kind: CoreExprKind::Local(end_tmp),  ty: MonoType::Int,     span: iter_span };
+        let step_expr = CoreExpr { kind: CoreExprKind::Local(step_tmp), ty: MonoType::Int,     span: iter_span };
+        let acc_expr  = CoreExpr { kind: CoreExprKind::Local(acc_local), ty: result_ty.clone(), span: iter_span };
+
+        self.local_allocator.push_scope();
+
+        let elem_local = match pattern {
+            Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
+            _ => self.local_allocator.alloc(),
+        };
+
+        let body_val_local = self.local_allocator.alloc_and_bind("__rc_val".to_string());
+        let body_expr = self.lower_expr(body)?;
+        let body_ty = body_expr.ty.clone();
+
+        self.local_allocator.pop_scope();
+
+        // cur = cur + step
+        let cur_plus_step = CoreExpr {
+            kind: CoreExprKind::BinOp { op: BinOp::Add, left: Box::new(cur_expr.clone()), right: Box::new(step_expr) },
+            ty: MonoType::Int, span: iter_span,
+        };
+        let cur_inc = CoreExpr {
+            kind: CoreExprKind::Assign { local: cur_tmp, value: Box::new(cur_plus_step) },
+            ty: MonoType::Void, span: iter_span,
+        };
+
+        // acc = array_append(acc, val)
+        let append_func = CoreExpr {
+            kind: CoreExprKind::GlobalFunc(prelude::ARRAY_APPEND),
+            ty: MonoType::Function { params: vec![result_ty.clone(), body_ty.clone()], ret: Box::new(result_ty.clone()) },
+            span: iter_span,
+        };
+        let acc_new_val = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(append_func),
+                args: vec![
+                    acc_expr.clone(),
+                    CoreExpr { kind: CoreExprKind::Local(body_val_local), ty: body_ty, span: iter_span },
+                ],
+            },
+            ty: result_ty.clone(), span: iter_span,
+        };
+        let acc_assign = CoreExpr {
+            kind: CoreExprKind::Assign { local: acc_local, value: Box::new(acc_new_val) },
+            ty: MonoType::Void, span: iter_span,
+        };
+
+        let continue_expr = CoreExpr { kind: CoreExprKind::Continue, ty: MonoType::Void, span: iter_span };
+
+        // Build from inside out: Let(_, acc_assign, Continue)
+        let tmp1 = self.local_allocator.alloc();
+        let after_append = CoreExpr {
+            kind: CoreExprKind::Let { local: tmp1, value: Box::new(acc_assign), body: Box::new(continue_expr) },
+            ty: MonoType::Void, span: iter_span,
+        };
+        // Let(val, body, after_append)
+        let with_val = CoreExpr {
+            kind: CoreExprKind::Let { local: body_val_local, value: Box::new(body_expr), body: Box::new(after_append) },
+            ty: MonoType::Void, span: iter_span,
+        };
+        // Let(_, cur_inc, with_val) — increment BEFORE body so continue advances
+        let tmp2 = self.local_allocator.alloc();
+        let with_inc = CoreExpr {
+            kind: CoreExprKind::Let { local: tmp2, value: Box::new(cur_inc), body: Box::new(with_val) },
+            ty: MonoType::Void, span: iter_span,
+        };
+        // Let(x, cur, with_inc)
+        let with_elem = CoreExpr {
+            kind: CoreExprKind::Let { local: elem_local, value: Box::new(cur_expr.clone()), body: Box::new(with_inc) },
+            ty: MonoType::Void, span: iter_span,
+        };
+
+        // Break condition: cur >= end → Break(acc)
+        let cond_ge = CoreExpr {
+            kind: CoreExprKind::BinOp { op: BinOp::Ge, left: Box::new(cur_expr), right: Box::new(end_expr) },
+            ty: MonoType::Bool, span: iter_span,
+        };
+        let break_acc = CoreExpr {
+            kind: CoreExprKind::Break { value: Some(Box::new(acc_expr)) },
+            ty: result_ty.clone(), span: iter_span,
+        };
+        let loop_if = CoreExpr {
+            kind: CoreExprKind::If { cond: Box::new(cond_ge), then_branch: Box::new(break_acc), else_branch: Box::new(with_elem) },
+            ty: result_ty.clone(), span: iter_span,
+        };
+        let loop_expr = CoreExpr {
+            kind: CoreExprKind::Loop { body: Box::new(loop_if) },
+            ty: result_ty.clone(), span,
+        };
+
+        let empty_arr = CoreExpr { kind: CoreExprKind::ArrayLit { elements: vec![] }, ty: result_ty.clone(), span: iter_span };
+
+        // Wrap: Let(r, iter, Let(cur, start_get, Let(end, end_get, Let(step, step_get, Let(acc, [], loop)))))
+        Some(CoreExprKind::Let {
+            local: r_tmp,
+            value: Box::new(iter_expr),
+            body: Box::new(CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: cur_tmp,
+                    value: Box::new(start_get),
+                    body: Box::new(CoreExpr {
+                        kind: CoreExprKind::Let {
+                            local: end_tmp,
+                            value: Box::new(end_get),
+                            body: Box::new(CoreExpr {
+                                kind: CoreExprKind::Let {
+                                    local: step_tmp,
+                                    value: Box::new(step_get),
+                                    body: Box::new(CoreExpr {
+                                        kind: CoreExprKind::Let {
+                                            local: acc_local,
+                                            value: Box::new(empty_arr),
+                                            body: Box::new(loop_expr),
+                                        },
+                                        ty: result_ty.clone(), span,
+                                    }),
+                                },
+                                ty: result_ty.clone(), span,
+                            }),
+                        },
+                        ty: result_ty.clone(), span,
+                    }),
+                },
+                ty: result_ty.clone(), span,
+            }),
+        })
+    }
+
     fn lower_collect(
         &mut self,
         pattern: &Pattern,
@@ -1912,6 +2288,11 @@ impl Lowerer {
         result_ty: &MonoType,
         span: Span,
     ) -> Option<CoreExprKind> {
+        let iter_ty = self.type_map.get_expr_type(iter.id).cloned();
+        if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == RANGE_TYPE_ID) {
+            return self.lower_range_collect(pattern, iter, body, result_ty, span);
+        }
+
         // collect x in arr { body }
         // →
         // Let(arr_tmp, iter,
@@ -1926,7 +2307,7 @@ impl Lowerer {
         //                   Let(idx, idx+1, Continue)))))
         //         }))))
 
-        let elem_ty = match self.type_map.get_expr_type(iter.id).cloned() {
+        let elem_ty = match iter_ty {
             Some(MonoType::Array(inner)) => *inner,
             _ => MonoType::Void,
         };
