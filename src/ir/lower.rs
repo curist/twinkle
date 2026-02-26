@@ -1650,6 +1650,9 @@ impl Lowerer {
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
             (MonoType::String, "to_string") => prelude::STRING_TO_STRING,
             (MonoType::Dict(_, _), "keys") => prelude::DICT_KEYS,
+            (MonoType::Named { type_id, .. }, "get") if *type_id == crate::types::ty::CELL_TYPE_ID => prelude::CELL_GET,
+            (MonoType::Named { type_id, .. }, "set") if *type_id == crate::types::ty::CELL_TYPE_ID => prelude::CELL_SET,
+            (MonoType::Named { type_id, .. }, "update") if *type_id == crate::types::ty::CELL_TYPE_ID => prelude::CELL_UPDATE,
             (MonoType::Named { type_id, .. }, _) => {
                 // User-defined inherent method: look up via TypeEnv → func_table
                 let type_id = *type_id;

@@ -1021,6 +1021,46 @@ impl TypeChecker {
                     Err(())
                 }
             }
+            MonoType::Named { type_id, args: ref cell_args } if type_id == CELL_TYPE_ID => {
+                let inner = cell_args.first().cloned().unwrap_or(MonoType::Void);
+                match method {
+                    "get" => {
+                        if !args.is_empty() {
+                            self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                            return Err(());
+                        }
+                        Ok(inner)
+                    }
+                    "set" => {
+                        if args.len() != 1 {
+                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &inner)?;
+                        Ok(MonoType::Void)
+                    }
+                    "update" => {
+                        if args.len() != 1 {
+                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            return Err(());
+                        }
+                        let expected_fn = MonoType::Function {
+                            params: vec![inner.clone()],
+                            ret: Box::new(inner),
+                        };
+                        self.check_expr(&args[0], &expected_fn)?;
+                        Ok(MonoType::Void)
+                    }
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "unknown Cell method",
+                            span,
+                            note: format!("Cell has no method '{}'; available: get, set, update", method),
+                        });
+                        Err(())
+                    }
+                }
+            }
             MonoType::Named { type_id, .. } => {
                 // Look up user-defined inherent method
                 if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
