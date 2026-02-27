@@ -973,8 +973,10 @@ impl Parser {
         while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
             arms.push(self.parse_case_arm()?);
 
-            if !self.peek_is(TokenKind::RBrace) {
+            if self.peek_is(TokenKind::RBrace) {
                 self.consume_if(TokenKind::Comma);
+            } else {
+                self.expect(TokenKind::Comma)?;
             }
         }
 

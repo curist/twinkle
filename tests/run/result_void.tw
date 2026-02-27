@@ -10,8 +10,8 @@ fn validate(n: Int) Result<Void, String> {
 
 fn describe(r: Result<Void, String>) String {
     case r {
-        .Ok(_) => "ok"
-        .Err(msg) => "err: ${msg}"
+        .Ok(_) => "ok",
+        .Err(msg) => "err: ${msg}",
     }
 }
 

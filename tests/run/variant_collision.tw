@@ -9,15 +9,15 @@ type B = { None, All }
 
 fn describe_a(v: A) String {
   case v {
-    .None => "A: none"
-    .Some(n) => "A: some ${n}"
+    .None => "A: none",
+    .Some(n) => "A: some ${n}",
   }
 }
 
 fn describe_b(v: B) String {
   case v {
-    .None => "B: none"
-    .All => "B: all"
+    .None => "B: none",
+    .All => "B: all",
   }
 }
 

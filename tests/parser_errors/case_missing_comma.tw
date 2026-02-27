@@ -1,0 +1,8 @@
+type Opt = { None, Some(Int) }
+
+fn f(x: Opt) Int {
+    case x {
+        .None => 0
+        .Some(n) => n
+    }
+}
