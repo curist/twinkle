@@ -743,7 +743,11 @@ impl TypeChecker {
                 // TypeName.Variant(args) — variant construction with type prefix
                 if let Some(type_id) = self.type_env.lookup_type(alias) {
                     if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name) {
-                        let named_ty = MonoType::Named { type_id, args: vec![] };
+                        // Build named_ty with Var args for generic types
+                        let type_var_args: Vec<MonoType> = self.type_env.get_def(type_id)
+                            .map(|d| d.type_params().iter().map(|p| MonoType::Var(p.clone())).collect())
+                            .unwrap_or_default();
+                        let named_ty = MonoType::Named { type_id, args: type_var_args };
                         self.type_map.set_expr_type(base.id, named_ty.clone());
                         let variants = self.type_env.get_variants(type_id)
                             .expect("variant exists, variants must exist");
@@ -757,6 +761,35 @@ impl TypeChecker {
                             });
                             return Err(());
                         }
+                        // For generic types, use substitution to infer concrete type args
+                        if variant_fields.iter().any(type_contains_var) {
+                            let mut subst = HashMap::new();
+                            let mut arg_tys = Vec::new();
+                            for arg in args.iter() {
+                                arg_tys.push(self.synth_expr(arg)?);
+                            }
+                            let mut ok = true;
+                            for (idx, (field_ty, arg_ty)) in variant_fields.iter().zip(arg_tys.iter()).enumerate() {
+                                if !collect_subst(field_ty, arg_ty, &mut subst) {
+                                    self.errors.push(TypeError::TypeMismatch {
+                                        expected: apply_subst(field_ty, &subst),
+                                        actual: arg_ty.clone(),
+                                        span,
+                                        note: Some(format!("argument {} of variant constructor", idx + 1)),
+                                    });
+                                    ok = false;
+                                }
+                            }
+                            if !ok { return Err(()); }
+                            let concrete_named_ty = apply_subst(&named_ty, &subst);
+                            let ctor_ty = MonoType::Function {
+                                params: variant_fields,
+                                ret: Box::new(named_ty),
+                            };
+                            self.type_map.set_expr_type(callee.id, apply_subst(&ctor_ty, &subst));
+                            return Ok(concrete_named_ty);
+                        }
+                        // Non-generic: check each arg directly
                         for (arg, expected_ty) in args.iter().zip(variant_fields.iter()) {
                             self.check_expr(arg, expected_ty)?;
                         }
@@ -1209,7 +1242,7 @@ impl TypeChecker {
                     }
                 }
             }
-            MonoType::Named { type_id, .. } => {
+            MonoType::Named { type_id, args: named_args } => {
                 // Look up user-defined inherent method
                 if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
                     if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
@@ -1238,9 +1271,14 @@ impl TypeChecker {
 
                 // No inherent method — check if it's a function-typed record field
                 // (capability record call: `record.fn_field(args)`)
+                // Apply type-arg substitution for generic capability records
                 if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
                     if let Some(fields) = self.type_env.get_record_fields(type_id) {
-                        let field_ty = fields[field_idx].ty.clone();
+                        let type_params = self.type_env.get_def(type_id)
+                            .map(|d| d.type_params().to_vec())
+                            .unwrap_or_default();
+                        let subst = build_type_subst(&type_params, &named_args);
+                        let field_ty = apply_subst(&fields[field_idx].ty, &subst);
                         if let MonoType::Function { params, ret } = field_ty {
                             if params.len() != args.len() {
                                 self.errors.push(TypeError::WrongArity {
@@ -1475,7 +1513,12 @@ impl TypeChecker {
         if let ExprKind::Ident(type_name) = &base.kind {
             if let Some(type_id) = self.type_env.lookup_type(type_name) {
                 if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
-                    let named_ty = MonoType::Named { type_id, args: vec![] };
+                    // For generic types, build named_ty with Var args so the generic
+                    // call path in synth_call can infer concrete type args via collect_subst
+                    let type_var_args: Vec<MonoType> = self.type_env.get_def(type_id)
+                        .map(|d| d.type_params().iter().map(|p| MonoType::Var(p.clone())).collect())
+                        .unwrap_or_default();
+                    let named_ty = MonoType::Named { type_id, args: type_var_args };
                     // Record type of the type-name base as Named (so lowerer can identify it)
                     self.type_map.set_expr_type(base.id, named_ty.clone());
                     let variants = self.type_env.get_variants(type_id)
@@ -1495,7 +1538,7 @@ impl TypeChecker {
         let base_ty = self.synth_expr(base)?;
 
         match base_ty {
-            MonoType::Named { type_id, .. } => {
+            MonoType::Named { type_id, args: ref type_args } => {
                 // Check for field/method collision
                 let has_field = self.type_env.has_field(type_id, field);
                 let has_method = self.type_env.has_method(type_id, field);
@@ -1513,12 +1556,16 @@ impl TypeChecker {
                     return Err(());
                 }
 
-                // Look up the record fields
-                if let Some(fields) = self.type_env.get_record_fields(type_id) {
+                // Look up the record fields; apply type-arg substitution for generic types
+                if let Some(record_fields) = self.type_env.get_record_fields(type_id) {
+                    let type_params = self.type_env.get_def(type_id)
+                        .map(|d| d.type_params().to_vec())
+                        .unwrap_or_default();
+                    let subst = build_type_subst(&type_params, &type_args);
                     // Find the field
-                    for f in fields {
+                    for f in record_fields {
                         if f.name == field {
-                            return Ok(f.ty.clone());
+                            return Ok(apply_subst(&f.ty, &subst));
                         }
                     }
 
@@ -1649,9 +1696,81 @@ impl TypeChecker {
                 }
             };
 
-            let expected_ty = MonoType::named(type_id);
-            self.check_record_lit_fields(type_id, fields, span)?;
-            Ok(expected_ty)
+            let type_params = self.type_env.get_def(type_id)
+                .map(|d| d.type_params().to_vec())
+                .unwrap_or_default();
+
+            if type_params.is_empty() {
+                // Non-generic: check fields directly
+                self.check_record_lit_fields(type_id, &[], fields, span)?;
+                Ok(MonoType::named(type_id))
+            } else {
+                // Generic: synth each field once to infer type args, then validate.
+                // Single-pass to avoid double-evaluation: we collect (name, actual_ty) from
+                // synth, then unify against the substituted declared types.
+                let def_fields: Vec<(String, MonoType)> = self.type_env.get_record_fields(type_id)
+                    .map(|fs| fs.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
+                    .unwrap_or_default();
+
+                // Synth pass: collect actual types and build substitution
+                let mut subst = HashMap::new();
+                let mut field_synth: Vec<(&str, Result<MonoType, ()>)> = Vec::new();
+                for (provided_name, provided_expr) in fields.iter() {
+                    let result = self.synth_expr(provided_expr);
+                    if let Ok(actual_ty) = &result {
+                        if let Some((_, declared_ty)) = def_fields.iter().find(|(n, _)| n == provided_name) {
+                            collect_subst(declared_ty, actual_ty, &mut subst);
+                        }
+                    }
+                    field_synth.push((provided_name.as_str(), result));
+                }
+
+                let type_args: Vec<MonoType> = type_params.iter()
+                    .map(|p| subst.get(p).cloned().unwrap_or_else(|| MonoType::Var(p.clone())))
+                    .collect();
+                let subst2 = build_type_subst(&type_params, &type_args);
+
+                let record_name = self.type_env.get_def(type_id)
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_else(|| format!("Type#{}", type_id.0));
+
+                // Check for extra (unknown) fields
+                let expected_names: Vec<&str> = def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                for (provided_name, _) in fields.iter() {
+                    if !expected_names.contains(&provided_name.as_str()) {
+                        self.errors.push(TypeError::NoSuchField {
+                            record_type: record_name.clone(),
+                            field: provided_name.clone(),
+                            span,
+                        });
+                        return Err(());
+                    }
+                }
+
+                // Validate each expected field: present, correctly typed
+                let mut ok = true;
+                for (expected_name, declared_ty) in &def_fields {
+                    let concrete_ty = apply_subst(declared_ty, &subst2);
+                    match field_synth.iter().find(|(n, _)| *n == expected_name.as_str()) {
+                        Some((_, Ok(actual_ty))) => {
+                            if self.unify(actual_ty, &concrete_ty, span).is_err() {
+                                ok = false;
+                            }
+                        }
+                        Some((_, Err(()))) => { ok = false; }
+                        None => {
+                            self.errors.push(TypeError::NoSuchField {
+                                record_type: record_name.clone(),
+                                field: expected_name.clone(),
+                                span,
+                            });
+                            ok = false;
+                        }
+                    }
+                }
+
+                if ok { Ok(MonoType::Named { type_id, args: type_args }) } else { Err(()) }
+            }
         } else {
             // Anonymous record literal: .{ x: 1, y: 2 }
             // This requires expected type from context - error in synthesis mode
@@ -1662,8 +1781,8 @@ impl TypeChecker {
 
     fn check_anon_record_lit(&mut self, fields: &[(String, Expr)], expected: &MonoType, span: Span) -> Result<(), ()> {
         match expected {
-            MonoType::Named { type_id, .. } => {
-                self.check_record_lit_fields(*type_id, fields, span)
+            MonoType::Named { type_id, args } => {
+                self.check_record_lit_fields(*type_id, args, fields, span)
             }
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
@@ -1677,7 +1796,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_record_lit_fields(&mut self, type_id: crate::types::ty::TypeId, fields: &[(String, Expr)], span: Span) -> Result<(), ()> {
+    fn check_record_lit_fields(&mut self, type_id: crate::types::ty::TypeId, type_args: &[MonoType], fields: &[(String, Expr)], span: Span) -> Result<(), ()> {
         let expected_fields = match self.type_env.get_record_fields(type_id) {
             Some(f) => f,
             None => {
@@ -1691,10 +1810,18 @@ impl TypeChecker {
             }
         };
 
+        // Build substitution for generic types
+        let subst = {
+            let type_params = self.type_env.get_def(type_id)
+                .map(|d| d.type_params().to_vec())
+                .unwrap_or_default();
+            build_type_subst(&type_params, type_args)
+        };
+
         // Check all expected fields are present and have correct types
-        // Clone the fields to avoid borrowing issues
+        // Apply substitution to declared field types for generic types
         let expected_fields_vec: Vec<_> = expected_fields.iter()
-            .map(|f| (f.name.clone(), f.ty.clone()))
+            .map(|f| (f.name.clone(), apply_subst(&f.ty, &subst)))
             .collect();
 
         let expected_names: Vec<String> = expected_fields_vec.iter()
@@ -1797,7 +1924,12 @@ impl TypeChecker {
                                 _ => v.fields.clone(),
                             }
                         } else {
-                            v.fields.clone()
+                            // User-defined generic sum type: apply type-arg substitution
+                            let type_params = self.type_env.get_def(*type_id)
+                                .map(|d| d.type_params().to_vec())
+                                .unwrap_or_default();
+                            let subst = build_type_subst(&type_params, args);
+                            v.fields.iter().map(|f| apply_subst(f, &subst)).collect()
                         };
 
                         // Check arity
@@ -1954,10 +2086,14 @@ impl TypeChecker {
                 // r.field = expr — type-check both sides conservatively
                 let base_ty = self.synth_expr(base)?;
                 match base_ty {
-                    MonoType::Named { type_id, .. } => {
+                    MonoType::Named { type_id, args: type_args } => {
                         if let Some(fields) = self.type_env.get_record_fields(type_id) {
+                            let type_params = self.type_env.get_def(type_id)
+                                .map(|d| d.type_params().to_vec())
+                                .unwrap_or_default();
+                            let subst = build_type_subst(&type_params, &type_args);
                             let field_ty = fields.iter().find(|f| f.name == *field)
-                                .map(|f| f.ty.clone());
+                                .map(|f| apply_subst(&f.ty, &subst));
                             if let Some(fty) = field_ty {
                                 self.check_expr(right, &fty)?;
                                 Ok(MonoType::Void)
@@ -2196,6 +2332,13 @@ fn collect_subst(expected: &MonoType, actual: &MonoType, subst: &mut HashMap<Str
         (MonoType::Never, _) | (_, MonoType::Never) => true,
         (a, b) => a == b,
     }
+}
+
+/// Build a substitution map from type parameter names to concrete type arguments.
+pub fn build_type_subst(type_params: &[String], args: &[MonoType]) -> HashMap<String, MonoType> {
+    type_params.iter().zip(args.iter())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 /// Apply a substitution map to a type, replacing all Var occurrences.

@@ -194,16 +194,19 @@ pub enum TypeDef {
     /// Record type: nominal struct with named fields
     Record {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<RecordField>,
     },
     /// Sum type: nominal enum with named variants
     Sum {
         name: String,
+        type_params: Vec<String>,
         variants: Vec<Variant>,
     },
     /// Type alias: transparent alias to another type
     Alias {
         name: String,
+        type_params: Vec<String>,
         target: MonoType,
     },
 }
@@ -215,6 +218,15 @@ impl TypeDef {
             TypeDef::Record { name, .. } => name,
             TypeDef::Sum { name, .. } => name,
             TypeDef::Alias { name, .. } => name,
+        }
+    }
+
+    /// Get the type parameters of this type definition
+    pub fn type_params(&self) -> &[String] {
+        match self {
+            TypeDef::Record { type_params, .. }
+            | TypeDef::Sum { type_params, .. }
+            | TypeDef::Alias { type_params, .. } => type_params,
         }
     }
 

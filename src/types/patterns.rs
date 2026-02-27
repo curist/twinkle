@@ -3,6 +3,7 @@ use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv};
 use super::error::TypeError;
 use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID};
+use super::check::{apply_subst, build_type_subst};
 use std::collections::HashSet;
 
 /// Pattern checking utilities for case expressions
@@ -105,7 +106,12 @@ impl<'a> PatternChecker<'a> {
                                             _ => v.fields.clone(),
                                         }
                                     } else {
-                                        v.fields.clone()
+                                        // User-defined generic sum type: apply type-arg substitution
+                                        let type_params = self.type_env.get_def(*type_id)
+                                            .map(|d| d.type_params().to_vec())
+                                            .unwrap_or_default();
+                                        let subst = build_type_subst(&type_params, args);
+                                        v.fields.iter().map(|f| apply_subst(f, &subst)).collect()
                                     };
 
                                 // Check arity
@@ -297,6 +303,7 @@ mod tests {
         let mut type_env = TypeEnv::new();
         let type_id = type_env.add_type(TypeDef::Sum {
             name: "Option".to_string(),
+            type_params: vec![],
             variants: vec![
                 Variant {
                     name: "None".to_string(),
@@ -338,6 +345,7 @@ mod tests {
         let mut type_env = TypeEnv::new();
         let type_id = type_env.add_type(TypeDef::Sum {
             name: "Option".to_string(),
+            type_params: vec![],
             variants: vec![
                 Variant {
                     name: "None".to_string(),

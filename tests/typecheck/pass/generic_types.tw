@@ -1,0 +1,16 @@
+type Pair<A, B> = .{ first: A, second: B }
+fn swap<A, B>(p: Pair<A, B>) Pair<B, A> {
+    .{ first: p.second, second: p.first }
+}
+
+type Tree<T> = { Leaf, Node(T, Tree<T>, Tree<T>) }
+fn depth<T>(t: Tree<T>) Int {
+    case t {
+        .Leaf => 0,
+        .Node(_, l, r) => {
+            ld := depth(l)
+            rd := depth(r)
+            if ld > rd { ld + 1 } else { rd + 1 }
+        },
+    }
+}

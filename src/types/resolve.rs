@@ -151,16 +151,6 @@ impl Resolver {
     }
 
     fn collect_type_decl(&mut self, decl: &TypeDecl) {
-        // User-defined generic types are not yet supported
-        if !decl.type_params.is_empty() {
-            self.errors.push(TypeError::GenericNotSupported {
-                name: decl.name.clone(),
-                span: decl.span,
-                note: "User-defined generic types are not yet supported. Use concrete types or the built-in Option<T>, Result<T,E>, Cell<T>.".to_string(),
-            });
-            return;
-        }
-
         // Check for duplicate type names
         if let Some(first_span) = self.type_spans.get(&decl.name) {
             self.errors.push(TypeError::DuplicateDefinition {
@@ -206,17 +196,21 @@ impl Resolver {
         let mut type_ids: HashMap<String, TypeId> = HashMap::new();
         for (name, decl) in &self.type_decls {
             // Create a placeholder TypeDef based on the variant
+            // Include type_params so arity checks work during Pass 2b resolution
             let placeholder = match &decl.definition {
                 AstTypeDef::Record { .. } => TypeDef::Record {
                     name: name.clone(),
+                    type_params: decl.type_params.clone(),
                     fields: Vec::new(),
                 },
                 AstTypeDef::Sum { .. } => TypeDef::Sum {
                     name: name.clone(),
+                    type_params: decl.type_params.clone(),
                     variants: Vec::new(),
                 },
                 AstTypeDef::Alias { .. } => TypeDef::Alias {
                     name: name.clone(),
+                    type_params: decl.type_params.clone(),
                     target: MonoType::Void,
                 },
             };
@@ -244,11 +238,12 @@ impl Resolver {
     }
 
     fn resolve_type_def(&mut self, decl: &TypeDecl) -> Result<TypeDef, ()> {
+        let type_params = &decl.type_params;
         let def = match &decl.definition {
             AstTypeDef::Record { fields } => {
                 let mut resolved_fields = Vec::new();
                 for field in fields {
-                    match self.resolve_type(&field.ty) {
+                    match self.resolve_type_with_vars(&field.ty, type_params) {
                         Ok(ty) => {
                             resolved_fields.push(RecordField {
                                 name: field.name.clone(),
@@ -256,13 +251,13 @@ impl Resolver {
                             });
                         }
                         Err(()) => {
-                            // Error already recorded
                             return Err(());
                         }
                     }
                 }
                 TypeDef::Record {
                     name: decl.name.clone(),
+                    type_params: type_params.clone(),
                     fields: resolved_fields,
                 }
             }
@@ -271,7 +266,7 @@ impl Resolver {
                 for variant in variants {
                     let mut resolved_fields = Vec::new();
                     for field_ty in &variant.fields {
-                        match self.resolve_type(field_ty) {
+                        match self.resolve_type_with_vars(field_ty, type_params) {
                             Ok(ty) => resolved_fields.push(ty),
                             Err(()) => {
                                 return Err(());
@@ -285,13 +280,15 @@ impl Resolver {
                 }
                 TypeDef::Sum {
                     name: decl.name.clone(),
+                    type_params: type_params.clone(),
                     variants: resolved_variants,
                 }
             }
             AstTypeDef::Alias { ty } => {
-                let target = self.resolve_type(ty)?;
+                let target = self.resolve_type_with_vars(ty, type_params)?;
                 TypeDef::Alias {
                     name: decl.name.clone(),
+                    type_params: type_params.clone(),
                     target,
                 }
             }
@@ -391,8 +388,33 @@ impl Resolver {
                         args: resolved_args,
                     }),
                     _ => {
-                        // Fall through to normal resolution (will likely error on unknown generic)
-                        self.resolve_type(ty)
+                        // User-defined generic type: look up TypeId and use pre-resolved args
+                        match self.type_env.lookup_type(name) {
+                            Some(type_id) => {
+                                let expected_arity = self.type_env.get_def(type_id)
+                                    .map(|d| d.type_params().len())
+                                    .unwrap_or(0);
+                                if resolved_args.len() != expected_arity {
+                                    self.errors.push(TypeError::UndefinedType {
+                                        name: format!(
+                                            "{} (expected {} type arg(s), found {})",
+                                            name, expected_arity, resolved_args.len()
+                                        ),
+                                        span: *span,
+                                    });
+                                    Err(())
+                                } else {
+                                    Ok(MonoType::Named { type_id, args: resolved_args })
+                                }
+                            }
+                            None => {
+                                self.errors.push(TypeError::UndefinedType {
+                                    name: name.clone(),
+                                    span: *span,
+                                });
+                                Err(())
+                            }
+                        }
                     }
                 }
             }

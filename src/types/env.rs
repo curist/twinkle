@@ -41,6 +41,7 @@ impl TypeEnv {
         debug_assert_eq!(
             env.add_type(TypeDef::Sum {
                 name: "Option".to_string(),
+                type_params: vec![],
                 variants: vec![
                     Variant { name: "None".to_string(), fields: vec![] },
                     Variant { name: "Some".to_string(), fields: vec![MonoType::Void] },
@@ -51,6 +52,7 @@ impl TypeEnv {
         debug_assert_eq!(
             env.add_type(TypeDef::Sum {
                 name: "Result".to_string(),
+                type_params: vec![],
                 variants: vec![
                     Variant { name: "Ok".to_string(),  fields: vec![MonoType::Void] },
                     Variant { name: "Err".to_string(), fields: vec![MonoType::Void] },
@@ -61,6 +63,7 @@ impl TypeEnv {
         debug_assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Cell".to_string(),
+                type_params: vec![],
                 fields: vec![],
             }),
             CELL_TYPE_ID,
@@ -68,6 +71,7 @@ impl TypeEnv {
         debug_assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Range".to_string(),
+                type_params: vec![],
                 fields: vec![
                     RecordField { name: "start".to_string(), ty: MonoType::Int },
                     RecordField { name: "end".to_string(),   ty: MonoType::Int },
@@ -325,35 +329,51 @@ impl TypeEnv {
                         return Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] });
                     }
                     _ => {
-                        // User-defined type
-                        if !args.is_empty() {
-                            // Type arguments not supported in Stage 2
-                            errors.push(TypeError::GenericNotSupported {
-                                name: name.clone(),
-                                span: *span,
-                                note: "Type arguments will be supported in Stage 5".to_string(),
-                            });
-                            return Err(());
-                        }
-
-                        // Look up in type environment
-                        match self.lookup_type(name) {
-                            Some(type_id) => {
-                                // Expand aliases transparently: aliases are not nominal types
-                                if let Some(TypeDef::Alias { target, .. }) = self.get_def(type_id) {
-                                    Ok(target.clone())
-                                } else {
-                                    Ok(MonoType::named(type_id))
-                                }
-                            }
+                        // User-defined type — look up in type environment
+                        let type_id = match self.lookup_type(name) {
+                            Some(id) => id,
                             None => {
                                 errors.push(TypeError::UndefinedType {
                                     name: name.clone(),
                                     span: *span,
                                 });
-                                Err(())
+                                return Err(());
                             }
+                        };
+
+                        // Aliases: expand transparently, but don't accept type args
+                        if let Some(TypeDef::Alias { target, .. }) = self.get_def(type_id) {
+                            if !args.is_empty() {
+                                errors.push(TypeError::GenericNotSupported {
+                                    name: name.clone(),
+                                    span: *span,
+                                    note: "Type aliases cannot take type arguments".to_string(),
+                                });
+                                return Err(());
+                            }
+                            return Ok(target.clone());
                         }
+
+                        // Check arity against declared type_params
+                        let expected_arity = self.get_def(type_id)
+                            .map(|d| d.type_params().len())
+                            .unwrap_or(0);
+                        if args.len() != expected_arity {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!(
+                                    "{} (expected {} type arg(s), found {})",
+                                    name, expected_arity, args.len()
+                                ),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+
+                        let resolved_args: Vec<MonoType> = args
+                            .iter()
+                            .map(|a| self.resolve_type(a, errors))
+                            .collect::<Result<_, _>>()?;
+                        Ok(MonoType::Named { type_id, args: resolved_args })
                     }
                 }
             }

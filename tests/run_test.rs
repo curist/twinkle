@@ -168,3 +168,8 @@ fn string_methods() {
 fn multi_module_alias() {
     check("tests/run/multi_module_alias/main.tw");
 }
+
+#[test]
+fn generic_types() {
+    check("tests/run/generic_types.tw");
+}

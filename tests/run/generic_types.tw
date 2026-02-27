@@ -1,0 +1,21 @@
+// Expected output:
+//   1
+//   hello
+//   42
+//   true
+
+type Pair<A, B> = .{ first: A, second: B }
+p: Pair<Int, String> = .{ first: 1, second: "hello" }
+println("${p.first}")
+println("${p.second}")
+
+type Tree<T> = { Leaf, Node(T, Tree<T>, Tree<T>) }
+t: Tree<Int> = .Node(42, .Leaf, .Leaf)
+case t {
+    .Leaf => println("leaf"),
+    .Node(v, _, _) => println("${v}"),
+}
+
+type Pred<T> = .{ test: fn(T) Bool }
+is_pos: Pred<Int> = .{ test: fn(n) { n > 0 } }
+println("${is_pos.test(5)}")
