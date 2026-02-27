@@ -10,11 +10,14 @@
 //   2
 
 // Basic capture-by-value: rebinding after closure creation does not affect the closure.
-acc := 0
-f := fn() Int { acc }
-acc = acc + 1
-println("${f()}")    // 0 — captured value at definition time
-println("${acc}")    // 1
+fn test_capture() Void {
+    acc := 0
+    f := fn() Int { acc }
+    acc = acc + 1
+    println("${f()}")    // 0 — captured value at definition time
+    println("${acc}")    // 1
+}
+test_capture()
 
 // Shadowing: closure captures the innermost binding visible at definition time.
 fn make_adder(base: Int) fn(Int) Int {

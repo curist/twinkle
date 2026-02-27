@@ -17,9 +17,9 @@ println("${m.len()}")       // 2
 println("${m.has("a")}")    // true
 println("${m.has("c")}")    // false
 
-m = m.remove("a")
-println("${m.len()}")       // 1
-println("${m.has("a")}")    // false
+m2 := m.remove("a")
+println("${m2.len()}")       // 1
+println("${m2.has("a")}")    // false
 
 // Qualified calls: Dict.len, Dict.has, Dict.remove
 n: Dict<String, Int> = Dict.new()
@@ -27,5 +27,5 @@ n["x"] = 10
 println("${Dict.len(n)}")         // 1
 println("${Dict.has(n, "x")}")    // true
 println("${Dict.has(n, "y")}")    // false
-n = Dict.remove(n, "x")
-println("${Dict.len(n)}")         // 0
+n2 := Dict.remove(n, "x")
+println("${Dict.len(n2)}")         // 0

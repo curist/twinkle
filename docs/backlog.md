@@ -40,24 +40,7 @@ with an undefined local.
 
 ---
 
-## B-005: Module-scope rebinding not rejected
-
-**Spec §8.1:** "Rebinding (`=`) is not allowed at module scope — each name may
-only be bound once."
-
-**Current state:** `synth_assign` falls back to `value_env.lookup` when a name
-is not found in `local_env`. Module-level bindings live in `value_env`, so a
-top-level `x = expr` (rebinding a module constant) passes type-checking.
-
-**What's needed:**
-* Track whether the type checker is currently at module scope vs. inside a function.
-* In `synth_assign`, reject rebinding when the target name is found only in
-  `value_env` (i.e., it is a module-level binding, not a local).
-* Emit a clear error: "rebinding is not allowed at module scope".
-
----
-
-## B-006: Closure rebinding of captured variables not rejected
+## B-005: Closure rebinding of captured variables not rejected
 
 **Spec §7.7.4:** "A closure may reference captured variables, but may **not**
 rebind them using `=`."

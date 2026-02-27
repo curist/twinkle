@@ -114,6 +114,12 @@ pub enum TypeError {
         key_type: MonoType,
         span: Span,
     },
+
+    /// Rebinding is not allowed at module scope
+    ModuleScopeRebinding {
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -278,6 +284,12 @@ impl TypeError {
                     "Both a field and a method named '{}' exist on this type. This is not allowed.",
                     name
                 )),
+            ),
+            TypeError::ModuleScopeRebinding { name, span } => self.format_error(
+                registry,
+                *span,
+                &format!("Cannot rebind '{}' at module scope", name),
+                Some("Rebinding (=) is not allowed at module scope — each name may only be bound once.\nUse a new binding (`:=`) instead."),
             ),
             TypeError::InvalidDictKey { key_type, span } => self.format_error(
                 registry,

@@ -15,18 +15,18 @@ for x in range(5) {
 println(acc)
 
 // range_from
-acc = ""
+acc2 := ""
 for x in range_from(10, 13) {
-  if acc == "" { acc = "${x}" } else { acc = "${acc}+${x}" }
+  if acc2 == "" { acc2 = "${x}" } else { acc2 = "${acc2}+${x}" }
 }
-println(acc)
+println(acc2)
 
 // Indexed form: x==i since range(3) yields 0,1,2
-acc = ""
+acc3 := ""
 for x, i in range(3) {
-  if acc == "" { acc = "${i}:${x}" } else { acc = "${acc},${i}:${x}" }
+  if acc3 == "" { acc3 = "${i}:${x}" } else { acc3 = "${acc3},${i}:${x}" }
 }
-println(acc)
+println(acc3)
 
 // Range stored as a first-class value
 r := range(5)

@@ -29,6 +29,9 @@ pub struct TypeChecker {
 
     // Type variable scope — names in scope resolve to MonoType::Var
     type_var_scope: Vec<String>,
+
+    // True when type-checking at module scope (top-level lets/stmts)
+    at_module_scope: bool,
 }
 
 impl TypeChecker {
@@ -55,6 +58,7 @@ impl TypeChecker {
             current_function_ret: None,
             module_aliases,
             type_var_scope: Vec::new(),
+            at_module_scope: true,
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -146,6 +150,7 @@ impl TypeChecker {
             current_function_ret: None,
             module_aliases,
             type_var_scope: Vec::new(),
+            at_module_scope: true,
         };
 
         // Pass 1: top-level lets
@@ -210,6 +215,7 @@ impl TypeChecker {
     fn check_function(&mut self, decl: &FunctionDecl) {
         // Push type variable scope for generic functions
         let saved_type_vars = std::mem::replace(&mut self.type_var_scope, decl.type_params.clone());
+        let saved_module_scope = std::mem::replace(&mut self.at_module_scope, false);
 
         // Push a new scope for the function body
         self.local_env.push_scope();
@@ -262,6 +268,7 @@ impl TypeChecker {
         self.current_function_ret = None;
         self.local_env.pop_scope();
         self.type_var_scope = saved_type_vars;
+        self.at_module_scope = saved_module_scope;
     }
 
     /// Type-check a top-level statement that is not a let binding.
@@ -276,7 +283,9 @@ impl TypeChecker {
             }
             Stmt::ForCond { cond, body, .. } => {
                 let _ = self.check_expr(cond, &MonoType::Bool);
+                let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
                 let _ = self.synth_block(body);
+                self.at_module_scope = saved_scope;
             }
             Stmt::Break { value, .. } => {
                 if let Some(val) = value {
@@ -329,6 +338,7 @@ impl TypeChecker {
         }
         let saved = self.current_function_ret.take();
         self.current_function_ret = expected_ret.clone();
+        let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
 
         let body_ty = match &expected_ret {
             Some(exp) => {
@@ -340,6 +350,7 @@ impl TypeChecker {
 
         self.local_env.pop_scope();
         self.current_function_ret = saved;
+        self.at_module_scope = saved_scope;
 
         Ok(MonoType::Function {
             params: param_types,
@@ -580,9 +591,11 @@ impl TypeChecker {
                     }
                     let saved = self.current_function_ret.take();
                     self.current_function_ret = Some(*expected_ret.clone());
+                    let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
                     let result = self.check_expr(&fe.body, expected_ret);
                     self.local_env.pop_scope();
                     self.current_function_ret = saved;
+                    self.at_module_scope = saved_scope;
                     result
                 } else {
                     let actual = self.synth_expr(expr)?;
@@ -2524,6 +2537,13 @@ impl TypeChecker {
     fn synth_assign(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
         match &left.kind {
             ExprKind::Ident(name) => {
+                if self.at_module_scope {
+                    self.errors.push(TypeError::ModuleScopeRebinding {
+                        name: name.clone(),
+                        span: left.span,
+                    });
+                    return Err(());
+                }
                 let existing_ty = if let Some(ty) = self.local_env.lookup(name) {
                     ty.clone()
                 } else if let Some(ty) = self.value_env.lookup(name) {
@@ -2728,7 +2748,9 @@ impl TypeChecker {
             }
         }
 
+        let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
         let _ = self.synth_block(body);
+        self.at_module_scope = saved_scope;
         self.local_env.pop_scope();
     }
 
