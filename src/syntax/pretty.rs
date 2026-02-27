@@ -343,8 +343,11 @@ fn print_pattern(pattern: &Pattern, out: &mut String) {
         Pattern::Wildcard(_) => write!(out, "_").unwrap(),
         Pattern::Ident(name, _) => write!(out, "{}", name).unwrap(),
         Pattern::Literal(lit, _) => print_literal(lit, out),
-        Pattern::Variant { name, fields, .. } => {
-            write!(out, ".{}", name).unwrap();
+        Pattern::Variant { type_name, name, fields, .. } => {
+            match type_name {
+                Some(tname) => write!(out, "{}.{}", tname, name).unwrap(),
+                None => write!(out, ".{}", name).unwrap(),
+            };
             if !fields.is_empty() {
                 write!(out, "(").unwrap();
                 for (i, field) in fields.iter().enumerate() {

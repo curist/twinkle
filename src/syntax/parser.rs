@@ -1090,7 +1090,7 @@ impl Parser {
     fn parse_pattern(&mut self) -> ParseResult<Pattern> {
         match self.peek_kind() {
             Some(TokenKind::Dot) => {
-                // Variant pattern: .Some(x), .Node(val, left, right), .Unit
+                // Anonymous variant pattern: .Some(x), .Node(val, left, right), .Unit
                 let start = self.expect(TokenKind::Dot)?;
                 let name_token = self.expect(TokenKind::Ident)?;
                 let name = name_token.text.clone();
@@ -1111,19 +1111,45 @@ impl Parser {
                     let rparen = self.expect(TokenKind::RParen)?;
                     let span = start.span.merge(&rparen.span);
 
-                    return Ok(Pattern::Variant { name, fields, span });
+                    return Ok(Pattern::Variant { type_name: None, name, fields, span });
                 } else {
                     Vec::new()
                 };
 
                 let span = start.span.merge(&name_token.span);
-                Ok(Pattern::Variant { name, fields, span })
+                Ok(Pattern::Variant { type_name: None, name, fields, span })
             }
             Some(TokenKind::Ident) => {
                 let token = self.advance().unwrap();
-                // Check if it's a wildcard pattern
                 if token.text == "_" {
                     Ok(Pattern::Wildcard(token.span))
+                } else if token.text.starts_with(|c: char| c.is_uppercase())
+                    && self.peek_is(TokenKind::Dot)
+                {
+                    // Qualified variant pattern: TypeName.Variant or TypeName.Variant(fields)
+                    let type_name = token.text.clone();
+                    self.expect(TokenKind::Dot)?;
+                    let variant_token = self.expect(TokenKind::Ident)?;
+                    let name = variant_token.text.clone();
+
+                    let (fields, span) = if self.peek_is(TokenKind::LParen) {
+                        self.expect(TokenKind::LParen)?;
+                        let mut fields = Vec::new();
+                        while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
+                            fields.push(self.parse_pattern()?);
+                            if !self.peek_is(TokenKind::RParen) {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                        }
+                        let rparen = self.expect(TokenKind::RParen)?;
+                        let span = token.span.merge(&rparen.span);
+                        (fields, span)
+                    } else {
+                        let span = token.span.merge(&variant_token.span);
+                        (Vec::new(), span)
+                    };
+
+                    Ok(Pattern::Variant { type_name: Some(type_name), name, fields, span })
                 } else {
                     Ok(Pattern::Ident(token.text.clone(), token.span))
                 }

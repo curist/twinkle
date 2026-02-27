@@ -349,8 +349,10 @@ pub enum Pattern {
     /// Literal pattern: 42, "hello", true
     Literal(Literal, Span),
 
-    /// Variant pattern: .Some(x), .Node(val, left, right)
+    /// Variant pattern: .Some(x) or qualified ParseError.InvalidFormat(s)
     Variant {
+        /// Present for the qualified `TypeName.Variant` form; None for the anonymous `.Variant` form.
+        type_name: Option<String>,
         name: String,
         fields: Vec<Pattern>,
         span: Span,

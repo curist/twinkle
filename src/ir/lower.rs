@@ -2290,46 +2290,48 @@ impl Lowerer {
                 }
             }),
 
-            Pattern::Variant { name: variant_name, fields, span: pat_span } => {
-                // Resolve TypeId from the scrutinee's declared type — avoids the
-                // first-match scan that would pick the wrong type when variant names
-                // collide across sum types (e.g., two types both have `None`).
-                let (type_id, variant_idx) = match scrutinee_ty {
-                    Some(MonoType::Named { type_id, .. }) => {
-                        let type_id = *type_id;
-                        match self.type_env.get_variant_index(type_id, variant_name) {
-                            Some(idx) => (type_id, idx),
-                            None => {
-                                self.errors.push(LowerError::UnknownVariant {
-                                    name: variant_name.to_string(),
-                                    type_name: format!("Type#{}", type_id.0),
-                                    span: *pat_span,
-                                });
-                                return None;
+            Pattern::Variant { type_name: qual_type_name, name: variant_name, fields, span: pat_span } => {
+                // Resolve TypeId using three strategies in priority order:
+                // 1. Qualified type name lookup (TypeName.Variant form) — fast, direct.
+                //    Note: bare type names are removed after per-module typecheck in multi-module
+                //    builds, so this may return None even for valid qualified patterns.
+                // 2. Scrutinee's declared MonoType — correct even after name removal; the
+                //    type checker has already validated that the variant belongs to this type.
+                // 3. Full scan — last resort when scrutinee type is unknown.
+                let resolved: Option<(crate::types::ty::TypeId, usize)> = 'resolve: {
+                    if let Some(tname) = qual_type_name {
+                        if let Some(tid) = self.type_env.lookup_type(tname) {
+                            if let Some(idx) = self.type_env.get_variant_index(tid, variant_name) {
+                                break 'resolve Some((tid, idx));
                             }
                         }
                     }
-                    _ => {
-                        // Fallback: scan all types (only reached if scrutinee type is unknown)
-                        let mut found = None;
-                        for i in 0..self.type_env.type_count() {
-                            let tid = crate::types::ty::TypeId(i as u32);
-                            if let Some(idx) = self.type_env.get_variant_index(tid, variant_name) {
-                                found = Some((tid, idx));
-                                break;
-                            }
+                    if let Some(MonoType::Named { type_id, .. }) = scrutinee_ty {
+                        if let Some(idx) = self.type_env.get_variant_index(*type_id, variant_name) {
+                            break 'resolve Some((*type_id, idx));
                         }
-                        match found {
-                            Some(pair) => pair,
-                            None => {
-                                self.errors.push(LowerError::UnknownVariant {
-                                    name: variant_name.to_string(),
-                                    type_name: "(unknown)".to_string(),
-                                    span: *pat_span,
-                                });
-                                return None;
-                            }
+                    }
+                    let mut found = None;
+                    for i in 0..self.type_env.type_count() {
+                        let tid = crate::types::ty::TypeId(i as u32);
+                        if let Some(idx) = self.type_env.get_variant_index(tid, variant_name) {
+                            found = Some((tid, idx));
+                            break;
                         }
+                    }
+                    found
+                };
+
+                let (type_id, variant_idx) = match resolved {
+                    Some(pair) => pair,
+                    None => {
+                        let tname = qual_type_name.as_deref().unwrap_or("(unknown)");
+                        self.errors.push(LowerError::UnknownVariant {
+                            name: variant_name.to_string(),
+                            type_name: tname.to_string(),
+                            span: *pat_span,
+                        });
+                        return None;
                     }
                 };
 

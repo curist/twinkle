@@ -63,6 +63,7 @@ impl<'a> PatternChecker<'a> {
             }
 
             Pattern::Variant {
+                type_name: _,
                 name,
                 fields,
                 span,
@@ -361,6 +362,7 @@ mod tests {
         let scrut_ty = MonoType::named(type_id);
         let arms = vec![CaseArm {
             pattern: Pattern::Variant {
+                type_name: None,
                 name: "None".to_string(),
                 fields: vec![],
                 span: Span::new(FileId(0), 0, 4),

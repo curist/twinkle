@@ -20,8 +20,8 @@ fn parse_positive(s: String) Result<Int, ParseError> {
 
 fn show_error(e: ParseError) String {
     case e {
-        .InvalidFormat(s) => "not a number: \"${s}\"",
-        .OutOfRange(n) => "out of range: ${n}",
+        ParseError.InvalidFormat(s) => "not a number: \"${s}\"",
+        ParseError.OutOfRange(n) => "out of range: ${n}",
     }
 }
 
