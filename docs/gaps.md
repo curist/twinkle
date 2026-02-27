@@ -33,7 +33,12 @@ The spec mentions `Result<T, E>` and "traps" (like OOB or div-by-zero).
 * **Incompleteness:** There is no detailed specification for **Error Handling**. Does the language support `try/catch`? Does it have a `?` operator (like Rust/Zig) or a `try` keyword (like Gleam) to propagate `Result` types?
 * **Needs Thought:** If every "mutation" actually returns a new value, how do we handle errors in the middle of a nested update (e.g., `config.users[i].email = "..."` where `i` is out of bounds)?
 
-ans: biggest gap IMO. definitely need more thoughts.
+ans: resolved. Twinkle uses a two-tier error model:
+
+* **Recoverable errors** → `Result<T, E>` with `try` keyword for propagation. `E` can be any type, including a custom sum type with structured variants (e.g. `type ParseError = { InvalidFormat(String), OutOfRange(Int) }`). Pattern matching on `Result` arms uses either the anonymous form (`.Ok(n)`) or the qualified form (`ParseError.InvalidFormat(s)`).
+* **Unrecoverable faults** → Traps: array OOB, division by zero, and explicit `error("msg")` abort execution immediately. No recovery path; these map directly to Wasm traps.
+
+The nested-update OOB question is answered by the trap model: `config.users[i].email = ...` where `i` is OOB traps unconditionally. If recoverable behavior is needed, guard with an explicit bounds check before the update.
 
 ### 5. Module System Rigidity
 
