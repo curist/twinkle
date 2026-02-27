@@ -77,12 +77,15 @@ impl CompilationContext {
         func_table.insert("Cell.set".to_string(), prelude::CELL_SET);
         func_table.insert("Cell.update".to_string(), prelude::CELL_UPDATE);
         func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
+        func_table.insert("Iterator.next".to_string(),   prelude::ITERATOR_NEXT);
+        func_table.insert("Iterator.unfold".to_string(), prelude::ITERATOR_UNFOLD);
 
         // Built-in module aliases: handled as module-qualified calls rather than
         // method calls on values.
         let mut module_aliases = HashSet::new();
         module_aliases.insert("Cell".to_string());
         module_aliases.insert("Dict".to_string());
+        module_aliases.insert("Iterator".to_string());
 
         Self {
             type_env: TypeEnv::new(),

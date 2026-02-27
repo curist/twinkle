@@ -1,0 +1,48 @@
+// Expected output:
+//   sum=45
+//   squares: 0 1 4 9 16 25 36 49 64 81
+//   evens: 0 2 4 6 8
+//   first_three=36
+//   done
+
+fn my_range(n: Int) Iterator<Int> {
+  Iterator.unfold(0, fn(i: Int) {
+    if i < n { UnfoldStep.Yield(i, i + 1) }
+    else     { UnfoldStep.Done }
+  })
+}
+
+// for loop
+sum := 0
+for x in my_range(10) {
+  sum = sum + x
+}
+println("sum=${sum}")
+
+// collect
+squares := collect x in my_range(10) { x * x }
+print("squares:")
+for sq in squares {
+  print(" ${sq}")
+}
+println("")
+
+// collect with continue (filter evens)
+evens := collect x in my_range(10) {
+  if x % 2 == 0 { x } else { continue }
+}
+print("evens:")
+for e in evens {
+  print(" ${e}")
+}
+println("")
+
+// for with break
+acc := 0
+for x in my_range(100) {
+  if acc + x > 40 { break }
+  acc = acc + x
+}
+println("first_three=${acc}")
+
+println("done")

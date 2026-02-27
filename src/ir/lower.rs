@@ -6,7 +6,7 @@ use crate::syntax::ast::{
 };
 use crate::syntax::span::Span;
 use crate::types::env::TypeEnv;
-use crate::types::ty::{MonoType, RANGE_TYPE_ID, RESULT_TYPE_ID};
+use crate::types::ty::{MonoType, ITERATOR_TYPE_ID, OPTION_TYPE_ID, ITER_ITEM_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
 use super::core::{
@@ -64,8 +64,16 @@ pub mod prelude {
     pub const DICT_REMOVE:  FuncId = FuncId(29); // Dict.remove(m, k) -> Dict<K,V>
     pub const STRING_SUBSTR: FuncId = FuncId(30); // String.substring(s, start, end) -> String
 
+    pub const ITERATOR_NEXT:   FuncId = FuncId(31); // Iterator.next<T>(it: Iterator<T>) Option<IterItem<T>>
+    pub const ITERATOR_UNFOLD: FuncId = FuncId(32); // Iterator.unfold<T,S>(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
+
+    // Internal array builder intrinsics (never user-visible)
+    pub const ARRAY_BUILDER_NEW:    FuncId = FuncId(33); // () -> Cell<Array<T>>
+    pub const ARRAY_BUILDER_PUSH:   FuncId = FuncId(34); // (Cell<Array<T>>, T) -> Void
+    pub const ARRAY_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Array<T>>) -> Array<T>
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 31;
+    pub const USER_FUNC_START: u32 = 36;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,12 +112,15 @@ impl Lowerer {
         func_table.insert("Cell.set".to_string(), prelude::CELL_SET);
         func_table.insert("Cell.update".to_string(), prelude::CELL_UPDATE);
         func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
+        func_table.insert("Iterator.next".to_string(),   prelude::ITERATOR_NEXT);
+        func_table.insert("Iterator.unfold".to_string(), prelude::ITERATOR_UNFOLD);
 
         // len is polymorphic and handled specially in lower_expr_call
 
         let mut module_aliases = HashSet::new();
         module_aliases.insert("Cell".to_string()); // built-in module alias
         module_aliases.insert("Dict".to_string()); // built-in module alias
+        module_aliases.insert("Iterator".to_string()); // built-in module alias
 
         Self {
             type_map,
@@ -539,6 +550,11 @@ impl Lowerer {
                 if matches!(iter_ty, Some(MonoType::Dict(_, _))) {
                     return self.lower_dict_for_stmt(
                         pattern, index_pattern.as_ref(), iter, body, rest, cont_span, for_span,
+                    );
+                }
+                if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == ITERATOR_TYPE_ID) {
+                    return self.lower_iterator_for_stmt(
+                        pattern, iter, body, rest, cont_span, for_span,
                     );
                 }
                 if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == RANGE_TYPE_ID) {
@@ -1091,6 +1107,245 @@ impl Lowerer {
                     ty: cont_ty.clone(),
                     span: for_span,
                 }),
+            },
+            ty: cont_ty,
+            span: for_span,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Iterator for-loop lowering
+    // -----------------------------------------------------------------------
+
+    /// Lower `for x in iter { body }` where iter: Iterator<T>.
+    ///
+    /// Emits:
+    ///   Let(loop_it, iter_expr,
+    ///     Let(_, rest_stmts,
+    ///       Loop {
+    ///         Let(opt, Call(ITERATOR_NEXT, [Local(loop_it)]),
+    ///           Match(opt) {
+    ///             None   → Break(None)
+    ///             Some(item) →
+    ///               Let(x, RecordGet(item, 0),
+    ///                 Let(_, Assign(loop_it, RecordGet(item, 1)),
+    ///                   Let(_, body, Continue)))
+    ///           })
+    ///       }))
+    #[allow(clippy::too_many_arguments)]
+    fn lower_iterator_for_stmt(
+        &mut self,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Block,
+        rest: &[Stmt],
+        cont_span: Span,
+        for_span: Span,
+    ) -> Option<CoreExpr> {
+        let iter_expr = self.lower_expr(iter)?;
+        let iter_span = iter.span;
+
+        let elem_ty = match &iter_expr.ty {
+            MonoType::Named { type_id, args } if *type_id == ITERATOR_TYPE_ID => {
+                args.first().cloned().unwrap_or(MonoType::Void)
+            }
+            _ => MonoType::Void,
+        };
+        let iter_ty = iter_expr.ty.clone();
+        let option_item_ty = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Named {
+                type_id: ITER_ITEM_TYPE_ID,
+                args: vec![elem_ty.clone()],
+            }],
+        };
+        let item_ty = MonoType::Named {
+            type_id: ITER_ITEM_TYPE_ID,
+            args: vec![elem_ty.clone()],
+        };
+
+        // loop_it: mutable local holding the current iterator state
+        let loop_it = self.local_allocator.alloc_and_bind("__it".to_string());
+
+        // Loop scope
+        self.local_allocator.push_scope();
+
+        let opt_local  = self.local_allocator.alloc_and_bind("__opt".to_string());
+        let item_local = self.local_allocator.alloc_and_bind("__item".to_string());
+
+        let elem_local = match pattern {
+            Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
+            _ => self.local_allocator.alloc(),
+        };
+
+        let body_expr = self.lower_block(body)?;
+        self.local_allocator.pop_scope();
+
+        // Call(ITERATOR_NEXT, [Local(loop_it)])
+        let next_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::ITERATOR_NEXT),
+                    ty: MonoType::Function {
+                        params: vec![iter_ty.clone()],
+                        ret: Box::new(option_item_ty.clone()),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![CoreExpr {
+                    kind: CoreExprKind::Local(loop_it),
+                    ty: iter_ty.clone(),
+                    span: iter_span,
+                }],
+            },
+            ty: option_item_ty,
+            span: iter_span,
+        };
+
+        // RecordGet(Local(item_local), 0) → value: T
+        let value_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(item_local),
+                    ty: item_ty.clone(),
+                    span: iter_span,
+                }),
+                field: FieldId(0),
+            },
+            ty: elem_ty,
+            span: iter_span,
+        };
+        // RecordGet(Local(item_local), 1) → rest: Iterator<T>
+        let rest_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(item_local),
+                    ty: item_ty,
+                    span: iter_span,
+                }),
+                field: FieldId(1),
+            },
+            ty: iter_ty.clone(),
+            span: iter_span,
+        };
+        // Assign(loop_it, rest_get)
+        let advance_it = CoreExpr {
+            kind: CoreExprKind::Assign {
+                local: loop_it,
+                value: Box::new(rest_get),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        let continue_expr = CoreExpr {
+            kind: CoreExprKind::Continue,
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        // Let(_, advance_it, Let(_, body, Continue))
+        let body_then_continue = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(body_expr),
+                body: Box::new(continue_expr),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        let with_advance = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(advance_it),
+                body: Box::new(body_then_continue),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        // Let(x, value_get, with_advance)
+        let with_elem = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: elem_local,
+                value: Box::new(value_get),
+                body: Box::new(with_advance),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // Match arms:
+        //   VariantId(0) = None  → Break(None)
+        //   VariantId(1) = Some  → Let(item, payload, with_elem)
+        let break_expr = CoreExpr {
+            kind: CoreExprKind::Break { value: None },
+            ty: MonoType::Void,
+            span: for_span,
+        };
+        let match_expr = CoreExpr {
+            kind: CoreExprKind::Match {
+                scrutinee: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(opt_local),
+                    ty: MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![MonoType::Void] },
+                    span: iter_span,
+                }),
+                arms: vec![
+                    MatchArm {
+                        pattern: CorePattern::Variant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(0),
+                            fields: vec![],
+                        },
+                        body: break_expr,
+                    },
+                    MatchArm {
+                        pattern: CorePattern::Variant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(1),
+                            fields: vec![CorePattern::Var(item_local)],
+                        },
+                        body: with_elem,
+                    },
+                ],
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // Let(opt, next_call, match_expr)
+        let loop_body = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: opt_local,
+                value: Box::new(next_call),
+                body: Box::new(match_expr),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        let loop_expr = CoreExpr {
+            kind: CoreExprKind::Loop { body: Box::new(loop_body) },
+            ty: MonoType::Void,
+            span: for_span,
+        };
+
+        // Continuation after the loop
+        let continuation = self.lower_stmts(rest, cont_span)?;
+        let cont_ty = continuation.ty.clone();
+        let loop_then_cont = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(loop_expr),
+                body: Box::new(continuation),
+            },
+            ty: cont_ty.clone(),
+            span: for_span,
+        };
+
+        // Let(loop_it, iter_expr, loop_then_cont)
+        Some(CoreExpr {
+            kind: CoreExprKind::Let {
+                local: loop_it,
+                value: Box::new(iter_expr),
+                body: Box::new(loop_then_cont),
             },
             ty: cont_ty,
             span: for_span,
@@ -2324,6 +2579,287 @@ impl Lowerer {
         })
     }
 
+    /// Lower `collect x in iter { body }` where iter: Iterator<T>.
+    ///
+    /// Uses three array-builder intrinsics (ARRAY_BUILDER_NEW/PUSH/FREEZE) to
+    /// accumulate elements without requiring a mutable acc local:
+    ///
+    ///   Let(builder, ARRAY_BUILDER_NEW(),
+    ///     Let(loop_it, iter_expr,
+    ///       Loop {
+    ///         Let(opt, ITERATOR_NEXT(loop_it),
+    ///           Match(opt) {
+    ///             None   → Break(ARRAY_BUILDER_FREEZE(builder))
+    ///             Some(item) →
+    ///               Let(x, item.value,
+    ///                 Let(_, Assign(loop_it, item.rest),
+    ///                   Let(elem, body,
+    ///                     Let(_, ARRAY_BUILDER_PUSH(builder, elem),
+    ///                       Continue))))
+    ///           })
+    ///       }))
+    fn lower_iterator_collect(
+        &mut self,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Expr,
+        result_ty: &MonoType,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        let iter_expr = self.lower_expr(iter)?;
+        let iter_span = iter.span;
+
+        let elem_ty = match &iter_expr.ty {
+            MonoType::Named { type_id, args } if *type_id == ITERATOR_TYPE_ID => {
+                args.first().cloned().unwrap_or(MonoType::Void)
+            }
+            _ => MonoType::Void,
+        };
+        let iter_ty = iter_expr.ty.clone();
+        let item_ty = MonoType::Named {
+            type_id: ITER_ITEM_TYPE_ID,
+            args: vec![elem_ty.clone()],
+        };
+        let option_item_ty = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![item_ty.clone()],
+        };
+
+        // builder: Cell<Array<T>> — interior-mutable accumulator
+        let builder_local = self.local_allocator.alloc_and_bind("__builder".to_string());
+        let loop_it       = self.local_allocator.alloc_and_bind("__it".to_string());
+
+        // Loop scope
+        self.local_allocator.push_scope();
+        let opt_local  = self.local_allocator.alloc_and_bind("__opt".to_string());
+        let item_local = self.local_allocator.alloc_and_bind("__item".to_string());
+
+        let elem_local = match pattern {
+            Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
+            _ => self.local_allocator.alloc(),
+        };
+        let body_val_local = self.local_allocator.alloc_and_bind("__c_val".to_string());
+
+        let body_expr = self.lower_expr(body)?;
+        let body_ty = body_expr.ty.clone();
+        self.local_allocator.pop_scope();
+
+        // ARRAY_BUILDER_PUSH(builder, body_val_local)
+        let push_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_PUSH),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }),
+                args: vec![
+                    CoreExpr { kind: CoreExprKind::Local(builder_local), ty: MonoType::Void, span: iter_span },
+                    CoreExpr { kind: CoreExprKind::Local(body_val_local), ty: body_ty, span: iter_span },
+                ],
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        let continue_expr = CoreExpr { kind: CoreExprKind::Continue, ty: MonoType::Void, span: iter_span };
+
+        // Let(_, push_call, Continue)
+        let push_then_cont = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(push_call),
+                body: Box::new(continue_expr),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        // Let(body_val, body_expr, push_then_cont)
+        // If body produces Continue, push is skipped (element filtered out)
+        let with_body = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: body_val_local,
+                value: Box::new(body_expr),
+                body: Box::new(push_then_cont),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // Assign(loop_it, item.rest)
+        let rest_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(item_local),
+                    ty: item_ty.clone(),
+                    span: iter_span,
+                }),
+                field: FieldId(1),
+            },
+            ty: iter_ty.clone(),
+            span: iter_span,
+        };
+        let advance_it = CoreExpr {
+            kind: CoreExprKind::Assign { local: loop_it, value: Box::new(rest_get) },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        let with_advance = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: self.local_allocator.alloc(),
+                value: Box::new(advance_it),
+                body: Box::new(with_body),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // Let(x, item.value, with_advance)
+        let value_get = CoreExpr {
+            kind: CoreExprKind::RecordGet {
+                target: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(item_local),
+                    ty: item_ty,
+                    span: iter_span,
+                }),
+                field: FieldId(0),
+            },
+            ty: elem_ty,
+            span: iter_span,
+        };
+        let with_elem = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: elem_local,
+                value: Box::new(value_get),
+                body: Box::new(with_advance),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // None arm: Break(ARRAY_BUILDER_FREEZE(builder))
+        let freeze_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_FREEZE),
+                    ty: MonoType::Function {
+                        params: vec![MonoType::Void],
+                        ret: Box::new(result_ty.clone()),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![CoreExpr {
+                    kind: CoreExprKind::Local(builder_local),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }],
+            },
+            ty: result_ty.clone(),
+            span: iter_span,
+        };
+        let break_freeze = CoreExpr {
+            kind: CoreExprKind::Break { value: Some(Box::new(freeze_call)) },
+            ty: result_ty.clone(),
+            span: span,
+        };
+
+        // Match the option
+        let match_expr = CoreExpr {
+            kind: CoreExprKind::Match {
+                scrutinee: Box::new(CoreExpr {
+                    kind: CoreExprKind::Local(opt_local),
+                    ty: MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![MonoType::Void] },
+                    span: iter_span,
+                }),
+                arms: vec![
+                    MatchArm {
+                        pattern: CorePattern::Variant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(0),
+                            fields: vec![],
+                        },
+                        body: break_freeze,
+                    },
+                    MatchArm {
+                        pattern: CorePattern::Variant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(1),
+                            fields: vec![CorePattern::Var(item_local)],
+                        },
+                        body: with_elem,
+                    },
+                ],
+            },
+            ty: result_ty.clone(),
+            span: iter_span,
+        };
+
+        // Let(opt, next_call, match_expr)
+        let next_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::ITERATOR_NEXT),
+                    ty: MonoType::Function {
+                        params: vec![iter_ty.clone()],
+                        ret: Box::new(option_item_ty),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![CoreExpr {
+                    kind: CoreExprKind::Local(loop_it),
+                    ty: iter_ty.clone(),
+                    span: iter_span,
+                }],
+            },
+            ty: MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![MonoType::Void] },
+            span: iter_span,
+        };
+        let loop_body = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: opt_local,
+                value: Box::new(next_call),
+                body: Box::new(match_expr),
+            },
+            ty: result_ty.clone(),
+            span: iter_span,
+        };
+        let loop_expr = CoreExpr {
+            kind: CoreExprKind::Loop { body: Box::new(loop_body) },
+            ty: result_ty.clone(),
+            span,
+        };
+
+        // Let(loop_it, iter_expr, loop_expr)
+        let with_it = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: loop_it,
+                value: Box::new(iter_expr),
+                body: Box::new(loop_expr),
+            },
+            ty: result_ty.clone(),
+            span,
+        };
+
+        // builder_new_call
+        let builder_new_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_NEW),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }),
+                args: vec![],
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+
+        // Let(builder, builder_new_call, with_it)
+        Some(CoreExprKind::Let {
+            local: builder_local,
+            value: Box::new(builder_new_call),
+            body: Box::new(with_it),
+        })
+    }
+
     fn lower_collect(
         &mut self,
         pattern: &Pattern,
@@ -2335,6 +2871,9 @@ impl Lowerer {
         let iter_ty = self.type_map.get_expr_type(iter.id).cloned();
         if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == RANGE_TYPE_ID) {
             return self.lower_range_collect(pattern, iter, body, result_ty, span);
+        }
+        if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == ITERATOR_TYPE_ID) {
+            return self.lower_iterator_collect(pattern, iter, body, result_ty, span);
         }
 
         // collect x in arr { body }

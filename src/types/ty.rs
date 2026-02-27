@@ -16,10 +16,13 @@ pub struct TypeId(pub u32);
 /// Pre-registered built-in parametric type IDs.
 /// These are the first three TypeDefs added to every fresh TypeEnv, so their
 /// IDs are fixed and may be used as constants throughout the compiler.
-pub const OPTION_TYPE_ID: TypeId = TypeId(0);
-pub const RESULT_TYPE_ID: TypeId = TypeId(1);
-pub const CELL_TYPE_ID:   TypeId = TypeId(2);
-pub const RANGE_TYPE_ID:  TypeId = TypeId(3);
+pub const OPTION_TYPE_ID:      TypeId = TypeId(0);
+pub const RESULT_TYPE_ID:      TypeId = TypeId(1);
+pub const CELL_TYPE_ID:        TypeId = TypeId(2);
+pub const RANGE_TYPE_ID:       TypeId = TypeId(3);
+pub const ITERATOR_TYPE_ID:    TypeId = TypeId(4);
+pub const ITER_ITEM_TYPE_ID:   TypeId = TypeId(5);
+pub const UNFOLD_STEP_TYPE_ID: TypeId = TypeId(6);
 
 /// Monomorphic type representation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

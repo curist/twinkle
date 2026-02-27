@@ -6,7 +6,7 @@ use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
-use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID};
+use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 use super::type_map::TypeMap;
 use std::collections::{HashSet, HashMap};
 use std::mem;
@@ -895,12 +895,15 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        // Special: Cell and Dict modules provide polymorphic operations.
+        // Special: Cell, Dict, and Iterator modules provide polymorphic operations.
         if alias == "Cell" {
             return self.synth_cell_call(func_name, args, span);
         }
         if alias == "Dict" {
             return self.synth_dict_module_call(func_name, args, span);
+        }
+        if alias == "Iterator" {
+            return self.synth_iterator_call(func_name, args, span);
         }
 
         let qualified = format!("{}.{}", alias, func_name);
@@ -1040,6 +1043,102 @@ impl TypeChecker {
             other => {
                 self.errors.push(TypeError::UndefinedVariable {
                     name: format!("Dict.{}", other),
+                    span,
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle Iterator.next / Iterator.unfold polymorphically.
+    fn synth_iterator_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        match func_name {
+            "next" => {
+                // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let it_ty = self.synth_expr(&args[0])?;
+                match it_ty {
+                    MonoType::Named { type_id, args: ref it_args } if type_id == ITERATOR_TYPE_ID => {
+                        let elem_ty = it_args.first().cloned().unwrap_or(MonoType::Void);
+                        let item_ty = MonoType::Named {
+                            type_id: ITER_ITEM_TYPE_ID,
+                            args: vec![elem_ty],
+                        };
+                        Ok(MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![item_ty] })
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![] },
+                            actual: other,
+                            span,
+                            note: Some("Iterator.next expects an Iterator<T>".to_string()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "unfold" => {
+                // Iterator.unfold(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
+                // We infer T and S from the step function's signature.
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                // Synthesize seed to determine S
+                let seed_ty = self.synth_expr(&args[0])?;
+                // Synthesize the step closure
+                let step_ty = self.synth_expr(&args[1])?;
+                // Validate: step must be fn(S) UnfoldStep<T,S>
+                match step_ty {
+                    MonoType::Function { ref params, ref ret } => {
+                        if params.len() != 1 {
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: params.len(),
+                                span,
+                            });
+                            return Err(());
+                        }
+                        // Check parameter matches seed type
+                        let param_ty = &params[0];
+                        if param_ty != &seed_ty {
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected: seed_ty.clone(),
+                                actual: param_ty.clone(),
+                                span,
+                                note: Some("Iterator.unfold: step function parameter type must match seed type".to_string()),
+                            });
+                            return Err(());
+                        }
+                        // Return type should be UnfoldStep<T,S>; extract T
+                        match ret.as_ref() {
+                            MonoType::Named { type_id, args: ret_args } if *type_id == UNFOLD_STEP_TYPE_ID => {
+                                let elem_ty = ret_args.first().cloned().unwrap_or(MonoType::Void);
+                                Ok(MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![elem_ty] })
+                            }
+                            other => {
+                                self.errors.push(TypeError::TypeMismatch {
+                                    expected: MonoType::Named { type_id: UNFOLD_STEP_TYPE_ID, args: vec![] },
+                                    actual: other.clone(),
+                                    span,
+                                    note: Some("Iterator.unfold: step function must return UnfoldStep<T,S>".to_string()),
+                                });
+                                Err(())
+                            }
+                        }
+                    }
+                    other => {
+                        self.errors.push(TypeError::NotAFunction { ty: other, span });
+                        Err(())
+                    }
+                }
+            }
+            other => {
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: format!("Iterator.{}", other),
                     span,
                 });
                 Err(())
@@ -2049,16 +2148,33 @@ impl TypeChecker {
             return Ok(());
         }
         if actual == expected {
-            Ok(())
-        } else {
-            self.errors.push(TypeError::TypeMismatch {
-                expected: expected.clone(),
-                actual: actual.clone(),
-                span,
-                    note: None,
-            });
-            Err(())
+            return Ok(());
         }
+        // Structural unification for Named types: Var(_) in either arg position
+        // acts as a wildcard. This handles generic zero-arg variants like
+        // `UnfoldStep.Done` which synthesize as Named(id, [Var("T"), Var("S")])
+        // but need to match against a concrete Named(id, [Int, Int]).
+        if let (
+            MonoType::Named { type_id: aid, args: aa },
+            MonoType::Named { type_id: eid, args: ea },
+        ) = (actual, expected)
+        {
+            if aid == eid && aa.len() == ea.len() {
+                let all_ok = aa.iter().zip(ea.iter()).all(|(a, e)| {
+                    matches!(a, MonoType::Var(_)) || matches!(e, MonoType::Var(_)) || a == e
+                });
+                if all_ok {
+                    return Ok(());
+                }
+            }
+        }
+        self.errors.push(TypeError::TypeMismatch {
+            expected: expected.clone(),
+            actual: actual.clone(),
+            span,
+            note: None,
+        });
+        Err(())
     }
 
     //
@@ -2220,6 +2336,27 @@ impl TypeChecker {
                     }
                 }
             }
+            MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
+                let elem_ty = args.first().cloned().unwrap_or(MonoType::Void);
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop over Iterator",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns over Iterator<T>".to_string(),
+                        });
+                    }
+                }
+                if index_pattern.is_some() {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "indexed for loop over Iterator",
+                        span: iter.span,
+                        note: "Iterator<T> does not support the 'for x, i in' form".to_string(),
+                    });
+                }
+            }
             MonoType::Dict(key_ty, val_ty) => {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
@@ -2265,6 +2402,9 @@ impl TypeChecker {
         let elem_ty = match iter_ty {
             MonoType::Array(elem) => *elem,
             MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => MonoType::Int,
+            MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
+                args.first().cloned().unwrap_or(MonoType::Void)
+            }
             other => {
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Array(Box::new(MonoType::Int)),

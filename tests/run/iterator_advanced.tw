@@ -1,0 +1,35 @@
+// Expected output:
+//   a
+//   b
+//   c
+//   total=6
+
+fn count_down(n: Int) Iterator<Int> {
+  Iterator.unfold(n, fn(i: Int) {
+    if i > 0 { UnfoldStep.Yield(i, i - 1) }
+    else     { UnfoldStep.Done }
+  })
+}
+
+// iterator as function argument
+fn sum_iter(it: Iterator<Int>) Int {
+  acc := 0
+  for x in it {
+    acc = acc + x
+  }
+  acc
+}
+
+// collect with outer capture
+names: Array<String> = ["a", "b", "c"]
+n := names.len()
+name_iter := Iterator.unfold(0, fn(i: Int) {
+  if i < n { UnfoldStep.Yield(names[i], i + 1) }
+  else     { UnfoldStep.Done }
+})
+for name in name_iter {
+  println(name)
+}
+
+total := sum_iter(count_down(3))
+println("total=${total}")

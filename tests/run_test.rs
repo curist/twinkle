@@ -178,3 +178,13 @@ fn generic_types() {
 fn method_chaining() {
     check("tests/run/method_chaining.tw");
 }
+
+#[test]
+fn iterator() {
+    check("tests/run/iterator.tw");
+}
+
+#[test]
+fn iterator_advanced() {
+    check("tests/run/iterator_advanced.tw");
+}

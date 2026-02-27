@@ -9,7 +9,8 @@ use crate::ir::core::{
 use crate::ir::CoreModule;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID};
+use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
+use super::value::IteratorState;
 
 use super::value::Value;
 
@@ -364,7 +365,7 @@ impl<W: Write> Interpreter<W> {
     }
 
     // -----------------------------------------------------------------------
-    // Built-in functions (FuncId 1–30; USER_FUNC_START=31)
+    // Built-in functions (FuncId 1–35; USER_FUNC_START=36)
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {
@@ -651,6 +652,72 @@ impl<W: Write> Interpreter<W> {
                     }
                     _ => panic!("string_substring: expected String and two Ints"),
                 }
+            }
+            31 => {
+                // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
+                let iter_state = match &args[0] {
+                    Value::Iterator(s) => s.clone(),
+                    _ => panic!("Iterator.next: expected Iterator"),
+                };
+                let step_result = match iter_state.step.as_ref() {
+                    Value::Closure(func_id, captured) => {
+                        let fid = *func_id;
+                        let cap = captured.clone();
+                        self.call_func(fid, vec![iter_state.seed.as_ref().clone()], cap)?
+                    }
+                    _ => panic!("Iterator.next: step must be a Closure"),
+                };
+                match step_result {
+                    // Done (variant 0) → None
+                    Value::Variant(tid, 0, _) if tid == UNFOLD_STEP_TYPE_ID => {
+                        Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                    }
+                    // Yield(value, next_seed) (variant 1) → Some(IterItem { value, rest })
+                    Value::Variant(tid, 1, payload) if tid == UNFOLD_STEP_TYPE_ID => {
+                        let yielded   = payload[0].clone();
+                        let next_seed = payload[1].clone();
+                        let next_iter = Value::Iterator(Rc::new(IteratorState {
+                            seed: Box::new(next_seed),
+                            step: iter_state.step.clone(),
+                        }));
+                        let item = Value::Record(ITER_ITEM_TYPE_ID, vec![yielded, next_iter]);
+                        Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![item]))
+                    }
+                    other => panic!("Iterator.next: unexpected step result {:?}", other),
+                }
+            }
+            32 => {
+                // Iterator.unfold(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
+                Ok(Value::Iterator(Rc::new(IteratorState {
+                    seed: Box::new(args[0].clone()),
+                    step: Box::new(args[1].clone()),
+                })))
+            }
+            33 => {
+                // ARRAY_BUILDER_NEW() -> Cell<Array<T>>
+                Ok(Value::Cell(Rc::new(RefCell::new(Value::Arr(vec![])))))
+            }
+            34 => {
+                // ARRAY_BUILDER_PUSH(builder, elem) -> Void
+                let cell = match &args[0] {
+                    Value::Cell(c) => c.clone(),
+                    _ => panic!("ARRAY_BUILDER_PUSH: expected Cell"),
+                };
+                let elem = args[1].clone();
+                if let Value::Arr(ref mut vec) = *cell.borrow_mut() {
+                    vec.push(elem);
+                } else {
+                    panic!("ARRAY_BUILDER_PUSH: cell does not contain an Array");
+                }
+                Ok(Value::Void)
+            }
+            35 => {
+                // ARRAY_BUILDER_FREEZE(builder) -> Array<T>
+                let cell = match &args[0] {
+                    Value::Cell(c) => c.clone(),
+                    _ => panic!("ARRAY_BUILDER_FREEZE: expected Cell"),
+                };
+                Ok(cell.borrow().clone())
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }

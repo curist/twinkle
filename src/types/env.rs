@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID};
+use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 use super::error::TypeError;
 use crate::syntax::ast::Type as AstType;
 
@@ -79,6 +79,52 @@ impl TypeEnv {
                 ],
             }),
             RANGE_TYPE_ID,
+        );
+        // TypeId(4) = Iterator<T> — opaque iterator, no fields (state is held in interpreter)
+        debug_assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Iterator".to_string(),
+                type_params: vec!["T".to_string()],
+                fields: vec![],
+            }),
+            ITERATOR_TYPE_ID,
+        );
+        // TypeId(5) = IterItem<T> — record returned by Iterator.next: { value: T, rest: Iterator<T> }
+        debug_assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "IterItem".to_string(),
+                type_params: vec!["T".to_string()],
+                fields: vec![
+                    RecordField {
+                        name: "value".to_string(),
+                        ty: MonoType::Var("T".to_string()),
+                    },
+                    RecordField {
+                        name: "rest".to_string(),
+                        ty: MonoType::Named {
+                            type_id: ITERATOR_TYPE_ID,
+                            args: vec![MonoType::Var("T".to_string())],
+                        },
+                    },
+                ],
+            }),
+            ITER_ITEM_TYPE_ID,
+        );
+        // TypeId(6) = UnfoldStep<T,S> — sum type returned by step function
+        //   Done | Yield(T, S)
+        debug_assert_eq!(
+            env.add_type(TypeDef::Sum {
+                name: "UnfoldStep".to_string(),
+                type_params: vec!["T".to_string(), "S".to_string()],
+                variants: vec![
+                    Variant { name: "Done".to_string(),  fields: vec![] },
+                    Variant {
+                        name: "Yield".to_string(),
+                        fields: vec![MonoType::Var("T".to_string()), MonoType::Var("S".to_string())],
+                    },
+                ],
+            }),
+            UNFOLD_STEP_TYPE_ID,
         );
 
         env
@@ -327,6 +373,40 @@ impl TypeEnv {
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
                         return Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] });
+                    }
+                    "Iterator" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("Iterator (expected 1 type argument, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let elem = self.resolve_type(&args[0], errors)?;
+                        return Ok(MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![elem] });
+                    }
+                    "IterItem" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("IterItem (expected 1 type argument, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let elem = self.resolve_type(&args[0], errors)?;
+                        return Ok(MonoType::Named { type_id: ITER_ITEM_TYPE_ID, args: vec![elem] });
+                    }
+                    "UnfoldStep" => {
+                        if args.len() != 2 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!("UnfoldStep (expected 2 type arguments, found {})", args.len()),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let t = self.resolve_type(&args[0], errors)?;
+                        let s = self.resolve_type(&args[1], errors)?;
+                        return Ok(MonoType::Named { type_id: UNFOLD_STEP_TYPE_ID, args: vec![t, s] });
                     }
                     _ => {
                         // User-defined type — look up in type environment

@@ -4,6 +4,14 @@ use std::rc::Rc;
 use crate::ir::core::{FuncId, LocalId};
 use crate::types::ty::TypeId;
 
+/// Iterator state: a seed value plus a step closure.
+/// The step closure takes the seed and returns an UnfoldStep<T,S> variant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IteratorState {
+    pub seed: Box<Value>,
+    pub step: Box<Value>, // must be a Closure
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -21,6 +29,8 @@ pub enum Value {
     Closure(FuncId, HashMap<LocalId, Value>),
     /// Mutable cell (interior mutability via Rc<RefCell<...>>)
     Cell(Rc<RefCell<Value>>),
+    /// Lazy iterator: seed + step closure (persistent/value semantics)
+    Iterator(Rc<IteratorState>),
     Void,
 }
 
@@ -78,6 +88,7 @@ impl std::fmt::Display for Value {
             }
             Value::Closure(id, _) => write!(f, "<closure FuncId({})>", id.0),
             Value::Cell(inner) => write!(f, "Cell({})", inner.borrow()),
+            Value::Iterator(_) => write!(f, "<iterator>"),
         }
     }
 }
