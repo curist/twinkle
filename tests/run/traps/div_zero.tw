@@ -1,0 +1,5 @@
+// Expected trap: division by zero
+
+x := 10
+y := 0
+println("${x / y}")

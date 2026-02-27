@@ -1,5 +1,26 @@
 use std::fs;
 
+/// Parse the `// Expected trap: <message>` line from a `.tw` file.
+fn parse_expected_trap(source: &str) -> Option<String> {
+    source.lines().find_map(|l| {
+        l.trim().strip_prefix("// Expected trap: ").map(|s| s.to_string())
+    })
+}
+
+/// Run a `.tw` file that is expected to trap and assert the trap message.
+fn check_trap(path: &str) {
+    let source = fs::read_to_string(path).expect("test file exists");
+    let expected_msg = parse_expected_trap(&source)
+        .unwrap_or_else(|| panic!("No '// Expected trap:' in {path}"));
+    let err = run_and_capture(path)
+        .expect_err(&format!("expected a trap in {path} but interpreter succeeded"));
+    let actual = err.to_string();
+    assert!(
+        actual.contains(&expected_msg),
+        "Trap message mismatch for {path}\nExpected to contain: {expected_msg}\nActual: {actual}"
+    );
+}
+
 /// Parse the expected output from the leading comment block in a `.tw` file.
 /// Recognises lines of the form `// Expected output:` followed by `//   <line>`.
 fn parse_expected(source: &str) -> Vec<String> {
@@ -202,4 +223,26 @@ fn empty_array() {
 #[test]
 fn module_globals() {
     check("tests/run/module_globals.tw");
+}
+
+#[test]
+fn error_types() {
+    check("tests/run/error_types.tw");
+}
+
+// --- Trap tests ---
+
+#[test]
+fn trap_array_oob() {
+    check_trap("tests/run/traps/array_oob.tw");
+}
+
+#[test]
+fn trap_div_zero() {
+    check_trap("tests/run/traps/div_zero.tw");
+}
+
+#[test]
+fn trap_error_call() {
+    check_trap("tests/run/traps/error_call.tw");
 }

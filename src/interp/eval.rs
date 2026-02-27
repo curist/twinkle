@@ -21,6 +21,32 @@ use super::value::Value;
 type Frame = HashMap<LocalId, Value>;
 
 // ---------------------------------------------------------------------------
+// Trap errors (unrecoverable runtime faults)
+// ---------------------------------------------------------------------------
+
+/// A user-visible runtime fault that aborts execution.
+/// Distinct from interpreter bugs, which remain as `panic!`.
+#[derive(Debug)]
+pub enum TrapError {
+    ArrayIndexOutOfBounds { index: usize, len: usize },
+    DivisionByZero,
+    ModuloByZero,
+    UserError(String),
+}
+
+impl std::fmt::Display for TrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrapError::ArrayIndexOutOfBounds { index, len } =>
+                write!(f, "array index out of bounds: {} >= {}", index, len),
+            TrapError::DivisionByZero => write!(f, "division by zero"),
+            TrapError::ModuloByZero => write!(f, "modulo by zero"),
+            TrapError::UserError(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Control-flow signals
 // ---------------------------------------------------------------------------
 
@@ -29,6 +55,7 @@ enum Signal {
     Break(Option<Value>),
     Continue,
     Return(Option<Value>),
+    Trap(TrapError),
 }
 
 type EvalResult = Result<Value, Signal>;
@@ -65,8 +92,11 @@ impl<W: Write> Interpreter<W> {
         // Run all module __init__ functions in dependency order (imported modules first,
         // entry module last). This ensures cross-module globals are available when needed.
         for id in self.module.all_init_func_ids.clone() {
-            self.run_init(id)
-                .map_err(|_| anyhow::anyhow!("top-level execution failed with unhandled signal"))?;
+            match self.run_init(id) {
+                Ok(_) => {}
+                Err(Signal::Trap(t)) => return Err(anyhow::anyhow!("{}", t)),
+                Err(_) => return Err(anyhow::anyhow!("top-level execution failed with unhandled signal")),
+            }
         }
         Ok(())
     }
@@ -259,7 +289,7 @@ impl<W: Write> Interpreter<W> {
                     match self.eval(&body_clone, frame) {
                         Ok(_) | Err(Signal::Continue) => { /* continue loop */ }
                         Err(Signal::Break(v)) => return Ok(v.unwrap_or(Value::Void)),
-                        Err(Signal::Return(v)) => return Err(Signal::Return(v)),
+                        Err(sig) => return Err(sig), // Return and Trap propagate
                     }
                 }
             }
@@ -334,7 +364,7 @@ impl<W: Write> Interpreter<W> {
                     (Value::Arr(elems), Value::Int(i)) => {
                         let i = i as usize;
                         if i >= elems.len() {
-                            panic!("array index out of bounds: {} >= {}", i, elems.len());
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds { index: i, len: elems.len() }));
                         }
                         Ok(elems[i].clone())
                     }
@@ -378,11 +408,11 @@ impl<W: Write> Interpreter<W> {
             (BinOp::Sub, Value::Int(a), Value::Int(b)) => Value::Int(a - b),
             (BinOp::Mul, Value::Int(a), Value::Int(b)) => Value::Int(a * b),
             (BinOp::Div, Value::Int(a), Value::Int(b)) => {
-                if b == 0 { panic!("division by zero"); }
+                if b == 0 { return Err(Signal::Trap(TrapError::DivisionByZero)); }
                 Value::Int(a / b)
             }
             (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
-                if b == 0 { panic!("modulo by zero"); }
+                if b == 0 { return Err(Signal::Trap(TrapError::ModuloByZero)); }
                 Value::Int(a % b)
             }
 
@@ -430,7 +460,7 @@ impl<W: Write> Interpreter<W> {
             3 => {
                 // error(s: String)
                 let s = args_to_string(&args, 0);
-                panic!("error: {}", s);
+                return Err(Signal::Trap(TrapError::UserError(s)));
             }
             4 => {
                 // int_to_string(n: Int) String
@@ -497,7 +527,7 @@ impl<W: Write> Interpreter<W> {
                     (Value::Arr(mut elems), Value::Int(i), val) => {
                         let i = *i as usize;
                         if i >= elems.len() {
-                            panic!("array_set: index {} out of bounds (len {})", i, elems.len());
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds { index: i, len: elems.len() }));
                         }
                         elems[i] = val;
                         Ok(Value::Arr(elems))

@@ -1,0 +1,53 @@
+// Expected output:
+//   parsed: 42
+//   parse error: not a number: "abc"
+//   parse error: out of range: -5
+//   chained ok: 84
+//   chained error: not a number: "???"
+
+// A richer error type: each variant carries different diagnostic data
+type ParseError = { InvalidFormat(String), OutOfRange(Int) }
+
+fn parse_positive(s: String) Result<Int, ParseError> {
+    if s == "42" {
+        .Ok(42)
+    } else if s == "-5" {
+        .Err(ParseError.OutOfRange(-5))
+    } else {
+        .Err(ParseError.InvalidFormat(s))
+    }
+}
+
+fn show_error(e: ParseError) String {
+    case e {
+        .InvalidFormat(s) => "not a number: \"${s}\"",
+        .OutOfRange(n) => "out of range: ${n}",
+    }
+}
+
+fn handle(s: String) {
+    case parse_positive(s) {
+        .Ok(n) => println("parsed: ${n}"),
+        .Err(e) => println("parse error: ${show_error(e)}"),
+    }
+}
+
+handle("42")
+handle("abc")
+handle("-5")
+
+// try sugar propagates the Err variant transparently
+fn double_parsed(s: String) Result<Int, ParseError> {
+    n := try parse_positive(s)
+    .Ok(n * 2)
+}
+
+case double_parsed("42") {
+    .Ok(n) => println("chained ok: ${n}"),
+    .Err(e) => println("chained error: ${show_error(e)}"),
+}
+
+case double_parsed("???") {
+    .Ok(n) => println("chained ok: ${n}"),
+    .Err(e) => println("chained error: ${show_error(e)}"),
+}
