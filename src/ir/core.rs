@@ -188,5 +188,8 @@ pub struct FunctionDef {
 pub struct CoreModule {
     pub functions: Vec<FunctionDef>,
     pub type_env: TypeEnv,
+    /// Entry module's __init__ FuncId (for display / CLI tools)
     pub init_func_id: Option<FuncId>,
+    /// All module __init__ FuncIds in dependency order; the interpreter runs these in sequence
+    pub all_init_func_ids: Vec<FuncId>,
 }

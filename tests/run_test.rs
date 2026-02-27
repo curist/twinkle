@@ -170,6 +170,11 @@ fn multi_module_alias() {
 }
 
 #[test]
+fn pub_values() {
+    check("tests/run/pub_values/main.tw");
+}
+
+#[test]
 fn generic_types() {
     check("tests/run/generic_types.tw");
 }

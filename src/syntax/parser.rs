@@ -186,8 +186,12 @@ impl Parser {
             Some(TokenKind::Fn) => Ok(Item::Function(self.parse_function_decl(is_pub)?)),
             _ => {
                 if is_pub {
+                    // Only let bindings can be `pub` at module scope
+                    if self.is_let_binding() {
+                        return Ok(Item::Stmt(self.parse_let_stmt(true)?));
+                    }
                     return Err(ParseError::unexpected_token(
-                        vec!["use", "type", "fn"],
+                        vec!["fn", "type", "let binding"],
                         self.peek().unwrap(),
                     ));
                 }
@@ -1188,7 +1192,7 @@ impl Parser {
             _ => {
                 // Check if this is a let binding by looking ahead
                 if self.is_let_binding() {
-                    self.parse_let_stmt()
+                    self.parse_let_stmt(false)
                 } else {
                     // Otherwise it's an expression statement
                     let expr = self.parse_expr()?;
@@ -1213,7 +1217,7 @@ impl Parser {
         }
     }
 
-    fn parse_let_stmt(&mut self) -> ParseResult<Stmt> {
+    fn parse_let_stmt(&mut self, is_pub: bool) -> ParseResult<Stmt> {
         let pattern = self.parse_pattern()?;
 
         let (ty, value) = if self.peek_is(TokenKind::ColonEq) {
@@ -1241,6 +1245,7 @@ impl Parser {
             pattern,
             ty,
             value,
+            is_pub,
             span,
         })
     }

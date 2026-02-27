@@ -62,7 +62,9 @@ impl<W: Write> Interpreter<W> {
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
-        if let Some(id) = self.module.init_func_id {
+        // Run all module __init__ functions in dependency order (imported modules first,
+        // entry module last). This ensures cross-module globals are available when needed.
+        for id in self.module.all_init_func_ids.clone() {
             self.run_init(id)
                 .map_err(|_| anyhow::anyhow!("top-level execution failed with unhandled signal"))?;
         }

@@ -8,7 +8,8 @@ use anyhow::{anyhow, Result};
 
 use crate::ir::lower::Lowerer;
 use crate::ir::CoreModule;
-use crate::syntax::ast::Item;
+use crate::ir::core::LocalId;
+use crate::syntax::ast::{Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
 use crate::types::check::TypeChecker;
 use crate::types::resolve::Resolver;
@@ -152,8 +153,10 @@ pub fn compile_module(
         }
     };
 
-    // Build ModuleExports from public declarations
+    // Build ModuleExports from public declarations.
+    // Pub let bindings get globally-unique LocalIds starting from ctx.next_global_local_id.
     let mut exports = ModuleExports::empty();
+    let mut global_offset = ctx.next_global_local_id;
     for item in &ast.items {
         match item {
             Item::TypeDecl(decl) if decl.is_pub => {
@@ -171,6 +174,15 @@ pub fn compile_module(
                 if let Some(&func_id) = ctx.func_table.get(&qualified) {
                     exports.public_func_ids.insert(decl.name.clone(), func_id);
                 }
+            }
+            Item::Stmt(Stmt::Let { pattern: Pattern::Ident(name, _), is_pub, .. }) => {
+                let local_id = LocalId(global_offset);
+                if *is_pub {
+                    if let Some(ty) = ctx.value_env.lookup(name) {
+                        exports.public_values.insert(name.clone(), (ty, local_id));
+                    }
+                }
+                global_offset += 1;
             }
             _ => {}
         }
@@ -192,9 +204,12 @@ pub fn compile_module(
     if do_lower {
         let lowerer = Lowerer::new_with_context(type_map, ctx);
         match lowerer.lower_module_funcs(&ast) {
-            Ok((functions, init_func_id)) => {
+            Ok((functions, init_func_id, next_global_id, next_hoisted_id)) => {
                 ctx.all_functions.extend(functions);
+                ctx.next_global_local_id = next_global_id;
+                ctx.next_func_id = next_hoisted_id;
                 if let Some(id) = init_func_id {
+                    ctx.all_init_func_ids.push(id);
                     ctx.init_func_id = Some(id);
                 }
             }
@@ -246,6 +261,7 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
             functions: ctx.all_functions,
             type_env: ctx.type_env,
             init_func_id: ctx.init_func_id,
+            all_init_func_ids: ctx.all_init_func_ids,
         },
         registry,
     ))

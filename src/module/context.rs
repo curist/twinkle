@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::ir::core::{FuncId, FunctionDef};
+use crate::ir::core::{FuncId, FunctionDef, LocalId};
 use crate::ir::lower::prelude;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{FunctionSignature, MonoType, TypeId};
@@ -15,6 +15,8 @@ pub struct ModuleExports {
     pub public_functions: HashMap<String, FunctionSignature>,
     /// exported function name → assigned FuncId
     pub public_func_ids: HashMap<String, FuncId>,
+    /// exported value name → (type, globally-unique LocalId in the module's __init__)
+    pub public_values: HashMap<String, (MonoType, LocalId)>,
 }
 
 impl ModuleExports {
@@ -23,6 +25,7 @@ impl ModuleExports {
             public_types: HashMap::new(),
             public_functions: HashMap::new(),
             public_func_ids: HashMap::new(),
+            public_values: HashMap::new(),
         }
     }
 }
@@ -46,8 +49,15 @@ pub struct CompilationContext {
     pub all_functions: Vec<FunctionDef>,
     /// Next FuncId to assign (starts after prelude)
     pub next_func_id: u32,
-    /// FuncId of the __init__ function (top-level statements), if any
+    /// FuncId of the entry module's __init__ function, if any (for display)
     pub init_func_id: Option<FuncId>,
+    /// All module __init__ FuncIds in dependency order (for runtime execution)
+    pub all_init_func_ids: Vec<FuncId>,
+    /// Next globally-unique LocalId for module-level let bindings.
+    /// Each compiled module's globals start here and advance this counter.
+    pub next_global_local_id: u32,
+    /// "alias.name" → globally-unique LocalId, for cross-module value references in the lowerer
+    pub qualified_value_globals: HashMap<String, LocalId>,
 }
 
 impl CompilationContext {
@@ -111,6 +121,9 @@ impl CompilationContext {
             all_functions: Vec::new(),
             next_func_id: prelude::USER_FUNC_START,
             init_func_id: None,
+            all_init_func_ids: Vec::new(),
+            next_global_local_id: 0,
+            qualified_value_globals: HashMap::new(),
         }
     }
 
@@ -154,6 +167,13 @@ impl CompilationContext {
             if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
                 self.type_env.add_method(*type_id, func_name.clone(), qualified_name);
             }
+        }
+
+        // Register qualified pub value names and their global LocalIds
+        for (val_name, (val_ty, local_id)) in &exports.public_values {
+            let qualified = format!("{}.{}", alias, val_name);
+            self.value_env.add_value(qualified.clone(), val_ty.clone());
+            self.qualified_value_globals.insert(qualified, *local_id);
         }
 
         self.module_registry.insert(alias.to_string(), exports.clone());

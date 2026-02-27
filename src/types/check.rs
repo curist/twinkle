@@ -65,7 +65,7 @@ impl TypeChecker {
         // This makes them available to all functions
         for item in &ast.items {
             if let Item::Stmt(stmt) = item {
-                if let Stmt::Let { pattern, ty, value, span } = stmt {
+                if let Stmt::Let { pattern, ty, value, span, .. } = stmt {
                     // Only simple identifier patterns for top-level lets
                     if let Pattern::Ident(name, _) = pattern {
                         // Determine the expected type
@@ -156,7 +156,7 @@ impl TypeChecker {
         // Pass 1: top-level lets
         for item in &ast.items {
             if let Item::Stmt(stmt) = item {
-                if let Stmt::Let { pattern, ty, value, span } = stmt {
+                if let Stmt::Let { pattern, ty, value, span, .. } = stmt {
                     if let Pattern::Ident(name, _) = pattern {
                         let value_ty = if let Some(ann_ty) = ty {
                             let expected = match checker.resolve_type(ann_ty) {
@@ -419,9 +419,17 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess { base, field } => {
-                // Module method reference without type annotation: require check mode
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
+                        let qualified = format!("{}.{}", alias, field);
+                        // If it's a plain pub value (not a function), synthesize it directly
+                        if let Some(ty) = self.value_env.lookup(&qualified) {
+                            if !matches!(ty, MonoType::Function { .. }) {
+                                self.type_map.set_expr_type(expr.id, ty.clone());
+                                return Ok(ty);
+                            }
+                        }
+                        // Otherwise it's a function ref: require a type annotation
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "module method reference without type annotation",
                             span: expr.span,
@@ -1782,7 +1790,7 @@ impl TypeChecker {
 
         for stmt in &block.stmts {
             match stmt {
-                Stmt::Let { pattern, ty, value, span: _ } => {
+                Stmt::Let { pattern, ty, value, span: _, .. } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
                 }
                 Stmt::Expr(e) => {
@@ -1843,7 +1851,7 @@ impl TypeChecker {
 
         for (i, stmt) in block.stmts.iter().enumerate() {
             match stmt {
-                Stmt::Let { pattern, ty, value, span: _ } => {
+                Stmt::Let { pattern, ty, value, span: _, .. } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
                 }
                 Stmt::Expr(e) => {

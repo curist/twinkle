@@ -97,8 +97,14 @@ pub struct Lowerer {
     /// Module-level let bindings pre-allocated before any function lowering.
     /// Functions reference these via GlobalLocal(id); __init__ owns the actual Let nodes.
     module_globals: HashMap<String, LocalId>,
-    /// Number of module globals; function allocators start here to avoid overlap.
+    /// Absolute next GlobalLocal id to allocate; starts at global_local_start and advances
+    /// as module globals are collected.  Function allocators start here to avoid overlap.
     next_global_id: u32,
+    /// The starting offset for this module's global LocalIds (from CompilationContext).
+    /// For single-module compilation this is always 0.
+    global_local_start: u32,
+    /// "alias.name" → globally-unique LocalId for cross-module pub value references.
+    qualified_value_globals: HashMap<String, LocalId>,
     /// True while lowering __init__ top-level statements; lets lowerer reuse pre-assigned
     /// module global LocalIds instead of allocating new ones.
     in_init_context: bool,
@@ -155,6 +161,8 @@ impl Lowerer {
             hoisted_functions: Vec::new(),
             module_globals: HashMap::new(),
             next_global_id: 0,
+            global_local_start: 0,
+            qualified_value_globals: HashMap::new(),
             in_init_context: false,
         }
     }
@@ -176,6 +184,8 @@ impl Lowerer {
             hoisted_functions: Vec::new(),
             module_globals: HashMap::new(),
             next_global_id: 0,
+            global_local_start: ctx.next_global_local_id,
+            qualified_value_globals: ctx.qualified_value_globals.clone(),
             in_init_context: false,
         }
     }
@@ -184,7 +194,7 @@ impl Lowerer {
     /// Must be called before any function lowering so that functions can
     /// reference globals via GlobalLocal(id).
     fn collect_module_globals(&mut self, ast: &SourceFile) {
-        let mut next_id = 0u32;
+        let mut next_id = self.global_local_start;
         for item in &ast.items {
             if let Item::Stmt(Stmt::Let { pattern: Pattern::Ident(name, _), .. }) = item {
                 self.module_globals.insert(name.clone(), LocalId(next_id));
@@ -239,10 +249,12 @@ impl Lowerer {
         functions.extend(self.hoisted_functions.drain(..));
 
         if self.errors.is_empty() {
+            let all_init_func_ids = init_func_id.into_iter().collect();
             Ok(CoreModule {
                 functions,
                 type_env: self.type_env,
                 init_func_id,
+                all_init_func_ids,
             })
         } else {
             Err(self.errors)
@@ -253,7 +265,11 @@ impl Lowerer {
     /// with the Optional FuncId of the __init__ function (top-level stmts).
     /// FuncIds for user functions must already be pre-assigned in `self.func_table`.
     /// Used by the multi-module pipeline.
-    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>), Vec<LowerError>> {
+    /// Returns (functions, init_func_id, next_global_id, next_hoisted_id).
+    /// - `next_global_id`: write back to `CompilationContext.next_global_local_id`
+    /// - `next_hoisted_id`: write back to `CompilationContext.next_func_id` so the next
+    ///   module's hoisted functions (lambdas, __init__) don't reuse the same FuncIds.
+    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>, u32, u32), Vec<LowerError>> {
         // Pre-scan: assign stable LocalIds to module-level let bindings
         self.collect_module_globals(ast);
 
@@ -276,8 +292,10 @@ impl Lowerer {
         // Include any hoisted lambdas
         functions.extend(self.hoisted_functions.drain(..));
 
+        let next_global_id = self.next_global_id;
+        let next_hoisted_id = self.next_hoisted_id;
         if self.errors.is_empty() {
-            Ok((functions, init_func_id))
+            Ok((functions, init_func_id, next_global_id, next_hoisted_id))
         } else {
             Err(self.errors)
         }
@@ -1696,19 +1714,21 @@ impl Lowerer {
 
             // --- Field access → RecordGet or method call ---
             ExprKind::FieldAccess { base, field } => {
-                // Module alias first-class function reference: Array.len, String.concat, etc.
+                // Module alias first-class function/value reference: Array.len, math.pi, etc.
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
                         let qualified = format!("{}.{}", alias, field);
                         if let Some(&func_id) = self.func_table.get(&qualified) {
                             return Some(CoreExprKind::GlobalFunc(func_id));
-                        } else {
-                            self.errors.push(LowerError::InternalError {
-                                message: format!("unknown method reference '{}.{}'", alias, field),
-                                span,
-                            });
-                            return None;
                         }
+                        if let Some(&local_id) = self.qualified_value_globals.get(&qualified) {
+                            return Some(CoreExprKind::GlobalLocal(local_id));
+                        }
+                        self.errors.push(LowerError::InternalError {
+                            message: format!("unknown module reference '{}.{}'", alias, field),
+                            span,
+                        });
+                        return None;
                     }
                 }
 

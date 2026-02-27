@@ -1,0 +1,7 @@
+pub pi: Float = 3.14159
+pub max_items := 100
+greeting := "private"
+
+pub fn circle_area(r: Float) Float {
+    pi * r * r
+}

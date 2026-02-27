@@ -285,6 +285,7 @@ pub enum Stmt {
         pattern: Pattern,
         ty: Option<Type>,
         value: Expr,
+        is_pub: bool,
         span: Span,
     },
 
