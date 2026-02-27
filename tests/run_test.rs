@@ -173,3 +173,8 @@ fn multi_module_alias() {
 fn generic_types() {
     check("tests/run/generic_types.tw");
 }
+
+#[test]
+fn method_chaining() {
+    check("tests/run/method_chaining.tw");
+}
