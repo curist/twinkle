@@ -188,3 +188,8 @@ fn iterator() {
 fn iterator_advanced() {
     check("tests/run/iterator_advanced.tw");
 }
+
+#[test]
+fn empty_array() {
+    check("tests/run/empty_array.tw");
+}

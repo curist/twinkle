@@ -590,6 +590,20 @@ impl TypeChecker {
                 }
             }
 
+            // Array literals: check each element against the expected element type
+            ExprKind::Array { elements } => {
+                if let MonoType::Array(elem_ty) = expected {
+                    let elem_ty = *elem_ty.clone();
+                    for elem in elements {
+                        self.check_expr(elem, &elem_ty)?;
+                    }
+                    Ok(())
+                } else {
+                    let actual = self.synth_array(elements, expr.span)?;
+                    self.unify(&actual, expected, expr.span)
+                }
+            }
+
             // Dict.new() — type comes entirely from context annotation
             ExprKind::Call { callee, args }
                 if args.is_empty() =>

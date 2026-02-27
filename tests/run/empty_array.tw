@@ -1,0 +1,18 @@
+// Expected output:
+//   0
+//   3
+//   hello
+//   world
+
+xs: Array<Int> = []
+println("${xs.len()}")
+
+xs = xs.append(1).append(2).append(3)
+println("${xs.len()}")
+
+// Empty array of strings
+words: Array<String> = []
+words = words.append("hello").append("world")
+for w in words {
+    println(w)
+}

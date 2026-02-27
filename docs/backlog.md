@@ -20,37 +20,6 @@ other than `fn` or `type`. The `Stmt::Let` AST node has no `is_pub` field.
 
 ---
 
-## B-002: Empty array literals require type annotation
-
-**Spec §14:** `xs: Array<Int> = []` must work when the expected type is known.
-
-**Current state:** `synth_array` errors unconditionally on empty arrays, and
-`check_expr` has no `ExprKind::Array` case — so even when checking against a
-known `Array<T>`, it falls through to synthesis and fails.
-
-**What's needed:**
-* Add `ExprKind::Array { elements }` to `check_expr`.
-* When `elements` is empty and expected type is `Array<T>`, accept it and produce
-  an empty `ArrayLit([])` in Core IR.
-* When `elements` is empty and no expected type is available, keep the error.
-
----
-
-## B-003: Dict key type constraint not enforced
-
-**Spec §17:** `K` in `Dict<K,V>` must be `Int` or `String`. `Bool` keys are
-excluded. This is a closed compiler-known set; no trait system is needed.
-
-**Current state:** No such check exists. `Dict<Bool, V>` and `Dict<Array<Int>, V>`
-are silently accepted.
-
-**What's needed:**
-* In `resolve_type` (or wherever `MonoType::Dict` is constructed from a type
-  annotation), verify that `K` is `Int` or `String` and emit a type error otherwise.
-* Add a typecheck/fail test for invalid key types.
-
----
-
 ## B-004: Module-level globals not accessible from functions at runtime
 
 **Spec §8.1:** Top-level value bindings are module globals, accessible from all

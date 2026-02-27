@@ -337,6 +337,16 @@ impl TypeEnv {
                             return Err(());
                         }
                         let k_ty = self.resolve_type(&args[0], errors)?;
+                        match &k_ty {
+                            MonoType::Int | MonoType::String => {}
+                            _ => {
+                                errors.push(TypeError::InvalidDictKey {
+                                    key_type: k_ty.clone(),
+                                    span: *span,
+                                });
+                                return Err(());
+                            }
+                        }
                         let v_ty = self.resolve_type(&args[1], errors)?;
                         Ok(MonoType::Dict(Box::new(k_ty), Box::new(v_ty)))
                     }

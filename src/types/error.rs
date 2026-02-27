@@ -108,6 +108,12 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+
+    /// Dict key type must be Int or String
+    InvalidDictKey {
+        key_type: MonoType,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -271,6 +277,15 @@ impl TypeError {
                 Some(&format!(
                     "Both a field and a method named '{}' exist on this type. This is not allowed.",
                     name
+                )),
+            ),
+            TypeError::InvalidDictKey { key_type, span } => self.format_error(
+                registry,
+                *span,
+                "Invalid Dict key type",
+                Some(&format!(
+                    "Dict key must be Int or String, but got: {}\nBool, Float, and compound types are not allowed as Dict keys.",
+                    fmt_type(key_type)
                 )),
             ),
         }

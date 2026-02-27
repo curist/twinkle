@@ -1,0 +1,4 @@
+// Dict key must be Int or String — Bool is not allowed
+fn bad(x: Dict<Bool, Int>) Int {
+    x["key"]
+}
