@@ -20,27 +20,7 @@ other than `fn` or `type`. The `Stmt::Let` AST node has no `is_pub` field.
 
 ---
 
-## B-004: Module-level globals not accessible from functions at runtime
-
-**Spec §8.1:** Top-level value bindings are module globals, accessible from all
-functions in the module.
-
-**Current state:** The type checker adds top-level `Let` bindings to `ValueEnv`,
-so type-checking of references inside functions passes. But the interpreter has
-no globals store — the values only exist in the `__init__` frame, so a function
-called from `__init__` that references a module-level name will fail at runtime
-with an undefined local.
-
-**What's needed:**
-* Add a `globals: HashMap<LocalId, Value>` (or similar) to the `Interpreter` struct.
-* After evaluating each top-level binding in `__init__`, store the result in globals.
-* When `Local(id)` is not found in the current call frame, fall back to globals.
-* Ensure the lowerer assigns stable `LocalId`s to module-level bindings so the
-  interpreter can look them up by id.
-
----
-
-## B-005: Closure rebinding of captured variables not rejected
+## B-004: Closure rebinding of captured variables not rejected
 
 **Spec §7.7.4:** "A closure may reference captured variables, but may **not**
 rebind them using `=`."

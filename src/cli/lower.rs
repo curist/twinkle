@@ -39,6 +39,7 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
         LitStr(s) => println!("{}LitStr({:?}) : {:?}", pad, s, expr.ty),
         LitVoid => println!("{}LitVoid", pad),
         Local(id) => println!("{}Local({}) : {:?}", pad, id.0, expr.ty),
+        GlobalLocal(id) => println!("{}GlobalLocal({}) : {:?}", pad, id.0, expr.ty),
         GlobalFunc(id) => println!("{}GlobalFunc({}) : {:?}", pad, id.0, expr.ty),
         Let { local, value, body } => {
             println!("{}Let L{} =", pad, local.0);

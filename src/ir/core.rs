@@ -41,6 +41,9 @@ pub enum CoreExprKind {
 
     // Variables
     Local(LocalId),
+    /// Reference to a module-level global. The interpreter resolves this
+    /// from the globals store rather than the current call frame.
+    GlobalLocal(LocalId),
     GlobalFunc(FuncId),
 
     // Binding (introduces a new variable; purely functional)

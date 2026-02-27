@@ -41,6 +41,10 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
     module: CoreModule,
     func_index: HashMap<FuncId, usize>,
     output: W,
+    /// Module-level globals populated during __init__ execution.
+    globals: Frame,
+    /// True while directly executing the __init__ body (not inside nested calls).
+    in_init_frame: bool,
 }
 
 impl<W: Write> Interpreter<W> {
@@ -48,7 +52,7 @@ impl<W: Write> Interpreter<W> {
         let func_index = module.functions.iter().enumerate()
             .map(|(i, f)| (f.func_id, i))
             .collect();
-        Self { module, func_index, output }
+        Self { module, func_index, output, globals: HashMap::new(), in_init_frame: false }
     }
 
     /// Consume the interpreter and return the underlying output sink.
@@ -59,10 +63,29 @@ impl<W: Write> Interpreter<W> {
 
     pub fn run(&mut self) -> anyhow::Result<()> {
         if let Some(id) = self.module.init_func_id {
-            self.call_func(id, vec![], HashMap::new())
+            self.run_init(id)
                 .map_err(|_| anyhow::anyhow!("top-level execution failed with unhandled signal"))?;
         }
         Ok(())
+    }
+
+    /// Execute the __init__ function with globals tracking enabled.
+    fn run_init(&mut self, func_id: FuncId) -> EvalResult {
+        let idx = match self.func_index.get(&func_id) {
+            Some(&i) => i,
+            None => return Ok(Value::Void),
+        };
+        let body = self.module.functions[idx].body.clone();
+        let mut frame: Frame = HashMap::new();
+        self.in_init_frame = true;
+        let result = match self.eval(&body, &mut frame) {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(Some(v))) => Ok(v),
+            Err(Signal::Return(None)) => Ok(Value::Void),
+            Err(sig) => Err(sig),
+        };
+        self.in_init_frame = false;
+        result
     }
 
     // -----------------------------------------------------------------------
@@ -99,12 +122,16 @@ impl<W: Write> Interpreter<W> {
             frame.insert(*param, arg);
         }
 
-        match self.eval(&body, &mut frame) {
+        // Nested calls are never the init frame
+        let saved_in_init = std::mem::replace(&mut self.in_init_frame, false);
+        let result = match self.eval(&body, &mut frame) {
             Ok(v) => Ok(v),
             Err(Signal::Return(Some(v))) => Ok(v),
             Err(Signal::Return(None)) => Ok(Value::Void),
             Err(sig) => Err(sig), // Break/Continue propagate (shouldn't reach here)
-        }
+        };
+        self.in_init_frame = saved_in_init;
+        result
     }
 
     // -----------------------------------------------------------------------
@@ -121,9 +148,19 @@ impl<W: Write> Interpreter<W> {
             LitVoid => Ok(Value::Void),
 
             Local(id) => {
-                match frame.get(id) {
+                if let Some(v) = frame.get(id) {
+                    Ok(v.clone())
+                } else if let Some(v) = self.globals.get(id) {
+                    Ok(v.clone())
+                } else {
+                    panic!("interpreter bug: undefined local {:?}", id)
+                }
+            }
+
+            GlobalLocal(id) => {
+                match self.globals.get(id) {
                     Some(v) => Ok(v.clone()),
-                    None => panic!("interpreter bug: undefined local {:?}", id),
+                    None => panic!("interpreter bug: uninitialized module global {:?}", id),
                 }
             }
 
@@ -143,13 +180,19 @@ impl<W: Write> Interpreter<W> {
 
             Let { local, value, body } => {
                 let v = self.eval(value, frame)?;
-                frame.insert(*local, v);
+                frame.insert(*local, v.clone());
+                if self.in_init_frame {
+                    self.globals.insert(*local, v);
+                }
                 self.eval(body, frame)
             }
 
             Assign { local, value } => {
                 let v = self.eval(value, frame)?;
-                frame.insert(*local, v);
+                frame.insert(*local, v.clone());
+                if self.in_init_frame {
+                    self.globals.insert(*local, v);
+                }
                 Ok(Value::Void)
             }
 

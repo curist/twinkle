@@ -94,6 +94,14 @@ pub struct Lowerer {
     next_hoisted_id: u32,
     /// Hoisted lambda functions (and __init__) collected during lowering
     hoisted_functions: Vec<FunctionDef>,
+    /// Module-level let bindings pre-allocated before any function lowering.
+    /// Functions reference these via GlobalLocal(id); __init__ owns the actual Let nodes.
+    module_globals: HashMap<String, LocalId>,
+    /// Number of module globals; function allocators start here to avoid overlap.
+    next_global_id: u32,
+    /// True while lowering __init__ top-level statements; lets lowerer reuse pre-assigned
+    /// module global LocalIds instead of allocating new ones.
+    in_init_context: bool,
 }
 
 impl Lowerer {
@@ -145,6 +153,9 @@ impl Lowerer {
             local_allocator: LocalAllocator::new(),
             next_hoisted_id: prelude::USER_FUNC_START, // updated after user-func pass
             hoisted_functions: Vec::new(),
+            module_globals: HashMap::new(),
+            next_global_id: 0,
+            in_init_context: false,
         }
     }
 
@@ -163,11 +174,31 @@ impl Lowerer {
             local_allocator: LocalAllocator::new(),
             next_hoisted_id: ctx.next_func_id,
             hoisted_functions: Vec::new(),
+            module_globals: HashMap::new(),
+            next_global_id: 0,
+            in_init_context: false,
         }
+    }
+
+    /// Pre-scan top-level let bindings and assign stable LocalIds to them.
+    /// Must be called before any function lowering so that functions can
+    /// reference globals via GlobalLocal(id).
+    fn collect_module_globals(&mut self, ast: &SourceFile) {
+        let mut next_id = 0u32;
+        for item in &ast.items {
+            if let Item::Stmt(Stmt::Let { pattern: Pattern::Ident(name, _), .. }) = item {
+                self.module_globals.insert(name.clone(), LocalId(next_id));
+                next_id += 1;
+            }
+        }
+        self.next_global_id = next_id;
     }
 
     /// Lower a complete source file to Core IR
     pub fn lower_module(mut self, ast: &SourceFile) -> Result<CoreModule, Vec<LowerError>> {
+        // Pre-scan: assign stable LocalIds to module-level let bindings
+        self.collect_module_globals(ast);
+
         // First pass: assign FuncIds to all user functions (source order)
         // Skip any that are already in the func_table (pre-assigned by context)
         let mut next_func_id = prelude::USER_FUNC_START;
@@ -223,6 +254,9 @@ impl Lowerer {
     /// FuncIds for user functions must already be pre-assigned in `self.func_table`.
     /// Used by the multi-module pipeline.
     pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>), Vec<LowerError>> {
+        // Pre-scan: assign stable LocalIds to module-level let bindings
+        self.collect_module_globals(ast);
+
         let mut functions = Vec::new();
         for item in &ast.items {
             if let Item::Function(decl) = item {
@@ -268,8 +302,12 @@ impl Lowerer {
             return None;
         }
 
-        // Fresh allocator for the __init__ function
-        self.local_allocator = LocalAllocator::new();
+        // Allocator for __init__: new locals start after the globals range,
+        // but all module globals are pre-bound to their stable LocalIds.
+        self.local_allocator = LocalAllocator::new_at(self.next_global_id);
+        for (name, &local_id) in &self.module_globals {
+            self.local_allocator.bind(name.clone(), local_id);
+        }
 
         // We need an owned Vec<Stmt> to call lower_stmts — clone for now
         let stmts_owned: Vec<Stmt> = stmts.iter().map(|s| (*s).clone()).collect();
@@ -279,7 +317,9 @@ impl Lowerer {
             None => return None,
         };
 
+        self.in_init_context = true;
         let body = self.lower_stmts(&stmts_owned, span)?;
+        self.in_init_context = false;
         let func_id = self.alloc_hoisted_id();
 
         Some(FunctionDef {
@@ -296,8 +336,8 @@ impl Lowerer {
     // -----------------------------------------------------------------------
 
     fn lower_function(&mut self, decl: &FunctionDecl) -> Option<FunctionDef> {
-        // Fresh LocalAllocator for each function
-        self.local_allocator = LocalAllocator::new();
+        // Fresh LocalAllocator starting after the module globals range
+        self.local_allocator = LocalAllocator::new_at(self.next_global_id);
 
         // Bind parameters
         let mut params = Vec::new();
@@ -348,7 +388,17 @@ impl Lowerer {
                 match pattern {
                     Pattern::Ident(name, _) => {
                         let value_expr = self.lower_expr(value)?;
-                        let local = self.local_allocator.alloc_and_bind(name.clone());
+                        // In __init__ context, module globals already have stable LocalIds.
+                        // Reuse the pre-assigned id so functions' GlobalLocal(id) references match.
+                        let local = if self.in_init_context {
+                            if let Some(&pre_id) = self.module_globals.get(name.as_str()) {
+                                pre_id
+                            } else {
+                                self.local_allocator.alloc_and_bind(name.clone())
+                            }
+                        } else {
+                            self.local_allocator.alloc_and_bind(name.clone())
+                        };
                         let body = self.lower_stmts(rest, span)?;
                         let ty = body.ty.clone();
                         Some(CoreExpr {
@@ -1588,6 +1638,8 @@ impl Lowerer {
                     Some(CoreExprKind::Local(local_id))
                 } else if let Some(&func_id) = self.func_table.get(name.as_str()) {
                     Some(CoreExprKind::GlobalFunc(func_id))
+                } else if let Some(&global_id) = self.module_globals.get(name.as_str()) {
+                    Some(CoreExprKind::GlobalLocal(global_id))
                 } else {
                     self.errors.push(LowerError::InternalError {
                         message: format!("unresolved name '{}' during lowering", name),
@@ -3385,9 +3437,9 @@ fn collect_local_refs_inner(
                 }
             }
         }
-        // These don't contain Local refs
+        // These don't contain Local refs (GlobalLocal is always reachable via globals)
         LitInt(_) | LitFloat(_) | LitBool(_) | LitStr(_) | LitVoid
-        | GlobalFunc(_) | Break { value: None }
+        | GlobalFunc(_) | GlobalLocal(_) | Break { value: None }
         | Return { value: None } | Continue => {}
     }
 }

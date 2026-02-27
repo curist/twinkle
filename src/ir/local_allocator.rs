@@ -11,8 +11,15 @@ pub struct LocalAllocator {
 impl LocalAllocator {
     /// Create a new LocalAllocator with an empty root scope
     pub fn new() -> Self {
+        Self::new_at(0)
+    }
+
+    /// Create a new LocalAllocator whose first allocation starts at `start`.
+    /// Use this when a reserved block of LocalIds must not be re-allocated
+    /// (e.g., module globals occupy 0..N, so function allocators start at N).
+    pub fn new_at(start: u32) -> Self {
         Self {
-            next_id: 0,
+            next_id: start,
             scopes: vec![HashMap::new()],
         }
     }

@@ -1,0 +1,24 @@
+// Expected output:
+//   78
+//   hello world
+//   3
+
+PI := 3
+GREETING := "hello"
+
+fn double_pi() Int {
+    PI * 2 * 13
+}
+
+fn make_greeting(suffix: String) String {
+    "${GREETING} ${suffix}"
+}
+
+fn count_items() Int {
+    xs := [10, 20, 30]
+    xs.len()
+}
+
+println("${double_pi()}")
+println(make_greeting("world"))
+println("${count_items()}")

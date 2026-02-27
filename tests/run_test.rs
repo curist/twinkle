@@ -193,3 +193,8 @@ fn iterator_advanced() {
 fn empty_array() {
     check("tests/run/empty_array.tw");
 }
+
+#[test]
+fn module_globals() {
+    check("tests/run/module_globals.tw");
+}
