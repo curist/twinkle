@@ -977,45 +977,44 @@ for x,i in coll { body }
 
 **Supported Collection Types:**
 
-The `for x in coll` syntax is supported only for a **closed set** of built-in collection types:
+The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
 
-* `Array<T>` — homogeneous indexable arrays,
-* `Range`    — integer ranges,
-* `Dict<K, V>` — dictionaries (iterates over key-value pairs).
+* `Array<T>` — lowered to an indexed loop over the array length.
+* `Range` — lowered to a simple integer loop over the range bounds.
+* `Dict<K, V>` — lowered to iteration over key–value pairs.
+* `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/iterator.md](iterator.md)).
 
-The compiler performs a **type-directed** lowering:
-
-* If `coll` has type `Array<T>`, the loop is lowered to an indexed loop over the array length.
-* If `coll` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
-* If `coll` has type `Dict<K, V>`, the loop is lowered to iteration over key–value pairs.
-
-Any value used in `for x in coll` whose type is not one of the supported built-ins is a **compile-time error**.
+Any value used in `for x in coll` whose type is not one of the above is a **compile-time error**.
 
 **Indexed form:**
 
 * `i: Int` starts from 0 and increments each iteration.
 * Break/continue as usual.
+* The indexed form (`for x, i in coll`) is supported for `Array<T>`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
 
 **User Extensions:**
 
-To iterate over a custom type, define a helper that produces a built-in collection:
+To iterate over a custom type, either:
+
+1. Define a helper that returns a supported built-in collection (`Array<T>`, `Range`), or
+2. Define a helper that returns `Iterator<T>` using `Iterator.unfold` (see [docs/iterator.md](iterator.md)).
 
 ```tw
-// tree.tw
-type Tree<T> = ...
-
-pub fn to_array<T>(t: Tree<T>) Array<T> {
-  // collect tree nodes into an array
-}
-
-// usage
+// Option 1: convert to Array
 fn sum_tree(t: Tree<Int>) Int {
   acc := 0
-  for x in t.to_array() {    // desugars to: tree.to_array(t)
+  for x in t.to_array() {
     acc = acc + x
   }
   acc
 }
+
+// Option 2: return Iterator<T>
+fn tree_iter<T>(t: Tree<T>) Iterator<T> {
+  Iterator.unfold(/* ... */)
+}
+
+for x in tree_iter(my_tree) { ... }
 ```
 
 ### Diverging expressions
@@ -1050,7 +1049,7 @@ xs := collect x in range(10) { x * x }
 Rules:
 
 * Produces `Array<T>`.
-* Works with the same built-in collection types as `for` loops (see Section 12).
+* Works with the same collection types as `for` loops (see Section 12): `Array<T>`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
 * `continue` skips emission.
 * `break` ends early, returns partial array.
 * If the body returns `Void` → error, because collect expects a value to push.
@@ -1215,11 +1214,12 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `error`
-* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`
-* range functions: `range`
+* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
+* range functions: `range`, `range_from`, `range_step`
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * string module: `String.concat`, `String.substring`, `String.of_int`, etc.
+* iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/iterator.md](iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
 * snake_case intrinsics (e.g. `int_to_string`, `string_concat`) exist in the stage0 implementation but are not user-facing; user code uses `.to_string()`, `.len()`, `.concat()`, string interpolation, and `String.*` / `Array.*` / `Dict.*` module functions instead.
 
