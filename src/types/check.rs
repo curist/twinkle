@@ -39,6 +39,13 @@ impl TypeChecker {
         type_env: TypeEnv,
         value_env: ValueEnv,
     ) -> Result<(TypeMap, TypeEnv), Vec<TypeError>> {
+        let mut module_aliases = HashSet::new();
+        module_aliases.insert("Cell".to_string());
+        module_aliases.insert("Dict".to_string());
+        module_aliases.insert("Iterator".to_string());
+        module_aliases.insert("Array".to_string());
+        module_aliases.insert("String".to_string());
+
         let mut checker = TypeChecker {
             type_env,
             value_env,
@@ -46,7 +53,7 @@ impl TypeChecker {
             errors: Vec::new(),
             type_map: TypeMap::new(),
             current_function_ret: None,
-            module_aliases: HashSet::new(),
+            module_aliases,
             type_var_scope: Vec::new(),
         };
 
@@ -401,6 +408,21 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess { base, field } => {
+                // Module method reference without type annotation: require check mode
+                if let ExprKind::Ident(alias) = &base.kind {
+                    if self.module_aliases.contains(alias.as_str()) {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "module method reference without type annotation",
+                            span: expr.span,
+                            note: format!(
+                                "'{}.{}' as a value requires a type annotation, \
+                                 e.g. `f : fn(...) ... = {}.{}`",
+                                alias, field, alias, field
+                            ),
+                        });
+                        return Err(());
+                    }
+                }
                 self.synth_field_access(base, field, expr.span)
             }
 
@@ -582,6 +604,19 @@ impl TypeChecker {
                                 return Ok(());
                             }
                         }
+                    }
+                }
+                let actual = self.synth_expr(expr)?;
+                self.unify(&actual, expected, expr.span)
+            }
+
+            // First-class module method reference: Array.len, String.concat, etc.
+            ExprKind::FieldAccess { base, field } => {
+                if let ExprKind::Ident(alias) = &base.kind {
+                    if self.module_aliases.contains(alias.as_str()) {
+                        let alias = alias.clone();
+                        let field = field.clone();
+                        return self.check_module_func_ref(&alias, &field, expected, expr.id, expr.span);
                     }
                 }
                 let actual = self.synth_expr(expr)?;
@@ -867,7 +902,7 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        // Special: Cell, Dict, and Iterator modules provide polymorphic operations.
+        // Special: Cell, Dict, Iterator, Array, and String modules provide polymorphic operations.
         if alias == "Cell" {
             return self.synth_cell_call(func_name, args, span);
         }
@@ -876,6 +911,12 @@ impl TypeChecker {
         }
         if alias == "Iterator" {
             return self.synth_iterator_call(func_name, args, span);
+        }
+        if alias == "Array" {
+            return self.synth_array_call(func_name, args, span);
+        }
+        if alias == "String" {
+            return self.synth_string_call(func_name, args, span);
         }
 
         let qualified = format!("{}.{}", alias, func_name);
@@ -1000,9 +1041,9 @@ impl TypeChecker {
         }
     }
 
-    /// Handle Dict.new() — type comes entirely from the annotation context.
-    /// Called from synth_module_call; errors in synthesis mode (no context).
-    fn synth_dict_module_call(&mut self, func_name: &str, _args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    /// Handle Dict module-qualified calls.
+    /// Dict.new() requires annotation context; other methods synthesize from first arg.
+    fn synth_dict_module_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
         match func_name {
             "new" => {
                 self.errors.push(TypeError::UnsupportedFeature {
@@ -1011,6 +1052,88 @@ impl TypeChecker {
                     note: "Dict.new() requires a type annotation, e.g. `m: Dict<String, Int> = Dict.new()`".to_string(),
                 });
                 Err(())
+            }
+            "len" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let dict_ty = self.synth_expr(&args[0])?;
+                if !matches!(dict_ty, MonoType::Dict(_, _)) {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                        actual: dict_ty,
+                        span,
+                        note: Some("Dict.len expects Dict<K,V> as first argument".to_string()),
+                    });
+                    return Err(());
+                }
+                Ok(MonoType::Int)
+            }
+            "has" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let dict_ty = self.synth_expr(&args[0])?;
+                match dict_ty {
+                    MonoType::Dict(ref k_ty, _) => {
+                        let k_ty = *k_ty.clone();
+                        self.check_expr(&args[1], &k_ty)?;
+                        Ok(MonoType::Bool)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            actual: other,
+                            span,
+                            note: Some("Dict.has expects Dict<K,V> as first argument".to_string()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "keys" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let dict_ty = self.synth_expr(&args[0])?;
+                match dict_ty {
+                    MonoType::Dict(k_ty, _) => Ok(MonoType::Array(k_ty)),
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            actual: other,
+                            span,
+                            note: Some("Dict.keys expects Dict<K,V> as first argument".to_string()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "remove" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let dict_ty = self.synth_expr(&args[0])?;
+                match dict_ty.clone() {
+                    MonoType::Dict(ref k_ty, _) => {
+                        let k_ty = *k_ty.clone();
+                        self.check_expr(&args[1], &k_ty)?;
+                        Ok(dict_ty)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            actual: other,
+                            span,
+                            note: Some("Dict.remove expects Dict<K,V> as first argument".to_string()),
+                        });
+                        Err(())
+                    }
+                }
             }
             other => {
                 self.errors.push(TypeError::UndefinedVariable {
@@ -1115,6 +1238,237 @@ impl TypeChecker {
                 });
                 Err(())
             }
+        }
+    }
+
+    /// Handle Array.method(arr, ...) module-qualified calls.
+    fn synth_array_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        match func_name {
+            "len" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                let arr_ty = self.synth_expr(&args[0])?;
+                if !matches!(arr_ty, MonoType::Array(_)) {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: MonoType::Array(Box::new(MonoType::Void)),
+                        actual: arr_ty,
+                        span,
+                        note: Some("Array.len expects Array<T> as first argument".to_string()),
+                    });
+                    return Err(());
+                }
+                Ok(MonoType::Int)
+            }
+            "append" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let arr_ty = self.synth_expr(&args[0])?;
+                match arr_ty {
+                    MonoType::Array(ref elem_ty) => {
+                        let elem_ty = *elem_ty.clone();
+                        self.check_expr(&args[1], &elem_ty)?;
+                        Ok(arr_ty)
+                    }
+                    other => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Array(Box::new(MonoType::Void)),
+                            actual: other,
+                            span,
+                            note: Some("Array.append expects Array<T> as first argument".to_string()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+            "concat" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                let arr_ty = self.synth_expr(&args[0])?;
+                if !matches!(arr_ty, MonoType::Array(_)) {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: MonoType::Array(Box::new(MonoType::Void)),
+                        actual: arr_ty,
+                        span,
+                        note: Some("Array.concat expects Array<T> as first argument".to_string()),
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[1], &arr_ty)?;
+                Ok(arr_ty)
+            }
+            "slice" => {
+                if args.len() != 3 {
+                    self.errors.push(TypeError::WrongArity { expected: 3, actual: args.len(), span });
+                    return Err(());
+                }
+                let arr_ty = self.synth_expr(&args[0])?;
+                if !matches!(arr_ty, MonoType::Array(_)) {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: MonoType::Array(Box::new(MonoType::Void)),
+                        actual: arr_ty,
+                        span,
+                        note: Some("Array.slice expects Array<T> as first argument".to_string()),
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[1], &MonoType::Int)?;
+                self.check_expr(&args[2], &MonoType::Int)?;
+                Ok(arr_ty)
+            }
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "unknown Array method",
+                    span,
+                    note: format!("Array has no method '{}'", func_name),
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Handle String.method(s, ...) module-qualified calls.
+    fn synth_string_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        match func_name {
+            "len" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                Ok(MonoType::Int)
+            }
+            "concat" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                self.check_expr(&args[1], &MonoType::String)?;
+                Ok(MonoType::String)
+            }
+            "substring" => {
+                if args.len() != 3 {
+                    self.errors.push(TypeError::WrongArity { expected: 3, actual: args.len(), span });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                self.check_expr(&args[1], &MonoType::Int)?;
+                self.check_expr(&args[2], &MonoType::Int)?;
+                Ok(MonoType::String)
+            }
+            "to_string" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                Ok(MonoType::String)
+            }
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "unknown String method",
+                    span,
+                    note: format!("String has no method '{}'", func_name),
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Validate a first-class module method reference (e.g. `Array.len`) in check mode.
+    /// Called when a FieldAccess with a module alias base appears in check_expr.
+    fn check_module_func_ref(
+        &mut self,
+        alias: &str,
+        method: &str,
+        expected: &MonoType,
+        expr_id: ExprId,
+        span: Span,
+    ) -> Result<(), ()> {
+        // expected must be a function type
+        let (params, ret) = match expected {
+            MonoType::Function { params, ret } => (params, ret.as_ref()),
+            _ => {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected: expected.clone(),
+                    actual: MonoType::Function { params: vec![], ret: Box::new(MonoType::Void) },
+                    span,
+                    note: Some(format!("'{}.{}' is a function", alias, method)),
+                });
+                return Err(());
+            }
+        };
+
+        if params.is_empty() {
+            self.errors.push(TypeError::UnsupportedFeature {
+                feature: "module method reference with no params",
+                span,
+                note: format!("'{}.{}' must take at least one argument", alias, method),
+            });
+            return Err(());
+        }
+
+        // Validate the first param matches the base type and check the shape
+        let valid = match alias {
+            "Array" => {
+                if !matches!(params[0], MonoType::Array(_)) {
+                    false
+                } else {
+                    match (method, params.len()) {
+                        ("len", 1) => matches!(ret, MonoType::Int),
+                        ("append", 2) => matches!(ret, MonoType::Array(_)),
+                        ("concat", 2) => matches!(ret, MonoType::Array(_)),
+                        ("slice", 3) => matches!(ret, MonoType::Array(_)),
+                        _ => false,
+                    }
+                }
+            }
+            "String" => {
+                if !matches!(params[0], MonoType::String) {
+                    false
+                } else {
+                    match (method, params.len()) {
+                        ("len", 1) => matches!(ret, MonoType::Int),
+                        ("concat", 2) => matches!(ret, MonoType::String),
+                        ("substring", 3) => matches!(ret, MonoType::String),
+                        ("to_string", 1) => matches!(ret, MonoType::String),
+                        _ => false,
+                    }
+                }
+            }
+            "Dict" => {
+                if !matches!(params[0], MonoType::Dict(_, _)) {
+                    false
+                } else {
+                    match (method, params.len()) {
+                        ("len", 1) => matches!(ret, MonoType::Int),
+                        ("has", 2) => matches!(ret, MonoType::Bool),
+                        ("keys", 1) => matches!(ret, MonoType::Array(_)),
+                        ("remove", 2) => matches!(ret, MonoType::Dict(_, _)),
+                        _ => false,
+                    }
+                }
+            }
+            _ => false,
+        };
+
+        if valid {
+            self.type_map.set_expr_type(expr_id, expected.clone());
+            Ok(())
+        } else {
+            self.errors.push(TypeError::TypeMismatch {
+                expected: expected.clone(),
+                actual: MonoType::Function { params: vec![], ret: Box::new(MonoType::Void) },
+                span,
+                note: Some(format!("'{}.{}' signature does not match annotation", alias, method)),
+            });
+            Err(())
         }
     }
 

@@ -4,6 +4,10 @@
 //   false
 //   1
 //   false
+//   1
+//   true
+//   false
+//   0
 
 m: Dict<String, Int> = Dict.new()
 m["a"] = 1
@@ -16,3 +20,12 @@ println("${m.has("c")}")    // false
 m = m.remove("a")
 println("${m.len()}")       // 1
 println("${m.has("a")}")    // false
+
+// Qualified calls: Dict.len, Dict.has, Dict.remove
+n: Dict<String, Int> = Dict.new()
+n["x"] = 10
+println("${Dict.len(n)}")         // 1
+println("${Dict.has(n, "x")}")    // true
+println("${Dict.has(n, "y")}")    // false
+n = Dict.remove(n, "x")
+println("${Dict.len(n)}")         // 0

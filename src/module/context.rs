@@ -79,6 +79,18 @@ impl CompilationContext {
         func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
         func_table.insert("Iterator.next".to_string(),   prelude::ITERATOR_NEXT);
         func_table.insert("Iterator.unfold".to_string(), prelude::ITERATOR_UNFOLD);
+        func_table.insert("Array.len".to_string(),        prelude::ARRAY_LEN);
+        func_table.insert("Array.append".to_string(),     prelude::ARRAY_APPEND);
+        func_table.insert("Array.concat".to_string(),     prelude::ARRAY_CONCAT);
+        func_table.insert("Array.slice".to_string(),      prelude::ARRAY_SLICE);
+        func_table.insert("String.len".to_string(),       prelude::STRING_LEN);
+        func_table.insert("String.concat".to_string(),    prelude::STRING_CONCAT);
+        func_table.insert("String.substring".to_string(), prelude::STRING_SUBSTR);
+        func_table.insert("String.to_string".to_string(), prelude::STRING_TO_STRING);
+        func_table.insert("Dict.len".to_string(),         prelude::DICT_LEN);
+        func_table.insert("Dict.has".to_string(),         prelude::DICT_HAS);
+        func_table.insert("Dict.keys".to_string(),        prelude::DICT_KEYS);
+        func_table.insert("Dict.remove".to_string(),      prelude::DICT_REMOVE);
 
         // Built-in module aliases: handled as module-qualified calls rather than
         // method calls on values.
@@ -86,6 +98,8 @@ impl CompilationContext {
         module_aliases.insert("Cell".to_string());
         module_aliases.insert("Dict".to_string());
         module_aliases.insert("Iterator".to_string());
+        module_aliases.insert("Array".to_string());
+        module_aliases.insert("String".to_string());
 
         Self {
             type_env: TypeEnv::new(),

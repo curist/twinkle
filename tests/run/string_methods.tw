@@ -3,6 +3,9 @@
 //   world
 //   lo wo
 //
+//   11
+//   hello world!
+//   hello
 
 s := "hello world"
 println(s.substring(0, 5))    // hello
@@ -11,3 +14,8 @@ println(s.substring(3, 8))    // lo wo
 
 // Out-of-bounds clamps to length
 println(s.substring(11, 20))  // "" (empty)
+
+// Qualified calls: String.len, String.concat, String.substring
+println("${String.len(s)}")
+println(String.concat(s, "!"))
+println(String.substring(s, 0, 5))
