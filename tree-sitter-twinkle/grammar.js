@@ -57,9 +57,10 @@ module.exports = grammar({
       $.let_binding,
     ),
 
-    // Statement terminator in tree-sitter: newline or semicolon.
-    // (EOF is treated as an implicit terminator by the real Twinkle parser.)
-    _terminator: $ => choice('\n', ';'),
+    // Optional explicit semicolon separator. Newlines are whitespace (in extras)
+    // and statement boundaries are determined by grammar structure — this allows
+    // method-chain continuation across newlines (e.g. foo\n  .bar()).
+    _terminator: $ => ';',
 
     // ===== Type Declarations =====
 
@@ -299,7 +300,7 @@ module.exports = grammar({
 
     variant_expression: $ => prec.dynamic(-1, seq(
       '.',
-      field('variant', $.identifier),
+      field('variant', alias(token(/[A-Z][a-zA-Z0-9_]*/), $.identifier)),
       optional(seq('(', $.arguments, ')')),
     )),
 
@@ -502,13 +503,8 @@ module.exports = grammar({
 
     block: $ => seq(
       '{',
-      // Zero or more statements, each followed by one or more terminators
-      repeat(seq(
-        $._statement,
-        repeat1($._terminator),
-      )),
-      // Optional trailing expression (no terminator)
-      optional($._expression),
+      // Statements separated by grammar structure; optional ';' allowed anywhere.
+      repeat(seq($._statement, optional($._terminator))),
       '}',
     ),
 
