@@ -194,31 +194,25 @@ Pattern =
 
 ## 2.4 Prelude FuncId Assignments
 
-Prelude functions have fixed, deterministic FuncIds:
+Prelude functions occupy a fixed block of FuncIds starting at 1. The canonical,
+up-to-date list lives in `src/ir/lower.rs` (the `prelude` module constants) and
+`src/interp/eval.rs` (`call_builtin`). The `USER_FUNC_START` constant in `lower.rs`
+marks the first FuncId available for user-defined functions; it advances as new
+builtins are added.
 
-| FuncId | Function             |
-|--------|----------------------|
-| 1      | print                |
-| 2      | println              |
-| 3      | error                |
-| 4      | `String.of_int` (intrinsic: `int_to_string`) |
-| 5      | `String.of_float` (intrinsic: `float_to_string`) |
-| 6      | `String.of_bool` (intrinsic: `bool_to_string`) |
-| 7      | `String.to_string` (intrinsic: `string_to_string`) |
-| 8      | `String.len` (intrinsic: `string_len`) |
-| 9      | `String.concat` (intrinsic: `string_concat`) |
-| 10     | `Array.len` (intrinsic: `array_len`) |
-| 11     | `Array.append` (intrinsic: `array_append`) |
-| 12     | `Array.set(arr, idx, val)` (intrinsic: `array_set`) |
-| 13     | `Dict.set(m, k, v)` (intrinsic: `dict_set`) |
-| 14     | `Dict.keys(m)` (intrinsic: `dict_keys`) |
-| 15+    | user-defined (deterministic source order) |
+Prelude functions cover (in order of FuncId):
 
-Additional stdlib builtins (`Array.concat`, `Array.slice`, `Dict.new`, `Dict.get`,
-`Dict.has`, `Dict.remove`, `Dict.len`, `String.substring`, `Range.range`, etc.) are
-added as fixed FuncIds only when needed by tests or language features. They slot into
-the range above user functions and the `USER_FUNC_START` constant in `lower.rs`
-advances accordingly.
+* Core I/O: `print`, `println`, `error`
+* String conversions: `String.of_int`, `String.of_float`, `String.of_bool`, `String.to_string`
+* String operations: `String.len`, `String.concat`, `String.substring`
+* Array operations: `Array.len`, `Array.append`, `Array.set`, `Array.concat`, `Array.slice`
+* Dict operations: `Dict.set`, `Dict.keys`, `Dict.get`, `Dict.new`, `Dict.has`, `Dict.remove`, `Dict.len`
+* Cell operations: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
+* Range constructors: `range`, `range_from`, `range_step`
+
+New builtins slot in before `USER_FUNC_START`; adding one requires bumping the constant
+and updating `call_builtin`. Do not hardcode numeric FuncIds in documentation or tests —
+refer to the named constants in `lower.rs` instead.
 
 Inherent method calls (`x.method(args)`) are **not** a distinct IR node.
 They lower to `Call { callee: GlobalFunc(func_id), args: [receiver, ...rest] }`.

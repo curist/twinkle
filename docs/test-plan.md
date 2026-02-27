@@ -53,54 +53,48 @@ Our testing philosophy follows from these constraints:
 
 # 2. Test Categories
 
-Twinkle has 8 major test categories.
+Current test directories (stage 0–5 bootstrap compiler):
 
 ```
 tests/
-  lexer/
-  parser/
-  pretty/
+  parser/           # parser snapshot tests (.tw + insta snapshots)
+  parser_errors/    # parser error cases
   typecheck/
-  lower/
-  ir/
-  codegen/
-  execute/
-  wasi/
-  selfhost/
+    pass/           # programs that must type-check cleanly
+    fail/           # programs that must produce specific type errors
+  closure/          # closure capture-by-value semantics
+  modules/          # multi-module compilation tests
+  ir/               # Core IR lowering snapshots
+  run/              # end-to-end interpreter run tests (expected output in leading comment)
+  snapshots/        # insta snapshot storage
 ```
 
-We describe them in detail below.
+Future directories (added as later stages are implemented):
+
+```
+tests/
+  lower_anf/        # ANF IR lowering (Stage 7)
+  codegen/          # WAT/Wasm golden output (Stage 8)
+  wasi/             # WASI contract tests (Stage 9+)
+  selfhost/         # self-hosting compatibility (Stage 10)
+benchmarks/
+```
+
+We describe the current categories in detail below.
 
 ---
 
 # 3. Lexer Tests
 
-### Purpose
+> **Future.** No dedicated `tests/lexer/` directory yet. Lexer correctness is
+> validated indirectly through parser tests and integration tests.
 
-Validate that the lexer produces correct tokens and source spans.
-
-### Format
+When added, format will be:
 
 ```
 tests/lexer/xxx.tw
-tests/lexer/xxx.tokens
+tests/lexer/xxx.tokens    # golden snapshot: token kinds, lexemes, spans
 ```
-
-`.tokens` is a golden snapshot containing:
-
-* token kinds
-* lexemes
-* spans (start/end indices)
-
-### Examples
-
-* integer literals
-* float literals
-* string escapes
-* identifiers
-* operators & punctuators
-* comments
-* error cases (unterminated string, unexpected char)
 
 ---
 
@@ -109,151 +103,152 @@ tests/lexer/xxx.tokens
 ### Structure
 
 ```
-tests/parser/xxx.tw
-tests/parser/xxx.ast.json
+tests/parser/        # programs that must parse successfully (insta snapshots)
+tests/parser_errors/ # programs that must produce specific parse errors
 ```
 
-`.ast.json` contains:
+Insta snapshots capture the pretty-printed AST. Tests are driven by `tests/integration_test.rs`.
 
-* full AST
-* spans
-* no type information
+### Coverage
 
-### Test Subtypes
-
-* precedence parsing
-* block desugaring
-* operator associativity
-* if/else
-* lambda syntax
-* record syntax
-* enum and pattern syntax
-* error recovery tests (parser must produce partial AST + diagnostics)
+* operator precedence and associativity
+* block expressions
+* if/else, case, for, collect
+* lambda and function syntax
+* record and enum syntax
+* string interpolation
+* error cases: unexpected tokens, unterminated strings, etc.
 
 ---
 
 # 5. Pretty-Printer Tests (Formatter Baseline)
 
-### Purpose
+> **Future.** No dedicated `tests/pretty/` directory yet.
 
-Ensure parse → format → parse is idempotent.
-
-### Rules
-
-For each file:
-
-```
-formatted1 = format(src)
-formatted2 = format(formatted1)
-assert(formatted2 == formatted1)
-```
-
-### Fixtures
+When added:
 
 ```
 tests/pretty/original.tw
 tests/pretty/original.formatted.tw
 ```
 
-The `.formatted.tw` is a golden file.
+Goal: `format(format(src)) == format(src)`.
 
 ---
 
 # 6. Typechecker Tests
 
-### Files
+### Structure
 
 ```
-tests/type_ok/*.tw
-tests/type_ok/*.typed.json
-
-tests/type_err/*.tw
-tests/type_err/*.error
+tests/typecheck/pass/   # programs that must type-check cleanly
+tests/typecheck/fail/   # programs that must produce specific type errors
 ```
 
-### Type OK Tests (`type_ok`)
+Tests are driven by `tests/typecheck_test.rs`. Each `fail/` file has the expected
+error message(s) embedded as comments.
 
-* Produce typed AST (`.typed.json`) including inferred types.
-* Must match golden snapshot exactly.
+### Coverage
 
-### Type Error Tests (`type_err`)
-
-* Exact diagnostic messages must match `.error`.
-* Error location spans must match exactly.
-* Tests include:
-
-  * unification failures
-  * unknown identifiers
-  * invalid field access
-  * non-exhaustive pattern matches
-  * trait-constraint failures (`Show`, generics)
-  * wrong arity
+* basic type inference and checking
+* record field access and update
+* variant construction and pattern matching
+* generic type declarations and substitution
+* capability records (function-typed fields)
+* `try`/`Result` sugar
+* cross-module type checking
 
 ---
 
-# 7. Lowering Tests (AST → Core IR → ANF IR)
+# 7. Lowering Tests (AST → Core IR)
 
-### Files
+### Structure
 
 ```
-tests/lower_core/*.tw
-tests/lower_core/*.core.json
-
-tests/lower_anf/*.tw
-tests/lower_anf/*.anf.json
+tests/ir/   # Core IR lowering snapshots (insta)
 ```
 
-### Core IR Tests
+`tests/integration_test.rs` drives `twk lower` and captures the output.
 
-Verify:
+### Coverage
 
-* no surface sugar remains
-* implicit return is gone
+* no surface sugar remains after lowering
 * `try` desugared into match
-* `collect` lowered to loop
-* `for x in` lowered to explicit iterator
-* all identifiers replaced by locals
-* variant + record constructors resolved
+* `collect` lowered to loop + array append
+* `for x in` lowered to indexed iteration
+* all identifiers replaced by LocalIds
+* variant and record constructors resolved to TypeId/VariantId
 
-### ANF Tests
-
-Verify:
-
-* every non-atomic subexpression is let-bound
-* evaluation order is explicit
-* no nested calls or nested ops remaining
+> **Future:** ANF IR tests will live in `tests/lower_anf/` (Stage 7).
 
 ---
 
-# 8. IR Interpretation Tests
+# 8. End-to-End Run Tests
 
-These ensure semantics of Core IR and ANF IR are correct even before Wasm backend exists.
+These ensure the full pipeline (parse → typecheck → lower → interpret) produces
+correct output.
 
-### Files
-
-```
-tests/ir/xxx.tw
-tests/ir/xxx.result
-```
-
-The test pipeline is:
+### Structure
 
 ```
-twinkle-bootstrap parse+typecheck+lower_core xxx.tw → core.ir
-run-internal-core-interpreter core.ir → result
-compare result to xxx.result
+tests/run/   # interpreter run tests
 ```
 
-This guarantees:
+Each `.tw` file has the expected stdout embedded as leading comments:
 
-* interpreter defines semantics,
-* backend must match the interpreter exactly.
+```tw
+// Expected output:
+//   hello
+//   42
+println("hello")
+println("${42}")
+```
+
+Tests are driven by `tests/run_test.rs`, which compares actual interpreter output
+against the embedded expected output.
+
+### Coverage
+
+* arithmetic, strings, booleans
+* control flow (if, case, for, collect)
+* closures and higher-order functions
+* records, arrays, dicts
+* generic types and capability records
+* `try`/`Result`
+* multi-module programs (`tests/run/multi_module/`)
 
 ---
 
-# 9. Codegen Tests (WAT + Wasm)
+# 9. Module Tests
 
-### Files
+### Structure
+
+```
+tests/modules/   # multi-module compilation tests
+```
+
+Tests cover: import resolution, `pub`/private visibility, module aliasing,
+collision errors, circular import errors, and cross-module inherent method calls.
+
+---
+
+# 10. Closure Tests
+
+### Structure
+
+```
+tests/closure/   # closure capture semantics
+```
+
+Tests specifically for closure capture-by-value (spec §7.7).
+
+---
+
+# 11. Codegen Tests (WAT + Wasm)
+
+> **Future** — Stage 8.
+
+When added:
 
 ```
 tests/codegen/xxx.tw
@@ -261,63 +256,31 @@ tests/codegen/xxx.wat         (golden)
 tests/codegen/xxx.stdout      (execution result)
 ```
 
-### Requirements
+Requirements:
 
 1. Lowered ANF IR → WAT must match golden `.wat`.
 2. Compiling `.wat` → Wasm → executing → stdout must match `.stdout`.
 
-### Codegen Cases
-
-* numeric ops
-* boolean logic
-* closures and lambda capture
-* arrays, dicts, records
-* variant construction & match
-* loops
-* try/Result
-* large integer values
-* branching and nested blocks
-
 ---
 
-# 10. Execution Tests (End-to-End)
+# 12. Execution Tests (Cross-Runtime)
 
-These focus on real-world semantic behaviors.
+> **Future** — Stage 9+.
 
-### Files
-
-```
-tests/execute/xxx.tw
-tests/execute/xxx.stdout
-```
-
-Execution must match across all runtimes:
+When added, execution must match across all runtimes:
 
 * wasmtime
 * self-hosted wasm
 * Node (WASI)
 * Deno (WASI)
 
-Each test runs:
-
-```
-twinkle-bootstrap compile xxx.tw → xxx.wasm
-wasmtime xxx.wasm > out1
-
-twinkle-compiler.wasm compile xxx.tw → xxx2.wasm
-wasmtime xxx2.wasm > out2
-
-assert(out1 == out2)
-assert(out1 == golden)
-```
-
 ---
 
-# 11. WASI Contract Tests
+# 13. WASI Contract Tests
 
-These validate the Host ABI contract (file I/O, args, env, fs operations).
+> **Future** — Stage 9+.
 
-### Files
+When added:
 
 ```
 tests/wasi/*.tw
@@ -325,20 +288,11 @@ tests/wasi/*.stdout
 tests/wasi/fs/   (fixture FS hierarchy)
 ```
 
-### Requirements
-
-All runtimes must produce identical results:
-
-* wasmtime
-* Node WASI
-* Deno WASI
-* browser polyfill
-
-All WASI tests must be self-contained with a virtual filesystem.
-
 ---
 
-# 12. Self-Hosting Compatibility Tests
+# 14. Self-Hosting Compatibility Tests
+
+> **Future** — Stage 10.
 
 The most important long-term stability test.
 
@@ -383,7 +337,7 @@ assert(r1 == golden_stdout)
 
 ---
 
-# 13. Performance Tests (Optional)
+# 15. Performance Tests (Optional)
 
 Benchmarks are not part of CI correctness, but tracked:
 
@@ -402,39 +356,57 @@ benchmarks/
 
 ---
 
-# 14. CI Testing Matrix
+# 16. CI Testing Matrix
 
 ### Build matrix includes:
 
+Current (stage 0–5):
+
+| Stage                   | Rust | Notes |
+| ----------------------- | ---- | ----- |
+| Parser tests            | ✓    | insta snapshots |
+| Typechecker             | ✓    | pass/fail dirs  |
+| IR lowering             | ✓    | insta snapshots |
+| Run (interpreter)       | ✓    | expected output in comments |
+| Module tests            | ✓    | multi-file programs |
+| Closure tests           | ✓    | capture-by-value |
+
+Future (stages 7–10):
+
 | Stage                   | Rust | Self-hosted | wasmtime | Node | Deno | Browser |
 | ----------------------- | ---- | ----------- | -------- | ---- | ---- | ------- |
-| Lexer tests             | ✓    | —           | —        | —    | —    | —       |
-| Parser tests            | ✓    | —           | —        | —    | —    | —       |
-| Typechecker             | ✓    | —           | —        | —    | —    | —       |
-| IR tests                | ✓    | ✓           | —        | —    | —    | —       |
+| ANF IR tests            | ✓    | ✓           | —        | —    | —    | —       |
 | Codegen                 | ✓    | ✓           | ✓        | —    | —    | —       |
-| Execute                 | ✓    | ✓           | ✓        | ✓    | ✓    | ✓       |
+| Execute (Wasm)          | ✓    | ✓           | ✓        | ✓    | ✓    | ✓       |
 | WASI                    | ✓    | ✓           | ✓        | ✓    | ✓    | ✓       |
 | Self-host compatibility | ✓    | ✓           | ✓        | —    | —    | —       |
 
-The self-host compiler must compile itself once per CI run.
-
 ---
 
-# 15. Directory Layout
+# 17. Directory Layout
+
+Current:
 
 ```
 tests/
-  lexer/
   parser/
-  pretty/
-  type_ok/
-  type_err/
-  lower_core/
-  lower_anf/
+  parser_errors/
+  typecheck/
+    pass/
+    fail/
+  closure/
+  modules/
   ir/
+  run/
+  snapshots/
+```
+
+Future:
+
+```
+tests/
+  lower_anf/
   codegen/
-  execute/
   wasi/
     fs/
   selfhost/
@@ -443,7 +415,7 @@ benchmarks/
 
 ---
 
-# 16. Test Tooling
+# 18. Test Tooling
 
 We use:
 
@@ -462,7 +434,7 @@ twinkle test tests/   # self-hosted test runner
 
 ---
 
-# 17. Stability Guarantees
+# 19. Stability Guarantees
 
 This test suite guarantees:
 
@@ -483,7 +455,7 @@ This test suite guarantees:
 
 ---
 
-# 18. How to Add a New Feature
+# 20. How to Add a New Feature
 
 A PR must include:
 
@@ -499,7 +471,7 @@ No change is accepted without complete coverage across the stack.
 
 ---
 
-# 19. Summary
+# 21. Summary
 
 This test plan ensures:
 

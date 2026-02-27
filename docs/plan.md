@@ -424,16 +424,9 @@ Runtime representation:
 
 * Built-ins (add only as needed by tests):
 
-  * FuncIds 1–14 dispatched natively in `call_builtin` (already assigned in `lower.rs`).
-  * Additional stdlib builtins assigned starting at FuncId 15; `USER_FUNC_START`
-    advances past them. Add only when a test requires them:
-    * `Dict.new() Dict<K,V>` — needed for any dict test; also requires type-checker
-      support (special-case `Dict.new` in `check.rs` similarly to how `len` is handled).
-    * `Dict.get(m, k) Option<V>` — deferred to Stage 6 (requires generics for `Option<V>`).
-    * `Dict.has`, `Dict.remove`, `Dict.len` — add when needed.
-    * `Array.concat`, `Array.slice` — add when needed.
-    * `String.substring` — add when needed.
-    * `range(n) Array<Int>`, `range_from`, `range_step` — add when needed.
+  * Prelude builtins dispatched natively in `call_builtin`; see `src/ir/lower.rs`
+    (`prelude` constants) for the current list and `USER_FUNC_START` for the boundary.
+    Add builtins only as tests require them; bump `USER_FUNC_START` each time.
   * User functions looked up in `CoreModule.functions` by `FuncId`.
 
 * `Dict` runtime representation: `Vec<(Value, Value)>` — no `Hash` bound needed;
@@ -479,38 +472,55 @@ Deliverables:
 
 ---
 
-### Stage 6 — Generics & Bidirectional Type Checking ⬅ Next
+### Stage 6a — User-Defined Generics & Bidirectional Type Checking ✅
 
-**Goal:** Upgrade typechecker to support generics and inference.
+**Goal:** Support generic type declarations and bidirectional checking for common expression forms.
+
+What was done:
+
+* User-defined generic record and sum types (`type Pair<A,B> = .{ ... }`, `type Tree<T> = { ... }`).
+* One `TypeId` per generic definition; field/variant types stored with `Var("T")` placeholders.
+* Substitution applied at field reads, record literals, variant literals, patterns, and capability records.
+* Bidirectional `check_expr` for `case` arms, anonymous record literals, lambda params, and `if` branches.
+* `MonoType::Never` (bottom type) for diverging expressions (`break`/`continue`/`return`).
+* `try expr` sugar desugared into a match over `Result`.
+
+Remaining limitation: type variables are only introduced via explicit `<T>` parameters on `fn`/`type`
+declarations. Call-site inference (e.g. `let f := id` where `id` is polymorphic) is not supported —
+see Stage 6b.
+
+---
+
+### Stage 6b — Full Damas–Milner Inference ⬅ Next
+
+**Goal:** Complete the type inference engine with unification, generalization, and instantiation at use sites.
 
 Features:
 
-* Types:
+* True type variables and unification:
 
-  * type variables (`TypeVar`),
-  * schemes: universally quantified types for polymorphic functions and types.
+  * Fresh type variables at instantiation sites.
+  * Unification engine (union-find or substitution map).
+  * `occurs` check.
 
-* Type checking (spec §20):
+* Generalization at `fn` declarations (not local `:=` bindings) (spec §21 Generalization Rules):
 
-  * bidirectional Damas–Milner with:
+  * `fn id<A>(x: A) A { x }` — polymorphic; `A` is generic.
+  * `f := id` — error: cannot infer monomorphic type for polymorphic binding; must annotate.
 
-    * unification,
-    * generalization at `fn` declarations (not local bindings) (spec §20 Generalization Rules),
-    * instantiation at use sites.
+* Instantiation at use sites:
 
-* Generic functions and sum/record types (spec §3):
+  * Each call to a generic function gets fresh type vars that unify with argument types.
+  * `fn map<A,B>(xs: Array<A>, f: fn(A) B) Array<B>` — type vars resolved per call.
 
-  * `type Option<T> = { None, Some(T) }`
-  * `fn map<A, B>(xs: Arr<A>, f: fn(A) B) -> Arr<B> { ... }`
-
-Core IR does not necessarily change; it just gets richer type annotations.
+Core IR does not change; it just gets richer type annotations.
 
 Deliverables:
 
-* `twk check` supports generic code.
+* `twk check` supports call-site type inference for generic functions.
 * Type inference tests:
 
-  * polymorphic functions,
+  * polymorphic functions called without explicit type args,
   * higher-order functions,
   * errors where inference fails or constraints are violated.
 

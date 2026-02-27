@@ -840,8 +840,12 @@ fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
 
 type Point = .{ x: Int, y: Int }
 
+fn point_equals(a: Point, b: Point) Bool {
+  a.x == b.x && a.y == b.y
+}
+
 EqPoint: Eq<Point> = .{
-  equals(a, b) => a.x == b.x && a.y == b.y,
+  equals: point_equals,
 }
 
 points: Array<Point> = [...]
@@ -863,7 +867,7 @@ fn sum_array(xs: Array<Int>) Int {
 }
 ```
 
-User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Iterator<T>`) from explicit functions.
+User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Array<T>` or `Range`) from explicit conversion functions.
 
 ---
 
@@ -976,41 +980,38 @@ for x,i in coll { body }
 The `for x in coll` syntax is supported only for a **closed set** of built-in collection types:
 
 * `Array<T>` — homogeneous indexable arrays,
-* `Range`    — integer ranges (e.g. `0..10`),
-* `Dict<K, V>` — dictionaries (iterates over key-value pairs),
-* `Iterator<T>` — an explicit iterator type from the standard library.
+* `Range`    — integer ranges,
+* `Dict<K, V>` — dictionaries (iterates over key-value pairs).
 
 The compiler performs a **type-directed** lowering:
 
 * If `coll` has type `Array<T>`, the loop is lowered to an indexed loop over the array length.
 * If `coll` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
 * If `coll` has type `Dict<K, V>`, the loop is lowered to iteration over key–value pairs.
-* If `coll` has type `Iterator<T>`, the loop is lowered to repeated `next` calls until the iterator is exhausted.
 
 Any value used in `for x in coll` whose type is not one of the supported built-ins is a **compile-time error**.
 
 **Indexed form:**
 
 * `i: Int` starts from 0 and increments each iteration.
-* Independent of the underlying iterator state.
 * Break/continue as usual.
 
 **User Extensions:**
 
-To iterate over a custom type, users define a **helper function** that produces a built-in collection or iterator:
+To iterate over a custom type, define a helper that produces a built-in collection:
 
 ```tw
 // tree.tw
 type Tree<T> = ...
 
-pub fn iter<T>(t: Tree<T>) Iterator<T> {
-  // implementation creates an Iterator<T> over the tree
+pub fn to_array<T>(t: Tree<T>) Array<T> {
+  // collect tree nodes into an array
 }
 
 // usage
 fn sum_tree(t: Tree<Int>) Int {
   acc := 0
-  for x in t.iter() {    // desugars to: tree.iter(t)
+  for x in t.to_array() {    // desugars to: tree.to_array(t)
     acc = acc + x
   }
   acc
@@ -1023,7 +1024,7 @@ Some expressions do not complete normally, for example:
 
 * `return expr`
 * `error("message")`
-* infinite loops (e.g. `loop { ... }`)
+* infinite loops (e.g. `for true { ... }`)
 
 Such expressions are allowed in any expression position.
 
@@ -1117,6 +1118,9 @@ arr = Array.set(arr, i, value)
 Strings are **immutable**.
 
 `str.len()` returns the length of the string.
+
+`str[i]` returns a single-character `String` at position `i` (0-based). Out-of-bounds
+access traps.
 
 String interpolation is recommended for string assembly (see Section 11).
 
@@ -1367,8 +1371,8 @@ note: dot syntax only resolves record fields and inherent methods from the defin
 
 ```
 error: cannot iterate over value of type Tree<Int>
-note: for loops only support Array<T>, Range, Dict<K,V>, and Iterator<T>
-help: consider defining a helper function that returns Iterator<Int>
+note: for loops only support Array<T>, Range, and Dict<K,V>
+help: consider defining a helper function that returns Array<Int>
 ```
 
 **Mutation attempt on non-name**:
