@@ -700,34 +700,6 @@ impl TypeChecker {
     //
 
     fn synth_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Result<MonoType, ()> {
-        // Special case: len() builtin
-        if let ExprKind::Ident(name) = &callee.kind {
-            if name == "len" {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-
-                let arg_ty = self.synth_expr(&args[0])?;
-                match &arg_ty {
-                    MonoType::String | MonoType::Array(_) => return Ok(MonoType::Int),
-                    _ => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::String,
-                            actual: arg_ty,
-                            span: args[0].span,
-                    note: None,
-                        });
-                        return Err(());
-                    }
-                }
-            }
-        }
-
         // Special case: field-access calls — handles both module-qualified
         // calls (module.func(args)) and method calls (receiver.method(args)).
         if let ExprKind::FieldAccess { base, field: method_name } = &callee.kind {

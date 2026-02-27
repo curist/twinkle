@@ -1970,13 +1970,6 @@ impl Lowerer {
         ret_ty: &MonoType,
         span: Span,
     ) -> Option<CoreExprKind> {
-        // Special case: len(x) is polymorphic — dispatch by arg type
-        if let ExprKind::Ident(name) = &callee.kind {
-            if name == "len" {
-                return self.lower_len_call(args, span);
-            }
-        }
-
         // Field-access calls: module.func(args) or receiver.method(args)
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
             // TypeName.Variant(args) — parameterized variant construction
@@ -2047,45 +2040,6 @@ impl Lowerer {
         Some(CoreExprKind::Call {
             callee: Box::new(callee_expr),
             args: lowered_args,
-        })
-    }
-
-    fn lower_len_call(&mut self, args: &[Expr], span: Span) -> Option<CoreExprKind> {
-        if args.len() != 1 {
-            self.errors.push(LowerError::InternalError {
-                message: "len() called with wrong number of arguments".to_string(),
-                span,
-            });
-            return None;
-        }
-        let arg = &args[0];
-        let arg_ty = self.type_map.get_expr_type(arg.id).cloned();
-        let lowered_arg = self.lower_expr(arg)?;
-
-        let func_id = match arg_ty {
-            Some(MonoType::Array(_)) => prelude::ARRAY_LEN,
-            Some(MonoType::String) => prelude::STRING_LEN,
-            _ => {
-                self.errors.push(LowerError::InternalError {
-                    message: "len() called on unsupported type".to_string(),
-                    span,
-                });
-                return None;
-            }
-        };
-
-        let func_expr = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(func_id),
-            ty: MonoType::Function {
-                params: vec![lowered_arg.ty.clone()],
-                ret: Box::new(MonoType::Int),
-            },
-            span,
-        };
-
-        Some(CoreExprKind::Call {
-            callee: Box::new(func_expr),
-            args: vec![lowered_arg],
         })
     }
 
