@@ -14,13 +14,19 @@ a.set(42)
 println("b = ${b.get()}")  // 42  (b sees the mutation through a)
 
 // 3. Shared state via closures
-fn make_counter() Int {
+fn make_counter() fn() Int {
   c := Cell.new(0)
-  c.update(fn(n: Int) Int { n + 1 })
-  c.get()
+  fn() {
+    c.update(fn(n: Int) Int { n + 1 })
+    c.get()
+  }
 }
 
-println("make_counter = ${make_counter()}")  // 1
+counter := make_counter()
+
+println("count = ${counter()}")  // 1
+println("count = ${counter()}")  // 2
+println("count = ${counter()}")  // 3
 
 // 4. Accumulate in a loop
 sum := Cell.new(0)
