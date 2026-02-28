@@ -36,3 +36,55 @@ type StringIntMap = Dict<String, Int>
 type MaybeString = String?
 //                 ^^^^^^ type.builtin
 //                       ^ operator
+
+// Result shorthand: T!E — Result<T, E>
+type IntResult = Int!String
+//   ^^^^^^^^^ type.definition
+//               ^^^ type.builtin
+//                  ^ operator
+//                   ^^^^^^ type.builtin
+
+// Result shorthand: !E — Result<Void, E>
+type ErrOnly = !String
+//   ^^^^^^^ type.definition
+//             ^ operator
+//              ^^^^^^ type.builtin
+
+// Result shorthand: T?!E — Result<Option<T>, E>
+type MaybeResult = Int?!String
+//   ^^^^^^^^^^^ type.definition
+//                 ^^^ type.builtin
+//                    ^ operator
+//                     ^ operator
+//                      ^^^^^^ type.builtin
+
+// Shorthand in let binding annotation
+x: Int!String = .Ok(1)
+// ^^^ type.builtin
+//    ^ operator
+//     ^^^^^^ type.builtin
+
+// Shorthand in function return type
+fn parse(s: String) Int!String { .Ok(0) }
+//       ^ variable.parameter
+//          ^^^^^^ type.builtin
+//                  ^^^ type.builtin
+//                     ^ operator
+//                      ^^^^^^ type.builtin
+
+fn validate(n: Int) !String { .Ok({}) }
+//          ^ variable.parameter
+//             ^^^ type.builtin
+//                  ^ operator
+//                   ^^^^^^ type.builtin
+
+fn find(xs: Array<Int>, key: Int) Int?!String { .Ok(.None) }
+//      ^^ variable.parameter
+//          ^^^^^ type
+//                ^^^ type.builtin
+//                      ^^^ variable.parameter
+//                           ^^^ type.builtin
+//                                ^^^ type.builtin
+//                                   ^ operator
+//                                    ^ operator
+//                                     ^^^^^^ type.builtin

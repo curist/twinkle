@@ -40,3 +40,19 @@ case x {
   _ => 0,
 //^ variable.builtin
 }
+
+// Qualified enum patterns with user-defined types
+type ParseError = { NotANumber(String), OutOfRange(Int) }
+//                  ^^^^^^^^^^ constructor
+//                             ^^^^^^ type.builtin
+//                                      ^^^^^^^^^^ constructor
+//                                                 ^^^ type.builtin
+
+case err {
+  ParseError.NotANumber(s) => s,
+//           ^^^^^^^^^^ constructor
+//                      ^ variable
+  ParseError.OutOfRange(n) => 0,
+//           ^^^^^^^^^^ constructor
+//                      ^ variable
+}
