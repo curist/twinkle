@@ -544,7 +544,8 @@ impl TypeChecker {
             // Case: check each arm body against expected type
             ExprKind::Case { scrutinee, arms } => {
                 let scrut_ty = self.synth_expr(scrutinee)?;
-                if !scrut_ty.is_sum(&self.type_env) {
+                let is_primitive_match = matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
+                if !is_primitive_match && !scrut_ty.is_sum(&self.type_env) {
                     self.errors.push(TypeError::CaseScrutineeNotSumType {
                         actual_type: scrut_ty.clone(),
                         span: scrutinee.span,
@@ -2445,8 +2446,9 @@ impl TypeChecker {
     fn synth_case(&mut self, scrutinee: &Expr, arms: &[crate::syntax::ast::CaseArm], span: Span) -> Result<MonoType, ()> {
         let scrut_ty = self.synth_expr(scrutinee)?;
 
-        // Scrutinee must be a sum type
-        if !scrut_ty.is_sum(&self.type_env) {
+        // Scrutinee must be a sum type or a matchable primitive (Int, Bool, String)
+        let is_primitive_match = matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
+        if !is_primitive_match && !scrut_ty.is_sum(&self.type_env) {
             self.errors.push(TypeError::CaseScrutineeNotSumType {
                 actual_type: scrut_ty.clone(),
                 span: scrutinee.span,

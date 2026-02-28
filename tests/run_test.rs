@@ -240,6 +240,11 @@ fn result_shorthand() {
     check("tests/run/result_shorthand.tw");
 }
 
+#[test]
+fn result_try() {
+    check("tests/run/result_try.tw");
+}
+
 // --- Trap tests ---
 
 #[test]

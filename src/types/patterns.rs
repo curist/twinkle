@@ -172,6 +172,21 @@ impl<'a> PatternChecker<'a> {
         arms: &[CaseArm],
         span: Span,
     ) -> Result<(), ()> {
+        // For primitive types (Int, Bool, String), only a wildcard/identifier arm is exhaustive
+        if matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String) {
+            let has_wildcard = arms.iter().any(|arm| {
+                matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _))
+            });
+            if !has_wildcard {
+                errors.push(TypeError::NonExhaustiveMatch {
+                    missing: vec!["_ (wildcard required for primitive match)".to_string()],
+                    span,
+                });
+                return Err(());
+            }
+            return Ok(());
+        }
+
         // Get the type_id for the sum type
         let type_id = match scrut_ty {
             MonoType::Named { type_id, .. } => type_id,

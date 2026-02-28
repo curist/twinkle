@@ -1,0 +1,98 @@
+// Expected output:
+//   parsed: 42
+//   error: out of range: -5
+//   validated: 10
+//   error: must be positive
+//   found: 99
+//   not present
+//   error: key must be non-empty
+
+type ParseError = { NotANumber(String), OutOfRange(Int) }
+
+fn show_parse_err(e: ParseError) String {
+    case e {
+        .NotANumber(s) => "not a number: \"${s}\"",
+        .OutOfRange(n) => "out of range: ${n}",
+    }
+}
+
+fn parse_positive(s: String) Int!ParseError {
+    case s {
+        "42" => .Ok(42),
+        "-5" => .Err(ParseError.OutOfRange(-5)),
+        _    => .Err(ParseError.NotANumber(s)),
+    }
+}
+
+// try extracts the Ok value; Err propagates immediately out of the function
+fn print_parsed(s: String) !ParseError {
+    n := try parse_positive(s)
+    println("parsed: ${n}")
+    .Ok({})
+}
+
+// try chains: stops at the first failure and propagates it
+fn run_parses() !ParseError {
+    try print_parsed("42")
+    try print_parsed("-5")
+    try print_parsed("abc")
+    .Ok({})
+}
+
+case run_parses() {
+    .Ok(_) => {},
+    .Err(e) => println("error: ${show_parse_err(e)}"),
+}
+
+fn validate_positive(n: Int) !String {
+    if n > 0 { .Ok({}) } else { .Err("must be positive") }
+}
+
+fn run_validate(n: Int) !String {
+    try validate_positive(n)
+    println("validated: ${n}")
+    .Ok({})
+}
+
+fn run_validates() !String {
+    try run_validate(10)
+    try run_validate(-3)
+    .Ok({})
+}
+
+case run_validates() {
+    .Ok(_) => {},
+    .Err(msg) => println("error: ${msg}"),
+}
+
+fn safe_lookup(m: Dict<String, Int>, key: String) Int?!String {
+    if key == "" {
+        return .Err("key must be non-empty")
+    }
+    .Ok(m[key])
+}
+
+// try unwraps the outer Result, then case on the inner Option
+fn print_score(m: Dict<String, Int>, key: String) !String {
+    opt := try safe_lookup(m, key)
+    case opt {
+        .Some(n) => println("found: ${n}"),
+        .None => println("not present"),
+    }
+    .Ok({})
+}
+
+fn run_scores(m: Dict<String, Int>) !String {
+    try print_score(m, "alice")
+    try print_score(m, "bob")
+    try print_score(m, "")
+    .Ok({})
+}
+
+scores: Dict<String, Int> = Dict.new()
+scores["alice"] = 99
+
+case run_scores(scores) {
+    .Ok(_) => {},
+    .Err(msg) => println("error: ${msg}"),
+}

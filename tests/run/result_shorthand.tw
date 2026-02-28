@@ -20,12 +20,10 @@ fn show_parse_err(e: ParseError) String {
 
 // T!E — parse that returns a value or fails with a structured error
 fn parse_positive(s: String) Int!ParseError {
-    if s == "42" {
-        .Ok(42)
-    } else if s == "-5" {
-        .Err(ParseError.OutOfRange(-5))
-    } else {
-        .Err(ParseError.NotANumber(s))
+    case s {
+        "42" => .Ok(42),
+        "-5" => .Err(ParseError.OutOfRange(-5)),
+        _    => .Err(ParseError.NotANumber(s)),
     }
 }
 
