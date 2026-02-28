@@ -290,10 +290,10 @@ Twinkle provides update-like syntax for ergonomics, but all updates are expresse
 r.field = expr
 ```
 
-Desugars to:
+Desugars conceptually to the core record-update operation (not Twinkle surface syntax):
 
 ```tw
-r = { r with field = expr }
+r = RecordUpdate(r, field, expr)
 ```
 
 #### Array index update
@@ -328,10 +328,8 @@ Nested field chains (`a.b.c = x`) are supported and desugar recursively from the
 
 ```tw
 a.b.c = x
-// desugars to:
-a.b = { a.b with c = x }
-// which desugars to:
-a = { a with b = { a.b with c = x } }
+// desugars conceptually to:
+a = RecordUpdate(a, b, RecordUpdate(a.b, c, x))
 ```
 
 The root of the chain must be a local identifier. Chains starting with expressions (e.g., `foo().x = 1`) are not allowed.

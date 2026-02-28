@@ -26,10 +26,10 @@ Twinkle provides imperative-looking update syntax, but semantics are purely valu
 x.field = expr
 ```
 
-Desugars to:
+Desugars conceptually to the core record-update operation (not Twinkle surface syntax):
 
 ```tw
-x = { x with field = expr }
+x = RecordUpdate(x, field, expr)
 ```
 
 ### 2.2 Array update
@@ -63,7 +63,7 @@ m = Dict.set(m, k, v)
 
 ```tw
 a.b.c = x
-// a = { a with b = { a.b with c = x } }
+// a = RecordUpdate(a, b, RecordUpdate(a.b, c, x))
 ```
 
 * Chains starting from expressions are not allowed:

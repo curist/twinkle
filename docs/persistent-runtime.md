@@ -9,7 +9,7 @@ This note captures how to keep Twinkle’s immutable data model pluggable across
 - Keep desugarings (for/collect, field/index updates) target-agnostic.
 
 ## Core Surface (what the compiler emits)
-- **Record rebuild**: `{ r with field = expr }` lowering for field updates.
+- **Record update op**: conceptual `RecordUpdate(r, field, expr)` lowering for field updates.
 - **Array**: `new`, `len`, `get`, `set`, `append`, `concat`, `slice`.
 - **Dict**: `new`, `len`, `get`, `set`, `remove`, `has`, `keys`.
 - **String**: `concat`, `substring`, `of_int`, `of_float`, `of_bool`.
