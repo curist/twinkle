@@ -38,7 +38,7 @@ impl TypeEnv {
         // The variant field types below are placeholders; the type checker uses
         // the args from MonoType::Named{type_id, args} to determine the actual
         // payload types at each use site.
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Sum {
                 name: "Option".to_string(),
                 type_params: vec![],
@@ -49,7 +49,7 @@ impl TypeEnv {
             }),
             OPTION_TYPE_ID,
         );
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Sum {
                 name: "Result".to_string(),
                 type_params: vec![],
@@ -60,7 +60,7 @@ impl TypeEnv {
             }),
             RESULT_TYPE_ID,
         );
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Cell".to_string(),
                 type_params: vec![],
@@ -68,7 +68,7 @@ impl TypeEnv {
             }),
             CELL_TYPE_ID,
         );
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Range".to_string(),
                 type_params: vec![],
@@ -81,7 +81,7 @@ impl TypeEnv {
             RANGE_TYPE_ID,
         );
         // TypeId(4) = Iterator<T> — opaque iterator, no fields (state is held in interpreter)
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Iterator".to_string(),
                 type_params: vec!["T".to_string()],
@@ -90,7 +90,7 @@ impl TypeEnv {
             ITERATOR_TYPE_ID,
         );
         // TypeId(5) = IterItem<T> — record returned by Iterator.next: { value: T, rest: Iterator<T> }
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "IterItem".to_string(),
                 type_params: vec!["T".to_string()],
@@ -112,7 +112,7 @@ impl TypeEnv {
         );
         // TypeId(6) = UnfoldStep<T,S> — sum type returned by step function
         //   Done | Yield(T, S)
-        debug_assert_eq!(
+        assert_eq!(
             env.add_type(TypeDef::Sum {
                 name: "UnfoldStep".to_string(),
                 type_params: vec!["T".to_string(), "S".to_string()],
