@@ -1,0 +1,3 @@
+pub fn beta(x: Int) Int {
+  x * 2
+}

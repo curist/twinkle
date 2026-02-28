@@ -115,11 +115,9 @@ The prelude retains fixed FuncIds (as today). User-module FuncIds become
 `module_base_offset + local_index`. The base offset is determined by topological order
 of dependencies, computed once by the linker.
 
-**Status (Stage 6b)**: FuncIds remain globally monotonic — the same counter increments
-across all modules in a single compilation. Module-local IDs and the CoreExpr remapping
-pass in the linker are **deferred** to when content-hash caching is implemented.
-The `link()` function's signature already accepts per-module `LoweredModule` artifacts,
-so that future change will be localized to the linker only (no stage API changes needed).
+**Status (Stage 6b)**: Module-local user FuncIds are implemented in lowering, and the
+linker remaps all user FuncId references (including cross-module calls and closures)
+using deterministic module ordering. Prelude FuncIds remain fixed.
 
 ---
 
@@ -130,9 +128,8 @@ so that future change will be localized to the linker only (no stage API changes
 Currently, `compile_module` does significant work around the resolver call that must
 move into (or alongside) `resolve` itself:
 
-- **Before** calling `Resolver::resolve_with_context`: pre-assigns FuncIds for this
-  module's functions into `ctx.func_table` and increments `ctx.next_func_id`.
-- **After**: manually registers inherent methods into `ctx.type_env` / `ctx.value_env`.
+- Before typecheck: pre-assign module-local FuncIds for this module's functions.
+- After resolve: register current module inherent methods into the resolved envs.
 
 These steps are part of name resolution semantically. After the refactor, they become
 part of `resolve`'s internal logic; `ResolvedModule` carries the pre-assigned `func_ids`
@@ -143,14 +140,9 @@ instead of a mutable context. Resolution itself stays a two-pass scan of the AST
 
 ### typecheck
 
-Two entry points currently exist: `check_module(ast, type_env, value_env)` (already
-takes explicit args) and `check_module_with_context(&mut ctx)` (uses shared state,
-swapping envs in/out with `mem::replace`). The refactor unifies them behind a single
-pure interface: `typecheck(ast, resolved: &ResolvedModule) -> TypedModule`.
-
-The `ResolvedModule` carries `type_env` and `value_env` — so `check_module` is already
-close to the target shape. The main work is eliminating `check_module_with_context` and
-ensuring no ctx mutation leaks into the type checker.
+Typecheck runs with explicit resolver output (`ResolvedModule`) and returns
+`TypedModule`. Coordinator stage flow uses explicit clone-in / artifact-out calls; the
+env swap pattern in the module coordinator has been removed.
 
 ### lower
 
@@ -170,19 +162,9 @@ The linker becomes an explicit step:
 4. Merge TypeEnvs
 5. Return `LinkedProgram`
 
-The existing `all_init_func_ids: Vec<FuncId>` ordering logic moves here.
-
-**Open design question — module-level globals**: `CompilationContext` currently tracks
-`next_global_local_id` and `qualified_value_globals` to give module-level `let` bindings
-stable `LocalId`s accessible across functions. These have no direct equivalent in a
-per-module `LoweredModule`. Options:
-- Give each `LoweredModule` its own `globals: Vec<(LocalId, CoreExpr)>` with module-local
-  IDs; the linker remaps them just like FuncIds.
-- Or make the linker assign GlobalIds in a separate namespace (separate from LocalIds)
-  so cross-module global references are unambiguous.
-
-This is the most non-trivial design question in the refactor and should be resolved
-before starting the lower stage changes.
+The existing `all_init_func_ids: Vec<FuncId>` ordering logic now lives in link-time
+remap order. Module-level globals remain coordinator-assigned via
+`next_global_local_id` and `qualified_value_globals`.
 
 ### compile_module (orchestrator)
 
@@ -203,7 +185,7 @@ and when to invalidate.
 
 ---
 
-## Optional: Content-Hash Caching
+## Content-Hash Caching
 
 Once stages are pure functions, adding a cache layer is straightforward:
 
@@ -218,7 +200,12 @@ struct StageCache {
 ```
 
 A file that hasn't changed (same source hash, same deps hashes) skips all stages.
-This can be persisted to disk across `twk` runs.
+Current implementation status:
+
+- In-process cache is implemented for parse/resolve/typecheck/lower.
+- Stage keys include source hash + dependency hash + pre-stage context hash.
+- Reverse-dependent invalidation is implemented via a dependency graph.
+- On-disk persistence is intentionally out of Stage 6b scope.
 
 This is NOT needed immediately — the pure-function shape is the prerequisite. Add
 caching only when batch compilation speed becomes a real issue.

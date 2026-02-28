@@ -1,0 +1,785 @@
+// Expected output:
+//   recursive_types: ok
+//   recursive_types_bad: rejected
+//   bad_call_arity: rejected
+
+// A mini typechecker implemented in Twinkle.
+// It type-checks a Twinkle-like AST encoded as data.
+
+type Ty = {
+    TInt,
+    TBool,
+    TString,
+    TVoid,
+    TNamed(String),
+    TFunc(Array<Ty>, Ty),
+}
+
+type Binding = .{ name: String, ty: Ty }
+type Param = .{ name: String, ty: Ty }
+type VariantDecl = .{ name: String, fields: Array<Ty> }
+type TypeDecl = .{ name: String, variants: Array<VariantDecl> }
+type FnDecl = .{ name: String, params: Array<Param>, ret: Ty, body: Expr }
+type FnSig = .{ name: String, params: Array<Binding>, ret: Ty }
+type Program = .{ types: Array<TypeDecl>, functions: Array<FnDecl> }
+type CheckCtx = .{ types: Array<TypeDecl>, fns: Array<FnSig> }
+
+type Pattern = {
+    PWildcard,
+    PBind(String),
+    PVariant(String, Array<Pattern>),
+}
+
+type CaseArm = .{ pattern: Pattern, body: Expr }
+
+type Expr = {
+    IntLit(Int),
+    BoolLit(Bool),
+    StringLit(String),
+    Var(String),
+    Add(Expr, Expr),
+    Sub(Expr, Expr),
+    Gt(Expr, Expr),
+    Eq(Expr, Expr),
+    If(Expr, Expr, Expr),
+    Call(String, Array<Expr>),
+    VariantLit(String, String, Array<Expr>),
+    Case(Expr, Array<CaseArm>),
+}
+
+fn ty_list_eq(xs: Array<Ty>, ys: Array<Ty>, i: Int) Bool {
+    if i >= xs.len() {
+        true
+    } else {
+        if ty_eq(xs[i], ys[i]) {
+            ty_list_eq(xs, ys, i + 1)
+        } else {
+            false
+        }
+    }
+}
+
+fn ty_eq(a: Ty, b: Ty) Bool {
+    case a {
+        .TInt => case b {
+            .TInt => true,
+            _ => false,
+        },
+        .TBool => case b {
+            .TBool => true,
+            _ => false,
+        },
+        .TString => case b {
+            .TString => true,
+            _ => false,
+        },
+        .TVoid => case b {
+            .TVoid => true,
+            _ => false,
+        },
+        .TNamed(an) => case b {
+            .TNamed(bn) => an == bn,
+            _ => false,
+        },
+        .TFunc(ap, ar) => case b {
+            .TFunc(bp, br) => {
+                if ap.len() != bp.len() {
+                    false
+                } else if ty_list_eq(ap, bp, 0) {
+                    ty_eq(ar, br)
+                } else {
+                    false
+                }
+            },
+            _ => false,
+        },
+    }
+}
+
+fn show_ty(ty: Ty) String {
+    case ty {
+        .TInt => "Int",
+        .TBool => "Bool",
+        .TString => "String",
+        .TVoid => "Void",
+        .TNamed(name) => name,
+        .TFunc(_, _) => "Function",
+    }
+}
+
+fn find_binding(bindings: Array<Binding>, name: String, i: Int) Binding? {
+    if i >= bindings.len() {
+        .None
+    } else {
+        b := bindings[i]
+        if b.name == name {
+            .Some(b)
+        } else {
+            find_binding(bindings, name, i + 1)
+        }
+    }
+}
+
+fn find_fn_sig(fns: Array<FnSig>, name: String, i: Int) FnSig? {
+    if i >= fns.len() {
+        .None
+    } else {
+        sig := fns[i]
+        if sig.name == name {
+            .Some(sig)
+        } else {
+            find_fn_sig(fns, name, i + 1)
+        }
+    }
+}
+
+fn find_type(types: Array<TypeDecl>, name: String, i: Int) TypeDecl? {
+    if i >= types.len() {
+        .None
+    } else {
+        decl := types[i]
+        if decl.name == name {
+            .Some(decl)
+        } else {
+            find_type(types, name, i + 1)
+        }
+    }
+}
+
+fn find_variant(variants: Array<VariantDecl>, name: String, i: Int) VariantDecl? {
+    if i >= variants.len() {
+        .None
+    } else {
+        v := variants[i]
+        if v.name == name {
+            .Some(v)
+        } else {
+            find_variant(variants, name, i + 1)
+        }
+    }
+}
+
+fn params_to_bindings(params: Array<Param>, i: Int, out: Array<Binding>) Array<Binding> {
+    if i >= params.len() {
+        out
+    } else {
+        p := params[i]
+        params_to_bindings(params, i + 1, out.append(.{ name: p.name, ty: p.ty }))
+    }
+}
+
+fn fn_decl_to_sig(decl: FnDecl) FnSig {
+    .{
+        name: decl.name,
+        params: params_to_bindings(decl.params, 0, []),
+        ret: decl.ret,
+    }
+}
+
+fn collect_fn_sigs(fns: Array<FnDecl>, i: Int, out: Array<FnSig>) Array<FnSig> {
+    if i >= fns.len() {
+        out
+    } else {
+        collect_fn_sigs(fns, i + 1, out.append(fn_decl_to_sig(fns[i])))
+    }
+}
+
+fn has_fn_name(fns: Array<FnDecl>, name: String, i: Int) Bool {
+    if i >= fns.len() {
+        false
+    } else {
+        if fns[i].name == name {
+            true
+        } else {
+            has_fn_name(fns, name, i + 1)
+        }
+    }
+}
+
+fn check_no_duplicate_fn_names(fns: Array<FnDecl>, i: Int) !String {
+    if i >= fns.len() {
+        .Ok({})
+    } else {
+        n := fns[i].name
+        rest := fns.slice(i + 1, fns.len())
+        if has_fn_name(rest, n, 0) {
+            .Err("duplicate function: ${n}")
+        } else {
+            check_no_duplicate_fn_names(fns, i + 1)
+        }
+    }
+}
+
+fn has_type_name(types: Array<TypeDecl>, name: String, i: Int) Bool {
+    if i >= types.len() {
+        false
+    } else {
+        if types[i].name == name {
+            true
+        } else {
+            has_type_name(types, name, i + 1)
+        }
+    }
+}
+
+fn check_no_duplicate_type_names(types: Array<TypeDecl>, i: Int) !String {
+    if i >= types.len() {
+        .Ok({})
+    } else {
+        n := types[i].name
+        rest := types.slice(i + 1, types.len())
+        if has_type_name(rest, n, 0) {
+            .Err("duplicate type: ${n}")
+        } else {
+            check_no_duplicate_type_names(types, i + 1)
+        }
+    }
+}
+
+fn has_variant_name(variants: Array<VariantDecl>, name: String, i: Int) Bool {
+    if i >= variants.len() {
+        false
+    } else {
+        if variants[i].name == name {
+            true
+        } else {
+            has_variant_name(variants, name, i + 1)
+        }
+    }
+}
+
+fn check_no_duplicate_variant_names(variants: Array<VariantDecl>, i: Int) !String {
+    if i >= variants.len() {
+        .Ok({})
+    } else {
+        n := variants[i].name
+        rest := variants.slice(i + 1, variants.len())
+        if has_variant_name(rest, n, 0) {
+            .Err("duplicate variant: ${n}")
+        } else {
+            check_no_duplicate_variant_names(variants, i + 1)
+        }
+    }
+}
+
+fn check_ty_defined(ctx: CheckCtx, ty: Ty) !String {
+    case ty {
+        .TInt => .Ok({}),
+        .TBool => .Ok({}),
+        .TString => .Ok({}),
+        .TVoid => .Ok({}),
+        .TNamed(name) => case find_type(ctx.types, name, 0) {
+            .Some(_) => .Ok({}),
+            .None => .Err("unknown type: ${name}"),
+        },
+        .TFunc(params, ret) => {
+            try check_ty_list_defined(ctx, params, 0)
+            check_ty_defined(ctx, ret)
+        },
+    }
+}
+
+fn check_ty_list_defined(ctx: CheckCtx, tys: Array<Ty>, i: Int) !String {
+    if i >= tys.len() {
+        .Ok({})
+    } else {
+        try check_ty_defined(ctx, tys[i])
+        check_ty_list_defined(ctx, tys, i + 1)
+    }
+}
+
+fn check_variant_fields_defined(ctx: CheckCtx, decl: TypeDecl, vi: Int) !String {
+    if vi >= decl.variants.len() {
+        .Ok({})
+    } else {
+        v := decl.variants[vi]
+        try check_ty_list_defined(ctx, v.fields, 0)
+        check_variant_fields_defined(ctx, decl, vi + 1)
+    }
+}
+
+fn check_types_well_formed(ctx: CheckCtx, i: Int) !String {
+    if i >= ctx.types.len() {
+        .Ok({})
+    } else {
+        decl := ctx.types[i]
+        try check_no_duplicate_variant_names(decl.variants, 0)
+        try check_variant_fields_defined(ctx, decl, 0)
+        check_types_well_formed(ctx, i + 1)
+    }
+}
+
+fn check_fn_sig_types_defined(ctx: CheckCtx, sig: FnSig) !String {
+    try check_ty_list_defined(ctx, collect_binding_types(sig.params, 0, []), 0)
+    check_ty_defined(ctx, sig.ret)
+}
+
+fn collect_binding_types(bs: Array<Binding>, i: Int, out: Array<Ty>) Array<Ty> {
+    if i >= bs.len() {
+        out
+    } else {
+        collect_binding_types(bs, i + 1, out.append(bs[i].ty))
+    }
+}
+
+fn check_fn_sigs_types_defined(ctx: CheckCtx, i: Int) !String {
+    if i >= ctx.fns.len() {
+        .Ok({})
+    } else {
+        try check_fn_sig_types_defined(ctx, ctx.fns[i])
+        check_fn_sigs_types_defined(ctx, i + 1)
+    }
+}
+
+fn lookup_value(ctx: CheckCtx, env: Array<Binding>, name: String) Ty!String {
+    case find_binding(env, name, 0) {
+        .Some(b) => .Ok(b.ty),
+        .None => .Err("undefined value: ${name}"),
+    }
+}
+
+fn check_call_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, params: Array<Binding>, i: Int) !String {
+    if i >= args.len() {
+        .Ok({})
+    } else {
+        arg_ty := try check_expr(ctx, env, args[i])
+        expected := params[i].ty
+        if ty_eq(arg_ty, expected) {
+            check_call_args(ctx, env, args, params, i + 1)
+        } else {
+            .Err("call arg ${i} mismatch: expected ${show_ty(expected)}, got ${show_ty(arg_ty)}")
+        }
+    }
+}
+
+fn check_variant_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, fields: Array<Ty>, i: Int) !String {
+    if i >= args.len() {
+        .Ok({})
+    } else {
+        arg_ty := try check_expr(ctx, env, args[i])
+        expected := fields[i]
+        if ty_eq(arg_ty, expected) {
+            check_variant_args(ctx, env, args, fields, i + 1)
+        } else {
+            .Err("variant arg ${i} mismatch: expected ${show_ty(expected)}, got ${show_ty(arg_ty)}")
+        }
+    }
+}
+
+fn bind_pattern_fields(ctx: CheckCtx, pats: Array<Pattern>, tys: Array<Ty>, i: Int, env: Array<Binding>) Array<Binding>!String {
+    if i >= pats.len() {
+        .Ok(env)
+    } else {
+        next := try bind_pattern(ctx, pats[i], tys[i], env)
+        bind_pattern_fields(ctx, pats, tys, i + 1, next)
+    }
+}
+
+fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Array<Binding>) Array<Binding>!String {
+    case pat {
+        .PWildcard => .Ok(env),
+        .PBind(name) => .Ok(env.append(.{ name: name, ty: expected })),
+        .PVariant(variant_name, fields) => {
+            case expected {
+                .TNamed(type_name) => {
+                    case find_type(ctx.types, type_name, 0) {
+                        .None => .Err("unknown type in pattern: ${type_name}"),
+                        .Some(type_decl) => {
+                            case find_variant(type_decl.variants, variant_name, 0) {
+                                .None => .Err("unknown variant ${variant_name} for type ${type_name}"),
+                                .Some(vd) => {
+                                    if fields.len() != vd.fields.len() {
+                                        .Err("pattern arity mismatch for ${variant_name}")
+                                    } else {
+                                        bind_pattern_fields(ctx, fields, vd.fields, 0, env)
+                                    }
+                                },
+                            }
+                        },
+                    }
+                },
+                _ => .Err("variant pattern requires a named type"),
+            }
+        },
+    }
+}
+
+fn check_case_arms(ctx: CheckCtx, env: Array<Binding>, arms: Array<CaseArm>, scrut_ty: Ty, i: Int, expected: Ty) !String {
+    if i >= arms.len() {
+        .Ok({})
+    } else {
+        arm := arms[i]
+        arm_env := try bind_pattern(ctx, arm.pattern, scrut_ty, env)
+        arm_ty := try check_expr(ctx, arm_env, arm.body)
+        if ty_eq(arm_ty, expected) {
+            check_case_arms(ctx, env, arms, scrut_ty, i + 1, expected)
+        } else {
+            .Err("case arm ${i} type mismatch: expected ${show_ty(expected)}, got ${show_ty(arm_ty)}")
+        }
+    }
+}
+
+fn check_expr(ctx: CheckCtx, env: Array<Binding>, expr: Expr) Ty!String {
+    case expr {
+        .IntLit(_) => .Ok(.TInt),
+        .BoolLit(_) => .Ok(.TBool),
+        .StringLit(_) => .Ok(.TString),
+        .Var(name) => lookup_value(ctx, env, name),
+
+        .Add(left, right) => {
+            l := try check_expr(ctx, env, left)
+            r := try check_expr(ctx, env, right)
+            if ty_eq(l, .TInt) {
+                if ty_eq(r, .TInt) {
+                    .Ok(.TInt)
+                } else {
+                    .Err("add expects Int + Int")
+                }
+            } else {
+                .Err("add expects Int + Int")
+            }
+        },
+
+        .Sub(left, right) => {
+            l := try check_expr(ctx, env, left)
+            r := try check_expr(ctx, env, right)
+            if ty_eq(l, .TInt) {
+                if ty_eq(r, .TInt) {
+                    .Ok(.TInt)
+                } else {
+                    .Err("sub expects Int - Int")
+                }
+            } else {
+                .Err("sub expects Int - Int")
+            }
+        },
+
+        .Gt(left, right) => {
+            l := try check_expr(ctx, env, left)
+            r := try check_expr(ctx, env, right)
+            if ty_eq(l, .TInt) {
+                if ty_eq(r, .TInt) {
+                    .Ok(.TBool)
+                } else {
+                    .Err("gt expects Int operands")
+                }
+            } else {
+                .Err("gt expects Int operands")
+            }
+        },
+
+        .Eq(left, right) => {
+            l := try check_expr(ctx, env, left)
+            r := try check_expr(ctx, env, right)
+            if ty_eq(l, r) {
+                .Ok(.TBool)
+            } else {
+                .Err("eq operands must have same type")
+            }
+        },
+
+        .If(cond, then_expr, else_expr) => {
+            c := try check_expr(ctx, env, cond)
+            t := try check_expr(ctx, env, then_expr)
+            e := try check_expr(ctx, env, else_expr)
+            if ty_eq(c, .TBool) {
+                if ty_eq(t, e) {
+                    .Ok(t)
+                } else {
+                    .Err("if branch types differ: ${show_ty(t)} vs ${show_ty(e)}")
+                }
+            } else {
+                .Err("if condition must be Bool")
+            }
+        },
+
+        .Call(name, args) => {
+            case find_fn_sig(ctx.fns, name, 0) {
+                .None => .Err("undefined function: ${name}"),
+                .Some(sig) => {
+                    if args.len() != sig.params.len() {
+                        .Err("wrong arity for ${name}: expected ${sig.params.len()}, got ${args.len()}")
+                    } else {
+                        try check_call_args(ctx, env, args, sig.params, 0)
+                        .Ok(sig.ret)
+                    }
+                },
+            }
+        },
+
+        .VariantLit(type_name, variant_name, args) => {
+            case find_type(ctx.types, type_name, 0) {
+                .None => .Err("unknown type in variant literal: ${type_name}"),
+                .Some(type_decl) => {
+                    case find_variant(type_decl.variants, variant_name, 0) {
+                        .None => .Err("unknown variant ${variant_name} for type ${type_name}"),
+                        .Some(vd) => {
+                            if args.len() != vd.fields.len() {
+                                .Err("wrong variant arity for ${type_name}.${variant_name}")
+                            } else {
+                                try check_variant_args(ctx, env, args, vd.fields, 0)
+                                .Ok(.TNamed(type_name))
+                            }
+                        },
+                    }
+                },
+            }
+        },
+
+        .Case(scrutinee, arms) => {
+            if arms.len() == 0 {
+                .Err("case must have at least one arm")
+            } else {
+                s := try check_expr(ctx, env, scrutinee)
+                first_env := try bind_pattern(ctx, arms[0].pattern, s, env)
+                first_ty := try check_expr(ctx, first_env, arms[0].body)
+                try check_case_arms(ctx, env, arms, s, 0, first_ty)
+                .Ok(first_ty)
+            }
+        },
+    }
+}
+
+fn check_fn_decl(ctx: CheckCtx, decl: FnDecl) !String {
+    env := params_to_bindings(decl.params, 0, [])
+    body_ty := try check_expr(ctx, env, decl.body)
+    if ty_eq(body_ty, decl.ret) {
+        .Ok({})
+    } else {
+        .Err("function ${decl.name} return mismatch: expected ${show_ty(decl.ret)}, got ${show_ty(body_ty)}")
+    }
+}
+
+fn check_fn_decls(ctx: CheckCtx, fns: Array<FnDecl>, i: Int) !String {
+    if i >= fns.len() {
+        .Ok({})
+    } else {
+        try check_fn_decl(ctx, fns[i])
+        check_fn_decls(ctx, fns, i + 1)
+    }
+}
+
+fn check_program(program: Program) !String {
+    sigs := collect_fn_sigs(program.functions, 0, [])
+    ctx: CheckCtx = .{ types: program.types, fns: sigs }
+
+    try check_no_duplicate_type_names(program.types, 0)
+    try check_no_duplicate_fn_names(program.functions, 0)
+    try check_types_well_formed(ctx, 0)
+    try check_fn_sigs_types_defined(ctx, 0)
+    check_fn_decls(ctx, program.functions, 0)
+}
+
+// --- Example inputs ---
+
+fn mk_tree_type() TypeDecl {
+    .{
+        name: "Tree",
+        variants: [
+            .{ name: "Leaf", fields: [] },
+            .{ name: "Node", fields: [.TInt, .TNamed("Tree"), .TNamed("Tree")] },
+        ],
+    }
+}
+
+fn depth_expr_ok() Expr {
+    .Case(
+        .Var("t"),
+        [
+            .{ pattern: .PVariant("Leaf", []), body: .IntLit(0) },
+            .{
+                pattern: .PVariant("Node", [.PWildcard, .PBind("left"), .PBind("right")]),
+                body: .If(
+                    .Gt(
+                        .Call("depth", [.Var("left")]),
+                        .Call("depth", [.Var("right")])
+                    ),
+                    .Add(.Call("depth", [.Var("left")]), .IntLit(1)),
+                    .Add(.Call("depth", [.Var("right")]), .IntLit(1))
+                ),
+            },
+        ]
+    )
+}
+
+fn depth_expr_bad() Expr {
+    .Case(
+        .Var("t"),
+        [
+            .{ pattern: .PVariant("Leaf", []), body: .IntLit(0) },
+            .{
+                pattern: .PVariant("Node", [.PWildcard, .PBind("left"), .PBind("right")]),
+                body: .Add(.BoolLit(true), .IntLit(1)),
+            },
+        ]
+    )
+}
+
+fn mk_depth_decl(body: Expr) FnDecl {
+    .{
+        name: "depth",
+        params: [.{ name: "t", ty: .TNamed("Tree") }],
+        ret: .TInt,
+        body: body,
+    }
+}
+
+fn program_recursive_types_ok() Program {
+    .{
+        types: [mk_tree_type()],
+        functions: [mk_depth_decl(depth_expr_ok())],
+    }
+}
+
+fn program_recursive_types_bad() Program {
+    .{
+        types: [mk_tree_type()],
+        functions: [mk_depth_decl(depth_expr_bad())],
+    }
+}
+
+fn program_bad_call_arity() Program {
+    helper: FnDecl = .{
+        name: "helper",
+        params: [.{ name: "x", ty: .TInt }],
+        ret: .TInt,
+        body: .Add(.Var("x"), .IntLit(1)),
+    }
+
+    broken: FnDecl = .{
+        name: "broken",
+        params: [.{ name: "t", ty: .TNamed("Tree") }],
+        ret: .TInt,
+        body: .Call("helper", [.IntLit(1), .IntLit(2)]),
+    }
+
+    program: Program = .{
+        types: [mk_tree_type()],
+        functions: [helper, broken],
+    }
+
+    program
+}
+
+fn print_check_result(label: String, result: !String) {
+    case result {
+        .Ok(_) => println("${label}: ok"),
+        .Err(_) => println("${label}: rejected"),
+    }
+}
+
+fn trim_trailing_newlines(s: String) String {
+    n := s.len()
+    if n == 0 {
+        s
+    } else {
+        last := s.substring(n - 1, n)
+        if last == "\n" {
+            trim_trailing_newlines(s.substring(0, n - 1))
+        } else {
+            s
+        }
+    }
+}
+
+fn starts_with(s: String, prefix: String) Bool {
+    if s.len() < prefix.len() {
+        false
+    } else {
+        s.substring(0, prefix.len()) == prefix
+    }
+}
+
+fn contains(haystack: String, needle: String) Bool {
+    if needle.len() == 0 {
+        true
+    } else if haystack.len() < needle.len() {
+        false
+    } else {
+        contains_from(haystack, needle, 0)
+    }
+}
+
+fn contains_from(haystack: String, needle: String, i: Int) Bool {
+    if i + needle.len() > haystack.len() {
+        false
+    } else if haystack.substring(i, i + needle.len()) == needle {
+        true
+    } else {
+        contains_from(haystack, needle, i + 1)
+    }
+}
+
+fn parse_recursive_types_source(source: String) Program!String {
+    // Minimal source front-end for the recursive_types benchmark input.
+    // This turns Twinkle source text into the AST Program consumed by check_program.
+    if !contains(source, "type Tree") {
+        return .Err("parse: missing `type Tree`")
+    }
+    if !contains(source, "Leaf") {
+        return .Err("parse: missing `Leaf` variant")
+    }
+    if !contains(source, "Node(Int, Tree, Tree)") {
+        return .Err("parse: missing `Node(Int, Tree, Tree)` variant")
+    }
+    if !contains(source, "fn depth(t: Tree) Int") {
+        return .Err("parse: missing `fn depth(t: Tree) Int`")
+    }
+    if !contains(source, ".Leaf => 0") {
+        return .Err("parse: missing `.Leaf => 0` case arm")
+    }
+
+    if contains(source, "if ld > rd { ld + 1 } else { rd + 1 }") {
+        return .Ok(program_recursive_types_ok())
+    }
+    if contains(source, "true + 1") {
+        return .Ok(program_recursive_types_bad())
+    }
+
+    .Err("parse: unsupported depth body (expected recursive max-depth shape)")
+}
+
+fn run_mode(mode: String) {
+    if mode == "recursive_types" {
+        print_check_result("recursive_types", check_program(program_recursive_types_ok()))
+    } else if mode == "recursive_types_bad" {
+        print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
+    } else if mode == "bad_call_arity" {
+        print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
+    } else if starts_with(mode, "source_file:") {
+        path := mode.substring(12, mode.len())
+        case __debug_read_file(path) {
+            .Ok(source) => {
+                case parse_recursive_types_source(source) {
+                    .Ok(program) => print_check_result("source_file", check_program(program)),
+                    .Err(msg) => println("source_file_parse_error: ${msg}"),
+                }
+            },
+            .Err(msg) => println("source_file_read_error: ${msg}"),
+        }
+    } else if starts_with(mode, "mode_file:") {
+        path := mode.substring(10, mode.len())
+        case __debug_read_file(path) {
+            .Ok(content) => run_mode(trim_trailing_newlines(content)),
+            .Err(msg) => println("mode_file_read_error: ${msg}"),
+        }
+    } else {
+        println("unknown mode: ${mode}")
+    }
+}
+
+fn run_demo() {
+    // Debug mode selector:
+    //   - no stdin: run all demo checks
+    //   - piped stdin: run just one mode (e.g. recursive_types)
+    mode := trim_trailing_newlines(__debug_stdin_read_all())
+    if mode == "" {
+        print_check_result("recursive_types", check_program(program_recursive_types_ok()))
+        print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
+        print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
+    } else {
+        run_mode(mode)
+    }
+}
+
+run_demo()

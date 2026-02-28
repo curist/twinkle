@@ -1,0 +1,6 @@
+// Test undefined type error
+
+fn use_missing(x: MissingType) Int {
+    0
+}
+

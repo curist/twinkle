@@ -1,0 +1,12 @@
+use dep_a
+use dep_b
+
+fn noise() Int {
+  42
+}
+
+fn run() Int {
+  dep_a.alpha(dep_b.beta(3))
+}
+
+run()

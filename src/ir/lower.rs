@@ -9,7 +9,7 @@ use crate::types::env::TypeEnv;
 use crate::types::ty::{MonoType, ITERATOR_TYPE_ID, OPTION_TYPE_ID, ITER_ITEM_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
-use crate::module::artifacts::LoweredModule;
+use crate::module::artifacts::{ExternalFuncRef, LoweredModule};
 
 use super::core::{
     CoreExpr, CoreExprKind, CoreModule, CorePattern, FieldId, FuncId, FunctionDef,
@@ -74,8 +74,13 @@ pub mod prelude {
     pub const ARRAY_BUILDER_PUSH:   FuncId = FuncId(34); // (Cell<Array<T>>, T) -> Void
     pub const ARRAY_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Array<T>>) -> Array<T>
 
+    // Debug/dev-only API (unstable): read all piped stdin as String
+    pub const DEBUG_STDIN_READ_ALL: FuncId = FuncId(36); // () -> String
+    // Debug/dev-only API (unstable): read UTF-8 file content
+    pub const DEBUG_READ_FILE: FuncId = FuncId(37); // (path: String) -> Result<String, String>
+
     // User functions start here
-    pub const USER_FUNC_START: u32 = 36;
+    pub const USER_FUNC_START: u32 = 38;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +93,8 @@ pub struct LowerInput {
     pub func_table: HashMap<String, FuncId>,
     pub module_aliases: HashSet<String>,
     pub qualified_value_globals: HashMap<String, LocalId>,
+    /// "alias.fn" → target module path + module-local FuncId.
+    pub qualified_func_targets: HashMap<String, ExternalFuncRef>,
     /// Next FuncId to assign for hoisted lambdas / __init__
     pub next_func_id: u32,
     /// Starting GlobalLocal offset for this module's top-level lets
@@ -119,10 +126,20 @@ pub struct Lowerer {
     global_local_start: u32,
     /// "alias.name" → globally-unique LocalId for cross-module pub value references.
     qualified_value_globals: HashMap<String, LocalId>,
+    /// "alias.fn" → target module path + module-local FuncId.
+    qualified_func_targets: HashMap<String, ExternalFuncRef>,
+    /// Placeholder FuncId → external target; linker resolves these.
+    external_func_refs: HashMap<FuncId, ExternalFuncRef>,
+    /// Reverse lookup to keep placeholder assignment stable per target.
+    external_func_ref_ids: HashMap<ExternalFuncRef, FuncId>,
+    /// Next placeholder FuncId for cross-module references.
+    next_external_func_id: u32,
     /// True while lowering __init__ top-level statements; lets lowerer reuse pre-assigned
     /// module global LocalIds instead of allocating new ones.
     in_init_context: bool,
 }
+
+const EXTERNAL_FUNC_ID_START: u32 = 1_000_000_000;
 
 impl Lowerer {
     pub fn new(type_map: TypeMap, type_env: TypeEnv) -> Self {
@@ -154,6 +171,8 @@ impl Lowerer {
         func_table.insert("Dict.has".to_string(),         prelude::DICT_HAS);
         func_table.insert("Dict.keys".to_string(),        prelude::DICT_KEYS);
         func_table.insert("Dict.remove".to_string(),      prelude::DICT_REMOVE);
+        func_table.insert("__debug_stdin_read_all".to_string(), prelude::DEBUG_STDIN_READ_ALL);
+        func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
 
         // len is polymorphic and handled specially in lower_expr_call
 
@@ -177,6 +196,10 @@ impl Lowerer {
             next_global_id: 0,
             global_local_start: 0,
             qualified_value_globals: HashMap::new(),
+            qualified_func_targets: HashMap::new(),
+            external_func_refs: HashMap::new(),
+            external_func_ref_ids: HashMap::new(),
+            next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
         }
     }
@@ -196,6 +219,10 @@ impl Lowerer {
             next_global_id: 0,
             global_local_start: input.next_global_local_id,
             qualified_value_globals: input.qualified_value_globals,
+            qualified_func_targets: input.qualified_func_targets,
+            external_func_refs: HashMap::new(),
+            external_func_ref_ids: HashMap::new(),
+            next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
         }
     }
@@ -304,8 +331,11 @@ impl Lowerer {
 
         if self.errors.is_empty() {
             Ok(LoweredModule {
+                module_path: std::path::PathBuf::new(),
+                dependencies: Vec::new(),
                 functions,
                 init_func_id,
+                external_func_refs: self.external_func_refs,
                 next_func_id_after: self.next_hoisted_id,
                 next_global_local_id_after: self.next_global_id,
             })
@@ -318,6 +348,31 @@ impl Lowerer {
     fn alloc_hoisted_id(&mut self) -> FuncId {
         let id = FuncId(self.next_hoisted_id);
         self.next_hoisted_id += 1;
+        id
+    }
+
+    fn resolve_named_func_id(&mut self, name: &str, span: Span) -> Option<FuncId> {
+        if let Some(target) = self.qualified_func_targets.get(name).cloned() {
+            return Some(self.alloc_external_func_id(target));
+        }
+        if let Some(&func_id) = self.func_table.get(name) {
+            return Some(func_id);
+        }
+        self.errors.push(LowerError::InternalError {
+            message: format!("no FuncId for '{}'", name),
+            span,
+        });
+        None
+    }
+
+    fn alloc_external_func_id(&mut self, target: ExternalFuncRef) -> FuncId {
+        if let Some(&existing) = self.external_func_ref_ids.get(&target) {
+            return existing;
+        }
+        let id = FuncId(self.next_external_func_id);
+        self.next_external_func_id += 1;
+        self.external_func_ref_ids.insert(target.clone(), id);
+        self.external_func_refs.insert(id, target);
         id
     }
 
@@ -1667,7 +1722,10 @@ impl Lowerer {
             ExprKind::Ident(name) => {
                 if let Some(local_id) = self.local_allocator.lookup(name) {
                     Some(CoreExprKind::Local(local_id))
-                } else if let Some(&func_id) = self.func_table.get(name.as_str()) {
+                } else if self.qualified_func_targets.contains_key(name.as_str())
+                    || self.func_table.contains_key(name.as_str())
+                {
+                    let func_id = self.resolve_named_func_id(name, span)?;
                     Some(CoreExprKind::GlobalFunc(func_id))
                 } else if let Some(&global_id) = self.module_globals.get(name.as_str()) {
                     Some(CoreExprKind::GlobalLocal(global_id))
@@ -1731,7 +1789,10 @@ impl Lowerer {
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
                         let qualified = format!("{}.{}", alias, field);
-                        if let Some(&func_id) = self.func_table.get(&qualified) {
+                        if self.qualified_func_targets.contains_key(&qualified)
+                            || self.func_table.contains_key(&qualified)
+                        {
+                            let func_id = self.resolve_named_func_id(&qualified, span)?;
                             return Some(CoreExprKind::GlobalFunc(func_id));
                         }
                         if let Some(&local_id) = self.qualified_value_globals.get(&qualified) {
@@ -2114,7 +2175,10 @@ impl Lowerer {
             if let ExprKind::Ident(alias) = &base.kind {
                 if self.module_aliases.contains(alias.as_str()) {
                     let qualified = format!("{}.{}", alias, field);
-                    if let Some(&func_id) = self.func_table.get(&qualified) {
+                    if self.qualified_func_targets.contains_key(&qualified)
+                        || self.func_table.contains_key(&qualified)
+                    {
+                        let func_id = self.resolve_named_func_id(&qualified, span)?;
                         let mut lowered_args = Vec::new();
                         for a in args {
                             lowered_args.push(self.lower_expr(a)?);
@@ -2132,13 +2196,12 @@ impl Lowerer {
                             callee: Box::new(func_expr),
                             args: lowered_args,
                         });
-                    } else {
-                        self.errors.push(LowerError::InternalError {
-                            message: format!("no FuncId for '{}'", qualified),
-                            span,
-                        });
-                        return None;
                     }
+                    self.errors.push(LowerError::InternalError {
+                        message: format!("no FuncId for '{}'", qualified),
+                        span,
+                    });
+                    return None;
                 }
             }
 
@@ -2197,18 +2260,7 @@ impl Lowerer {
                 // User-defined inherent method: look up via TypeEnv → func_table
                 let type_id = *type_id;
                 if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
-                    if let Some(&func_id) = self.func_table.get(&func_name) {
-                        func_id
-                    } else {
-                        self.errors.push(LowerError::InternalError {
-                            message: format!(
-                                "no FuncId for method '{}' (resolved to '{}')",
-                                method, func_name
-                            ),
-                            span,
-                        });
-                        return None;
-                    }
+                    self.resolve_named_func_id(&func_name, span)?
                 } else if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
                     // Function-typed record field: `record.fn_field(args)` — call the closure stored in the field
                     let field_ty = self.type_env.get_record_fields(type_id)

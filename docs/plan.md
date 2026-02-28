@@ -492,7 +492,7 @@ see Stage 6b.
 
 ---
 
-### Stage 6b — Query-Friendly Pipeline Refactor
+### Stage 6b — Query-Friendly Pipeline Refactor ✅
 
 **Goal:** Reshape the compiler pipeline so each stage is a pure function with explicit
 inputs and outputs, enabling independent stage invocation, per-file incremental
@@ -506,16 +506,102 @@ Key changes:
   `ResolvedModule`, `TypedModule`, `LoweredModule`, `LinkedProgram`.
 * Each stage becomes a pure function: `resolve(ast, deps)`, `typecheck(ast, resolved)`,
   `lower(ast, typed)`, `link(modules)`.
-* FuncIds assigned module-locally (0, 1, 2...) and remapped by the linker with
-  per-module base offsets — stable across re-compilations.
+* FuncIds assigned module-locally (starting at USER_FUNC_START, after prelude slots)
+  and remapped by the linker with per-module base offsets — stable across re-compilations.
 * `compile_module` becomes a thin coordinator; no shared mutable state.
 * `CompilationContext` shrinks to just the module loader cache and import stack.
 
-Deliverables:
+**Current status (2026-02-28):**
+
+* Artifact structs exist (`ResolvedModule`, `TypedModule`, `LoweredModule`) and stage
+  boundaries are cleaner than before.
+* `resolve`, `typecheck`, and `lower` are callable with explicit inputs and artifacts.
+* The `compile_module` coordinator now uses explicit stage data flow (no env-swap
+  `mem::replace` pattern).
+* `CompileState` is reduced to module-graph/coordinator accumulation state.
+* User FuncIds are now module-local during lowering and remapped in `link` with a
+  deterministic topo order of modules.
+* FuncId stability tests exist for import-order changes and unrelated entry-module edits.
+* An in-process content-hash stage cache exists for parse / resolve / typecheck / lower,
+  including reverse-dependent invalidation and cache hit/miss tests.
+* Tool-facing query API includes structured diagnostics, direct stage entry points, and
+  symbol queries without requiring `CompileState` construction.
+
+Stage 6b scope is complete in this repo. The compiler can be called query-style for
+parse/resolve/typecheck/lower and supports in-process incremental reuse.
+
+* **6b.1 Stateless stage contracts**
+  * done: stage functions consume explicit inputs and return artifacts;
+  * done: env swap pattern removed from coordinator stage flow.
+
+* **6b.2 Stable module-local IDs + linker remap**
+  * done: module-local FuncIds + deterministic linker remap;
+  * done: stability tests for import-order and unrelated edits.
+
+* **6b.3 Incremental cache database**
+  * done: content-hash keys + independent stage caches;
+  * done: reverse-dependent invalidation;
+  * non-goal for Stage 6b: on-disk persistence across process invocations.
+
+* **6b.4 Tool-facing query API**
+  * done: parse/resolve/typecheck/lower APIs + structured diagnostics;
+  * done: symbol query API + default query context helpers.
+
+Deliverables (done when all below are true):
 
 * All existing tests (`tests/run/`, `tests/modules/`) pass unchanged.
 * Each stage independently testable without constructing a full context.
 * No Salsa or other framework dependency introduced.
+* Incremental tests prove unchanged modules skip resolve/typecheck/lower.
+* FuncId stability tests prove deterministic IDs after unrelated edits.
+
+**Execution checklist (file/module map):**
+
+* **Step A — Refactor stage boundaries (`6b.1`)**
+  * `src/module/mod.rs`:
+    * split orchestration from stage logic; coordinator should pass immutable inputs and collect outputs;
+    * remove env swapping pattern in favor of explicit stage data flow.
+  * `src/module/context.rs`:
+    * shrink or remove `CompileState` as mutable cross-stage carrier;
+    * move only loader/cycle detection concerns into a thin context.
+  * `src/module/artifacts.rs`:
+    * extend artifact structs so all stage outputs are explicit (including method registrations / per-module metadata).
+  * `src/types/resolve.rs`, `src/types/check.rs`, `src/ir/lower.rs`:
+    * keep stage functions pure over explicit inputs; no hidden mutation dependencies.
+
+* **Step B — Stable IDs via linker remap (`6b.2`)**
+  * `src/ir/lower.rs`:
+    * assign module-local user FuncIds (per-module numbering), not global monotonic IDs.
+  * `src/module/artifacts.rs`:
+    * store module-local function sets and metadata required for remapping.
+  * `src/module/mod.rs` (`link`):
+    * topologically order modules, assign module base offsets, and remap all FuncId references.
+  * Tests to add:
+    * `tests/modules_test.rs` / new dedicated test file asserting FuncId stability under import-order changes.
+
+* **Step C — Incremental cache + invalidation (`6b.3`)**
+  * New module recommended: `src/query/` (`mod.rs`, `cache.rs`, `keys.rs`, `graph.rs`).
+    * stage cache keying: source hash + transitive dep hashes + stage context hash.
+    * dep graph and reverse-dependency invalidation.
+  * `src/module/mod.rs`, `src/module/loader.rs`:
+    * integrate cache lookup/store and dependency graph updates.
+  * `src/cli/check.rs`, `src/cli/build.rs`, `src/cli/run.rs`:
+    * add cache-aware execution paths (warm/cold behavior).
+  * Tests to add:
+    * cache hit/miss behavior;
+    * reverse-dependent invalidation when an imported module changes.
+
+* **Step D — Tool-facing query API (`6b.4`)**
+  * `src/lib.rs`:
+    * export stable query entry points for parse / resolve / typecheck / diagnostics / symbol lookup.
+  * New module recommended: `src/query/api.rs`:
+    * single ergonomic facade used by CLI, future `twk lsp`, and future `twk lint`.
+  * `src/types/error.rs`, `src/syntax/span.rs`:
+    * ensure diagnostics include stable machine-readable IDs + spans + severity.
+  * Tests to add:
+    * API-level snapshots for diagnostics and symbol queries.
+
+**Recommended order:** A -> B -> C -> D (do not start LSP incremental work before C).
 
 ---
 
@@ -755,6 +841,66 @@ Deliverables:
 
 * **Lossless lexer**: comments preserved as trivia tokens (required by formatter and LSP).
 * **Parser error recovery**: partial AST on syntax errors (required by LSP; nice-to-have for formatter).
+
+**Practical goals for "easy tooling":**
+
+* **Whole-program formatting is easy to run**
+  * `twk fmt --all` discovers project files from root and formats all `.tw` files deterministically;
+  * formatting is idempotent (`fmt` twice yields no diff);
+  * on syntax error, command reports file + span and continues other files (non-zero exit at end).
+
+* **Incremental LSP is easy to keep fast**
+  * on file change, re-run parse/resolve/typecheck only for the changed file and affected reverse-dependents;
+  * unchanged modules are served from stage caches;
+  * diagnostics/hover/go-to-definition read query artifacts directly (no full lower/link requirement).
+
+**Milestones to reach those goals:**
+
+* **T1 — Formatter core**
+  * finish lossless lexer trivia model and formatter AST printer;
+  * add `twk fmt <file>` with golden tests + idempotence tests.
+
+* **T2 — Whole-project formatter UX**
+  * add `twk fmt --all` file discovery, include/exclude rules, and stable output ordering;
+  * add CI-friendly exit codes and summary reporting.
+
+* **T3 — Incremental diagnostics for LSP**
+  * complete Stage 6b query-cache work;
+  * add dependency graph invalidation + reverse-dependency tracking;
+  * expose diagnostics query endpoint reused by CLI and LSP host.
+
+* **T4 — Interactive LSP features**
+  * add hover / go-to-definition / completion on top of cached query artifacts;
+  * add latency benchmarks with warm cache and edit-loop workloads.
+
+**Tooling implementation map (files):**
+
+* **Formatter core (`T1`)**
+  * `src/syntax/lexer.rs`, `src/syntax/tokens.rs`:
+    * add trivia/comment preservation model required by formatter.
+  * `src/syntax/parser.rs`:
+    * ensure parser exposes token/trivia links needed by formatting decisions.
+  * `src/syntax/pretty.rs`:
+    * implement canonical formatter printer.
+  * `src/cli/mod.rs`, new `src/cli/fmt.rs`, `src/main.rs`:
+    * wire `twk fmt <file>` and `--check`.
+  * Tests: add formatter golden/idempotence suite under `tests/` (new formatter tests file + fixtures).
+
+* **Whole-project formatting UX (`T2`)**
+  * New module recommended: `src/cli/project_files.rs` (shared project file discovery).
+  * `src/cli/fmt.rs`:
+    * implement `--all`, deterministic file ordering, partial-failure reporting, CI exit codes.
+
+* **Incremental diagnostics (`T3`)**
+  * Build on query cache modules from Stage 6b Step C.
+  * New module recommended: `src/diagnostics/mod.rs` for normalized diagnostic structures.
+  * `src/cli/check.rs`:
+    * consume diagnostics query API (no full lower/link unless requested).
+
+* **LSP (`T4`)**
+  * New module recommended: `src/lsp/mod.rs` (or standalone crate later).
+  * Integrate with query API from Stage 6b Step D; keep lower/link out of hot path.
+  * Add edit-loop latency benchmark harness (new `benches/lsp_latency.rs`).
 
 **Planned tools** (all as `twk` subcommands initially, rewritten in Twinkle post-self-hosting):
 

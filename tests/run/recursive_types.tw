@@ -1,0 +1,23 @@
+// Expected output:
+// 2
+// 0
+
+type Tree = {
+  Leaf,
+  Node(Int, Tree, Tree),
+}
+
+fn depth(t: Tree) Int {
+  case t {
+    .Leaf => 0,
+    .Node(_, left, right) => {
+      ld := depth(left)
+      rd := depth(right)
+      if ld > rd { ld + 1 } else { rd + 1 }
+    }
+  }
+}
+
+t := Tree.Node(1, Tree.Node(2, Tree.Leaf, Tree.Leaf), Tree.Leaf)
+println(int_to_string(depth(t)))
+println(int_to_string(depth(Tree.Leaf)))

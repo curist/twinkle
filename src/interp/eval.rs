@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{IsTerminal, Read, Write};
 use std::rc::Rc;
 
 use crate::ir::core::{
@@ -9,7 +9,7 @@ use crate::ir::core::{
 use crate::ir::CoreModule;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
+use crate::types::ty::{OPTION_TYPE_ID, RESULT_TYPE_ID, RANGE_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 use super::value::IteratorState;
 
 use super::value::Value;
@@ -130,7 +130,7 @@ impl<W: Write> Interpreter<W> {
         args: Vec<Value>,
         captured: Frame,
     ) -> EvalResult {
-        // Prelude / built-in functions (FuncId 1–22)
+        // Prelude / built-in functions
         if func_id.0 < crate::ir::lower::prelude::USER_FUNC_START {
             return self.call_builtin(func_id, args);
         }
@@ -440,7 +440,7 @@ impl<W: Write> Interpreter<W> {
     }
 
     // -----------------------------------------------------------------------
-    // Built-in functions (FuncId 1–35; USER_FUNC_START=36)
+    // Built-in functions (FuncId 1–37; USER_FUNC_START=38)
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {
@@ -793,6 +793,30 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("ARRAY_BUILDER_FREEZE: expected Cell"),
                 };
                 Ok(cell.borrow().clone())
+            }
+            36 => {
+                // __debug_stdin_read_all() -> String
+                // Dev/debug-only helper: when stdin is a terminal, return ""
+                // immediately to avoid blocking interactive runs.
+                let mut stdin = std::io::stdin();
+                if stdin.is_terminal() {
+                    return Ok(Value::Str(String::new()));
+                }
+                let mut buf = String::new();
+                stdin.read_to_string(&mut buf)
+                    .map_err(|e| Signal::Trap(TrapError::UserError(format!("stdin read failed: {}", e))))?;
+                Ok(Value::Str(buf))
+            }
+            37 => {
+                // __debug_read_file(path: String) -> Result<String, String>
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__debug_read_file: expected String path"),
+                };
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => Ok(Value::Variant(RESULT_TYPE_ID, 0, vec![Value::Str(contents)])), // Ok
+                    Err(err) => Ok(Value::Variant(RESULT_TYPE_ID, 1, vec![Value::Str(err.to_string())])), // Err
+                }
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
