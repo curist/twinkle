@@ -9,7 +9,7 @@ Design goals:
 * Concise, low-ceremony syntax.
 * Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking.
 * Unboxed primitives (`Int = i64`, `Float = f64`, `Bool`).
-* GC-managed references for strings, arrays, records, dicts.
+* GC-managed references for strings, arrays, records, dicts, and cells.
 * Small runtime; rely on `struct`, `array`, reference types.
 * Inherent methods only via module functions.
 * Immutable values with rebindable names.
@@ -23,11 +23,12 @@ Source files end with `.tw`.
 
 ### Immutability
 
-**All values in Twinkle are immutable.**
+**All ordinary values in Twinkle are immutable.**
 
 * Primitives, strings, arrays, records, dicts, and functions cannot be mutated in place.
 * There is no observable in-place mutation of values in the language model.
 * Updates are expressed through rebinding: constructing a new value and binding a name to it.
+* Shared mutable state is explicit and only available through `Cell<T>` APIs (`Cell.set`, `Cell.update`).
 
 ### Primitives (unboxed)
 
@@ -43,6 +44,7 @@ Source files end with `.tw`.
 * `record` — immutable closed struct shape.
 * `Dict<K,V>` — immutable hash map reference.
 * `function` — closure with captured environment (GC).
+* `Cell<T>` — mutable cell reference for explicit shared state.
 
 ### `Void`
 
@@ -170,8 +172,8 @@ Field access: `p.x`
 fn f(x: Int, y: Int) Int { x + y }
 ```
 
-Functions are pure: they cannot mutate caller-visible state.
-All “updates” create new values and rebind local names.
+Functions cannot mutate caller-visible ordinary values via assignment syntax.
+All assignment-like updates create new values and rebind local names. Side effects are explicit (e.g. `print`, `println`, `error`, `Cell.set`, `Cell.update`).
 
 Parameters are ordinary local bindings and may be rebound within the function body (see §7.3).
 
@@ -214,7 +216,7 @@ x = expr
 
 #### Rules
 
-1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function** (or at top-level).
+1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function**.
 2. It introduces a **fresh binding identity** for `x` — the name now refers to a new immutable value. It does not mutate a stored cell; it changes what future references to the name resolve to.
 3. Rebinding introduces a fresh binding identity for `x` that replaces the previous one for the remainder of the current lexical region; it does not introduce an additional scope layer.
 4. If multiple bindings of `x` exist due to shadowing, the **innermost** one is the target.
@@ -357,7 +359,7 @@ Twinkle has **value semantics**, not reference semantics.
 
 A function expression (`fn (...) { ... }`) may reference names defined in its surrounding lexical scopes.
 When such a function is **defined**, Twinkle captures the **current value** of each free variable.
-Closures capture *values*, not mutable cells.
+Closures capture values. If a captured value is a `Cell<T>`, the closure captures that cell reference value, so cell effects remain shared.
 
 This section formalizes the capture model.
 
@@ -432,7 +434,7 @@ This follows directly from capture-by-value semantics.
 
 #### 7.7.4 Closures Cannot Rebind Captured Variables
 
-Because closures capture **values**, not cells, they cannot assign to variables defined outside their own function.
+Because rebinding always targets local bindings in the current function, closures cannot assign to variables defined outside their own function.
 
 The following is an error:
 
@@ -448,7 +450,7 @@ Compile-time rule:
 
 > A closure may reference captured variables, but may **not** rebind them using `=`.
 
-If mutation-like behavior is desired in the future, it must be expressed explicitly using a type such as `Cell<T>` rather than via closures.
+If shared mutable state is desired, express it explicitly using `Cell<T>` rather than by rebinding captured variables.
 
 ---
 
@@ -485,9 +487,9 @@ This avoids common “loop capture traps” seen in other languages.
 | Rebinding afterwards      | Does **not** affect existing closures; it creates a new shadowing binding.                  |
 | Assigning inside closures | Cannot rebind captured variables (compile-time error).                                      |
 | Loops                     | Fresh binding per iteration; closures capture the iteration’s value.                        |
-| Mutation                  | Not supported implicitly; must use explicit types (e.g. future `Cell<T>`) for shared state. |
+| Mutation                  | Not supported implicitly; shared mutable state must use explicit `Cell<T>` operations.        |
 
-This model is simple, predictable, and strictly functional in semantics, while still supporting direct rebinding syntax.
+This model is simple and predictable, while still supporting direct rebinding syntax.
 
 ---
 
@@ -1181,6 +1183,25 @@ Indexing syntax:
 * `m[k]` returns `V?` (Option<V>) for safe read access
 * `m[k] = v` desugars to `m = Dict.set(m, k, v)`
 
+### 17.1 Cell (Explicit Mutable State)
+
+`Cell<T>` is an opaque mutable container type for explicit shared state.
+
+Core API:
+
+* `Cell.new(v: T) Cell<T>` — allocate a new cell
+* `Cell.get(c: Cell<T>) T` — read current value
+* `Cell.set(c: Cell<T>, v: T) Void` — write current value (side effect)
+* `Cell.update(c: Cell<T>, f: fn(T) T) Void` — read/transform/write (side effect)
+
+`Cell` does not change update-sugar semantics:
+
+* `x.y = v` still means record rebuild + rebinding of `x`.
+* `arr[i] = v` still means `arr = Array.set(arr, i, v)`.
+* `m[k] = v` still means `m = Dict.set(m, k, v)`.
+
+If multiple names refer to the same `Cell<T>`, updates through one name are visible through the others.
+
 ---
 
 ## 18. Error Handling
@@ -1238,10 +1259,11 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `error`
-* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
+* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
 * range functions: `range`, `range_from`, `range_step`
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
+* cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
 * string module: `String.concat`, `String.substring`, `String.of_int`, etc.
 * iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/iterator.md](iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
@@ -1362,6 +1384,7 @@ String interpolation is type-checked by verifying the expression type is one of:
 * Records → immutable `struct` (new values created via structural sharing where possible)
 * Arrays → immutable `array` (new values created via structural sharing where possible)
 * Dicts → immutable hash map structures (structural sharing where possible)
+* Cells → mutable `struct` wrapper storing a `T` payload
 * Functions → closures allocated as small structs
 * Options:
 
