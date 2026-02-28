@@ -2,16 +2,18 @@ pub mod context;
 pub mod loader;
 
 use std::fs;
+use std::mem;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 
-use crate::ir::lower::Lowerer;
+use crate::ir::lower::{LowerInput, Lowerer};
 use crate::ir::CoreModule;
 use crate::ir::core::LocalId;
 use crate::syntax::ast::{Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
 use crate::types::check::TypeChecker;
+use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{FunctionSignature, MonoType, TypeId};
 
@@ -96,60 +98,47 @@ pub fn compile_module(
         }
     }
 
-    // Resolve names using the shared context
-    let resolve_result = Resolver::resolve_with_context(&ast, ctx);
-    if let Err(errors) = resolve_result {
-        let msgs: Vec<String> = errors
-            .iter()
-            .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
-            .collect();
-        importing_stack.pop();
-        return Err(anyhow!("{}", msgs.join("\n")));
-    }
+    // Resolve — pure function; takes accumulated envs, returns updated envs
+    let (type_env, value_env) = {
+        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
+        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
+        match Resolver::resolve(&ast, type_env, value_env) {
+            Ok(envs) => envs,
+            Err(errors) => {
+                let msgs: Vec<String> = errors
+                    .iter()
+                    .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
+                    .collect();
+                importing_stack.pop();
+                return Err(anyhow!("{}", msgs.join("\n")));
+            }
+        }
+    };
+    ctx.type_env = type_env;
+    ctx.value_env = value_env;
 
     // Register current module's own functions as inherent methods so that
     // p1.method() syntax works within the same file (not just cross-module).
-    // The resolver has already built function signatures into ctx.value_env.
-    // Two things are needed per method:
-    //   1. type_env.add_method(type_id, "add", "point.add") — for method lookup
-    //   2. value_env.add_function(qualified_sig) — so synth_method_call can
-    //      retrieve the signature by the qualified name
-    {
-        let registrations: Vec<(TypeId, String, FunctionSignature)> = ast.items.iter()
-            .filter_map(|item| {
-                if let Item::Function(decl) = item {
-                    if let Some(sig) = ctx.value_env.get_function(&decl.name) {
-                        if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
-                            let qname = format!("{}.{}", alias, &decl.name);
-                            let qsig = FunctionSignature {
-                                name: qname,
-                                type_params: sig.type_params.clone(),
-                                params: sig.params.clone(),
-                                ret: sig.ret.clone(),
-                            };
-                            return Some((*type_id, decl.name.clone(), qsig));
-                        }
-                    }
-                }
-                None
-            })
-            .collect();
-        for (type_id, method_name, qsig) in registrations {
-            ctx.type_env.add_method(type_id, method_name, qsig.name.clone());
-            ctx.value_env.add_function(qsig);
-        }
-    }
+    register_inherent_methods(&ast, alias, &mut ctx.type_env, &mut ctx.value_env);
 
-    // Type-check using shared context
-    let type_map = match TypeChecker::check_module_with_context(&ast, ctx) {
-        Ok(tm) => tm,
-        Err(errors) => {
-            let msgs: Vec<String> = errors
-                .iter()
-                .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
-                .collect();
-            importing_stack.pop();
-            return Err(anyhow!("{}", msgs.join("\n")));
+    // Typecheck — pure function; takes accumulated envs, returns updated envs + TypeMap
+    let type_map = {
+        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
+        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
+        match TypeChecker::check_module(&ast, type_env, value_env, ctx.module_aliases.clone()) {
+            Ok((type_map, type_env, value_env)) => {
+                ctx.type_env = type_env;
+                ctx.value_env = value_env;
+                type_map
+            }
+            Err(errors) => {
+                let msgs: Vec<String> = errors
+                    .iter()
+                    .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
+                    .collect();
+                importing_stack.pop();
+                return Err(anyhow!("{}", msgs.join("\n")));
+            }
         }
     };
 
@@ -200,9 +189,17 @@ pub fn compile_module(
         }
     }
 
-    // Lower (if requested)
+    // Lower (if requested) — pure function via explicit LowerInput
     if do_lower {
-        let lowerer = Lowerer::new_with_context(type_map, ctx);
+        let input = LowerInput {
+            type_env: ctx.type_env.clone(),
+            func_table: ctx.func_table.clone(),
+            module_aliases: ctx.module_aliases.clone(),
+            qualified_value_globals: ctx.qualified_value_globals.clone(),
+            next_func_id: ctx.next_func_id,
+            next_global_local_id: ctx.next_global_local_id,
+        };
+        let lowerer = Lowerer::new_from_input(type_map, input);
         match lowerer.lower_module_funcs(&ast) {
             Ok((functions, init_func_id, next_global_id, next_hoisted_id)) => {
                 ctx.all_functions.extend(functions);
@@ -242,6 +239,45 @@ pub fn check_entry(file_path: &str) -> Result<FileRegistry> {
     let mut ctx = CompilationContext::new();
     let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], false)?;
     Ok(registry)
+}
+
+/// Register this module's own functions as inherent methods so that dot-syntax
+/// (`p.method()`) works within the same file, not just cross-module.
+///
+/// The resolver has already built function signatures into `value_env`.
+/// Two things are needed per method:
+///   1. `type_env.add_method(type_id, "method", "module.method")` — for method lookup
+///   2. `value_env.add_function(qualified_sig)` — so `synth_method_call` can
+///      retrieve the signature by qualified name
+fn register_inherent_methods(
+    ast: &crate::syntax::ast::SourceFile,
+    alias: &str,
+    type_env: &mut TypeEnv,
+    value_env: &mut ValueEnv,
+) {
+    let registrations: Vec<(TypeId, String, FunctionSignature)> = ast.items.iter()
+        .filter_map(|item| {
+            if let Item::Function(decl) = item {
+                if let Some(sig) = value_env.get_function(&decl.name) {
+                    if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
+                        let qname = format!("{}.{}", alias, &decl.name);
+                        let qsig = FunctionSignature {
+                            name: qname,
+                            type_params: sig.type_params.clone(),
+                            params: sig.params.clone(),
+                            ret: sig.ret.clone(),
+                        };
+                        return Some((*type_id, decl.name.clone(), qsig));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+    for (type_id, method_name, qsig) in registrations {
+        type_env.add_method(type_id, method_name, qsig.name.clone());
+        value_env.add_function(qsig);
+    }
 }
 
 /// Full pipeline (parse + resolve + typecheck + lower).

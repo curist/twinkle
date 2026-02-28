@@ -1,5 +1,16 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+
+use twinkle::types::env::{TypeEnv, ValueEnv};
+
+/// Built-in module aliases recognised by the type checker.
+fn builtin_aliases() -> HashSet<String> {
+    ["Cell", "Dict", "Iterator", "Array", "String"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
 
 #[test]
 fn test_typecheck_pass_cases() {
@@ -38,7 +49,7 @@ fn test_typecheck_pass_cases() {
         };
 
         // Resolve names
-        let (type_env, value_env) = match twinkle::types::Resolver::resolve(&ast) {
+        let (type_env, value_env) = match twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new()) {
             Ok(envs) => envs,
             Err(errors) => {
                 let error_msg = errors
@@ -55,8 +66,8 @@ fn test_typecheck_pass_cases() {
         };
 
         // Type check
-        match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
-            Ok((_type_map, _type_env)) => {
+        match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env, builtin_aliases()) {
+            Ok((_type_map, _type_env, _value_env)) => {
                 passed += 1;
             }
             Err(errors) => {
@@ -125,16 +136,18 @@ fn test_typecheck_fail_cases() {
         };
 
         // Resolve names and type check
-        let result = twinkle::types::Resolver::resolve(&ast).and_then(|(te, ve)| {
-            twinkle::types::TypeChecker::check_module(&ast, te, ve)
-        });
+        let result = twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new())
+            .and_then(|(te, ve)| {
+                twinkle::types::TypeChecker::check_module(&ast, te, ve, builtin_aliases())
+                    .map(|(tm, te, ve)| (tm, te, ve))
+            });
 
         match result {
             Err(_) => {
                 // Expected to fail
                 passed += 1;
             }
-            Ok((_type_map, _type_env)) => {
+            Ok((_type_map, _type_env, _value_env)) => {
                 failed.push(format!(
                     "{}: Expected type checking to fail, but it succeeded",
                     file_name
@@ -161,13 +174,13 @@ fn test_typecheck_fail_cases() {
 fn check_errors(src: &str) -> Vec<String> {
     let (ast, registry) = twinkle::syntax::parse_source(src, "test.tw")
         .expect("parse failed");
-    let (type_env, value_env) = match twinkle::types::Resolver::resolve(&ast) {
+    let (type_env, value_env) = match twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new()) {
         Ok(envs) => envs,
         Err(errors) => {
             return errors.iter().map(|e| e.format(&registry, None)).collect();
         }
     };
-    match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env) {
+    match twinkle::types::TypeChecker::check_module(&ast, type_env.clone(), value_env, builtin_aliases()) {
         Ok(_) => vec![],
         Err(errors) => errors.iter().map(|e| e.format(&registry, Some(&type_env))).collect(),
     }

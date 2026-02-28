@@ -7,7 +7,6 @@ use super::env::{TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant};
 use std::collections::{HashMap, HashSet};
-use std::mem;
 
 /// Two-pass name resolver for type and function declarations
 ///
@@ -28,55 +27,16 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    /// Resolve all names in a source file
-    /// Returns TypeEnv and ValueEnv on success, or a list of errors on failure
-    pub fn resolve(source_file: &SourceFile) -> Result<(TypeEnv, ValueEnv), Vec<TypeError>> {
-        let mut resolver = Resolver {
-            type_env: TypeEnv::new(),
-            value_env: ValueEnv::new(),
-            errors: Vec::new(),
-            type_decls: HashMap::new(),
-            type_spans: HashMap::new(),
-            function_decls: HashMap::new(),
-            function_spans: HashMap::new(),
-        };
-
-        // Pass 1: Collect all declarations and check for duplicates/generics
-        resolver.collect_declarations(source_file);
-
-        // Early return if Pass 1 had errors
-        if !resolver.errors.is_empty() {
-            return Err(resolver.errors);
-        }
-
-        // Pass 2: Resolve type references and build environments
-        resolver.resolve_type_references();
-        resolver.resolve_function_signatures();
-
-        // Check for circular type aliases
-        resolver.detect_circular_aliases();
-
-        if !resolver.errors.is_empty() {
-            Err(resolver.errors)
-        } else {
-            Ok((resolver.type_env, resolver.value_env))
-        }
-    }
-
-    /// Resolve all names using a shared CompilationContext (multi-module mode).
+    /// Resolve all names in a source file.
     ///
-    /// Types/functions from imported modules are already registered in
-    /// `ctx.type_env`/`ctx.value_env` via `CompilationContext::register_module_exports`.
-    /// This function adds the current module's declarations to those shared envs
-    /// and writes them back.
-    pub fn resolve_with_context(
+    /// Takes accumulated `type_env` and `value_env` from previously compiled
+    /// dependencies (pass `TypeEnv::new()` / `ValueEnv::new()` for single-module use).
+    /// Adds this module's declarations and returns the updated environments.
+    pub fn resolve(
         source_file: &SourceFile,
-        ctx: &mut crate::module::context::CompilationContext,
-    ) -> Result<(), Vec<TypeError>> {
-        // Move shared envs out of ctx so the resolver can own them temporarily
-        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
-        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
-
+        type_env: TypeEnv,
+        value_env: ValueEnv,
+    ) -> Result<(TypeEnv, ValueEnv), Vec<TypeError>> {
         let mut resolver = Resolver {
             type_env,
             value_env,
@@ -87,28 +47,22 @@ impl Resolver {
             function_spans: HashMap::new(),
         };
 
-        // Pass 1: Collect this module's declarations; no-op on imports
+        // Pass 1: Collect this module's declarations; imports are no-ops (already compiled)
         resolver.collect_declarations_for_context(source_file);
 
         if !resolver.errors.is_empty() {
-            ctx.type_env = resolver.type_env;
-            ctx.value_env = resolver.value_env;
             return Err(resolver.errors);
         }
 
-        // Pass 2: Resolve type references and function signatures
+        // Pass 2: Resolve type references and build environments
         resolver.resolve_type_references();
         resolver.resolve_function_signatures();
         resolver.detect_circular_aliases();
 
-        // Write back
-        ctx.type_env = resolver.type_env;
-        ctx.value_env = resolver.value_env;
-
-        if resolver.errors.is_empty() {
-            Ok(())
-        } else {
+        if !resolver.errors.is_empty() {
             Err(resolver.errors)
+        } else {
+            Ok((resolver.type_env, resolver.value_env))
         }
     }
 
@@ -116,27 +70,7 @@ impl Resolver {
     // Pass 1: Collection
     //
 
-    fn collect_declarations(&mut self, source_file: &SourceFile) {
-        for item in &source_file.items {
-            match item {
-                Item::TypeDecl(decl) => self.collect_type_decl(decl),
-                Item::Function(decl) => self.collect_function_decl(decl),
-                Item::Import(import) => {
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "import declarations",
-                        span: import.span,
-                        note: "Use `twk check/lower` which compiles via the module pipeline".to_string(),
-                    });
-                }
-                Item::Stmt(_) => {
-                    // Top-level statements (let bindings) are allowed
-                    // They will be type-checked in check.rs, not during name resolution
-                }
-            }
-        }
-    }
-
-    /// Like collect_declarations but treats imports as no-ops (already compiled).
+    /// Collect this module's declarations; imports are no-ops (already compiled by caller).
     fn collect_declarations_for_context(&mut self, source_file: &SourceFile) {
         for item in &source_file.items {
             match item {

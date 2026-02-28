@@ -9,7 +9,6 @@ use super::patterns::PatternChecker;
 use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 use super::type_map::TypeMap;
 use std::collections::{HashSet, HashMap};
-use std::mem;
 
 /// Bidirectional type checker
 ///
@@ -35,20 +34,17 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    /// Type-check a complete module (source file)
-    /// Returns Ok((TypeMap, TypeEnv)) if type checking succeeds, or a list of errors
+    /// Type-check a complete module (source file).
+    ///
+    /// Takes accumulated `type_env` and `value_env` from the resolver, plus the
+    /// set of known module aliases. Returns `(TypeMap, TypeEnv, ValueEnv)` so the
+    /// caller can thread the updated environments to the next stage.
     pub fn check_module(
         ast: &SourceFile,
         type_env: TypeEnv,
         value_env: ValueEnv,
-    ) -> Result<(TypeMap, TypeEnv), Vec<TypeError>> {
-        let mut module_aliases = HashSet::new();
-        module_aliases.insert("Cell".to_string());
-        module_aliases.insert("Dict".to_string());
-        module_aliases.insert("Iterator".to_string());
-        module_aliases.insert("Array".to_string());
-        module_aliases.insert("String".to_string());
-
+        module_aliases: HashSet<String>,
+    ) -> Result<(TypeMap, TypeEnv, ValueEnv), Vec<TypeError>> {
         let mut checker = TypeChecker {
             type_env,
             value_env,
@@ -107,8 +103,8 @@ impl TypeChecker {
         // Functions can now reference top-level lets
         for item in &ast.items {
             match item {
-                Item::TypeDecl(_) => {
-                    // Type declarations were already processed by the resolver
+                Item::TypeDecl(_) | Item::Import(_) => {
+                    // Already handled by resolver
                 }
                 Item::Function(decl) => {
                     checker.check_function(decl);
@@ -116,93 +112,11 @@ impl TypeChecker {
                 Item::Stmt(_) => {
                     // Already checked in Pass 1
                 }
-                Item::Import(_) => {
-                    // Imports were already rejected by the resolver
-                }
             }
         }
 
         if checker.errors.is_empty() {
-            Ok((checker.type_map, checker.type_env))
-        } else {
-            Err(checker.errors)
-        }
-    }
-
-    /// Type-check a module using a shared CompilationContext (multi-module mode).
-    /// Returns Ok(TypeMap) on success; the shared TypeEnv/ValueEnv in ctx are
-    /// updated with any new functions whose return types are inferred.
-    pub fn check_module_with_context(
-        ast: &SourceFile,
-        ctx: &mut crate::module::context::CompilationContext,
-    ) -> Result<TypeMap, Vec<TypeError>> {
-        // Move shared envs out of ctx
-        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
-        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
-        let module_aliases = ctx.module_aliases.clone();
-
-        let mut checker = TypeChecker {
-            type_env,
-            value_env,
-            local_env: LocalEnv::new(),
-            errors: Vec::new(),
-            type_map: TypeMap::new(),
-            current_function_ret: None,
-            module_aliases,
-            type_var_scope: Vec::new(),
-            at_module_scope: true,
-        };
-
-        // Pass 1: top-level lets
-        for item in &ast.items {
-            if let Item::Stmt(stmt) = item {
-                if let Stmt::Let { pattern, ty, value, span, .. } = stmt {
-                    if let Pattern::Ident(name, _) = pattern {
-                        let value_ty = if let Some(ann_ty) = ty {
-                            let expected = match checker.resolve_type(ann_ty) {
-                                Ok(t) => t,
-                                Err(()) => continue,
-                            };
-                            match checker.check_expr(value, &expected) {
-                                Ok(()) => expected,
-                                Err(()) => continue,
-                            }
-                        } else {
-                            match checker.synth_expr(value) {
-                                Ok(t) => t,
-                                Err(()) => continue,
-                            }
-                        };
-                        checker.value_env.add_value(name.clone(), value_ty);
-                    } else {
-                        checker.errors.push(TypeError::UnsupportedFeature {
-                            feature: "pattern matching in top-level let bindings",
-                            span: *span,
-                            note: "Only simple identifiers are supported for top-level lets".to_string(),
-                        });
-                    }
-                } else {
-                    // For loops and other side-effectful statements at top-level
-                    checker.check_top_level_stmt(stmt);
-                }
-            }
-        }
-
-        // Pass 2: functions
-        for item in &ast.items {
-            match item {
-                Item::TypeDecl(_) | Item::Import(_) => {}
-                Item::Function(decl) => checker.check_function(decl),
-                Item::Stmt(_) => {}
-            }
-        }
-
-        // Write back
-        ctx.type_env = checker.type_env;
-        ctx.value_env = checker.value_env;
-
-        if checker.errors.is_empty() {
-            Ok(checker.type_map)
+            Ok((checker.type_map, checker.type_env, checker.value_env))
         } else {
             Err(checker.errors)
         }

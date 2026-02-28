@@ -77,8 +77,20 @@ pub mod prelude {
 }
 
 // ---------------------------------------------------------------------------
-// Lowerer
+// LowerInput / Lowerer
 // ---------------------------------------------------------------------------
+
+/// Explicit inputs for multi-module lowering (replaces CompilationContext coupling).
+pub struct LowerInput {
+    pub type_env: TypeEnv,
+    pub func_table: HashMap<String, FuncId>,
+    pub module_aliases: HashSet<String>,
+    pub qualified_value_globals: HashMap<String, LocalId>,
+    /// Next FuncId to assign for hoisted lambdas / __init__
+    pub next_func_id: u32,
+    /// Starting GlobalLocal offset for this module's top-level lets
+    pub next_global_local_id: u32,
+}
 
 pub struct Lowerer {
     type_map: TypeMap,
@@ -100,7 +112,7 @@ pub struct Lowerer {
     /// Absolute next GlobalLocal id to allocate; starts at global_local_start and advances
     /// as module globals are collected.  Function allocators start here to avoid overlap.
     next_global_id: u32,
-    /// The starting offset for this module's global LocalIds (from CompilationContext).
+    /// The starting offset for this module's global LocalIds.
     /// For single-module compilation this is always 0.
     global_local_start: u32,
     /// "alias.name" → globally-unique LocalId for cross-module pub value references.
@@ -167,25 +179,21 @@ impl Lowerer {
         }
     }
 
-    /// Construct a Lowerer using a pre-built CompilationContext.
-    /// The func_table, type_env, and module_aliases are taken from the context.
-    pub fn new_with_context(
-        type_map: TypeMap,
-        ctx: &crate::module::context::CompilationContext,
-    ) -> Self {
+    /// Construct a Lowerer from explicit inputs (multi-module mode).
+    pub fn new_from_input(type_map: TypeMap, input: LowerInput) -> Self {
         Self {
             type_map,
-            type_env: ctx.type_env.clone(),
-            func_table: ctx.func_table.clone(),
-            module_aliases: ctx.module_aliases.clone(),
+            type_env: input.type_env,
+            func_table: input.func_table,
+            module_aliases: input.module_aliases,
             errors: Vec::new(),
             local_allocator: LocalAllocator::new(),
-            next_hoisted_id: ctx.next_func_id,
+            next_hoisted_id: input.next_func_id,
             hoisted_functions: Vec::new(),
             module_globals: HashMap::new(),
             next_global_id: 0,
-            global_local_start: ctx.next_global_local_id,
-            qualified_value_globals: ctx.qualified_value_globals.clone(),
+            global_local_start: input.next_global_local_id,
+            qualified_value_globals: input.qualified_value_globals,
             in_init_context: false,
         }
     }
@@ -266,8 +274,8 @@ impl Lowerer {
     /// FuncIds for user functions must already be pre-assigned in `self.func_table`.
     /// Used by the multi-module pipeline.
     /// Returns (functions, init_func_id, next_global_id, next_hoisted_id).
-    /// - `next_global_id`: write back to `CompilationContext.next_global_local_id`
-    /// - `next_hoisted_id`: write back to `CompilationContext.next_func_id` so the next
+    /// - `next_global_id`: write back to the accumulator's `next_global_local_id`
+    /// - `next_hoisted_id`: write back to the accumulator's `next_func_id` so the next
     ///   module's hoisted functions (lambdas, __init__) don't reuse the same FuncIds.
     pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>, u32, u32), Vec<LowerError>> {
         // Pre-scan: assign stable LocalIds to module-level let bindings
