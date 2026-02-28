@@ -100,6 +100,12 @@ case x {
 }
 ```
 
+`T?` composes with `!E` (see §18):
+
+```
+T?!E  ==  Result<Option<T>, E>
+```
+
 ---
 
 ## 5. Enums & Pattern Matching
@@ -1191,6 +1197,24 @@ Recoverable via `Result<T,E>`:
 
 ```tw
 type Result<T, E> = { Ok(T), Err(E) }
+```
+
+**Type shorthand:**
+
+```
+T!E   ==  Result<T, E>       // full form
+!E    ==  Result<Void, E>    // operation that can fail with no return value
+```
+
+`T!` and bare `!` are **not** valid — the error type is always required.
+`T?!E` composes naturally: `Option<T>!E` == `Result<Option<T>, E>`.
+
+Examples:
+
+```tw
+fn validate(n: Int) !ParseError { ... }          // Result<Void, ParseError>
+fn parse(s: String) Int!ParseError { ... }       // Result<Int, ParseError>
+fn find(xs: Array<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, String>
 ```
 
 `try` sugar:
