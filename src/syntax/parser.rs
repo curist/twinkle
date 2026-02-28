@@ -1371,19 +1371,47 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> ParseResult<Type> {
+        // !E shorthand: Result<Void, E>
+        if self.peek_is(TokenKind::Bang) {
+            let bang = self.advance().unwrap();
+            let err_ty = self.parse_type_base()?;
+            let span = bang.span.merge(&err_ty.span());
+            let void_ty = Type::Named { name: "Void".to_string(), args: vec![], span: bang.span };
+            return Ok(Type::Named {
+                name: "Result".to_string(),
+                args: vec![void_ty, err_ty],
+                span,
+            });
+        }
+
         let base = self.parse_type_base()?;
+
         // T? sugar for Option<T>
-        if self.peek_is(TokenKind::Question) {
+        let base = if self.peek_is(TokenKind::Question) {
             let q = self.advance().unwrap();
             let span = base.span().merge(&q.span);
-            Ok(Type::Named {
+            Type::Named {
                 name: "Option".to_string(),
                 args: vec![base],
                 span,
-            })
+            }
         } else {
-            Ok(base)
+            base
+        };
+
+        // T!E or T?!E sugar for Result<T, E>
+        if self.peek_is(TokenKind::Bang) {
+            self.advance();
+            let err_ty = self.parse_type_base()?;
+            let span = base.span().merge(&err_ty.span());
+            return Ok(Type::Named {
+                name: "Result".to_string(),
+                args: vec![base, err_ty],
+                span,
+            });
         }
+
+        Ok(base)
     }
 
     fn parse_type_base(&mut self) -> ParseResult<Type> {

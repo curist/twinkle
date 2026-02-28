@@ -1,0 +1,84 @@
+// Expected output:
+//   parsed: 42
+//   error: out of range: -5
+//   error: not a number: "abc"
+//   validated: 10
+//   error: must be positive
+//   found: 99
+//   not present
+//   error: key must be non-empty
+
+// Custom error type used throughout
+type ParseError = { NotANumber(String), OutOfRange(Int) }
+
+fn show_parse_err(e: ParseError) String {
+    case e {
+        .NotANumber(s) => "not a number: \"${s}\"",
+        .OutOfRange(n) => "out of range: ${n}",
+    }
+}
+
+// T!E — parse that returns a value or fails with a structured error
+fn parse_positive(s: String) Int!ParseError {
+    if s == "42" {
+        .Ok(42)
+    } else if s == "-5" {
+        .Err(ParseError.OutOfRange(-5))
+    } else {
+        .Err(ParseError.NotANumber(s))
+    }
+}
+
+case parse_positive("42") {
+    .Ok(n) => println("parsed: ${n}"),
+    .Err(e) => println("error: ${show_parse_err(e)}"),
+}
+case parse_positive("-5") {
+    .Ok(n) => println("parsed: ${n}"),
+    .Err(e) => println("error: ${show_parse_err(e)}"),
+}
+case parse_positive("abc") {
+    .Ok(n) => println("parsed: ${n}"),
+    .Err(e) => println("error: ${show_parse_err(e)}"),
+}
+
+// !E — operation with no return value that can fail
+fn validate_positive(n: Int) !String {
+    if n > 0 { .Ok({}) } else { .Err("must be positive") }
+}
+
+case validate_positive(10) {
+    .Ok(_) => println("validated: 10"),
+    .Err(msg) => println("error: ${msg}"),
+}
+case validate_positive(-3) {
+    .Ok(_) => println("validated: -3"),
+    .Err(msg) => println("error: ${msg}"),
+}
+
+// T?!E — lookup that may be absent, but the lookup itself can fail
+fn safe_lookup(m: Dict<String, Int>, key: String) Int?!String {
+    if key == "" {
+        return .Err("key must be non-empty")
+    }
+    .Ok(m[key])
+}
+
+scores: Dict<String, Int> = Dict.new()
+scores["alice"] = 99
+
+case safe_lookup(scores, "alice") {
+    .Ok(.Some(n)) => println("found: ${n}"),
+    .Ok(.None) => println("not present"),
+    .Err(msg) => println("error: ${msg}"),
+}
+case safe_lookup(scores, "bob") {
+    .Ok(.Some(n)) => println("found: ${n}"),
+    .Ok(.None) => println("not present"),
+    .Err(msg) => println("error: ${msg}"),
+}
+case safe_lookup(scores, "") {
+    .Ok(.Some(n)) => println("found: ${n}"),
+    .Ok(.None) => println("not present"),
+    .Err(msg) => println("error: ${msg}"),
+}

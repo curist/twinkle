@@ -235,6 +235,11 @@ fn option_shorthand() {
     check("tests/run/option_shorthand.tw");
 }
 
+#[test]
+fn result_shorthand() {
+    check("tests/run/result_shorthand.tw");
+}
+
 // --- Trap tests ---
 
 #[test]
