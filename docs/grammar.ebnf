@@ -423,10 +423,25 @@ BoolLiteral =
 (* ===== Types ===== *)
 
 Type =
-    ( FunctionType | BaseType ) [ "?" ] ;
-(* Implementation note:
-   - T? is sugar for Option<T>.
-   - `fn(Int) Int?` means `fn(Int) Option<Int>`. *)
+      "!" BaseType                                    (* !E  → Result<Void, E>    *)
+    | ( FunctionType | BaseType ) [ "?" ] [ "!" BaseType ] ;  (* T, T?, T!E, T?!E *)
+(*
+   Postfix operators bind left-to-right:
+
+     T?       →  Option<T>
+     T!E      →  Result<T, E>
+     T?!E     →  Result<Option<T>, E>
+     !E       →  Result<Void, E>         (leading "!" — no success value)
+
+   Bare `!` alone, or `T!` without an explicit error type, are not valid.
+
+   Examples:
+     Int?                      Option<Int>
+     Int!String                Result<Int, String>
+     !ParseError               Result<Void, ParseError>
+     Int?!ParseError           Result<Option<Int>, ParseError>
+     fn(String) Int!ParseError function returning Result<Int, ParseError>
+*)
 
 FunctionType =
     "fn" "(" [ TypeList ] ")" [ Type ] ;
@@ -436,8 +451,10 @@ FunctionType =
        `fn(Int) Int`
        `fn(Int, String) Bool`
        `fn() fn(Int) Int`
-   - Combined with `?`:
-       `fn(Int) Int?` etc. *)
+   - Postfix sugar applies to the return type:
+       `fn(String) Int?`       fn returning Option<Int>
+       `fn(String) Int!Err`    fn returning Result<Int, Err>
+       `fn(String) !Err`       fn returning Result<Void, Err> *)
 
 BaseType =
       PrimitiveType

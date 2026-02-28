@@ -543,12 +543,24 @@ module.exports = grammar({
 
     // ===== Types =====
 
-    type: $ => seq(
-      choice(
-        $.function_type,
-        $._base_type,
+    // Type supports two postfix sugar operators (applied left-to-right):
+    //   T?     → Option<T>
+    //   T!E    → Result<T, E>
+    //   T?!E   → Result<Option<T>, E>
+    //   !E     → Result<Void, E>   (leading `!`, no success type)
+    // Bare `!` or `T!` without an error type are not valid.
+    type: $ => choice(
+      // !E shorthand: Result<Void, E>
+      seq(
+        '!',
+        field('error_type', $._base_type),
       ),
-      optional('?'),
+      // T, T?, T!E, T?!E
+      seq(
+        choice($.function_type, $._base_type),
+        optional('?'),
+        optional(seq('!', field('error_type', $._base_type))),
+      ),
     ),
 
     // Make function_type right-associative:
