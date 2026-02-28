@@ -9,6 +9,8 @@ use crate::types::env::TypeEnv;
 use crate::types::ty::{MonoType, ITERATOR_TYPE_ID, OPTION_TYPE_ID, ITER_ITEM_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
+use crate::module::artifacts::LoweredModule;
+
 use super::core::{
     CoreExpr, CoreExprKind, CoreModule, CorePattern, FieldId, FuncId, FunctionDef,
     LocalId, MatchArm, VariantId,
@@ -277,7 +279,7 @@ impl Lowerer {
     /// - `next_global_id`: write back to the accumulator's `next_global_local_id`
     /// - `next_hoisted_id`: write back to the accumulator's `next_func_id` so the next
     ///   module's hoisted functions (lambdas, __init__) don't reuse the same FuncIds.
-    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<(Vec<FunctionDef>, Option<FuncId>, u32, u32), Vec<LowerError>> {
+    pub fn lower_module_funcs(mut self, ast: &SourceFile) -> Result<LoweredModule, Vec<LowerError>> {
         // Pre-scan: assign stable LocalIds to module-level let bindings
         self.collect_module_globals(ast);
 
@@ -300,10 +302,13 @@ impl Lowerer {
         // Include any hoisted lambdas
         functions.extend(self.hoisted_functions.drain(..));
 
-        let next_global_id = self.next_global_id;
-        let next_hoisted_id = self.next_hoisted_id;
         if self.errors.is_empty() {
-            Ok((functions, init_func_id, next_global_id, next_hoisted_id))
+            Ok(LoweredModule {
+                functions,
+                init_func_id,
+                next_func_id_after: self.next_hoisted_id,
+                next_global_local_id_after: self.next_global_id,
+            })
         } else {
             Err(self.errors)
         }

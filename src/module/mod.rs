@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod context;
 pub mod loader;
 
@@ -17,13 +18,14 @@ use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{FunctionSignature, MonoType, TypeId};
 
-pub use context::{CompilationContext, ModuleExports};
+pub use context::{CompilationContext, CompileState, ModuleExports};
+pub use artifacts::{LoweredModule, ResolvedModule, TypedModule};
 pub use loader::{find_project_root, resolve_module_path};
 
 /// Compile a single module (file) and all its transitive dependencies.
 ///
 /// When `do_lower` is true, lowers the module to Core IR and accumulates
-/// `FunctionDef`s in `ctx.all_functions`.
+/// `LoweredModule`s in `state.lowered_modules`.
 ///
 /// Returns `(ModuleExports, FileRegistry)` for the compiled module.
 pub fn compile_module(
@@ -31,6 +33,7 @@ pub fn compile_module(
     alias: &str,
     ctx: &mut CompilationContext,
     importing_stack: &mut Vec<PathBuf>,
+    state: &mut CompileState,
     do_lower: bool,
 ) -> Result<(ModuleExports, FileRegistry)> {
     // Canonicalize for deduplication / cycle detection
@@ -74,9 +77,9 @@ pub fn compile_module(
             }
             let dep_path = resolve_module_path(&root, &import.module_path);
             let dep_alias = import.module_name().to_string();
-            let result = compile_module(&dep_path, &dep_alias, ctx, importing_stack, do_lower);
+            let result = compile_module(&dep_path, &dep_alias, ctx, importing_stack, state, do_lower);
             match result {
-                Ok((dep_exports, _)) => ctx.register_module_exports(&dep_alias, &dep_exports),
+                Ok((dep_exports, _)) => state.register_module_exports(&dep_alias, &dep_exports),
                 Err(e) => {
                     importing_stack.pop();
                     return Err(e);
@@ -88,86 +91,84 @@ pub fn compile_module(
     // Pre-assign FuncIds for this module's functions
     for item in &ast.items {
         if let Item::Function(decl) = item {
-            let func_id = ctx.alloc_func_id();
+            let func_id = state.alloc_func_id();
             // Register unqualified name for same-module calls (used by the lowerer
             // to assign FuncId to each FunctionDef — see lower_function).
-            ctx.func_table.insert(decl.name.clone(), func_id);
+            state.func_table.insert(decl.name.clone(), func_id);
             // Register qualified name for cross-module calls
             let qualified = format!("{}.{}", alias, decl.name);
-            ctx.func_table.insert(qualified, func_id);
+            state.func_table.insert(qualified, func_id);
         }
     }
 
     // Resolve — pure function; takes accumulated envs, returns updated envs
-    let (type_env, value_env) = {
-        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
-        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
+    let resolved = {
+        let type_env = mem::replace(&mut state.type_env, TypeEnv::new());
+        let value_env = mem::replace(&mut state.value_env, ValueEnv::new());
         match Resolver::resolve(&ast, type_env, value_env) {
-            Ok(envs) => envs,
+            Ok(r) => r,
             Err(errors) => {
                 let msgs: Vec<String> = errors
                     .iter()
-                    .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
+                    .map(|e| e.format(&file_registry, Some(&state.type_env)))
                     .collect();
                 importing_stack.pop();
                 return Err(anyhow!("{}", msgs.join("\n")));
             }
         }
     };
-    ctx.type_env = type_env;
-    ctx.value_env = value_env;
+    state.type_env = resolved.type_env;
+    state.value_env = resolved.value_env;
 
     // Register current module's own functions as inherent methods so that
     // p1.method() syntax works within the same file (not just cross-module).
-    register_inherent_methods(&ast, alias, &mut ctx.type_env, &mut ctx.value_env);
+    register_inherent_methods(&ast, alias, &mut state.type_env, &mut state.value_env);
 
     // Typecheck — pure function; takes accumulated envs, returns updated envs + TypeMap
-    let type_map = {
-        let type_env = mem::replace(&mut ctx.type_env, TypeEnv::new());
-        let value_env = mem::replace(&mut ctx.value_env, ValueEnv::new());
-        match TypeChecker::check_module(&ast, type_env, value_env, ctx.module_aliases.clone()) {
-            Ok((type_map, type_env, value_env)) => {
-                ctx.type_env = type_env;
-                ctx.value_env = value_env;
-                type_map
-            }
+    let typed = {
+        let type_env = mem::replace(&mut state.type_env, TypeEnv::new());
+        let value_env = mem::replace(&mut state.value_env, ValueEnv::new());
+        match TypeChecker::check_module(&ast, type_env, value_env, state.module_aliases.clone()) {
+            Ok(t) => t,
             Err(errors) => {
                 let msgs: Vec<String> = errors
                     .iter()
-                    .map(|e| e.format(&file_registry, Some(&ctx.type_env)))
+                    .map(|e| e.format(&file_registry, Some(&state.type_env)))
                     .collect();
                 importing_stack.pop();
                 return Err(anyhow!("{}", msgs.join("\n")));
             }
         }
     };
+    state.type_env = typed.type_env;
+    state.value_env = typed.value_env;
 
     // Build ModuleExports from public declarations.
-    // Pub let bindings get globally-unique LocalIds starting from ctx.next_global_local_id.
+    // Pub let bindings get globally-unique LocalIds starting from state.next_global_local_id.
     let mut exports = ModuleExports::empty();
-    let mut global_offset = ctx.next_global_local_id;
+    let mut global_offset = state.next_global_local_id;
     for item in &ast.items {
         match item {
             Item::TypeDecl(decl) if decl.is_pub => {
-                if let Some(type_id) = ctx.type_env.lookup_type(&decl.name) {
+                if let Some(type_id) = state.type_env.lookup_type(&decl.name) {
                     exports.public_types.insert(decl.name.clone(), type_id);
                 }
             }
             Item::Function(decl) if decl.is_pub => {
-                if let Some(sig) = ctx.value_env.get_function(&decl.name).cloned() {
+                if let Some(sig) = state.value_env.get_function(&decl.name).cloned() {
                     exports.public_functions.insert(decl.name.clone(), sig);
                 }
                 // Use qualified name to avoid ambiguity if another module shares
                 // the same bare function name.
                 let qualified = format!("{}.{}", alias, decl.name);
-                if let Some(&func_id) = ctx.func_table.get(&qualified) {
+                if let Some(&func_id) = state.func_table.get(&qualified) {
                     exports.public_func_ids.insert(decl.name.clone(), func_id);
                 }
             }
             Item::Stmt(Stmt::Let { pattern: Pattern::Ident(name, _), is_pub, .. }) => {
                 let local_id = LocalId(global_offset);
                 if *is_pub {
-                    if let Some(ty) = ctx.value_env.lookup(name) {
+                    if let Some(ty) = state.value_env.lookup(name) {
                         exports.public_values.insert(name.clone(), (ty, local_id));
                     }
                 }
@@ -185,29 +186,30 @@ pub fn compile_module(
     // registered by the importing module via register_module_exports.
     for item in &ast.items {
         if let Item::TypeDecl(decl) = item {
-            ctx.type_env.remove_bare_type_name(&decl.name);
+            state.type_env.remove_bare_type_name(&decl.name);
         }
     }
 
     // Lower (if requested) — pure function via explicit LowerInput
     if do_lower {
         let input = LowerInput {
-            type_env: ctx.type_env.clone(),
-            func_table: ctx.func_table.clone(),
-            module_aliases: ctx.module_aliases.clone(),
-            qualified_value_globals: ctx.qualified_value_globals.clone(),
-            next_func_id: ctx.next_func_id,
-            next_global_local_id: ctx.next_global_local_id,
+            type_env: state.type_env.clone(),
+            func_table: state.func_table.clone(),
+            module_aliases: state.module_aliases.clone(),
+            qualified_value_globals: state.qualified_value_globals.clone(),
+            next_func_id: state.next_func_id,
+            next_global_local_id: state.next_global_local_id,
         };
-        let lowerer = Lowerer::new_from_input(type_map, input);
+        let lowerer = Lowerer::new_from_input(typed.type_map, input);
         match lowerer.lower_module_funcs(&ast) {
-            Ok((functions, init_func_id, next_global_id, next_hoisted_id)) => {
-                ctx.all_functions.extend(functions);
-                ctx.next_global_local_id = next_global_id;
-                ctx.next_func_id = next_hoisted_id;
-                if let Some(id) = init_func_id {
-                    ctx.all_init_func_ids.push(id);
-                    ctx.init_func_id = Some(id);
+            Ok(lowered) => {
+                state.next_global_local_id = lowered.next_global_local_id_after;
+                state.next_func_id = lowered.next_func_id_after;
+                let init_id = lowered.init_func_id;
+                state.lowered_modules.push(lowered);
+                if let Some(id) = init_id {
+                    state.init_order.push(id);
+                    state.entry_init_func_id = Some(id);
                 }
             }
             Err(errs) => {
@@ -226,6 +228,22 @@ pub fn compile_module(
     Ok((exports, file_registry))
 }
 
+/// Assemble a CoreModule from all accumulated lowered modules.
+/// FuncIds are already globally stable — no remapping needed until
+/// module-local IDs land (see docs/query-pipeline.md).
+pub fn link(state: CompileState) -> CoreModule {
+    let functions = state.lowered_modules
+        .into_iter()
+        .flat_map(|m| m.functions)
+        .collect();
+    CoreModule {
+        functions,
+        type_env: state.type_env,
+        init_func_id: state.entry_init_func_id,
+        all_init_func_ids: state.init_order,
+    }
+}
+
 /// Check-only pipeline (parse + resolve + typecheck, no lowering).
 pub fn check_entry(file_path: &str) -> Result<FileRegistry> {
     let path = PathBuf::from(file_path)
@@ -237,7 +255,8 @@ pub fn check_entry(file_path: &str) -> Result<FileRegistry> {
         .unwrap_or("main")
         .to_string();
     let mut ctx = CompilationContext::new();
-    let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], false)?;
+    let mut state = CompileState::initial();
+    let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, false)?;
     Ok(registry)
 }
 
@@ -291,14 +310,7 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
         .unwrap_or("main")
         .to_string();
     let mut ctx = CompilationContext::new();
-    let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], true)?;
-    Ok((
-        CoreModule {
-            functions: ctx.all_functions,
-            type_env: ctx.type_env,
-            init_func_id: ctx.init_func_id,
-            all_init_func_ids: ctx.all_init_func_ids,
-        },
-        registry,
-    ))
+    let mut state = CompileState::initial();
+    let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, true)?;
+    Ok((link(state), registry))
 }

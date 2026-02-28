@@ -1,3 +1,4 @@
+use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
     FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl,
     TypeDef as AstTypeDef,
@@ -36,7 +37,7 @@ impl Resolver {
         source_file: &SourceFile,
         type_env: TypeEnv,
         value_env: ValueEnv,
-    ) -> Result<(TypeEnv, ValueEnv), Vec<TypeError>> {
+    ) -> Result<ResolvedModule, Vec<TypeError>> {
         let mut resolver = Resolver {
             type_env,
             value_env,
@@ -62,7 +63,7 @@ impl Resolver {
         if !resolver.errors.is_empty() {
             Err(resolver.errors)
         } else {
-            Ok((resolver.type_env, resolver.value_env))
+            Ok(ResolvedModule { type_env: resolver.type_env, value_env: resolver.value_env })
         }
     }
 

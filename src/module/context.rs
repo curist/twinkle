@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::ir::core::{FuncId, FunctionDef, LocalId};
+use crate::ir::core::{FuncId, LocalId};
 use crate::ir::lower::prelude;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{FunctionSignature, MonoType, TypeId};
+
+use super::artifacts::LoweredModule;
 
 /// Exported symbols from a compiled module
 #[derive(Debug, Clone)]
@@ -30,38 +32,57 @@ impl ModuleExports {
     }
 }
 
-/// Shared compilation context accumulated across all modules compiled in one
-/// `twk` invocation.  TypeIds and FuncIds are globally unique within it.
+/// Module-loader infrastructure: deduplication cache only.
+/// Passed through the recursive compile_module calls but never carries
+/// accumulated compilation state.
 pub struct CompilationContext {
-    /// Shared type environment — grows as modules are compiled
-    pub type_env: TypeEnv,
-    /// Shared value environment — grows as modules are compiled
-    pub value_env: ValueEnv,
-    /// Qualified "module.fn" and plain "fn" → FuncId
-    pub func_table: HashMap<String, FuncId>,
-    /// alias → exports for each compiled import
-    pub module_registry: HashMap<String, ModuleExports>,
-    /// Set of module alias names (for the lowerer and type checker)
-    pub module_aliases: HashSet<String>,
-    /// path → exports cache (for deduplication)
+    /// Deduplication cache: canonical path → exports (prevents re-compiling same file)
     pub module_cache: HashMap<PathBuf, ModuleExports>,
-    /// Accumulated lowered functions from all compiled modules
-    pub all_functions: Vec<FunctionDef>,
-    /// Next FuncId to assign (starts after prelude)
-    pub next_func_id: u32,
-    /// FuncId of the entry module's __init__ function, if any (for display)
-    pub init_func_id: Option<FuncId>,
-    /// All module __init__ FuncIds in dependency order (for runtime execution)
-    pub all_init_func_ids: Vec<FuncId>,
-    /// Next globally-unique LocalId for module-level let bindings.
-    /// Each compiled module's globals start here and advance this counter.
-    pub next_global_local_id: u32,
-    /// "alias.name" → globally-unique LocalId, for cross-module value references in the lowerer
-    pub qualified_value_globals: HashMap<String, LocalId>,
 }
 
 impl CompilationContext {
     pub fn new() -> Self {
+        Self {
+            module_cache: HashMap::new(),
+        }
+    }
+}
+
+impl Default for CompilationContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Accumulated compilation state across all modules compiled in one `twk` invocation.
+/// TypeIds and FuncIds are globally unique within it.
+pub struct CompileState {
+    // Environments (grow as modules are compiled)
+    pub type_env: TypeEnv,
+    pub value_env: ValueEnv,
+    /// Qualified "module.fn" and plain "fn" → FuncId
+    pub func_table: HashMap<String, FuncId>,
+    /// Set of module alias names (for the lowerer and type checker)
+    pub module_aliases: HashSet<String>,
+    /// "alias.name" → globally-unique LocalId, for cross-module value references
+    pub qualified_value_globals: HashMap<String, LocalId>,
+    /// alias → exports for each compiled import
+    pub module_registry: HashMap<String, ModuleExports>,
+
+    // Allocation counters
+    pub next_func_id: u32,
+    pub next_global_local_id: u32,
+
+    // Accumulated lowered modules (for link step)
+    pub lowered_modules: Vec<LoweredModule>,
+    /// All module __init__ FuncIds in dependency order (for runtime execution)
+    pub init_order: Vec<FuncId>,
+    /// Entry module's __init__ FuncId, if any
+    pub entry_init_func_id: Option<FuncId>,
+}
+
+impl CompileState {
+    pub fn initial() -> Self {
         let mut func_table: HashMap<String, FuncId> = HashMap::new();
 
         // Register prelude functions in the table (same as Lowerer::new does)
@@ -115,15 +136,14 @@ impl CompilationContext {
             type_env: TypeEnv::new(),
             value_env: ValueEnv::new(),
             func_table,
-            module_registry: HashMap::new(),
             module_aliases,
-            module_cache: HashMap::new(),
-            all_functions: Vec::new(),
-            next_func_id: prelude::USER_FUNC_START,
-            init_func_id: None,
-            all_init_func_ids: Vec::new(),
-            next_global_local_id: 0,
             qualified_value_globals: HashMap::new(),
+            module_registry: HashMap::new(),
+            next_func_id: prelude::USER_FUNC_START,
+            next_global_local_id: 0,
+            lowered_modules: Vec::new(),
+            init_order: Vec::new(),
+            entry_init_func_id: None,
         }
     }
 
@@ -177,11 +197,5 @@ impl CompilationContext {
         }
 
         self.module_registry.insert(alias.to_string(), exports.clone());
-    }
-}
-
-impl Default for CompilationContext {
-    fn default() -> Self {
-        Self::new()
     }
 }

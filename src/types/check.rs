@@ -1,3 +1,4 @@
+use crate::module::artifacts::TypedModule;
 use crate::syntax::ast::{
     BinOp, Block, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile,
     Stmt, StringPart, Type as AstType, UnOp,
@@ -44,7 +45,7 @@ impl TypeChecker {
         type_env: TypeEnv,
         value_env: ValueEnv,
         module_aliases: HashSet<String>,
-    ) -> Result<(TypeMap, TypeEnv, ValueEnv), Vec<TypeError>> {
+    ) -> Result<TypedModule, Vec<TypeError>> {
         let mut checker = TypeChecker {
             type_env,
             value_env,
@@ -116,7 +117,11 @@ impl TypeChecker {
         }
 
         if checker.errors.is_empty() {
-            Ok((checker.type_map, checker.type_env, checker.value_env))
+            Ok(TypedModule {
+                type_map: checker.type_map,
+                type_env: checker.type_env,
+                value_env: checker.value_env,
+            })
         } else {
             Err(checker.errors)
         }

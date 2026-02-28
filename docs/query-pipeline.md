@@ -115,6 +115,12 @@ The prelude retains fixed FuncIds (as today). User-module FuncIds become
 `module_base_offset + local_index`. The base offset is determined by topological order
 of dependencies, computed once by the linker.
 
+**Status (Stage 6b)**: FuncIds remain globally monotonic — the same counter increments
+across all modules in a single compilation. Module-local IDs and the CoreExpr remapping
+pass in the linker are **deferred** to when content-hash caching is implemented.
+The `link()` function's signature already accepts per-module `LoweredModule` artifacts,
+so that future change will be localized to the linker only (no stage API changes needed).
+
 ---
 
 ## Stage-by-Stage Changes
