@@ -230,6 +230,11 @@ fn error_types() {
     check("tests/run/error_types.tw");
 }
 
+#[test]
+fn option_shorthand() {
+    check("tests/run/option_shorthand.tw");
+}
+
 // --- Trap tests ---
 
 #[test]

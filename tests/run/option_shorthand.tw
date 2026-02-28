@@ -1,0 +1,60 @@
+// Expected output:
+//   found: 42
+//   not found
+//   lookup hit: world
+//   lookup miss
+//   first even: 4
+//   all odd, no evens
+
+// T? is shorthand for Option<T> in type positions
+
+// Function return type: Int? == Option<Int>
+fn find_first(xs: Array<Int>, target: Int) Int? {
+    for x in xs {
+        if x == target { return .Some(x) }
+    }
+    .None
+}
+
+fn show(label: String, r: Int?) {
+    case r {
+        .Some(n) => println("${label}: ${n}"),
+        .None => println("not found"),
+    }
+}
+
+show("found", find_first([10, 42, 99], 42))
+show("not found", find_first([10, 42, 99], 7))
+
+// Variable annotation: String? == Option<String>
+fn lookup(key: String) String? {
+    m: Dict<String, String> = Dict.new()
+    m["hello"] = "world"
+    m[key]
+}
+
+case lookup("hello") {
+    .Some(v) => println("lookup hit: ${v}"),
+    .None => println("lookup miss"),
+}
+case lookup("bye") {
+    .Some(v) => println("lookup hit: ${v}"),
+    .None => println("lookup miss"),
+}
+
+// Chaining: find first even number using Int?
+fn first_even(xs: Array<Int>) Int? {
+    for x in xs {
+        if x % 2 == 0 { return .Some(x) }
+    }
+    .None
+}
+
+case first_even([1, 3, 4, 6]) {
+    .Some(n) => println("first even: ${n}"),
+    .None => println("all odd, no evens"),
+}
+case first_even([1, 3, 5]) {
+    .Some(n) => println("first even: ${n}"),
+    .None => println("all odd, no evens"),
+}
