@@ -105,12 +105,13 @@ pub fn compile_module(
     let resolved = {
         let type_env = mem::replace(&mut state.type_env, TypeEnv::new());
         let value_env = mem::replace(&mut state.value_env, ValueEnv::new());
+        let type_env_for_errs = type_env.clone();
         match Resolver::resolve(&ast, type_env, value_env) {
             Ok(r) => r,
             Err(errors) => {
                 let msgs: Vec<String> = errors
                     .iter()
-                    .map(|e| e.format(&file_registry, Some(&state.type_env)))
+                    .map(|e| e.format(&file_registry, Some(&type_env_for_errs)))
                     .collect();
                 importing_stack.pop();
                 return Err(anyhow!("{}", msgs.join("\n")));
@@ -128,12 +129,13 @@ pub fn compile_module(
     let typed = {
         let type_env = mem::replace(&mut state.type_env, TypeEnv::new());
         let value_env = mem::replace(&mut state.value_env, ValueEnv::new());
+        let type_env_for_errs = type_env.clone();
         match TypeChecker::check_module(&ast, type_env, value_env, state.module_aliases.clone()) {
             Ok(t) => t,
             Err(errors) => {
                 let msgs: Vec<String> = errors
                     .iter()
-                    .map(|e| e.format(&file_registry, Some(&state.type_env)))
+                    .map(|e| e.format(&file_registry, Some(&type_env_for_errs)))
                     .collect();
                 importing_stack.pop();
                 return Err(anyhow!("{}", msgs.join("\n")));
