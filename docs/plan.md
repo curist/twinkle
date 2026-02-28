@@ -35,7 +35,7 @@ Runtime / distribution:
 
   * `twk` (Rust binary) with:
 
-    * `twk parse`, `twk check`, `twk run`, `twk build`.
+    * `twk parse`, `twk check`, `twk run`, `twk build`, `twk fmt`, `twk lint`, `twk lsp`.
   * `run` uses the interpreter backend.
 * Later:
 
@@ -364,7 +364,8 @@ Features:
 
 * **FuncId assignment across modules:**
 
-  * Prelude functions retain FuncId 1–14.
+  * Prelude functions retain fixed FuncIds starting from 1 (see `USER_FUNC_START`
+    in `src/ir/lower.rs` for the current boundary; this grows as builtins are added).
   * User functions across all imported modules are assigned FuncIds in
     deterministic order (import order, then source order within each file).
 
@@ -491,7 +492,34 @@ see Stage 6b.
 
 ---
 
-### Stage 6b — Full Damas–Milner Inference ⬅ Next
+### Stage 6b — Query-Friendly Pipeline Refactor
+
+**Goal:** Reshape the compiler pipeline so each stage is a pure function with explicit
+inputs and outputs, enabling independent stage invocation, per-file incremental
+re-compilation, and better testability — without adding any framework dependency.
+
+> **Full design:** See [docs/query-pipeline.md](query-pipeline.md).
+
+Key changes:
+
+* Replace `CompilationContext` mutation with per-module artifact structs:
+  `ResolvedModule`, `TypedModule`, `LoweredModule`, `LinkedProgram`.
+* Each stage becomes a pure function: `resolve(ast, deps)`, `typecheck(ast, resolved)`,
+  `lower(ast, typed)`, `link(modules)`.
+* FuncIds assigned module-locally (0, 1, 2...) and remapped by the linker with
+  per-module base offsets — stable across re-compilations.
+* `compile_module` becomes a thin coordinator; no shared mutable state.
+* `CompilationContext` shrinks to just the module loader cache and import stack.
+
+Deliverables:
+
+* All existing tests (`tests/run/`, `tests/modules/`) pass unchanged.
+* Each stage independently testable without constructing a full context.
+* No Salsa or other framework dependency introduced.
+
+---
+
+### Stage 6c — Full Damas–Milner Inference ⬅ Next
 
 **Goal:** Complete the type inference engine with unification, generalization, and instantiation at use sites.
 
@@ -721,11 +749,19 @@ Deliverables:
 
 ### Later Stages — Tooling & Ecosystem
 
-Once the core compiler is stable and (preferably) self-hosted, build:
+> **Full design:** See [docs/tooling.md](tooling.md).
 
-* **Formatter** (pretty-printer) in Twinkle.
-* **LSP server** in Twinkle (with a thin host wrapper).
+**Prerequisites before tooling:**
+
+* **Lossless lexer**: comments preserved as trivia tokens (required by formatter and LSP).
+* **Parser error recovery**: partial AST on syntax errors (required by LSP; nice-to-have for formatter).
+
+**Planned tools** (all as `twk` subcommands initially, rewritten in Twinkle post-self-hosting):
+
+* **`twk fmt`**: canonical formatter. Only needs parse stage + lossless lexer. No config; one official style.
+* **`twk lint`**: linter with syntactic rules (parse only) and semantic rules (parse + typecheck). Key rule: warn on rebinding-without-use (the "looks like mutation but isn't" trap).
+* **`twk lsp`**: language server (LSP protocol). Needs query-friendly pipeline + lossless lexer + error recovery. Initial features: diagnostics, hover types, go-to-definition, completion.
 * **Standard library** in Twinkle (collections, JSON, I/O via WASI).
-* **Package manager**, **test runner**, **doc generator**, **build system**, etc.
+* **Package manager**, **test runner**, **doc generator**, **build system**.
 
 These tools are separate concerns and plug into the pipeline via the existing compiler API (parse, typecheck, IR, codegen).
