@@ -1,0 +1,18 @@
+// Nested field update: o.inner.val = v desugars to:
+//   inner_tmp = record_get(o, .inner)
+//   updated   = record_update(inner_tmp, .val, v)   ← inner_tmp dies here
+//   o         = record_update(o, .inner, updated)
+//
+// The liveness pass should annotate the inner record_update with
+// can_reuse_in_place=true because inner_tmp is not used after that point.
+
+type Inner = .{ val: Int }
+type Outer = .{ inner: Inner }
+
+fn update_inner(o: Outer, v: Int) Outer {
+    o.inner.val = v
+    o
+}
+
+result := update_inner(Outer.{ inner: Inner.{ val: 0 } }, 42)
+println(int_to_string(result.inner.val))

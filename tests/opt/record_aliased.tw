@@ -1,0 +1,13 @@
+// A record update where the base local is still used after the update.
+// The liveness pass must NOT annotate this with can_reuse_in_place.
+
+type Point = .{ x: Int, y: Int }
+
+fn shift_and_sum(p: Point, dx: Int) Int {
+    // p.x = p.x + dx lowers to record_update(p, .x, ...) with base=p.
+    // p is used again after (to read p.y) → base is live → cannot reuse in place.
+    p.x = p.x + dx
+    p.x + p.y
+}
+
+println(int_to_string(shift_and_sum(Point.{ x: 5, y: 3 }, 2)))

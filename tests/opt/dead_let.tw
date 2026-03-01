@@ -1,0 +1,7 @@
+// Expected output:
+// hello
+
+// This binding is never used — should be eliminated.
+_unused := 1 + 2
+
+println("hello")

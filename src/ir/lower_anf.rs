@@ -156,7 +156,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom },
+                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom, can_reuse_in_place: false },
             ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
@@ -372,7 +372,7 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom },
+                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom, can_reuse_in_place: false },
             ));
             Atom::ALocal(tmp)
         }

@@ -1,0 +1,15 @@
+// ANF Module
+// 1 function(s)
+// init = FuncId(38)
+
+fn __init__  [FuncId(38)]  params=[]
+  return_ty: Void
+  body:
+    let L6 = call GlobalFunc(4) (42)
+    let L7 = call GlobalFunc(2) (L6)
+    let L9 = call GlobalFunc(6) (true)
+    let L10 = call GlobalFunc(2) (L9)
+    let L12 = call GlobalFunc(5) (3.14)
+    let L13 = call GlobalFunc(2) (L12)
+    L13
+

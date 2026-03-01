@@ -112,10 +112,15 @@ pub enum AnfOp {
         field: FieldId,
     },
     /// Functional record update: base and value are atoms.
+    ///
+    /// `can_reuse_in_place` is set by the liveness pass (Stage 7.5) when the
+    /// base local is provably dead after this update. The WAT backend may then
+    /// emit an in-place `struct.set` instead of allocating a new struct.
     ARecordUpdate {
         base: Atom,
         field: FieldId,
         value: Atom,
+        can_reuse_in_place: bool,
     },
     /// Variant construction: all args are atoms.
     AVariant {
@@ -270,8 +275,9 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
         AnfOp::ARecordGet { target, field } => {
             write!(f, "record_get({}, .{})", target, field.0)
         }
-        AnfOp::ARecordUpdate { base, field, value } => {
-            write!(f, "record_update({}, .{}={})", base, field.0, value)
+        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place } => {
+            let flag = if *can_reuse_in_place { " [in-place]" } else { "" };
+            write!(f, "record_update({}, .{}={}{})", base, field.0, value, flag)
         }
         AnfOp::AVariant { type_id, variant, args } => {
             write!(f, "variant(Type#{}.{})", type_id.0, variant.0)?;

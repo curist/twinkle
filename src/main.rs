@@ -31,6 +31,14 @@ enum Commands {
         /// Path to the .tw file
         file: String,
     },
+    /// Optimise a Twinkle source file and display the resulting ANF IR
+    Opt {
+        /// Path to the .tw file
+        file: String,
+        /// Also print the unoptimized ANF before the optimized form
+        #[arg(long)]
+        show_original: bool,
+    },
     /// Run a Twinkle program using the interpreter
     Run {
         /// Path to the .tw file
@@ -62,6 +70,10 @@ fn main() -> Result<()> {
         Commands::LowerAnf { file } => {
             let path = std::path::Path::new(&file);
             twinkle::cli::lower_anf::cmd_lower_anf(path)?;
+        }
+        Commands::Opt { file, show_original } => {
+            let path = std::path::Path::new(&file);
+            twinkle::cli::opt::cmd_opt(path, show_original)?;
         }
         Commands::Run { file } => {
             twinkle::cli::run::run_file(&file)?;

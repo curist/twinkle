@@ -6,3 +6,4 @@ pub mod module;
 pub mod interp;
 pub mod codegen;
 pub mod query;
+pub mod opt;
