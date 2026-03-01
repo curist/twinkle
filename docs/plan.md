@@ -737,6 +737,40 @@ Deliverables:
 
 ---
 
+### Stage 7.6 — Defer
+
+**Goal:** Implement `defer` end-to-end, from grammar to CFG desugaring.
+
+> **Full design:** See [docs/defer.md](defer.md).
+
+`defer expr` is a block-scoped statement that schedules an expression to run when the enclosing block exits. Semantics: LIFO ordering, capture-by-value, triggers on normal exit / `return` / `break` / `continue` / `try`-propagated `Err`, does **not** trigger on traps.
+
+**Why here:** the clean implementation vehicle is CFG edge insertion (Stage 7.5). Doing it earlier would require a throwaway runtime defer-stack in the interpreter. One pass, correct by construction.
+
+**Work items:**
+
+* **Grammar & parser** — add `defer` keyword and `defer expr` statement form.
+* **AST** — add `StmtKind::Defer(ExprId)`.
+* **Type checker** — type-check the deferred expression in the current scope; no constraint on its type (result is discarded).
+* **Core IR** — add `CoreExprKind::Defer(ExprId)` as an opaque semantic node; lowerer emits it directly.
+* **Interpreter** — defer stack per block evaluation; drain LIFO on any `Signal` except `Trap`.
+* **ANF IR** — preserve `Defer` nodes as-is through linearization.
+* **CFG pass** — edge insertion: each basic block carries its defer list; the pass splices LIFO defers onto every non-trap outgoing edge; after the pass no `Defer` nodes remain.
+
+**Deliverables:**
+
+* `defer` works correctly in `twk run` (interpreter path).
+* `defer` compiles away cleanly in the CFG pass; WAT backend sees no `Defer` nodes.
+* Tests covering:
+  * Basic LIFO ordering.
+  * `return` unwinding through nested blocks.
+  * `break` / `continue` per-iteration behavior in loops.
+  * `try`-propagated `Err` triggers defers.
+  * Trap does not trigger defers.
+  * Capture-by-value at declaration time.
+
+---
+
 ### Stage 8 — WAT Backend
 
 **Goal:** Compile Twinkle programs to human-readable WAT (WebAssembly text format).

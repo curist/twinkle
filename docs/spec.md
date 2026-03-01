@@ -1044,6 +1044,54 @@ x := case opt {
 
 Here the `.None` branch never returns, so the `case` expression has the type of the `.Some` branch.
 
+### `defer`
+
+`defer expr` schedules an expression to run when the **enclosing block** exits. It is a statement — it produces no value.
+
+```tw
+fn write_file(path: String, data: String) !IoError {
+  f := try open(path)
+  defer { close(f) }      // runs however write_file exits (except trap)
+  try write(f, data)
+}
+```
+
+**Scope:** `defer` is tied to the nearest enclosing `{ ... }` block, not the function. A `defer` inside a loop body runs at the end of **each iteration**:
+
+```tw
+for x in xs {
+  defer { println("done with ${x}") }   // runs once per iteration, and on break
+}
+```
+
+**Ordering:** multiple defers in the same block execute LIFO (last declared, first run):
+
+```tw
+{
+  defer { println("1") }
+  defer { println("2") }
+  defer { println("3") }
+}
+// prints: 3, 2, 1
+```
+
+**Capture:** variables referenced in a `defer` are captured by value at declaration time, consistent with closure semantics:
+
+```tw
+x := 1
+defer { println("x was ${x}") }   // captures x = 1
+x = 2
+// prints: x was 1
+```
+
+**Triggers:** normal completion, `return` (unwinds all enclosing blocks), `break`, `continue`, and `try`-propagated `Err`.
+
+**Does not trigger on traps** (`error()`, out-of-bounds, division by zero). Traps are unrecoverable — no cleanup is possible.
+
+**Type:** no constraint on the deferred expression; the result is silently discarded.
+
+> **Implementation note:** `defer` is not implemented until Stage 7.6 (after CFG). At the CFG level it desugars completely via edge insertion — zero runtime overhead. See [docs/defer.md](defer.md).
+
 ---
 
 ## 13. Collect Comprehension

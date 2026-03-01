@@ -354,6 +354,7 @@ Block =
 Statement =
       ForStmt
     | LetBinding
+    | DeferStmt
     | Expr
     | BreakStmt
     | ContinueStmt
@@ -370,6 +371,20 @@ LetBinding =
    - `x := expr`    : inferred-typed binding.
    - `x: T = expr`  : explicitly-typed binding.
    - These bindings do *not* form mutually recursive groups. *)
+
+DeferStmt =
+    "defer" Expr ;
+(* Implementation note:
+   - `defer expr` schedules `expr` to run when the enclosing block exits.
+   - The expression is captured by value at the declaration site (consistent
+     with closure capture semantics).
+   - Multiple defers in the same block execute in LIFO order.
+   - Triggers on: normal completion, `return`, `break`, `continue`,
+     and `try`-propagated `Err`.
+   - Does NOT trigger on traps (OOB, div-by-zero, `error()`).
+   - Since `{ ... }` is an expression, `defer { a(); b() }` is valid.
+   - There is no type constraint on the deferred expression; the result is discarded.
+   - Full design: see docs/defer.md. *)
 
 BreakStmt =
     "break" ;
@@ -564,7 +579,7 @@ Keywords (reserved):
   fn, if, else, true, false,
   use, as, pub, type, case, try,
   and, or, for, in, collect,
-  break, continue, return
+  break, continue, return, defer
 
 Implementation note:
   - These must not be recognized as Identifiers by the lexer.
