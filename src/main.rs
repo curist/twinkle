@@ -26,6 +26,11 @@ enum Commands {
         /// Path to the .tw file
         file: String,
     },
+    /// Lower a Twinkle source file to ANF IR and display it
+    LowerAnf {
+        /// Path to the .tw file
+        file: String,
+    },
     /// Run a Twinkle program using the interpreter
     Run {
         /// Path to the .tw file
@@ -53,6 +58,10 @@ fn main() -> Result<()> {
         }
         Commands::Lower { file } => {
             twinkle::cli::lower::lower_file(&file)?;
+        }
+        Commands::LowerAnf { file } => {
+            let path = std::path::Path::new(&file);
+            twinkle::cli::lower_anf::cmd_lower_anf(path)?;
         }
         Commands::Run { file } => {
             twinkle::cli::run::run_file(&file)?;

@@ -1,0 +1,67 @@
+// ANF Module
+// 3 function(s)
+// init = FuncId(40)
+
+fn magnitude_sq  [FuncId(38)]  params=[L2]
+  return_ty: Int
+  body:
+    let L3 = record_get(L2, .0)
+    let L4 = record_get(L2, .0)
+    let L5 = binop(Mul, L3, L4)
+    let L6 = record_get(L2, .1)
+    let L7 = record_get(L2, .1)
+    let L8 = binop(Mul, L6, L7)
+    let L9 = binop(Add, L5, L8)
+    L9
+
+fn translate  [FuncId(39)]  params=[L2, L3, L4]
+  return_ty: Named { type_id: TypeId(7), args: [] }
+  body:
+    let L5 = record_get(L2, .0)
+    let L6 = binop(Add, L5, L3)
+    let L7 = record_get(L2, .1)
+    let L8 = binop(Add, L7, L4)
+    let L9 = record(Type#7, .0=L6, .1=L8)
+    L9
+
+fn __init__  [FuncId(40)]  params=[]
+  return_ty: Void
+  body:
+    let L8 = record(Type#7, .0=3, .1=4)
+    let L0 = assign(L0 = L8)
+    let L9 = record_get(L0, .0)
+    let L10 = call GlobalFunc(4) (L9)
+    let L11 = call GlobalFunc(9) ("", L10)
+    let L12 = call GlobalFunc(2) (L11)
+    let L7 = assign(L7 = L12)
+    let L13 = record_get(L0, .1)
+    let L14 = call GlobalFunc(4) (L13)
+    let L15 = call GlobalFunc(9) ("", L14)
+    let L16 = call GlobalFunc(2) (L15)
+    let L6 = assign(L6 = L16)
+    let L17 = call GlobalFunc(38) (L0)
+    let L18 = call GlobalFunc(4) (L17)
+    let L19 = call GlobalFunc(9) ("", L18)
+    let L20 = call GlobalFunc(2) (L19)
+    let L5 = assign(L5 = L20)
+    let L21 = record_update(L0, .0=4)
+    let L22 = assign(L0 = L21)
+    let L4 = assign(L4 = void)
+    let L23 = record_get(L0, .0)
+    let L24 = call GlobalFunc(4) (L23)
+    let L25 = call GlobalFunc(9) ("", L24)
+    let L26 = call GlobalFunc(2) (L25)
+    let L3 = assign(L3 = L26)
+    let L27 = call GlobalFunc(39) (L0, 2, 2)
+    let L1 = assign(L1 = L27)
+    let L28 = record_get(L1, .0)
+    let L29 = call GlobalFunc(4) (L28)
+    let L30 = call GlobalFunc(9) ("", L29)
+    let L31 = call GlobalFunc(2) (L30)
+    let L2 = assign(L2 = L31)
+    let L32 = call GlobalFunc(38) (L1)
+    let L33 = call GlobalFunc(4) (L32)
+    let L34 = call GlobalFunc(9) ("", L33)
+    let L35 = call GlobalFunc(2) (L34)
+    L35
+

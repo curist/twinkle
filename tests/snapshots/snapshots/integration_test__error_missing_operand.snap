@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"missing_operand.tw:1:16: Expected expression, found }\n   1 | fn foo() { 1 + }\n\n                     ^"

@@ -1,0 +1,64 @@
+---
+source: tests/integration_test.rs
+expression: ast
+---
+SourceFile {
+    items: [
+        Stmt(
+            Expr(
+                Expr {
+                    id: ExprId(
+                        4,
+                    ),
+                    kind: Binary {
+                        op: Add,
+                        left: Expr {
+                            id: ExprId(
+                                0,
+                            ),
+                            kind: Literal(
+                                Int(
+                                    1,
+                                ),
+                            ),
+                            span: 0:0..1,
+                        },
+                        right: Expr {
+                            id: ExprId(
+                                3,
+                            ),
+                            kind: Binary {
+                                op: Mul,
+                                left: Expr {
+                                    id: ExprId(
+                                        1,
+                                    ),
+                                    kind: Literal(
+                                        Int(
+                                            2,
+                                        ),
+                                    ),
+                                    span: 0:4..5,
+                                },
+                                right: Expr {
+                                    id: ExprId(
+                                        2,
+                                    ),
+                                    kind: Literal(
+                                        Int(
+                                            3,
+                                        ),
+                                    ),
+                                    span: 0:8..9,
+                                },
+                            },
+                            span: 0:4..9,
+                        },
+                    },
+                    span: 0:0..9,
+                },
+            ),
+        ),
+    ],
+    span: 0:0..9,
+}
