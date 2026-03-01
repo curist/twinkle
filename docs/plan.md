@@ -653,9 +653,11 @@ Deliverables:
 
 ---
 
-### Stage 7 — ANF IR (Backend-Oriented, Optional) ⬅ Next
+### Stage 7 — ANF IR (Backend-Oriented) ⬅ Next
 
-**Goal:** Add an ANF representation for backend use.
+**Goal:** Add an ANF (Administrative Normal Form) IR layer between Core IR and the WAT
+backend. ANF makes evaluation order explicit and ensures every non-trivial intermediate
+value is bound to a named local — a requirement for straightforward WAT/Wasm code generation.
 
 Ordering note:
 
@@ -663,32 +665,101 @@ Ordering note:
 * This keeps execution semantics anchored by Core IR first, then introduces
   backend-oriented normalization.
 
-ANF IR:
+**Scope decision:** The interpreter continues to use Core IR. No ANF interpreter is added
+at this stage. Behavioral preservation is validated by structural invariant checks and
+golden output snapshots; full equivalence testing against the interpreter is deferred to
+Stage 8 where the WAT backend becomes the second execution path.
 
-* Same semantics as Core IR, but:
+ANF IR structure (full spec in `docs/ir.md §3`):
 
-  * every intermediate expression is bound to a temporary via `let`,
-  * function calls take only variables as arguments,
-  * evaluation order is explicit and linear.
+* **Atom** — trivially available values (locals or literals):
+  * `ALocal(LocalId)`, `ALitInt(i64)`, `ALitFloat(f64)`, `ALitBool(bool)`,
+    `ALitStr(String)`, `ALitVoid`.
 
-Core → ANF lowering:
+* **ANFExpr** — a flat let-chain terminating in an atom:
+  * `Let { local: LocalId, op: AnfOp, body: Box<ANFExpr> }`
+  * `Return(Atom)` — function return (terminal).
+  * `Break(Option<Atom>)` — loop break (terminal).
+  * `Continue` — loop continue (terminal).
 
-* Walk Core IR and:
+  > Note: `Break`/`Continue` are terminal `ANFExpr` variants, not `AnfOp` entries,
+  > because they carry no value to bind and the body after them is unreachable.
 
-  * introduce temporaries for non-trivial subexpressions,
-  * linearize nested structure into let-chains.
+* **AnfOp** — a single non-atomic computation whose result is bound by the enclosing `Let`:
+  * `ACall { callee: Atom, args: Vec<Atom> }`
+  * `AIf { cond: Atom, then_branch: ANFExpr, else_branch: ANFExpr }`
+  * `AMatch { scrutinee: Atom, arms: Vec<AnfMatchArm> }`
+  * `ALoop { body: ANFExpr }`
+  * `ABinOp { op: BinOp, left: Atom, right: Atom }`
+  * `AUnOp { op: UnOp, expr: Atom }`
+  * `AMakeClosure { func_id: FuncId, free_vars: Vec<Atom> }`
+  * `ARecord { type_id: TypeId, fields: Vec<(FieldId, Atom)> }`
+  * `ARecordGet { target: Atom, field: FieldId }`
+  * `ARecordUpdate { base: Atom, field: FieldId, value: Atom }`
+  * `AVariant { type_id: TypeId, variant: VariantId, args: Vec<Atom> }`
+  * `AArrayLit(Vec<Atom>)`
+  * `AIndex { base: Atom, index: Atom }`
+  * `AAssign { local: LocalId, value: Atom }` — maps to Wasm `local.set`.
 
-Usage:
+Core → ANF lowering rules (from `docs/ir.md §4`):
 
-* Interpreter can continue using Core IR.
-* ANF IR is used for codegen (WAT/Wasm), if it simplifies backend logic.
+* **A1** — Non-atom subexpressions are let-bound to fresh temporaries before use.
+  The lowering is continuation-passing: `lower_expr(expr, cont)` where `cont` is
+  the rest of the computation that expects an `Atom`.
+* **A2** — `If` cond is atomized; branches are lowered recursively into `ANFExpr`.
+* **A3** — `Match` scrutinee is atomized; arm bodies lowered recursively.
+* **A4** — `Loop` body lowered independently into `ANFExpr`.
+* **A5** — `MakeClosure` free vars are already locals (atoms); lambda body lowered
+  as an independent function.
+
+Fresh temporaries: a simple counter per function, starting above the function's
+existing max `LocalId`. No need for the full `LocalAllocator`.
 
 Deliverables:
 
-* `twk lower-anf file.tw` prints ANF IR.
-* Tests:
+* `twk lower-anf file.tw` prints ANF IR in a readable form.
+* All programs in `tests/run/` pass ANF invariant checks (see Step D).
+* Golden ANF output snapshots for a representative subset of test programs.
 
-  * check that ANF preserves behavior (e.g. interpret Core IR vs ANF IR and compare results on small programs, if you choose to interpret ANF too).
+**Execution checklist (file/module map):**
+
+* **Step A — ANF IR type definitions (`src/ir/anf.rs`)**
+  * Define `Atom`, `AnfExpr`, `AnfOp`, `AnfMatchArm` per the structure above.
+  * Define `AnfFunctionDef { func_id: FuncId, params: Vec<LocalId>, body: AnfExpr, return_ty: MonoType }`.
+  * Define `AnfModule { functions: Vec<AnfFunctionDef>, init_func_id: FuncId }` mirroring `CoreModule`.
+  * Implement `Display` (or a `pretty_print`) for `AnfExpr` — used by `twk lower-anf`.
+  * Register `pub mod anf` in `src/ir/mod.rs`; re-export `AnfModule`.
+
+* **Step B — Core → ANF lowering pass (`src/ir/lower_anf.rs`)**
+  * Entry point: `pub fn lower_module(module: &CoreModule) -> AnfModule`.
+  * Per-function: `lower_func(func: &FunctionDef) -> AnfFunctionDef`.
+  * Core expression lowering via CPS: `lower_expr(expr: &CoreExpr, cont: impl FnOnce(Atom) -> AnfExpr) -> AnfExpr`.
+    * Atomic cases (`LitInt`, `LitBool`, `Local`, etc.) call `cont` directly with the atom.
+    * Non-atomic cases (e.g. `BinOp`, `Call`, `Record`) recursively atomize their subexpressions,
+      allocate a fresh `LocalId`, emit `Let(tmp, AnfOp, cont(ALocal(tmp)))`.
+    * Terminal cases (`Break`, `Continue`, `Return`) emit the terminal `ANFExpr` variant directly
+      (ignore `cont` — unreachable after a terminal).
+    * Structural cases (`If`, `Match`, `Loop`) atomize their guard/scrutinee and recurse into branches.
+  * Fresh temp counter: track `next_temp: u32` per function, initialized to `max(params) + 1` or
+    the function's local count.
+
+* **Step C — CLI command (`src/cli/lower_anf.rs`)**
+  * Implement `pub fn cmd_lower_anf(path: &Path) -> anyhow::Result<()>` using the same pipeline
+    as `twk lower`: parse → resolve → typecheck → lower (Core IR) → `lower_anf::lower_module`.
+  * Wire as `twk lower-anf <file>` in `src/cli/mod.rs` and `src/main.rs`.
+  * Fix stale comment in `src/codegen/mod.rs`: change `// WAT/Wasm backend - Stage 7` to
+    `// WAT/Wasm backend - Stage 8`.
+
+* **Step D — Tests (`tests/anf_test.rs`)**
+  * **Invariant checker** (`fn check_anf_invariants(module: &AnfModule)`): walk `AnfExpr` and assert:
+    * All `ACall` args are `Atom` (no nested expressions).
+    * All `ARecord` field values are `Atom`.
+    * All `AVariant` args are `Atom`.
+    * All `ABinOp`/`AUnOp` operands are `Atom`.
+    * `Let` body is never immediately another `Let` wrapping the same op (no redundant nesting).
+  * Run the invariant checker on every `tests/run/*.tw` program as part of `cargo test`.
+  * **Golden snapshot tests**: pick a handful of simple programs (e.g. `hello.tw`, `arithmetic.tw`,
+    `closures.tw`, `records.tw`) and snapshot their `twk lower-anf` output; fail on diff.
 
 ---
 
