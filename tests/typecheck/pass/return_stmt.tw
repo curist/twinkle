@@ -1,0 +1,28 @@
+// Functions whose bodies end with a bare `return` statement (no trailing expression)
+// should typecheck without error. Return is a diverging statement (type Never),
+// which unifies with any expected type.
+
+fn always_returns(x: Int) Int {
+  return x + 1
+}
+
+fn early_return(x: Int) Int {
+  if x < 0 {
+    return 0
+  }
+  x
+}
+
+fn return_void() Void {
+  return
+}
+
+// Block ending with return inside an annotated function
+fn find_first(arr: Array<Int>, target: Int) Int {
+  for x in arr {
+    if x == target {
+      return x
+    }
+  }
+  -1
+}

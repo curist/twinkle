@@ -1836,7 +1836,7 @@ impl TypeChecker {
                             note: "Return statements are only allowed inside functions".to_string(),
                         });
                     }
-                    result_ty = MonoType::Void;
+                    result_ty = MonoType::Never;
                 }
                 Stmt::For { pattern, index_pattern, iter, body, .. } => {
                     self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
@@ -1873,10 +1873,15 @@ impl TypeChecker {
         // Index of the last Expr statement (if any)
         let last_expr_idx = block.stmts.iter().rposition(|s| matches!(s, Stmt::Expr(_)));
 
+        // Track whether the block ends with a diverging statement (Return/Break/Continue).
+        // Diverging blocks have type Never, which unifies with any expected type.
+        let mut diverges = false;
+
         for (i, stmt) in block.stmts.iter().enumerate() {
             match stmt {
                 Stmt::Let { pattern, ty, value, span: _, .. } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
+                    diverges = false;
                 }
                 Stmt::Expr(e) => {
                     if last_expr_idx == Some(i) {
@@ -1885,6 +1890,7 @@ impl TypeChecker {
                     } else {
                         let _ = self.synth_expr(e);
                     }
+                    diverges = false;
                 }
                 Stmt::Return { value, span } => {
                     if let Some(ret_ty) = self.current_function_ret.clone() {
@@ -1894,26 +1900,35 @@ impl TypeChecker {
                             let _ = self.unify(&MonoType::Void, &ret_ty, *span);
                         }
                     }
+                    diverges = true;
                 }
                 Stmt::For { pattern, index_pattern, iter, body, .. } => {
                     self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
+                    diverges = false;
                 }
                 Stmt::ForCond { cond, body, .. } => {
                     let _ = self.check_expr(cond, &MonoType::Bool);
                     let _ = self.synth_block(body);
+                    diverges = false;
                 }
                 Stmt::Break { value, .. } => {
                     if let Some(val) = value {
                         let _ = self.synth_expr(val);
                     }
+                    diverges = true;
                 }
-                Stmt::Continue { .. } => {}
+                Stmt::Continue { .. } => {
+                    diverges = true;
+                }
             }
         }
 
-        // If there's no final Expr stmt, the block type is Void
+        // If there's no final Expr stmt, infer the block type from control flow.
+        // Diverging blocks (ending with return/break/continue) have type Never,
+        // which unifies with any expected type without emitting an error.
         if last_expr_idx.is_none() {
-            let _ = self.unify(&MonoType::Void, expected_ty, block.span);
+            let block_ty = if diverges { MonoType::Never } else { MonoType::Void };
+            let _ = self.unify(&block_ty, expected_ty, block.span);
         }
 
         self.local_env.pop_scope();
