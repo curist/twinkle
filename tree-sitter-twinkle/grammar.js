@@ -511,6 +511,7 @@ module.exports = grammar({
     _statement: $ => choice(
       $.for_statement,
       $.let_binding,
+      $.defer_statement,
       $.break_statement,
       $.continue_statement,
       $.return_statement,
@@ -530,6 +531,11 @@ module.exports = grammar({
         '=',
         field('value', $._expression),
       ),
+    ),
+
+    defer_statement: $ => seq(
+      'defer',
+      field('expression', $._expression),
     ),
 
     break_statement: $ => 'break',

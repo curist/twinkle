@@ -199,6 +199,10 @@
           "named": true
         },
         {
+          "type": "defer_statement",
+          "named": true
+        },
+        {
           "type": "for_statement",
           "named": true
         },
@@ -487,6 +491,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "defer_statement",
+    "named": true,
+    "fields": {
+      "expression": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1646,10 +1666,29 @@
   {
     "type": "type",
     "named": true,
-    "fields": {},
+    "fields": {
+      "error_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "type_name",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": false,
-      "required": true,
+      "required": false,
       "types": [
         {
           "type": "function_type",
@@ -2150,6 +2189,10 @@
   {
     "type": "continue_statement",
     "named": true
+  },
+  {
+    "type": "defer",
+    "named": false
   },
   {
     "type": "else",

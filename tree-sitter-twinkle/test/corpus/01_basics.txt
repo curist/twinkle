@@ -335,3 +335,126 @@ s
                                             (int_literal))))))))))))
                       field: (identifier))
                     arguments: (argument_list)))))))))))
+================================================================================
+Defer — simple call expression
+================================================================================
+
+fn foo() Void {
+  defer cleanup()
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameter_list)
+    return_type: (type
+      (primitive_type))
+    body: (block
+      (defer_statement
+        expression: (assignment_expression
+          (logical_or_expression
+            (logical_and_expression
+              (equality_expression
+                (comparison_expression
+                  (additive_expression
+                    (multiplicative_expression
+                      (unary_expression
+                        (call_expression
+                          function: (identifier)
+                          arguments: (argument_list))))))))))))))
+
+================================================================================
+Defer — block expression
+================================================================================
+
+fn foo() Void {
+  defer { cleanup() }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameter_list)
+    return_type: (type
+      (primitive_type))
+    body: (block
+      (defer_statement
+        expression: (assignment_expression
+          (logical_or_expression
+            (logical_and_expression
+              (equality_expression
+                (comparison_expression
+                  (additive_expression
+                    (multiplicative_expression
+                      (unary_expression
+                        (block
+                          (assignment_expression
+                            (logical_or_expression
+                              (logical_and_expression
+                                (equality_expression
+                                  (comparison_expression
+                                    (additive_expression
+                                      (multiplicative_expression
+                                        (unary_expression
+                                          (call_expression
+                                            function: (identifier)
+                                            arguments: (argument_list)))))))))))))))))))))))
+
+================================================================================
+Defer — multiple defers in same block (LIFO)
+================================================================================
+
+fn foo() Void {
+  defer cleanup()
+  defer cleanup()
+  do_work()
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameter_list)
+    return_type: (type
+      (primitive_type))
+    body: (block
+      (defer_statement
+        expression: (assignment_expression
+          (logical_or_expression
+            (logical_and_expression
+              (equality_expression
+                (comparison_expression
+                  (additive_expression
+                    (multiplicative_expression
+                      (unary_expression
+                        (call_expression
+                          function: (identifier)
+                          arguments: (argument_list)))))))))))
+      (defer_statement
+        expression: (assignment_expression
+          (logical_or_expression
+            (logical_and_expression
+              (equality_expression
+                (comparison_expression
+                  (additive_expression
+                    (multiplicative_expression
+                      (unary_expression
+                        (call_expression
+                          function: (identifier)
+                          arguments: (argument_list)))))))))))
+      (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (call_expression
+                        function: (identifier)
+                        arguments: (argument_list)))))))))))))
