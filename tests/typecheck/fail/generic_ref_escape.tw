@@ -1,0 +1,8 @@
+// Error: referencing a generic function without calling it or annotating it
+// produces an unsolved MetaVar in the inferred return type.
+
+fn id<A>(x: A) A { x }
+
+fn foo() {
+    id    // should fail: ambiguous type (MetaVar escapes into return/body)
+}

@@ -1,6 +1,6 @@
 use crate::syntax::ast::ExprId;
 use crate::ir::FuncId;
-use super::ty::MonoType;
+use super::ty::{MonoType, zonk_ty};
 use std::collections::HashMap;
 
 /// Maps expressions to their inferred types and method call resolutions
@@ -47,5 +47,13 @@ impl TypeMap {
     /// Returns None if this is not a method call or hasn't been resolved
     pub fn get_method_call(&self, expr_id: ExprId) -> Option<FuncId> {
         self.method_calls.get(&expr_id).copied()
+    }
+
+    /// Apply meta-variable substitution to all stored expression types.
+    /// Called after each function is checked and at the end of module checking.
+    pub fn zonk(&mut self, meta_subst: &HashMap<u32, MonoType>) {
+        for ty in self.expr_types.values_mut() {
+            *ty = zonk_ty(ty, meta_subst);
+        }
     }
 }

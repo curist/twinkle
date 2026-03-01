@@ -7,7 +7,7 @@ use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
-use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
+use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID, zonk_ty, contains_meta};
 use super::type_map::TypeMap;
 use std::collections::{HashSet, HashMap};
 
@@ -32,6 +32,10 @@ pub struct TypeChecker {
 
     // True when type-checking at module scope (top-level lets/stmts)
     at_module_scope: bool,
+
+    // Unification engine: MetaVar counter and solved assignments
+    next_meta: u32,
+    meta_subst: HashMap<u32, MonoType>,
 }
 
 impl TypeChecker {
@@ -56,6 +60,8 @@ impl TypeChecker {
             module_aliases,
             type_var_scope: Vec::new(),
             at_module_scope: true,
+            next_meta: 0,
+            meta_subst: HashMap::new(),
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -78,10 +84,20 @@ impl TypeChecker {
                             }
                         } else {
                             // No annotation - synthesis mode
-                            match checker.synth_expr(value) {
+                            let t = match checker.synth_expr(value) {
                                 Ok(t) => t,
                                 Err(()) => continue, // Error already recorded
+                            };
+                            let t = checker.zonk(&t);
+                            if contains_meta(&t) {
+                                checker.errors.push(TypeError::AmbiguousType {
+                                    name: name.clone(),
+                                    span: value.span,
+                                    note: "type cannot be inferred; add a type annotation".to_string(),
+                                });
+                                continue;
                             }
+                            t
                         };
 
                         // Add to ValueEnv so it's accessible from functions
@@ -115,6 +131,10 @@ impl TypeChecker {
                 }
             }
         }
+
+        // Final zonk: resolve any MetaVars from top-level stmt checking
+        let meta_subst = std::mem::take(&mut checker.meta_subst);
+        checker.type_map.zonk(&meta_subst);
 
         if checker.errors.is_empty() {
             Ok(TypedModule {
@@ -172,10 +192,22 @@ impl TypeChecker {
             // No explicit return type - infer from body
             match self.synth_block(&decl.body) {
                 Ok(body_ty) => {
-                    // Update the function signature with the inferred return type
-                    let mut updated_sig = sig.clone();
-                    updated_sig.ret = Some(body_ty);
-                    self.value_env.update_function(updated_sig);
+                    let body_ty = self.zonk(&body_ty);
+                    if contains_meta(&body_ty) {
+                        // Return type contains unsolved MetaVars — the body holds a
+                        // generic reference that was never called.  Reject it to
+                        // prevent MetaVars from escaping into the TypeMap / lowered IR.
+                        self.errors.push(TypeError::AmbiguousType {
+                            name: format!("return type of `{}`", decl.name),
+                            span: decl.body.span,
+                            note: "return type cannot be inferred; add a type annotation or call the generic value".to_string(),
+                        });
+                    } else {
+                        // Update the function signature with the inferred return type
+                        let mut updated_sig = sig.clone();
+                        updated_sig.ret = Some(body_ty);
+                        self.value_env.update_function(updated_sig);
+                    }
                 }
                 Err(()) => {
                     // Type checking failed, can't infer return type
@@ -183,11 +215,89 @@ impl TypeChecker {
             }
         }
 
+        // Zonk all TypeMap entries for this function, then clear per-function state
+        let meta_subst = std::mem::take(&mut self.meta_subst);
+        self.type_map.zonk(&meta_subst);
+
         // Clean up
         self.current_function_ret = None;
         self.local_env.pop_scope();
         self.type_var_scope = saved_type_vars;
         self.at_module_scope = saved_module_scope;
+    }
+
+    //
+    // Unification engine — MetaVar management
+    //
+
+    /// Allocate a fresh MetaVar id.
+    fn fresh_meta(&mut self) -> MonoType {
+        let id = self.next_meta;
+        self.next_meta += 1;
+        MonoType::MetaVar(id)
+    }
+
+    /// Replace each named type parameter with a fresh MetaVar.
+    fn instantiate_vars(&mut self, type_params: &[String], ty: &MonoType) -> MonoType {
+        if type_params.is_empty() {
+            return ty.clone();
+        }
+        let var_to_meta: HashMap<String, MonoType> = type_params
+            .iter()
+            .map(|p| (p.clone(), self.fresh_meta()))
+            .collect();
+        apply_subst(ty, &var_to_meta)
+    }
+
+    /// Occurs check: does MetaVar `id` appear in `ty` (following chains)?
+    fn occurs(&self, id: u32, ty: &MonoType) -> bool {
+        match ty {
+            MonoType::MetaVar(other_id) => {
+                if *other_id == id {
+                    return true;
+                }
+                if let Some(resolved) = self.meta_subst.get(other_id) {
+                    let resolved = resolved.clone();
+                    self.occurs(id, &resolved)
+                } else {
+                    false
+                }
+            }
+            MonoType::Array(e) => self.occurs(id, e),
+            MonoType::Dict(k, v) => self.occurs(id, k) || self.occurs(id, v),
+            MonoType::Function { params, ret } => {
+                params.iter().any(|p| self.occurs(id, p)) || self.occurs(id, ret)
+            }
+            MonoType::Named { args, .. } => args.iter().any(|a| self.occurs(id, a)),
+            _ => false,
+        }
+    }
+
+    /// Solve `MetaVar(id) = ty`, with occurs check to prevent infinite types.
+    ///
+    /// Note: In the current type system this check is unreachable at the source
+    /// level because all lambda parameters require explicit type annotations,
+    /// preventing self-application (`fn(f) { f(f) }`) from creating circular
+    /// MetaVar constraints. The guard is kept as a safety net for when
+    /// unannotated parameters are introduced in a future stage.
+    fn solve_meta(&mut self, id: u32, ty: MonoType, span: Span) -> Result<(), ()> {
+        let zonked = self.zonk(&ty);
+        if let MonoType::MetaVar(other) = &zonked {
+            if *other == id {
+                return Ok(()); // trivial self-unification
+            }
+        }
+        if self.occurs(id, &zonked) {
+            self.errors.push(TypeError::OccursCheckFailed { span });
+            return Err(());
+        }
+        self.meta_subst.insert(id, zonked);
+        Ok(())
+    }
+
+    /// Apply the current meta substitution to a type.
+    fn zonk(&self, ty: &MonoType) -> MonoType {
+        zonk_ty(ty, &self.meta_subst)
     }
 
     /// Type-check a top-level statement that is not a let binding.
@@ -305,18 +415,28 @@ impl TypeChecker {
             ExprKind::Literal(lit) => Ok(self.synth_literal(lit)),
 
             ExprKind::Ident(name) => {
-                // Look up in local environment first, then value environment
+                // Local env first (function parameters, let bindings)
                 if let Some(ty) = self.local_env.lookup(name) {
-                    Ok(ty.clone())
-                } else if let Some(ty) = self.value_env.lookup(name) {
-                    Ok(ty)
-                } else {
-                    self.errors.push(TypeError::UndefinedVariable {
-                        name: name.clone(),
-                        span: expr.span,
-                    });
-                    Err(())
+                    return Ok(ty.clone());
                 }
+                // Generic function in value env: instantiate type params with MetaVars
+                if let Some(sig) = self.value_env.get_function(name).cloned() {
+                    let fn_ty = MonoType::Function {
+                        params: sig.params.clone(),
+                        ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+                    };
+                    let inst_ty = self.instantiate_vars(&sig.type_params, &fn_ty);
+                    return Ok(inst_ty);
+                }
+                // Non-function values (top-level lets, builtins)
+                if let Some(ty) = self.value_env.lookup(name) {
+                    return Ok(ty);
+                }
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: name.clone(),
+                    span: expr.span,
+                });
+                Err(())
             }
 
             ExprKind::Binary { op, left, right } => {
@@ -723,46 +843,34 @@ impl TypeChecker {
                             });
                             return Err(());
                         }
-                        // For generic types, use substitution to infer concrete type args
-                        if variant_fields.iter().any(type_contains_var) {
-                            let mut subst = HashMap::new();
-                            let mut arg_tys = Vec::new();
-                            for arg in args.iter() {
-                                arg_tys.push(self.synth_expr(arg)?);
+                        // Instantiate type params with MetaVars (no-op for non-generic types)
+                        let type_params: Vec<String> = self.type_env.get_def(type_id)
+                            .map(|d| d.type_params().to_vec())
+                            .unwrap_or_default();
+                        let inst_map: HashMap<String, MonoType> = type_params.iter()
+                            .map(|p| (p.clone(), self.fresh_meta()))
+                            .collect();
+                        let inst_fields: Vec<MonoType> = variant_fields.iter()
+                            .map(|f| apply_subst(f, &inst_map))
+                            .collect();
+                        let inst_named_ty = apply_subst(&named_ty, &inst_map);
+                        // Check each arg against instantiated field type
+                        for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
+                            if let Err(()) = self.check_expr(arg, expected_ty) {
+                                return Err(());
                             }
-                            let mut ok = true;
-                            for (idx, (field_ty, arg_ty)) in variant_fields.iter().zip(arg_tys.iter()).enumerate() {
-                                if !collect_subst(field_ty, arg_ty, &mut subst) {
-                                    self.errors.push(TypeError::TypeMismatch {
-                                        expected: apply_subst(field_ty, &subst),
-                                        actual: arg_ty.clone(),
-                                        span,
-                                        note: Some(format!("argument {} of variant constructor", idx + 1)),
-                                    });
-                                    ok = false;
-                                }
-                            }
-                            if !ok { return Err(()); }
-                            let concrete_named_ty = apply_subst(&named_ty, &subst);
-                            let ctor_ty = MonoType::Function {
-                                params: variant_fields,
-                                ret: Box::new(named_ty),
-                            };
-                            self.type_map.set_expr_type(callee.id, apply_subst(&ctor_ty, &subst));
-                            return Ok(concrete_named_ty);
                         }
-                        // Non-generic: check each arg directly
-                        for (arg, expected_ty) in args.iter().zip(variant_fields.iter()) {
-                            self.check_expr(arg, expected_ty)?;
-                        }
-                        // Record callee type (constructor function)
-                        let ctor_ty = if variant_fields.is_empty() {
-                            named_ty.clone()
+                        // Record callee type (constructor function) and return
+                        let ctor_ty = if inst_fields.is_empty() {
+                            inst_named_ty.clone()
                         } else {
-                            MonoType::Function { params: variant_fields, ret: Box::new(named_ty.clone()) }
+                            MonoType::Function {
+                                params: inst_fields,
+                                ret: Box::new(inst_named_ty.clone()),
+                            }
                         };
-                        self.type_map.set_expr_type(callee.id, ctor_ty);
-                        return Ok(named_ty);
+                        self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
+                        return Ok(self.zonk(&inst_named_ty));
                     }
                 }
             }
@@ -789,37 +897,8 @@ impl TypeChecker {
                     return Err(());
                 }
 
-                // Generic call: params contain type variables — use substitution
-                if params.iter().any(type_contains_var) {
-                    let mut subst = HashMap::new();
-                    let mut ok = true;
-                    for arg in args.iter() {
-                        let _ = self.synth_expr(arg)?;
-                    }
-                    let arg_tys: Vec<MonoType> = args.iter()
-                        .filter_map(|a| self.type_map.get_expr_type(a.id).cloned())
-                        .collect();
-                    let callee_label = if let ExprKind::Ident(n) = &callee.kind {
-                        format!(" of call to `{}`", n)
-                    } else {
-                        String::new()
-                    };
-                    for (idx, (param_ty, arg_ty)) in params.iter().zip(&arg_tys).enumerate() {
-                        if !collect_subst(param_ty, arg_ty, &mut subst) {
-                            self.errors.push(TypeError::TypeMismatch {
-                                expected: apply_subst(param_ty, &subst),
-                                actual: arg_ty.clone(),
-                                span,
-                                note: Some(format!("argument {}{}", idx + 1, callee_label)),
-                            });
-                            ok = false;
-                        }
-                    }
-                    if !ok { return Err(()); }
-                    return Ok(apply_subst(&ret, &subst));
-                }
-
-                // Check each argument; on failure, patch in call context
+                // Check each argument; MetaVar params are solved by unify inside check_expr.
+                // On failure, patch in call context for better error messages.
                 for (idx, (arg, expected_ty)) in args.iter().zip(params.iter()).enumerate() {
                     if let Err(()) = self.check_expr(arg, expected_ty) {
                         if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut() {
@@ -836,7 +915,7 @@ impl TypeChecker {
                     }
                 }
 
-                Ok(*ret)
+                Ok(self.zonk(&*ret))
             }
             _ => {
                 self.errors.push(TypeError::NotAFunction {
@@ -875,21 +954,32 @@ impl TypeChecker {
         }
 
         let qualified = format!("{}.{}", alias, func_name);
-        match self.value_env.lookup(&qualified) {
-            Some(MonoType::Function { params, ret }) => {
-                if params.len() != args.len() {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: params.len(),
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                for (arg, expected_ty) in args.iter().zip(params.iter()) {
-                    self.check_expr(arg, expected_ty)?;
-                }
-                Ok(*ret)
+        // Look up full function signature for proper MetaVar instantiation of generics.
+        if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
+            if sig.params.len() != args.len() {
+                self.errors.push(TypeError::WrongArity {
+                    expected: sig.params.len(),
+                    actual: args.len(),
+                    span,
+                });
+                return Err(());
             }
+            let fn_ty = MonoType::Function {
+                params: sig.params.clone(),
+                ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+            };
+            let inst_ty = self.instantiate_vars(&sig.type_params, &fn_ty);
+            let (inst_params, inst_ret) = match inst_ty {
+                MonoType::Function { params, ret } => (params, *ret),
+                _ => unreachable!(),
+            };
+            for (arg, expected_ty) in args.iter().zip(inst_params.iter()) {
+                self.check_expr(arg, expected_ty)?;
+            }
+            return Ok(self.zonk(&inst_ret));
+        }
+        // Not a function or undefined
+        match self.value_env.lookup(&qualified) {
             Some(ty) => {
                 self.errors.push(TypeError::NotAFunction { ty, span });
                 Err(())
@@ -1637,15 +1727,29 @@ impl TypeChecker {
                             });
                             return Err(());
                         }
-                        // Check receiver
-                        if let Some(recv_ty) = sig.params.first() {
-                            self.check_expr(base, recv_ty)?;
+                        // Instantiate the full method signature with MetaVars so that
+                        // type-level params (e.g. T in Box<T>) and method-level params
+                        // are all properly solved via unification.
+                        let full_fn_ty = MonoType::Function {
+                            params: sig.params.clone(),
+                            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+                        };
+                        let inst_ty = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+                        let (inst_params, inst_ret) = match inst_ty {
+                            MonoType::Function { params, ret } => (params, *ret),
+                            _ => unreachable!(),
+                        };
+                        // Unify the already-synthesised receiver type against the
+                        // instantiated first param — this solves the MetaVars for the
+                        // type-level type params (e.g. T → String for Box<String>).
+                        if let Some(recv_ty) = inst_params.first() {
+                            self.unify(&base_ty, recv_ty, base.span)?;
                         }
-                        // Check remaining args
-                        for (arg, expected_ty) in args.iter().zip(sig.params.iter().skip(1)) {
+                        // Check remaining explicit args
+                        for (arg, expected_ty) in args.iter().zip(inst_params.iter().skip(1)) {
                             self.check_expr(arg, expected_ty)?;
                         }
-                        return Ok(sig.ret.unwrap_or(MonoType::Void));
+                        return Ok(self.zonk(&inst_ret));
                     }
                 }
 
@@ -1837,10 +1941,20 @@ impl TypeChecker {
                     }
                 } else {
                     // No annotation - synthesis mode
-                    match self.synth_expr(value) {
+                    let t = match self.synth_expr(value) {
                         Ok(t) => t,
                         Err(()) => return,
+                    };
+                    let t = self.zonk(&t);
+                    if contains_meta(&t) {
+                        self.errors.push(TypeError::AmbiguousType {
+                            name: name.clone(),
+                            span: value.span,
+                            note: "type cannot be inferred; add a type annotation".to_string(),
+                        });
+                        return;
                     }
+                    t
                 };
 
                 // Bind the variable
@@ -1893,22 +2007,32 @@ impl TypeChecker {
         if let ExprKind::Ident(type_name) = &base.kind {
             if let Some(type_id) = self.type_env.lookup_type(type_name) {
                 if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
-                    // For generic types, build named_ty with Var args so the generic
-                    // call path in synth_call can infer concrete type args via collect_subst
-                    let type_var_args: Vec<MonoType> = self.type_env.get_def(type_id)
-                        .map(|d| d.type_params().iter().map(|p| MonoType::Var(p.clone())).collect())
+                    // Instantiate generic type params with fresh MetaVars so that
+                    // unification (e.g. unifying Done with Yield's type) can solve them.
+                    let type_params: Vec<String> = self.type_env.get_def(type_id)
+                        .map(|d| d.type_params().to_vec())
                         .unwrap_or_default();
-                    let named_ty = MonoType::Named { type_id, args: type_var_args };
+                    let inst_map: HashMap<String, MonoType> = type_params.iter()
+                        .map(|p| (p.clone(), self.fresh_meta()))
+                        .collect();
+                    let type_var_args: Vec<MonoType> = type_params.iter()
+                        .map(|p| MonoType::Var(p.clone()))
+                        .collect();
+                    let raw_named = MonoType::Named { type_id, args: type_var_args };
+                    let named_ty = if inst_map.is_empty() { raw_named } else { apply_subst(&raw_named, &inst_map) };
                     // Record type of the type-name base as Named (so lowerer can identify it)
                     self.type_map.set_expr_type(base.id, named_ty.clone());
                     let variants = self.type_env.get_variants(type_id)
                         .expect("variant index exists, variants must exist");
-                    let variant_fields = variants[variant_idx].fields.clone();
+                    let variant_fields_raw = variants[variant_idx].fields.clone();
+                    let variant_fields: Vec<MonoType> = variant_fields_raw.iter()
+                        .map(|f| apply_subst(f, &inst_map))
+                        .collect();
                     return if variant_fields.is_empty() {
                         // Zero-arg variant — directly a value of the named type
                         Ok(named_ty)
                     } else {
-                        // Parameterized variant — a constructor function
+                        // Parameterized variant accessed as a value (not called here)
                         Ok(MonoType::Function { params: variant_fields, ret: Box::new(named_ty) })
                     };
                 }
@@ -2085,28 +2209,33 @@ impl TypeChecker {
                 self.check_record_lit_fields(type_id, &[], fields, span)?;
                 Ok(MonoType::named(type_id))
             } else {
-                // Generic: synth each field once to infer type args, then validate.
-                // Single-pass to avoid double-evaluation: we collect (name, actual_ty) from
-                // synth, then unify against the substituted declared types.
+                // Generic: instantiate type params with MetaVars, then synth each field
+                // and unify against the instantiated declared type to solve the MetaVars.
                 let def_fields: Vec<(String, MonoType)> = self.type_env.get_record_fields(type_id)
                     .map(|fs| fs.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
                     .unwrap_or_default();
 
-                // Synth pass: collect actual types and build substitution
-                let mut subst = HashMap::new();
+                // Create a fresh MetaVar for each type param
+                let inst_map: HashMap<String, MonoType> = type_params.iter()
+                    .map(|p| (p.clone(), self.fresh_meta()))
+                    .collect();
+
+                // Synth each field value; unify against instantiated declared type
                 let mut field_synth: Vec<(&str, Result<MonoType, ()>)> = Vec::new();
                 for (provided_name, provided_expr) in fields.iter() {
                     let result = self.synth_expr(provided_expr);
                     if let Ok(actual_ty) = &result {
                         if let Some((_, declared_ty)) = def_fields.iter().find(|(n, _)| n == provided_name) {
-                            collect_subst(declared_ty, actual_ty, &mut subst);
+                            let inst_decl_ty = apply_subst(declared_ty, &inst_map);
+                            let _ = self.unify(actual_ty, &inst_decl_ty, provided_expr.span);
                         }
                     }
                     field_synth.push((provided_name.as_str(), result));
                 }
 
+                // Build concrete type args by zonking the MetaVars
                 let type_args: Vec<MonoType> = type_params.iter()
-                    .map(|p| subst.get(p).cloned().unwrap_or_else(|| MonoType::Var(p.clone())))
+                    .map(|p| self.zonk(inst_map.get(p).unwrap()))
                     .collect();
                 let subst2 = build_type_subst(&type_params, &type_args);
 
@@ -2425,31 +2554,88 @@ impl TypeChecker {
     //
 
     fn unify(&mut self, actual: &MonoType, expected: &MonoType, span: Span) -> Result<(), ()> {
+        let actual = self.zonk(actual);
+        let expected = self.zonk(expected);
+
         // Never (bottom type) unifies with anything
-        if *actual == MonoType::Never || *expected == MonoType::Never {
+        if actual == MonoType::Never || expected == MonoType::Never {
             return Ok(());
         }
         if actual == expected {
             return Ok(());
         }
-        // Structural unification for Named types: Var(_) in either arg position
-        // acts as a wildcard. This handles generic zero-arg variants like
-        // `UnfoldStep.Done` which synthesize as Named(id, [Var("T"), Var("S")])
-        // but need to match against a concrete Named(id, [Int, Int]).
-        if let (
-            MonoType::Named { type_id: aid, args: aa },
-            MonoType::Named { type_id: eid, args: ea },
-        ) = (actual, expected)
-        {
-            if aid == eid && aa.len() == ea.len() {
-                let all_ok = aa.iter().zip(ea.iter()).all(|(a, e)| {
-                    matches!(a, MonoType::Var(_)) || matches!(e, MonoType::Var(_)) || a == e
-                });
-                if all_ok {
-                    return Ok(());
-                }
+
+        match (&actual, &expected) {
+            // MetaVar on left: solve it
+            (MonoType::MetaVar(id), _) => {
+                let id = *id;
+                return self.solve_meta(id, expected, span);
             }
+            // MetaVar on right: solve it
+            (_, MonoType::MetaVar(id)) => {
+                let id = *id;
+                return self.solve_meta(id, actual, span);
+            }
+            // Structural: Array
+            (MonoType::Array(a), MonoType::Array(b)) => {
+                let a = a.as_ref().clone();
+                let b = b.as_ref().clone();
+                return self.unify(&a, &b, span);
+            }
+            // Structural: Dict
+            (MonoType::Dict(ak, av), MonoType::Dict(bk, bv)) => {
+                let ak = ak.as_ref().clone();
+                let av = av.as_ref().clone();
+                let bk = bk.as_ref().clone();
+                let bv = bv.as_ref().clone();
+                self.unify(&ak, &bk, span)?;
+                return self.unify(&av, &bv, span);
+            }
+            // Structural: Function
+            (
+                MonoType::Function { params: p1, ret: r1 },
+                MonoType::Function { params: p2, ret: r2 },
+            ) => {
+                if p1.len() != p2.len() {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: expected.clone(),
+                        actual: actual.clone(),
+                        span,
+                        note: None,
+                    });
+                    return Err(());
+                }
+                let pairs: Vec<_> = p1.iter().zip(p2.iter()).map(|(a, b)| (a.clone(), b.clone())).collect();
+                for (a, b) in pairs {
+                    self.unify(&a, &b, span)?;
+                }
+                let r1 = r1.as_ref().clone();
+                let r2 = r2.as_ref().clone();
+                return self.unify(&r1, &r2, span);
+            }
+            // Structural: Named
+            (
+                MonoType::Named { type_id: id1, args: a1 },
+                MonoType::Named { type_id: id2, args: a2 },
+            ) => {
+                if id1 != id2 || a1.len() != a2.len() {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected: expected.clone(),
+                        actual: actual.clone(),
+                        span,
+                        note: None,
+                    });
+                    return Err(());
+                }
+                let pairs: Vec<_> = a1.iter().zip(a2.iter()).map(|(a, b)| (a.clone(), b.clone())).collect();
+                for (a, b) in pairs {
+                    self.unify(&a, &b, span)?;
+                }
+                return Ok(());
+            }
+            _ => {}
         }
+
         self.errors.push(TypeError::TypeMismatch {
             expected: expected.clone(),
             actual: actual.clone(),
@@ -2734,37 +2920,6 @@ impl TypeChecker {
 // Generic substitution helpers
 // ---------------------------------------------------------------------------
 
-/// Unify `expected` (which may contain Var) against `actual` (concrete).
-/// On success, adds substitutions to `subst`. Returns false on structural mismatch.
-fn collect_subst(expected: &MonoType, actual: &MonoType, subst: &mut HashMap<String, MonoType>) -> bool {
-    match (expected, actual) {
-        (MonoType::Var(name), _) => {
-            if let Some(existing) = subst.get(name) {
-                existing == actual
-            } else {
-                subst.insert(name.clone(), actual.clone());
-                true
-            }
-        }
-        (MonoType::Array(a), MonoType::Array(b)) => collect_subst(a, b, subst),
-        (MonoType::Dict(ak, av), MonoType::Dict(bk, bv)) => {
-            collect_subst(ak, bk, subst) && collect_subst(av, bv, subst)
-        }
-        (MonoType::Function { params: p1, ret: r1 }, MonoType::Function { params: p2, ret: r2 }) => {
-            p1.len() == p2.len()
-                && p1.iter().zip(p2.iter()).all(|(a, b)| collect_subst(a, b, subst))
-                && collect_subst(r1, r2, subst)
-        }
-        (MonoType::Named { type_id: id1, args: a1 }, MonoType::Named { type_id: id2, args: a2 }) => {
-            id1 == id2
-                && a1.len() == a2.len()
-                && a1.iter().zip(a2.iter()).all(|(a, b)| collect_subst(a, b, subst))
-        }
-        (MonoType::Never, _) | (_, MonoType::Never) => true,
-        (a, b) => a == b,
-    }
-}
-
 /// Build a substitution map from type parameter names to concrete type arguments.
 pub fn build_type_subst(type_params: &[String], args: &[MonoType]) -> HashMap<String, MonoType> {
     type_params.iter().zip(args.iter())
@@ -2793,15 +2948,3 @@ pub fn apply_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType
     }
 }
 
-fn type_contains_var(ty: &MonoType) -> bool {
-    match ty {
-        MonoType::Var(_) => true,
-        MonoType::Array(e) => type_contains_var(e),
-        MonoType::Dict(k, v) => type_contains_var(k) || type_contains_var(v),
-        MonoType::Function { params, ret } => {
-            params.iter().any(type_contains_var) || type_contains_var(ret)
-        }
-        MonoType::Named { args, .. } => args.iter().any(type_contains_var),
-        _ => false,
-    }
-}

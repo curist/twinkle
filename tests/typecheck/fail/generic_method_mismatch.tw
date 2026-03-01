@@ -1,0 +1,8 @@
+// Error: generic inherent method return type must unify with annotation.
+// `Box<String>.get()` returns String, not Int.
+
+type Box<T> = .{ value: T }
+fn get<T>(b: Box<T>) T { b.value }
+
+b := Box.{ value: "hello" }
+x: Int = b.get()   // should fail: String != Int

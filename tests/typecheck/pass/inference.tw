@@ -1,0 +1,16 @@
+// Generic function inference: MetaVars are solved from argument types.
+
+fn id<A>(x: A) A { x }
+
+// These should all type-check with inferred concrete types:
+result_int := id(42)          // infers Int
+result_str := id("hello")     // infers String
+
+// Type annotation provides concrete type for the binding:
+annotated: fn(Int) Int = id
+
+fn apply<A, B>(f: fn(A) B, x: A) B {
+    f(x)
+}
+
+doubled := apply(fn(n: Int) Int { n * 2 }, 5)

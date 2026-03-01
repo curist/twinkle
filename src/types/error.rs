@@ -120,6 +120,18 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+
+    /// Occurs check failed: infinite type would be created
+    OccursCheckFailed {
+        span: Span,
+    },
+
+    /// Binding type is ambiguous (contains unsolved MetaVars after checking)
+    AmbiguousType {
+        name: String,
+        span: Span,
+        note: String,
+    },
 }
 
 impl TypeError {
@@ -299,6 +311,18 @@ impl TypeError {
                     "Dict key must be Int or String, but got: {}\nBool, Float, and compound types are not allowed as Dict keys.",
                     fmt_type(key_type)
                 )),
+            ),
+            TypeError::OccursCheckFailed { span } => self.format_error(
+                registry,
+                *span,
+                "Occurs check failed: infinite type",
+                Some("Cannot construct an infinite type"),
+            ),
+            TypeError::AmbiguousType { name, span, note } => self.format_error(
+                registry,
+                *span,
+                &format!("Ambiguous type for '{}'", name),
+                Some(note),
             ),
         }
     }

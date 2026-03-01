@@ -605,7 +605,7 @@ Deliverables (done when all below are true):
 
 ---
 
-### Stage 6c — Full Damas–Milner Inference ⬅ Next
+### Stage 6c — Full Damas–Milner Inference ✅
 
 **Goal:** Complete the type inference engine with unification, generalization, and instantiation at use sites.
 
@@ -613,34 +613,47 @@ Features:
 
 * True type variables and unification:
 
-  * Fresh type variables at instantiation sites.
-  * Unification engine (union-find or substitution map).
-  * `occurs` check.
+  * `MonoType::MetaVar(u32)` — fresh unification variables created at each generic instantiation site.
+  * Full structural unification engine with occurs check.
+  * `zonk` / `zonk_ty` — apply substitution maps to resolve MetaVars after checking.
 
-* Generalization at `fn` declarations (not local `:=` bindings) (spec §21 Generalization Rules):
+* Generalization at `fn` declarations (not local `:=` bindings):
 
   * `fn id<A>(x: A) A { x }` — polymorphic; `A` is generic.
-  * `f := id` — error: cannot infer monomorphic type for polymorphic binding; must annotate.
+  * `f := id` — error (`AmbiguousType`): cannot bind a polymorphic function without a type annotation.
+  * `annotated: fn(Int) Int = id` — annotation provides a concrete type; accepted.
 
-* Instantiation at use sites:
+* Instantiation at use sites (all dispatch paths):
 
-  * Each call to a generic function gets fresh type vars that unify with argument types.
-  * `fn map<A,B>(xs: Array<A>, f: fn(A) B) Array<B>` — type vars resolved per call.
+  * Direct calls: `id(42)` → fresh MetaVar solved to `Int` by argument.
+  * Module-qualified calls: `lib.id("s")` instantiated from full `FunctionSignature`.
+  * Inherent method calls: `box.get()` where `box: Box<String>` — receiver type unifies MetaVars.
+  * Zero-arg generic variants: `UnfoldStep.Done` via field-access path now uses MetaVars, not raw `Var`.
+  * `TypeName.Variant(args)` calls: already used MetaVars; verified consistent.
+
+* Soundness invariants enforced:
+
+  * `Var(_)` wildcard removed from `unify` — `fn bad<A>(x: A) Int { x }` is now a type error.
+  * `AmbiguousType` reported for: unannotated bindings holding unsolved MetaVars, inferred function return types containing MetaVars, generic references used without calling.
+  * `OccursCheckFailed` guard in `solve_meta` for infinite-type prevention (unreachable at current language level due to required parameter annotations; documented in-code for when unannotated lambdas are introduced).
+  * Per-function MetaVar scope: `meta_subst` cleared and TypeMap zonked after each function; final zonk after module-level stmts.
 
 Core IR does not change; it just gets richer type annotations.
 
 Deliverables:
 
-* `twk check` supports call-site type inference for generic functions.
+* `twk check` supports call-site type inference for generic functions across all dispatch paths.
 * Type inference tests:
 
-  * polymorphic functions called without explicit type args,
-  * higher-order functions,
-  * errors where inference fails or constraints are violated.
+  * `tests/typecheck/pass/inference.tw` — direct calls, higher-order (`apply`), annotated binding.
+  * `tests/typecheck/fail/polymorphic_binding.tw` — `f := id` rejected as ambiguous.
+  * `tests/typecheck/fail/generic_body_return_mismatch.tw` — `fn bad<A>(x: A) Int { x }` rejected.
+  * `tests/typecheck/fail/generic_method_mismatch.tw` — `Box<String>.get()` assigned to `Int` rejected.
+  * `tests/typecheck/fail/generic_ref_escape.tw` — unapplied generic reference in function body rejected.
 
 ---
 
-### Stage 7 — ANF IR (Backend-Oriented, Optional)
+### Stage 7 — ANF IR (Backend-Oriented, Optional) ⬅ Next
 
 **Goal:** Add an ANF representation for backend use.
 

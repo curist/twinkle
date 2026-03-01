@@ -1,4 +1,5 @@
 use std::fmt;
+use std::collections::HashMap;
 
 // Note on module dependencies:
 // ty.rs defines core types (MonoType, TypeDef, etc.)
@@ -44,6 +45,10 @@ pub enum MonoType {
     /// Bottom/never type — produced by diverging expressions (break/continue/return)
     /// Unifies with any type
     Never,
+
+    /// Unification metavariable — created fresh at each generic instantiation site.
+    /// Strict invariant: must never appear in TypeMap after type checking completes.
+    MetaVar(u32),
 
     /// User-defined nominal type (record or sum type)
     /// args is empty in Stage 2 but prepared for Stage 5 generics
@@ -112,6 +117,7 @@ impl MonoType {
             MonoType::String => "String".to_string(),
             MonoType::Void => "Void".to_string(),
             MonoType::Never => "Never".to_string(),
+            MonoType::MetaVar(id) => format!("?{}", id),
             MonoType::Named { type_id, args } => {
                 if let Some(def) = type_env.get_def(*type_id) {
                     let name = def.name();
@@ -161,6 +167,7 @@ impl fmt::Display for MonoType {
             MonoType::String => write!(f, "String"),
             MonoType::Void => write!(f, "Void"),
             MonoType::Never => write!(f, "Never"),
+            MonoType::MetaVar(id) => write!(f, "?{}", id),
             MonoType::Named { type_id, args } => {
                 if args.is_empty() {
                     write!(f, "Type#{}", type_id.0)
@@ -265,4 +272,43 @@ pub struct FunctionSignature {
     pub type_params: Vec<String>, // generic type parameter names (e.g. ["A", "B"])
     pub params: Vec<MonoType>,
     pub ret: Option<MonoType>, // None means infer from body
+}
+
+/// Apply meta-variable substitution to a type (zonking).
+/// Recursively follows chains: if ?0 → ?1 → Int, returns Int.
+pub fn zonk_ty(ty: &MonoType, meta_subst: &HashMap<u32, MonoType>) -> MonoType {
+    match ty {
+        MonoType::MetaVar(id) => match meta_subst.get(id) {
+            Some(resolved) => zonk_ty(resolved, meta_subst), // follow chains
+            None => ty.clone(),                               // unsolved
+        },
+        MonoType::Array(elem) => MonoType::Array(Box::new(zonk_ty(elem, meta_subst))),
+        MonoType::Dict(k, v) => MonoType::Dict(
+            Box::new(zonk_ty(k, meta_subst)),
+            Box::new(zonk_ty(v, meta_subst)),
+        ),
+        MonoType::Function { params, ret } => MonoType::Function {
+            params: params.iter().map(|p| zonk_ty(p, meta_subst)).collect(),
+            ret: Box::new(zonk_ty(ret, meta_subst)),
+        },
+        MonoType::Named { type_id, args } => MonoType::Named {
+            type_id: *type_id,
+            args: args.iter().map(|a| zonk_ty(a, meta_subst)).collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Check whether a type contains any unsolved MetaVar.
+pub fn contains_meta(ty: &MonoType) -> bool {
+    match ty {
+        MonoType::MetaVar(_) => true,
+        MonoType::Array(e) => contains_meta(e),
+        MonoType::Dict(k, v) => contains_meta(k) || contains_meta(v),
+        MonoType::Function { params, ret } => {
+            params.iter().any(contains_meta) || contains_meta(ret)
+        }
+        MonoType::Named { args, .. } => args.iter().any(contains_meta),
+        _ => false,
+    }
 }

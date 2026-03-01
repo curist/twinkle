@@ -324,6 +324,8 @@ fn type_error_primary_span(err: &TypeError) -> Span {
         TypeError::FieldMethodCollision { span, .. } => *span,
         TypeError::InvalidDictKey { span, .. } => *span,
         TypeError::ModuleScopeRebinding { span, .. } => *span,
+        TypeError::OccursCheckFailed { span } => *span,
+        TypeError::AmbiguousType { span, .. } => *span,
     }
 }
 
@@ -347,6 +349,8 @@ fn type_error_code(err: &TypeError) -> &'static str {
         TypeError::FieldMethodCollision { .. } => "E_FIELD_METHOD_COLLISION",
         TypeError::InvalidDictKey { .. } => "E_INVALID_DICT_KEY",
         TypeError::ModuleScopeRebinding { .. } => "E_MODULE_SCOPE_REBINDING",
+        TypeError::OccursCheckFailed { .. } => "E_OCCURS_CHECK_FAILED",
+        TypeError::AmbiguousType { .. } => "E_AMBIGUOUS_TYPE",
     }
 }
 

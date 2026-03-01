@@ -1,0 +1,4 @@
+// Error: the body of a generic function must type-check against its declared return type.
+// `x` has type A but the function claims to return Int — unsound coercion.
+
+fn bad<A>(x: A) Int { x }

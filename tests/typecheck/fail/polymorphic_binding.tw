@@ -1,0 +1,5 @@
+// Error: binding a polymorphic function without a type annotation is ambiguous.
+// `id` has type fn(?0) ?0 after instantiation — the MetaVar ?0 is unsolved.
+
+fn id<A>(x: A) A { x }
+f := id   // should fail: AmbiguousType
