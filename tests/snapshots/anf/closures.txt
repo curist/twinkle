@@ -5,17 +5,17 @@
 fn test_capture  [FuncId(38)]  params=[]
   return_ty: Void
   body:
-    let L2 = assign(L2 = 0)
+    let L2 = init(0)
     let L6 = closure(FuncId(40), free=[L2])
-    let L3 = assign(L3 = L6)
+    let L3 = init(L6)
     let L7 = binop(Add, L2, 1)
     let L8 = assign(L2 = L7)
-    let L5 = assign(L5 = void)
+    let L5 = init(void)
     let L9 = call L3 ()
     let L10 = call GlobalFunc(4) (L9)
     let L11 = call GlobalFunc(9) ("", L10)
     let L12 = call GlobalFunc(2) (L11)
-    let L4 = assign(L4 = L12)
+    let L4 = init(L12)
     let L13 = call GlobalFunc(4) (L2)
     let L14 = call GlobalFunc(9) ("", L13)
     let L15 = call GlobalFunc(2) (L14)
@@ -31,70 +31,70 @@ fn __init__  [FuncId(43)]  params=[]
   return_ty: Void
   body:
     let L20 = call GlobalFunc(38) ()
-    let L19 = assign(L19 = L20)
+    let L19 = init(L20)
     let L21 = call GlobalFunc(39) (10)
-    let L0 = assign(L0 = L21)
+    let L0 = init(L21)
     let L22 = call L0 (0)
     let L23 = call GlobalFunc(4) (L22)
     let L24 = call GlobalFunc(9) ("", L23)
     let L25 = call GlobalFunc(2) (L24)
-    let L18 = assign(L18 = L25)
+    let L18 = init(L25)
     let L26 = call L0 (0)
     let L27 = call GlobalFunc(4) (L26)
     let L28 = call GlobalFunc(9) ("", L27)
     let L29 = call GlobalFunc(2) (L28)
-    let L17 = assign(L17 = L29)
+    let L17 = init(L29)
     let L30 = array[0, 1, 2]
-    let L2 = assign(L2 = L30)
+    let L2 = init(L30)
     let L31 = array[]
-    let L3 = assign(L3 = L31)
+    let L3 = init(L31)
     let L32 = call GlobalFunc(10) (L2)
-    let L4 = assign(L4 = L32)
-    let L5 = assign(L5 = 0)
+    let L4 = init(L32)
+    let L5 = init(0)
     let L41 = loop {
       let L33 = binop(Ge, L5, L4)
       let L40 = if L33 {
         break L3
       } else {
         let L34 = index(L2, L5)
-        let L6 = assign(L6 = L34)
+        let L6 = init(L34)
         let L35 = binop(Add, L5, 1)
         let L36 = assign(L5 = L35)
-        let L9 = assign(L9 = void)
+        let L9 = init(void)
         let L37 = closure(FuncId(42), free=[L6])
-        let L7 = assign(L7 = L37)
+        let L7 = init(L37)
         let L38 = call GlobalFunc(11) (L3, L7)
         let L39 = assign(L3 = L38)
-        let L8 = assign(L8 = void)
+        let L8 = init(void)
         continue
       }
       L40
     }
-    let L1 = assign(L1 = L41)
-    let L10 = assign(L10 = L1)
+    let L1 = init(L41)
+    let L10 = init(L1)
     let L42 = call GlobalFunc(10) (L10)
-    let L11 = assign(L11 = L42)
-    let L12 = assign(L12 = 0)
+    let L11 = init(L42)
+    let L12 = init(0)
     let L52 = loop {
       let L43 = binop(Ge, L12, L11)
       let L51 = if L43 {
         break
       } else {
         let L44 = index(L10, L12)
-        let L13 = assign(L13 = L44)
+        let L13 = init(L44)
         let L45 = call L13 ()
         let L46 = call GlobalFunc(4) (L45)
         let L47 = call GlobalFunc(9) ("", L46)
         let L48 = call GlobalFunc(2) (L47)
-        let L15 = assign(L15 = L48)
+        let L15 = init(L48)
         let L49 = binop(Add, L12, 1)
         let L50 = assign(L12 = L49)
-        let L14 = assign(L14 = void)
+        let L14 = init(void)
         continue
       }
       L51
     }
-    let L16 = assign(L16 = L52)
+    let L16 = init(L52)
     void
 
 fn <lambda@268>  [FuncId(40)]  params=[]

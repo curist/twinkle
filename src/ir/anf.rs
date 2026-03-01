@@ -130,9 +130,16 @@ pub enum AnfOp {
         base: Atom,
         index: Atom,
     },
+    /// Initial binding — introduces a new local for the first time.
+    /// Used for `CoreExprKind::Let` lowering. Maps to Wasm `local.set` of a
+    /// freshly declared local. Distinct from `AAssign` (existing-local mutation).
+    /// The enclosing `AnfExpr::Let.local` names the local being initialized.
+    AInit {
+        value: Atom,
+    },
     /// Local mutation (maps to Wasm `local.set`): value is atom.
-    /// Result is void; the binding local in the enclosing `Let` is a fresh temp
-    /// that gets ALitVoid as its continuation atom.
+    /// Used for `CoreExprKind::Assign` lowering. Mutates an already-declared local.
+    /// Result is void; the binding local in the enclosing `Let` is a fresh temp.
     AAssign {
         local: LocalId,
         value: Atom,
@@ -292,6 +299,9 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
         }
         AnfOp::AIndex { base, index } => {
             write!(f, "index({}, {})", base, index)
+        }
+        AnfOp::AInit { value } => {
+            write!(f, "init({})", value)
         }
         AnfOp::AAssign { local, value } => {
             write!(f, "assign(L{} = {})", local.0, value)

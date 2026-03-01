@@ -193,40 +193,19 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             AnfExpr::Atom(Atom::ALitVoid)
         }
 
-        // ── Let: bind value to orig_local, then lower body ────────────────────
-        // We flush the current accum, produce a Let for orig_local, then lower body.
+        // ── Let: introduce a new binding for orig_local, then lower body ────────
+        // Uses AInit (not AAssign) — this is a fresh local introduction, not mutation.
         CoreExprKind::Let { local: orig_local, value, body } => {
             let orig_local = *orig_local;
             // Lower value: collect its ops into accum, get the result atom/expr.
             let value_result = lower_expr(value, next_temp, accum);
-            // Bind the result of value to orig_local.
             match value_result {
                 AnfExpr::Atom(atom) => {
-                    // Simple case: value reduced to an atom. Bind orig_local to it.
-                    accum.push((orig_local, AnfOp::AAssign { local: orig_local, value: atom }));
+                    // Value reduced to an atom — initialize orig_local with it.
+                    // AInit marks this as a new binding (distinct from AAssign mutation).
+                    accum.push((orig_local, AnfOp::AInit { value: atom }));
                 }
-                AnfExpr::Let { .. } => {
-                    // This shouldn't happen: lower_expr for non-structural forms always
-                    // returns Atom (with ops in accum). For structural forms (If/Match/Loop),
-                    // they return a Let-chain. We need to emit those into accum too.
-                    // Handle by unwinding the Let chain.
-                    // Actually: for structural forms, we need to:
-                    // 1. Flush accum (build the let-chain so far as prefix).
-                    // 2. Lower the structural value independently.
-                    // 3. Bind its result atom to orig_local.
-                    // 4. Continue with body.
-                    //
-                    // Since we're in the imperative style, the cleaner approach is:
-                    // for structural values, we snapshot the accum, lower the value
-                    // independently, and splice the result binding into orig_local.
-                    // But lower_expr returned an AnfExpr here — we need to re-lower.
-                    //
-                    // This indicates a design issue: lower_expr should return Atom always
-                    // for non-structural, and full AnfExpr for structural.
-                    // We handle this by checking value.kind before calling lower_expr.
-                    unreachable!("lower_expr returned Let for a non-structural value — this is a bug");
-                }
-                // Terminals: the body is unreachable.
+                // Terminals: body is unreachable; propagate the terminal upward.
                 terminal => {
                     return terminal;
                 }
@@ -331,27 +310,14 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             Atom::ALocal(tmp)
         }
 
-        // Break/Continue/Return: these are terminals — atomizing them doesn't make sense.
-        // If they appear in atomize position, it's because of a structural expression
-        // that terminates early. We handle them as void atoms but push the terminal
-        // as a special marker.
-        CoreExprKind::Break { value: None } => {
-            accum.push((LocalId(u32::MAX), AnfOp::AAssign { local: LocalId(u32::MAX), value: Atom::ALitVoid }));
-            Atom::ALitVoid
-        }
-        CoreExprKind::Break { value: Some(val) } => {
-            let atom = atomize(val, next_temp, accum);
-            accum.push((LocalId(u32::MAX), AnfOp::AAssign { local: LocalId(u32::MAX), value: atom }));
-            Atom::ALitVoid
-        }
-        CoreExprKind::Continue => {
-            Atom::ALitVoid
-        }
-        CoreExprKind::Return { value: None } => {
-            Atom::ALitVoid
-        }
-        CoreExprKind::Return { value: Some(val) } => {
-            atomize(val, next_temp, accum)
+        // Break/Continue/Return in operand (atomize) position indicates malformed Core IR.
+        // A terminal expression cannot produce a value that is used as an operand.
+        // The type checker prevents this via Never-typed expressions, but guard anyway.
+        CoreExprKind::Break { .. } | CoreExprKind::Continue | CoreExprKind::Return { .. } => {
+            panic!(
+                "ANF lowering: terminal expression ({:?}) in operand position — Core IR is malformed",
+                &expr.kind
+            );
         }
 
         // Non-atomic: push the op to accum, return temp atom.
@@ -454,16 +420,17 @@ fn flatten_into_accum(anf: AnfExpr, accum: &mut LetAccum, result_local: LocalId)
         AnfExpr::Atom(atom) => {
             accum.push((result_local, AnfOp::AAssign { local: result_local, value: atom }));
         }
-        // Terminals: the binding is unreachable.
+        // A terminal (Return/Break/Continue) in flattening position means the structural
+        // sub-expression always diverges. This indicates the Core IR has a terminal as the
+        // value of a Let binding or in an otherwise unexpected position. The lowerer does
+        // not generate such trees; if this panics, investigate the Core IR producer.
         AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => {
-            // Push a terminal marker — the result_local will never be used.
-            // We can't push terminals to accum (which only holds (LocalId, AnfOp) pairs).
-            // Instead, we need a way to signal that the code after this is unreachable.
-            // For now, we add a dummy void assign (will be cleaned up in a later pass).
-            accum.push((
-                result_local,
-                AnfOp::AAssign { local: result_local, value: Atom::ALitVoid },
-            ));
+            panic!(
+                "ANF lowering: terminal expression in flatten_into_accum — \
+                 structural sub-expression diverges (result_local = L{}). \
+                 Core IR should not have terminals in value position.",
+                result_local.0
+            );
         }
     }
 }

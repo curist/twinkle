@@ -51,7 +51,14 @@ fn check_anf_func(func: &AnfFunctionDef, prog: &str) {
 
 fn check_anf_expr(expr: &AnfExpr, prog: &str, func: &str) {
     match expr {
-        AnfExpr::Let { local: _, op, body } => {
+        AnfExpr::Let { local, op, body } => {
+            // Let.local must be a valid local (not a sentinel or garbage value).
+            // u32::MAX was used as a broken sentinel before AInit was introduced.
+            assert_ne!(
+                local.0, u32::MAX,
+                "Sentinel LocalId(MAX) in Let.local — lowering bug in '{}' function '{}'",
+                prog, func
+            );
             check_anf_op(op, prog, func);
             check_anf_expr(body, prog, func);
         }
@@ -119,6 +126,9 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
             assert_is_atom(base, "AIndex.base", prog, func);
             assert_is_atom(index, "AIndex.index", prog, func);
         }
+        AnfOp::AInit { value } => {
+            assert_is_atom(value, "AInit.value", prog, func);
+        }
         AnfOp::AAssign { value, .. } => {
             assert_is_atom(value, "AAssign.value", prog, func);
         }
@@ -127,9 +137,10 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
 
 /// Assert that an `Atom` is a valid atom (always true by type — this confirms
 /// the lowering produced proper atoms rather than trying to embed expressions).
-fn assert_is_atom(atom: &Atom, context: &str, prog: &str, func: &str) {
+fn assert_is_atom(atom: &Atom, _context: &str, _prog: &str, _func: &str) {
     // By construction, all AnfOp fields of type Atom ARE atoms.
-    // This assertion documents and checks the structural invariant.
+    // This exhaustive match documents the structural invariant and ensures
+    // the compiler catches any new Atom variants added to the type.
     match atom {
         Atom::ALocal(_)
         | Atom::AGlobalFunc(_)
@@ -138,19 +149,8 @@ fn assert_is_atom(atom: &Atom, context: &str, prog: &str, func: &str) {
         | Atom::ALitBool(_)
         | Atom::ALitStr(_)
         | Atom::ALitVoid => {
-            // Valid atom.
+            // Valid atom — all cases accounted for.
         }
-    }
-    // Also check that AAssign sentinel (LocalId::MAX) does not appear in real ops.
-    if let Atom::ALocal(id) = atom {
-        assert_ne!(
-            id.0,
-            u32::MAX,
-            "Sentinel LocalId(MAX) found in {} for program '{}' function '{}'",
-            context,
-            prog,
-            func
-        );
     }
 }
 
