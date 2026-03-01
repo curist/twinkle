@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ir::anf::{Atom, AnfExpr, AnfMatchArm, AnfOp};
 use crate::ir::core::LocalId;
-use crate::opt::use_count::is_pure;
+use crate::opt::use_count::{count_uses_excluding_free_vars, is_pure};
 use crate::syntax::ast::{BinOp, UnOp};
 
 // ── Substitution helper ───────────────────────────────────────────────────────
@@ -12,13 +12,24 @@ use crate::syntax::ast::{BinOp, UnOp};
 /// Only called with non-local atoms (literals or `AGlobalFunc`), so there is
 /// no risk of capturing or skipping a mutation of `replacement` between the
 /// definition and the use.
+///
+/// ANF invariant: LocalIds are unique within a function — no two `Let` nodes
+/// bind the same `LocalId`. If that invariant holds, the shadow-stop guard
+/// below (`local == target`) can never trigger in valid input; it is included
+/// as a safety net against any future violation of that invariant.
 pub fn subst_atom(body: AnfExpr, target: LocalId, replacement: &Atom) -> AnfExpr {
     match body {
-        AnfExpr::Let { local, op, body } => AnfExpr::Let {
-            local,
-            op: Box::new(subst_op(*op, target, replacement)),
-            body: Box::new(subst_atom(*body, target, replacement)),
-        },
+        AnfExpr::Let { local, op, body } => {
+            let new_op = Box::new(subst_op(*op, target, replacement));
+            // If this Let rebinds `target`, do not substitute further into
+            // its body (shadow-stop guard for ANF unique-LocalId safety).
+            let new_body = if local == target {
+                body
+            } else {
+                Box::new(subst_atom(*body, target, replacement))
+            };
+            AnfExpr::Let { local, op: new_op, body: new_body }
+        }
         AnfExpr::Return(Some(a)) => AnfExpr::Return(Some(subst_atom_val(a, target, replacement))),
         AnfExpr::Return(None) => AnfExpr::Return(None),
         AnfExpr::Break(Some(a)) => AnfExpr::Break(Some(subst_atom_val(a, target, replacement))),
@@ -65,20 +76,14 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
         }
         AnfOp::AUnOp { op, expr } => AnfOp::AUnOp { op, expr: sa(expr) },
         AnfOp::AMakeClosure { func_id, free_vars } => {
-            // free_vars are LocalIds, not Atoms — substitute if matching
-            let free_vars = free_vars
-                .into_iter()
-                .map(|v| {
-                    if v == target {
-                        // replacement must be ALocal for free_vars to work;
-                        // but we only substitute literals — so if target appears
-                        // as a free var it cannot be a literal. Leave as-is.
-                        v
-                    } else {
-                        v
-                    }
-                })
-                .collect();
+            // free_vars are Vec<LocalId>, not Vec<Atom>. We cannot substitute
+            // a literal atom into a free_var slot (Wasm closure capture requires
+            // a local, not an immediate). We leave free_vars unchanged.
+            //
+            // copy_propagate guards against this: it calls `uses_excluding_free_vars`
+            // and only propagates when the free-var-excluded count <= 1, ensuring
+            // that a local whose sole use is as a free_var is never propagated
+            // (which would drop the binding Let and orphan the closure).
             AnfOp::AMakeClosure { func_id, free_vars }
         }
         AnfOp::ARecord { type_id, fields } => AnfOp::ARecord {
@@ -174,11 +179,23 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
 // ── Literal copy propagation ──────────────────────────────────────────────────
 
 /// Inline `Let(t, AInit(lit), body)` where `lit` is a non-local atom and
-/// `t` is used at most once. Safe because literals cannot be mutated between
-/// definition and use.
+/// `t` is used at most once *excluding closure free_var positions*.
+///
+/// The free_var exclusion is critical: `AMakeClosure.free_vars` holds
+/// `LocalId`s (not `Atom`s) and cannot receive literal substitution.
+/// If a local's only use is as a free_var, propagating it would drop
+/// the defining `Let` while leaving the free_var referencing an unbound
+/// local — producing invalid ANF. By using `count_uses_excluding_free_vars`,
+/// such locals are conservatively kept alive.
 ///
 /// Returns `(new_expr, changed)`.
-pub fn copy_propagate(
+pub fn copy_propagate(body: AnfExpr) -> (AnfExpr, bool) {
+    // Recompute use counts excluding free_var positions for safety.
+    let uses = count_uses_excluding_free_vars(&body);
+    copy_propagate_inner(body, &uses)
+}
+
+fn copy_propagate_inner(
     body: AnfExpr,
     uses: &HashMap<LocalId, usize>,
 ) -> (AnfExpr, bool) {
@@ -195,7 +212,7 @@ pub fn copy_propagate(
             }
             // Recurse into sub-expressions.
             let (new_op, op_changed) = copy_propagate_op(*op, uses);
-            let (new_body, body_changed) = copy_propagate(*body, uses);
+            let (new_body, body_changed) = copy_propagate_inner(*body, uses);
             (
                 AnfExpr::Let {
                     local,
@@ -218,8 +235,8 @@ fn is_non_local_atom(a: &Atom) -> bool {
 fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) {
     match op {
         AnfOp::AIf { cond, then_branch, else_branch } => {
-            let (new_then, c1) = copy_propagate(*then_branch, uses);
-            let (new_else, c2) = copy_propagate(*else_branch, uses);
+            let (new_then, c1) = copy_propagate_inner(*then_branch, uses);
+            let (new_else, c2) = copy_propagate_inner(*else_branch, uses);
             (
                 AnfOp::AIf {
                     cond,
@@ -234,7 +251,7 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
             let arms = arms
                 .into_iter()
                 .map(|AnfMatchArm { pattern, body }| {
-                    let (new_body, c) = copy_propagate(body, uses);
+                    let (new_body, c) = copy_propagate_inner(body, uses);
                     changed |= c;
                     AnfMatchArm { pattern, body: new_body }
                 })
@@ -242,7 +259,7 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
-            let (new_body, changed) = copy_propagate(*body, uses);
+            let (new_body, changed) = copy_propagate_inner(*body, uses);
             (AnfOp::ALoop { body: Box::new(new_body) }, changed)
         }
         other => (other, false),
@@ -291,9 +308,9 @@ fn fold_binop(op: BinOp, left: &Atom, right: &Atom) -> Option<Atom> {
     match (left, right) {
         (Atom::ALitInt(a), Atom::ALitInt(b)) => {
             let result = match op {
-                BinOp::Add => *a + *b,
-                BinOp::Sub => *a - *b,
-                BinOp::Mul => *a * *b,
+                BinOp::Add => a.wrapping_add(*b),
+                BinOp::Sub => a.wrapping_sub(*b),
+                BinOp::Mul => a.wrapping_mul(*b),
                 // Leave div/mod by zero for runtime trap.
                 BinOp::Div if *b == 0 => return None,
                 BinOp::Div => *a / *b,

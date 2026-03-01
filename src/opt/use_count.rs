@@ -130,6 +130,46 @@ pub fn is_pure(op: &AnfOp) -> bool {
     // AIf / AMatch / ALoop: contain arbitrary sub-expressions — conservative.
 }
 
+/// Count uses of each `LocalId` in *atom* positions only — identical to
+/// `count_uses` but excluding appearances in `AMakeClosure.free_vars`.
+///
+/// Used by `copy_propagate` to determine whether it is safe to substitute
+/// a non-local atom for a local: if a local's only use is as a closure
+/// free_var, substitution would orphan the free_var reference (because
+/// `AMakeClosure.free_vars` holds `LocalId`s, not `Atom`s, and cannot
+/// receive a literal). By excluding free_var appearances, `copy_propagate`
+/// conservatively keeps the binding alive in that case.
+pub fn count_uses_excluding_free_vars(body: &AnfExpr) -> HashMap<LocalId, usize> {
+    let mut map = HashMap::new();
+    count_expr_ex(body, &mut map);
+    map
+}
+
+fn count_op_ex(op: &AnfOp, map: &mut HashMap<LocalId, usize>) {
+    match op {
+        // AMakeClosure: do NOT count free_vars — they are LocalIds in a
+        // closure-capture position and cannot receive literal substitution.
+        AnfOp::AMakeClosure { .. } => {}
+        // All other ops: delegate to the standard count_op.
+        other => count_op(other, map),
+    }
+}
+
+fn count_expr_ex(expr: &AnfExpr, map: &mut HashMap<LocalId, usize>) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            count_op_ex(op, map);
+            count_expr_ex(body, map);
+        }
+        AnfExpr::Return(Some(a)) => count_atom(a, map),
+        AnfExpr::Return(None) => {}
+        AnfExpr::Break(Some(a)) => count_atom(a, map),
+        AnfExpr::Break(None) => {}
+        AnfExpr::Continue => {}
+        AnfExpr::Atom(a) => count_atom(a, map),
+    }
+}
+
 /// Collect all `LocalId`s referenced as *operands* in `op`'s atom fields.
 /// Used by the liveness analysis.
 pub fn locals_in_op(op: &AnfOp) -> Vec<LocalId> {

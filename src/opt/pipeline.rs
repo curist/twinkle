@@ -16,8 +16,7 @@ pub fn optimize_func(mut func: AnfFunctionDef) -> AnfFunctionDef {
         func.body = body;
         changed |= c;
 
-        let uses = count_uses(&func.body);
-        let (body, c) = copy_propagate(func.body, &uses);
+        let (body, c) = copy_propagate(func.body);
         func.body = body;
         changed |= c;
 
