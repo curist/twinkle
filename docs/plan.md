@@ -763,7 +763,7 @@ Deliverables:
 
 ---
 
-### Stage 7.5 — Dataflow Analysis & ANF Optimization ⬅ Next
+### Stage 7.5 — Dataflow Analysis & ANF Optimization ✅
 
 **Goal:** Introduce a dataflow-aware optimization pass over ANF IR — computing use-def
 information and applying peephole rewrites — to reduce redundant computation before WAT
@@ -1000,7 +1000,11 @@ The nested-loop case works correctly: entering `ALoop` folds the current `loop_d
   from tree-sitter work; verify parser handles it).
 * **AST** — `StmtKind::Defer(ExprId)`.
 * **Type checker** — type-check the deferred expression in the current scope; result type
-  is discarded (any type accepted).
+  is discarded. Any expression type is accepted — function calls, block expressions, etc.
+  Expressions with type `Never` (i.e. those that diverge: `return`, `break`, `continue`,
+  `error(...)`) are rejected at the type-check level, because a defer body that itself
+  performs a non-local exit would silently swallow the surrounding control flow and is
+  almost certainly a bug.
 * **Core IR** — `CoreExprKind::Defer(ExprId)` as an opaque pass-through node; lowerer emits it
   directly without desugaring.
 * **Interpreter** — maintain a defer stack (a `Vec<Vec<CoreExpr>>`) alongside the eval frame;
