@@ -4,23 +4,20 @@
 ; Generic identifier - FIRST, so specific captures can override
 (identifier) @variable
 
-; Keywords
-[
-  "fn"
-  "type"
-  "use"
-  "as"
-  "pub"
-  "if"
-  "else"
-  "case"
-  "for"
-  "in"
-  "collect"
-  "try"
-] @keyword
+; Keywords by semantic role
+"fn" @keyword.function
 
-; Statement keywords
+"type" @keyword.type
+
+[ "use" "as" ] @keyword.import
+
+"pub" @keyword.modifier
+
+[ "if" "else" "case" "for" "in" "collect" ] @keyword.control
+
+"try" @keyword.exception
+
+; Control flow keywords
 (break_statement) @keyword.control
 (continue_statement) @keyword.control
 
@@ -46,9 +43,9 @@
   ">"
   ">="
   "!"
-  "and"
-  "or"
 ] @operator
+
+[ "and" "or" ] @keyword.operator
 
 ; Boolean literals
 (bool_literal) @boolean
@@ -60,6 +57,7 @@
 ; Strings
 (string_literal) @string
 (string_content) @string
+(escape_sequence) @string.escape
 
 ; Comments
 (comment) @comment
@@ -86,15 +84,9 @@
 (function_declaration
   name: (identifier) @function)
 
-(function_expression) @function
-
 ; Parameters
 (parameter
   name: (identifier) @variable.parameter)
-
-; Let bindings
-(let_binding
-  name: (identifier) @variable)
 
 ; Fields
 (field_access
