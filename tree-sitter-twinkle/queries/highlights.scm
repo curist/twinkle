@@ -120,7 +120,7 @@
   variant: (identifier) @constructor)
 
 ; Wildcard pattern
-(wildcard_pattern) @variable.builtin
+(wildcard_pattern) @punctuation.special
 
 ; Module paths in use declarations — after @variable so this wins for identifiers
 ; Covers both `use foo.bar` and `use @stdlib`
