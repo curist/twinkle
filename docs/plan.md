@@ -1092,7 +1092,7 @@ permanent.
 
 ---
 
-#### 8a — Runtime IR + Linker (`src/wasm/`)
+#### 8a — Runtime IR + Linker (`src/wasm/`) ✅
 
 New module `src/wasm/` with:
 
@@ -1136,7 +1136,7 @@ small hand-authored `ModuleIR` inputs.
 
 ---
 
-#### 8b — Runtime modules (`src/runtime/`)
+#### 8b — Runtime modules (`src/runtime/`) ✅
 
 New top-level directory `runtime/` — Rust source files that programmatically construct
 `ModuleIR` values using the `src/wasm/ir.rs` builder API. Each file is one runtime module.
@@ -1376,7 +1376,7 @@ run. Panic with a clear message if an `ADefer` is encountered.
 
 **Implementation steps:**
 
-**Step 0 — ANF type annotations + monomorphization prep**
+**Step 0 — ANF type annotations + monomorphization prep** ✅
 
 *ANF annotations* (`src/ir/anf.rs`, `src/ir/lower_anf.rs`):
 Add `NumKind`, `IndexKind` enums to `anf.rs`. Add `type_id` to `ARecordGet`/`ARecordUpdate`,
@@ -1392,7 +1392,7 @@ them, persist the zonked concrete type args into this map. This is the primary i
 Stage 9.5 monomorphization pass — recording it now is trivial and avoids a retroactive change
 later.
 
-**Step 1 — Scaffold** (`prelude.rs`, `ctx.rs`, `mod.rs`)
+**Step 1 — Scaffold** (`prelude.rs`, `ctx.rs`, `mod.rs`) ← next
 
 * `prelude.rs`: `PreludeMap` — `HashMap<FuncId, PreludeEntry>` where each entry has the
   runtime `FuncSym`, param types, result type. Covers all 35 prelude FuncIds.

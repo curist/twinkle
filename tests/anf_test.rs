@@ -122,7 +122,7 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
                 assert_is_atom(elem, "AArrayLit.elem", prog, func);
             }
         }
-        AnfOp::AIndex { base, index } => {
+        AnfOp::AIndex { base, index, .. } => {
             assert_is_atom(base, "AIndex.base", prog, func);
             assert_is_atom(index, "AIndex.index", prog, func);
         }

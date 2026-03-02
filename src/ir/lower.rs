@@ -5,7 +5,7 @@ use crate::syntax::ast::{
     Stmt, StringPart,
 };
 use crate::syntax::span::Span;
-use crate::types::env::TypeEnv;
+use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{MonoType, ITERATOR_TYPE_ID, OPTION_TYPE_ID, ITER_ITEM_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID};
 use crate::types::type_map::TypeMap;
 
@@ -90,6 +90,7 @@ pub mod prelude {
 /// Explicit inputs for multi-module lowering (replaces CompilationContext coupling).
 pub struct LowerInput {
     pub type_env: TypeEnv,
+    pub value_env: ValueEnv,
     pub func_table: HashMap<String, FuncId>,
     pub module_aliases: HashSet<String>,
     pub qualified_value_globals: HashMap<String, LocalId>,
@@ -104,6 +105,7 @@ pub struct LowerInput {
 pub struct Lowerer {
     type_map: TypeMap,
     type_env: TypeEnv,
+    value_env: ValueEnv,
     /// Map from function name to its assigned FuncId
     func_table: HashMap<String, FuncId>,
     /// Set of module alias names (for cross-module call dispatch)
@@ -186,6 +188,7 @@ impl Lowerer {
         Self {
             type_map,
             type_env,
+            value_env: ValueEnv::new(),
             func_table,
             module_aliases,
             errors: Vec::new(),
@@ -209,6 +212,7 @@ impl Lowerer {
         Self {
             type_map,
             type_env: input.type_env,
+            value_env: input.value_env,
             func_table: input.func_table,
             module_aliases: input.module_aliases,
             errors: Vec::new(),
@@ -412,6 +416,7 @@ impl Lowerer {
             func_id,
             name: "__init__".to_string(),
             params: vec![],
+            param_tys: vec![],
             return_ty: MonoType::Void,
             body,
         })
@@ -432,6 +437,13 @@ impl Lowerer {
             params.push(local_id);
         }
 
+        // Extract param types from the ValueEnv function signature
+        let param_tys = self
+            .value_env
+            .get_function(&decl.name)
+            .map(|sig| sig.params.clone())
+            .unwrap_or_default();
+
         let body = self.lower_block(&decl.body)?;
         let return_ty = body.ty.clone();
         let func_id = *self.func_table.get(&decl.name)?;
@@ -440,6 +452,7 @@ impl Lowerer {
             func_id,
             name: decl.name.clone(),
             params,
+            param_tys,
             body,
             return_ty,
         })
@@ -2054,10 +2067,17 @@ impl Lowerer {
                 // Hoist to a new FunctionDef
                 let func_id = self.alloc_hoisted_id();
                 let return_ty = body.ty.clone();
+                // Extract lambda param types from the expression's Function type
+                let lambda_param_tys = if let MonoType::Function { params, .. } = ty {
+                    params.clone()
+                } else {
+                    vec![]
+                };
                 let hoisted = FunctionDef {
                     func_id,
                     name: format!("<lambda@{}>", span.start),
                     params: lambda_params,
+                    param_tys: lambda_param_tys,
                     body,
                     return_ty,
                 };

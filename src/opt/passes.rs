@@ -71,10 +71,10 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
         AnfOp::ALoop { body } => {
             AnfOp::ALoop { body: Box::new(subst_atom(*body, target, replacement)) }
         }
-        AnfOp::ABinOp { op, left, right } => {
-            AnfOp::ABinOp { op, left: sa(left), right: sa(right) }
+        AnfOp::ABinOp { op, left, right, operand_ty } => {
+            AnfOp::ABinOp { op, left: sa(left), right: sa(right), operand_ty }
         }
-        AnfOp::AUnOp { op, expr } => AnfOp::AUnOp { op, expr: sa(expr) },
+        AnfOp::AUnOp { op, expr, operand_ty } => AnfOp::AUnOp { op, expr: sa(expr), operand_ty },
         AnfOp::AMakeClosure { func_id, free_vars } => {
             // free_vars are Vec<LocalId>, not Vec<Atom>. We cannot substitute
             // a literal atom into a free_var slot (Wasm closure capture requires
@@ -90,11 +90,11 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             type_id,
             fields: fields.into_iter().map(|(fid, a)| (fid, sa(a))).collect(),
         },
-        AnfOp::ARecordGet { target: t, field } => {
-            AnfOp::ARecordGet { target: sa(t), field }
+        AnfOp::ARecordGet { target: t, field, type_id } => {
+            AnfOp::ARecordGet { target: sa(t), field, type_id }
         }
-        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place } => {
-            AnfOp::ARecordUpdate { base: sa(base), field, value: sa(value), can_reuse_in_place }
+        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place, type_id } => {
+            AnfOp::ARecordUpdate { base: sa(base), field, value: sa(value), can_reuse_in_place, type_id }
         }
         AnfOp::AVariant { type_id, variant, args } => AnfOp::AVariant {
             type_id,
@@ -102,7 +102,7 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             args: args.into_iter().map(sa).collect(),
         },
         AnfOp::AArrayLit(elems) => AnfOp::AArrayLit(elems.into_iter().map(sa).collect()),
-        AnfOp::AIndex { base, index } => AnfOp::AIndex { base: sa(base), index: sa(index) },
+        AnfOp::AIndex { base, index, base_ty } => AnfOp::AIndex { base: sa(base), index: sa(index), base_ty },
         AnfOp::AInit { value } => AnfOp::AInit { value: sa(value) },
         AnfOp::AAssign { local, value } => AnfOp::AAssign { local, value: sa(value) },
         AnfOp::ADefer(inner) => AnfOp::ADefer(Box::new(subst_atom(*inner, target, replacement))),
@@ -307,8 +307,8 @@ pub fn constant_fold(body: AnfExpr) -> (AnfExpr, bool) {
 
 fn try_fold_op(op: &AnfOp) -> Option<Atom> {
     match op {
-        AnfOp::ABinOp { op, left, right } => fold_binop(*op, left, right),
-        AnfOp::AUnOp { op, expr } => fold_unop(*op, expr),
+        AnfOp::ABinOp { op, left, right, .. } => fold_binop(*op, left, right),
+        AnfOp::AUnOp { op, expr, .. } => fold_unop(*op, expr),
         _ => None,
     }
 }

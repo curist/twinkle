@@ -185,6 +185,7 @@ pub struct FunctionDef {
     pub func_id: FuncId,
     pub name: String,
     pub params: Vec<LocalId>,
+    pub param_tys: Vec<MonoType>,
     pub body: CoreExpr,
     pub return_ty: MonoType,
 }

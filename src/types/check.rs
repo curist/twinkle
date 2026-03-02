@@ -238,15 +238,24 @@ impl TypeChecker {
     }
 
     /// Replace each named type parameter with a fresh MetaVar.
-    fn instantiate_vars(&mut self, type_params: &[String], ty: &MonoType) -> MonoType {
+    /// Instantiate type-parameter variables with fresh MetaVars.
+    ///
+    /// Returns `(instantiated_type, var_to_meta)` where `var_to_meta` maps each
+    /// type parameter name to the MetaVar created for it. After unification
+    /// solves the MetaVars, callers can zonk these to get concrete type args.
+    fn instantiate_vars(&mut self, type_params: &[String], ty: &MonoType) -> (MonoType, Vec<(String, MonoType)>) {
         if type_params.is_empty() {
-            return ty.clone();
+            return (ty.clone(), vec![]);
         }
         let var_to_meta: HashMap<String, MonoType> = type_params
             .iter()
             .map(|p| (p.clone(), self.fresh_meta()))
             .collect();
-        apply_subst(ty, &var_to_meta)
+        let ordered: Vec<(String, MonoType)> = type_params
+            .iter()
+            .map(|p| (p.clone(), var_to_meta[p].clone()))
+            .collect();
+        (apply_subst(ty, &var_to_meta), ordered)
     }
 
     /// Occurs check: does MetaVar `id` appear in `ty` (following chains)?
@@ -438,7 +447,9 @@ impl TypeChecker {
                         params: sig.params.clone(),
                         ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
                     };
-                    let inst_ty = self.instantiate_vars(&sig.type_params, &fn_ty);
+                    let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
+                    // Don't record instantiation here — MetaVars aren't solved yet.
+                    // They'll be recorded at the call site after unification.
                     return Ok(inst_ty);
                 }
                 // Non-function values (top-level lets, builtins)
@@ -981,7 +992,7 @@ impl TypeChecker {
                 params: sig.params.clone(),
                 ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
             };
-            let inst_ty = self.instantiate_vars(&sig.type_params, &fn_ty);
+            let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
             let (inst_params, inst_ret) = match inst_ty {
                 MonoType::Function { params, ret } => (params, *ret),
                 _ => unreachable!(),
@@ -1747,7 +1758,7 @@ impl TypeChecker {
                             params: sig.params.clone(),
                             ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
                         };
-                        let inst_ty = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+                        let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
                         let (inst_params, inst_ret) = match inst_ty {
                             MonoType::Function { params, ret } => (params, *ret),
                             _ => unreachable!(),

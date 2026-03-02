@@ -14,6 +14,25 @@ use crate::ir::core::{FieldId, FuncId, LocalId, VariantId, CorePattern};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::ty::{MonoType, TypeId};
 
+/// The operand type for binary and unary operations.
+///
+/// The WAT emitter uses this to select the correct Wasm instruction family
+/// (e.g. `i64.add` vs `f64.add` vs `i32.and` vs `call $str_eq`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OpKind {
+    Int,
+    Float,
+    Bool,
+    String,
+}
+
+/// Distinguishes array indexing from dict indexing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IndexKind {
+    Array,
+    Dict,
+}
+
 /// An atom — a trivially available value that requires no computation.
 ///
 /// Every non-trivial subexpression must be let-bound before use.
@@ -90,11 +109,13 @@ pub enum AnfOp {
         op: BinOp,
         left: Atom,
         right: Atom,
+        operand_ty: OpKind,
     },
     /// Unary operation: operand is atom.
     AUnOp {
         op: UnOp,
         expr: Atom,
+        operand_ty: OpKind,
     },
     /// Closure creation: func_id is a literal; free_vars are already locals.
     AMakeClosure {
@@ -110,6 +131,7 @@ pub enum AnfOp {
     ARecordGet {
         target: Atom,
         field: FieldId,
+        type_id: TypeId,
     },
     /// Functional record update: base and value are atoms.
     ///
@@ -121,6 +143,7 @@ pub enum AnfOp {
         field: FieldId,
         value: Atom,
         can_reuse_in_place: bool,
+        type_id: TypeId,
     },
     /// Variant construction: all args are atoms.
     AVariant {
@@ -134,6 +157,7 @@ pub enum AnfOp {
     AIndex {
         base: Atom,
         index: Atom,
+        base_ty: IndexKind,
     },
     /// Initial binding — introduces a new local for the first time.
     /// Used for `CoreExprKind::Let` lowering. Maps to Wasm `local.set` of a
@@ -168,6 +192,7 @@ pub struct AnfFunctionDef {
     pub func_id: FuncId,
     pub name: String,
     pub params: Vec<LocalId>,
+    pub param_tys: Vec<MonoType>,
     pub body: AnfExpr,
     pub return_ty: MonoType,
 }
@@ -249,11 +274,11 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             print_anf_expr(body, f, indent + 1)?;
             write!(f, "{}}}", pad)
         }
-        AnfOp::ABinOp { op, left, right } => {
-            write!(f, "binop({:?}, {}, {})", op, left, right)
+        AnfOp::ABinOp { op, left, right, operand_ty } => {
+            write!(f, "binop({:?}, {}, {}, {:?})", op, left, right, operand_ty)
         }
-        AnfOp::AUnOp { op, expr } => {
-            write!(f, "unop({:?}, {})", op, expr)
+        AnfOp::AUnOp { op, expr, operand_ty } => {
+            write!(f, "unop({:?}, {}, {:?})", op, expr, operand_ty)
         }
         AnfOp::AMakeClosure { func_id, free_vars } => {
             write!(f, "closure(FuncId({})", func_id.0)?;
@@ -276,12 +301,12 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             }
             write!(f, ")")
         }
-        AnfOp::ARecordGet { target, field } => {
-            write!(f, "record_get({}, .{})", target, field.0)
+        AnfOp::ARecordGet { target, field, type_id } => {
+            write!(f, "record_get({}, .{}, Type#{})", target, field.0, type_id.0)
         }
-        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place } => {
+        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place, type_id } => {
             let flag = if *can_reuse_in_place { " [in-place]" } else { "" };
-            write!(f, "record_update({}, .{}={}{})", base, field.0, value, flag)
+            write!(f, "record_update({}, .{}={}, Type#{}{})", base, field.0, value, type_id.0, flag)
         }
         AnfOp::AVariant { type_id, variant, args } => {
             write!(f, "variant(Type#{}.{})", type_id.0, variant.0)?;
@@ -307,8 +332,8 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             }
             write!(f, "]")
         }
-        AnfOp::AIndex { base, index } => {
-            write!(f, "index({}, {})", base, index)
+        AnfOp::AIndex { base, index, base_ty } => {
+            write!(f, "index({}, {}, {:?})", base, index, base_ty)
         }
         AnfOp::AInit { value } => {
             write!(f, "init({})", value)
@@ -331,7 +356,11 @@ impl fmt::Display for AnfFunctionDef {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "L{}", p.0)?;
+            if let Some(ty) = self.param_tys.get(i) {
+                write!(f, "L{}: {:?}", p.0, ty)?;
+            } else {
+                write!(f, "L{}", p.0)?;
+            }
         }
         writeln!(f, "]")?;
         writeln!(f, "  return_ty: {:?}", self.return_ty)?;

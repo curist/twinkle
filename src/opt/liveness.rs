@@ -112,7 +112,7 @@ fn live_in_op(op: &AnfOp, live: &mut HashSet<LocalId>) {
                 add_atom(a, live);
             }
         }
-        AnfOp::AIndex { base, index } => {
+        AnfOp::AIndex { base, index, .. } => {
             add_atom(base, live);
             add_atom(index, live);
         }

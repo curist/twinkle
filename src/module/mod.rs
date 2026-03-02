@@ -262,6 +262,7 @@ pub fn compile_module(
         );
         let input = LowerInput {
             type_env: state.type_env.clone(),
+            value_env: state.value_env.clone(),
             func_table: state.func_table.clone(),
             module_aliases: state.module_aliases.clone(),
             qualified_value_globals: state.qualified_value_globals.clone(),

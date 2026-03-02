@@ -43,6 +43,7 @@ impl QueryContext {
     pub fn lower_input(&self, type_env: TypeEnv, next_func_id: u32) -> LowerInput {
         LowerInput {
             type_env,
+            value_env: self.value_env.clone(),
             func_table: self.func_table.clone(),
             module_aliases: self.module_aliases.clone(),
             qualified_value_globals: self.qualified_value_globals.clone(),

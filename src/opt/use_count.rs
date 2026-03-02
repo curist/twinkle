@@ -77,7 +77,7 @@ fn count_op(op: &AnfOp, map: &mut HashMap<LocalId, usize>) {
                 count_atom(a, map);
             }
         }
-        AnfOp::AIndex { base, index } => {
+        AnfOp::AIndex { base, index, .. } => {
             count_atom(base, map);
             count_atom(index, map);
         }

@@ -8,7 +8,7 @@ fn test_capture  [FuncId(38)]  params=[]
     let L2 = init(0)
     let L6 = closure(FuncId(40), free=[L2])
     let L3 = init(L6)
-    let L7 = binop(Add, L2, 1)
+    let L7 = binop(Add, L2, 1, Int)
     let L8 = assign(L2 = L7)
     let L5 = init(void)
     let L9 = call L3 ()
@@ -21,7 +21,7 @@ fn test_capture  [FuncId(38)]  params=[]
     let L15 = call GlobalFunc(2) (L14)
     L15
 
-fn make_adder  [FuncId(39)]  params=[L2]
+fn make_adder  [FuncId(39)]  params=[L2: Int]
   return_ty: Function { params: [Int], ret: Int }
   body:
     let L3 = closure(FuncId(41), free=[L2])
@@ -52,13 +52,13 @@ fn __init__  [FuncId(43)]  params=[]
     let L4 = init(L32)
     let L5 = init(0)
     let L41 = loop {
-      let L33 = binop(Ge, L5, L4)
+      let L33 = binop(Ge, L5, L4, Int)
       let L40 = if L33 {
         break L3
       } else {
-        let L34 = index(L2, L5)
+        let L34 = index(L2, L5, Array)
         let L6 = init(L34)
-        let L35 = binop(Add, L5, 1)
+        let L35 = binop(Add, L5, 1, Int)
         let L36 = assign(L5 = L35)
         let L9 = init(void)
         let L37 = closure(FuncId(42), free=[L6])
@@ -76,18 +76,18 @@ fn __init__  [FuncId(43)]  params=[]
     let L11 = init(L42)
     let L12 = init(0)
     let L52 = loop {
-      let L43 = binop(Ge, L12, L11)
+      let L43 = binop(Ge, L12, L11, Int)
       let L51 = if L43 {
         break
       } else {
-        let L44 = index(L10, L12)
+        let L44 = index(L10, L12, Array)
         let L13 = init(L44)
         let L45 = call L13 ()
         let L46 = call GlobalFunc(4) (L45)
         let L47 = call GlobalFunc(9) ("", L46)
         let L48 = call GlobalFunc(2) (L47)
         let L15 = init(L48)
-        let L49 = binop(Add, L12, 1)
+        let L49 = binop(Add, L12, 1, Int)
         let L50 = assign(L12 = L49)
         let L14 = init(void)
         continue
@@ -102,10 +102,10 @@ fn <lambda@268>  [FuncId(40)]  params=[]
   body:
     L2
 
-fn <lambda@541>  [FuncId(41)]  params=[L3]
+fn <lambda@541>  [FuncId(41)]  params=[L3: Int]
   return_ty: Int
   body:
-    let L4 = binop(Add, L2, L3)
+    let L4 = binop(Add, L2, L3, Int)
     L4
 
 fn <lambda@805>  [FuncId(42)]  params=[]
