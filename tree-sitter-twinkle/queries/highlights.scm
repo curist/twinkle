@@ -130,6 +130,14 @@
 ; Wildcard pattern
 (wildcard_pattern) @variable.builtin
 
+; Module paths in use declarations — after @variable so this wins for identifiers
+; Covers both `use foo.bar` and `use @stdlib`
+(use_declaration
+  path: (module_path) @module)
+(use_declaration
+  path: (module_path
+    (identifier) @module))
+
 ; Punctuation
 [
   "("
