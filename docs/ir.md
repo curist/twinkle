@@ -406,36 +406,57 @@ Atom =
     | ALitBool(bool)
     | ALitStr(String)
     | ALitVoid
+    | AGlobalFunc(FuncId)    // named function used as a first-class value (no captured env)
 ```
 
 ### ANF Expression
 
 ```
 ANFExpr =
-    | Let(local, AOp, ANFExpr)
-    | AReturn(Atom)
+    | Let { local: LocalId, op: AnfOp, body: ANFExpr }
+    | Return(Option<Atom>)       // terminal: function return; None for void returns
+    | Break(Option<Atom>)        // terminal: loop break (carries loop result if any)
+    | Continue                   // terminal: loop continue (no value)
 ```
+
+`Return`, `Break`, and `Continue` are terminal `ANFExpr` variants, not `AnfOp` entries,
+because they carry no value to bind and any code after them within the same expression is
+unreachable.
 
 ### ANF Operation (non-atomic)
 
 ```
-AOp =
+AnfOp =
+    | AInit { value: Atom }      // names an atom as a local; identity op, used by optimizer
+    | ABinOp { op: BinOp, left: Atom, right: Atom }
+    | AUnOp  { op: UnOp,  expr: Atom }
+
     | ACall { callee: Atom, args: Vec<Atom> }
-    | AIf { cond: Atom, then_branch: ANFExpr, else_branch: ANFExpr }
+
+    | AIf    { cond: Atom, then_branch: ANFExpr, else_branch: ANFExpr }
     | AMatch { scrutinee: Atom, arms: Vec<ANFMatchArm> }
-    | ALoop { body: ANFExpr }
-    | ABreak { value: Option<Atom> }
-    | AContinue
+    | ALoop  { body: ANFExpr }
 
-    | ARecord { type_id, fields: Vec<(FieldId, Atom)> }
-    | ARecordGet { target: Atom, field: FieldId }
+    // Mutation: updates an existing local's value. Maps to Wasm local.set.
+    | AAssign { local: LocalId, value: Atom }
 
-    | AVariant { type_id, variant, args: Vec<Atom> }
+    | ARecord       { type_id: TypeId, fields: Vec<(FieldId, Atom)> }
+    | ARecordGet    { target: Atom, field: FieldId }
+    // can_reuse_in_place set by liveness pass; WAT backend may emit struct.set instead of new.
+    | ARecordUpdate { base: Atom, field: FieldId, value: Atom, can_reuse_in_place: bool }
+
+    | AVariant  { type_id: TypeId, variant: VariantId, args: Vec<Atom> }
 
     | AArrayLit(Vec<Atom>)
     | AIndex { base: Atom, index: Atom }
 
-    | AMakeClosure { func_id: FuncId, free_vars: Vec<Atom> }
+    // free_vars holds only LocalIds (not arbitrary atoms): only locals from the enclosing
+    // scope can be captured; literals and global function references are not capturable.
+    | AMakeClosure { func_id: FuncId, free_vars: Vec<LocalId> }
+
+    // Deferred expression (from `defer` statement). Eliminated by the defer-elim pass
+    // before the WAT backend; no ADefer nodes reach code generation.
+    | ADefer(Box<ANFExpr>)
 ```
 
 ### ANF Match Arm
