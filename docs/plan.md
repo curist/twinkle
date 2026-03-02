@@ -1062,6 +1062,17 @@ runtime at a structured level above raw WAT; a Wasm GC runtime implementing pers
 dicts, and strings; and a WAT emitter that compiles ANF IR to Wasm GC code calling into the
 runtime. Produce `twk build file.tw -o output.wasm`.
 
+**Wasm 3.0 features adopted in Stage 8:**
+
+| Feature | Where used | Why |
+|---|---|---|
+| **Typed References** (`ref.func` + `call_ref`) | Stage 8b `$Closure`, Stage 8c emitter | Eliminates function table; typed, devirtualization-friendly closure calls |
+| **Tail Calls** (`return_call` + `return_call_ref`) | Stage 8c emitter (tail positions) | Required for deep recursion in self-hosted compiler (Stage 10); prevents stack overflow |
+| **GC** (structs, arrays, typed refs) | Entire runtime and emitter | Central to Twinkle's value model; now standardised in Wasm 3.0 |
+| **JS String Builtins** | Stage 8e `rt.str` (opt-in) | Drop-in JS-native strings when `twc.wasm` runs in browser/npm host |
+
+Features reviewed but not adopted: Multiple Memories and Memory64 (Twinkle uses GC, no linear memory); Relaxed SIMD (no SIMD use case); Exception Handling (Result + trap covers all cases without native exceptions).
+
 **Key architectural shape:**
 
 ```text
@@ -1142,11 +1153,17 @@ Shared types in `rt.types`:
 (type $DictEntry (struct (field key anyref) (field val anyref)))
 (type $Dict     (array (mut (ref null $DictEntry))))    ; sorted by key, COW semantics
 (type $ClosureEnv (array anyref))                       ; captured free variables
-(type $Closure  (struct (field func_idx i32) (field env (ref null $ClosureEnv))))
+(type $ClosureFunc (func (param anyref anyref) (result anyref))) ; (env anyref, args anyref) → anyref
+(type $Closure  (struct (field func_ref (ref null $ClosureFunc)) (field env (ref null $ClosureEnv))))
 (type $Variant  (struct (field type_id i32) (field variant_id i32) (field payload (ref null $Array))))
 (type $BoxedInt   (struct (field v i64)))
 (type $BoxedFloat (struct (field v f64)))
 ```
+
+> **Wasm 3.0 note:** `$Closure` stores a `(ref null $ClosureFunc)` typed function reference
+> (Wasm 3.0 Typed References) instead of an `i32` function table index. Closure calls use
+> `call_ref $ClosureFunc` instead of `call_indirect`, eliminating the Wasm table and element
+> sections entirely. See [Stage 8c](#8c--anf--wat-emitter-srccodegen) for the call-site pattern.
 
 **v0 data structure strategy — simplest-correct first; migrate later:**
 
@@ -1227,16 +1244,24 @@ Unboxing optimization is deferred to a later stage.
 | `Closure`          | `(ref null $Closure)` from `rt.types`               |
 
 **Closure calling convention (v0):** All user functions share the Wasm signature
-`(func (param anyref)... (result anyref))`. Closures store a function table index in `$Closure`.
-Closure calls use `call_indirect` via the function table with the appropriate type.
+`(func (param anyref anyref) (result anyref))` — first param is the `$ClosureEnv` (or `ref.null
+none` for non-closures), remaining params are value args. This uniform signature is `$ClosureFunc`
+defined in `rt.types`. Closures store a `(ref null $ClosureFunc)` typed function reference;
+calls use `ref.func $func_N` to obtain the reference and `call_ref $ClosureFunc` to dispatch.
+No Wasm table or element sections are needed for closures.
+
+> **Wasm 3.0 note (Typed References):** `ref.func` + `call_ref` replace `call_indirect` + a
+> function table. The engine verifies type safety at validation time and can inline/devirtualize
+> more aggressively. The `Instr::RefFunc` and `Instr::CallRef` variants in `src/wasm/ir.rs`
+> implement this.
 
 **ANF → Wasm GC instruction translation (key cases):**
 
 * `ALocal(id)` → `local.get N`.
 * `AAssign { local, value }` → `local.set N`.
 * `ACall { callee: AGlobalFunc(id), args }` → `call $func_N` (direct).
-* `ACall { callee: ALocal(c), args }` → unpack `$Closure.func_idx` and `$Closure.env`,
-  push env + args, `call_indirect`.
+* `ACall { callee: ALocal(c), args }` → `struct.get $Closure 0` (get `func_ref`),
+  `struct.get $Closure 1` (get env), push args, `call_ref $ClosureFunc`.
 * `ABinOp` → unbox operands, apply numeric op (i64 or f64), rebox result.
 * `AIf` → `if / else / end`.
 * `AMatch` → nested `if`/`br_if` on `$Variant.type_id` and `$Variant.variant_id`.
@@ -1251,7 +1276,8 @@ Closure calls use `call_indirect` via the function table with the appropriate ty
   `struct.new $Variant` with type_id, variant_id, payload.
 * `AArrayLit(elems)` → `call rt.arr.make` + sequential `call rt.arr.set`.
 * `AIndex { base, index }` → `call rt.arr.get` or `call rt.dict.get`.
-* `AMakeClosure { func_id, free_vars }` → build `$ClosureEnv` array, `struct.new $Closure`.
+* `AMakeClosure { func_id, free_vars }` → `ref.func $func_N` to obtain typed funcref,
+  build `$ClosureEnv` array from free vars, `struct.new $Closure`.
 
 ---
 
@@ -1332,6 +1358,15 @@ compiles a user program and produces `output.wasm`, only stdlib modules actually
 by that user program are included — dead-module elimination at the linker level keeps
 user output small.
 
+**Wasm 3.0 — JS String Builtins:** The `runtime/str.rs` module (`rt.str`) uses `$String (array
+i8)` backed by runtime functions today. When running `twc.wasm` in a browser or npm (JS) host,
+Wasm 3.0 JS String Builtins can replace the `rt.str` implementation with native JS string
+operations — giving free concatenation, slicing, and comparison without UTF-8 encode/decode
+at the boundary. Design `runtime/str.rs` with a clean interface seam: the exported function
+symbols stay identical; a `--host=js` link-time flag swaps in a `runtime/str_js.rs` module
+that emits extern-ref JS string calls instead of `array<i8>` operations. The compiler emitter
+is unaffected — it calls `rt.str.*` symbolically regardless of which implementation is linked.
+
 Deliverables:
 
 * `use @path` and `use @fs` resolve and compile end-to-end.
@@ -1381,12 +1416,24 @@ For every program in `tests/run/`:
 Any divergence is a regression in the WAT emitter or runtime. The interpreter remains the
 reference semantic oracle.
 
+**Wasm 3.0 — Tail Calls:** The WAT emitter should emit `return_call $f` / `return_call_ref
+$ClosureFunc` for calls in tail position. Tail calls matter for:
+
+* The recursive-descent parser in the self-hosted compiler (Stage 10).
+* Mutually-recursive functions that otherwise hit Wasm's call stack limit on large inputs.
+
+The `Instr::ReturnCall` and `Instr::ReturnCallRef` variants in `src/wasm/ir.rs` are available
+for the emitter to use. Identify tail-position calls in ANF IR (a `Return(ACall(...))` pattern)
+and emit the tail-call form. This is a safety gate for Stage 10 correctness.
+
 Deliverables:
 
 * All `tests/run/*.tw` programs produce correct output via `--backend=wasm`.
 * Differential test suite passing.
 * Host interface documented: the exact set of imports `twc.wasm` requires from the host,
   their types, and their observable behavior. This is the stability boundary for future hosts.
+* Tail-position calls emitted as `return_call` / `return_call_ref`; verified on a
+  deeply-recursive test program (e.g. Fibonacci with large N).
 
 ---
 

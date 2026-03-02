@@ -56,7 +56,7 @@ fn qualify(ns: &str, sym: &str) -> String {
 fn rewrite_calls(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
     for instr in body.iter_mut() {
         match instr {
-            Instr::Call(sym) => {
+            Instr::Call(sym) | Instr::RefFunc(sym) | Instr::ReturnCall(sym) => {
                 if let Some(renamed) = renames.get(sym.as_str()) {
                     *sym = renamed.clone();
                 }
@@ -88,7 +88,9 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
             | Instr::ArrayGet(ty)
             | Instr::ArrayGetU(ty)
             | Instr::ArraySet(ty)
-            | Instr::CallIndirect { ty, .. } => {
+            | Instr::CallIndirect { ty, .. }
+            | Instr::CallRef(ty)
+            | Instr::ReturnCallRef(ty) => {
                 if let Some(renamed) = renames.get(ty.as_str()) {
                     *ty = renamed.clone();
                 }
@@ -284,14 +286,15 @@ pub fn link(
             });
         }
 
+        // Build combined rename once per module: func renames + import redirects.
+        // Used by both func bodies and global initialisers.
+        let mut combined = func_renames.clone();
+        for (k, v) in redirects {
+            combined.insert(k.clone(), v.clone());
+        }
+
         // Merge funcs
         for mut func in module.funcs {
-            // Build combined rename: func renames + import redirects
-            let mut combined = func_renames.clone();
-            for (k, v) in redirects {
-                combined.insert(k.clone(), v.clone());
-            }
-
             rewrite_calls(&mut func.body, &combined);
             rewrite_type_refs(&mut func.body, type_renames);
 
@@ -317,7 +320,8 @@ pub fn link(
 
         // Merge globals
         for mut global in module.globals {
-            rewrite_calls(&mut global.init, func_renames);
+            rewrite_calls(&mut global.init, &combined);
+            rewrite_type_refs(&mut global.init, type_renames);
             merged_globals.push(GlobalDef {
                 name: qualify(ns, &global.name),
                 ..global

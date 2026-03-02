@@ -381,6 +381,10 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::CallIndirect { ty, table } => {
             format!("{pad}call_indirect (type ${ty}) (table {table})")
         }
+        Instr::RefFunc(f) => format!("{pad}ref.func ${f}"),
+        Instr::CallRef(ty) => format!("{pad}call_ref ${ty}"),
+        Instr::ReturnCall(f) => format!("{pad}return_call ${f}"),
+        Instr::ReturnCallRef(ty) => format!("{pad}return_call_ref ${ty}"),
 
         Instr::Drop => format!("{pad}drop"),
         Instr::Return => format!("{pad}return"),

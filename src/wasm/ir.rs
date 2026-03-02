@@ -158,6 +158,14 @@ pub enum Instr {
     // Calls
     Call(FuncSym),
     CallIndirect { ty: TypeSym, table: u32 },
+    /// `ref.func $sym` — produce a typed function reference without a table.
+    RefFunc(FuncSym),
+    /// `call_ref $type` — call via typed function reference (pops funcref from stack).
+    CallRef(TypeSym),
+    /// `return_call $sym` — tail call (direct).
+    ReturnCall(FuncSym),
+    /// `return_call_ref $type` — tail call via typed function reference.
+    ReturnCallRef(TypeSym),
 
     // Control flow
     Drop,
