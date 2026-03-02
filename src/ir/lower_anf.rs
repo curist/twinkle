@@ -432,7 +432,7 @@ fn flatten_into_accum(anf: AnfExpr, accum: &mut LetAccum, result_local: LocalId)
             flatten_into_accum(*body, accum, result_local);
         }
         AnfExpr::Atom(atom) => {
-            accum.push((result_local, AnfOp::AAssign { local: result_local, value: atom }));
+            accum.push((result_local, AnfOp::AInit { value: atom }));
         }
         // A terminal (Return/Break/Continue) in flattening position means the structural
         // sub-expression always diverges. This indicates the Core IR has a terminal as the
@@ -460,7 +460,7 @@ fn splice_atom_bind(anf: AnfExpr, result_local: LocalId) -> AnfExpr {
         },
         AnfExpr::Atom(atom) => AnfExpr::Let {
             local: result_local,
-            op: Box::new(AnfOp::AAssign { local: result_local, value: atom }),
+            op: Box::new(AnfOp::AInit { value: atom }),
             body: Box::new(AnfExpr::Atom(Atom::ALocal(result_local))),
         },
         terminal => terminal,
