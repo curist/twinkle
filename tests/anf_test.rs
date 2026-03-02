@@ -286,6 +286,21 @@ fn anf_multi_module_alias() { check("tests/run/multi_module_alias/main.tw"); }
 #[test]
 fn anf_pub_values() { check("tests/run/pub_values/main.tw"); }
 
+#[test]
+fn anf_defer_basic() { check("tests/run/defer_basic.tw"); }
+
+#[test]
+fn anf_defer_return() { check("tests/run/defer_return.tw"); }
+
+#[test]
+fn anf_defer_loop() { check("tests/run/defer_loop.tw"); }
+
+#[test]
+fn anf_defer_capture() { check("tests/run/defer_capture.tw"); }
+
+#[test]
+fn anf_defer_if() { check("tests/run/defer_if.tw"); }
+
 // Trap tests — these panic at the interpreter level, but the lowering to ANF
 // should still succeed (trapping happens at runtime, not at compile time).
 #[test]

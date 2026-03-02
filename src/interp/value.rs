@@ -92,3 +92,27 @@ impl std::fmt::Display for Value {
         }
     }
 }
+
+impl Value {
+    /// Deep-clone this value, copying the contents of any `Cell` rather than
+    /// sharing the `Rc<RefCell<...>>` pointer.  All other container types
+    /// (`Arr`, `Dict`, `Record`, `Variant`, `Closure`) are recursed so that
+    /// nested `Cell` values inside them are also copied.
+    ///
+    /// Used by the interpreter when capturing a frame snapshot for `defer`
+    /// to implement capture-by-value semantics.
+    pub fn deep_clone(&self) -> Value {
+        match self {
+            Value::Cell(rc) => Value::Cell(Rc::new(RefCell::new(rc.borrow().deep_clone()))),
+            Value::Arr(elems) => Value::Arr(elems.iter().map(|v| v.deep_clone()).collect()),
+            Value::Dict(kvs) => Value::Dict(kvs.iter().map(|(k, v)| (k.deep_clone(), v.deep_clone())).collect()),
+            Value::Record(tid, fields) => Value::Record(*tid, fields.iter().map(|v| v.deep_clone()).collect()),
+            Value::Variant(tid, vidx, args) => Value::Variant(*tid, *vidx, args.iter().map(|v| v.deep_clone()).collect()),
+            Value::Closure(fid, free_vars) => {
+                Value::Closure(*fid, free_vars.iter().map(|(k, v)| (*k, v.deep_clone())).collect())
+            }
+            // Primitives and Iterator are value types; Clone is sufficient.
+            other => other.clone(),
+        }
+    }
+}

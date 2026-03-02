@@ -1,0 +1,23 @@
+// defer is function-scoped: a defer inside an if-branch fires on function exit,
+// not when the branch ends.  If the branch is not taken the defer is never registered.
+// Expected output:
+//   after if
+//   inside if
+//   branch not taken: no defer
+
+fn taken() Void {
+    if true {
+        defer println("inside if")
+    }
+    println("after if")
+}
+
+fn not_taken() Void {
+    if false {
+        defer println("should not print")
+    }
+    println("branch not taken: no defer")
+}
+
+taken()
+not_taken()

@@ -134,6 +134,7 @@ fn invariant_check(path: &str) {
 #[test] fn opt_defer_return()       { invariant_check("tests/run/defer_return.tw"); }
 #[test] fn opt_defer_loop()         { invariant_check("tests/run/defer_loop.tw"); }
 #[test] fn opt_defer_capture()      { invariant_check("tests/run/defer_capture.tw"); }
+#[test] fn opt_defer_if()           { invariant_check("tests/run/defer_if.tw"); }
 
 // ── Node-count reduction test ─────────────────────────────────────────────────
 

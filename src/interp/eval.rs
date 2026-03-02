@@ -358,9 +358,13 @@ impl<W: Write> Interpreter<W> {
             Defer(inner_expr) => {
                 // Register the deferred expression in the innermost scope, capturing
                 // the current frame by value (capture-by-value semantics).
-                if let Some(scope) = self.defer_stack.last_mut() {
-                    scope.push((*inner_expr.clone(), frame.clone()));
-                }
+                // Deep-clone so that Cell values capture their current contents,
+                // not a shared Rc pointer that would reflect later mutations.
+                let captured: Frame = frame.iter().map(|(k, v)| (*k, v.deep_clone())).collect();
+                self.defer_stack
+                    .last_mut()
+                    .expect("interpreter bug: Defer evaluated with no active defer scope")
+                    .push((*inner_expr.clone(), captured));
                 Ok(Value::Void)
             }
 

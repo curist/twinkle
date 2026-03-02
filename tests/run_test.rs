@@ -281,3 +281,8 @@ fn defer_loop() {
 fn defer_capture() {
     check("tests/run/defer_capture.tw");
 }
+
+#[test]
+fn defer_if() {
+    check("tests/run/defer_if.tw");
+}
