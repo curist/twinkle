@@ -52,6 +52,8 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Dump the built-in runtime as WAT
+    RuntimeDump,
 }
 
 fn main() -> Result<()> {
@@ -80,6 +82,9 @@ fn main() -> Result<()> {
         }
         Commands::Build { file, output } => {
             twinkle::cli::build::build_file(&file, output.as_deref())?;
+        }
+        Commands::RuntimeDump => {
+            twinkle::cli::runtime_dump::runtime_dump()?;
         }
     }
 

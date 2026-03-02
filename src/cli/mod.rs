@@ -5,3 +5,4 @@ pub mod lower_anf;
 pub mod opt;
 pub mod run;
 pub mod build;
+pub mod runtime_dump;

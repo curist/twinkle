@@ -1,0 +1,16 @@
+---
+source: tests/wasm_ir_test.rs
+expression: wat
+---
+(module
+  (type $user__Point (struct (field $x i64) (field $y i64)))
+  (type $functype_0 (func (param i64 i64) (result (ref $user__Point))))
+  (func $user__make_point (type $functype_0)
+    (param $p0 i64)
+    (param $p1 i64)
+    (result (ref $user__Point))
+    local.get $p0
+    local.get $p1
+    struct.new $user__Point
+  )
+)

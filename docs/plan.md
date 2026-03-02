@@ -1194,8 +1194,8 @@ Runtime modules and their exported functions:
 * `runtime/mod.rs`: convenience function producing a `Vec<ModuleIR>` of all runtime modules,
   ready to pass to the linker.
 
-**Deliverable:** `twk runtime-dump [--wat | --json]` emits `runtime.wat` or `runtime.ast.json`
-for inspection. Unit tests for each runtime function (invoke via Wasmtime in test harness).
+**Deliverable:** `twk runtime-dump` emits the linked runtime WAT. Unit tests for each runtime
+function (invoke via Wasmtime in test harness, deferred to Stage 9).
 
 ---
 

@@ -1,0 +1,18 @@
+---
+source: tests/wasm_ir_test.rs
+expression: wat
+---
+(module
+  (type $functype_0 (func))
+  (func $rt__rt_init (type $functype_0)
+    nop
+  )
+  (func $user__user_init (type $functype_0)
+    nop
+  )
+  (func $__linked_init (type $functype_0)
+    call $rt__rt_init
+    call $user__user_init
+  )
+  (start $__linked_init)
+)

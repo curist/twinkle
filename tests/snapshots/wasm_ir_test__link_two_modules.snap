@@ -1,0 +1,24 @@
+---
+source: tests/wasm_ir_test.rs
+expression: wat
+---
+(module
+  (type $functype_0 (func (param i64 i64) (result i64)))
+  (func $math__add (type $functype_0)
+    (param $p0 i64)
+    (param $p1 i64)
+    (result i64)
+    local.get $p0
+    local.get $p1
+    i64.add
+  )
+  (func $user__double_add (type $functype_0)
+    (param $p0 i64)
+    (param $p1 i64)
+    (result i64)
+    local.get $p0
+    local.get $p1
+    call $math__add
+  )
+  (export "add" (func $math__add))
+)

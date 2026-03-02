@@ -1,0 +1,13 @@
+---
+source: tests/wasm_ir_test.rs
+expression: wat
+---
+(module
+  (type $functype_0 (func (param i64)))
+  (import "host" "println" (func $user__host_println (type $functype_0)))
+  (func $user__greet (type $functype_0)
+    (param $p0 i64)
+    local.get $p0
+    call $user__host_println
+  )
+)

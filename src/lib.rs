@@ -7,3 +7,5 @@ pub mod interp;
 pub mod codegen;
 pub mod query;
 pub mod opt;
+pub mod wasm;
+pub mod runtime;
