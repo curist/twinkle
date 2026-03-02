@@ -11,6 +11,8 @@ fn test() Void {
 //^^^ keyword
 //    ^ variable
 //      ^^ keyword
+    defer println("hi")
+//  ^^^^^ keyword.control
     break
 //  ^^^^^ keyword.control
   }

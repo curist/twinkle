@@ -27,6 +27,9 @@
 (return_statement
   "return" @keyword.return)
 
+(defer_statement
+  "defer" @keyword.control)
+
 ; Operators
 [
   "="
