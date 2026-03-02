@@ -1,6 +1,6 @@
 // Function declarations
 fn add(x: Int, y: Int) Int {
-// <- keyword
+// <- keyword.function
 // ^^^ function
 //     ^ variable.parameter
 //             ^ variable.parameter
@@ -17,7 +17,7 @@ text := str.len()
 
 // Anonymous functions
 mapper := fn(x: Int) Int { x * 2 }
-//        ^^ keyword
+//        ^^ keyword.function
 
 // Higher-order functions
 nums := [1, 2, 3]

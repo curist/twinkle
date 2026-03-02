@@ -16,7 +16,7 @@ fn handle(r: Result<Int, String>) Void {
       println(msg)
     },
     _ => {},
-//  ^ variable.builtin
+//  ^ punctuation.special
   }
 }
 
@@ -38,7 +38,7 @@ failure := .Err("error")
 // Wildcard pattern
 case x {
   _ => 0,
-//^ variable.builtin
+//^ punctuation.special
 }
 
 // Qualified enum patterns with user-defined types

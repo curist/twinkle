@@ -39,10 +39,10 @@ f := x >= y
 
 // Logical operators
 g := true and false
-//        ^^^ operator
+//        ^^^ keyword.operator
 
 h := true or false
-//        ^^ operator
+//        ^^ keyword.operator
 
 i := !true
 //   ^ operator

@@ -1,16 +1,16 @@
 // Keywords
 fn test() Void {
-// <- keyword
+// <- keyword.function
   if true {
-//^^ keyword
+//^^ keyword.control
     return 42
 //  ^^^^^^ keyword.return
   }
 
   for x in range(10) {
-//^^^ keyword
+//^^^ keyword.control
 //    ^ variable
-//      ^^ keyword
+//      ^^ keyword.control
     defer println("hi")
 //  ^^^^^ keyword.control
     break
@@ -18,19 +18,19 @@ fn test() Void {
   }
 
   case x {
-//^^^^ keyword
+//^^^^ keyword.control
     _ => continue,
 //       ^^^^^^^^ keyword.control
   }
 }
 
 pub type MyType = Int
-//^ keyword
-//  ^^^^ keyword
+//^ keyword.modifier
+//  ^^^^ keyword.type
 
 use math.vector as vec
-//^ keyword
-//              ^^ keyword
+//^ keyword.import
+//              ^^ keyword.import
 
 try foo()
-//^ keyword
+//^ keyword.exception
