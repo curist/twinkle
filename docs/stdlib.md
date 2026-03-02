@@ -5,8 +5,8 @@
 Standard library modules are imported with the `@` sigil:
 
 ```tw
-use @fs
-use @path
+use @std.fs
+use @std.path
 ```
 
 They are authored in Twinkle, compiled via the same Wasm GC backend + Runtime IR + Linker
@@ -22,10 +22,10 @@ together with the compiler.
   into `twc.wasm` alongside the compiler and runtime. The host only needs to provide file
   I/O for user source files and build outputs.
 
-* **Pure Twinkle where possible.** Modules that do not require host interaction (e.g. `@path`)
+* **Pure Twinkle where possible.** Modules that do not require host interaction (e.g. `@std.path`)
   are written entirely in Twinkle with no host imports.
 
-* **Thin host wrappers where necessary.** Modules that touch the outside world (e.g. `@fs`)
+* **Thin host wrappers where necessary.** Modules that touch the outside world (e.g. `@std.fs`)
   are thin Twinkle wrappers over the host import interface (`host.read_file`, `host.write_file`,
   `host.write_bytes`, `host.mkdirp`, `host.list_dir`, `host.exists`). The host imports are
   not exposed directly to user code.
@@ -42,7 +42,7 @@ together with the compiler.
 
 ## MVP modules
 
-### `@fs` — File system
+### `@std.fs` — File system
 
 Thin wrapper over host file I/O imports. All operations return `Result` — callers handle
 errors explicitly.
@@ -83,14 +83,14 @@ pub type EntryKind = { File, Dir, Other }
 pub type DirEntry = .{ name: String, kind: EntryKind }
 ```
 
-`DirEntry.name` is the bare name of the entry (not a full path). Callers use `@path.join`
+`DirEntry.name` is the bare name of the entry (not a full path). Callers use `@std.path.join`
 to construct absolute paths from directory path + entry name.
 
 #### Example
 
 ```tw
-use @fs
-use @path
+use @std.fs
+use @std.path
 
 fn read_module(base: String, module: String) -> Result<String, fs.FsError> {
   fs.read_text(path.join(base, module))
@@ -99,7 +99,7 @@ fn read_module(base: String, module: String) -> Result<String, fs.FsError> {
 
 ---
 
-### `@path` — Path manipulation
+### `@std.path` — Path manipulation
 
 Pure Twinkle — no host imports. All functions treat paths as strings with `/` as the
 separator. Behaviour is consistent across hosts.
@@ -142,7 +142,7 @@ pub fn is_absolute(path: String) -> Bool
 #### Example
 
 ```tw
-use @path
+use @std.path
 
 // Turn a module identifier "foo.bar.baz" into a relative file path "foo/bar/baz.tw"
 fn module_to_path(module_id: String) -> String {
@@ -153,16 +153,73 @@ fn module_to_path(module_id: String) -> String {
 
 ---
 
+### `@std.proc` — Process environment
+
+Thin wrapper over host process imports. Provides access to CLI arguments, environment
+variables, working directory, and process exit.
+
+#### API
+
+```tw
+// Return the command-line arguments as an array of strings.
+// The first element is the program name (if available).
+pub fn args() -> Array<String>
+
+// Read an environment variable. Returns None if not set.
+pub fn env(name: String) -> Option<String>
+
+// Return the current working directory as a logical path.
+pub fn cwd() -> String
+
+// Terminate the process with the given exit code.
+// Does not return.
+pub fn exit(code: Int) -> Never
+```
+
+#### Example
+
+```tw
+use @std.proc
+
+fn main() {
+  a := proc.args()
+  if Array.len(a) < 2 {
+    eprintln("usage: myapp <file>")
+    proc.exit(1)
+  }
+  // ...
+}
+```
+
+---
+
+## Prelude additions — stderr output
+
+Two new prelude functions for writing to stderr (available without any `use` import):
+
+```tw
+// Write a string to stderr, no newline.
+eprint(s: String) -> Void
+
+// Write a string to stderr with a trailing newline.
+eprintln(s: String) -> Void
+```
+
+These mirror `print`/`println` but target stderr, which is essential for diagnostic
+messages that should not pollute stdout output (e.g. compiler warnings, progress info).
+
+---
+
 ## Future modules
 
 These are not part of the MVP but are natural follow-ons:
 
-| Module   | Purpose                                              |
-|----------|------------------------------------------------------|
-| `@json`  | JSON parse and encode — useful for config, metadata, LSP protocol |
-| `@math`  | `sqrt`, `floor`, `ceil`, `pow`, `abs`, trig — pure wrappers over Wasm numeric instructions |
-| `@io`    | Buffered stdout/stderr writes beyond the basic prelude `println` |
-| `@test`  | Test runner primitives (`assert`, `assert_eq`, `describe`) |
+| Module       | Purpose                                              |
+|--------------|------------------------------------------------------|
+| `@std.json`  | JSON parse and encode — useful for config, metadata, LSP protocol |
+| `@std.math`  | `sqrt`, `floor`, `ceil`, `pow`, `abs`, trig — pure wrappers over Wasm numeric instructions |
+| `@std.io`    | Buffered stdout/stderr writes beyond the basic prelude `println` |
+| `@std.test`  | Test runner primitives (`assert`, `assert_eq`, `describe`) |
 
 ---
 
@@ -171,7 +228,7 @@ These are not part of the MVP but are natural follow-ons:
 The open questions from `tbc.md` TBC-001 are now answered:
 
 * **Module path:** stdlib is embedded in `twc.wasm`; no install-prefix path needed.
-* **What modules exist:** `@fs` and `@path` for MVP; see future table above.
+* **What modules exist:** `@std.fs`, `@std.path`, and `@std.proc` for MVP; see future table above.
 * **Ships as source or IR:** `.tw` source, compiled at `twc.wasm` build time via the Wasm GC
   backend + Runtime IR + Linker pipeline.
 * **Caching / versioning:** versioned with `twc.wasm`; no separate cache mechanism needed.

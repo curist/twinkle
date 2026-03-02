@@ -53,7 +53,7 @@ presence is what matters for root detection, not its contents.
 ## D-003: Stdlib Modules — `@` Sigil
 
 **Decision:** Stdlib (non-prelude) modules are imported with a `@` sigil prefix:
-`use @array`, `use @io`, `use @std.json`.
+`use @std.fs`, `use @std.path`, `use @std.proc`.
 
 **Alternatives considered:**
 
