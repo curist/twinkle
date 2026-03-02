@@ -1,5 +1,6 @@
 ---
 source: tests/runtime_dump_test.rs
+assertion_line: 100
 expression: wat
 ---
 (module
@@ -8,7 +9,8 @@ expression: wat
   (type $rt_types__DictEntry (struct (field $key anyref) (field $val anyref)))
   (type $rt_types__Dict (array (mut (ref null $rt_types__DictEntry))))
   (type $rt_types__ClosureEnv (array anyref))
-  (type $rt_types__Closure (struct (field $func_idx i32) (field $env (ref null $rt_types__ClosureEnv))))
+  (type $rt_types__ClosureFunc (func (param anyref anyref) (result anyref)))
+  (type $rt_types__Closure (struct (field $func_ref (ref null $rt_types__ClosureFunc)) (field $env (ref null $rt_types__ClosureEnv))))
   (type $rt_types__Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $rt_types__Array))))
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))

@@ -8,6 +8,7 @@ pub const T_STRING: &str = "rt_types__String";
 pub const T_DICT_ENTRY: &str = "rt_types__DictEntry";
 pub const T_DICT: &str = "rt_types__Dict";
 pub const T_CLOSURE_ENV: &str = "rt_types__ClosureEnv";
+pub const T_CLOSURE_FUNC: &str = "rt_types__ClosureFunc";
 pub const T_CLOSURE: &str = "rt_types__Closure";
 pub const T_VARIANT: &str = "rt_types__Variant";
 pub const T_BOXED_INT: &str = "rt_types__BoxedInt";
@@ -86,11 +87,27 @@ pub fn make() -> ModuleIR {
         elem: FieldDef { name: None, mutable: false, ty: ValType::Anyref },
     });
 
-    // (type $Closure (struct (field $func_idx i32) (field $env (ref null $ClosureEnv))))
+    // (type $ClosureFunc (func (param anyref anyref) (result anyref)))
+    // Universal closure signature: first param is env, second is a boxed-args anyref.
+    // All user functions share this type so closures can be stored/called uniformly.
+    m.types.push(TypeDef::FuncType {
+        name: "ClosureFunc".into(),
+        params: vec![ValType::Anyref, ValType::Anyref],
+        results: vec![ValType::Anyref],
+    });
+
+    // (type $Closure (struct (field $func_ref (ref null $ClosureFunc)) (field $env (ref null $ClosureEnv))))
     m.types.push(TypeDef::Struct {
         name: "Closure".into(),
         fields: vec![
-            FieldDef::named("func_idx", ValType::I32),
+            FieldDef {
+                name: Some("func_ref".into()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named("ClosureFunc".into()),
+                },
+            },
             FieldDef {
                 name: Some("env".into()),
                 mutable: false,
