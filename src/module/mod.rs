@@ -674,6 +674,9 @@ fn remap_expr_func_ids(
             remap_expr_func_ids(base, module_idx, external_func_refs, key_to_idx, local_to_global);
             remap_expr_func_ids(value, module_idx, external_func_refs, key_to_idx, local_to_global);
         }
+        CoreExprKind::Defer(inner) => {
+            remap_expr_func_ids(inner, module_idx, external_func_refs, key_to_idx, local_to_global);
+        }
         CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
         | CoreExprKind::LitBool(_)

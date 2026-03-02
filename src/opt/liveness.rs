@@ -122,6 +122,11 @@ fn live_in_op(op: &AnfOp, live: &mut HashSet<LocalId>) {
         AnfOp::AAssign { value, .. } => {
             add_atom(value, live);
         }
+        AnfOp::ADefer(inner) => {
+            // Conservatively treat all locals read in the deferred expression as live,
+            // since the deferred code runs at scope exit and may observe any local.
+            compute_live(inner, live);
+        }
     }
 }
 
@@ -172,6 +177,9 @@ fn annotate_op(op: &mut AnfOp) {
         }
         AnfOp::ALoop { body } => {
             annotate_expr(body);
+        }
+        AnfOp::ADefer(inner) => {
+            annotate_expr(inner);
         }
         _ => {}
     }

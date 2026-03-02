@@ -105,6 +105,7 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
         AnfOp::AIndex { base, index } => AnfOp::AIndex { base: sa(base), index: sa(index) },
         AnfOp::AInit { value } => AnfOp::AInit { value: sa(value) },
         AnfOp::AAssign { local, value } => AnfOp::AAssign { local, value: sa(value) },
+        AnfOp::ADefer(inner) => AnfOp::ADefer(Box::new(subst_atom(*inner, target, replacement))),
     }
 }
 
@@ -171,6 +172,10 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
         AnfOp::ALoop { body } => {
             let (new_body, changed) = dead_let_elim(*body, uses);
             (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+        }
+        AnfOp::ADefer(inner) => {
+            let (new_inner, changed) = dead_let_elim(*inner, uses);
+            (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),
     }
@@ -261,6 +266,10 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
         AnfOp::ALoop { body } => {
             let (new_body, changed) = copy_propagate_inner(*body, uses);
             (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+        }
+        AnfOp::ADefer(inner) => {
+            let (new_inner, changed) = copy_propagate_inner(*inner, uses);
+            (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),
     }
@@ -397,6 +406,10 @@ fn constant_fold_op(op: AnfOp) -> (AnfOp, bool) {
             let (new_body, changed) = constant_fold(*body);
             (AnfOp::ALoop { body: Box::new(new_body) }, changed)
         }
+        AnfOp::ADefer(inner) => {
+            let (new_inner, changed) = constant_fold(*inner);
+            (AnfOp::ADefer(Box::new(new_inner)), changed)
+        }
         other => (other, false),
     }
 }
@@ -480,6 +493,10 @@ fn branch_simplify_op(op: AnfOp) -> (AnfOp, bool) {
         AnfOp::ALoop { body } => {
             let (new_body, changed) = branch_simplify(*body);
             (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+        }
+        AnfOp::ADefer(inner) => {
+            let (new_inner, changed) = branch_simplify(*inner);
+            (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),
     }

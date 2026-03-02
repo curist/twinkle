@@ -1,0 +1,8 @@
+// Expected output:
+//   end 0
+//   end 1
+//   end 2
+
+for x in range(3) {
+    defer println("end ${x}")
+}

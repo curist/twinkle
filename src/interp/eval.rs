@@ -72,6 +72,10 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
     globals: Frame,
     /// True while directly executing the __init__ body (not inside nested calls).
     in_init_frame: bool,
+    /// Defer scope stack. Each entry is a scope (function call or loop iteration).
+    /// Entries are (deferred_expr, captured_frame_snapshot) pairs in declaration order.
+    /// Drained in reverse (LIFO) on scope exit. Traps do NOT drain defers.
+    defer_stack: Vec<Vec<(CoreExpr, Frame)>>,
 }
 
 impl<W: Write> Interpreter<W> {
@@ -79,7 +83,7 @@ impl<W: Write> Interpreter<W> {
         let func_index = module.functions.iter().enumerate()
             .map(|(i, f)| (f.func_id, i))
             .collect();
-        Self { module, func_index, output, globals: HashMap::new(), in_init_frame: false }
+        Self { module, func_index, output, globals: HashMap::new(), in_init_frame: false, defer_stack: Vec::new() }
     }
 
     /// Consume the interpreter and return the underlying output sink.
@@ -110,6 +114,7 @@ impl<W: Write> Interpreter<W> {
         let body = self.module.functions[idx].body.clone();
         let mut frame: Frame = HashMap::new();
         self.in_init_frame = true;
+        self.defer_stack.push(Vec::new());
         let result = match self.eval(&body, &mut frame) {
             Ok(v) => Ok(v),
             Err(Signal::Return(Some(v))) => Ok(v),
@@ -117,6 +122,12 @@ impl<W: Write> Interpreter<W> {
             Err(sig) => Err(sig),
         };
         self.in_init_frame = false;
+        let scope = self.defer_stack.pop().unwrap_or_default();
+        if !matches!(result, Err(Signal::Trap(_))) {
+            for (deferred_expr, mut cap) in scope.into_iter().rev() {
+                let _ = self.eval(&deferred_expr, &mut cap);
+            }
+        }
         result
     }
 
@@ -156,13 +167,20 @@ impl<W: Write> Interpreter<W> {
 
         // Nested calls are never the init frame
         let saved_in_init = std::mem::replace(&mut self.in_init_frame, false);
+        self.defer_stack.push(Vec::new());
         let result = match self.eval(&body, &mut frame) {
             Ok(v) => Ok(v),
             Err(Signal::Return(Some(v))) => Ok(v),
             Err(Signal::Return(None)) => Ok(Value::Void),
-            Err(sig) => Err(sig), // Break/Continue propagate (shouldn't reach here)
+            Err(sig) => Err(sig),
         };
         self.in_init_frame = saved_in_init;
+        let scope = self.defer_stack.pop().unwrap_or_default();
+        if !matches!(result, Err(Signal::Trap(_))) {
+            for (deferred_expr, mut cap) in scope.into_iter().rev() {
+                let _ = self.eval(&deferred_expr, &mut cap);
+            }
+        }
         result
     }
 
@@ -285,11 +303,36 @@ impl<W: Write> Interpreter<W> {
 
             Loop { body } => {
                 loop {
+                    // Each iteration gets its own defer scope.
+                    self.defer_stack.push(Vec::new());
                     let body_clone = body.clone();
-                    match self.eval(&body_clone, frame) {
-                        Ok(_) | Err(Signal::Continue) => { /* continue loop */ }
-                        Err(Signal::Break(v)) => return Ok(v.unwrap_or(Value::Void)),
-                        Err(sig) => return Err(sig), // Return and Trap propagate
+                    let iter_result = self.eval(&body_clone, frame);
+                    let scope = self.defer_stack.pop().unwrap_or_default();
+                    match iter_result {
+                        Ok(_) | Err(Signal::Continue) => {
+                            // Normal or continue: drain iteration defers, then keep looping.
+                            for (d, mut cap) in scope.into_iter().rev() {
+                                let _ = self.eval(&d, &mut cap);
+                            }
+                        }
+                        Err(Signal::Break(v)) => {
+                            // Break: drain iteration defers, then exit loop.
+                            for (d, mut cap) in scope.into_iter().rev() {
+                                let _ = self.eval(&d, &mut cap);
+                            }
+                            return Ok(v.unwrap_or(Value::Void));
+                        }
+                        Err(sig @ Signal::Return(_)) => {
+                            // Return: drain iteration defers; call_func will drain fn scope.
+                            for (d, mut cap) in scope.into_iter().rev() {
+                                let _ = self.eval(&d, &mut cap);
+                            }
+                            return Err(sig);
+                        }
+                        Err(sig @ Signal::Trap(_)) => {
+                            // Trap: do NOT drain defers; just propagate.
+                            return Err(sig);
+                        }
                     }
                 }
             }
@@ -310,6 +353,15 @@ impl<W: Write> Interpreter<W> {
                     None => None,
                 };
                 Err(Signal::Return(v))
+            }
+
+            Defer(inner_expr) => {
+                // Register the deferred expression in the innermost scope, capturing
+                // the current frame by value (capture-by-value semantics).
+                if let Some(scope) = self.defer_stack.last_mut() {
+                    scope.push((*inner_expr.clone(), frame.clone()));
+                }
+                Ok(Value::Void)
             }
 
             Record { type_id, fields } => {

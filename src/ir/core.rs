@@ -115,6 +115,12 @@ pub enum CoreExprKind {
         value: Option<Box<CoreExpr>>,
     },
 
+    /// Defer: schedules the inner expression to run when the enclosing scope exits.
+    /// Treated as an opaque pass-through by all stages except the interpreter
+    /// (which executes it on scope exit) and the ANF elimination pass (which
+    /// rewrites it away). The WAT backend never sees this node.
+    Defer(Box<CoreExpr>),
+
     // Data structures
     Record {
         type_id: TypeId,

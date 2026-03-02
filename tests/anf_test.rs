@@ -132,6 +132,11 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
         AnfOp::AAssign { value, .. } => {
             assert_is_atom(value, "AAssign.value", prog, func);
         }
+        AnfOp::ADefer(inner) => {
+            // ADefer should not survive past optimize_module; in anf_test
+            // we check pre-optimization ANF, so recurse to validate structure.
+            check_anf_expr(inner, prog, func);
+        }
     }
 }
 

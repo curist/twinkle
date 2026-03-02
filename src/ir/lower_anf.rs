@@ -185,6 +185,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
+        // ── Defer: lower inner independently, push ADefer, return ALitVoid ─────
+        CoreExprKind::Defer(inner) => {
+            let inner_anf = lower_expr_top(inner, next_temp);
+            let tmp = fresh(next_temp);
+            accum.push((tmp, AnfOp::ADefer(Box::new(inner_anf))));
+            AnfExpr::Atom(Atom::ALitVoid)
+        }
+
         // ── Assign: atomize value, push AAssign, return Atom(ALitVoid) ─────────
         CoreExprKind::Assign { local, value } => {
             let val_atom = atomize(value, next_temp, accum);
@@ -403,6 +411,12 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             accum.push((tmp, AnfOp::AAssign { local: *local, value: val_atom }));
             Atom::ALitVoid
         }
+        CoreExprKind::Defer(inner) => {
+            let inner_anf = lower_expr_top(inner, next_temp);
+            let tmp = fresh(next_temp);
+            accum.push((tmp, AnfOp::ADefer(Box::new(inner_anf))));
+            Atom::ALitVoid
+        }
     }
 }
 
@@ -551,6 +565,7 @@ fn max_local_id_in_expr(expr: &CoreExpr, max: &mut u32) {
             max_local_id_in_expr(base, max);
             max_local_id_in_expr(index, max);
         }
+        CoreExprKind::Defer(inner) => max_local_id_in_expr(inner, max),
         CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
         | CoreExprKind::LitBool(_)

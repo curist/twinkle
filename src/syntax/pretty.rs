@@ -166,6 +166,10 @@ fn print_stmt(stmt: &Stmt, out: &mut String, indent: usize) {
         Stmt::Expr(expr) => {
             print_expr(expr, out, indent);
         }
+        Stmt::Defer { expr, .. } => {
+            writeln!(out, "{}Defer", prefix).unwrap();
+            print_expr(expr, out, indent + 2);
+        }
     }
 }
 

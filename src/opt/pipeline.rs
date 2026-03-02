@@ -1,4 +1,5 @@
 use crate::ir::anf::{AnfFunctionDef, AnfModule};
+use crate::opt::defer_elim::eliminate_defers;
 use crate::opt::liveness::annotate_in_place;
 use crate::opt::passes::{branch_simplify, constant_fold, copy_propagate, dead_let_elim};
 use crate::opt::use_count::count_uses;
@@ -34,6 +35,9 @@ pub fn optimize_func(mut func: AnfFunctionDef) -> AnfFunctionDef {
     }
 
     annotate_in_place(&mut func);
+    // Eliminate all ADefer nodes — must run after peephole passes since it
+    // restructures terminal nodes (Return/Break/Continue/Atom) irreversibly.
+    func = eliminate_defers(func);
     func
 }
 

@@ -24,6 +24,7 @@ pub enum TokenKind {
     Or,
     True,
     False,
+    Defer,
 
     // Literals
     IntLit,
@@ -106,6 +107,7 @@ impl TokenKind {
                 | TokenKind::Or
                 | TokenKind::True
                 | TokenKind::False
+                | TokenKind::Defer
         )
     }
 
@@ -144,6 +146,7 @@ impl TokenKind {
             "or" => TokenKind::Or,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
+            "defer" => TokenKind::Defer,
             _ => return None,
         })
     }
@@ -170,6 +173,7 @@ impl TokenKind {
             TokenKind::Or => "or",
             TokenKind::True => "true",
             TokenKind::False => "false",
+            TokenKind::Defer => "defer",
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",

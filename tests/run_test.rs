@@ -261,3 +261,23 @@ fn trap_div_zero() {
 fn trap_error_call() {
     check_trap("tests/run/traps/error_call.tw");
 }
+
+#[test]
+fn defer_basic() {
+    check("tests/run/defer_basic.tw");
+}
+
+#[test]
+fn defer_return() {
+    check("tests/run/defer_return.tw");
+}
+
+#[test]
+fn defer_loop() {
+    check("tests/run/defer_loop.tw");
+}
+
+#[test]
+fn defer_capture() {
+    check("tests/run/defer_capture.tw");
+}

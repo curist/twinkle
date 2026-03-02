@@ -1,0 +1,11 @@
+// Capture-by-value: defer captures x=1, not the later value x=2.
+// Expected output:
+//   deferred: 1
+
+fn test() Void {
+    x := 1
+    defer println("deferred: ${x}")
+    x = 2
+}
+
+test()

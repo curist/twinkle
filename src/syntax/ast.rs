@@ -324,6 +324,13 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+
+    /// Defer statement: schedules `expr` to run when the enclosing scope exits.
+    /// Any expression type is accepted except `Never` (diverging expressions).
+    Defer {
+        expr: Expr,
+        span: Span,
+    },
 }
 
 /// Block of statements

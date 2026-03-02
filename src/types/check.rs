@@ -330,6 +330,19 @@ impl TypeChecker {
                 // lowerer handle it (it becomes part of __init__)
                 let _ = span;
             }
+            Stmt::Defer { expr, span } => {
+                let deferred_ty = self.synth_expr(expr).unwrap_or(MonoType::Void);
+                if deferred_ty == MonoType::Never {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "never-typed expression in defer",
+                        span: *span,
+                        note: "A defer body cannot diverge (return, break, continue, or \
+                               error(...)). These control-flow effects would be ambiguous \
+                               when executed at scope exit."
+                            .to_string(),
+                    });
+                }
+            }
             Stmt::Let { .. } => {
                 // Should not happen here; handled in Pass 1
             }
@@ -1856,6 +1869,20 @@ impl TypeChecker {
                 Stmt::Continue { .. } => {
                     result_ty = MonoType::Never;
                 }
+                Stmt::Defer { expr, span } => {
+                    let deferred_ty = self.synth_expr(expr)?;
+                    if deferred_ty == MonoType::Never {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "never-typed expression in defer",
+                            span: *span,
+                            note: "A defer body cannot diverge (return, break, continue, or \
+                                   error(...)). These control-flow effects would be ambiguous \
+                                   when executed at scope exit."
+                                .to_string(),
+                        });
+                    }
+                    result_ty = MonoType::Void;
+                }
             }
         }
 
@@ -1919,6 +1946,20 @@ impl TypeChecker {
                 }
                 Stmt::Continue { .. } => {
                     diverges = true;
+                }
+                Stmt::Defer { expr, span } => {
+                    let deferred_ty = self.synth_expr(expr)?;
+                    if deferred_ty == MonoType::Never {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "never-typed expression in defer",
+                            span: *span,
+                            note: "A defer body cannot diverge (return, break, continue, or \
+                                   error(...)). These control-flow effects would be ambiguous \
+                                   when executed at scope exit."
+                                .to_string(),
+                        });
+                    }
+                    diverges = false;
                 }
             }
         }

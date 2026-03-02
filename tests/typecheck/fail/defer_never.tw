@@ -1,0 +1,5 @@
+// Defer body must not have Never type.
+fn foo() Int {
+    defer return 0
+    42
+}

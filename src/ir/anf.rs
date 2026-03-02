@@ -149,6 +149,10 @@ pub enum AnfOp {
         local: LocalId,
         value: Atom,
     },
+    /// Deferred expression — preserves the deferred sub-expression through ANF
+    /// linearization. Eliminated by the defer_elim pass before reaching the WAT
+    /// backend; no `ADefer` node survives into code generation.
+    ADefer(Box<AnfExpr>),
 }
 
 /// A match arm in ANF IR. Reuses `CorePattern` from Core IR (already fully resolved).
@@ -311,6 +315,11 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
         }
         AnfOp::AAssign { local, value } => {
             write!(f, "assign(L{} = {})", local.0, value)
+        }
+        AnfOp::ADefer(inner) => {
+            writeln!(f, "defer {{")?;
+            print_anf_expr(inner, f, indent + 1)?;
+            write!(f, "{}}}", pad)
         }
     }
 }

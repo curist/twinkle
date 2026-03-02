@@ -88,6 +88,9 @@ fn count_op(op: &AnfOp, map: &mut HashMap<LocalId, usize>) {
         AnfOp::AAssign { value, .. } => {
             count_atom(value, map);
         }
+        AnfOp::ADefer(inner) => {
+            count_expr(inner, map);
+        }
     }
 }
 

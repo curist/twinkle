@@ -139,5 +139,9 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
             println!("{}  value:", pad);
             print_core_expr(value, indent + 4);
         }
+        Defer(inner) => {
+            println!("{}Defer:", pad);
+            print_core_expr(inner, indent + 2);
+        }
     }
 }

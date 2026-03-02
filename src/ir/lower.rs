@@ -626,6 +626,26 @@ impl Lowerer {
                 span: *cont_span,
             }),
 
+            Stmt::Defer { expr, span: defer_span } => {
+                let deferred_core = self.lower_expr(expr)?;
+                let body = self.lower_stmts(rest, span)?;
+                let ty = body.ty.clone();
+                let tmp = self.local_allocator.alloc();
+                Some(CoreExpr {
+                    kind: CoreExprKind::Let {
+                        local: tmp,
+                        value: Box::new(CoreExpr {
+                            kind: CoreExprKind::Defer(Box::new(deferred_core)),
+                            ty: MonoType::Void,
+                            span: *defer_span,
+                        }),
+                        body: Box::new(body),
+                    },
+                    ty,
+                    span,
+                })
+            }
+
             Stmt::For { span: for_span, .. } | Stmt::ForCond { span: for_span, .. } => {
                 self.lower_for_stmt(stmt, rest, span, *for_span)
             }
@@ -3424,6 +3444,7 @@ fn stmt_span(stmt: &Stmt) -> Span {
         Stmt::Break { span, .. } => *span,
         Stmt::Continue { span } => *span,
         Stmt::Return { span, .. } => *span,
+        Stmt::Defer { span, .. } => *span,
     }
 }
 
@@ -3523,6 +3544,9 @@ fn collect_local_refs_inner(
                     result.push(*id);
                 }
             }
+        }
+        Defer(inner) => {
+            collect_local_refs_inner(inner, exclude, seen, result);
         }
         // These don't contain Local refs (GlobalLocal is always reachable via globals)
         LitInt(_) | LitFloat(_) | LitBool(_) | LitStr(_) | LitVoid

@@ -157,6 +157,7 @@ impl Parser {
                     Stmt::Break { span, .. } => *span,
                     Stmt::Continue { span } => *span,
                     Stmt::Return { span, .. } => *span,
+                    Stmt::Defer { span, .. } => *span,
                 },
             })
             .unwrap_or(start_span);
@@ -1215,6 +1216,7 @@ impl Parser {
             Some(TokenKind::Break) => self.parse_break_stmt(),
             Some(TokenKind::Continue) => self.parse_continue_stmt(),
             Some(TokenKind::Return) => self.parse_return_stmt(),
+            Some(TokenKind::Defer) => self.parse_defer_stmt(),
             _ => {
                 // Check if this is a let binding by looking ahead
                 if self.is_let_binding() {
@@ -1346,6 +1348,13 @@ impl Parser {
     fn parse_continue_stmt(&mut self) -> ParseResult<Stmt> {
         let start = self.expect(TokenKind::Continue)?;
         Ok(Stmt::Continue { span: start.span })
+    }
+
+    fn parse_defer_stmt(&mut self) -> ParseResult<Stmt> {
+        let start = self.expect(TokenKind::Defer)?;
+        let expr = self.parse_expr()?;
+        let span = start.span.merge(&expr.span);
+        Ok(Stmt::Defer { expr, span })
     }
 
     fn parse_return_stmt(&mut self) -> ParseResult<Stmt> {

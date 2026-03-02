@@ -1,0 +1,10 @@
+// Expected output:
+//   cleanup
+//   result: 42
+
+fn foo() Int {
+    defer println("cleanup")
+    return 42
+}
+
+println("result: ${foo()}")

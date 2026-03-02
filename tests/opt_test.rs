@@ -76,6 +76,9 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
         AnfOp::ALoop { body } => {
             check_anf_expr(body, prog, func);
         }
+        AnfOp::ADefer(inner) => {
+            check_anf_expr(inner, prog, func);
+        }
         _ => {}
     }
 }
@@ -127,6 +130,10 @@ fn invariant_check(path: &str) {
 #[test] fn opt_trap_div_zero()      { invariant_check("tests/run/traps/div_zero.tw"); }
 #[test] fn opt_trap_error_call()    { invariant_check("tests/run/traps/error_call.tw"); }
 #[test] fn opt_method_chaining()    { invariant_check("tests/run/method_chaining.tw"); }
+#[test] fn opt_defer_basic()        { invariant_check("tests/run/defer_basic.tw"); }
+#[test] fn opt_defer_return()       { invariant_check("tests/run/defer_return.tw"); }
+#[test] fn opt_defer_loop()         { invariant_check("tests/run/defer_loop.tw"); }
+#[test] fn opt_defer_capture()      { invariant_check("tests/run/defer_capture.tw"); }
 
 // ── Node-count reduction test ─────────────────────────────────────────────────
 

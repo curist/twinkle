@@ -1,0 +1,12 @@
+// Expected output:
+//   c
+//   b
+//   a
+
+fn test() Void {
+    defer println("a")
+    defer println("b")
+    defer println("c")
+}
+
+test()
