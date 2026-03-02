@@ -2,14 +2,15 @@
 
 ## Goal
 
-Build a self-hosting Twinkle compiler that ultimately runs as a single WebAssembly module, with:
+Build a self-hosting Twinkle compiler whose canonical artifact is `twc.wasm` — a single
+WebAssembly module that can run in any compliant host. The Rust `twk` binary is the first
+host shell; browser and npm hosts follow naturally from the same interface.
 
-* A small Rust **stage0** implementation.
-* A clear internal pipeline:
-
-  * Source → AST → Typed AST → Core IR → (ANF) → backends.
-* An **interpreter-first** path for fast iteration.
-* A later **WAT/Wasm backend** for distribution and self-hosting.
+* A small Rust **stage0** implementation (`twk`) for fast iteration.
+* A clear internal pipeline: Source → AST → Typed AST → Core IR → ANF → Wasm GC backend.
+* An **interpreter-first** path (Core IR interpreter) as the semantic oracle.
+* A **Wasm GC backend** that emits code calling into a persistent-data-structure runtime.
+* `twc.wasm` as the stable, host-agnostic compiler artifact.
 
 ---
 
@@ -21,27 +22,51 @@ Compiler pipeline:
 Twinkle source
   → Lexer
   → Parser (AST with spans)
-  → Typechecker (bidirectional)
+  → Typechecker (bidirectional, Damas–Milner)
   → Core IR (expression+block, loops, match, variants)
-  → ANF IR (optional, backend-oriented)
+  → ANF IR (backend-oriented, with optimization passes)
   → Backend(s):
-       - Core IR Interpreter (stage0)
-       - WAT / Wasm GC backend (later)
+       - Core IR Interpreter (stage0, semantic oracle)
+       - Wasm GC backend → Runtime IR + Linker → linked.wat → output.wasm
 ```
 
 Runtime / distribution:
 
-* In development:
+```text
+Runtime modules (rt.types, rt.arr, rt.dict, rt.str, rt.core)   ┐
+Stdlib modules  (compiled from stdlib/*.tw via Wasm GC backend) ├─→ Linker → twc.wasm
+Compiler modules (compiled from compiler/*.tw via stage0)       ┘
 
-  * `twk` (Rust binary) with:
+                                                                  ┌── (stdlib + runtime ModuleIR
+                                                                  │    embedded in twc.wasm)
+user source files → twc.wasm (running in host) → user ModuleIR → Linker → output.wasm
+```
 
-    * `twk parse`, `twk check`, `twk run`, `twk build`, `twk fmt`, `twk lint`, `twk lsp`.
-  * `run` uses the interpreter backend.
-* Later:
-
-  * `twk build` emits `.wat` (and/or `.wasm`).
-  * A small host wrapper (Rust/Node/etc.) runs the Wasm compiler.
-  * Self-hosted compiler written in Twinkle.
+* **`twc.wasm`** bundles three things: the compiler, the stdlib, and the runtime — all linked
+  together by the same Runtime IR + Linker pipeline. It is `output.wasm` when the sources are
+  `compiler/main.tw` + `stdlib/*.tw` + the runtime modules.
+* **Stdlib is embedded**, not loaded from disk. Stdlib `.tw` sources are compiled via the
+  Wasm GC backend to `ModuleIR` and linked into `twc.wasm` at build time. The host only needs
+  to provide FS access for user source files and build outputs — not for the stdlib.
+* When compiling a user program, `twc.wasm` carries the pre-compiled stdlib and runtime
+  `ModuleIR` internally. It emits the user's `ModuleIR`, then links it together with those
+  embedded artifacts to produce `output.wasm`.
+* Once self-hosted, the **host shell drives `twc.wasm`**: it provides file I/O (reading user
+  source files, writing output) and instantiates `twc.wasm`, which executes the full compiler
+  pipeline internally. The compiler pipeline diagram above describes what runs *inside* `twc.wasm`.
+* The Rust host (Wasmtime) is a replaceable shell; browser and npm hosting implement the
+  same host import interface.
+* **Host interface** (what any host must provide):
+  * Console: `host.print`, `host.println`, `host.error`.
+  * File I/O (for reading user source files and writing build outputs; stdlib is embedded):
+    `host.read_file`, `host.write_file`, `host.write_bytes`, `host.mkdirp`, `host.list_dir`,
+    `host.exists`.
+  * Paths are logical (`/`-separated); the host maps them to OS paths or virtual FS.
+  * No clock, no randomness, no process spawning — compiler output is deterministic.
+* In development: `twk` (Rust binary) with subcommands
+  `parse`, `check`, `run`, `lower`, `lower-anf`, `opt`, `build`, `runtime-dump`.
+* `run` uses the Core IR interpreter; `build` uses the Wasm GC backend.
+* Self-hosted: `twc.wasm` compiled by stage0, then compiles itself.
 
 ---
 
@@ -1030,112 +1055,374 @@ The nested-loop case works correctly: entering `ALoop` folds the current `loop_d
 
 ---
 
-### Stage 8 — WAT Backend
+### Stage 8 — Wasm GC Backend & Runtime
 
-**Goal:** Compile Twinkle programs to human-readable WAT (WebAssembly text format).
+**Goal:** Build the full Wasm output pipeline: a Runtime IR + Linker for authoring the Twinkle
+runtime at a structured level above raw WAT; a Wasm GC runtime implementing persistent arrays,
+dicts, and strings; and a WAT emitter that compiles ANF IR to Wasm GC code calling into the
+runtime. Produce `twk build file.tw -o output.wasm`.
 
-Backend:
+**Key architectural shape:**
 
-* Consume optimized ANF/CFG output (with fallback path from plain ANF during migration).
-* Emit `.wat` with:
+```text
+Runtime modules (Rust-authored ModuleIR)──────────────────────┐
+                                                               ▼
+ANF IR → WAT emitter → user ModuleIR → Linker → LinkedModuleIR → emit → linked.wat → output.wasm
+```
 
-  * type section,
-  * function definitions,
-  * imports/exports,
-  * local variables,
-  * control structures:
+Both the runtime modules and the compiler-emitted user code reference types from `rt.types`
+symbolically. The linker resolves all symbolic refs to numeric indices and emits a single
+self-contained WAT file. `wat2wasm` (or the `wasm-tools` crate) produces the final `.wasm`.
 
-    * `if`, `block`, `loop`, `br`, `br_if`.
+**Distribution shape:** `twc.wasm` is the canonical compiler artifact. The Rust host (Wasmtime)
+is a replaceable shell. Browser and npm hosting are natural future extensions — they implement
+the same host import interface. No architecture decisions should assume the Wasmtime host is
+permanent.
 
-Representation of Twinkle types in Wasm:
+---
 
-* Start simple:
+#### 8a — Runtime IR + Linker (`src/wasm/`)
 
-  * map primitives (`Int`, `Bool`, `Float`) to numeric Wasm types (spec §2, §21).
-  * map `Str`, `Arr`, `Dict`, `Record`, `Variant` to a runtime representation (e.g. indices into a linear memory managed by a small runtime).
-* Later, experiment with Wasm GC (`struct`, `array`, `variant`) as the design stabilizes (spec §21).
-* Entry point: top-level init sequence lowers to a Wasm start function (spec §8.1).
+New module `src/wasm/` with:
+
+* `ir.rs` — symbolic IR types:
+  * `TypeSym`, `FuncSym`, `GlobalSym` — stable string-based symbols (e.g. `rt.types.Array`).
+  * `TypeDef`: `Struct { name, fields: Vec<FieldDef> }`, `Array { name, elem: ValType, mutable }`,
+    `FuncTy { name?, params, results }`.
+  * `ValType`: `I32 | I64 | F32 | F64 | Ref(Nullability, HeapType)` where
+    `HeapType = Type(TypeSym) | Anyref | I31ref | Funcref | ...`.
+  * `FuncDef`: `{ name: FuncSym, sig: FuncSig, locals: Vec<ValType>, body: Vec<Instr> }`.
+  * `Instr` — covers the GC + numeric + control subset:
+    `StructNew(TypeSym)`, `StructGet(TypeSym, field_idx)`, `StructSet(TypeSym, field_idx)`,
+    `ArrayNew(TypeSym)`, `ArrayNewFixed(TypeSym, n)`, `ArrayGet(TypeSym)`, `ArraySet(TypeSym)`,
+    `ArrayLen`, `RefIsNull`, `RefAsNonNull`, `RefEq`, `Call(FuncSym)`, `CallIndirect(TypeSym)`,
+    `LocalGet(u32)`, `LocalSet(u32)`, `LocalTee(u32)`,
+    `I32Const(i32)`, `I64Const(i64)`, `F64Const(f64)`,
+    `I32Add`, `I32Sub`, `I32Mul`, `I32DivS`, `I32RemS`, `I32And`, `I32Or`, `I32Eq`, `I32LtS`,
+    `I64Add`, `I64Sub`, `I64Mul`, `I64DivS`, `I64RemS`, `I64Eq`, `I64LtS`,
+    `F64Add`, `F64Sub`, `F64Mul`, `F64Div`, `F64Eq`, `F64Lt`,
+    `If { result, then_body, else_body }`, `Block { label, result, body }`,
+    `Loop { label, result, body }`, `Br(label)`, `BrIf(label)`, `Return`, `Drop`, `Unreachable`.
+  * No `RawWAT` escape hatch — extend `Instr` instead of adding escapes.
+  * `ModuleIR`: collects `TypeDef`, `FuncDef`, `ImportDef`, `ExportDef`, `GlobalDef`.
+  * `ImportDef`: `ImportFunc { module_ns, name, as_sym, sig }` (and memory/table if needed).
+  * `ExportDef`: `ExportFunc { name, sym }`.
+
+* `linker.rs` — `pub fn link(modules: Vec<ModuleIR>, manifest: &LinkManifest) -> LinkedModuleIR`:
+  * Resolves all `FuncSym`/`TypeSym`/`GlobalSym` imports to matching exports.
+  * Errors: `MissingExport`, `AmbiguousExport`, `TypeMismatch`, `NamespaceCollision`.
+  * Assigns numeric indices deterministically: types first (with structurally identical
+    `FuncTy` deduplication), then imports, then functions, then globals.
+  * Synthesizes `__linked_init` calling each module's optional `__init` in declaration order,
+    then the entry function.
+
+* `emit.rs` — `pub fn emit_wat(module: &LinkedModuleIR) -> String`:
+  * Emits standard WAT (s-expression format).
+  * Also `pub fn emit_debug_json(module: &LinkedModuleIR) -> String` for inspection.
+
+**Deliverable:** `cargo test --test wasm_ir_test` — unit tests for linking and WAT emission for
+small hand-authored `ModuleIR` inputs.
+
+---
+
+#### 8b — Runtime modules (`runtime/`)
+
+New top-level directory `runtime/` — Rust source files that programmatically construct
+`ModuleIR` values using the `src/wasm/ir.rs` builder API. Each file is one runtime module.
+
+**Type ownership rule:** `runtime/types.rs` (namespace `rt.types`) defines all shared Wasm GC
+types. All other modules and the compiler emitter reference these by symbol; they never define
+competing layouts.
+
+Shared types in `rt.types`:
+
+```wat
+(type $Array    (array (mut anyref)))
+(type $String   (array i8))                             ; UTF-8, immutable by construction
+(type $DictEntry (struct (field key anyref) (field val anyref)))
+(type $Dict     (array (mut (ref null $DictEntry))))    ; sorted by key, COW semantics
+(type $ClosureEnv (array anyref))                       ; captured free variables
+(type $Closure  (struct (field func_idx i32) (field env (ref null $ClosureEnv))))
+(type $Variant  (struct (field type_id i32) (field variant_id i32) (field payload (ref null $Array))))
+(type $BoxedInt   (struct (field v i64)))
+(type $BoxedFloat (struct (field v f64)))
+```
+
+**v0 data structure strategy — simplest-correct first; migrate later:**
+
+* **Array (persistent):** copy-on-write — `rt.arr.set` copies the entire backing `$Array` and
+  writes the new element. O(n) time and space. Correct semantics; replace with an RRB-tree or
+  persistent trie when performance matters.
+* **Dict (persistent):** sorted association list — `rt.dict.set` copies and inserts/replaces in
+  order. O(n) lookup and mutation. Replace with HAMT when performance matters.
+* **String:** `$String` (`array<i8>`, UTF-8). Immutable by construction; `str.concat` allocates
+  a fresh array.
+
+Runtime modules and their exported functions:
+
+* `runtime/arr.rs` (`rt.arr`):
+  `make(len: i32, fill: anyref) -> Array`,
+  `get(arr, i: i32) -> anyref`,
+  `set(arr, i: i32, val: anyref) -> Array` (COW — returns new array),
+  `len(arr) -> i32`,
+  `concat(a, b) -> Array`,
+  `slice(arr, start: i32, end: i32) -> Array`.
+
+* `runtime/dict.rs` (`rt.dict`):
+  `make() -> Dict`,
+  `get(dict, key: anyref) -> anyref` (returns null if absent),
+  `has(dict, key: anyref) -> i32`,
+  `set(dict, key: anyref, val: anyref) -> Dict` (COW),
+  `remove(dict, key: anyref) -> Dict`,
+  `len(dict) -> i32`,
+  `keys(dict) -> Array`.
+
+* `runtime/str.rs` (`rt.str`):
+  `len(s) -> i32`,
+  `concat(a, b) -> String`,
+  `substring(s, start: i32, end: i32) -> String`,
+  `eq(a, b) -> i32`,
+  `from_i64(n: i64) -> String`,
+  `from_f64(n: f64) -> String`,
+  `from_bool(b: i32) -> String`.
+
+* `runtime/core.rs` (`rt.core`):
+  `eq(a: anyref, b: anyref) -> i32` (structural equality for variants/records),
+  `trap(msg: String)` (calls host error),
+  host imports: `host.print(s: String)`, `host.println(s: String)`, `host.error(s: String)`.
+
+* `runtime/mod.rs`: convenience function producing a `Vec<ModuleIR>` of all runtime modules,
+  ready to pass to the linker.
+
+**Deliverable:** `twk runtime-dump [--wat | --json]` emits `runtime.wat` or `runtime.ast.json`
+for inspection. Unit tests for each runtime function (invoke via Wasmtime in test harness).
+
+---
+
+#### 8c — ANF → WAT Emitter (`src/codegen/`)
+
+New module `src/codegen/emit.rs`:
+
+* Entry: `pub fn emit_user_module(anf: &AnfModule, program_types: &ProgramTypes) -> ModuleIR`.
+* Imports all needed runtime functions by `FuncSym`; imports host functions.
+* Defines Wasm GC struct types for each user record type (one `(type $RecordN ...)` per `TypeId`).
+* Emits one `FuncDef` per `AnfFunctionDef`; also emits a `__init` function for the init sequence.
+
+**Value representation (v0 — fully boxed at boundaries):**
+
+All Twinkle locals and function parameters/results are `anyref` in Wasm for uniformity.
+Unboxing optimization is deferred to a later stage.
+
+| Twinkle type       | Wasm GC representation                              |
+|--------------------|-----------------------------------------------------|
+| `Int (i64)`        | `(ref $BoxedInt)` — heap struct                     |
+| `Float (f64)`      | `(ref $BoxedFloat)` — heap struct                   |
+| `Bool`             | `i31ref` with value 0 or 1                          |
+| `Void`             | `i31ref` with value 0                               |
+| `String`           | `(ref null $String)` from `rt.types`                |
+| `Array<T>`         | `(ref null $Array)` from `rt.types`                 |
+| `Dict<K,V>`        | `(ref null $Dict)` from `rt.types`                  |
+| `Record(TypeId)`   | `(ref null $RecordN)` — emitted per user type       |
+| `Variant`          | `(ref null $Variant)` from `rt.types`               |
+| `Closure`          | `(ref null $Closure)` from `rt.types`               |
+
+**Closure calling convention (v0):** All user functions share the Wasm signature
+`(func (param anyref)... (result anyref))`. Closures store a function table index in `$Closure`.
+Closure calls use `call_indirect` via the function table with the appropriate type.
+
+**ANF → Wasm GC instruction translation (key cases):**
+
+* `ALocal(id)` → `local.get N`.
+* `AAssign { local, value }` → `local.set N`.
+* `ACall { callee: AGlobalFunc(id), args }` → `call $func_N` (direct).
+* `ACall { callee: ALocal(c), args }` → unpack `$Closure.func_idx` and `$Closure.env`,
+  push env + args, `call_indirect`.
+* `ABinOp` → unbox operands, apply numeric op (i64 or f64), rebox result.
+* `AIf` → `if / else / end`.
+* `AMatch` → nested `if`/`br_if` on `$Variant.type_id` and `$Variant.variant_id`.
+* `ALoop` / `Break` / `Continue` → `block` + `loop` + `br` / `br_if`.
+* `ARecord { type_id, fields }` → `struct.new $RecordN` with field atoms.
+* `ARecordGet { target, field }` → `struct.get $RecordN field_idx`.
+* `ARecordUpdate { base, field, value, can_reuse_in_place }`:
+  * `can_reuse_in_place = true` → `struct.set $RecordN field_idx` (in-place mutation; liveness
+    guarantees no observable aliasing).
+  * `can_reuse_in_place = false` → `struct.new $RecordN` copying all fields with the one updated.
+* `AVariant { type_id, variant, args }` → pack args into `$Array` via `rt.arr.make` + `set`;
+  `struct.new $Variant` with type_id, variant_id, payload.
+* `AArrayLit(elems)` → `call rt.arr.make` + sequential `call rt.arr.set`.
+* `AIndex { base, index }` → `call rt.arr.get` or `call rt.dict.get`.
+* `AMakeClosure { func_id, free_vars }` → build `$ClosureEnv` array, `struct.new $Closure`.
+
+---
+
+#### 8d — Full build pipeline
+
+Wire the complete pipeline in `src/cli/build.rs`:
+
+1. Parse → resolve → typecheck → lower (Core IR) → lower (ANF) → optimize → defer-eliminate.
+2. `emit_user_module(anf, types)` → user `ModuleIR`.
+3. Load runtime modules from `runtime/`.
+4. `link([runtime_modules..., user_module], manifest)` → `LinkedModuleIR`.
+5. `emit_wat(linked)` → write `output.wat`.
+6. Shell out to `wasm-tools` (or the `wat` crate) to assemble `output.wasm`.
+
+**Host import interface** (what the linked module imports from `"host"`):
+
+* `host.print(s: ref $String)` — write to stdout, no newline.
+* `host.println(s: ref $String)` — write to stdout with newline.
+* `host.error(s: ref $String)` — write to stderr and trap (does not return).
+
+File I/O host imports (used by `@fs`; absent in programs that don't use it):
+
+* `host.read_file(path: ref $String) -> ref $String`
+* `host.write_file(path: ref $String, content: ref $String)`
+* `host.write_bytes(path: ref $String, bytes: ref $Array)`
+* `host.mkdirp(path: ref $String)`
+* `host.list_dir(path: ref $String) -> ref $Array`
+* `host.exists(path: ref $String) -> i32`
 
 CLI:
 
 ```bash
-twk build file.tw -o file.wat
+twk build file.tw [-o output.wasm] [--emit-wat]
 ```
-
-At first, this is just a compilation target; executing WAT/Wasm can be done via external tools.
 
 Deliverables:
 
-* WAT emitted for simple programs.
-* Golden tests:
-
-  * `.tw` input → expected `.wat` pattern (or pretty-printed).
+* `twk build hello.tw` produces a runnable `hello.wasm`.
+* `twk runtime-dump --wat` emits the linked runtime for inspection.
+* Golden snapshot tests: a handful of programs (e.g. `hello.tw`, `arithmetic.tw`, `records.tw`)
+  have their WAT output snapshotted and fail on regression.
+* All runtime functions unit-tested via Wasmtime test harness.
 
 ---
 
-### Stage 9 — Wasm Execution Integration
+#### 8e — Standard library (`stdlib/`)
 
-**Goal:** Integrate a Wasm runtime (e.g. Wasmtime) so Twinkle can run via Wasm as well as via interpreter.
+New directory `stdlib/` containing Twinkle source files for the MVP standard library modules.
+These are compiled via the same Wasm GC backend pipeline as user programs and linked into
+`twc.wasm` alongside the runtime. See [docs/stdlib.md](stdlib.md) for the full API spec.
 
-CLI modes:
+**`stdlib/path.tw` (`@path`)** — pure Twinkle, no host imports:
+
+* `join`, `join_all`, `dirname`, `basename`, `stem`, `extension`, `normalize`, `is_absolute`.
+* Testable via the Core IR interpreter immediately (no Wasm backend needed).
+
+**`stdlib/fs.tw` (`@fs`)** — thin wrapper over host file I/O imports:
+
+* `FsError` sum type: `{ NotFound, PermissionDenied, Other(String) }`.
+* `DirEntry` record and `EntryKind` sum type.
+* `read_text`, `write_text`, `write_bytes`, `mkdirp`, `list_dir`, `exists`.
+* Calls `host.read_file`, `host.write_file`, `host.write_bytes`, `host.mkdirp`,
+  `host.list_dir` — the same host imports declared in 8d.
+
+**Module loader fix:** Update the module loader (`src/module/loader.rs`) to resolve `@name`
+imports to the corresponding embedded stdlib `ModuleIR` rather than returning "not yet
+implemented". Stdlib modules are registered at startup alongside the runtime modules.
+
+**Link step update:** The build pipeline from 8d gains stdlib modules in the link:
+
+```
+link([runtime_modules..., stdlib_modules..., user_module], manifest)
+```
+
+When building `twc.wasm` itself, all stdlib modules are linked in unconditionally (the
+compiler must carry the full stdlib to embed it for user program builds). When `twc.wasm`
+compiles a user program and produces `output.wasm`, only stdlib modules actually imported
+by that user program are included — dead-module elimination at the linker level keeps
+user output small.
+
+Deliverables:
+
+* `use @path` and `use @fs` resolve and compile end-to-end.
+* `@path` functions tested via existing interpreter test harness (`tests/run/`).
+* `@fs` functions tested via Wasmtime test harness with a temporary directory fixture.
+
+---
+
+### Stage 9 — Host Integration & Validation
+
+**Goal:** Implement the Wasmtime host shell that satisfies the runtime's host import interface,
+run compiled programs end-to-end via Wasm, and validate correctness against the interpreter
+via differential testing.
+
+**Host shell design:**
+
+The host is a thin Rust + Wasmtime layer. It is *not* the compiler — it merely provides
+the host import functions (`host.print`, `host.println`, `host.error`) and instantiates the
+linked Wasm module. The compiler pipeline remains in Rust at this stage, but the host interface
+is deliberately minimal so any other host (Node, browser shim) can implement it identically.
+
+WASI is a host concern: the Wasmtime host implements `host.read_file`, `host.write_file`,
+`host.write_bytes`, `host.mkdirp`, `host.list_dir`, `host.exists` using WASI or native
+calls. `twc.wasm` imports file I/O abstractly — it is not aware of WASI. This keeps
+`twc.wasm` host-agnostic.
+
+At Stage 9, the host shell only needs console imports (`host.print`, `host.println`,
+`host.error`) since the compiler pipeline is still in Rust. File I/O imports become live
+in Stage 10 when `twc.wasm` itself reads source files.
+
+CLI:
 
 ```bash
-twk run file.tw                 # default: interpreter backend
-twk run --backend=wat file.tw   # compile to WAT, run via Wasmtime
-twk build file.tw -o file.wat   # compile only
+twk run file.tw                  # interpreter backend (unchanged)
+twk run --backend=wasm file.tw   # compile → link → run via Wasmtime
+twk build file.tw -o output.wasm # compile + link only
 ```
 
-Implementation:
+**Differential testing (`tests/wasm_test.rs`):**
 
-* `compile_to_wat(src: &str) -> String`.
-* `run_wat(wat: &str)` using Wasmtime APIs (or a simple shell-out to `wasmtime` binary during development).
+For every program in `tests/run/`:
 
-Interpreter remains the reference semantics; Wasm/WAT is a second backend.
+1. Run via interpreter → capture stdout.
+2. Compile + link + run via Wasmtime → capture stdout.
+3. Assert outputs are identical.
+
+Any divergence is a regression in the WAT emitter or runtime. The interpreter remains the
+reference semantic oracle.
 
 Deliverables:
 
-* Programs can run both via interpreter and via Wasm backend.
-* Tests:
-
-  * For selected programs, compare interpreter output vs Wasm execution output.
+* All `tests/run/*.tw` programs produce correct output via `--backend=wasm`.
+* Differential test suite passing.
+* Host interface documented: the exact set of imports `twc.wasm` requires from the host,
+  their types, and their observable behavior. This is the stability boundary for future hosts.
 
 ---
 
-### Stage 10 — Self-Hosted Compiler in Twinkle
+### Stage 10 — Self-Hosted Compiler
 
-**Goal:** Re-implement the compiler pipeline in Twinkle itself.
+**Goal:** Re-implement the compiler pipeline in Twinkle, use the stage0 Rust compiler to
+compile it to `twc.wasm`, then run and verify the Twinkle-hosted compiler.
 
-Reimplemented components in Twinkle:
+**Bootstrapping sequence:**
 
-* Lexer,
-* Parser,
-* Typechecker/inference,
-* Core IR lowering,
-* (optionally ANF lowering),
-* WAT backend.
+1. Write the compiler in Twinkle under `compiler/` (lexer, parser, type checker, Core IR
+   lowering, ANF lowering, optimizer, WAT emitter, Runtime IR + linker).
+2. Stage0 Rust: `twk build compiler/main.tw -o twc.wasm`.
+3. Verify: run `twc.wasm` under Wasmtime on `hello.tw`; output must match stage0 output.
+4. Self-hosting round: compile `compiler/main.tw` with `twc.wasm` → new `twc.wasm`; verify
+   the two are behaviorally equivalent on the compatibility suite.
 
-Bootstrapping:
+**Prerequisites:** The Twinkle language must be expressive enough to write a compiler.
+File I/O (reading source files) is provided by the host via WASI or a custom import — the
+compiler sources import it as an abstract interface. String manipulation, arrays, and dicts
+(already in the runtime) are sufficient for symbol tables and AST representations.
 
-1. Use the Rust stage0 compiler to:
+**Porting note:** The Runtime IR + Linker (`src/wasm/`) is implemented in Rust for stage0 but
+must be ported to Twinkle for self-hosting. It is the largest self-hosting prerequisite beyond
+the compiler pipeline itself.
 
-   * compile the Twinkle compiler sources (`compiler/*.tw`) to WAT/Wasm.
-2. Run that Twinkle-written compiler under Wasmtime to:
+**Compatibility suite:**
 
-   * compile user programs,
-   * eventually compile itself.
-
-Compatibility suite:
-
-* A set of `.tw` inputs are compiled by:
-
-  * Rust stage0 compiler,
-  * Twinkle self-hosted compiler.
-* Ensure outputs (WAT or Wasm) are identical or behavior-equivalent.
+A set of `.tw` programs compiled by both stage0 (Rust) and stage1 (Twinkle self-hosted);
+outputs (Wasm execution results) must be identical.
 
 Deliverables:
 
-* Self-hosted Twinkle compiler that can compile real programs.
-* Stage0 Rust implementation can be frozen or kept as a reference.
+* `twc.wasm` produced by stage0 can compile real Twinkle programs.
+* `twc.wasm` produced by itself compiles the same programs to equivalent results.
+* Stage0 Rust implementation frozen as a reference and bootstrap tool.
 
 ---
 
