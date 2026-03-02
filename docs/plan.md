@@ -1136,7 +1136,7 @@ small hand-authored `ModuleIR` inputs.
 
 ---
 
-#### 8b — Runtime modules (`runtime/`)
+#### 8b — Runtime modules (`src/runtime/`)
 
 New top-level directory `runtime/` — Rust source files that programmatically construct
 `ModuleIR` values using the `src/wasm/ir.rs` builder API. Each file is one runtime module.
@@ -1218,66 +1218,254 @@ function (invoke via Wasmtime in test harness, deferred to Stage 9).
 
 #### 8c — ANF → WAT Emitter (`src/codegen/`)
 
-New module `src/codegen/emit.rs`:
+**Prerequisite — ANF type annotations:** Several ANF nodes lack the type information needed
+for code generation. Before starting the emitter, augment these nodes in `src/ir/anf.rs` and
+update the ANF lowerer (`src/ir/lower_anf.rs`) to propagate types from the Core IR `TypeMap`:
 
-* Entry: `pub fn emit_user_module(anf: &AnfModule, program_types: &ProgramTypes) -> ModuleIR`.
+* `ARecordGet { target, field }` → add `type_id: TypeId` (needed to cast to the correct
+  `$UserRecord_N` before `struct.get`).
+* `ARecordUpdate { base, field, value, can_reuse_in_place }` → add `type_id: TypeId` (needed
+  for `struct.set` or copy-and-update).
+* `ABinOp { op, left, right }` → add `operand_ty: NumKind` where
+  `enum NumKind { Int, Float }` (needed to choose `i64` vs `f64` instructions and
+  `$BoxedInt` vs `$BoxedFloat` unboxing).
+* `AUnOp { op, expr }` → add `operand_ty: NumKind`.
+* `AIndex { base, index }` → add `base_ty: IndexKind` where
+  `enum IndexKind { Array, Dict }` (needed to choose `rt.arr.get` vs `rt.dict.get`).
+
+Also add `param_tys: Vec<MonoType>` to `AnfFunctionDef` (propagated from the type checker's
+`FunctionSignature`); the emitter uses this to emit typed locals and to generate correct
+box/unbox code at function boundaries.
+
+**Files:**
+
+```
+src/codegen/
+  mod.rs          — pub mod emit; pub mod prelude; pub mod ctx;
+  prelude.rs      — FuncId → runtime FuncSym mapping + Wasm import signatures
+  ctx.rs          — EmitCtx: local map, label stack, type env, import set
+  emit.rs         — emit_user_module(), emit_func(), emit_expr(), emit_atom()
+```
+
+* Entry: `pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv, func_table: &HashMap<String, FuncId>) -> ModuleIR`.
 * Imports all needed runtime functions by `FuncSym`; imports host functions.
-* Defines Wasm GC struct types for each user record type (one `(type $RecordN ...)` per `TypeId`).
+* Defines Wasm GC struct types for each user record type (one `(type $UserRecord_N ...)` per
+  `TypeId`), all fields `anyref` (v0).
 * Emits one `FuncDef` per `AnfFunctionDef`; also emits a `__init` function for the init sequence.
 
-**Value representation (v0 — fully boxed at boundaries):**
+**Value representation — typed locals, boxed at boundaries:**
 
-All Twinkle locals and function parameters/results are `anyref` in Wasm for uniformity.
-Unboxing optimization is deferred to a later stage.
+Each Wasm local/param gets its concrete `ValType` based on its `MonoType`:
 
-| Twinkle type       | Wasm GC representation                              |
-|--------------------|-----------------------------------------------------|
-| `Int (i64)`        | `(ref $BoxedInt)` — heap struct                     |
-| `Float (f64)`      | `(ref $BoxedFloat)` — heap struct                   |
-| `Bool`             | `i31ref` with value 0 or 1                          |
-| `Void`             | `i31ref` with value 0                               |
-| `String`           | `(ref null $String)` from `rt.types`                |
-| `Array<T>`         | `(ref null $Array)` from `rt.types`                 |
-| `Dict<K,V>`        | `(ref null $Dict)` from `rt.types`                  |
-| `Record(TypeId)`   | `(ref null $RecordN)` — emitted per user type       |
-| `Variant`          | `(ref null $Variant)` from `rt.types`               |
-| `Closure`          | `(ref null $Closure)` from `rt.types`               |
+| Twinkle type       | Wasm `ValType`             | Box (→ anyref)             | Unbox (anyref →)                        |
+|--------------------|----------------------------|----------------------------|-----------------------------------------|
+| `Int (i64)`        | `i64`                      | `struct.new $BoxedInt`     | `ref.cast $BoxedInt` + `struct.get 0`   |
+| `Float (f64)`      | `f64`                      | `struct.new $BoxedFloat`   | `ref.cast $BoxedFloat` + `struct.get 0` |
+| `Bool`             | `i32`                      | `ref.i31`                  | `ref.cast i31` + `i31.get_s`            |
+| `Void`             | (none / `i32`)             | `ref.i31 0`                | `drop`                                  |
+| `String`           | `(ref null $String)`       | identity (already ref)     | `ref.cast $String`                      |
+| `Array<T>`         | `(ref null $Array)`        | identity                   | `ref.cast $Array`                       |
+| `Dict<K,V>`        | `(ref null $Dict)`         | identity                   | `ref.cast $Dict`                        |
+| `Record(TypeId)`   | `(ref null $UserRecord_N)` | identity (subtype of any)  | `ref.cast $UserRecord_N`                |
+| `Variant`          | `(ref null $Variant)`      | identity                   | `ref.cast $Variant`                     |
+| `Closure / fn(…)`  | `(ref null $Closure)`      | identity                   | `ref.cast $Closure`                     |
+| `Var("T")`         | `anyref`                   | already boxed              | `ref.cast` to concrete at use site      |
 
-**Closure calling convention (v0):** All user functions share the Wasm signature
-`(func (param anyref anyref) (result anyref))` — first param is the `$ClosureEnv` (or `ref.null
-none` for non-closures), remaining params are value args. This uniform signature is `$ClosureFunc`
-defined in `rt.types`. Closures store a `(ref null $ClosureFunc)` typed function reference;
-calls use `ref.func $func_N` to obtain the reference and `call_ref $ClosureFunc` to dispatch.
-No Wasm table or element sections are needed for closures.
+Boxing occurs at **polymorphism boundaries**: storing a typed value into something that
+expects `anyref` (closure env, variant payload, `$Array` elements), and at **type-variable
+positions** in generic function bodies. `MonoType::Var(_)` maps to `anyref` — callers box
+arguments at generic call sites, and unbox the result afterward.
+
+> **Monomorphization note:** The type-erasure strategy (`Var → anyref`) is the initial
+> implementation. Stage 9.5 introduces a monomorphization pass that eliminates `Var` entirely
+> by specializing generic functions per call-site type args. After monomorphization, no
+> `Var("T")` survives into codegen and the `anyref` row above becomes dead code. See
+> [Stage 9.5](#stage-95--monomorphization) for details.
+
+**Prep for monomorphization (do in Step 0):** During type checking, record the solved type
+arguments at each generic call site. Add `generic_instantiations: HashMap<ExprId, Vec<MonoType>>`
+to `TypeMap` (or a sibling struct). The type checker already solves these via `instantiate_vars`
++ MetaVar unification — just persist the zonked results before discarding them. This map costs
+nothing at runtime and is the primary input to the Stage 9.5 monomorphization pass.
+
+**Calling convention — hybrid direct/closure:**
+
+* **Direct calls** (`ACall { callee: AGlobalFunc(id), args }`): Use the function's natural
+  Wasm signature with typed params. No packing, no env param. Emits `call $func_N` directly.
+  This is the common case and avoids all boxing/packing overhead.
+
+* **Closure calls** (`ACall { callee: ALocal(c), args }`): Use the uniform `$ClosureFunc`
+  signature `(func (param anyref anyref) (result anyref))` — first param is `$ClosureEnv`,
+  second is a `$Array` of boxed args. Emits: unpack `$Closure`, box each arg into `$Array`,
+  `call_ref $ClosureFunc`.
+
+* **Closure body wrapper**: Every user function that can be stored as a closure value gets a
+  generated **trampoline** `$func_N__closure` with the `$ClosureFunc` signature. The trampoline
+  unpacks the `$Array` arg, unboxes each element to the expected type, calls the real
+  `$func_N`, and boxes the result. `AMakeClosure { func_id, free_vars }` stores
+  `ref.func $func_N__closure` in the `$Closure`.
+
+* **`AGlobalFunc` in atom position** (e.g. `f := Array.len`): Emits `ref.func` for the
+  trampoline + `struct.new $Closure` with empty env. Prelude functions similarly get trampolines.
+
+* **0-arg functions**: Direct call passes no args. Closure call passes `ref.null none` as the
+  args array.
 
 > **Wasm 3.0 note (Typed References):** `ref.func` + `call_ref` replace `call_indirect` + a
 > function table. The engine verifies type safety at validation time and can inline/devirtualize
 > more aggressively. The `Instr::RefFunc` and `Instr::CallRef` variants in `src/wasm/ir.rs`
 > implement this.
 
+**Runtime/prelude calls** use native Wasm signatures, not the closure convention. The emitter
+maintains a `prelude.rs` table mapping each prelude `FuncId` to its runtime `FuncSym` and Wasm
+signature. At call sites the emitter converts Twinkle-typed args to the runtime's expected types
+(e.g. box an `i64` to `anyref` before calling `rt.arr.set`). The runtime functions themselves
+are not modified.
+
+**Prelude FuncId → runtime symbol mapping** (in `prelude.rs`):
+
+| FuncId | Twinkle name       | Runtime FuncSym          | Wasm signature                                    |
+|--------|--------------------|--------------------------|---------------------------------------------------|
+| 1      | `print`            | `rt_core__print`         | `(ref $String) → ()`                              |
+| 2      | `println`          | `rt_core__println`       | `(ref $String) → ()`                              |
+| 3      | `error`            | `rt_core__error`         | `(ref $String) → ()`                              |
+| 4      | `int_to_string`    | `rt_str__from_i64`       | `(i64) → (ref $String)`                           |
+| 5      | `float_to_string`  | `rt_str__from_f64`       | `(f64) → (ref $String)`                           |
+| 6      | `bool_to_string`   | `rt_str__from_bool`      | `(i32) → (ref $String)`                           |
+| 8      | `string_len`       | `rt_str__len`            | `(ref $String) → i32`                             |
+| 9      | `string_concat`    | `rt_str__concat`         | `(ref $String, ref $String) → (ref $String)`      |
+| 10     | `array_len`        | `rt_arr__len`            | `(ref $Array) → i32`                              |
+| 11     | `array_append`     | `rt_arr__set` (COW)      | `(ref $Array, i32, anyref) → (ref $Array)`        |
+| …      | (see full list in `src/ir/core.rs::prelude`) | …                     | …                                                |
+
 **ANF → Wasm GC instruction translation (key cases):**
 
-* `ALocal(id)` → `local.get N`.
-* `AAssign { local, value }` → `local.set N`.
-* `ACall { callee: AGlobalFunc(id), args }` → `call $func_N` (direct).
-* `ACall { callee: ALocal(c), args }` → `struct.get $Closure 0` (get `func_ref`),
-  `struct.get $Closure 1` (get env), push args, `call_ref $ClosureFunc`.
-* `ABinOp` → unbox operands, apply numeric op (i64 or f64), rebox result.
-* `AIf` → `if / else / end`.
-* `AMatch` → nested `if`/`br_if` on `$Variant.type_id` and `$Variant.variant_id`.
-* `ALoop` / `Break` / `Continue` → `block` + `loop` + `br` / `br_if`.
-* `ARecord { type_id, fields }` → `struct.new $RecordN` with field atoms.
-* `ARecordGet { target, field }` → `struct.get $RecordN field_idx`.
-* `ARecordUpdate { base, field, value, can_reuse_in_place }`:
-  * `can_reuse_in_place = true` → `struct.set $RecordN field_idx` (in-place mutation; liveness
-    guarantees no observable aliasing).
-  * `can_reuse_in_place = false` → `struct.new $RecordN` copying all fields with the one updated.
-* `AVariant { type_id, variant, args }` → pack args into `$Array` via `rt.arr.make` + `set`;
-  `struct.new $Variant` with type_id, variant_id, payload.
-* `AArrayLit(elems)` → `call rt.arr.make` + sequential `call rt.arr.set`.
-* `AIndex { base, index }` → `call rt.arr.get` or `call rt.dict.get`.
-* `AMakeClosure { func_id, free_vars }` → `ref.func $func_N` to obtain typed funcref,
-  build `$ClosureEnv` array from free vars, `struct.new $Closure`.
+* `ALocal(id)` → `local.get N` (typed local).
+* `AInit { value }` / `AAssign { local, value }` → `local.set N`.
+* `ACall { callee: AGlobalFunc(id), args }` → push typed args, `call $func_N` (direct,
+  no packing). If callee is a prelude func, box/unbox args to match runtime signature.
+* `ACall { callee: ALocal(c), args }` → cast local to `$Closure`,
+  `struct.get $Closure 1` (env), box args into `$Array`,
+  `struct.get $Closure 0` (func_ref), `call_ref $ClosureFunc`, unbox result.
+* `ABinOp { op, left, right, operand_ty }` → `local.get` both (already typed),
+  apply `i64.add` / `f64.add` / etc. based on `operand_ty`. No box/unbox needed.
+* `AUnOp { op, expr, operand_ty }` → same pattern.
+* `AIf` → `if (result T) / else / end` where `T` is the concrete `ValType`.
+* `AMatch` → nested `if`/`br_if` on `$Variant.type_id` and `$Variant.variant_id`;
+  unbox payload fields from `$Array` into typed locals.
+* `ALoop` / `Break` / `Continue` → `block $break_N` + `loop $cont_N` + `br`.
+* `ARecord { type_id, fields }` → box each field to `anyref`, `struct.new $UserRecord_N`.
+* `ARecordGet { target, type_id, field }` → `ref.cast $UserRecord_N`,
+  `struct.get $UserRecord_N field_idx`, unbox result to expected type.
+* `ARecordUpdate { base, type_id, field, value, can_reuse_in_place }`:
+  * `can_reuse_in_place = true` → `ref.cast`, box value, `struct.set $UserRecord_N field_idx`.
+  * `can_reuse_in_place = false` → `ref.cast`, copy all fields with the one updated,
+    `struct.new $UserRecord_N`.
+* `AVariant { type_id, variant, args }` → box args into `$Array` via `array.new_fixed`,
+  `struct.new $Variant` with `i32` type_id, `i32` variant_id, payload.
+* `AArrayLit(elems)` → box each element to `anyref`, `array.new_fixed $Array N`.
+* `AIndex { base, index, base_ty }` → `call rt.arr.get` or `call rt.dict.get` depending
+  on `base_ty`, then unbox result.
+* `AMakeClosure { func_id, free_vars }` → box each free var to `anyref`,
+  `array.new_fixed $ClosureEnv N`, `ref.func $func_N__closure`,
+  `struct.new $Closure`.
+* String literals → `array.new_fixed $String N` with `i32` byte constants (UTF-8).
+
+**Guard:** Assert no `ADefer` nodes remain before codegen — the `defer_elim` pass must have
+run. Panic with a clear message if an `ADefer` is encountered.
+
+**Implementation steps:**
+
+**Step 0 — ANF type annotations + monomorphization prep**
+
+*ANF annotations* (`src/ir/anf.rs`, `src/ir/lower_anf.rs`):
+Add `NumKind`, `IndexKind` enums to `anf.rs`. Add `type_id` to `ARecordGet`/`ARecordUpdate`,
+`operand_ty` to `ABinOp`/`AUnOp`, `base_ty` to `AIndex`, `param_tys` to `AnfFunctionDef`.
+Update `lower_anf.rs` to propagate: thread the `TypeMap` through the ANF lowerer and extract
+types during lowering. Update Display impls and the optimization passes that inspect these
+nodes. Existing tests must still pass.
+
+*Monomorphization prep* (`src/types/type_map.rs` or `src/types/check.rs`):
+Add `generic_instantiations: HashMap<ExprId, Vec<MonoType>>` to `TypeMap`. In the type checker,
+after each generic call site where `instantiate_vars` creates MetaVars and unification solves
+them, persist the zonked concrete type args into this map. This is the primary input to the
+Stage 9.5 monomorphization pass — recording it now is trivial and avoids a retroactive change
+later.
+
+**Step 1 — Scaffold** (`prelude.rs`, `ctx.rs`, `mod.rs`)
+
+* `prelude.rs`: `PreludeMap` — `HashMap<FuncId, PreludeEntry>` where each entry has the
+  runtime `FuncSym`, param types, result type. Covers all 35 prelude FuncIds.
+* `ctx.rs`: `EmitCtx` struct — `local_map: HashMap<LocalId, (u32, ValType)>` (Wasm local index
+  + type), `label_stack: Vec<(Label, Label)>` (break/continue label pairs),
+  `imports: BTreeSet<ImportDef>`, `type_env: &TypeEnv`, `prelude: &PreludeMap`.
+* `EmitCtx::setup_locals(func: &AnfFunctionDef)` — scans body for all `Let`-bound LocalIds,
+  assigns contiguous Wasm local indices after params, infers `ValType` from usage context.
+* Helper: `fn mono_to_valtype(ty: &MonoType) -> ValType` — central mapping function.
+
+**Step 2 — Atoms + literals** (`emit.rs`)
+
+* `emit_atom(atom, expected_ty, ctx)` → `Vec<Instr>`:
+  * `ALocal(id)` → `LocalGet(idx)`, with box/unbox if local type ≠ expected type.
+  * `AGlobalFunc(id)` → `RefFunc` + `StructNew $Closure` with null env (wraps in trampoline).
+  * `ALitInt(n)` → `I64Const(n)`.
+  * `ALitFloat(v)` → `F64Const(v)`.
+  * `ALitBool(b)` → `I32Const(b as i32)`.
+  * `ALitStr(s)` → `ArrayNewFixed $String` with UTF-8 bytes.
+  * `ALitVoid` → (nothing, or `I32Const(0)` if a value is needed).
+
+**Step 3 — BinOp, UnOp, If**
+
+* `ABinOp` — emit left + right (both typed), apply `i64.add`/`f64.mul`/`i32.eq`/etc.
+  Comparison ops that cross types (e.g. `==` on strings) → `call rt_str__eq`.
+* `AUnOp` — `Negate` → `i64.const 0; i64.sub` or `f64.neg`; `Not` → `i32.eqz`.
+* `AIf` → `If { result: Some(valtype), then_body, else_body }`.
+
+**Step 4 — Direct calls + prelude calls**
+
+* User-to-user direct call: push typed args, `call $func_N`.
+* Prelude call: look up `PreludeEntry`, convert each arg from Twinkle type to runtime
+  expected type (e.g. `i64` → `struct.new $BoxedInt` if runtime expects `anyref`), emit
+  `call $rt_sym`, convert result back.
+* Register each used runtime func as an import in `EmitCtx`.
+
+**Step 5 — Closure calls + AMakeClosure**
+
+* `AMakeClosure` → generate trampoline `$func_N__closure` if not yet emitted; box free vars
+  into `$ClosureEnv`, `ref.func $func_N__closure`, `struct.new $Closure`.
+* Closure call → cast to `$Closure`, box args into `$Array`, extract env + func_ref,
+  `call_ref $ClosureFunc`, unbox result.
+
+**Step 6 — Records, variants, arrays**
+
+* `ARecord` → box fields, `struct.new $UserRecord_N`.
+* `ARecordGet` → cast, `struct.get`, unbox.
+* `ARecordUpdate` → in-place `struct.set` or copy-and-update.
+* `AVariant` → box args into `$Array`, `struct.new $Variant`.
+* `AArrayLit` → box elements, `array.new_fixed $Array`.
+* `AIndex` → `call rt.arr.get` / `call rt.dict.get`, unbox result.
+
+**Step 7 — Loops, break, continue**
+
+* `ALoop` → `Block { label: $break_N } + Loop { label: $cont_N, body }`.
+* `Break` → `Br($break_N)`; `Continue` → `Br($cont_N)`.
+* Push/pop label pairs on `EmitCtx.label_stack`.
+
+**Step 8 — Pattern matching**
+
+* `AMatch` → `Block` per arm. Cast scrutinee to `$Variant`. For each arm:
+  extract `struct.get $Variant 0` (type_id) and `struct.get $Variant 1` (variant_id),
+  compare with `i32.eq` + `br_if` on mismatch.
+  Bind payload fields: `struct.get $Variant 2` (payload array), `array.get` each slot,
+  unbox to typed locals.
+  Literal patterns: compare constants.
+  Wildcard `_`: fallthrough.
+
+**Step 9 — Build pipeline + CLI** (overlaps with 8d)
+
+* Wire `emit_user_module` into the compilation pipeline.
+* Snapshot tests: compile `hello.tw`, `arithmetic.tw`, `records.tw` to WAT, assert valid
+  output and no link errors.
 
 ---
 
@@ -1285,7 +1473,7 @@ No Wasm table or element sections are needed for closures.
 
 Wire the complete pipeline in `src/cli/build.rs`:
 
-1. Parse → resolve → typecheck → lower (Core IR) → lower (ANF) → optimize → defer-eliminate.
+1. Parse → resolve → typecheck → lower (Core IR) → [monomorphize (Stage 9.5)] → lower (ANF) → optimize → defer-eliminate.
 2. `emit_user_module(anf, types)` → user `ModuleIR`.
 3. Load runtime modules from `runtime/`.
 4. `link([runtime_modules..., user_module], manifest)` → `LinkedModuleIR`.
@@ -1434,6 +1622,90 @@ Deliverables:
   their types, and their observable behavior. This is the stability boundary for future hosts.
 * Tail-position calls emitted as `return_call` / `return_call_ref`; verified on a
   deeply-recursive test program (e.g. Fibonacci with large N).
+
+---
+
+### Stage 9.5 — Monomorphization
+
+**Goal:** Eliminate all type-variable boxing by specializing generic functions at each unique
+instantiation. After this pass, no `MonoType::Var` survives into ANF or codegen — every
+function has fully concrete typed params and locals.
+
+**Why not type erasure permanently:** Type erasure (`Var → anyref`) requires boxing/unboxing
+at every generic call boundary. For `fn id<T>(x: T) T` called as `id(42)`, the caller boxes
+`i64` → `struct.new $BoxedInt` → `anyref`, passes it, the generic body treats `x` as `anyref`,
+and the caller unboxes the result. This is 2 heap allocations and 2 casts per call. With
+monomorphization, `id` is specialized to `id__Int(x: i64) -> i64` — zero overhead.
+
+**Approach — Core IR → Core IR transform:**
+
+The monomorphization pass runs after type checking and before Core IR → ANF lowering.
+It is a whole-program transform:
+
+1. **Collect instantiations.** Walk all `CoreExprKind::Call` nodes. For each call to a generic
+   function, look up the solved type args from `TypeMap.generic_instantiations` (recorded during
+   type checking per the 8c prep step). Build a map:
+   `HashMap<FuncId, BTreeSet<Vec<MonoType>>>` — each generic FuncId to its set of unique
+   concrete type-arg tuples.
+
+2. **Specialize.** For each `(FuncId, type_args)` pair, clone the generic `FunctionDef`,
+   substitute every `Var("T")` → concrete `MonoType` in params, return type, and body.
+   Assign a fresh `FuncId` to each specialization. Name it `original_name__TypeA_TypeB`
+   (e.g. `id__Int`, `map__Int_String`).
+
+3. **Rewrite call sites.** Replace each generic `Call(func_id, args)` with
+   `Call(specialized_func_id, args)` based on the call's type args.
+
+4. **Remove generic originals.** The original generic `FunctionDef` (with `Var` types) is
+   dropped — no function with `Var` types reaches ANF.
+
+**Scope and edge cases:**
+
+* **Rank-1 guarantee:** Damas-Milner ensures every instantiation is fully concrete and known
+  at compile time. There are no higher-rank or existential types that would require runtime
+  dispatch. The set of specializations is always finite.
+
+* **Recursive generics:** `fn f<T>(x: T) { f(x) }` — the recursive call uses the same type
+  args as the outer call, so it produces no new instantiations. The pass terminates because
+  rank-1 prevents type args from growing (no `f(wrap(x))` where `wrap` adds a layer).
+
+* **Transitive specialization:** If `f<T>` calls `g<T>` internally, specializing `f` to
+  `f__Int` reveals a call to `g<Int>`. The pass must iterate (or process in dependency order)
+  until no new instantiations are discovered. In practice this converges in 2-3 rounds for
+  typical code.
+
+* **Generic functions used as first-class values:** `let f = id` where the binding has a
+  concrete type annotation (e.g. `f: fn(Int) Int = id`) — the monomorphizer generates
+  `id__Int` and the closure wraps that specialization. If a generic function is stored without
+  a concrete type context (e.g. `let f = id` with no annotation), the type checker already
+  rejects this as `AmbiguousType`.
+
+* **Cross-module generics:** A generic function exported from module A and called from module B
+  with concrete types — the monomorphization pass runs on the linked Core IR (after all modules
+  are lowered but before ANF), so cross-module instantiations are visible.
+
+**Integration with the emitter:**
+
+After monomorphization, the emitter never sees `MonoType::Var`. The `mono_to_valtype` mapping
+for `Var` becomes `unreachable!()`. All functions have concrete Wasm signatures. The closure
+trampoline generator uses concrete types. The `anyref` row in the value representation table
+is dead code.
+
+**Pipeline position:**
+
+```text
+parse → resolve → typecheck → lower (Core IR) → **monomorphize** → lower (ANF) → optimize → emit
+```
+
+**Deliverables:**
+
+* `src/ir/monomorphize.rs` — the pass.
+* All `tests/run/*.tw` programs produce identical output before and after monomorphization
+  (differential test against interpreter).
+* Wasm output for generic-heavy test programs (e.g. `generic_types.tw`, `iterator.tw`)
+  shows specialized function names and no `anyref` locals in specialized bodies.
+* Code-size report: compare total WAT line count with and without monomorphization on the
+  test suite. Document the bloat ratio.
 
 ---
 
