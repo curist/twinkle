@@ -952,7 +952,7 @@ Deliverables:
 
 ---
 
-### Stage 7.6 — Defer
+### ✅ Stage 7.6 — Defer
 
 **Goal:** Implement `defer` end-to-end: interpreter execution and ANF-level elimination,
 leaving no `Defer` nodes for the WAT backend.
