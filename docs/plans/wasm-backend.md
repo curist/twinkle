@@ -226,7 +226,7 @@ arguments at generic call sites, and unbox the result afterward.
 > implementation. Stage 9.5 introduces a monomorphization pass that eliminates `Var` entirely
 > by specializing generic functions per call-site type args. After monomorphization, no
 > `Var("T")` survives into codegen and the `anyref` row above becomes dead code. See
-> [Stage 9.5](future.md#stage-95--monomorphization) for details.
+> [Stage 9.5](monomorphization.md) for details.
 
 **Prep for monomorphization (do in Step 0):** During type checking, record the solved type
 arguments at each generic call site. Add `generic_instantiations: HashMap<ExprId, Vec<MonoType>>`

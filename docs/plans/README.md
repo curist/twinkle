@@ -176,8 +176,12 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 | 7 | ANF IR (Backend-Oriented) | Done | [optimization.md](optimization.md) |
 | 7.5 | Dataflow Analysis & ANF Optimization | Done | [optimization.md](optimization.md) |
 | 7.6 | Defer | Done | [optimization.md](optimization.md) |
-| 8 | Wasm GC Backend & Runtime | In progress | [wasm-backend.md](wasm-backend.md) |
-| 9 | Host Integration & Validation | Planned | [future.md](future.md) |
-| 9.5 | Monomorphization | Planned | [future.md](future.md) |
-| 10 | Self-Hosted Compiler | Planned | [future.md](future.md) |
-| Later | Tooling & Ecosystem | Planned | [future.md](future.md) |
+| 8a | Runtime IR + Linker | Done | [wasm-backend.md](wasm-backend.md) |
+| 8b | Runtime Modules | Done | [wasm-backend.md](wasm-backend.md) |
+| 8c | ANF → WAT Emitter | Done | [wasm-backend.md](wasm-backend.md) |
+| 8d | Full Build Pipeline | Done | [wasm-backend.md](wasm-backend.md) |
+| 8e | Standard Library | Done | [wasm-backend.md](wasm-backend.md) |
+| 9 | Host Integration & Validation | Next | [host-validation.md](host-validation.md) |
+| 9.5 | Monomorphization | Planned | [monomorphization.md](monomorphization.md) |
+| 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
+| Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
