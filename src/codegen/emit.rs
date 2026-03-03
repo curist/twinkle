@@ -147,6 +147,9 @@ fn infer_capture_locals(func: &AnfFunctionDef) -> Vec<crate::ir::LocalId> {
     let mut declared: HashSet<crate::ir::LocalId> = func.params.iter().copied().collect();
     let mut free: HashSet<crate::ir::LocalId> = HashSet::new();
     collect_free_locals_expr(&func.body, &mut declared, &mut free);
+    // Filter out locals that are assigned within the function (assign targets that
+    // are declared by an earlier let/init in the same function are NOT captures).
+    // The free set only contains truly undeclared locals.
     let mut ordered = free.into_iter().collect::<Vec<_>>();
     ordered.sort_by_key(|id| id.0);
     ordered
@@ -197,6 +200,7 @@ fn collect_free_locals_op(
             collect_free_locals_atom(scrutinee, declared, free);
             for arm in arms {
                 let mut arm_declared = declared.clone();
+                collect_pattern_bindings(&arm.pattern, &mut arm_declared);
                 collect_free_locals_expr(&arm.body, &mut arm_declared, free);
             }
         }
@@ -244,6 +248,24 @@ fn collect_free_locals_op(
             }
             collect_free_locals_atom(value, declared, free);
         }
+    }
+}
+
+fn collect_pattern_bindings(
+    pattern: &crate::ir::core::CorePattern,
+    declared: &mut HashSet<crate::ir::LocalId>,
+) {
+    use crate::ir::core::CorePattern;
+    match pattern {
+        CorePattern::Var(id) => {
+            declared.insert(*id);
+        }
+        CorePattern::Variant { fields, .. } => {
+            for field in fields {
+                collect_pattern_bindings(field, declared);
+            }
+        }
+        CorePattern::Wildcard | CorePattern::LitInt(_) | CorePattern::LitBool(_) | CorePattern::LitStr(_) => {}
     }
 }
 
@@ -637,11 +659,16 @@ fn emit_loop_op(
     vec![Instr::Block {
         label: break_label,
         result: Some(bind_ty.clone()),
-        body: vec![Instr::Loop {
-            label: cont_label,
-            result: None,
-            body: loop_body,
-        }],
+        body: vec![
+            Instr::Loop {
+                label: cont_label,
+                result: None,
+                body: loop_body,
+            },
+            // The loop always branches (continue or break), so this is unreachable.
+            // Needed to satisfy the block's result type for the Wasm validator.
+            Instr::Unreachable,
+        ],
     }]
 }
 
@@ -945,6 +972,7 @@ fn emit_string_literal_atom(s: &str) -> Vec<Instr> {
 fn emit_int_literal(n: i64, expected_ty: Option<&ValType>) -> Vec<Instr> {
     match expected_ty {
         None | Some(ValType::I64) => vec![Instr::I64Const(n)],
+        Some(ValType::I32) => vec![Instr::I32Const(n as i32)],
         Some(ValType::Anyref) => vec![
             Instr::I64Const(n),
             Instr::StructNew(T_BOXED_INT.to_string()),
@@ -1003,6 +1031,9 @@ fn emit_coerce_local(idx: u32, local_ty: &ValType, expected: &ValType) -> Vec<In
             instrs.extend(emit_unbox_on_stack(expected));
             instrs
         }
+        // Numeric widening/narrowing
+        (ValType::I32, ValType::I64) => vec![Instr::LocalGet(idx), Instr::I64ExtendI32S],
+        (ValType::I64, ValType::I32) => vec![Instr::LocalGet(idx), Instr::I32WrapI64],
         (
             ValType::Ref {
                 nullable: _,
@@ -2599,15 +2630,18 @@ mod tests {
                 Instr::Block {
                     label: "break_0".to_string(),
                     result: Some(ValType::I64),
-                    body: vec![Instr::Loop {
-                        label: "cont_0".to_string(),
-                        result: None,
-                        body: vec![
-                            Instr::I64Const(5),
-                            Instr::Br("break_0".to_string()),
-                            Instr::Br("cont_0".to_string()),
-                        ],
-                    }],
+                    body: vec![
+                        Instr::Loop {
+                            label: "cont_0".to_string(),
+                            result: None,
+                            body: vec![
+                                Instr::I64Const(5),
+                                Instr::Br("break_0".to_string()),
+                                Instr::Br("cont_0".to_string()),
+                            ],
+                        },
+                        Instr::Unreachable,
+                    ],
                 },
                 Instr::LocalSet(0),
             ]
@@ -2637,16 +2671,19 @@ mod tests {
                 Instr::Block {
                     label: "break_0".to_string(),
                     result: Some(ValType::Anyref),
-                    body: vec![Instr::Loop {
-                        label: "cont_0".to_string(),
-                        result: None,
-                        body: vec![
-                            Instr::I32Const(0),
-                            Instr::RefI31,
-                            Instr::Br("break_0".to_string()),
-                            Instr::Br("cont_0".to_string()),
-                        ],
-                    }],
+                    body: vec![
+                        Instr::Loop {
+                            label: "cont_0".to_string(),
+                            result: None,
+                            body: vec![
+                                Instr::I32Const(0),
+                                Instr::RefI31,
+                                Instr::Br("break_0".to_string()),
+                                Instr::Br("cont_0".to_string()),
+                            ],
+                        },
+                        Instr::Unreachable,
+                    ],
                 },
                 Instr::LocalSet(0),
             ]

@@ -1,6 +1,5 @@
 ---
 source: tests/runtime_dump_test.rs
-assertion_line: 109
 expression: wat
 ---
 (module
@@ -288,11 +287,11 @@ expression: wat
         i32.const 101
         array.new_fixed $rt_types__String 5))
   )
-  (export "len" (func $rt_str__len))
-  (export "concat" (func $rt_str__concat))
-  (export "substring" (func $rt_str__substring))
-  (export "eq" (func $rt_str__eq))
-  (export "from_i64" (func $rt_str__from_i64))
-  (export "from_f64" (func $rt_str__from_f64))
-  (export "from_bool" (func $rt_str__from_bool))
+  (export "rt_str__len" (func $rt_str__len))
+  (export "rt_str__concat" (func $rt_str__concat))
+  (export "rt_str__substring" (func $rt_str__substring))
+  (export "rt_str__eq" (func $rt_str__eq))
+  (export "rt_str__from_i64" (func $rt_str__from_i64))
+  (export "rt_str__from_f64" (func $rt_str__from_f64))
+  (export "rt_str__from_bool" (func $rt_str__from_bool))
 )

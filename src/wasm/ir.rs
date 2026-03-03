@@ -7,6 +7,7 @@ pub type Label = String;
 pub enum HeapType {
     Named(TypeSym),
     Any,
+    Eq,
     I31,
     Func,
     None,

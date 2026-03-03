@@ -383,14 +383,14 @@ pub fn link(
             });
         }
 
-        // Merge exports
+        // Merge exports (qualify wasm_name to avoid duplicates across modules)
         for exp in module.exports {
             let resolved_sym = func_renames
                 .get(&exp.func_sym)
                 .cloned()
                 .unwrap_or_else(|| qualify(ns, &exp.func_sym));
             merged_exports.push(ExportDef {
-                wasm_name: exp.wasm_name,
+                wasm_name: qualify(ns, &exp.wasm_name),
                 func_sym: resolved_sym,
             });
         }

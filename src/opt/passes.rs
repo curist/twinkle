@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ir::anf::{AnfExpr, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::LocalId;
-use crate::opt::use_count::{count_uses_excluding_free_vars, is_pure};
+use crate::opt::use_count::{collect_assigned_locals, count_uses_excluding_free_vars, is_pure};
 use crate::syntax::ast::{BinOp, UnOp};
 
 // ── Substitution helper ───────────────────────────────────────────────────────
@@ -169,19 +169,23 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
 /// Eliminate `Let(t, pure_op, body)` bindings where `t` is never used.
 ///
 /// Returns `(new_expr, changed)`. Call repeatedly until `changed` is false.
-pub fn dead_let_elim(body: AnfExpr, uses: &HashMap<LocalId, usize>) -> (AnfExpr, bool) {
+pub fn dead_let_elim(
+    body: AnfExpr,
+    uses: &HashMap<LocalId, usize>,
+    assigned: &HashSet<LocalId>,
+) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
             // Check if this binding is dead and the op is pure.
             let use_count = uses.get(&local).copied().unwrap_or(0);
-            if use_count == 0 && is_pure(&op) {
+            if use_count == 0 && !assigned.contains(&local) && is_pure(&op) {
                 // Drop the binding; recurse into body.
-                let (new_body, _) = dead_let_elim(*body, uses);
+                let (new_body, _) = dead_let_elim(*body, uses, assigned);
                 return (new_body, true);
             }
             // Recurse into op's sub-expressions and body.
-            let (new_op, op_changed) = dead_let_elim_op(*op, uses);
-            let (new_body, body_changed) = dead_let_elim(*body, uses);
+            let (new_op, op_changed) = dead_let_elim_op(*op, uses, assigned);
+            let (new_body, body_changed) = dead_let_elim(*body, uses, assigned);
             (
                 AnfExpr::Let {
                     local,
@@ -195,15 +199,19 @@ pub fn dead_let_elim(body: AnfExpr, uses: &HashMap<LocalId, usize>) -> (AnfExpr,
     }
 }
 
-fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) {
+fn dead_let_elim_op(
+    op: AnfOp,
+    uses: &HashMap<LocalId, usize>,
+    assigned: &HashSet<LocalId>,
+) -> (AnfOp, bool) {
     match op {
         AnfOp::AIf {
             cond,
             then_branch,
             else_branch,
         } => {
-            let (new_then, c1) = dead_let_elim(*then_branch, uses);
-            let (new_else, c2) = dead_let_elim(*else_branch, uses);
+            let (new_then, c1) = dead_let_elim(*then_branch, uses, assigned);
+            let (new_else, c2) = dead_let_elim(*else_branch, uses, assigned);
             (
                 AnfOp::AIf {
                     cond,
@@ -218,7 +226,7 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
             let arms = arms
                 .into_iter()
                 .map(|AnfMatchArm { pattern, body }| {
-                    let (new_body, c) = dead_let_elim(body, uses);
+                    let (new_body, c) = dead_let_elim(body, uses, assigned);
                     changed |= c;
                     AnfMatchArm {
                         pattern,
@@ -229,7 +237,7 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
-            let (new_body, changed) = dead_let_elim(*body, uses);
+            let (new_body, changed) = dead_let_elim(*body, uses, assigned);
             (
                 AnfOp::ALoop {
                     body: Box::new(new_body),
@@ -238,7 +246,7 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
             )
         }
         AnfOp::ADefer(inner) => {
-            let (new_inner, changed) = dead_let_elim(*inner, uses);
+            let (new_inner, changed) = dead_let_elim(*inner, uses, assigned);
             (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),
@@ -261,24 +269,29 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
 pub fn copy_propagate(body: AnfExpr) -> (AnfExpr, bool) {
     // Recompute use counts excluding free_var positions for safety.
     let uses = count_uses_excluding_free_vars(&body);
-    copy_propagate_inner(body, &uses)
+    let assigned = collect_assigned_locals(&body);
+    copy_propagate_inner(body, &uses, &assigned)
 }
 
-fn copy_propagate_inner(body: AnfExpr, uses: &HashMap<LocalId, usize>) -> (AnfExpr, bool) {
+fn copy_propagate_inner(
+    body: AnfExpr,
+    uses: &HashMap<LocalId, usize>,
+    assigned: &HashSet<LocalId>,
+) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
             if let AnfOp::AInit { value: ref lit } = *op {
                 if is_non_local_atom(lit) {
                     let use_count = uses.get(&local).copied().unwrap_or(0);
-                    if use_count <= 1 {
+                    if use_count <= 1 && !assigned.contains(&local) {
                         let new_body = subst_atom(*body, local, lit);
                         return (new_body, true);
                     }
                 }
             }
             // Recurse into sub-expressions.
-            let (new_op, op_changed) = copy_propagate_op(*op, uses);
-            let (new_body, body_changed) = copy_propagate_inner(*body, uses);
+            let (new_op, op_changed) = copy_propagate_op(*op, uses, assigned);
+            let (new_body, body_changed) = copy_propagate_inner(*body, uses, assigned);
             (
                 AnfExpr::Let {
                     local,
@@ -298,15 +311,19 @@ fn is_non_local_atom(a: &Atom) -> bool {
     !matches!(a, Atom::ALocal(_))
 }
 
-fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) {
+fn copy_propagate_op(
+    op: AnfOp,
+    uses: &HashMap<LocalId, usize>,
+    assigned: &HashSet<LocalId>,
+) -> (AnfOp, bool) {
     match op {
         AnfOp::AIf {
             cond,
             then_branch,
             else_branch,
         } => {
-            let (new_then, c1) = copy_propagate_inner(*then_branch, uses);
-            let (new_else, c2) = copy_propagate_inner(*else_branch, uses);
+            let (new_then, c1) = copy_propagate_inner(*then_branch, uses, assigned);
+            let (new_else, c2) = copy_propagate_inner(*else_branch, uses, assigned);
             (
                 AnfOp::AIf {
                     cond,
@@ -321,7 +338,7 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
             let arms = arms
                 .into_iter()
                 .map(|AnfMatchArm { pattern, body }| {
-                    let (new_body, c) = copy_propagate_inner(body, uses);
+                    let (new_body, c) = copy_propagate_inner(body, uses, assigned);
                     changed |= c;
                     AnfMatchArm {
                         pattern,
@@ -332,7 +349,7 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
-            let (new_body, changed) = copy_propagate_inner(*body, uses);
+            let (new_body, changed) = copy_propagate_inner(*body, uses, assigned);
             (
                 AnfOp::ALoop {
                     body: Box::new(new_body),
@@ -341,7 +358,7 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
             )
         }
         AnfOp::ADefer(inner) => {
-            let (new_inner, changed) = copy_propagate_inner(*inner, uses);
+            let (new_inner, changed) = copy_propagate_inner(*inner, uses, assigned);
             (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),

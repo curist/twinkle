@@ -1,6 +1,5 @@
 ---
 source: tests/runtime_dump_test.rs
-assertion_line: 100
 expression: wat
 ---
 (module
@@ -144,10 +143,10 @@ expression: wat
     local.get $p4
     ref.as_non_null
   )
-  (export "make" (func $rt_arr__make))
-  (export "get" (func $rt_arr__get))
-  (export "set" (func $rt_arr__set))
-  (export "len" (func $rt_arr__len))
-  (export "concat" (func $rt_arr__concat))
-  (export "slice" (func $rt_arr__slice))
+  (export "rt_arr__make" (func $rt_arr__make))
+  (export "rt_arr__get" (func $rt_arr__get))
+  (export "rt_arr__set" (func $rt_arr__set))
+  (export "rt_arr__len" (func $rt_arr__len))
+  (export "rt_arr__concat" (func $rt_arr__concat))
+  (export "rt_arr__slice" (func $rt_arr__slice))
 )

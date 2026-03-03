@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ir::anf::{AnfExpr, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::LocalId;
@@ -13,6 +13,16 @@ pub fn count_uses(body: &AnfExpr) -> HashMap<LocalId, usize> {
     let mut map = HashMap::new();
     count_expr(body, &mut map);
     map
+}
+
+/// Collect all locals that are written via `AAssign`.
+///
+/// This is used by optimization passes to conservatively avoid removing or
+/// substituting bindings whose storage is mutated later.
+pub fn collect_assigned_locals(body: &AnfExpr) -> HashSet<LocalId> {
+    let mut out = HashSet::new();
+    collect_assigned_expr(body, &mut out);
+    out
 }
 
 fn count_atom(atom: &Atom, map: &mut HashMap<LocalId, usize>) {
@@ -98,6 +108,34 @@ fn count_op(op: &AnfOp, map: &mut HashMap<LocalId, usize>) {
     }
 }
 
+fn collect_assigned_op(op: &AnfOp, out: &mut HashSet<LocalId>) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_assigned_expr(then_branch, out);
+            collect_assigned_expr(else_branch, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for AnfMatchArm { body, .. } in arms {
+                collect_assigned_expr(body, out);
+            }
+        }
+        AnfOp::ALoop { body } => {
+            collect_assigned_expr(body, out);
+        }
+        AnfOp::AAssign { local, .. } => {
+            out.insert(*local);
+        }
+        AnfOp::ADefer(inner) => {
+            collect_assigned_expr(inner, out);
+        }
+        _ => {}
+    }
+}
+
 fn count_expr(expr: &AnfExpr, map: &mut HashMap<LocalId, usize>) {
     match expr {
         // Let.local is the binder — NOT a use. Count uses inside op and body.
@@ -111,6 +149,16 @@ fn count_expr(expr: &AnfExpr, map: &mut HashMap<LocalId, usize>) {
         AnfExpr::Break(None) => {}
         AnfExpr::Continue => {}
         AnfExpr::Atom(a) => count_atom(a, map),
+    }
+}
+
+fn collect_assigned_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_assigned_op(op, out);
+            collect_assigned_expr(body, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
     }
 }
 

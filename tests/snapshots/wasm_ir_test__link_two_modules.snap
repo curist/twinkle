@@ -20,5 +20,5 @@ expression: wat
     local.get $p1
     call $math__add
   )
-  (export "add" (func $math__add))
+  (export "math__add" (func $math__add))
 )

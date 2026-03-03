@@ -137,6 +137,17 @@ pub fn emit_wat(module: &LinkedModuleIR) -> String {
         ));
     }
 
+    // 6b. Declarative element segment for ref.func references
+    let ref_func_syms = collect_ref_func_syms(module);
+    if !ref_func_syms.is_empty() {
+        let funcs_str = ref_func_syms
+            .iter()
+            .map(|f| format!("${f}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push_str(&format!("  (elem declare func {funcs_str})\n"));
+    }
+
     // 7. Data segments
     for data in &module.data {
         let bytes_str: String = data
@@ -178,6 +189,37 @@ pub fn emit_wat(module: &LinkedModuleIR) -> String {
     out
 }
 
+/// Collect all function symbols referenced by `ref.func` instructions.
+fn collect_ref_func_syms(module: &LinkedModuleIR) -> Vec<String> {
+    let mut syms = std::collections::BTreeSet::new();
+    for func in &module.funcs {
+        collect_ref_func_from_body(&func.body, &mut syms);
+    }
+    syms.into_iter().collect()
+}
+
+fn collect_ref_func_from_body(body: &[Instr], syms: &mut std::collections::BTreeSet<String>) {
+    for instr in body {
+        match instr {
+            Instr::RefFunc(sym) => {
+                syms.insert(sym.clone());
+            }
+            Instr::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_ref_func_from_body(then_body, syms);
+                collect_ref_func_from_body(else_body, syms);
+            }
+            Instr::Block { body, .. } | Instr::Loop { body, .. } => {
+                collect_ref_func_from_body(body, syms);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn emit_val_type(vt: &ValType) -> String {
     match vt {
         ValType::I8 => "i8".into(),
@@ -203,6 +245,7 @@ pub fn emit_heap_type(ht: &HeapType) -> String {
     match ht {
         HeapType::Named(name) => format!("${name}"),
         HeapType::Any => "any".into(),
+        HeapType::Eq => "eq".into(),
         HeapType::I31 => "i31".into(),
         HeapType::Func => "func".into(),
         HeapType::None => "none".into(),

@@ -85,16 +85,24 @@ fn trap_fn() -> FuncDef {
 /// Structural equality: same pointer → equal; $BoxedInt → compare i64;
 /// $BoxedFloat → compare f64; $Variant → compare type_id + variant_id;
 /// otherwise falls back to ref.eq (identity).
+///
+/// `ref.eq` requires `eqref`, so we cast each operand before comparing.
 fn eq_fn() -> FuncDef {
+    let cast_to_eqref = Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Eq,
+    };
     FuncDef {
         name: "eq".into(),
         params: vec![ValType::Anyref, ValType::Anyref],
         results: vec![ValType::I32],
         locals: vec![],
         body: vec![
-            // Fast path: same pointer
+            // Fast path: same pointer (cast to eqref for ref.eq)
             Instr::LocalGet(0),
+            cast_to_eqref.clone(),
             Instr::LocalGet(1),
+            cast_to_eqref.clone(),
             Instr::RefEq,
             Instr::If {
                 result: None,
@@ -136,9 +144,11 @@ fn eq_fn() -> FuncDef {
                     Instr::I64Eq,
                 ],
                 else_body: vec![
-                    // Fall back to identity
+                    // Fall back to identity (cast to eqref for ref.eq)
                     Instr::LocalGet(0),
+                    cast_to_eqref.clone(),
                     Instr::LocalGet(1),
+                    cast_to_eqref,
                     Instr::RefEq,
                 ],
             },

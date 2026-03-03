@@ -153,7 +153,14 @@ mod tests {
     #[test]
     fn build_wat_for_smoke_fixtures_contains_module_and_start() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for fixture in ["hello.tw", "arithmetic.tw", "records.tw"] {
+        for fixture in [
+            "hello.tw",
+            "arithmetic.tw",
+            "records.tw",
+            "closures.tw",
+            "for_break.tw",
+            "capability_records.tw",
+        ] {
             let path = root.join("tests/run").join(fixture);
             let wat = build_wat(path.to_str().unwrap())
                 .unwrap_or_else(|e| panic!("build_wat failed for {}: {e}", path.display()));

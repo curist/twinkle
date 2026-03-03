@@ -1,6 +1,5 @@
 ---
 source: tests/runtime_dump_test.rs
-assertion_line: 19
 expression: wat
 ---
 (module
@@ -755,7 +754,9 @@ expression: wat
     (param $p1 anyref)
     (result i32)
     local.get $p0
+    ref.cast (ref null eq)
     local.get $p1
+    ref.cast (ref null eq)
     ref.eq
     (if
       (then
@@ -781,31 +782,33 @@ expression: wat
         i64.eq)
       (else
         local.get $p0
+        ref.cast (ref null eq)
         local.get $p1
+        ref.cast (ref null eq)
         ref.eq))
   )
-  (export "make" (func $rt_arr__make))
-  (export "get" (func $rt_arr__get))
-  (export "set" (func $rt_arr__set))
-  (export "len" (func $rt_arr__len))
-  (export "concat" (func $rt_arr__concat))
-  (export "slice" (func $rt_arr__slice))
-  (export "len" (func $rt_str__len))
-  (export "concat" (func $rt_str__concat))
-  (export "substring" (func $rt_str__substring))
-  (export "eq" (func $rt_str__eq))
-  (export "from_i64" (func $rt_str__from_i64))
-  (export "from_f64" (func $rt_str__from_f64))
-  (export "from_bool" (func $rt_str__from_bool))
-  (export "make" (func $rt_dict__make))
-  (export "len" (func $rt_dict__len))
-  (export "keys" (func $rt_dict__keys))
-  (export "has" (func $rt_dict__has))
-  (export "get" (func $rt_dict__get))
-  (export "set" (func $rt_dict__set))
-  (export "remove" (func $rt_dict__remove))
-  (export "print" (func $rt_core__print))
-  (export "println" (func $rt_core__println))
-  (export "trap" (func $rt_core__trap))
-  (export "eq" (func $rt_core__eq))
+  (export "rt_arr__make" (func $rt_arr__make))
+  (export "rt_arr__get" (func $rt_arr__get))
+  (export "rt_arr__set" (func $rt_arr__set))
+  (export "rt_arr__len" (func $rt_arr__len))
+  (export "rt_arr__concat" (func $rt_arr__concat))
+  (export "rt_arr__slice" (func $rt_arr__slice))
+  (export "rt_str__len" (func $rt_str__len))
+  (export "rt_str__concat" (func $rt_str__concat))
+  (export "rt_str__substring" (func $rt_str__substring))
+  (export "rt_str__eq" (func $rt_str__eq))
+  (export "rt_str__from_i64" (func $rt_str__from_i64))
+  (export "rt_str__from_f64" (func $rt_str__from_f64))
+  (export "rt_str__from_bool" (func $rt_str__from_bool))
+  (export "rt_dict__make" (func $rt_dict__make))
+  (export "rt_dict__len" (func $rt_dict__len))
+  (export "rt_dict__keys" (func $rt_dict__keys))
+  (export "rt_dict__has" (func $rt_dict__has))
+  (export "rt_dict__get" (func $rt_dict__get))
+  (export "rt_dict__set" (func $rt_dict__set))
+  (export "rt_dict__remove" (func $rt_dict__remove))
+  (export "rt_core__print" (func $rt_core__print))
+  (export "rt_core__println" (func $rt_core__println))
+  (export "rt_core__trap" (func $rt_core__trap))
+  (export "rt_core__eq" (func $rt_core__eq))
 )
