@@ -3049,7 +3049,10 @@ mod tests {
             &mut ctx,
         );
 
-        assert!(instr_tree_any(&instrs, &|i| matches!(i, Instr::If { result: None, .. })));
+        assert!(instr_tree_any(&instrs, &|i| matches!(
+            i,
+            Instr::If { result: None, .. }
+        )));
     }
 
     #[test]
@@ -3071,7 +3074,10 @@ mod tests {
             &mut ctx,
         );
 
-        assert!(instr_tree_any(&instrs, &|i| matches!(i, Instr::If { result: None, .. })));
+        assert!(instr_tree_any(&instrs, &|i| matches!(
+            i,
+            Instr::If { result: None, .. }
+        )));
         assert!(!instrs.iter().any(|i| matches!(i, Instr::LocalSet(0))));
     }
 

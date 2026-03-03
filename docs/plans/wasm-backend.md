@@ -413,7 +413,7 @@ later.
 * Snapshot tests: compile `hello.tw`, `arithmetic.tw`, `records.tw` to WAT, assert valid
   output and no link errors.
 
-**Post-8d Follow-up — Eliminate Non-Essential `anyref` Fallbacks** 🚧
+**Post-8d Follow-up — Eliminate Non-Essential `anyref` Fallbacks** ✅
 
 `anyref` is intentional at specific boundaries (generic type variables, closure trampolines,
 runtime container element storage). That part is by design.
@@ -460,6 +460,7 @@ Regression coverage (added and enabled):
 * `codegen::ctx::tests::local_type_match_variant_binding_prefers_variant_field_type`
 * `codegen::ctx::tests::local_type_match_var_binding_prefers_scrutinee_type`
 * `codegen::ctx::tests::local_type_match_with_diverging_arm_prefers_non_diverging_type`
+* `codegen::ctx::tests::local_type_match_result_payload_prefers_anyref_placeholder`
 
 Acceptance criteria for this follow-up:
 
@@ -507,7 +508,7 @@ Regression coverage:
 
 ---
 
-## 8d — Full build pipeline ← next
+## 8d — Full build pipeline
 
 Wire the complete pipeline in `src/cli/build.rs`:
 
@@ -522,6 +523,8 @@ Wire the complete pipeline in `src/cli/build.rs`:
 
 * `host.print(s: ref $String)` — write to stdout, no newline.
 * `host.println(s: ref $String)` — write to stdout with newline.
+* `host.eprint(s: ref $String)` — write to stderr, no newline.
+* `host.eprintln(s: ref $String)` — write to stderr with newline.
 * `host.error(s: ref $String)` — write to stderr and trap (does not return).
 
 File I/O host imports (used by `@std.fs`; absent in programs that don't use it):
@@ -533,11 +536,31 @@ File I/O host imports (used by `@std.fs`; absent in programs that don't use it):
 * `host.list_dir(path: ref $String) -> ref $Array`
 * `host.exists(path: ref $String) -> i32`
 
+Process host imports (used by `@std.proc`; absent in programs that don't use it):
+
+* `host.args() -> ref $Array`
+* `host.env(name: ref $String) -> ref $Array` (0/1 encoded values)
+* `host.cwd() -> ref $String`
+* `host.exit(code: i64)`
+
 CLI:
 
 ```bash
 twk build file.tw [-o output.wasm] [--emit-wat]
 ```
+
+Status update (2026-03-03):
+
+* `twk build ... --emit-wat` now emits a sibling `.wat` when output is `.wasm` while still
+  assembling `.wasm` in-process via the Rust `wat` crate.
+* `twk runtime-dump` emits linked runtime WAT (always-on, no flag needed).
+* Wasmtime host bindings in `run-wasm` now accept `@std.fs` host imports:
+  `host.read_file`, `host.write_file`, `host.write_bytes`, `host.mkdirp`, `host.list_dir`,
+  `host.exists`.
+* Wasmtime host bindings in `run-wasm` now accept stderr + process imports:
+  `host.eprint`, `host.eprintln`, `host.args`, `host.env`, `host.cwd`, `host.exit`.
+* Build WAT golden snapshots were added for `hello.tw`, `arithmetic.tw`, `records.tw`
+  (`tests/snapshots/build/*.wat`).
 
 Deliverables:
 
@@ -568,9 +591,16 @@ These are compiled via the same Wasm GC backend pipeline as user programs and li
 * Calls `host.read_file`, `host.write_file`, `host.write_bytes`, `host.mkdirp`,
   `host.list_dir` — the same host imports declared in 8d.
 
+**`stdlib/proc.tw` (`@std.proc`)** — thin wrapper over host process imports:
+
+* `args`, `env`, `cwd`, `exit`.
+* Calls `host.args`, `host.env`, `host.cwd`, `host.exit` through typed host bridge intrinsics.
+
 **Module loader fix:** Update the module loader (`src/module/loader.rs`) to resolve `@name`
-imports to the corresponding embedded stdlib `ModuleIR` rather than returning "not yet
-implemented". Stdlib modules are registered at startup alongside the runtime modules.
+imports to `stdlib/*.tw` sources (with `TWINKLE_STDLIB_ROOT` override support) instead of
+returning "not yet implemented". In stage0, stdlib modules are compiled from source as part of
+normal module compilation; embedding precompiled stdlib `ModuleIR` into `twc.wasm` remains the
+self-hosting stage behavior.
 
 **Link step update:** The build pipeline from 8d gains stdlib modules in the link:
 
@@ -584,6 +614,26 @@ compiles a user program and produces `output.wasm`, only stdlib modules actually
 by that user program are included — dead-module elimination at the linker level keeps
 user output small.
 
+Status update (2026-03-03):
+
+* Added `stdlib/path.tw`, `stdlib/fs.tw`, and `stdlib/proc.tw` with MVP public APIs.
+* Module compilation now resolves `use @std.*` imports via `stdlib/*.tw` instead of rejecting
+  stdlib imports.
+* Added host bridge intrinsics for `@std.fs` wrappers:
+  `__host_read_file`, `__host_write_file`, `__host_write_bytes`, `__host_mkdirp`,
+  `__host_list_dir`, `__host_exists` (typed, lowered, and codegen-mapped to `host.*` imports).
+* Added host bridge intrinsics for `@std.proc` wrappers:
+  `__host_args`, `__host_env`, `__host_cwd`, `__host_exit`.
+* Added stderr prelude support:
+  `eprint`, `eprintln` mapped through `rt.core` and host imports.
+* Added end-to-end regression coverage:
+  * interpreter: `tests/run/stdlib_path.tw` (`tests/run_test.rs::stdlib_path`)
+  * Wasm host integration: `tests/stdlib_fs_wasm_test.rs`
+  * Wasm run fixtures:
+    `tests/run_wasm_test.rs::run_wasm_stdlib_path`,
+    `tests/run_wasm_test.rs::run_wasm_stdlib_proc`,
+    `tests/run_wasm_test.rs::run_wasm_stderr_prelude`
+
 **Wasm 3.0 — JS String Builtins:** The `runtime/str.rs` module (`rt.str`) uses `$String (array
 i8)` backed by runtime functions today. When running `twc.wasm` in a browser or npm (JS) host,
 Wasm 3.0 JS String Builtins can replace the `rt.str` implementation with native JS string
@@ -595,6 +645,7 @@ is unaffected — it calls `rt.str.*` symbolically regardless of which implement
 
 Deliverables:
 
-* `use @std.path` and `use @std.fs` resolve and compile end-to-end.
+* `use @std.path`, `use @std.fs`, and `use @std.proc` resolve and compile end-to-end.
 * `@std.path` functions tested via existing interpreter test harness (`tests/run/`).
 * `@std.fs` functions tested via Wasmtime test harness with a temporary directory fixture.
+* `@std.proc` and stderr prelude (`eprint`, `eprintln`) tested via Wasm run fixtures.

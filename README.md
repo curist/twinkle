@@ -105,10 +105,13 @@ fn log<T>(x: T, show: Show<T>) Void {
 
 ```bash
 twk build path/to/file.tw -o output.wasm
+twk build path/to/file.tw -o output.wasm --emit-wat
+twk runtime-dump --wat
 ```
 
 `twk build` assembles WAT to Wasm in-process via the Rust `wat` crate, so no external
-`wasm-tools`/`wat2wasm` command is required for compilation.
+`wasm-tools`/`wat2wasm` command is required for compilation. `--emit-wat` writes a sibling
+`.wat` file next to the `.wasm` output.
 
 ## Design Principles
 

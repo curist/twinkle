@@ -56,8 +56,11 @@ enum Commands {
         /// Output file path
         #[arg(short, long)]
         output: Option<String>,
+        /// Also emit a sibling .wat file when outputting .wasm
+        #[arg(long)]
+        emit_wat: bool,
     },
-    /// Dump the built-in runtime as WAT
+    /// Dump the built-in runtime as linked WAT
     RuntimeDump,
 }
 
@@ -91,8 +94,12 @@ fn main() -> Result<()> {
         Commands::RunWasm { file } => {
             twinkle::cli::run_wasm::run_wasm_file(&file)?;
         }
-        Commands::Build { file, output } => {
-            twinkle::cli::build::build_file(&file, output.as_deref())?;
+        Commands::Build {
+            file,
+            output,
+            emit_wat,
+        } => {
+            twinkle::cli::build::build_file(&file, output.as_deref(), emit_wat)?;
         }
         Commands::RuntimeDump => {
             twinkle::cli::runtime_dump::runtime_dump()?;

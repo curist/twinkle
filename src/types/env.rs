@@ -635,6 +635,20 @@ impl ValueEnv {
                 ret: Box::new(MonoType::Void), // Actually never returns, but Void for now
             },
         );
+        env.builtins.insert(
+            "eprint".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "eprintln".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
 
         // Type conversion builtins
         env.builtins.insert(
@@ -718,6 +732,76 @@ impl ValueEnv {
                     type_id: RESULT_TYPE_ID,
                     args: vec![MonoType::String, MonoType::String],
                 }),
+            },
+        );
+        env.builtins.insert(
+            "__host_read_file".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "__host_write_file".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String, MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__host_write_bytes".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String, MonoType::Array(Box::new(MonoType::Int))],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__host_mkdirp".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__host_list_dir".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+            },
+        );
+        env.builtins.insert(
+            "__host_exists".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Bool),
+            },
+        );
+        env.builtins.insert(
+            "__host_args".to_string(),
+            MonoType::Function {
+                params: vec![],
+                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+            },
+        );
+        env.builtins.insert(
+            "__host_env".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+            },
+        );
+        env.builtins.insert(
+            "__host_cwd".to_string(),
+            MonoType::Function {
+                params: vec![],
+                ret: Box::new(MonoType::String),
+            },
+        );
+        env.builtins.insert(
+            "__host_exit".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Never),
             },
         );
 

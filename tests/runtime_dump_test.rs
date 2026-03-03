@@ -79,6 +79,8 @@ fn test_runtime_exports() {
         // rt.core
         "rt_core__print",
         "rt_core__println",
+        "rt_core__eprint",
+        "rt_core__eprintln",
         "rt_core__trap",
         "rt_core__eq",
     ];
@@ -96,6 +98,8 @@ fn test_host_imports_preserved() {
     // All host imports must remain as Wasm imports
     assert!(wat.contains(r#"(import "host" "print""#));
     assert!(wat.contains(r#"(import "host" "println""#));
+    assert!(wat.contains(r#"(import "host" "eprint""#));
+    assert!(wat.contains(r#"(import "host" "eprintln""#));
     assert!(wat.contains(r#"(import "host" "error""#));
     assert!(wat.contains(r#"(import "host" "f64_to_string""#));
 }

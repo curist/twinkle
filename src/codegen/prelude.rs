@@ -90,6 +90,28 @@ pub fn build_prelude_map() -> PreludeMap {
             vec![],
         ),
     );
+    map.insert(
+        prelude_ids::EPRINT,
+        PreludeEntry::runtime(
+            "eprint",
+            "rt.core",
+            "eprint",
+            "rt_core__eprint",
+            vec![ref_string_null()],
+            vec![],
+        ),
+    );
+    map.insert(
+        prelude_ids::EPRINTLN,
+        PreludeEntry::runtime(
+            "eprintln",
+            "rt.core",
+            "eprintln",
+            "rt_core__eprintln",
+            vec![ref_string_null()],
+            vec![],
+        ),
+    );
 
     map.insert(
         prelude_ids::INT_TO_STRING,
@@ -338,8 +360,119 @@ pub fn build_prelude_map() -> PreludeMap {
         prelude_ids::DEBUG_READ_FILE,
         PreludeEntry::intrinsic("__debug_read_file"),
     );
+    map.insert(
+        prelude_ids::HOST_READ_FILE,
+        PreludeEntry::runtime(
+            "__host_read_file",
+            "host",
+            "read_file",
+            "host_read_file",
+            vec![ref_string_null()],
+            vec![ref_string()],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_WRITE_FILE,
+        PreludeEntry::runtime(
+            "__host_write_file",
+            "host",
+            "write_file",
+            "host_write_file",
+            vec![ref_string_null(), ref_string_null()],
+            vec![],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_WRITE_BYTES,
+        PreludeEntry::runtime(
+            "__host_write_bytes",
+            "host",
+            "write_bytes",
+            "host_write_bytes",
+            vec![ref_string_null(), ref_array_null()],
+            vec![],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_MKDIRP,
+        PreludeEntry::runtime(
+            "__host_mkdirp",
+            "host",
+            "mkdirp",
+            "host_mkdirp",
+            vec![ref_string_null()],
+            vec![],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_LIST_DIR,
+        PreludeEntry::runtime(
+            "__host_list_dir",
+            "host",
+            "list_dir",
+            "host_list_dir",
+            vec![ref_string_null()],
+            vec![ref_array()],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_EXISTS,
+        PreludeEntry::runtime(
+            "__host_exists",
+            "host",
+            "exists",
+            "host_exists",
+            vec![ref_string_null()],
+            vec![ValType::I32],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_ARGS,
+        PreludeEntry::runtime(
+            "__host_args",
+            "host",
+            "args",
+            "host_args",
+            vec![],
+            vec![ref_array()],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_ENV,
+        PreludeEntry::runtime(
+            "__host_env",
+            "host",
+            "env",
+            "host_env",
+            vec![ref_string_null()],
+            vec![ref_array()],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_CWD,
+        PreludeEntry::runtime(
+            "__host_cwd",
+            "host",
+            "cwd",
+            "host_cwd",
+            vec![],
+            vec![ref_string()],
+        ),
+    );
+    map.insert(
+        prelude_ids::HOST_EXIT,
+        PreludeEntry::runtime(
+            "__host_exit",
+            "host",
+            "exit",
+            "host_exit",
+            vec![ValType::I64],
+            vec![],
+        ),
+    );
 
-    debug_assert_eq!(map.len(), prelude_ids::DEBUG_READ_FILE.0 as usize);
+    debug_assert!(map.contains_key(&prelude_ids::DEBUG_READ_FILE));
+    debug_assert!(map.contains_key(&prelude_ids::HOST_EXIT));
     map
 }
 
@@ -350,11 +483,29 @@ mod tests {
     #[test]
     fn prelude_map_covers_all_fixed_ids() {
         let map = build_prelude_map();
-        let max_id = prelude_ids::DEBUG_READ_FILE.0;
-        for id in 1..=max_id {
+        for id in 1..=prelude_ids::DEBUG_READ_FILE.0 {
             assert!(
                 map.contains_key(&FuncId(id)),
                 "missing prelude FuncId({id})"
+            );
+        }
+        for id in [
+            prelude_ids::EPRINT.0,
+            prelude_ids::EPRINTLN.0,
+            prelude_ids::HOST_READ_FILE.0,
+            prelude_ids::HOST_WRITE_FILE.0,
+            prelude_ids::HOST_WRITE_BYTES.0,
+            prelude_ids::HOST_MKDIRP.0,
+            prelude_ids::HOST_LIST_DIR.0,
+            prelude_ids::HOST_EXISTS.0,
+            prelude_ids::HOST_ARGS.0,
+            prelude_ids::HOST_ENV.0,
+            prelude_ids::HOST_CWD.0,
+            prelude_ids::HOST_EXIT.0,
+        ] {
+            assert!(
+                map.contains_key(&FuncId(id)),
+                "missing host prelude FuncId({id})"
             );
         }
     }

@@ -1,0 +1,20 @@
+pub fn args() Array<String> {
+  __host_args()
+}
+
+pub fn env(name: String) String? {
+  values := __host_env(name)
+  if values.len() == 0 {
+    .None
+  } else {
+    .Some(values[0])
+  }
+}
+
+pub fn cwd() String {
+  __host_cwd()
+}
+
+pub fn exit(code: Int) {
+  __host_exit(code)
+}

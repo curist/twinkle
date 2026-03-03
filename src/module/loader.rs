@@ -32,3 +32,45 @@ pub fn resolve_module_path(root: &Path, module_path: &[String]) -> PathBuf {
     path.set_extension("tw");
     path
 }
+
+fn resolve_stdlib_root() -> PathBuf {
+    if let Ok(root) = env::var("TWINKLE_STDLIB_ROOT") {
+        return PathBuf::from(root);
+    }
+    if let Ok(root) = env::var("TWINKLE_ROOT") {
+        return PathBuf::from(root).join("stdlib");
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib")
+}
+
+/// Resolve `@...` stdlib imports to `stdlib/*.tw` files.
+/// e.g. `@std.path` => `<stdlib_root>/path.tw`
+pub fn resolve_stdlib_module_path(module_path: &[String]) -> PathBuf {
+    let rel = if module_path.first().is_some_and(|s| s == "std") {
+        &module_path[1..]
+    } else {
+        module_path
+    };
+
+    let mut path = resolve_stdlib_root();
+    for segment in rel {
+        path.push(segment);
+    }
+    path.set_extension("tw");
+    path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_stdlib_module_path_maps_std_prefix_to_stdlib_root() {
+        let p = resolve_stdlib_module_path(&["std".to_string(), "path".to_string()]);
+        assert!(
+            p.ends_with("stdlib/path.tw"),
+            "unexpected stdlib path: {}",
+            p.display()
+        );
+    }
+}

@@ -71,6 +71,7 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
     module: CoreModule,
     func_index: HashMap<FuncId, usize>,
     output: W,
+    error_output: Vec<u8>,
     /// Module-level globals populated during __init__ execution.
     globals: Frame,
     /// True while directly executing the __init__ body (not inside nested calls).
@@ -93,6 +94,7 @@ impl<W: Write> Interpreter<W> {
             module,
             func_index,
             output,
+            error_output: Vec::new(),
             globals: HashMap::new(),
             in_init_frame: false,
             defer_stack: Vec::new(),
@@ -103,6 +105,11 @@ impl<W: Write> Interpreter<W> {
     /// Useful in tests to inspect captured bytes.
     pub fn into_output(self) -> W {
         self.output
+    }
+
+    /// Return the captured stderr bytes.
+    pub fn error_output(&self) -> &[u8] {
+        &self.error_output
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
@@ -523,7 +530,7 @@ impl<W: Write> Interpreter<W> {
     }
 
     // -----------------------------------------------------------------------
-    // Built-in functions (FuncId 1–37; USER_FUNC_START=38)
+    // Built-in functions (fixed prelude IDs + extended host bridge IDs)
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {
@@ -544,6 +551,18 @@ impl<W: Write> Interpreter<W> {
                 // error(s: String)
                 let s = args_to_string(&args, 0);
                 return Err(Signal::Trap(TrapError::UserError(s)));
+            }
+            1007 => {
+                // eprint(s: String)
+                let s = args_to_string(&args, 0);
+                write!(self.error_output, "{}", s).ok();
+                Ok(Value::Void)
+            }
+            1008 => {
+                // eprintln(s: String)
+                let s = args_to_string(&args, 0);
+                writeln!(self.error_output, "{}", s).ok();
+                Ok(Value::Void)
             }
             4 => {
                 // int_to_string(n: Int) String
@@ -915,6 +934,40 @@ impl<W: Write> Interpreter<W> {
                     )), // Err
                 }
             }
+            1009 => {
+                // __host_args() -> Array<String>
+                let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
+                Ok(Value::Arr(argv))
+            }
+            1010 => {
+                // __host_env(name: String) -> Array<String> (0 or 1 value)
+                let name = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_env: expected String name"),
+                };
+                let values = std::env::var(&name)
+                    .ok()
+                    .map(|v| vec![Value::Str(v)])
+                    .unwrap_or_default();
+                Ok(Value::Arr(values))
+            }
+            1011 => {
+                // __host_cwd() -> String
+                let cwd = std::env::current_dir().map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("cwd lookup failed: {e}")))
+                })?;
+                Ok(Value::Str(path_to_logical(&cwd)))
+            }
+            1012 => {
+                // __host_exit(code: Int) -> Never
+                let code = match &args[0] {
+                    Value::Int(i) => *i,
+                    _ => panic!("__host_exit: expected Int exit code"),
+                };
+                return Err(Signal::Trap(TrapError::UserError(format!(
+                    "host.exit({code})"
+                ))));
+            }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
     }
@@ -972,6 +1025,15 @@ fn format_float(f: f64) -> String {
         s
     } else {
         format!("{}.0", s)
+    }
+}
+
+fn path_to_logical(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    if std::path::MAIN_SEPARATOR == '/' {
+        s.into_owned()
+    } else {
+        s.replace(std::path::MAIN_SEPARATOR, "/")
     }
 }
 

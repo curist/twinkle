@@ -1,0 +1,14 @@
+// Expected output:
+//   true
+//   true
+//   NONE
+
+use @std.proc
+
+println(bool_to_string(Array.len(proc.args()) >= 1))
+println(bool_to_string(proc.cwd() != ""))
+
+case proc.env("__TWINKLE_ENV_SHOULD_NOT_EXIST__") {
+  .Some(value) => println(value),
+  .None => println("NONE")
+}

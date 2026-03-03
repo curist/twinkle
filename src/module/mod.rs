@@ -24,7 +24,7 @@ use crate::types::ty::{FunctionSignature, MonoType, TypeId};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};
-pub use loader::{find_project_root, resolve_module_path};
+pub use loader::{find_project_root, resolve_module_path, resolve_stdlib_module_path};
 
 /// Compile a single module (file) and all its transitive dependencies.
 ///
@@ -88,14 +88,23 @@ pub fn compile_module(
 
     for item in &ast.items {
         if let Item::Import(import) = item {
-            if import.is_stdlib {
+            let dep_path = if import.is_stdlib {
+                resolve_stdlib_module_path(&import.module_path)
+            } else {
+                resolve_module_path(&root, &import.module_path)
+            };
+            if !dep_path.exists() {
                 importing_stack.pop();
                 return Err(anyhow!(
-                    "@stdlib modules are not yet implemented (used in '{}')",
-                    file_path.display()
+                    "Cannot resolve module '{}': expected file '{}'",
+                    if import.is_stdlib {
+                        format!("@{}", import.module_path.join("."))
+                    } else {
+                        import.module_path.join(".")
+                    },
+                    dep_path.display()
                 ));
             }
-            let dep_path = resolve_module_path(&root, &import.module_path);
             let dep_canonical = dep_path.canonicalize().unwrap_or_else(|_| dep_path.clone());
             dep_canonical_paths.push(dep_canonical);
             let dep_alias = import.module_name().to_string();

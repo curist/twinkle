@@ -1,0 +1,20 @@
+// Expected output:
+//   a/b
+//   a/b/c
+//   a/b
+//   baz.tw
+//   baz
+//   .tw
+//   foo/baz
+//   true
+
+use @std.path
+
+println(path.join("a", "b"))
+println(path.join_all(["a", "b", "c"]))
+println(path.dirname("a/b/baz.tw"))
+println(path.basename("a/b/baz.tw"))
+println(path.stem("a/b/baz.tw"))
+println(path.extension("a/b/baz.tw"))
+println(path.normalize("foo//bar/../baz"))
+println("${path.is_absolute("/root")}")

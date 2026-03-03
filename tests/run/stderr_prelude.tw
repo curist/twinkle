@@ -1,0 +1,3 @@
+eprint("warn:")
+eprintln("bad")
+println("done")

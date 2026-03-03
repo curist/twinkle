@@ -972,6 +972,9 @@ mod tests {
                 value: Atom::ALocal(LocalId(2))
             }
         ));
-        assert!(matches!(*inner_body, AnfExpr::Atom(Atom::ALocal(LocalId(1)))));
+        assert!(matches!(
+            *inner_body,
+            AnfExpr::Atom(Atom::ALocal(LocalId(1)))
+        ));
     }
 }

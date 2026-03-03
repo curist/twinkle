@@ -14,6 +14,10 @@ pipeline as user code, and **embedded in `twc.wasm`** at compiler build time. Th
 separate stdlib installation step and no runtime path resolution — the stdlib is versioned
 together with the compiler.
 
+Stage0 note (Rust host, current implementation): `@std.*` imports are resolved from `stdlib/*.tw`
+sources (or `TWINKLE_STDLIB_ROOT`) and compiled as part of normal module compilation. The
+embedding behavior above is the self-hosting (`twc.wasm`) target architecture.
+
 ---
 
 ## Design decisions

@@ -81,6 +81,24 @@ pub mod prelude {
     // Debug/dev-only API (unstable): read UTF-8 file content
     pub const DEBUG_READ_FILE: FuncId = FuncId(37); // (path: String) -> Result<String, String>
 
+    // Additional prelude functions (kept outside fixed 1..=37 range).
+    pub const EPRINT: FuncId = FuncId(1007); // eprint(s: String) -> Void
+    pub const EPRINTLN: FuncId = FuncId(1008); // eprintln(s: String) -> Void
+
+    // Host stdlib bridge intrinsics used by `@std.fs` and `@std.proc`.
+    // Kept outside the fixed 1..=37 prelude range so existing user FuncId
+    // assignments (USER_FUNC_START=38) remain stable.
+    pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> String
+    pub const HOST_WRITE_FILE: FuncId = FuncId(1002); // (path: String, content: String) -> Void
+    pub const HOST_WRITE_BYTES: FuncId = FuncId(1003); // (path: String, bytes: Array<Int>) -> Void
+    pub const HOST_MKDIRP: FuncId = FuncId(1004); // (path: String) -> Void
+    pub const HOST_LIST_DIR: FuncId = FuncId(1005); // (path: String) -> Array<String>
+    pub const HOST_EXISTS: FuncId = FuncId(1006); // (path: String) -> Bool
+    pub const HOST_ARGS: FuncId = FuncId(1009); // () -> Array<String>
+    pub const HOST_ENV: FuncId = FuncId(1010); // (name: String) -> Array<String> (0/1 values)
+    pub const HOST_CWD: FuncId = FuncId(1011); // () -> String
+    pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
+
     // User functions start here
     pub const USER_FUNC_START: u32 = 38;
 }
@@ -153,6 +171,8 @@ impl Lowerer {
         func_table.insert("print".to_string(), prelude::PRINT);
         func_table.insert("println".to_string(), prelude::PRINTLN);
         func_table.insert("error".to_string(), prelude::ERROR);
+        func_table.insert("eprint".to_string(), prelude::EPRINT);
+        func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
         func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
         func_table.insert("range".to_string(), prelude::RANGE);
         func_table.insert("range_step".to_string(), prelude::RANGE_STEP);
@@ -180,6 +200,16 @@ impl Lowerer {
             prelude::DEBUG_STDIN_READ_ALL,
         );
         func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
+        func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
+        func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
+        func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);
+        func_table.insert("__host_mkdirp".to_string(), prelude::HOST_MKDIRP);
+        func_table.insert("__host_list_dir".to_string(), prelude::HOST_LIST_DIR);
+        func_table.insert("__host_exists".to_string(), prelude::HOST_EXISTS);
+        func_table.insert("__host_args".to_string(), prelude::HOST_ARGS);
+        func_table.insert("__host_env".to_string(), prelude::HOST_ENV);
+        func_table.insert("__host_cwd".to_string(), prelude::HOST_CWD);
+        func_table.insert("__host_exit".to_string(), prelude::HOST_EXIT);
 
         // len is polymorphic and handled specially in lower_expr_call
 

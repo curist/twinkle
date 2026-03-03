@@ -12,21 +12,27 @@ use crate::runtime;
 use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link};
 
-pub fn build_file(file_path: &str, output: Option<&str>) -> Result<()> {
+pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Result<()> {
     let wat = build_wat(file_path)?;
-    match resolve_output_path(file_path, output)? {
-        BuildOutput::Wat(out_path) => {
-            fs::write(&out_path, &wat)
-                .with_context(|| format!("failed to write WAT output '{}'", out_path.display()))?;
-            println!("Building: {}", file_path);
-            println!("WAT output: {}", out_path.display());
-        }
-        BuildOutput::Wasm(out_path) => {
-            assemble_wat_to_wasm(&wat, &out_path)?;
-            println!("Building: {}", file_path);
-            println!("Wasm output: {}", out_path.display());
-        }
+    let plan = resolve_output_plan(file_path, output, emit_wat)?;
+
+    if let Some(out_path) = &plan.wat_out {
+        fs::write(out_path, &wat)
+            .with_context(|| format!("failed to write WAT output '{}'", out_path.display()))?;
     }
+
+    if let Some(out_path) = &plan.wasm_out {
+        assemble_wat_to_wasm(&wat, out_path)?;
+    }
+
+    println!("Building: {}", file_path);
+    if let Some(out_path) = &plan.wasm_out {
+        println!("Wasm output: {}", out_path.display());
+    }
+    if let Some(out_path) = &plan.wat_out {
+        println!("WAT output: {}", out_path.display());
+    }
+
     Ok(())
 }
 
@@ -46,19 +52,29 @@ pub fn build_wat(file_path: &str) -> Result<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum BuildOutput {
-    Wat(PathBuf),
-    Wasm(PathBuf),
+struct BuildOutputPlan {
+    wasm_out: Option<PathBuf>,
+    wat_out: Option<PathBuf>,
 }
 
-fn resolve_output_path(file_path: &str, output: Option<&str>) -> Result<BuildOutput> {
+fn resolve_output_plan(
+    file_path: &str,
+    output: Option<&str>,
+    emit_wat: bool,
+) -> Result<BuildOutputPlan> {
     let out = match output {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(file_path).with_extension("wasm"),
     };
     match out.extension().and_then(|ext| ext.to_str()) {
-        Some("wat") => Ok(BuildOutput::Wat(out)),
-        Some("wasm") | None => Ok(BuildOutput::Wasm(out)),
+        Some("wat") => Ok(BuildOutputPlan {
+            wasm_out: None,
+            wat_out: Some(out),
+        }),
+        Some("wasm") | None => Ok(BuildOutputPlan {
+            wat_out: emit_wat.then(|| out.with_extension("wat")),
+            wasm_out: Some(out),
+        }),
         Some(ext) => bail!(
             "unsupported output extension '.{}' (use .wasm or .wat)",
             ext
@@ -117,32 +133,62 @@ mod tests {
 
     #[test]
     fn resolve_output_defaults_to_wasm() {
-        let out = resolve_output_path("tests/run/hello.tw", None).expect("path resolution failed");
+        let out =
+            resolve_output_plan("tests/run/hello.tw", None, false).expect("path resolution failed");
         assert_eq!(
             out,
-            BuildOutput::Wasm(PathBuf::from("tests/run/hello.wasm"))
+            BuildOutputPlan {
+                wasm_out: Some(PathBuf::from("tests/run/hello.wasm")),
+                wat_out: None,
+            }
         );
     }
 
     #[test]
     fn resolve_output_accepts_wat_and_wasm() {
         assert_eq!(
-            resolve_output_path("tests/run/hello.tw", Some("out.wat")).expect("wat output"),
-            BuildOutput::Wat(PathBuf::from("out.wat"))
+            resolve_output_plan("tests/run/hello.tw", Some("out.wat"), false).expect("wat output"),
+            BuildOutputPlan {
+                wasm_out: None,
+                wat_out: Some(PathBuf::from("out.wat")),
+            }
         );
         assert_eq!(
-            resolve_output_path("tests/run/hello.tw", Some("out.wasm")).expect("wasm output"),
-            BuildOutput::Wasm(PathBuf::from("out.wasm"))
+            resolve_output_plan("tests/run/hello.tw", Some("out.wasm"), false)
+                .expect("wasm output"),
+            BuildOutputPlan {
+                wasm_out: Some(PathBuf::from("out.wasm")),
+                wat_out: None,
+            }
         );
     }
 
     #[test]
     fn resolve_output_rejects_unsupported_extension() {
-        let err = resolve_output_path("tests/run/hello.tw", Some("out.txt")).unwrap_err();
+        let err = resolve_output_plan("tests/run/hello.tw", Some("out.txt"), false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("unsupported output extension '.txt'"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_output_emits_wat_sidecar_for_wasm_targets() {
+        assert_eq!(
+            resolve_output_plan("tests/run/hello.tw", None, true).expect("default output"),
+            BuildOutputPlan {
+                wasm_out: Some(PathBuf::from("tests/run/hello.wasm")),
+                wat_out: Some(PathBuf::from("tests/run/hello.wat")),
+            }
+        );
+        assert_eq!(
+            resolve_output_plan("tests/run/hello.tw", Some("custom.wasm"), true)
+                .expect("custom wasm output"),
+            BuildOutputPlan {
+                wasm_out: Some(PathBuf::from("custom.wasm")),
+                wat_out: Some(PathBuf::from("custom.wat")),
+            }
         );
     }
 

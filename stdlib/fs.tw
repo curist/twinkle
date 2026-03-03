@@ -1,0 +1,44 @@
+pub type FsError = { NotFound, PermissionDenied, Other(String) }
+
+pub type EntryKind = { File, Dir, Other }
+
+pub type DirEntry = .{ name: String, kind: EntryKind }
+
+pub fn read_text(path: String) String!FsError {
+  if __host_exists(path) {
+    .Ok(__host_read_file(path))
+  } else {
+    .Err(FsError.NotFound)
+  }
+}
+
+pub fn write_text(path: String, content: String) !FsError {
+  __host_write_file(path, content)
+  .Ok({})
+}
+
+pub fn write_bytes(path: String, bytes: Array<Int>) !FsError {
+  __host_write_bytes(path, bytes)
+  .Ok({})
+}
+
+pub fn mkdirp(path: String) !FsError {
+  __host_mkdirp(path)
+  .Ok({})
+}
+
+pub fn list_dir(path: String) Array<DirEntry>!FsError {
+  if !__host_exists(path) {
+    return .Err(FsError.NotFound)
+  }
+
+  names := __host_list_dir(path)
+  entries := collect name in names {
+    DirEntry.{ name: name, kind: EntryKind.Other }
+  }
+  .Ok(entries)
+}
+
+pub fn exists(path: String) Bool {
+  __host_exists(path)
+}

@@ -221,6 +221,11 @@ fn iterator_advanced() {
 }
 
 #[test]
+fn stdlib_path() {
+    check("tests/run/stdlib_path.tw");
+}
+
+#[test]
 fn empty_array() {
     check("tests/run/empty_array.tw");
 }

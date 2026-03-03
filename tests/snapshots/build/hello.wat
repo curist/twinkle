@@ -1,8 +1,3 @@
----
-source: tests/runtime_dump_test.rs
-assertion_line: 19
-expression: wat
----
 (module
   (type $rt_types__Array (array (mut anyref)))
   (type $rt_types__String (array (mut i8)))
@@ -14,6 +9,10 @@ expression: wat
   (type $rt_types__Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $rt_types__Array))))
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))
+  (type $user__UserRecord_2 (struct))
+  (type $user__UserRecord_3 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref)) (field $f2 (mut anyref))))
+  (type $user__UserRecord_4 (struct))
+  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref))))
   (type $functype_0 (func (param f64) (result (ref $rt_types__String))))
   (type $functype_1 (func (param (ref null $rt_types__String))))
   (type $functype_2 (func (param i32 anyref) (result (ref $rt_types__Array))))
@@ -36,6 +35,8 @@ expression: wat
   (type $functype_19 (func (param (ref null $rt_types__Dict) anyref anyref) (result (ref $rt_types__Dict))))
   (type $functype_20 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Dict))))
   (type $functype_21 (func (param anyref anyref) (result i32)))
+  (type $functype_22 (func))
+  (type $functype_23 (func (param anyref anyref) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -800,6 +801,40 @@ expression: wat
         ref.cast (ref null eq)
         ref.eq))
   )
+  (func $user__func_38 (type $functype_22)
+    (local $p0 i32)
+    i32.const 104
+    i32.const 101
+    i32.const 108
+    i32.const 108
+    i32.const 111
+    i32.const 44
+    i32.const 32
+    i32.const 84
+    i32.const 119
+    i32.const 105
+    i32.const 110
+    i32.const 107
+    i32.const 108
+    i32.const 101
+    i32.const 33
+    array.new_fixed $rt_types__String 15
+    return_call $rt_core__println
+  )
+  (func $user__func_38__closure (type $functype_23)
+    (param $p0 anyref)
+    (param $p1 anyref)
+    (result anyref)
+    call $user__func_38
+    i32.const 0
+    ref.i31
+  )
+  (func $user____user_init (type $functype_22)
+    call $user__func_38
+  )
+  (func $__linked_init (type $functype_22)
+    call $user____user_init
+  )
   (export "rt_arr__make" (func $rt_arr__make))
   (export "rt_arr__get" (func $rt_arr__get))
   (export "rt_arr__set" (func $rt_arr__set))
@@ -826,4 +861,5 @@ expression: wat
   (export "rt_core__eprintln" (func $rt_core__eprintln))
   (export "rt_core__trap" (func $rt_core__trap))
   (export "rt_core__eq" (func $rt_core__eq))
+  (start $__linked_init)
 )

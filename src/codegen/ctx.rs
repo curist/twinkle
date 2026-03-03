@@ -8,7 +8,9 @@ use crate::ir::core::CorePattern;
 use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_STRING, T_VARIANT};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
-use crate::types::ty::{MonoType, TypeDef, TypeId};
+use crate::types::ty::{
+    MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+};
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
 #[derive(Debug, Clone)]
@@ -188,7 +190,8 @@ impl<'a> EmitCtx<'a> {
                 pat_locals.sort_by_key(|(local_id, _)| local_id.0);
                 for (local_id, local_ty) in pat_locals {
                     if !self.local_map.contains_key(&local_id) {
-                        self.local_map.insert(local_id, (*next_idx, local_ty.clone()));
+                        self.local_map
+                            .insert(local_id, (*next_idx, local_ty.clone()));
                         wasm_locals.push(local_ty);
                         *next_idx += 1;
                     }
@@ -330,7 +333,11 @@ impl<'a> EmitCtx<'a> {
     }
 }
 
-fn record_field_mono<'a>(type_env: &'a TypeEnv, type_id: TypeId, field_idx: usize) -> Option<&'a MonoType> {
+fn record_field_mono<'a>(
+    type_env: &'a TypeEnv,
+    type_id: TypeId,
+    field_idx: usize,
+) -> Option<&'a MonoType> {
     match type_env.get_def(type_id)? {
         TypeDef::Record { fields, .. } => fields.get(field_idx).map(|f| &f.ty),
         TypeDef::Alias { target, .. } => match target {
@@ -524,27 +531,60 @@ fn collect_pattern_locals_typed(
     }
 }
 
-fn sum_variant_field_valtypes(type_env: &TypeEnv, type_id: TypeId, variant_idx: usize) -> Vec<ValType> {
-    let fields: Vec<MonoType> = match type_env.get_def(type_id) {
-        Some(TypeDef::Sum { variants, .. }) => variants
-            .get(variant_idx)
-            .map(|v| v.fields.clone())
-            .unwrap_or_default(),
-        Some(TypeDef::Alias { target, .. }) => match target {
-            MonoType::Named { type_id, .. } => match type_env.get_def(*type_id) {
-                Some(TypeDef::Sum { variants, .. }) => variants
+fn sum_variant_field_valtypes(
+    type_env: &TypeEnv,
+    type_id: TypeId,
+    variant_idx: usize,
+) -> Vec<ValType> {
+    let (fields, source_type_id, has_type_params): (Vec<MonoType>, TypeId, bool) =
+        match type_env.get_def(type_id) {
+            Some(TypeDef::Sum {
+                variants,
+                type_params,
+                ..
+            }) => (
+                variants
                     .get(variant_idx)
                     .map(|v| v.fields.clone())
                     .unwrap_or_default(),
-                _ => Vec::new(),
+                type_id,
+                !type_params.is_empty(),
+            ),
+            Some(TypeDef::Alias { target, .. }) => match target {
+                MonoType::Named { type_id, .. } => match type_env.get_def(*type_id) {
+                    Some(TypeDef::Sum {
+                        variants,
+                        type_params,
+                        ..
+                    }) => (
+                        variants
+                            .get(variant_idx)
+                            .map(|v| v.fields.clone())
+                            .unwrap_or_default(),
+                        *type_id,
+                        !type_params.is_empty(),
+                    ),
+                    _ => (Vec::new(), *type_id, false),
+                },
+                _ => (Vec::new(), type_id, false),
             },
-            _ => Vec::new(),
-        },
-        _ => Vec::new(),
-    };
+            _ => (Vec::new(), type_id, false),
+        };
+    let builtin_placeholder_sum = source_type_id == OPTION_TYPE_ID
+        || source_type_id == RESULT_TYPE_ID
+        || source_type_id == UNFOLD_STEP_TYPE_ID;
     fields
         .iter()
-        .map(|mono| mono_to_valtype(mono, type_env))
+        .map(|mono| {
+            // Generic sum placeholders (e.g. built-in Option/Result definitions) store
+            // `Void` in the field list; concrete call-site instantiations are erased to
+            // `anyref` at codegen time.
+            if (has_type_params || builtin_placeholder_sum) && matches!(mono, MonoType::Void) {
+                ValType::Anyref
+            } else {
+                mono_to_valtype(mono, type_env)
+            }
+        })
         .collect()
 }
 
@@ -553,7 +593,7 @@ mod tests {
     use super::*;
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::{FieldId, VariantId};
-    use crate::types::ty::Variant;
+    use crate::types::ty::{RESULT_TYPE_ID, Variant};
 
     #[test]
     fn local_type_if_with_continue_branch_prefers_value_type() {
@@ -788,5 +828,55 @@ mod tests {
         let _locals = ctx.setup_locals(&func);
         let (_, ty) = ctx.local(LocalId(1)).expect("missing local L1");
         assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn local_type_match_result_payload_prefers_anyref_placeholder() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let result_string_string = MonoType::Named {
+            type_id: RESULT_TYPE_ID,
+            args: vec![MonoType::String, MonoType::String],
+        };
+        let func = AnfFunctionDef {
+            func_id: FuncId(8),
+            name: "match_result_bind".to_string(),
+            params: vec![LocalId(0)],
+            param_tys: vec![result_string_string.clone()],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AMatch {
+                    scrutinee: Atom::ALocal(LocalId(0)),
+                    arms: vec![
+                        AnfMatchArm {
+                            pattern: CorePattern::Variant {
+                                type_id: RESULT_TYPE_ID,
+                                variant: VariantId(0),
+                                fields: vec![CorePattern::Var(LocalId(2))],
+                            },
+                            body: AnfExpr::Atom(Atom::ALocal(LocalId(2))),
+                        },
+                        AnfMatchArm {
+                            pattern: CorePattern::Variant {
+                                type_id: RESULT_TYPE_ID,
+                                variant: VariantId(1),
+                                fields: vec![CorePattern::Var(LocalId(3))],
+                            },
+                            body: AnfExpr::Atom(Atom::ALocal(LocalId(3))),
+                        },
+                    ],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
+            },
+            return_ty: result_string_string,
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty_ok) = ctx.local(LocalId(2)).expect("missing Ok payload local");
+        let (_, ty_err) = ctx.local(LocalId(3)).expect("missing Err payload local");
+        assert_eq!(*ty_ok, ValType::Anyref);
+        assert_eq!(*ty_err, ValType::Anyref);
     }
 }

@@ -1,0 +1,153 @@
+pub fn is_absolute(path: String) Bool {
+  String.len(path) > 0 and String.substring(path, 0, 1) == "/"
+}
+
+pub fn join(base: String, part: String) String {
+  if base == "" { return part }
+  if part == "" { return base }
+
+  base_len := String.len(base)
+  part_len := String.len(part)
+  base_slash := String.substring(base, base_len - 1, base_len) == "/"
+  part_slash := String.substring(part, 0, 1) == "/"
+
+  if base_slash and part_slash {
+    "${base}${String.substring(part, 1, part_len)}"
+  } else if !base_slash and !part_slash {
+    "${base}/${part}"
+  } else {
+    "${base}${part}"
+  }
+}
+
+pub fn join_all(parts: Array<String>) String {
+  if parts.len() == 0 { return "" }
+
+  out := parts[0]
+  i := 1
+  for i < parts.len() {
+    out = join(out, parts[i])
+    i = i + 1
+  }
+  out
+}
+
+pub fn dirname(path: String) String {
+  n := String.len(path)
+  if n == 0 { return "." }
+
+  i := n - 1
+  for i >= 0 {
+    if String.substring(path, i, i + 1) == "/" {
+      if i == 0 { return "/" }
+      return String.substring(path, 0, i)
+    }
+    i = i - 1
+  }
+  "."
+}
+
+pub fn basename(path: String) String {
+  n := String.len(path)
+  if n == 0 { return "" }
+
+  i := n - 1
+  for i >= 0 {
+    if String.substring(path, i, i + 1) == "/" {
+      return String.substring(path, i + 1, n)
+    }
+    i = i - 1
+  }
+  path
+}
+
+pub fn stem(path: String) String {
+  name := basename(path)
+  n := String.len(name)
+
+  i := n - 1
+  for i > 0 {
+    if String.substring(name, i, i + 1) == "." {
+      return String.substring(name, 0, i)
+    }
+    i = i - 1
+  }
+  name
+}
+
+pub fn extension(path: String) String {
+  name := basename(path)
+  n := String.len(name)
+
+  i := n - 1
+  for i > 0 {
+    if String.substring(name, i, i + 1) == "." {
+      return String.substring(name, i, n)
+    }
+    i = i - 1
+  }
+  ""
+}
+
+pub fn normalize(path: String) String {
+  abs := is_absolute(path)
+  n := String.len(path)
+
+  segs: Array<String> = []
+  start := 0
+  i := 0
+
+  for i <= n {
+    at_end := i == n
+    at_sep := false
+    if !at_end {
+      at_sep = String.substring(path, i, i + 1) == "/"
+    }
+
+    if at_end or at_sep {
+      seg := String.substring(path, start, i)
+      if seg == "" or seg == "." {
+      } else if seg == ".." {
+        if segs.len() > 0 {
+          last := segs[segs.len() - 1]
+          if last == ".." {
+            if !abs { segs = segs.append(seg) }
+          } else {
+            segs = segs.slice(0, segs.len() - 1)
+          }
+        } else if !abs {
+          segs = segs.append(seg)
+        }
+      } else {
+        segs = segs.append(seg)
+      }
+      start = i + 1
+    }
+
+    i = i + 1
+  }
+
+  if segs.len() == 0 {
+    if abs { "/" } else { "." }
+  } else if abs {
+    out := "/"
+    j := 0
+    for j < segs.len() {
+      if out == "/" {
+        out = "${out}${segs[j]}"
+      } else {
+        out = "${out}/${segs[j]}"
+      }
+      j = j + 1
+    }
+    out
+  } else {
+    out := segs[0]
+    j := 1
+    for j < segs.len() {
+      out = "${out}/${segs[j]}"
+      j = j + 1
+    }
+    out
+  }
+}

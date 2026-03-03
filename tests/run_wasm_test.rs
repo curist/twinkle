@@ -75,3 +75,21 @@ fn run_wasm_for_break() {
 fn run_wasm_capability_records() {
     check("tests/run/capability_records.tw");
 }
+
+#[test]
+fn run_wasm_stdlib_path() {
+    check("tests/run/stdlib_path.tw");
+}
+
+#[test]
+fn run_wasm_stdlib_proc() {
+    check("tests/run/stdlib_proc.tw");
+}
+
+#[test]
+fn run_wasm_stderr_prelude() {
+    let (stdout, stderr) = twinkle::cli::run_wasm::run_wasm_capture("tests/run/stderr_prelude.tw")
+        .expect("stderr prelude fixture should run");
+    assert_eq!(stdout, "done\n");
+    assert_eq!(stderr, "warn:bad\n");
+}

@@ -27,9 +27,25 @@ pub fn make() -> ModuleIR {
         params: vec![ref_string_null()],
         results: vec![],
     });
+    m.imports.push(ImportDef {
+        module: "host".into(),
+        name: "eprint".into(),
+        as_sym: "host_eprint".into(),
+        params: vec![ref_string_null()],
+        results: vec![],
+    });
+    m.imports.push(ImportDef {
+        module: "host".into(),
+        name: "eprintln".into(),
+        as_sym: "host_eprintln".into(),
+        params: vec![ref_string_null()],
+        results: vec![],
+    });
 
     m.funcs.push(print_fn());
     m.funcs.push(println_fn());
+    m.funcs.push(eprint_fn());
+    m.funcs.push(eprintln_fn());
     m.funcs.push(trap_fn());
     m.funcs.push(eq_fn());
 
@@ -62,6 +78,28 @@ fn println_fn() -> FuncDef {
         results: vec![],
         locals: vec![],
         body: vec![Instr::LocalGet(0), Instr::Call("host_println".into())],
+    }
+}
+
+/// `eprint(s: String)`
+fn eprint_fn() -> FuncDef {
+    FuncDef {
+        name: "eprint".into(),
+        params: vec![ref_string_null()],
+        results: vec![],
+        locals: vec![],
+        body: vec![Instr::LocalGet(0), Instr::Call("host_eprint".into())],
+    }
+}
+
+/// `eprintln(s: String)`
+fn eprintln_fn() -> FuncDef {
+    FuncDef {
+        name: "eprintln".into(),
+        params: vec![ref_string_null()],
+        results: vec![],
+        locals: vec![],
+        body: vec![Instr::LocalGet(0), Instr::Call("host_eprintln".into())],
     }
 }
 

@@ -1,8 +1,3 @@
----
-source: tests/runtime_dump_test.rs
-assertion_line: 19
-expression: wat
----
 (module
   (type $rt_types__Array (array (mut anyref)))
   (type $rt_types__String (array (mut i8)))
@@ -14,6 +9,11 @@ expression: wat
   (type $rt_types__Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $rt_types__Array))))
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))
+  (type $user__UserRecord_2 (struct))
+  (type $user__UserRecord_3 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref)) (field $f2 (mut anyref))))
+  (type $user__UserRecord_4 (struct))
+  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref))))
+  (type $user__UserRecord_7 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref))))
   (type $functype_0 (func (param f64) (result (ref $rt_types__String))))
   (type $functype_1 (func (param (ref null $rt_types__String))))
   (type $functype_2 (func (param i32 anyref) (result (ref $rt_types__Array))))
@@ -36,6 +36,10 @@ expression: wat
   (type $functype_19 (func (param (ref null $rt_types__Dict) anyref anyref) (result (ref $rt_types__Dict))))
   (type $functype_20 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Dict))))
   (type $functype_21 (func (param anyref anyref) (result i32)))
+  (type $functype_22 (func (param (ref null $user__UserRecord_7)) (result i64)))
+  (type $functype_23 (func (param (ref null $user__UserRecord_7) i64 i64) (result (ref null $user__UserRecord_7))))
+  (type $functype_24 (func))
+  (type $functype_25 (func (param anyref anyref) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -800,6 +804,299 @@ expression: wat
         ref.cast (ref null eq)
         ref.eq))
   )
+  (func $user__func_38 (type $functype_22)
+    (param $p0 (ref null $user__UserRecord_7))
+    (result i64)
+    (local $p1 i64)
+    (local $p2 i64)
+    (local $p3 i64)
+    (local $p4 i64)
+    (local $p5 i64)
+    (local $p6 i64)
+    (local $p7 i64)
+    local.get $p0
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p1
+    local.get $p0
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p2
+    local.get $p1
+    local.get $p2
+    i64.mul
+    local.set $p3
+    local.get $p0
+    struct.get $user__UserRecord_7 1
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p4
+    local.get $p0
+    struct.get $user__UserRecord_7 1
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p5
+    local.get $p4
+    local.get $p5
+    i64.mul
+    local.set $p6
+    local.get $p3
+    local.get $p6
+    i64.add
+    local.set $p7
+    local.get $p7
+    return
+  )
+  (func $user__func_39 (type $functype_23)
+    (param $p0 (ref null $user__UserRecord_7))
+    (param $p1 i64)
+    (param $p2 i64)
+    (result (ref null $user__UserRecord_7))
+    (local $p3 i64)
+    (local $p4 i64)
+    (local $p5 i64)
+    (local $p6 i64)
+    (local $p7 (ref null $user__UserRecord_7))
+    local.get $p0
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p3
+    local.get $p3
+    local.get $p1
+    i64.add
+    local.set $p4
+    local.get $p0
+    struct.get $user__UserRecord_7 1
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p5
+    local.get $p5
+    local.get $p2
+    i64.add
+    local.set $p6
+    local.get $p4
+    struct.new $rt_types__BoxedInt
+    local.get $p6
+    struct.new $rt_types__BoxedInt
+    struct.new $user__UserRecord_7
+    ref.cast (ref null $user__UserRecord_7)
+    local.set $p7
+    local.get $p7
+    return
+  )
+  (func $user__func_40 (type $functype_24)
+    (local $p0 (ref null $user__UserRecord_7))
+    (local $p1 (ref null $user__UserRecord_7))
+    (local $p2 i64)
+    (local $p3 (ref $rt_types__String))
+    (local $p4 (ref $rt_types__String))
+    (local $p5 i32)
+    (local $p6 i64)
+    (local $p7 (ref $rt_types__String))
+    (local $p8 (ref $rt_types__String))
+    (local $p9 i32)
+    (local $p10 i64)
+    (local $p11 (ref $rt_types__String))
+    (local $p12 (ref $rt_types__String))
+    (local $p13 i32)
+    (local $p14 (ref null $user__UserRecord_7))
+    (local $p15 i32)
+    (local $p16 i64)
+    (local $p17 (ref $rt_types__String))
+    (local $p18 (ref $rt_types__String))
+    (local $p19 i32)
+    (local $p20 (ref null $user__UserRecord_7))
+    (local $p21 (ref null $user__UserRecord_7))
+    (local $p22 i64)
+    (local $p23 (ref $rt_types__String))
+    (local $p24 (ref $rt_types__String))
+    (local $p25 i32)
+    (local $p26 i64)
+    (local $p27 (ref $rt_types__String))
+    (local $p28 (ref $rt_types__String))
+    (local $p29 i32)
+    i64.const 3
+    struct.new $rt_types__BoxedInt
+    i64.const 4
+    struct.new $rt_types__BoxedInt
+    struct.new $user__UserRecord_7
+    ref.cast (ref null $user__UserRecord_7)
+    local.set $p0
+    local.get $p0
+    local.set $p1
+    local.get $p1
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p2
+    local.get $p2
+    call $rt_str__from_i64
+    local.set $p3
+    array.new_fixed $rt_types__String 0
+    local.get $p3
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p4
+    local.get $p4
+    ref.cast (ref null $rt_types__String)
+    call $rt_core__println
+    i32.const 0
+    local.set $p5
+    local.get $p1
+    struct.get $user__UserRecord_7 1
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p6
+    local.get $p6
+    call $rt_str__from_i64
+    local.set $p7
+    array.new_fixed $rt_types__String 0
+    local.get $p7
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p8
+    local.get $p8
+    ref.cast (ref null $rt_types__String)
+    call $rt_core__println
+    i32.const 0
+    local.set $p9
+    local.get $p1
+    call $user__func_38
+    local.set $p10
+    local.get $p10
+    call $rt_str__from_i64
+    local.set $p11
+    array.new_fixed $rt_types__String 0
+    local.get $p11
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p12
+    local.get $p12
+    ref.cast (ref null $rt_types__String)
+    call $rt_core__println
+    i32.const 0
+    local.set $p13
+    i64.const 4
+    struct.new $rt_types__BoxedInt
+    local.get $p1
+    struct.get $user__UserRecord_7 1
+    struct.new $user__UserRecord_7
+    ref.cast (ref null $user__UserRecord_7)
+    local.set $p14
+    local.get $p14
+    local.set $p1
+    i32.const 0
+    local.set $p15
+    local.get $p1
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p16
+    local.get $p16
+    call $rt_str__from_i64
+    local.set $p17
+    array.new_fixed $rt_types__String 0
+    local.get $p17
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p18
+    local.get $p18
+    ref.cast (ref null $rt_types__String)
+    call $rt_core__println
+    i32.const 0
+    local.set $p19
+    local.get $p1
+    i64.const 2
+    i64.const 2
+    call $user__func_39
+    local.set $p20
+    local.get $p20
+    local.set $p21
+    local.get $p21
+    struct.get $user__UserRecord_7 0
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.set $p22
+    local.get $p22
+    call $rt_str__from_i64
+    local.set $p23
+    array.new_fixed $rt_types__String 0
+    local.get $p23
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p24
+    local.get $p24
+    ref.cast (ref null $rt_types__String)
+    call $rt_core__println
+    i32.const 0
+    local.set $p25
+    local.get $p21
+    call $user__func_38
+    local.set $p26
+    local.get $p26
+    call $rt_str__from_i64
+    local.set $p27
+    array.new_fixed $rt_types__String 0
+    local.get $p27
+    ref.cast (ref null $rt_types__String)
+    call $rt_str__concat
+    local.set $p28
+    local.get $p28
+    ref.cast (ref null $rt_types__String)
+    return_call $rt_core__println
+  )
+  (func $user__func_38__closure (type $functype_25)
+    (param $p0 anyref)
+    (param $p1 anyref)
+    (result anyref)
+    local.get $p1
+    ref.cast (ref null $rt_types__Array)
+    i32.const 0
+    array.get $rt_types__Array
+    ref.cast (ref null $user__UserRecord_7)
+    call $user__func_38
+    struct.new $rt_types__BoxedInt
+  )
+  (func $user__func_39__closure (type $functype_25)
+    (param $p0 anyref)
+    (param $p1 anyref)
+    (result anyref)
+    local.get $p1
+    ref.cast (ref null $rt_types__Array)
+    i32.const 0
+    array.get $rt_types__Array
+    ref.cast (ref null $user__UserRecord_7)
+    local.get $p1
+    ref.cast (ref null $rt_types__Array)
+    i32.const 1
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    local.get $p1
+    ref.cast (ref null $rt_types__Array)
+    i32.const 2
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    call $user__func_39
+  )
+  (func $user__func_40__closure (type $functype_25)
+    (param $p0 anyref)
+    (param $p1 anyref)
+    (result anyref)
+    call $user__func_40
+    i32.const 0
+    ref.i31
+  )
+  (func $user____user_init (type $functype_24)
+    call $user__func_40
+  )
+  (func $__linked_init (type $functype_24)
+    call $user____user_init
+  )
   (export "rt_arr__make" (func $rt_arr__make))
   (export "rt_arr__get" (func $rt_arr__get))
   (export "rt_arr__set" (func $rt_arr__set))
@@ -826,4 +1123,5 @@ expression: wat
   (export "rt_core__eprintln" (func $rt_core__eprintln))
   (export "rt_core__trap" (func $rt_core__trap))
   (export "rt_core__eq" (func $rt_core__eq))
+  (start $__linked_init)
 )

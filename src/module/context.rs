@@ -90,6 +90,8 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("print".to_string(), prelude::PRINT);
     func_table.insert("println".to_string(), prelude::PRINTLN);
     func_table.insert("error".to_string(), prelude::ERROR);
+    func_table.insert("eprint".to_string(), prelude::EPRINT);
+    func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
     func_table.insert("int_to_string".to_string(), prelude::INT_TO_STRING);
     func_table.insert("float_to_string".to_string(), prelude::FLOAT_TO_STRING);
     func_table.insert("bool_to_string".to_string(), prelude::BOOL_TO_STRING);
@@ -128,6 +130,16 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
         prelude::DEBUG_STDIN_READ_ALL,
     );
     func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
+    func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
+    func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
+    func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);
+    func_table.insert("__host_mkdirp".to_string(), prelude::HOST_MKDIRP);
+    func_table.insert("__host_list_dir".to_string(), prelude::HOST_LIST_DIR);
+    func_table.insert("__host_exists".to_string(), prelude::HOST_EXISTS);
+    func_table.insert("__host_args".to_string(), prelude::HOST_ARGS);
+    func_table.insert("__host_env".to_string(), prelude::HOST_ENV);
+    func_table.insert("__host_cwd".to_string(), prelude::HOST_CWD);
+    func_table.insert("__host_exit".to_string(), prelude::HOST_EXIT);
 
     func_table
 }
