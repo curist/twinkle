@@ -153,6 +153,7 @@ pub enum AnfOp {
         base: Atom,
         index: Atom,
         base_ty: IndexKind,
+        result_ty: MonoType,
     },
     /// Initial binding — introduces a new local for the first time.
     /// Used for `CoreExprKind::Let` lowering. Maps to Wasm `local.set` of a
@@ -365,6 +366,7 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             base,
             index,
             base_ty,
+            ..
         } => {
             write!(f, "index({}, {}, {:?})", base, index, base_ty)
         }

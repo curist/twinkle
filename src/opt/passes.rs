@@ -150,10 +150,12 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             base,
             index,
             base_ty,
+            result_ty,
         } => AnfOp::AIndex {
             base: sa(base),
             index: sa(index),
             base_ty,
+            result_ty,
         },
         AnfOp::AInit { value } => AnfOp::AInit { value: sa(value) },
         AnfOp::AAssign { local, value } => AnfOp::AAssign {
@@ -632,5 +634,56 @@ fn branch_simplify_op(op: AnfOp) -> (AnfOp, bool) {
             (AnfOp::ADefer(Box::new(new_inner)), changed)
         }
         other => (other, false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dead_let_elim;
+    use crate::ir::anf::{AnfExpr, AnfOp, Atom, OpKind};
+    use crate::ir::core::LocalId;
+    use crate::opt::use_count::{collect_assigned_locals, count_uses};
+    use crate::syntax::ast::BinOp;
+
+    #[test]
+    fn dead_let_elim_keeps_integer_div_even_when_unused() {
+        let expr = AnfExpr::Let {
+            local: LocalId(1),
+            op: Box::new(AnfOp::ABinOp {
+                op: BinOp::Div,
+                left: Atom::ALitInt(1),
+                right: Atom::ALitInt(0),
+                operand_ty: OpKind::Int,
+            }),
+            body: Box::new(AnfExpr::Atom(Atom::ALitInt(42))),
+        };
+        let uses = count_uses(&expr);
+        let assigned = collect_assigned_locals(&expr);
+
+        let (optimized, changed) = dead_let_elim(expr, &uses, &assigned);
+
+        assert!(!changed);
+        assert!(matches!(optimized, AnfExpr::Let { .. }));
+    }
+
+    #[test]
+    fn dead_let_elim_drops_unused_non_trapping_add() {
+        let expr = AnfExpr::Let {
+            local: LocalId(1),
+            op: Box::new(AnfOp::ABinOp {
+                op: BinOp::Add,
+                left: Atom::ALitInt(1),
+                right: Atom::ALitInt(2),
+                operand_ty: OpKind::Int,
+            }),
+            body: Box::new(AnfExpr::Atom(Atom::ALitInt(42))),
+        };
+        let uses = count_uses(&expr);
+        let assigned = collect_assigned_locals(&expr);
+
+        let (optimized, changed) = dead_let_elim(expr, &uses, &assigned);
+
+        assert!(changed);
+        assert!(matches!(optimized, AnfExpr::Atom(Atom::ALitInt(42))));
     }
 }

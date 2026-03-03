@@ -287,6 +287,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     base: base_atom,
                     index: index_atom,
                     base_ty: bty,
+                    result_ty: expr.ty.clone(),
                 },
             ));
             AnfExpr::Atom(Atom::ALocal(tmp))
@@ -322,17 +323,21 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             body,
         } => {
             let orig_local = *orig_local;
-            // Lower value: collect its ops into accum, get the result atom/expr.
-            let value_result = lower_expr(value, next_temp, accum);
+            // Lower value in an isolated accumulator so terminal value expressions
+            // don't leak partial bindings into the caller's accumulator.
+            let mut value_accum: LetAccum = Vec::new();
+            let value_result = lower_expr(value, next_temp, &mut value_accum);
             match value_result {
                 AnfExpr::Atom(atom) => {
+                    accum.extend(value_accum);
                     // Value reduced to an atom — initialize orig_local with it.
                     // AInit marks this as a new binding (distinct from AAssign mutation).
                     accum.push((orig_local, AnfOp::AInit { value: atom }));
                 }
-                // Terminals: body is unreachable; propagate the terminal upward.
+                // Terminals: body is unreachable. Return a self-contained subtree
+                // for value side effects + terminal, without mutating outer accum.
                 terminal => {
-                    return terminal;
+                    return build_lets(value_accum, terminal);
                 }
             }
             // Lower body (continues with the same accum).
@@ -602,6 +607,7 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     base: base_atom,
                     index: index_atom,
                     base_ty: bty,
+                    result_ty: expr.ty.clone(),
                 },
             ));
             Atom::ALocal(tmp)
@@ -803,5 +809,169 @@ fn max_local_id_in_pattern(pattern: &CorePattern, max: &mut u32) {
         | CorePattern::LitInt(_)
         | CorePattern::LitBool(_)
         | CorePattern::LitStr(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lower_expr_top;
+    use crate::ir::anf::{AnfExpr, AnfOp, Atom, OpKind};
+    use crate::ir::core::{CoreExpr, CoreExprKind, LocalId};
+    use crate::syntax::ast::BinOp;
+    use crate::syntax::span::{FileId, Span};
+    use crate::types::ty::MonoType;
+
+    fn sp() -> Span {
+        Span::new(FileId(0), 0, 0)
+    }
+
+    fn lit_int(n: i64) -> CoreExpr {
+        CoreExpr {
+            kind: CoreExprKind::LitInt(n),
+            ty: MonoType::Int,
+            span: sp(),
+        }
+    }
+
+    fn local(id: u32, ty: MonoType) -> CoreExpr {
+        CoreExpr {
+            kind: CoreExprKind::Local(LocalId(id)),
+            ty,
+            span: sp(),
+        }
+    }
+
+    #[test]
+    fn let_value_terminal_keeps_value_bindings_inside_returned_subtree() {
+        let inner_value = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Add,
+                left: Box::new(lit_int(1)),
+                right: Box::new(lit_int(2)),
+            },
+            ty: MonoType::Int,
+            span: sp(),
+        };
+        let inner_let = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: LocalId(2),
+                value: Box::new(inner_value),
+                body: Box::new(CoreExpr {
+                    kind: CoreExprKind::Return {
+                        value: Some(Box::new(local(2, MonoType::Int))),
+                    },
+                    ty: MonoType::Never,
+                    span: sp(),
+                }),
+            },
+            ty: MonoType::Never,
+            span: sp(),
+        };
+        let outer = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: LocalId(1),
+                value: Box::new(inner_let),
+                body: Box::new(lit_int(99)),
+            },
+            ty: MonoType::Never,
+            span: sp(),
+        };
+
+        let mut next_temp = 3;
+        let anf = lower_expr_top(&outer, &mut next_temp);
+
+        let (outer_op, outer_body) = match anf {
+            AnfExpr::Let {
+                local: LocalId(3),
+                op,
+                body,
+            } => (op, body),
+            other => panic!("unexpected ANF shape for outer let: {other:?}"),
+        };
+        assert!(matches!(
+            *outer_op,
+            AnfOp::ABinOp {
+                op: BinOp::Add,
+                operand_ty: OpKind::Int,
+                ..
+            }
+        ));
+
+        let (inner_op, inner_body) = match *outer_body {
+            AnfExpr::Let {
+                local: LocalId(2),
+                op,
+                body,
+            } => (op, body),
+            other => panic!("unexpected ANF shape for inner let: {other:?}"),
+        };
+        assert!(matches!(
+            *inner_op,
+            AnfOp::AInit {
+                value: Atom::ALocal(LocalId(3))
+            }
+        ));
+        assert!(matches!(
+            *inner_body,
+            AnfExpr::Return(Some(Atom::ALocal(LocalId(2))))
+        ));
+    }
+
+    #[test]
+    fn let_value_non_terminal_still_commits_value_bindings_to_outer_accum() {
+        let value = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Add,
+                left: Box::new(lit_int(1)),
+                right: Box::new(lit_int(2)),
+            },
+            ty: MonoType::Int,
+            span: sp(),
+        };
+        let expr = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: LocalId(1),
+                value: Box::new(value),
+                body: Box::new(local(1, MonoType::Int)),
+            },
+            ty: MonoType::Int,
+            span: sp(),
+        };
+
+        let mut next_temp = 2;
+        let anf = lower_expr_top(&expr, &mut next_temp);
+
+        let (outer_op, outer_body) = match anf {
+            AnfExpr::Let {
+                local: LocalId(2),
+                op,
+                body,
+            } => (op, body),
+            other => panic!("unexpected ANF shape for outer let: {other:?}"),
+        };
+        assert!(matches!(
+            *outer_op,
+            AnfOp::ABinOp {
+                op: BinOp::Add,
+                operand_ty: OpKind::Int,
+                ..
+            }
+        ));
+
+        let (inner_op, inner_body) = match *outer_body {
+            AnfExpr::Let {
+                local: LocalId(1),
+                op,
+                body,
+            } => (op, body),
+            other => panic!("unexpected ANF shape for inner let: {other:?}"),
+        };
+        assert!(matches!(
+            *inner_op,
+            AnfOp::AInit {
+                value: Atom::ALocal(LocalId(2))
+            }
+        ));
+        assert!(matches!(*inner_body, AnfExpr::Atom(Atom::ALocal(LocalId(1)))));
     }
 }

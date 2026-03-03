@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -78,72 +76,11 @@ fn format_link_errors(errors: Vec<LinkError>) -> anyhow::Error {
 }
 
 fn assemble_wat_to_wasm(wat: &str, wasm_out: &Path) -> Result<()> {
-    let tmp_wat = temp_wat_path();
-    fs::write(&tmp_wat, wat)
-        .with_context(|| format!("failed to write temporary WAT '{}'", tmp_wat.display()))?;
-
-    let attempts = assembler_commands(&tmp_wat, wasm_out);
-    let result = run_assembler_commands(&attempts);
-    let _ = fs::remove_file(&tmp_wat);
-    result
-}
-
-fn temp_wat_path() -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::env::temp_dir().join(format!("twinkle-build-{}-{stamp}.wat", std::process::id()))
-}
-
-fn assembler_commands(wat_in: &Path, wasm_out: &Path) -> Vec<(String, Vec<String>)> {
-    vec![
-        (
-            "wasm-tools".to_string(),
-            vec![
-                "parse".to_string(),
-                wat_in.to_string_lossy().into_owned(),
-                "-o".to_string(),
-                wasm_out.to_string_lossy().into_owned(),
-            ],
-        ),
-        (
-            "wat2wasm".to_string(),
-            vec![
-                wat_in.to_string_lossy().into_owned(),
-                "-o".to_string(),
-                wasm_out.to_string_lossy().into_owned(),
-            ],
-        ),
-    ]
-}
-
-fn run_assembler_commands(commands: &[(String, Vec<String>)]) -> Result<()> {
-    let mut errors = Vec::new();
-    for (bin, args) in commands {
-        match Command::new(bin).args(args).output() {
-            Ok(output) if output.status.success() => return Ok(()),
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                if stderr.is_empty() {
-                    errors.push(format!("{bin} exited with status {}", output.status));
-                } else {
-                    errors.push(format!("{bin} failed: {stderr}"));
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                errors.push(format!("{bin} not found"));
-            }
-            Err(e) => {
-                errors.push(format!("{bin} error: {e}"));
-            }
-        }
-    }
-
-    bail!(
-        "failed to assemble WAT to Wasm. Install 'wasm-tools' or 'wat2wasm'.\n{}",
-        errors.join("\n")
-    )
+    let wasm_bytes =
+        wat::parse_str(wat).context("failed to assemble WAT to Wasm bytes using wat crate")?;
+    fs::write(wasm_out, wasm_bytes)
+        .with_context(|| format!("failed to write Wasm output '{}'", wasm_out.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -210,10 +147,20 @@ mod tests {
     }
 
     #[test]
-    fn assembler_command_order_prefers_wasm_tools_then_wat2wasm() {
-        let commands = assembler_commands(Path::new("/tmp/in.wat"), Path::new("/tmp/out.wasm"));
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].0, "wasm-tools");
-        assert_eq!(commands[1].0, "wat2wasm");
+    fn assemble_wat_to_wasm_writes_binary_module() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let out = std::env::temp_dir().join(format!(
+            "twinkle-build-test-{}-{stamp}.wasm",
+            std::process::id()
+        ));
+        assemble_wat_to_wasm("(module)", &out).expect("assemble should succeed");
+        let bytes = fs::read(&out).expect("wasm output should exist");
+        let _ = fs::remove_file(&out);
+        assert!(bytes.starts_with(b"\0asm"), "missing wasm magic header");
     }
 }

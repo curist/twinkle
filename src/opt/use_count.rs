@@ -167,18 +167,24 @@ fn collect_assigned_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
 ///
 /// Pure ops with zero uses can be safely eliminated by dead-let elimination.
 pub fn is_pure(op: &AnfOp) -> bool {
-    matches!(
-        op,
+    match op {
+        AnfOp::ABinOp { op, operand_ty, .. } => !matches!(
+            (op, operand_ty),
+            (
+                crate::syntax::ast::BinOp::Div | crate::syntax::ast::BinOp::Mod,
+                crate::ir::anf::OpKind::Int
+            )
+        ),
         AnfOp::AInit { .. }
-            | AnfOp::ABinOp { .. }
-            | AnfOp::AUnOp { .. }
-            | AnfOp::ARecord { .. }
-            | AnfOp::ARecordGet { .. }
-            | AnfOp::ARecordUpdate { .. }
-            | AnfOp::AVariant { .. }
-            | AnfOp::AArrayLit(_)
-            | AnfOp::AMakeClosure { .. }
-    )
+        | AnfOp::AUnOp { .. }
+        | AnfOp::ARecord { .. }
+        | AnfOp::ARecordGet { .. }
+        | AnfOp::ARecordUpdate { .. }
+        | AnfOp::AVariant { .. }
+        | AnfOp::AArrayLit(_)
+        | AnfOp::AMakeClosure { .. } => true,
+        _ => false,
+    }
     // ACall: may I/O or trap — impure.
     // AAssign: mutates state — impure.
     // AIndex: may trap on out-of-bounds — impure.
@@ -235,4 +241,47 @@ pub fn locals_in_op(op: &AnfOp) -> Vec<LocalId> {
         out.push(id);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_pure;
+    use crate::ir::anf::{AnfOp, Atom, OpKind};
+    use crate::syntax::ast::BinOp;
+
+    #[test]
+    fn is_pure_marks_integer_div_mod_impure() {
+        let int_div = AnfOp::ABinOp {
+            op: BinOp::Div,
+            left: Atom::ALitInt(1),
+            right: Atom::ALitInt(0),
+            operand_ty: OpKind::Int,
+        };
+        let int_mod = AnfOp::ABinOp {
+            op: BinOp::Mod,
+            left: Atom::ALitInt(1),
+            right: Atom::ALitInt(0),
+            operand_ty: OpKind::Int,
+        };
+        assert!(!is_pure(&int_div));
+        assert!(!is_pure(&int_mod));
+    }
+
+    #[test]
+    fn is_pure_keeps_non_trapping_binops_pure() {
+        let int_add = AnfOp::ABinOp {
+            op: BinOp::Add,
+            left: Atom::ALitInt(1),
+            right: Atom::ALitInt(2),
+            operand_ty: OpKind::Int,
+        };
+        let float_div = AnfOp::ABinOp {
+            op: BinOp::Div,
+            left: Atom::ALitFloat(1.0),
+            right: Atom::ALitFloat(0.0),
+            operand_ty: OpKind::Float,
+        };
+        assert!(is_pure(&int_add));
+        assert!(is_pure(&float_div));
+    }
 }

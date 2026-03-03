@@ -5,4 +5,5 @@ pub mod lower_anf;
 pub mod opt;
 pub mod parse;
 pub mod run;
+pub mod run_wasm;
 pub mod runtime_dump;

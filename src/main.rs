@@ -44,6 +44,11 @@ enum Commands {
         /// Path to the .tw file
         file: String,
     },
+    /// Compile and run a Twinkle/Wasm program using Wasmtime + host bindings
+    RunWasm {
+        /// Path to a .tw, .wat, or .wasm file
+        file: String,
+    },
     /// Compile a Twinkle program to WAT/Wasm
     Build {
         /// Path to the .tw file
@@ -82,6 +87,9 @@ fn main() -> Result<()> {
         }
         Commands::Run { file } => {
             twinkle::cli::run::run_file(&file)?;
+        }
+        Commands::RunWasm { file } => {
+            twinkle::cli::run_wasm::run_wasm_file(&file)?;
         }
         Commands::Build { file, output } => {
             twinkle::cli::build::build_file(&file, output.as_deref())?;

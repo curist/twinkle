@@ -28,7 +28,8 @@ ANF IR → WAT emitter → user ModuleIR → Linker → LinkedModuleIR → emit 
 
 Both the runtime modules and the compiler-emitted user code reference types from `rt.types`
 symbolically. The linker resolves all symbolic refs to numeric indices and emits a single
-self-contained WAT file. `wat2wasm` (or the `wasm-tools` crate) produces the final `.wasm`.
+self-contained WAT file. The Rust `wat` crate assembles that WAT into the final `.wasm`
+in-process (no external `wat2wasm`/`wasm-tools` command required).
 
 **Distribution shape:** `twc.wasm` is the canonical compiler artifact. The Rust host (Wasmtime)
 is a replaceable shell. Browser and npm hosting are natural future extensions — they implement
@@ -412,6 +413,90 @@ later.
 * Snapshot tests: compile `hello.tw`, `arithmetic.tw`, `records.tw` to WAT, assert valid
   output and no link errors.
 
+**Post-8d Follow-up — Eliminate Non-Essential `anyref` Fallbacks** 🚧
+
+`anyref` is intentional at specific boundaries (generic type variables, closure trampolines,
+runtime container element storage). That part is by design.
+
+What is *not* intentional: local/result typing falling back to `anyref` where the compiler has
+enough type information to keep concrete Wasm value types (`i64`, `f64`, concrete refs). These
+fallbacks are correctness-safe but cause avoidable boxing/unboxing and allocation churn.
+
+Findings (observed before the follow-up fixes):
+
+1. `AIf` with one diverging branch (`continue`/`break`/`return`) can infer `anyref` instead of
+   the value branch type.
+2. `ALoop` result locals default to `anyref` because loop result type is not inferred from
+   `break` values.
+3. `ARecordGet` result local defaults to `anyref` even though `type_id + field` determines the
+   exact type.
+4. `AIndex` result local defaults to `anyref` because ANF does not currently carry element/result
+   type metadata.
+5. `AMatch` pattern-bound locals are inserted as `anyref` regardless of variant field type.
+
+Proposed fixes (now implemented in stage0 `twk`):
+
+1. `AIf` inference: treat diverging branch (`Never`/terminal) as compatible with the non-diverging
+   branch type.
+2. `ALoop` inference: infer loop result from all reachable `break` values (join type); use
+   `Void/I32` only when no value break exists.
+3. `ARecordGet` inference: look up record field type from `TypeEnv` via `type_id + field`, map via
+   `mono_to_valtype`.
+4. `AIndex` inference: extend ANF (`AIndex`) to carry result type (or element type) from Core
+   expression typing and use it in local assignment.
+5. Pattern binding typing: carry expected field types while traversing `CorePattern::Variant` and
+   assign pattern locals with concrete `ValType` instead of unconditional `anyref`.
+
+Regression coverage (added and enabled):
+
+* `codegen::ctx::tests::local_type_if_with_continue_branch_prefers_value_type`
+* `codegen::ctx::tests::local_type_loop_with_break_value_prefers_break_type`
+* `codegen::ctx::tests::local_type_record_get_prefers_field_type`
+* `codegen::ctx::tests::local_type_index_prefers_element_type`
+* `codegen::ctx::tests::local_type_match_variant_binding_prefers_variant_field_type`
+
+Acceptance criteria for this follow-up:
+
+* Keep all five regression tests enabled and green.
+* Re-audit emitted WAT for fixture corpus: no `if/block (result anyref)` in user functions unless
+  required by intentional type-erasure boundaries.
+* Numeric hot paths (e.g. recursive `fib`) emit typed control-flow results (`i64`) without
+  temporary `BoxedInt` round-trips.
+
+**Post-8d Hardening (optimizer/codegen correctness)**
+
+Additional findings from code review and status:
+
+1. Dead-let elimination purity model treated all `ABinOp` as pure, which could erase trapping
+   integer `Div/Mod` and suppress runtime traps.
+2. Closure capture arity was inferred from callee body scans, which can drift from
+   `AMakeClosure.free_vars` after optimization.
+3. Wasmtime host string decode used lossy UTF-8 conversion, masking invalid runtime bytes.
+4. Match arm chain always emitted `if (result <bind_ty>)`, even when both arms diverge.
+5. `lower_anf` let-terminal accumulator behavior was flagged as structurally risky in malformed
+   Core IR shapes (not currently observed in typed input programs).
+
+Implemented fixes:
+
+1. `is_pure` now marks integer `Div/Mod` as impure.
+2. Closure capture layout/signatures/trampoline arity now use module-level
+   `AMakeClosure.free_vars` as source of truth.
+3. `run-wasm` UTF-8 decoding is now strict (`String::from_utf8` + context-rich error).
+4. Match arm `if` now omits result type when both branches are known-diverging.
+5. `lower_anf` `Let` lowering now uses an isolated value accumulator and only
+   commits it on non-terminal values; terminal values return a self-contained
+   `build_lets(value_accum, terminal)` subtree (no partial binding leakage).
+
+Regression coverage:
+
+* `opt::passes::tests::dead_let_elim_keeps_integer_div_even_when_unused`
+* `opt::passes::tests::dead_let_elim_drops_unused_non_trapping_add`
+* `opt::use_count::tests::is_pure_marks_integer_div_mod_impure`
+* `cli::run_wasm::tests::decode_runtime_utf8_bytes_rejects_invalid_utf8`
+* `codegen::emit::tests::emit_match_all_diverging_arms_emits_if_without_result_type`
+* `ir::lower_anf::tests::let_value_terminal_keeps_value_bindings_inside_returned_subtree`
+* `ir::lower_anf::tests::let_value_non_terminal_still_commits_value_bindings_to_outer_accum`
+
 ---
 
 ## 8d — Full build pipeline ← next
@@ -423,7 +508,7 @@ Wire the complete pipeline in `src/cli/build.rs`:
 3. Load runtime modules from `runtime/`.
 4. `link([runtime_modules..., user_module], manifest)` → `LinkedModuleIR`.
 5. `emit_wat(linked)` → write `output.wat`.
-6. Shell out to `wasm-tools` (or the `wat` crate) to assemble `output.wasm`.
+6. Assemble `output.wasm` in-process via the Rust `wat` crate.
 
 **Host import interface** (what the linked module imports from `"host"`):
 

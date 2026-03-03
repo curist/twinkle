@@ -28,19 +28,27 @@ pub fn emit_user_module(
     _func_table: &HashMap<String, FuncId>,
 ) -> ModuleIR {
     let prelude = build_prelude_map();
-    let user_sigs = build_user_sig_map(anf, type_env);
+    let closure_capture_layouts = collect_closure_capture_layouts(anf);
+    let user_sigs = build_user_sig_map(anf, type_env, &closure_capture_layouts);
     let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
     let mut module = ModuleIR::new("user");
     module.types.extend(emit_user_record_type_defs(type_env));
 
     for func in &anf.functions {
-        module.funcs.push(emit_func_stub(func, &mut ctx));
+        let capture_locals = closure_capture_layouts
+            .get(&func.func_id)
+            .cloned()
+            .unwrap_or_default();
+        module
+            .funcs
+            .push(emit_func_stub(func, &capture_locals, &mut ctx));
     }
     for func in &anf.functions {
-        let capture_locals = infer_capture_locals(func);
         module.funcs.push(emit_user_closure_trampoline(
             func,
-            capture_locals.len(),
+            closure_capture_layouts
+                .get(&func.func_id)
+                .map_or(0, std::vec::Vec::len),
             &ctx,
         ));
     }
@@ -97,11 +105,18 @@ fn emit_user_record_type_defs(type_env: &TypeEnv) -> Vec<WasmTypeDef> {
     defs
 }
 
-fn build_user_sig_map(anf: &AnfModule, type_env: &TypeEnv) -> HashMap<FuncId, FuncSigInfo> {
+fn build_user_sig_map(
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
+) -> HashMap<FuncId, FuncSigInfo> {
     anf.functions
         .iter()
         .map(|func| {
-            let capture_locals = infer_capture_locals(func);
+            let capture_locals = closure_capture_layouts
+                .get(&func.func_id)
+                .cloned()
+                .unwrap_or_default();
             let mut params = func
                 .param_tys
                 .iter()
@@ -117,8 +132,11 @@ fn build_user_sig_map(anf: &AnfModule, type_env: &TypeEnv) -> HashMap<FuncId, Fu
         .collect()
 }
 
-fn emit_func_stub(func: &AnfFunctionDef, ctx: &mut EmitCtx<'_>) -> FuncDef {
-    let capture_locals = infer_capture_locals(func);
+fn emit_func_stub(
+    func: &AnfFunctionDef,
+    capture_locals: &[crate::ir::LocalId],
+    ctx: &mut EmitCtx<'_>,
+) -> FuncDef {
     let extra_params = capture_locals
         .iter()
         .copied()
@@ -143,6 +161,77 @@ fn emit_func_stub(func: &AnfFunctionDef, ctx: &mut EmitCtx<'_>) -> FuncDef {
     }
 }
 
+fn collect_closure_capture_layouts(anf: &AnfModule) -> HashMap<FuncId, Vec<crate::ir::LocalId>> {
+    let mut captures = HashMap::<FuncId, HashSet<crate::ir::LocalId>>::new();
+    for func in &anf.functions {
+        collect_make_closure_captures_expr(&func.body, &mut captures);
+    }
+
+    captures
+        .into_iter()
+        .map(|(func_id, locals)| {
+            let mut ordered = locals.into_iter().collect::<Vec<_>>();
+            ordered.sort_by_key(|id| id.0);
+            (func_id, ordered)
+        })
+        .collect()
+}
+
+fn collect_make_closure_captures_expr(
+    expr: &AnfExpr,
+    captures: &mut HashMap<FuncId, HashSet<crate::ir::LocalId>>,
+) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_make_closure_captures_op(op, captures);
+            collect_make_closure_captures_expr(body, captures);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_make_closure_captures_op(
+    op: &AnfOp,
+    captures: &mut HashMap<FuncId, HashSet<crate::ir::LocalId>>,
+) {
+    match op {
+        AnfOp::AMakeClosure { func_id, free_vars } => {
+            let entry = captures.entry(*func_id).or_default();
+            for local_id in free_vars {
+                entry.insert(*local_id);
+            }
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_make_closure_captures_expr(then_branch, captures);
+            collect_make_closure_captures_expr(else_branch, captures);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_make_closure_captures_expr(&arm.body, captures);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_make_closure_captures_expr(body, captures);
+        }
+        AnfOp::ACall { .. }
+        | AnfOp::ABinOp { .. }
+        | AnfOp::AUnOp { .. }
+        | AnfOp::ARecord { .. }
+        | AnfOp::ARecordGet { .. }
+        | AnfOp::ARecordUpdate { .. }
+        | AnfOp::AVariant { .. }
+        | AnfOp::AArrayLit(_)
+        | AnfOp::AIndex { .. }
+        | AnfOp::AInit { .. }
+        | AnfOp::AAssign { .. } => {}
+    }
+}
+
+#[cfg(test)]
 fn infer_capture_locals(func: &AnfFunctionDef) -> Vec<crate::ir::LocalId> {
     let mut declared: HashSet<crate::ir::LocalId> = func.params.iter().copied().collect();
     let mut free: HashSet<crate::ir::LocalId> = HashSet::new();
@@ -155,6 +244,7 @@ fn infer_capture_locals(func: &AnfFunctionDef) -> Vec<crate::ir::LocalId> {
     ordered
 }
 
+#[cfg(test)]
 fn collect_free_locals_expr(
     expr: &AnfExpr,
     declared: &mut HashSet<crate::ir::LocalId>,
@@ -173,6 +263,7 @@ fn collect_free_locals_expr(
     }
 }
 
+#[cfg(test)]
 fn collect_free_locals_op(
     op: &AnfOp,
     declared: &mut HashSet<crate::ir::LocalId>,
@@ -251,6 +342,7 @@ fn collect_free_locals_op(
     }
 }
 
+#[cfg(test)]
 fn collect_pattern_bindings(
     pattern: &crate::ir::core::CorePattern,
     declared: &mut HashSet<crate::ir::LocalId>,
@@ -265,10 +357,14 @@ fn collect_pattern_bindings(
                 collect_pattern_bindings(field, declared);
             }
         }
-        CorePattern::Wildcard | CorePattern::LitInt(_) | CorePattern::LitBool(_) | CorePattern::LitStr(_) => {}
+        CorePattern::Wildcard
+        | CorePattern::LitInt(_)
+        | CorePattern::LitBool(_)
+        | CorePattern::LitStr(_) => {}
     }
 }
 
+#[cfg(test)]
 fn collect_free_locals_atom(
     atom: &Atom,
     declared: &HashSet<crate::ir::LocalId>,
@@ -459,6 +555,7 @@ fn emit_let_binding(
             base,
             index,
             base_ty,
+            ..
         } => {
             let mut instrs = emit_index_op(base, index, *base_ty, &bind_ty, ctx);
             instrs.push(Instr::LocalSet(bind_idx));
@@ -503,12 +600,62 @@ fn emit_match_arm_chain(
     let mut then_body = emit_pattern_bindings(&head.pattern, scrutinee_anyref, ctx);
     then_body.extend(emit_expr_value(&head.body, bind_ty, fn_return_ty, ctx));
     let else_body = emit_match_arm_chain(scrutinee_anyref, &arms[1..], bind_ty, fn_return_ty, ctx);
+    let both_arms_diverge =
+        expr_always_diverges(&head.body) && match_chain_always_diverges(&arms[1..]);
     instrs.push(Instr::If {
-        result: Some(bind_ty.clone()),
+        result: if both_arms_diverge {
+            None
+        } else {
+            Some(bind_ty.clone())
+        },
         then_body,
         else_body,
     });
     instrs
+}
+
+fn expr_always_diverges(expr: &AnfExpr) -> bool {
+    match expr {
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => true,
+        AnfExpr::Atom(_) => false,
+        AnfExpr::Let { op, body, .. } => op_always_diverges(op) || expr_always_diverges(body),
+    }
+}
+
+fn op_always_diverges(op: &AnfOp) -> bool {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_always_diverges(then_branch) && expr_always_diverges(else_branch),
+        AnfOp::AMatch { arms, .. } => arms.iter().all(|arm| expr_always_diverges(&arm.body)),
+        // A loop may break and produce a value; keep conservative.
+        AnfOp::ALoop { .. } => false,
+        // Defer lowering preserves inner expr structure but does not diverge at bind site.
+        AnfOp::ADefer(_) => false,
+        AnfOp::ACall { .. }
+        | AnfOp::ABinOp { .. }
+        | AnfOp::AUnOp { .. }
+        | AnfOp::AMakeClosure { .. }
+        | AnfOp::ARecord { .. }
+        | AnfOp::ARecordGet { .. }
+        | AnfOp::ARecordUpdate { .. }
+        | AnfOp::AVariant { .. }
+        | AnfOp::AArrayLit(_)
+        | AnfOp::AIndex { .. }
+        | AnfOp::AInit { .. }
+        | AnfOp::AAssign { .. } => false,
+    }
+}
+
+fn match_chain_always_diverges(arms: &[AnfMatchArm]) -> bool {
+    if arms.is_empty() {
+        // Empty-arm fallback is `trap` + `unreachable`.
+        return true;
+    }
+    let head = &arms[0];
+    expr_always_diverges(&head.body) && match_chain_always_diverges(&arms[1..])
 }
 
 fn emit_pattern_condition(
@@ -1429,11 +1576,11 @@ fn emit_make_closure(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // Sort free_vars by LocalId to match `infer_capture_locals` ordering.
-    // The trampoline reads env slots in sorted order, so the env array must
-    // be built in the same order.
+    // Sort free_vars by LocalId to match closure capture layout ordering used
+    // by function signatures and trampolines.
     let mut sorted_vars = free_vars.to_vec();
     sorted_vars.sort_by_key(|id| id.0);
+    sorted_vars.dedup_by_key(|id| id.0);
     let mut instrs = vec![Instr::RefFunc(global_func_trampoline_sym(func_id))];
     for local_id in &sorted_vars {
         instrs.extend(emit_atom(
@@ -1529,14 +1676,12 @@ fn emit_array_append_intrinsic(
         panic!("Array.append intrinsic expects 2 args, got {}", args.len());
     }
 
-    ensure_rt_arr_len_import(ctx);
-    ensure_rt_arr_set_import(ctx);
+    ensure_rt_arr_concat_import(ctx);
 
     let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    instrs.push(Instr::Call("rt_arr__len".to_string()));
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
-    instrs.push(Instr::Call("rt_arr__set".to_string()));
+    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    instrs.push(Instr::Call("rt_arr__concat".to_string()));
     instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
     instrs
 }
@@ -1696,22 +1841,12 @@ fn ensure_rt_str_concat_import(ctx: &mut EmitCtx<'_>) {
     });
 }
 
-fn ensure_rt_arr_len_import(ctx: &mut EmitCtx<'_>) {
+fn ensure_rt_arr_concat_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.arr".to_string(),
-        name: "len".to_string(),
-        as_sym: "rt_arr__len".to_string(),
-        params: vec![ref_array_null()],
-        results: vec![ValType::I32],
-    });
-}
-
-fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "set".to_string(),
-        as_sym: "rt_arr__set".to_string(),
-        params: vec![ref_array_null(), ValType::I32, ValType::Anyref],
+        name: "concat".to_string(),
+        as_sym: "rt_arr__concat".to_string(),
+        params: vec![ref_array_null(), ref_array_null()],
         results: vec![ref_array()],
     });
 }
@@ -1898,7 +2033,7 @@ mod tests {
     }
 
     #[test]
-    fn emit_array_append_intrinsic_lowers_to_len_plus_set() {
+    fn emit_array_append_intrinsic_lowers_to_concat_with_singleton() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
@@ -1923,11 +2058,10 @@ mod tests {
             instrs,
             vec![
                 Instr::LocalGet(0),
-                Instr::LocalGet(0),
-                Instr::Call("rt_arr__len".to_string()),
                 Instr::LocalGet(1),
                 Instr::StructNew(T_BOXED_INT.to_string()),
-                Instr::Call("rt_arr__set".to_string()),
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
+                Instr::Call("rt_arr__concat".to_string()),
                 Instr::RefCast {
                     nullable: true,
                     heap: HeapType::Named("rt_types__Array".to_string()),
@@ -1936,8 +2070,7 @@ mod tests {
         );
 
         let imports = ctx.imports();
-        assert!(imports.iter().any(|i| i.as_sym == "rt_arr__len"));
-        assert!(imports.iter().any(|i| i.as_sym == "rt_arr__set"));
+        assert!(imports.iter().any(|i| i.as_sym == "rt_arr__concat"));
     }
 
     #[test]
@@ -1981,6 +2114,69 @@ mod tests {
         let expr = AnfExpr::Return(Some(Atom::ALitInt(7)));
         let instrs = emit_expr_value(&expr, &ValType::I32, Some(&ValType::I64), &mut ctx);
         assert_eq!(instrs, vec![Instr::I64Const(7), Instr::Return]);
+    }
+
+    #[test]
+    fn emit_if_result_stays_i64_when_else_branch_returns_nested_local() {
+        let type_env = TypeEnv::new();
+        let fib_like = AnfFunctionDef {
+            func_id: FuncId(99),
+            name: "fib_like".to_string(),
+            params: vec![LocalId(0)],
+            param_tys: vec![MonoType::Int],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::ABinOp {
+                    op: crate::syntax::ast::BinOp::Lt,
+                    left: Atom::ALocal(LocalId(0)),
+                    right: Atom::ALitInt(2),
+                    operand_ty: crate::ir::anf::OpKind::Int,
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(7),
+                    op: Box::new(AnfOp::AIf {
+                        cond: Atom::ALocal(LocalId(1)),
+                        then_branch: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(0)))),
+                        else_branch: Box::new(AnfExpr::Let {
+                            local: LocalId(2),
+                            op: Box::new(AnfOp::ABinOp {
+                                op: crate::syntax::ast::BinOp::Sub,
+                                left: Atom::ALocal(LocalId(0)),
+                                right: Atom::ALitInt(1),
+                                operand_ty: crate::ir::anf::OpKind::Int,
+                            }),
+                            body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+                        }),
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(7)))),
+                }),
+            },
+            return_ty: MonoType::Int,
+        };
+        let anf = AnfModule {
+            functions: vec![fib_like],
+            init_func_id: None,
+            all_init_func_ids: Vec::new(),
+        };
+
+        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let func = module
+            .funcs
+            .iter()
+            .find(|f| f.name == "func_99")
+            .expect("missing emitted fib_like function");
+
+        assert!(instr_tree_any(&func.body, &|i| matches!(
+            i,
+            Instr::If {
+                result: Some(ValType::I64),
+                ..
+            }
+        )));
+        assert!(!instr_tree_any(
+            &func.body,
+            &|i| matches!(i, Instr::StructNew(name) if name == T_BOXED_INT)
+        ));
     }
 
     #[test]
@@ -2335,16 +2531,38 @@ mod tests {
     #[test]
     fn captured_closure_function_gets_hidden_anyref_param_and_trampoline_loads_env() {
         let type_env = TypeEnv::new();
-        let func = AnfFunctionDef {
+        let callee = AnfFunctionDef {
             func_id: FuncId(2),
             name: "capturing".to_string(),
             params: vec![LocalId(1)],
             param_tys: vec![MonoType::Int],
-            body: AnfExpr::Atom(Atom::ALocal(LocalId(42))),
+            // Simulate a post-optimization body where the captured local is no longer read.
+            body: AnfExpr::Atom(Atom::ALocal(LocalId(1))),
             return_ty: MonoType::Int,
         };
+        let caller = AnfFunctionDef {
+            func_id: FuncId(3),
+            name: "mk".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(42),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALitInt(7),
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(100),
+                    op: Box::new(AnfOp::AMakeClosure {
+                        func_id: FuncId(2),
+                        free_vars: vec![LocalId(42)],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+                }),
+            },
+            return_ty: MonoType::Void,
+        };
         let anf = AnfModule {
-            functions: vec![func],
+            functions: vec![callee, caller],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
         };
@@ -2551,6 +2769,7 @@ mod tests {
                 base: Atom::ALocal(LocalId(2)),
                 index: Atom::ALitInt(3),
                 base_ty: crate::ir::anf::IndexKind::Array,
+                result_ty: MonoType::Int,
             },
             None,
             &mut ctx,
@@ -2589,6 +2808,7 @@ mod tests {
                 base: Atom::ALocal(LocalId(2)),
                 index: Atom::ALitStr("k".to_string()),
                 base_ty: crate::ir::anf::IndexKind::Dict,
+                result_ty: MonoType::Int,
             },
             None,
             &mut ctx,
@@ -2797,6 +3017,31 @@ mod tests {
         );
         assert_eq!(instrs.iter().rev().nth(1), Some(&Instr::Unreachable));
         assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_core__trap"));
+    }
+
+    #[test]
+    fn emit_match_all_diverging_arms_emits_if_without_result_type() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ValType::I64));
+        ctx.local_map.insert(LocalId(2), (1, ValType::I64));
+
+        let instrs = emit_let_binding(
+            LocalId(1),
+            &AnfOp::AMatch {
+                scrutinee: Atom::ALocal(LocalId(2)),
+                arms: vec![AnfMatchArm {
+                    pattern: CorePattern::Wildcard,
+                    body: AnfExpr::Return(None),
+                }],
+            },
+            None,
+            &mut ctx,
+        );
+
+        assert!(instr_tree_any(&instrs, &|i| matches!(i, Instr::If { result: None, .. })));
     }
 
     #[test]

@@ -101,6 +101,15 @@ fn log<T>(x: T, show: Show<T>) Void {
 - **[Grammar](docs/grammar.ebnf)** - Formal EBNF grammar
 - **[Examples](examples/)** - Sample programs demonstrating key features
 
+## CLI Build
+
+```bash
+twk build path/to/file.tw -o output.wasm
+```
+
+`twk build` assembles WAT to Wasm in-process via the Rust `wat` crate, so no external
+`wasm-tools`/`wat2wasm` command is required for compilation.
+
 ## Design Principles
 
 - **No traits** - capabilities are explicit records of functions
