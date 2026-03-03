@@ -97,11 +97,33 @@ impl Lexer {
             '*' => self.lex_single(TokenKind::Star),
             '/' => self.lex_single(TokenKind::Slash),
             '%' => self.lex_single(TokenKind::Percent),
-            '=' => self.lex_char_or_double(TokenKind::Eq, '=', TokenKind::EqEq, '>',  TokenKind::FatArrow),
-            '!' => self.lex_char_or_double(TokenKind::Bang, '=', TokenKind::BangEq, '\0', TokenKind::Error),
-            '<' => self.lex_char_or_double(TokenKind::Lt, '=', TokenKind::LtEq, '\0', TokenKind::Error),
-            '>' => self.lex_char_or_double(TokenKind::Gt, '=', TokenKind::GtEq, '\0', TokenKind::Error),
-            ':' => self.lex_char_or_double(TokenKind::Colon, '=', TokenKind::ColonEq, '\0', TokenKind::Error),
+            '=' => self.lex_char_or_double(
+                TokenKind::Eq,
+                '=',
+                TokenKind::EqEq,
+                '>',
+                TokenKind::FatArrow,
+            ),
+            '!' => self.lex_char_or_double(
+                TokenKind::Bang,
+                '=',
+                TokenKind::BangEq,
+                '\0',
+                TokenKind::Error,
+            ),
+            '<' => {
+                self.lex_char_or_double(TokenKind::Lt, '=', TokenKind::LtEq, '\0', TokenKind::Error)
+            }
+            '>' => {
+                self.lex_char_or_double(TokenKind::Gt, '=', TokenKind::GtEq, '\0', TokenKind::Error)
+            }
+            ':' => self.lex_char_or_double(
+                TokenKind::Colon,
+                '=',
+                TokenKind::ColonEq,
+                '\0',
+                TokenKind::Error,
+            ),
 
             '(' => self.lex_single(TokenKind::LParen),
             ')' => self.lex_single(TokenKind::RParen),
@@ -133,7 +155,14 @@ impl Lexer {
         Token::new(kind, span, ch.to_string())
     }
 
-    fn lex_char_or_double(&mut self, single: TokenKind, next1: char, double1: TokenKind, next2: char, double2: TokenKind) -> Token {
+    fn lex_char_or_double(
+        &mut self,
+        single: TokenKind,
+        next1: char,
+        double1: TokenKind,
+        next2: char,
+        double2: TokenKind,
+    ) -> Token {
         let start = self.pos;
         let ch = self.advance();
         let next = self.peek();
@@ -251,7 +280,9 @@ impl Lexer {
         // First, check if we're at a brace
         if self.peek() == '{' {
             let new_depth = brace_depth + 1;
-            self.string_state = StringState::InString { brace_depth: new_depth };
+            self.string_state = StringState::InString {
+                brace_depth: new_depth,
+            };
             return Ok(self.lex_single(TokenKind::LBrace));
         }
 
@@ -261,10 +292,7 @@ impl Lexer {
                 let start = self.pos;
                 self.advance();
                 let span = Span::new(self.file_id, start as u32, self.pos as u32);
-                return Err(LexError::new(
-                    LexErrorKind::UnexpectedChar('}'),
-                    span,
-                ));
+                return Err(LexError::new(LexErrorKind::UnexpectedChar('}'), span));
             }
 
             let new_depth = brace_depth - 1;
@@ -314,7 +342,9 @@ impl Lexer {
                     Ok(Token::new(TokenKind::StringEnd, span, value))
                 }
             } else {
-                self.string_state = StringState::InString { brace_depth: new_depth };
+                self.string_state = StringState::InString {
+                    brace_depth: new_depth,
+                };
                 Ok(self.lex_single(TokenKind::RBrace))
             }
         } else {

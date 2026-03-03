@@ -1,6 +1,6 @@
-use crate::syntax::ast::ExprId;
-use crate::ir::FuncId;
 use super::ty::{MonoType, zonk_ty};
+use crate::ir::FuncId;
+use crate::syntax::ast::ExprId;
 use std::collections::HashMap;
 
 /// Maps expressions to their inferred types and method call resolutions

@@ -6,7 +6,9 @@ fn modules_dir() -> PathBuf {
 
 fn check(relative: &str) -> Result<(), String> {
     let path = modules_dir().join(relative);
-    twinkle::module::check_entry(path.to_str().unwrap()).map(|_| ()).map_err(|e| e.to_string())
+    twinkle::module::check_entry(path.to_str().unwrap())
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn lower(relative: &str) -> Result<(), String> {

@@ -199,7 +199,8 @@ impl CompileState {
             // Register inherent methods: if first param is a Named type,
             // register (type_id, method_name) → qualified_func_name
             if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
-                self.type_env.add_method(*type_id, func_name.clone(), qualified_name);
+                self.type_env
+                    .add_method(*type_id, func_name.clone(), qualified_name);
             }
         }
 
@@ -210,6 +211,7 @@ impl CompileState {
             self.qualified_value_globals.insert(qualified, *local_id);
         }
 
-        self.module_registry.insert(alias.to_string(), exports.clone());
+        self.module_registry
+            .insert(alias.to_string(), exports.clone());
     }
 }

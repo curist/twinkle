@@ -1,8 +1,8 @@
-pub mod types;
 pub mod arr;
-pub mod str;
-pub mod dict;
 pub mod core;
+pub mod dict;
+pub mod str;
+pub mod types;
 
 use crate::wasm::ir::ModuleIR;
 

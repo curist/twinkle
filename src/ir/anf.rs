@@ -10,7 +10,7 @@
 /// The interpreter continues to use Core IR directly; ANF is backend-only.
 use std::fmt;
 
-use crate::ir::core::{FieldId, FuncId, LocalId, VariantId, CorePattern};
+use crate::ir::core::{CorePattern, FieldId, FuncId, LocalId, VariantId};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::ty::{MonoType, TypeId};
 
@@ -85,10 +85,7 @@ pub enum AnfExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnfOp {
     /// Function call: callee and all args are atoms.
-    ACall {
-        callee: Atom,
-        args: Vec<Atom>,
-    },
+    ACall { callee: Atom, args: Vec<Atom> },
     /// Conditional: cond is atom; branches are full ANF sub-expressions.
     AIf {
         cond: Atom,
@@ -101,9 +98,7 @@ pub enum AnfOp {
         arms: Vec<AnfMatchArm>,
     },
     /// Loop: body is a full ANF sub-expression (typically ends with Break/Continue).
-    ALoop {
-        body: Box<AnfExpr>,
-    },
+    ALoop { body: Box<AnfExpr> },
     /// Binary operation: both operands are atoms.
     ABinOp {
         op: BinOp,
@@ -163,16 +158,11 @@ pub enum AnfOp {
     /// Used for `CoreExprKind::Let` lowering. Maps to Wasm `local.set` of a
     /// freshly declared local. Distinct from `AAssign` (existing-local mutation).
     /// The enclosing `AnfExpr::Let.local` names the local being initialized.
-    AInit {
-        value: Atom,
-    },
+    AInit { value: Atom },
     /// Local mutation (maps to Wasm `local.set`): value is atom.
     /// Used for `CoreExprKind::Assign` lowering. Mutates an already-declared local.
     /// Result is void; the binding local in the enclosing `Let` is a fresh temp.
-    AAssign {
-        local: LocalId,
-        value: Atom,
-    },
+    AAssign { local: LocalId, value: Atom },
     /// Deferred expression — preserves the deferred sub-expression through ANF
     /// linearization. Eliminated by the defer_elim pass before reaching the WAT
     /// backend; no `ADefer` node survives into code generation.
@@ -254,7 +244,11 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             }
             write!(f, ")")
         }
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             writeln!(f, "if {} {{", cond)?;
             print_anf_expr(then_branch, f, indent + 1)?;
             writeln!(f, "{}}} else {{", pad)?;
@@ -274,10 +268,19 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             print_anf_expr(body, f, indent + 1)?;
             write!(f, "{}}}", pad)
         }
-        AnfOp::ABinOp { op, left, right, operand_ty } => {
+        AnfOp::ABinOp {
+            op,
+            left,
+            right,
+            operand_ty,
+        } => {
             write!(f, "binop({:?}, {}, {}, {:?})", op, left, right, operand_ty)
         }
-        AnfOp::AUnOp { op, expr, operand_ty } => {
+        AnfOp::AUnOp {
+            op,
+            expr,
+            operand_ty,
+        } => {
             write!(f, "unop({:?}, {}, {:?})", op, expr, operand_ty)
         }
         AnfOp::AMakeClosure { func_id, free_vars } => {
@@ -301,14 +304,40 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             }
             write!(f, ")")
         }
-        AnfOp::ARecordGet { target, field, type_id } => {
-            write!(f, "record_get({}, .{}, Type#{})", target, field.0, type_id.0)
+        AnfOp::ARecordGet {
+            target,
+            field,
+            type_id,
+        } => {
+            write!(
+                f,
+                "record_get({}, .{}, Type#{})",
+                target, field.0, type_id.0
+            )
         }
-        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place, type_id } => {
-            let flag = if *can_reuse_in_place { " [in-place]" } else { "" };
-            write!(f, "record_update({}, .{}={}, Type#{}{})", base, field.0, value, type_id.0, flag)
+        AnfOp::ARecordUpdate {
+            base,
+            field,
+            value,
+            can_reuse_in_place,
+            type_id,
+        } => {
+            let flag = if *can_reuse_in_place {
+                " [in-place]"
+            } else {
+                ""
+            };
+            write!(
+                f,
+                "record_update({}, .{}={}, Type#{}{})",
+                base, field.0, value, type_id.0, flag
+            )
         }
-        AnfOp::AVariant { type_id, variant, args } => {
+        AnfOp::AVariant {
+            type_id,
+            variant,
+            args,
+        } => {
             write!(f, "variant(Type#{}.{})", type_id.0, variant.0)?;
             if !args.is_empty() {
                 write!(f, "(")?;
@@ -332,7 +361,11 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
             }
             write!(f, "]")
         }
-        AnfOp::AIndex { base, index, base_ty } => {
+        AnfOp::AIndex {
+            base,
+            index,
+            base_ty,
+        } => {
             write!(f, "index({}, {}, {:?})", base, index, base_ty)
         }
         AnfOp::AInit { value } => {
@@ -351,7 +384,11 @@ fn print_anf_op(op: &AnfOp, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::R
 
 impl fmt::Display for AnfFunctionDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "fn {}  [FuncId({})]  params=[", self.name, self.func_id.0)?;
+        write!(
+            f,
+            "fn {}  [FuncId({})]  params=[",
+            self.name, self.func_id.0
+        )?;
         for (i, p) in self.params.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;

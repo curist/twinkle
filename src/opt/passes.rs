@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::anf::{Atom, AnfExpr, AnfMatchArm, AnfOp};
+use crate::ir::anf::{AnfExpr, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::LocalId;
 use crate::opt::use_count::{count_uses_excluding_free_vars, is_pure};
 use crate::syntax::ast::{BinOp, UnOp};
@@ -28,7 +28,11 @@ pub fn subst_atom(body: AnfExpr, target: LocalId, replacement: &Atom) -> AnfExpr
             } else {
                 Box::new(subst_atom(*body, target, replacement))
             };
-            AnfExpr::Let { local, op: new_op, body: new_body }
+            AnfExpr::Let {
+                local,
+                op: new_op,
+                body: new_body,
+            }
         }
         AnfExpr::Return(Some(a)) => AnfExpr::Return(Some(subst_atom_val(a, target, replacement))),
         AnfExpr::Return(None) => AnfExpr::Return(None),
@@ -53,7 +57,11 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             callee: sa(callee),
             args: args.into_iter().map(sa).collect(),
         },
-        AnfOp::AIf { cond, then_branch, else_branch } => AnfOp::AIf {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => AnfOp::AIf {
             cond: sa(cond),
             then_branch: Box::new(subst_atom(*then_branch, target, replacement)),
             else_branch: Box::new(subst_atom(*else_branch, target, replacement)),
@@ -68,13 +76,29 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
                 })
                 .collect(),
         },
-        AnfOp::ALoop { body } => {
-            AnfOp::ALoop { body: Box::new(subst_atom(*body, target, replacement)) }
-        }
-        AnfOp::ABinOp { op, left, right, operand_ty } => {
-            AnfOp::ABinOp { op, left: sa(left), right: sa(right), operand_ty }
-        }
-        AnfOp::AUnOp { op, expr, operand_ty } => AnfOp::AUnOp { op, expr: sa(expr), operand_ty },
+        AnfOp::ALoop { body } => AnfOp::ALoop {
+            body: Box::new(subst_atom(*body, target, replacement)),
+        },
+        AnfOp::ABinOp {
+            op,
+            left,
+            right,
+            operand_ty,
+        } => AnfOp::ABinOp {
+            op,
+            left: sa(left),
+            right: sa(right),
+            operand_ty,
+        },
+        AnfOp::AUnOp {
+            op,
+            expr,
+            operand_ty,
+        } => AnfOp::AUnOp {
+            op,
+            expr: sa(expr),
+            operand_ty,
+        },
         AnfOp::AMakeClosure { func_id, free_vars } => {
             // free_vars are Vec<LocalId>, not Vec<Atom>. We cannot substitute
             // a literal atom into a free_var slot (Wasm closure capture requires
@@ -90,21 +114,52 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             type_id,
             fields: fields.into_iter().map(|(fid, a)| (fid, sa(a))).collect(),
         },
-        AnfOp::ARecordGet { target: t, field, type_id } => {
-            AnfOp::ARecordGet { target: sa(t), field, type_id }
-        }
-        AnfOp::ARecordUpdate { base, field, value, can_reuse_in_place, type_id } => {
-            AnfOp::ARecordUpdate { base: sa(base), field, value: sa(value), can_reuse_in_place, type_id }
-        }
-        AnfOp::AVariant { type_id, variant, args } => AnfOp::AVariant {
+        AnfOp::ARecordGet {
+            target: t,
+            field,
+            type_id,
+        } => AnfOp::ARecordGet {
+            target: sa(t),
+            field,
+            type_id,
+        },
+        AnfOp::ARecordUpdate {
+            base,
+            field,
+            value,
+            can_reuse_in_place,
+            type_id,
+        } => AnfOp::ARecordUpdate {
+            base: sa(base),
+            field,
+            value: sa(value),
+            can_reuse_in_place,
+            type_id,
+        },
+        AnfOp::AVariant {
+            type_id,
+            variant,
+            args,
+        } => AnfOp::AVariant {
             type_id,
             variant,
             args: args.into_iter().map(sa).collect(),
         },
         AnfOp::AArrayLit(elems) => AnfOp::AArrayLit(elems.into_iter().map(sa).collect()),
-        AnfOp::AIndex { base, index, base_ty } => AnfOp::AIndex { base: sa(base), index: sa(index), base_ty },
+        AnfOp::AIndex {
+            base,
+            index,
+            base_ty,
+        } => AnfOp::AIndex {
+            base: sa(base),
+            index: sa(index),
+            base_ty,
+        },
         AnfOp::AInit { value } => AnfOp::AInit { value: sa(value) },
-        AnfOp::AAssign { local, value } => AnfOp::AAssign { local, value: sa(value) },
+        AnfOp::AAssign { local, value } => AnfOp::AAssign {
+            local,
+            value: sa(value),
+        },
         AnfOp::ADefer(inner) => AnfOp::ADefer(Box::new(subst_atom(*inner, target, replacement))),
     }
 }
@@ -114,10 +169,7 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
 /// Eliminate `Let(t, pure_op, body)` bindings where `t` is never used.
 ///
 /// Returns `(new_expr, changed)`. Call repeatedly until `changed` is false.
-pub fn dead_let_elim(
-    body: AnfExpr,
-    uses: &HashMap<LocalId, usize>,
-) -> (AnfExpr, bool) {
+pub fn dead_let_elim(body: AnfExpr, uses: &HashMap<LocalId, usize>) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
             // Check if this binding is dead and the op is pure.
@@ -145,7 +197,11 @@ pub fn dead_let_elim(
 
 fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) {
     match op {
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let (new_then, c1) = dead_let_elim(*then_branch, uses);
             let (new_else, c2) = dead_let_elim(*else_branch, uses);
             (
@@ -164,14 +220,22 @@ fn dead_let_elim_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) 
                 .map(|AnfMatchArm { pattern, body }| {
                     let (new_body, c) = dead_let_elim(body, uses);
                     changed |= c;
-                    AnfMatchArm { pattern, body: new_body }
+                    AnfMatchArm {
+                        pattern,
+                        body: new_body,
+                    }
                 })
                 .collect();
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
             let (new_body, changed) = dead_let_elim(*body, uses);
-            (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+            (
+                AnfOp::ALoop {
+                    body: Box::new(new_body),
+                },
+                changed,
+            )
         }
         AnfOp::ADefer(inner) => {
             let (new_inner, changed) = dead_let_elim(*inner, uses);
@@ -200,10 +264,7 @@ pub fn copy_propagate(body: AnfExpr) -> (AnfExpr, bool) {
     copy_propagate_inner(body, &uses)
 }
 
-fn copy_propagate_inner(
-    body: AnfExpr,
-    uses: &HashMap<LocalId, usize>,
-) -> (AnfExpr, bool) {
+fn copy_propagate_inner(body: AnfExpr, uses: &HashMap<LocalId, usize>) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
             if let AnfOp::AInit { value: ref lit } = *op {
@@ -239,7 +300,11 @@ fn is_non_local_atom(a: &Atom) -> bool {
 
 fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool) {
     match op {
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let (new_then, c1) = copy_propagate_inner(*then_branch, uses);
             let (new_else, c2) = copy_propagate_inner(*else_branch, uses);
             (
@@ -258,14 +323,22 @@ fn copy_propagate_op(op: AnfOp, uses: &HashMap<LocalId, usize>) -> (AnfOp, bool)
                 .map(|AnfMatchArm { pattern, body }| {
                     let (new_body, c) = copy_propagate_inner(body, uses);
                     changed |= c;
-                    AnfMatchArm { pattern, body: new_body }
+                    AnfMatchArm {
+                        pattern,
+                        body: new_body,
+                    }
                 })
                 .collect();
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
             let (new_body, changed) = copy_propagate_inner(*body, uses);
-            (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+            (
+                AnfOp::ALoop {
+                    body: Box::new(new_body),
+                },
+                changed,
+            )
         }
         AnfOp::ADefer(inner) => {
             let (new_inner, changed) = copy_propagate_inner(*inner, uses);
@@ -290,14 +363,22 @@ pub fn constant_fold(body: AnfExpr) -> (AnfExpr, bool) {
                 let new_op = AnfOp::AInit { value: folded };
                 let (new_body, _) = constant_fold(*body);
                 return (
-                    AnfExpr::Let { local, op: Box::new(new_op), body: Box::new(new_body) },
+                    AnfExpr::Let {
+                        local,
+                        op: Box::new(new_op),
+                        body: Box::new(new_body),
+                    },
                     true,
                 );
             }
             let (new_op, op_changed) = constant_fold_op(*op);
             let (new_body, body_changed) = constant_fold(*body);
             (
-                AnfExpr::Let { local, op: Box::new(new_op), body: Box::new(new_body) },
+                AnfExpr::Let {
+                    local,
+                    op: Box::new(new_op),
+                    body: Box::new(new_body),
+                },
                 op_changed || body_changed,
             )
         }
@@ -307,7 +388,9 @@ pub fn constant_fold(body: AnfExpr) -> (AnfExpr, bool) {
 
 fn try_fold_op(op: &AnfOp) -> Option<Atom> {
     match op {
-        AnfOp::ABinOp { op, left, right, .. } => fold_binop(*op, left, right),
+        AnfOp::ABinOp {
+            op, left, right, ..
+        } => fold_binop(*op, left, right),
         AnfOp::AUnOp { op, expr, .. } => fold_unop(*op, expr),
         _ => None,
     }
@@ -325,12 +408,12 @@ fn fold_binop(op: BinOp, left: &Atom, right: &Atom) -> Option<Atom> {
                 BinOp::Div => *a / *b,
                 BinOp::Mod if *b == 0 => return None,
                 BinOp::Mod => *a % *b,
-                BinOp::Eq  => return Some(Atom::ALitBool(*a == *b)),
-                BinOp::Ne  => return Some(Atom::ALitBool(*a != *b)),
-                BinOp::Lt  => return Some(Atom::ALitBool(*a < *b)),
-                BinOp::Le  => return Some(Atom::ALitBool(*a <= *b)),
-                BinOp::Gt  => return Some(Atom::ALitBool(*a > *b)),
-                BinOp::Ge  => return Some(Atom::ALitBool(*a >= *b)),
+                BinOp::Eq => return Some(Atom::ALitBool(*a == *b)),
+                BinOp::Ne => return Some(Atom::ALitBool(*a != *b)),
+                BinOp::Lt => return Some(Atom::ALitBool(*a < *b)),
+                BinOp::Le => return Some(Atom::ALitBool(*a <= *b)),
+                BinOp::Gt => return Some(Atom::ALitBool(*a > *b)),
+                BinOp::Ge => return Some(Atom::ALitBool(*a >= *b)),
                 _ => return None,
             };
             Some(Atom::ALitInt(result))
@@ -341,21 +424,21 @@ fn fold_binop(op: BinOp, left: &Atom, right: &Atom) -> Option<Atom> {
                 BinOp::Sub => *a - *b,
                 BinOp::Mul => *a * *b,
                 BinOp::Div => *a / *b,
-                BinOp::Eq  => return Some(Atom::ALitBool(*a == *b)),
-                BinOp::Ne  => return Some(Atom::ALitBool(*a != *b)),
-                BinOp::Lt  => return Some(Atom::ALitBool(*a < *b)),
-                BinOp::Le  => return Some(Atom::ALitBool(*a <= *b)),
-                BinOp::Gt  => return Some(Atom::ALitBool(*a > *b)),
-                BinOp::Ge  => return Some(Atom::ALitBool(*a >= *b)),
+                BinOp::Eq => return Some(Atom::ALitBool(*a == *b)),
+                BinOp::Ne => return Some(Atom::ALitBool(*a != *b)),
+                BinOp::Lt => return Some(Atom::ALitBool(*a < *b)),
+                BinOp::Le => return Some(Atom::ALitBool(*a <= *b)),
+                BinOp::Gt => return Some(Atom::ALitBool(*a > *b)),
+                BinOp::Ge => return Some(Atom::ALitBool(*a >= *b)),
                 _ => return None,
             };
             Some(Atom::ALitFloat(result))
         }
         (Atom::ALitBool(a), Atom::ALitBool(b)) => match op {
             BinOp::And => Some(Atom::ALitBool(*a && *b)),
-            BinOp::Or  => Some(Atom::ALitBool(*a || *b)),
-            BinOp::Eq  => Some(Atom::ALitBool(*a == *b)),
-            BinOp::Ne  => Some(Atom::ALitBool(*a != *b)),
+            BinOp::Or => Some(Atom::ALitBool(*a || *b)),
+            BinOp::Eq => Some(Atom::ALitBool(*a == *b)),
+            BinOp::Ne => Some(Atom::ALitBool(*a != *b)),
             _ => None,
         },
         _ => None,
@@ -378,7 +461,11 @@ fn fold_unop(op: UnOp, expr: &Atom) -> Option<Atom> {
 
 fn constant_fold_op(op: AnfOp) -> (AnfOp, bool) {
     match op {
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let (new_then, c1) = constant_fold(*then_branch);
             let (new_else, c2) = constant_fold(*else_branch);
             (
@@ -397,14 +484,22 @@ fn constant_fold_op(op: AnfOp) -> (AnfOp, bool) {
                 .map(|AnfMatchArm { pattern, body }| {
                     let (new_body, c) = constant_fold(body);
                     changed |= c;
-                    AnfMatchArm { pattern, body: new_body }
+                    AnfMatchArm {
+                        pattern,
+                        body: new_body,
+                    }
                 })
                 .collect();
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
             let (new_body, changed) = constant_fold(*body);
-            (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+            (
+                AnfOp::ALoop {
+                    body: Box::new(new_body),
+                },
+                changed,
+            )
         }
         AnfOp::ADefer(inner) => {
             let (new_inner, changed) = constant_fold(*inner);
@@ -424,7 +519,12 @@ fn constant_fold_op(op: AnfOp) -> (AnfOp, bool) {
 pub fn branch_simplify(body: AnfExpr) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
-            if let AnfOp::AIf { cond: Atom::ALitBool(b), then_branch, else_branch } = *op {
+            if let AnfOp::AIf {
+                cond: Atom::ALitBool(b),
+                then_branch,
+                else_branch,
+            } = *op
+            {
                 let selected = if b { *then_branch } else { *else_branch };
                 let spliced = splice_branch(selected, local, *body);
                 return (spliced, true);
@@ -432,7 +532,11 @@ pub fn branch_simplify(body: AnfExpr) -> (AnfExpr, bool) {
             let (new_op, op_changed) = branch_simplify_op(*op);
             let (new_body, body_changed) = branch_simplify(*body);
             (
-                AnfExpr::Let { local, op: Box::new(new_op), body: Box::new(new_body) },
+                AnfExpr::Let {
+                    local,
+                    op: Box::new(new_op),
+                    body: Box::new(new_body),
+                },
                 op_changed || body_changed,
             )
         }
@@ -466,7 +570,11 @@ fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) 
 
 fn branch_simplify_op(op: AnfOp) -> (AnfOp, bool) {
     match op {
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let (new_then, c1) = branch_simplify(*then_branch);
             let (new_else, c2) = branch_simplify(*else_branch);
             (
@@ -485,14 +593,22 @@ fn branch_simplify_op(op: AnfOp) -> (AnfOp, bool) {
                 .map(|AnfMatchArm { pattern, body }| {
                     let (new_body, c) = branch_simplify(body);
                     changed |= c;
-                    AnfMatchArm { pattern, body: new_body }
+                    AnfMatchArm {
+                        pattern,
+                        body: new_body,
+                    }
                 })
                 .collect();
             (AnfOp::AMatch { scrutinee, arms }, changed)
         }
         AnfOp::ALoop { body } => {
             let (new_body, changed) = branch_simplify(*body);
-            (AnfOp::ALoop { body: Box::new(new_body) }, changed)
+            (
+                AnfOp::ALoop {
+                    body: Box::new(new_body),
+                },
+                changed,
+            )
         }
         AnfOp::ADefer(inner) => {
             let (new_inner, changed) = branch_simplify(*inner);

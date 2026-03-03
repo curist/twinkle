@@ -89,7 +89,8 @@ impl QueryStageCache {
     }
 
     pub fn put_parsed(&mut self, module: &Path, key: u64, value: ParsedModule) {
-        self.parse.insert(module.to_path_buf(), CacheEntry { key, value });
+        self.parse
+            .insert(module.to_path_buf(), CacheEntry { key, value });
     }
 
     pub fn get_resolved(&mut self, module: &Path, key: u64) -> Option<ResolvedModule> {
@@ -104,7 +105,8 @@ impl QueryStageCache {
     }
 
     pub fn put_resolved(&mut self, module: &Path, key: u64, value: ResolvedModule) {
-        self.resolve.insert(module.to_path_buf(), CacheEntry { key, value });
+        self.resolve
+            .insert(module.to_path_buf(), CacheEntry { key, value });
     }
 
     pub fn get_typed(&mut self, module: &Path, key: u64) -> Option<TypedModule> {
@@ -119,7 +121,8 @@ impl QueryStageCache {
     }
 
     pub fn put_typed(&mut self, module: &Path, key: u64, value: TypedModule) {
-        self.typecheck.insert(module.to_path_buf(), CacheEntry { key, value });
+        self.typecheck
+            .insert(module.to_path_buf(), CacheEntry { key, value });
     }
 
     pub fn get_lowered(&mut self, module: &Path, key: u64) -> Option<LoweredModule> {
@@ -134,7 +137,8 @@ impl QueryStageCache {
     }
 
     pub fn put_lowered(&mut self, module: &Path, key: u64, value: LoweredModule) {
-        self.lower.insert(module.to_path_buf(), CacheEntry { key, value });
+        self.lower
+            .insert(module.to_path_buf(), CacheEntry { key, value });
     }
 }
 

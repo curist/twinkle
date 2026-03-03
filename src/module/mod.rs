@@ -6,11 +6,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
-use crate::ir::lower::LowerInput;
 use crate::ir::CoreModule;
 use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
+use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
     lower_stage, parse_file, preassign_module_function_ids, resolve_stage, typecheck_stage,
@@ -22,8 +22,8 @@ use crate::syntax::span::FileRegistry;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{FunctionSignature, MonoType, TypeId};
 
-pub use context::{CompilationContext, CompileState, ModuleExports};
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
+pub use context::{CompilationContext, CompileState, ModuleExports};
 pub use loader::{find_project_root, resolve_module_path};
 
 /// Compile a single module (file) and all its transitive dependencies.
@@ -96,12 +96,11 @@ pub fn compile_module(
                 ));
             }
             let dep_path = resolve_module_path(&root, &import.module_path);
-            let dep_canonical = dep_path
-                .canonicalize()
-                .unwrap_or_else(|_| dep_path.clone());
+            let dep_canonical = dep_path.canonicalize().unwrap_or_else(|_| dep_path.clone());
             dep_canonical_paths.push(dep_canonical);
             let dep_alias = import.module_name().to_string();
-            let result = compile_module(&dep_path, &dep_alias, ctx, importing_stack, state, do_lower);
+            let result =
+                compile_module(&dep_path, &dep_alias, ctx, importing_stack, state, do_lower);
             match result {
                 Ok((dep_exports, _)) => state.register_module_exports(&dep_alias, &dep_exports),
                 Err(e) => {
@@ -129,12 +128,7 @@ pub fn compile_module(
 
     // Pre-assign module-local FuncIds for this module's user functions.
     let mut module_next_func_id = prelude::USER_FUNC_START;
-    preassign_module_function_ids(
-        &ast,
-        alias,
-        &mut state.func_table,
-        &mut module_next_func_id,
-    );
+    preassign_module_function_ids(&ast, alias, &mut state.func_table, &mut module_next_func_id);
 
     // Resolve — pure function; takes accumulated envs, returns updated envs
     let resolve_key = query_keys::with_context(
@@ -180,11 +174,7 @@ pub fn compile_module(
         cached
     } else {
         let type_env_for_errs = resolved.type_env.clone();
-        let typed = match typecheck_stage(
-            &ast,
-            resolved.clone(),
-            state.module_aliases.clone(),
-        ) {
+        let typed = match typecheck_stage(&ast, resolved.clone(), state.module_aliases.clone()) {
             Ok(t) => t,
             Err(errors) => {
                 let msgs: Vec<String> = errors
@@ -224,7 +214,11 @@ pub fn compile_module(
                     exports.public_func_ids.insert(decl.name.clone(), func_id);
                 }
             }
-            Item::Stmt(Stmt::Let { pattern: Pattern::Ident(name, _), is_pub, .. }) => {
+            Item::Stmt(Stmt::Let {
+                pattern: Pattern::Ident(name, _),
+                is_pub,
+                ..
+            }) => {
                 let local_id = LocalId(global_offset);
                 if *is_pub {
                     if let Some(ty) = state.value_env.lookup(name) {
@@ -288,8 +282,7 @@ pub fn compile_module(
                     state.lowered_modules.push(lowered);
                 }
                 Err(errs) => {
-                    let msgs: Vec<String> =
-                        errs.iter().map(|e| e.format(&file_registry)).collect();
+                    let msgs: Vec<String> = errs.iter().map(|e| e.format(&file_registry)).collect();
                     importing_stack.pop();
                     return Err(anyhow!("Lowering failed:\n{}", msgs.join("\n")));
                 }
@@ -506,7 +499,13 @@ fn remap_expr_func_ids(
 ) {
     match &mut expr.kind {
         CoreExprKind::GlobalFunc(id) => {
-            *id = remap_func_id(*id, module_idx, external_func_refs, key_to_idx, local_to_global);
+            *id = remap_func_id(
+                *id,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::MakeClosure { func_id, .. } => {
             *func_id = remap_func_id(
@@ -543,11 +542,29 @@ fn remap_expr_func_ids(
             );
         }
         CoreExprKind::BinOp { left, right, .. } => {
-            remap_expr_func_ids(left, module_idx, external_func_refs, key_to_idx, local_to_global);
-            remap_expr_func_ids(right, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                left,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
+            remap_expr_func_ids(
+                right,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::UnOp { expr, .. } => {
-            remap_expr_func_ids(expr, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                expr,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::Call { callee, args } => {
             remap_expr_func_ids(
@@ -572,7 +589,13 @@ fn remap_expr_func_ids(
             then_branch,
             else_branch,
         } => {
-            remap_expr_func_ids(cond, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                cond,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
             remap_expr_func_ids(
                 then_branch,
                 module_idx,
@@ -597,11 +620,23 @@ fn remap_expr_func_ids(
                 local_to_global,
             );
             for MatchArm { body, .. } in arms {
-                remap_expr_func_ids(body, module_idx, external_func_refs, key_to_idx, local_to_global);
+                remap_expr_func_ids(
+                    body,
+                    module_idx,
+                    external_func_refs,
+                    key_to_idx,
+                    local_to_global,
+                );
             }
         }
         CoreExprKind::Loop { body } => {
-            remap_expr_func_ids(body, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                body,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::Break { value } => {
             if let Some(value) = value {
@@ -668,15 +703,45 @@ fn remap_expr_func_ids(
             }
         }
         CoreExprKind::Index { base, index } => {
-            remap_expr_func_ids(base, module_idx, external_func_refs, key_to_idx, local_to_global);
-            remap_expr_func_ids(index, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                base,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
+            remap_expr_func_ids(
+                index,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::RecordUpdate { base, value, .. } => {
-            remap_expr_func_ids(base, module_idx, external_func_refs, key_to_idx, local_to_global);
-            remap_expr_func_ids(value, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                base,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
+            remap_expr_func_ids(
+                value,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::Defer(inner) => {
-            remap_expr_func_ids(inner, module_idx, external_func_refs, key_to_idx, local_to_global);
+            remap_expr_func_ids(
+                inner,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
         }
         CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
@@ -719,7 +784,9 @@ fn register_inherent_methods(
     type_env: &mut TypeEnv,
     value_env: &mut ValueEnv,
 ) {
-    let registrations: Vec<(TypeId, String, FunctionSignature)> = ast.items.iter()
+    let registrations: Vec<(TypeId, String, FunctionSignature)> = ast
+        .items
+        .iter()
         .filter_map(|item| {
             if let Item::Function(decl) = item {
                 if let Some(sig) = value_env.get_function(&decl.name) {

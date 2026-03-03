@@ -13,9 +13,13 @@ pub fn cmd_opt(path: &Path, show_original: bool) -> Result<()> {
         Ok((core_module, _registry)) => {
             let anf_module = crate::ir::lower_anf::lower_module(&core_module);
             if show_original {
-                println!("// ── Original ANF ─────────────────────────────────────────────────────────────");
+                println!(
+                    "// ── Original ANF ─────────────────────────────────────────────────────────────"
+                );
                 print!("{}", anf_module);
-                println!("// ── Optimized ANF ────────────────────────────────────────────────────────────");
+                println!(
+                    "// ── Optimized ANF ────────────────────────────────────────────────────────────"
+                );
             }
             let optimized = crate::opt::optimize_module(anf_module);
             print!("{}", optimized);

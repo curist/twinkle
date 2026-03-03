@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 use super::error::TypeError;
+use super::ty::{
+    CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
+    RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+};
 use crate::syntax::ast::Type as AstType;
 
 /// Type environment - tracks user-defined type declarations
@@ -43,8 +46,14 @@ impl TypeEnv {
                 name: "Option".to_string(),
                 type_params: vec![],
                 variants: vec![
-                    Variant { name: "None".to_string(), fields: vec![] },
-                    Variant { name: "Some".to_string(), fields: vec![MonoType::Void] },
+                    Variant {
+                        name: "None".to_string(),
+                        fields: vec![]
+                    },
+                    Variant {
+                        name: "Some".to_string(),
+                        fields: vec![MonoType::Void]
+                    },
                 ],
             }),
             OPTION_TYPE_ID,
@@ -54,8 +63,14 @@ impl TypeEnv {
                 name: "Result".to_string(),
                 type_params: vec![],
                 variants: vec![
-                    Variant { name: "Ok".to_string(),  fields: vec![MonoType::Void] },
-                    Variant { name: "Err".to_string(), fields: vec![MonoType::Void] },
+                    Variant {
+                        name: "Ok".to_string(),
+                        fields: vec![MonoType::Void]
+                    },
+                    Variant {
+                        name: "Err".to_string(),
+                        fields: vec![MonoType::Void]
+                    },
                 ],
             }),
             RESULT_TYPE_ID,
@@ -73,9 +88,18 @@ impl TypeEnv {
                 name: "Range".to_string(),
                 type_params: vec![],
                 fields: vec![
-                    RecordField { name: "start".to_string(), ty: MonoType::Int },
-                    RecordField { name: "end".to_string(),   ty: MonoType::Int },
-                    RecordField { name: "step".to_string(),  ty: MonoType::Int },
+                    RecordField {
+                        name: "start".to_string(),
+                        ty: MonoType::Int
+                    },
+                    RecordField {
+                        name: "end".to_string(),
+                        ty: MonoType::Int
+                    },
+                    RecordField {
+                        name: "step".to_string(),
+                        ty: MonoType::Int
+                    },
                 ],
             }),
             RANGE_TYPE_ID,
@@ -117,10 +141,16 @@ impl TypeEnv {
                 name: "UnfoldStep".to_string(),
                 type_params: vec!["T".to_string(), "S".to_string()],
                 variants: vec![
-                    Variant { name: "Done".to_string(),  fields: vec![] },
+                    Variant {
+                        name: "Done".to_string(),
+                        fields: vec![]
+                    },
                     Variant {
                         name: "Yield".to_string(),
-                        fields: vec![MonoType::Var("T".to_string()), MonoType::Var("S".to_string())],
+                        fields: vec![
+                            MonoType::Var("T".to_string()),
+                            MonoType::Var("S".to_string())
+                        ],
                     },
                 ],
             }),
@@ -139,14 +169,12 @@ impl TypeEnv {
         match &def {
             TypeDef::Record { fields, .. } => {
                 for (i, field) in fields.iter().enumerate() {
-                    self.record_fields
-                        .insert((type_id, field.name.clone()), i);
+                    self.record_fields.insert((type_id, field.name.clone()), i);
                 }
             }
             TypeDef::Sum { variants, .. } => {
                 for (i, variant) in variants.iter().enumerate() {
-                    self.sum_variants
-                        .insert((type_id, variant.name.clone()), i);
+                    self.sum_variants.insert((type_id, variant.name.clone()), i);
                 }
             }
             TypeDef::Alias { .. } => {}
@@ -172,14 +200,12 @@ impl TypeEnv {
         match &def {
             TypeDef::Record { fields, .. } => {
                 for (i, field) in fields.iter().enumerate() {
-                    self.record_fields
-                        .insert((type_id, field.name.clone()), i);
+                    self.record_fields.insert((type_id, field.name.clone()), i);
                 }
             }
             TypeDef::Sum { variants, .. } => {
                 for (i, variant) in variants.iter().enumerate() {
-                    self.sum_variants
-                        .insert((type_id, variant.name.clone()), i);
+                    self.sum_variants.insert((type_id, variant.name.clone()), i);
                 }
             }
             TypeDef::Alias { .. } => {}
@@ -257,7 +283,8 @@ impl TypeEnv {
                             errors.push(TypeError::GenericNotSupported {
                                 name: "Int".to_string(),
                                 span: *span,
-                                note: "Int is a primitive type and takes no type arguments".to_string(),
+                                note: "Int is a primitive type and takes no type arguments"
+                                    .to_string(),
                             });
                             return Err(());
                         }
@@ -268,7 +295,8 @@ impl TypeEnv {
                             errors.push(TypeError::GenericNotSupported {
                                 name: "Float".to_string(),
                                 span: *span,
-                                note: "Float is a primitive type and takes no type arguments".to_string(),
+                                note: "Float is a primitive type and takes no type arguments"
+                                    .to_string(),
                             });
                             return Err(());
                         }
@@ -279,7 +307,8 @@ impl TypeEnv {
                             errors.push(TypeError::GenericNotSupported {
                                 name: "Bool".to_string(),
                                 span: *span,
-                                note: "Bool is a primitive type and takes no type arguments".to_string(),
+                                note: "Bool is a primitive type and takes no type arguments"
+                                    .to_string(),
                             });
                             return Err(());
                         }
@@ -290,7 +319,8 @@ impl TypeEnv {
                             errors.push(TypeError::GenericNotSupported {
                                 name: "String".to_string(),
                                 span: *span,
-                                note: "String is a primitive type and takes no type arguments".to_string(),
+                                note: "String is a primitive type and takes no type arguments"
+                                    .to_string(),
                             });
                             return Err(());
                         }
@@ -301,7 +331,8 @@ impl TypeEnv {
                             errors.push(TypeError::GenericNotSupported {
                                 name: "Void".to_string(),
                                 span: *span,
-                                note: "Void is a primitive type and takes no type arguments".to_string(),
+                                note: "Void is a primitive type and takes no type arguments"
+                                    .to_string(),
                             });
                             return Err(());
                         }
@@ -314,7 +345,10 @@ impl TypeEnv {
                                 name: if args.is_empty() {
                                     "Array (missing type argument)".to_string()
                                 } else {
-                                    format!("Array<...> (expected 1 type argument, found {})", args.len())
+                                    format!(
+                                        "Array<...> (expected 1 type argument, found {})",
+                                        args.len()
+                                    )
                                 },
                                 span: *span,
                             });
@@ -330,7 +364,10 @@ impl TypeEnv {
                                 name: if args.is_empty() {
                                     "Dict (missing type arguments)".to_string()
                                 } else {
-                                    format!("Dict<...> (expected 2 type arguments, found {})", args.len())
+                                    format!(
+                                        "Dict<...> (expected 2 type arguments, found {})",
+                                        args.len()
+                                    )
                                 },
                                 span: *span,
                             });
@@ -353,70 +390,106 @@ impl TypeEnv {
                     "Option" => {
                         if args.len() != 1 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("Option (expected 1 type argument, found {})", args.len()),
+                                name: format!(
+                                    "Option (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![inner] });
+                        return Ok(MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![inner],
+                        });
                     }
                     "Result" => {
                         if args.len() != 2 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("Result (expected 2 type arguments, found {})", args.len()),
+                                name: format!(
+                                    "Result (expected 2 type arguments, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let t = self.resolve_type(&args[0], errors)?;
                         let e = self.resolve_type(&args[1], errors)?;
-                        return Ok(MonoType::Named { type_id: RESULT_TYPE_ID, args: vec![t, e] });
+                        return Ok(MonoType::Named {
+                            type_id: RESULT_TYPE_ID,
+                            args: vec![t, e],
+                        });
                     }
                     "Cell" => {
                         if args.len() != 1 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("Cell (expected 1 type argument, found {})", args.len()),
+                                name: format!(
+                                    "Cell (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] });
+                        return Ok(MonoType::Named {
+                            type_id: CELL_TYPE_ID,
+                            args: vec![inner],
+                        });
                     }
                     "Iterator" => {
                         if args.len() != 1 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("Iterator (expected 1 type argument, found {})", args.len()),
+                                name: format!(
+                                    "Iterator (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let elem = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![elem] });
+                        return Ok(MonoType::Named {
+                            type_id: ITERATOR_TYPE_ID,
+                            args: vec![elem],
+                        });
                     }
                     "IterItem" => {
                         if args.len() != 1 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("IterItem (expected 1 type argument, found {})", args.len()),
+                                name: format!(
+                                    "IterItem (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let elem = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named { type_id: ITER_ITEM_TYPE_ID, args: vec![elem] });
+                        return Ok(MonoType::Named {
+                            type_id: ITER_ITEM_TYPE_ID,
+                            args: vec![elem],
+                        });
                     }
                     "UnfoldStep" => {
                         if args.len() != 2 {
                             errors.push(TypeError::UndefinedType {
-                                name: format!("UnfoldStep (expected 2 type arguments, found {})", args.len()),
+                                name: format!(
+                                    "UnfoldStep (expected 2 type arguments, found {})",
+                                    args.len()
+                                ),
                                 span: *span,
                             });
                             return Err(());
                         }
                         let t = self.resolve_type(&args[0], errors)?;
                         let s = self.resolve_type(&args[1], errors)?;
-                        return Ok(MonoType::Named { type_id: UNFOLD_STEP_TYPE_ID, args: vec![t, s] });
+                        return Ok(MonoType::Named {
+                            type_id: UNFOLD_STEP_TYPE_ID,
+                            args: vec![t, s],
+                        });
                     }
                     _ => {
                         // User-defined type — look up in type environment
@@ -445,14 +518,17 @@ impl TypeEnv {
                         }
 
                         // Check arity against declared type_params
-                        let expected_arity = self.get_def(type_id)
+                        let expected_arity = self
+                            .get_def(type_id)
                             .map(|d| d.type_params().len())
                             .unwrap_or(0);
                         if args.len() != expected_arity {
                             errors.push(TypeError::UndefinedType {
                                 name: format!(
                                     "{} (expected {} type arg(s), found {})",
-                                    name, expected_arity, args.len()
+                                    name,
+                                    expected_arity,
+                                    args.len()
                                 ),
                                 span: *span,
                             });
@@ -463,7 +539,10 @@ impl TypeEnv {
                             .iter()
                             .map(|a| self.resolve_type(a, errors))
                             .collect::<Result<_, _>>()?;
-                        Ok(MonoType::Named { type_id, args: resolved_args })
+                        Ok(MonoType::Named {
+                            type_id,
+                            args: resolved_args,
+                        })
                     }
                 }
             }
@@ -490,7 +569,8 @@ impl TypeEnv {
 
     /// Check if a type has a method with the given name
     pub fn has_method(&self, type_id: TypeId, method_name: &str) -> bool {
-        self.methods.contains_key(&(type_id, method_name.to_string()))
+        self.methods
+            .contains_key(&(type_id, method_name.to_string()))
     }
 
     /// Get the function name for a method
@@ -501,7 +581,8 @@ impl TypeEnv {
 
     /// Check if a type has a field with the given name (for collision detection)
     pub fn has_field(&self, type_id: TypeId, field_name: &str) -> bool {
-        self.record_fields.contains_key(&(type_id, field_name.to_string()))
+        self.record_fields
+            .contains_key(&(type_id, field_name.to_string()))
     }
 
     /// Number of registered types (for iterating all TypeIds)

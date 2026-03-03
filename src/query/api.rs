@@ -2,16 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::ir::core::{FuncId, LocalId};
 use crate::ir::error::LowerError;
 use crate::ir::lower::{LowerInput, Lowerer};
 use crate::module::artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 use crate::module::context::{default_func_table, default_module_aliases};
-use crate::syntax::span::Span;
 use crate::syntax::ast::{Item, Pattern, SourceFile, Stmt};
 use crate::syntax::span::FileRegistry;
+use crate::syntax::span::Span;
 use crate::types::check::TypeChecker;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::error::TypeError;
@@ -107,8 +107,7 @@ pub fn parse_file(file_path: &Path) -> Result<ParsedModule> {
     let source = fs::read_to_string(file_path)
         .map_err(|e| anyhow!("Cannot read '{}': {}", file_path.display(), e))?;
 
-    let (ast, file_registry) =
-        crate::syntax::parse_source(&source, &file_path.to_string_lossy())?;
+    let (ast, file_registry) = crate::syntax::parse_source(&source, &file_path.to_string_lossy())?;
 
     let alias = canonical_path
         .file_stem()

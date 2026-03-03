@@ -21,7 +21,11 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             } else {
                 decl.module_path.join(".")
             };
-            let alias_str = decl.alias.as_deref().map(|a| format!(" as {}", a)).unwrap_or_default();
+            let alias_str = decl
+                .alias
+                .as_deref()
+                .map(|a| format!(" as {}", a))
+                .unwrap_or_default();
             writeln!(out, "{}Import: {}{}", prefix, path, alias_str).unwrap();
         }
         Item::TypeDecl(decl) => {
@@ -116,7 +120,9 @@ fn print_block(block: &Block, out: &mut String, indent: usize) {
 fn print_stmt(stmt: &Stmt, out: &mut String, indent: usize) {
     let prefix = " ".repeat(indent);
     match stmt {
-        Stmt::Let { pattern, ty, value, .. } => {
+        Stmt::Let {
+            pattern, ty, value, ..
+        } => {
             write!(out, "{}Let ", prefix).unwrap();
             print_pattern(pattern, out);
             if let Some(ty) = ty {
@@ -126,7 +132,13 @@ fn print_stmt(stmt: &Stmt, out: &mut String, indent: usize) {
             writeln!(out, " =").unwrap();
             print_expr(value, out, indent + 2);
         }
-        Stmt::For { pattern, index_pattern, iter, body, .. } => {
+        Stmt::For {
+            pattern,
+            index_pattern,
+            iter,
+            body,
+            ..
+        } => {
             write!(out, "{}For ", prefix).unwrap();
             print_pattern(pattern, out);
             if let Some(idx) = index_pattern {
@@ -209,7 +221,11 @@ fn print_expr(expr: &Expr, out: &mut String, indent: usize) {
             print_expr(base, out, indent + 2);
             print_expr(index, out, indent + 2);
         }
-        ExprKind::If { cond, then_branch, else_branch } => {
+        ExprKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             writeln!(out, "{}If", prefix).unwrap();
             writeln!(out, "{}  condition:", prefix).unwrap();
             print_expr(cond, out, indent + 4);
@@ -287,7 +303,11 @@ fn print_expr(expr: &Expr, out: &mut String, indent: usize) {
             writeln!(out, "{}Try", prefix).unwrap();
             print_expr(expr, out, indent + 2);
         }
-        ExprKind::Collect { pattern, iter, body } => {
+        ExprKind::Collect {
+            pattern,
+            iter,
+            body,
+        } => {
             write!(out, "{}Collect ", prefix).unwrap();
             print_pattern(pattern, out);
             writeln!(out, " in").unwrap();
@@ -347,7 +367,12 @@ fn print_pattern(pattern: &Pattern, out: &mut String) {
         Pattern::Wildcard(_) => write!(out, "_").unwrap(),
         Pattern::Ident(name, _) => write!(out, "{}", name).unwrap(),
         Pattern::Literal(lit, _) => print_literal(lit, out),
-        Pattern::Variant { type_name, name, fields, .. } => {
+        Pattern::Variant {
+            type_name,
+            name,
+            fields,
+            ..
+        } => {
             match type_name {
                 Some(tname) => write!(out, "{}.{}", tname, name).unwrap(),
                 None => write!(out, ".{}", name).unwrap(),

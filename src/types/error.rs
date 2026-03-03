@@ -1,20 +1,14 @@
-use crate::syntax::span::{FileRegistry, Span};
 use super::ty::MonoType;
+use crate::syntax::span::{FileRegistry, Span};
 
 /// Type error with source location
 #[derive(Debug, Clone)]
 pub enum TypeError {
     /// Undefined type name
-    UndefinedType {
-        name: String,
-        span: Span,
-    },
+    UndefinedType { name: String, span: Span },
 
     /// Undefined variable or function
-    UndefinedVariable {
-        name: String,
-        span: Span,
-    },
+    UndefinedVariable { name: String, span: Span },
 
     /// Type mismatch
     TypeMismatch {
@@ -26,16 +20,10 @@ pub enum TypeError {
     },
 
     /// Non-exhaustive pattern match
-    NonExhaustiveMatch {
-        missing: Vec<String>,
-        span: Span,
-    },
+    NonExhaustiveMatch { missing: Vec<String>, span: Span },
 
     /// Tried to call a non-function value
-    NotAFunction {
-        ty: MonoType,
-        span: Span,
-    },
+    NotAFunction { ty: MonoType, span: Span },
 
     /// Wrong number of arguments in function call
     WrongArity {
@@ -66,15 +54,10 @@ pub enum TypeError {
     },
 
     /// Circular type alias
-    CircularTypeAlias {
-        name: String,
-        span: Span,
-    },
+    CircularTypeAlias { name: String, span: Span },
 
     /// Anonymous record literal without expected type context
-    AnonymousRecordWithoutContext {
-        span: Span,
-    },
+    AnonymousRecordWithoutContext { span: Span },
 
     /// Generic type parameters not supported in Stage 2
     GenericNotSupported {
@@ -91,16 +74,10 @@ pub enum TypeError {
     },
 
     /// Invalid top-level item
-    InvalidTopLevelItem {
-        span: Span,
-        note: String,
-    },
+    InvalidTopLevelItem { span: Span, note: String },
 
     /// Scrutinee of case expression must be a sum type
-    CaseScrutineeNotSumType {
-        actual_type: MonoType,
-        span: Span,
-    },
+    CaseScrutineeNotSumType { actual_type: MonoType, span: Span },
 
     /// Field and method with the same name on a type
     FieldMethodCollision {
@@ -110,21 +87,13 @@ pub enum TypeError {
     },
 
     /// Dict key type must be Int or String
-    InvalidDictKey {
-        key_type: MonoType,
-        span: Span,
-    },
+    InvalidDictKey { key_type: MonoType, span: Span },
 
     /// Rebinding is not allowed at module scope
-    ModuleScopeRebinding {
-        name: String,
-        span: Span,
-    },
+    ModuleScopeRebinding { name: String, span: Span },
 
     /// Occurs check failed: infinite type would be created
-    OccursCheckFailed {
-        span: Span,
-    },
+    OccursCheckFailed { span: Span },
 
     /// Binding type is ambiguous (contains unsolved MetaVars after checking)
     AmbiguousType {
@@ -144,7 +113,11 @@ impl TypeError {
     /// ```ignore
     /// error.format(&file_registry, Some(&type_env))
     /// ```
-    pub fn format(&self, registry: &FileRegistry, type_env: Option<&super::env::TypeEnv>) -> String {
+    pub fn format(
+        &self,
+        registry: &FileRegistry,
+        type_env: Option<&super::env::TypeEnv>,
+    ) -> String {
         // Helper to format a type with or without names
         let fmt_type = |ty: &MonoType| -> String {
             if let Some(env) = type_env {

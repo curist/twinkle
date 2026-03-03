@@ -1,8 +1,8 @@
+use crate::ir::core::{FuncId, LocalId};
+use crate::types::ty::TypeId;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use crate::ir::core::{FuncId, LocalId};
-use crate::types::ty::TypeId;
 
 /// Iterator state: a seed value plus a step closure.
 /// The step closure takes the seed and returns an UnfoldStep<T,S> variant.
@@ -53,7 +53,9 @@ impl std::fmt::Display for Value {
             Value::Arr(elems) => {
                 write!(f, "[")?;
                 for (i, e) in elems.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", e)?;
                 }
                 write!(f, "]")
@@ -61,7 +63,9 @@ impl std::fmt::Display for Value {
             Value::Dict(pairs) => {
                 write!(f, "{{")?;
                 for (i, (k, v)) in pairs.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}: {}", k, v)?;
                 }
                 write!(f, "}}")
@@ -69,7 +73,9 @@ impl std::fmt::Display for Value {
             Value::Record(_, fields) => {
                 write!(f, ".{{")?;
                 for (i, v) in fields.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", v)?;
                 }
                 write!(f, "}}")
@@ -79,7 +85,9 @@ impl std::fmt::Display for Value {
                 if !args.is_empty() {
                     write!(f, "(")?;
                     for (i, a) in args.iter().enumerate() {
-                        if i > 0 { write!(f, ", ")?; }
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
                         write!(f, "{}", a)?;
                     }
                     write!(f, ")")?;
@@ -105,12 +113,24 @@ impl Value {
         match self {
             Value::Cell(rc) => Value::Cell(Rc::new(RefCell::new(rc.borrow().deep_clone()))),
             Value::Arr(elems) => Value::Arr(elems.iter().map(|v| v.deep_clone()).collect()),
-            Value::Dict(kvs) => Value::Dict(kvs.iter().map(|(k, v)| (k.deep_clone(), v.deep_clone())).collect()),
-            Value::Record(tid, fields) => Value::Record(*tid, fields.iter().map(|v| v.deep_clone()).collect()),
-            Value::Variant(tid, vidx, args) => Value::Variant(*tid, *vidx, args.iter().map(|v| v.deep_clone()).collect()),
-            Value::Closure(fid, free_vars) => {
-                Value::Closure(*fid, free_vars.iter().map(|(k, v)| (*k, v.deep_clone())).collect())
+            Value::Dict(kvs) => Value::Dict(
+                kvs.iter()
+                    .map(|(k, v)| (k.deep_clone(), v.deep_clone()))
+                    .collect(),
+            ),
+            Value::Record(tid, fields) => {
+                Value::Record(*tid, fields.iter().map(|v| v.deep_clone()).collect())
             }
+            Value::Variant(tid, vidx, args) => {
+                Value::Variant(*tid, *vidx, args.iter().map(|v| v.deep_clone()).collect())
+            }
+            Value::Closure(fid, free_vars) => Value::Closure(
+                *fid,
+                free_vars
+                    .iter()
+                    .map(|(k, v)| (*k, v.deep_clone()))
+                    .collect(),
+            ),
             // Primitives and Iterator are value types; Clone is sufficient.
             other => other.clone(),
         }

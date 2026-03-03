@@ -1,5 +1,5 @@
-use crate::wasm::ir::*;
 use crate::runtime::types::*;
+use crate::wasm::ir::*;
 
 /// Build the `rt.dict` module: persistent (COW) dictionary as an unsorted association list.
 /// Key comparison uses `rt.core.eq` (structural equality) so both `$BoxedInt` and `$String`
@@ -35,11 +35,17 @@ pub fn make() -> ModuleIR {
 }
 
 fn ref_dict_entry_null() -> ValType {
-    ValType::Ref { nullable: true, heap: HeapType::Named(T_DICT_ENTRY.into()) }
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_DICT_ENTRY.into()),
+    }
 }
 
 fn ref_dict_entry() -> ValType {
-    ValType::Ref { nullable: false, heap: HeapType::Named(T_DICT_ENTRY.into()) }
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_DICT_ENTRY.into()),
+    }
 }
 
 /// Emit instructions that compare `entry.key` (already on stack) to `key` (local p1),
@@ -67,9 +73,7 @@ fn len_fn() -> FuncDef {
         params: vec![ref_dict_null()],
         results: vec![ValType::I32],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen,
-        ],
+        body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen],
     }
 }
 
@@ -87,10 +91,16 @@ fn keys_fn() -> FuncDef {
             ref_dict_entry_null(),
         ],
         body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(1),
-            Instr::RefNull(HeapType::None), Instr::LocalGet(1),
-            Instr::ArrayNew(T_ARRAY.into()), Instr::LocalSet(3),
-            Instr::I32Const(0), Instr::LocalSet(2),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(1),
+            Instr::RefNull(HeapType::None),
+            Instr::LocalGet(1),
+            Instr::ArrayNew(T_ARRAY.into()),
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(2),
             Instr::Block {
                 label: "exit".into(),
                 result: None,
@@ -98,20 +108,32 @@ fn keys_fn() -> FuncDef {
                     label: "loop".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(2), Instr::LocalGet(1), Instr::I32GeS,
+                        Instr::LocalGet(2),
+                        Instr::LocalGet(1),
+                        Instr::I32GeS,
                         Instr::BrIf("exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(2),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(4),
-                        Instr::LocalGet(3), Instr::RefAsNonNull, Instr::LocalGet(2),
-                        Instr::LocalGet(4), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(2),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(4),
+                        Instr::LocalGet(3),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(2),
+                        Instr::LocalGet(4),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::ArraySet(T_ARRAY.into()),
-                        Instr::LocalGet(2), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(2),
+                        Instr::LocalGet(2),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(2),
                         Instr::Br("loop".into()),
                     ],
                 }],
             },
-            Instr::LocalGet(3), Instr::RefAsNonNull,
+            Instr::LocalGet(3),
+            Instr::RefAsNonNull,
         ],
     }
 }
@@ -125,8 +147,12 @@ fn has_fn() -> FuncDef {
         results: vec![ValType::I32],
         locals: vec![ValType::I32, ValType::I32, ref_dict_entry_null()],
         body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(2),
-            Instr::I32Const(0), Instr::LocalSet(3),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
             Instr::Block {
                 label: "exit".into(),
                 result: None,
@@ -134,11 +160,17 @@ fn has_fn() -> FuncDef {
                     label: "scan".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(3), Instr::LocalGet(2), Instr::I32GeS,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
                         Instr::BrIf("exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(3),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(4),
-                        Instr::LocalGet(4), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(4),
+                        Instr::LocalGet(4),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::LocalGet(1),
                     ]
@@ -150,7 +182,10 @@ fn has_fn() -> FuncDef {
                             then_body: vec![Instr::I32Const(1), Instr::Return],
                             else_body: vec![],
                         },
-                        Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(3),
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
                         Instr::Br("scan".into()),
                     ])
                     .collect(),
@@ -170,8 +205,12 @@ fn get_fn() -> FuncDef {
         results: vec![ValType::Anyref],
         locals: vec![ValType::I32, ValType::I32, ref_dict_entry_null()],
         body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(2),
-            Instr::I32Const(0), Instr::LocalSet(3),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
             Instr::Block {
                 label: "exit".into(),
                 result: None,
@@ -179,27 +218,38 @@ fn get_fn() -> FuncDef {
                     label: "scan".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(3), Instr::LocalGet(2), Instr::I32GeS,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
                         Instr::BrIf("exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(3),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(4),
-                        Instr::LocalGet(4), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(4),
+                        Instr::LocalGet(4),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::LocalGet(1),
                     ]
                     .into_iter()
                     .chain(key_eq_call())
-                    .chain([Instr::If {
-                        result: None,
-                        then_body: vec![
-                            Instr::LocalGet(4), Instr::RefAsNonNull,
-                            Instr::StructGet(T_DICT_ENTRY.into(), 1),
-                            Instr::Return,
-                        ],
-                        else_body: vec![],
-                    },
-                    Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(3),
-                    Instr::Br("scan".into()),
+                    .chain([
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                Instr::LocalGet(4),
+                                Instr::RefAsNonNull,
+                                Instr::StructGet(T_DICT_ENTRY.into(), 1),
+                                Instr::Return,
+                            ],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("scan".into()),
                     ])
                     .collect(),
                 }],
@@ -219,23 +269,30 @@ fn set_fn() -> FuncDef {
         params: vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
         results: vec![ref_dict()],
         locals: vec![
-            ValType::I32,       // p3 = n
-            ValType::I32,       // p4 = i (loop cursor)
-            ValType::I32,       // p5 = found
-            ref_dict_null(),    // p6 = result
-            ref_dict_entry(),   // p7 = new_entry
+            ValType::I32,          // p3 = n
+            ValType::I32,          // p4 = i (loop cursor)
+            ValType::I32,          // p5 = found
+            ref_dict_null(),       // p6 = result
+            ref_dict_entry(),      // p7 = new_entry
             ref_dict_entry_null(), // p8 = entry scratch
-            ValType::I32,       // p9 = result_len
+            ValType::I32,          // p9 = result_len
         ],
         body: vec![
             // p3 = len(dict)
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(3),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
             // p7 = new DictEntry { key=p1, val=p2 }
-            Instr::LocalGet(1), Instr::LocalGet(2),
-            Instr::StructNew(T_DICT_ENTRY.into()), Instr::LocalSet(7),
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::StructNew(T_DICT_ENTRY.into()),
+            Instr::LocalSet(7),
             // Scan to check if key exists → p5
-            Instr::I32Const(0), Instr::LocalSet(4),
-            Instr::I32Const(0), Instr::LocalSet(5),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
+            Instr::I32Const(0),
+            Instr::LocalSet(5),
             Instr::Block {
                 label: "found_exit".into(),
                 result: None,
@@ -243,11 +300,17 @@ fn set_fn() -> FuncDef {
                     label: "scan".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(4), Instr::LocalGet(3), Instr::I32GeS,
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(3),
+                        Instr::I32GeS,
                         Instr::BrIf("found_exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(4),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(8),
-                        Instr::LocalGet(8), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(4),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(8),
+                        Instr::LocalGet(8),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::LocalGet(1),
                     ]
@@ -257,12 +320,16 @@ fn set_fn() -> FuncDef {
                         Instr::If {
                             result: None,
                             then_body: vec![
-                                Instr::I32Const(1), Instr::LocalSet(5),
+                                Instr::I32Const(1),
+                                Instr::LocalSet(5),
                                 Instr::Br("found_exit".into()),
                             ],
                             else_body: vec![],
                         },
-                        Instr::LocalGet(4), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(4),
+                        Instr::LocalGet(4),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(4),
                         Instr::Br("scan".into()),
                     ])
                     .collect(),
@@ -282,7 +349,8 @@ fn set_fn() -> FuncDef {
             Instr::ArrayNew(T_DICT.into()),
             Instr::LocalSet(6),
             // Copy entries from dict to result, replacing the matched key
-            Instr::I32Const(0), Instr::LocalSet(4),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
             Instr::Block {
                 label: "copy_exit".into(),
                 result: None,
@@ -290,11 +358,17 @@ fn set_fn() -> FuncDef {
                     label: "copy".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(4), Instr::LocalGet(3), Instr::I32GeS,
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(3),
+                        Instr::I32GeS,
                         Instr::BrIf("copy_exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(4),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(8),
-                        Instr::LocalGet(8), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(4),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(8),
+                        Instr::LocalGet(8),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::LocalGet(1),
                     ]
@@ -304,17 +378,24 @@ fn set_fn() -> FuncDef {
                         Instr::If {
                             result: None,
                             then_body: vec![
-                                Instr::LocalGet(6), Instr::RefAsNonNull, Instr::LocalGet(4),
+                                Instr::LocalGet(6),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(4),
                                 Instr::LocalGet(7),
                                 Instr::ArraySet(T_DICT.into()),
                             ],
                             else_body: vec![
-                                Instr::LocalGet(6), Instr::RefAsNonNull, Instr::LocalGet(4),
+                                Instr::LocalGet(6),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(4),
                                 Instr::LocalGet(8),
                                 Instr::ArraySet(T_DICT.into()),
                             ],
                         },
-                        Instr::LocalGet(4), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(4),
+                        Instr::LocalGet(4),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(4),
                         Instr::Br("copy".into()),
                     ])
                     .collect(),
@@ -326,13 +407,16 @@ fn set_fn() -> FuncDef {
             Instr::If {
                 result: None,
                 then_body: vec![
-                    Instr::LocalGet(6), Instr::RefAsNonNull, Instr::LocalGet(3),
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(3),
                     Instr::LocalGet(7),
                     Instr::ArraySet(T_DICT.into()),
                 ],
                 else_body: vec![],
             },
-            Instr::LocalGet(6), Instr::RefAsNonNull,
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
         ],
     }
 }
@@ -352,13 +436,19 @@ fn remove_fn() -> FuncDef {
             ref_dict_entry_null(),
         ],
         body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(2),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
             // result = array.new $Dict (null, n)
             Instr::RefNull(HeapType::Named(T_DICT_ENTRY.into())),
             Instr::LocalGet(2),
-            Instr::ArrayNew(T_DICT.into()), Instr::LocalSet(5),
-            Instr::I32Const(0), Instr::LocalSet(3),
-            Instr::I32Const(0), Instr::LocalSet(4),
+            Instr::ArrayNew(T_DICT.into()),
+            Instr::LocalSet(5),
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
             Instr::Block {
                 label: "exit".into(),
                 result: None,
@@ -366,11 +456,17 @@ fn remove_fn() -> FuncDef {
                     label: "scan".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(3), Instr::LocalGet(2), Instr::I32GeS,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
                         Instr::BrIf("exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(3),
-                        Instr::ArrayGet(T_DICT.into()), Instr::LocalSet(6),
-                        Instr::LocalGet(6), Instr::RefAsNonNull,
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(6),
+                        Instr::LocalGet(6),
+                        Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
                         Instr::LocalGet(1),
                     ]
@@ -382,20 +478,29 @@ fn remove_fn() -> FuncDef {
                             // skip this entry
                             then_body: vec![],
                             else_body: vec![
-                                Instr::LocalGet(5), Instr::RefAsNonNull, Instr::LocalGet(4),
-                                Instr::LocalGet(6), Instr::ArraySet(T_DICT.into()),
-                                Instr::LocalGet(4), Instr::I32Const(1), Instr::I32Add,
+                                Instr::LocalGet(5),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(4),
+                                Instr::LocalGet(6),
+                                Instr::ArraySet(T_DICT.into()),
+                                Instr::LocalGet(4),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
                                 Instr::LocalSet(4),
                             ],
                         },
-                        Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Add, Instr::LocalSet(3),
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
                         Instr::Br("scan".into()),
                     ])
                     .collect(),
                 }],
             },
             // v0: return result (may have 1 trailing null slot if key was found)
-            Instr::LocalGet(5), Instr::RefAsNonNull,
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
         ],
     }
 }

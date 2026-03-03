@@ -1,12 +1,11 @@
-use crate::module::artifacts::ResolvedModule;
-use crate::syntax::ast::{
-    FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl,
-    TypeDef as AstTypeDef,
-};
-use crate::syntax::span::Span;
 use super::env::{TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant};
+use crate::module::artifacts::ResolvedModule;
+use crate::syntax::ast::{
+    FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl, TypeDef as AstTypeDef,
+};
+use crate::syntax::span::Span;
 use std::collections::{HashMap, HashSet};
 
 /// Two-pass name resolver for type and function declarations
@@ -63,7 +62,10 @@ impl Resolver {
         if !resolver.errors.is_empty() {
             Err(resolver.errors)
         } else {
-            Ok(ResolvedModule { type_env: resolver.type_env, value_env: resolver.value_env })
+            Ok(ResolvedModule {
+                type_env: resolver.type_env,
+                value_env: resolver.value_env,
+            })
         }
     }
 
@@ -266,7 +268,8 @@ impl Resolver {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "type inference for function parameters",
                     span: param.span,
-                    note: "All function parameters must have type annotations in Stage 2".to_string(),
+                    note: "All function parameters must have type annotations in Stage 2"
+                        .to_string(),
                 });
                 return Err(());
             };
@@ -288,7 +291,11 @@ impl Resolver {
         })
     }
 
-    fn resolve_type_with_vars(&mut self, ty: &AstType, type_vars: &[String]) -> Result<MonoType, ()> {
+    fn resolve_type_with_vars(
+        &mut self,
+        ty: &AstType,
+        type_vars: &[String],
+    ) -> Result<MonoType, ()> {
         // If this is a bare name that matches a type variable, return Var(name)
         if let AstType::Named { name, args, .. } = ty {
             if args.is_empty() && type_vars.contains(name) {
@@ -299,16 +306,22 @@ impl Resolver {
         match ty {
             AstType::Named { name, args, span } if !args.is_empty() => {
                 // Try built-in generic types (Array, Dict, etc.) with var-aware arg resolution
-                let resolved_args: Vec<MonoType> = args.iter()
+                let resolved_args: Vec<MonoType> = args
+                    .iter()
                     .map(|a| self.resolve_type_with_vars(a, type_vars))
                     .collect::<Result<_, _>>()?;
                 // Re-use env's logic by building a synthetic type with resolved args
                 // For known built-ins, handle directly
                 match name.as_str() {
-                    "Array" if resolved_args.len() == 1 => Ok(MonoType::Array(Box::new(resolved_args.into_iter().next().unwrap()))),
+                    "Array" if resolved_args.len() == 1 => Ok(MonoType::Array(Box::new(
+                        resolved_args.into_iter().next().unwrap(),
+                    ))),
                     "Dict" if resolved_args.len() == 2 => {
                         let mut it = resolved_args.into_iter();
-                        Ok(MonoType::Dict(Box::new(it.next().unwrap()), Box::new(it.next().unwrap())))
+                        Ok(MonoType::Dict(
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                        ))
                     }
                     "Option" if resolved_args.len() == 1 => Ok(MonoType::Named {
                         type_id: crate::types::ty::OPTION_TYPE_ID,
@@ -326,20 +339,27 @@ impl Resolver {
                         // User-defined generic type: look up TypeId and use pre-resolved args
                         match self.type_env.lookup_type(name) {
                             Some(type_id) => {
-                                let expected_arity = self.type_env.get_def(type_id)
+                                let expected_arity = self
+                                    .type_env
+                                    .get_def(type_id)
                                     .map(|d| d.type_params().len())
                                     .unwrap_or(0);
                                 if resolved_args.len() != expected_arity {
                                     self.errors.push(TypeError::UndefinedType {
                                         name: format!(
                                             "{} (expected {} type arg(s), found {})",
-                                            name, expected_arity, resolved_args.len()
+                                            name,
+                                            expected_arity,
+                                            resolved_args.len()
                                         ),
                                         span: *span,
                                     });
                                     Err(())
                                 } else {
-                                    Ok(MonoType::Named { type_id, args: resolved_args })
+                                    Ok(MonoType::Named {
+                                        type_id,
+                                        args: resolved_args,
+                                    })
                                 }
                             }
                             None => {
@@ -354,11 +374,15 @@ impl Resolver {
                 }
             }
             AstType::Function { params, ret, .. } => {
-                let param_tys: Vec<MonoType> = params.iter()
+                let param_tys: Vec<MonoType> = params
+                    .iter()
                     .map(|p| self.resolve_type_with_vars(p, type_vars))
                     .collect::<Result<_, _>>()?;
                 let ret_ty = self.resolve_type_with_vars(ret, type_vars)?;
-                Ok(MonoType::Function { params: param_tys, ret: Box::new(ret_ty) })
+                Ok(MonoType::Function {
+                    params: param_tys,
+                    ret: Box::new(ret_ty),
+                })
             }
             _ => self.resolve_type(ty),
         }
@@ -411,7 +435,10 @@ impl Resolver {
         match def {
             TypeDef::Alias { target, .. } => {
                 // Check if target refers to a type in the visited set
-                if let MonoType::Named { type_id: target_id, .. } = target {
+                if let MonoType::Named {
+                    type_id: target_id, ..
+                } = target
+                {
                     if let Some(target_def) = self.type_env.get_def(*target_id) {
                         let target_name = target_def.name();
                         if visited.contains(target_name) {

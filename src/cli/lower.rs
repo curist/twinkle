@@ -68,9 +68,16 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
             }
         }
         MakeClosure { func_id, free_vars } => {
-            println!("{}MakeClosure FuncId({}) free_vars={:?}", pad, func_id.0, free_vars);
+            println!(
+                "{}MakeClosure FuncId({}) free_vars={:?}",
+                pad, func_id.0, free_vars
+            );
         }
-        If { cond, then_branch, else_branch } => {
+        If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             println!("{}If : {:?}", pad, expr.ty);
             println!("{}  cond:", pad);
             print_core_expr(cond, indent + 4);
@@ -113,7 +120,11 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
             println!("{}RecordGet .{} : {:?}", pad, field.0, expr.ty);
             print_core_expr(target, indent + 2);
         }
-        Variant { type_id, variant, args } => {
+        Variant {
+            type_id,
+            variant,
+            args,
+        } => {
             println!(
                 "{}Variant(Type#{} .{}) : {:?}",
                 pad, type_id.0, variant.0, expr.ty

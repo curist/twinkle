@@ -3,14 +3,16 @@ use std::collections::HashMap;
 use std::io::{IsTerminal, Read, Write};
 use std::rc::Rc;
 
+use super::value::IteratorState;
+use crate::ir::CoreModule;
 use crate::ir::core::{
     CoreExpr, CoreExprKind, CorePattern, FuncId, FunctionDef, LocalId, MatchArm,
 };
-use crate::ir::CoreModule;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::{OPTION_TYPE_ID, RESULT_TYPE_ID, RANGE_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID};
-use super::value::IteratorState;
+use crate::types::ty::{
+    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+};
 
 use super::value::Value;
 
@@ -37,8 +39,9 @@ pub enum TrapError {
 impl std::fmt::Display for TrapError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TrapError::ArrayIndexOutOfBounds { index, len } =>
-                write!(f, "array index out of bounds: {} >= {}", index, len),
+            TrapError::ArrayIndexOutOfBounds { index, len } => {
+                write!(f, "array index out of bounds: {} >= {}", index, len)
+            }
             TrapError::DivisionByZero => write!(f, "division by zero"),
             TrapError::ModuloByZero => write!(f, "modulo by zero"),
             TrapError::UserError(msg) => write!(f, "{}", msg),
@@ -80,10 +83,20 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
 
 impl<W: Write> Interpreter<W> {
     pub fn new(module: CoreModule, output: W) -> Self {
-        let func_index = module.functions.iter().enumerate()
+        let func_index = module
+            .functions
+            .iter()
+            .enumerate()
             .map(|(i, f)| (f.func_id, i))
             .collect();
-        Self { module, func_index, output, globals: HashMap::new(), in_init_frame: false, defer_stack: Vec::new() }
+        Self {
+            module,
+            func_index,
+            output,
+            globals: HashMap::new(),
+            in_init_frame: false,
+            defer_stack: Vec::new(),
+        }
     }
 
     /// Consume the interpreter and return the underlying output sink.
@@ -99,7 +112,11 @@ impl<W: Write> Interpreter<W> {
             match self.run_init(id) {
                 Ok(_) => {}
                 Err(Signal::Trap(t)) => return Err(anyhow::anyhow!("{}", t)),
-                Err(_) => return Err(anyhow::anyhow!("top-level execution failed with unhandled signal")),
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "top-level execution failed with unhandled signal"
+                    ));
+                }
             }
         }
         Ok(())
@@ -135,12 +152,7 @@ impl<W: Write> Interpreter<W> {
     // Function calls
     // -----------------------------------------------------------------------
 
-    fn call_func(
-        &mut self,
-        func_id: FuncId,
-        args: Vec<Value>,
-        captured: Frame,
-    ) -> EvalResult {
+    fn call_func(&mut self, func_id: FuncId, args: Vec<Value>, captured: Frame) -> EvalResult {
         // Prelude / built-in functions
         if func_id.0 < crate::ir::lower::prelude::USER_FUNC_START {
             return self.call_builtin(func_id, args);
@@ -207,16 +219,12 @@ impl<W: Write> Interpreter<W> {
                 }
             }
 
-            GlobalLocal(id) => {
-                match self.globals.get(id) {
-                    Some(v) => Ok(v.clone()),
-                    None => panic!("interpreter bug: uninitialized module global {:?}", id),
-                }
-            }
+            GlobalLocal(id) => match self.globals.get(id) {
+                Some(v) => Ok(v.clone()),
+                None => panic!("interpreter bug: uninitialized module global {:?}", id),
+            },
 
-            GlobalFunc(func_id) => {
-                Ok(Value::Closure(*func_id, HashMap::new()))
-            }
+            GlobalFunc(func_id) => Ok(Value::Closure(*func_id, HashMap::new())),
 
             MakeClosure { func_id, free_vars } => {
                 let mut captured = HashMap::new();
@@ -246,9 +254,7 @@ impl<W: Write> Interpreter<W> {
                 Ok(Value::Void)
             }
 
-            BinOp { op, left, right } => {
-                self.eval_binop(*op, left, right, frame)
-            }
+            BinOp { op, left, right } => self.eval_binop(*op, left, right, frame),
 
             CoreExprKind::UnOp { op, expr: inner } => {
                 let v = self.eval(inner, frame)?;
@@ -279,7 +285,11 @@ impl<W: Write> Interpreter<W> {
                 }
             }
 
-            If { cond, then_branch, else_branch } => {
+            If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 let cond_val = self.eval(cond, frame)?;
                 match cond_val {
                     Value::Bool(true) => self.eval(then_branch, frame),
@@ -397,7 +407,11 @@ impl<W: Write> Interpreter<W> {
                 }
             }
 
-            Variant { type_id, variant, args } => {
+            Variant {
+                type_id,
+                variant,
+                args,
+            } => {
                 let mut arg_vals = Vec::new();
                 for a in args {
                     arg_vals.push(self.eval(a, frame)?);
@@ -420,7 +434,10 @@ impl<W: Write> Interpreter<W> {
                     (Value::Arr(elems), Value::Int(i)) => {
                         let i = i as usize;
                         if i >= elems.len() {
-                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds { index: i, len: elems.len() }));
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
+                                index: i,
+                                len: elems.len(),
+                            }));
                         }
                         Ok(elems[i].clone())
                     }
@@ -437,7 +454,13 @@ impl<W: Write> Interpreter<W> {
     // Binary operators
     // -----------------------------------------------------------------------
 
-    fn eval_binop(&mut self, op: BinOp, left: &CoreExpr, right: &CoreExpr, frame: &mut Frame) -> EvalResult {
+    fn eval_binop(
+        &mut self,
+        op: BinOp,
+        left: &CoreExpr,
+        right: &CoreExpr,
+        frame: &mut Frame,
+    ) -> EvalResult {
         // Short-circuit logical operators
         if op == BinOp::And {
             let lv = self.eval(left, frame)?;
@@ -464,11 +487,15 @@ impl<W: Write> Interpreter<W> {
             (BinOp::Sub, Value::Int(a), Value::Int(b)) => Value::Int(a - b),
             (BinOp::Mul, Value::Int(a), Value::Int(b)) => Value::Int(a * b),
             (BinOp::Div, Value::Int(a), Value::Int(b)) => {
-                if b == 0 { return Err(Signal::Trap(TrapError::DivisionByZero)); }
+                if b == 0 {
+                    return Err(Signal::Trap(TrapError::DivisionByZero));
+                }
                 Value::Int(a / b)
             }
             (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
-                if b == 0 { return Err(Signal::Trap(TrapError::ModuloByZero)); }
+                if b == 0 {
+                    return Err(Signal::Trap(TrapError::ModuloByZero));
+                }
                 Value::Int(a % b)
             }
 
@@ -583,7 +610,10 @@ impl<W: Write> Interpreter<W> {
                     (Value::Arr(mut elems), Value::Int(i), val) => {
                         let i = *i as usize;
                         if i >= elems.len() {
-                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds { index: i, len: elems.len() }));
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
+                                index: i,
+                                len: elems.len(),
+                            }));
                         }
                         elems[i] = val;
                         Ok(Value::Arr(elems))
@@ -645,7 +675,9 @@ impl<W: Write> Interpreter<W> {
             }
             17 => {
                 // Cell.new(value: T) Cell<T>
-                Ok(Value::Cell(Rc::new(RefCell::new(args.into_iter().next().unwrap_or(Value::Void)))))
+                Ok(Value::Cell(Rc::new(RefCell::new(
+                    args.into_iter().next().unwrap_or(Value::Void),
+                ))))
             }
             18 => {
                 // Cell.get(cell: Cell<T>) T
@@ -805,7 +837,7 @@ impl<W: Write> Interpreter<W> {
                     }
                     // Yield(value, next_seed) (variant 1) → Some(IterItem { value, rest })
                     Value::Variant(tid, 1, payload) if tid == UNFOLD_STEP_TYPE_ID => {
-                        let yielded   = payload[0].clone();
+                        let yielded = payload[0].clone();
                         let next_seed = payload[1].clone();
                         let next_iter = Value::Iterator(Rc::new(IteratorState {
                             seed: Box::new(next_seed),
@@ -859,8 +891,9 @@ impl<W: Write> Interpreter<W> {
                     return Ok(Value::Str(String::new()));
                 }
                 let mut buf = String::new();
-                stdin.read_to_string(&mut buf)
-                    .map_err(|e| Signal::Trap(TrapError::UserError(format!("stdin read failed: {}", e))))?;
+                stdin.read_to_string(&mut buf).map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("stdin read failed: {}", e)))
+                })?;
                 Ok(Value::Str(buf))
             }
             37 => {
@@ -870,8 +903,16 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("__debug_read_file: expected String path"),
                 };
                 match std::fs::read_to_string(&path) {
-                    Ok(contents) => Ok(Value::Variant(RESULT_TYPE_ID, 0, vec![Value::Str(contents)])), // Ok
-                    Err(err) => Ok(Value::Variant(RESULT_TYPE_ID, 1, vec![Value::Str(err.to_string())])), // Err
+                    Ok(contents) => Ok(Value::Variant(
+                        RESULT_TYPE_ID,
+                        0,
+                        vec![Value::Str(contents)],
+                    )), // Ok
+                    Err(err) => Ok(Value::Variant(
+                        RESULT_TYPE_ID,
+                        1,
+                        vec![Value::Str(err.to_string())],
+                    )), // Err
                 }
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
@@ -893,11 +934,21 @@ fn match_pattern(pattern: &CorePattern, value: &Value, frame: &mut Frame) -> boo
         (CorePattern::LitInt(n), Value::Int(m)) => n == m,
         (CorePattern::LitBool(b), Value::Bool(c)) => b == c,
         (CorePattern::LitStr(s), Value::Str(t)) => s == t,
-        (CorePattern::Variant { type_id, variant, fields }, Value::Variant(vt, vi, vargs)) => {
+        (
+            CorePattern::Variant {
+                type_id,
+                variant,
+                fields,
+            },
+            Value::Variant(vt, vi, vargs),
+        ) => {
             type_id == vt
                 && variant.0 == *vi
                 && fields.len() == vargs.len()
-                && fields.iter().zip(vargs).all(|(p, v)| match_pattern(p, v, frame))
+                && fields
+                    .iter()
+                    .zip(vargs)
+                    .all(|(p, v)| match_pattern(p, v, frame))
         }
         _ => false,
     }

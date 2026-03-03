@@ -1,5 +1,5 @@
-use std::fmt;
 use std::collections::HashMap;
+use std::fmt;
 
 // Note on module dependencies:
 // ty.rs defines core types (MonoType, TypeDef, etc.)
@@ -17,12 +17,12 @@ pub struct TypeId(pub u32);
 /// Pre-registered built-in parametric type IDs.
 /// These are the first three TypeDefs added to every fresh TypeEnv, so their
 /// IDs are fixed and may be used as constants throughout the compiler.
-pub const OPTION_TYPE_ID:      TypeId = TypeId(0);
-pub const RESULT_TYPE_ID:      TypeId = TypeId(1);
-pub const CELL_TYPE_ID:        TypeId = TypeId(2);
-pub const RANGE_TYPE_ID:       TypeId = TypeId(3);
-pub const ITERATOR_TYPE_ID:    TypeId = TypeId(4);
-pub const ITER_ITEM_TYPE_ID:   TypeId = TypeId(5);
+pub const OPTION_TYPE_ID: TypeId = TypeId(0);
+pub const RESULT_TYPE_ID: TypeId = TypeId(1);
+pub const CELL_TYPE_ID: TypeId = TypeId(2);
+pub const RANGE_TYPE_ID: TypeId = TypeId(3);
+pub const ITERATOR_TYPE_ID: TypeId = TypeId(4);
+pub const ITER_ITEM_TYPE_ID: TypeId = TypeId(5);
 pub const UNFOLD_STEP_TYPE_ID: TypeId = TypeId(6);
 
 /// Monomorphic type representation
@@ -94,9 +94,7 @@ impl MonoType {
                         crate::types::ty::TypeDef::Record { .. } => false,
                         // Follow aliases to their target recursively
                         // The resolver must ensure no circular aliases exist
-                        crate::types::ty::TypeDef::Alias { target, .. } => {
-                            target.is_sum(type_env)
-                        }
+                        crate::types::ty::TypeDef::Alias { target, .. } => target.is_sum(type_env),
                     }
                 } else {
                     false
@@ -140,7 +138,11 @@ impl MonoType {
                 format!("Array<{}>", elem_ty.format_with_names(type_env))
             }
             MonoType::Dict(k, v) => {
-                format!("Dict<{}, {}>", k.format_with_names(type_env), v.format_with_names(type_env))
+                format!(
+                    "Dict<{}, {}>",
+                    k.format_with_names(type_env),
+                    v.format_with_names(type_env)
+                )
             }
             MonoType::Function { params, ret } => {
                 let params_str = params
@@ -280,7 +282,7 @@ pub fn zonk_ty(ty: &MonoType, meta_subst: &HashMap<u32, MonoType>) -> MonoType {
     match ty {
         MonoType::MetaVar(id) => match meta_subst.get(id) {
             Some(resolved) => zonk_ty(resolved, meta_subst), // follow chains
-            None => ty.clone(),                               // unsolved
+            None => ty.clone(),                              // unsolved
         },
         MonoType::Array(elem) => MonoType::Array(Box::new(zonk_ty(elem, meta_subst))),
         MonoType::Dict(k, v) => MonoType::Dict(

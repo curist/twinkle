@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "twk")]
@@ -73,7 +73,10 @@ fn main() -> Result<()> {
             let path = std::path::Path::new(&file);
             twinkle::cli::lower_anf::cmd_lower_anf(path)?;
         }
-        Commands::Opt { file, show_original } => {
+        Commands::Opt {
+            file,
+            show_original,
+        } => {
             let path = std::path::Path::new(&file);
             twinkle::cli::opt::cmd_opt(path, show_original)?;
         }

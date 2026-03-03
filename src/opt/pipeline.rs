@@ -44,5 +44,8 @@ pub fn optimize_func(mut func: AnfFunctionDef) -> AnfFunctionDef {
 /// Optimize every function in an ANF module.
 pub fn optimize_module(module: AnfModule) -> AnfModule {
     let functions = module.functions.into_iter().map(optimize_func).collect();
-    AnfModule { functions, ..module }
+    AnfModule {
+        functions,
+        ..module
+    }
 }

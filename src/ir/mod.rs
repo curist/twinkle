@@ -8,6 +8,7 @@ pub mod lower;
 pub mod lower_anf;
 
 // Re-export commonly used types
+pub use anf::AnfModule;
 pub use core::{
     CoreExpr, CoreExprKind, CoreModule, CorePattern, FieldId, FuncId, FunctionDef, LocalId,
     MatchArm, VariantId,
@@ -15,4 +16,3 @@ pub use core::{
 pub use error::LowerError;
 pub use local_allocator::LocalAllocator;
 pub use lower::Lowerer;
-pub use anf::AnfModule;

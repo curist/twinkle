@@ -1,11 +1,11 @@
 pub mod cli;
-pub mod syntax;
-pub mod types;
+pub mod codegen;
+pub mod interp;
 pub mod ir;
 pub mod module;
-pub mod interp;
-pub mod codegen;
-pub mod query;
 pub mod opt;
-pub mod wasm;
+pub mod query;
 pub mod runtime;
+pub mod syntax;
+pub mod types;
+pub mod wasm;

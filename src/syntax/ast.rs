@@ -130,28 +130,16 @@ pub enum ExprKind {
     },
 
     /// Unary operation
-    Unary {
-        op: UnOp,
-        expr: Box<Expr>,
-    },
+    Unary { op: UnOp, expr: Box<Expr> },
 
     /// Function call
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
 
     /// Field access: expr.field
-    FieldAccess {
-        base: Box<Expr>,
-        field: String,
-    },
+    FieldAccess { base: Box<Expr>, field: String },
 
     /// Index access: expr[index]
-    Index {
-        base: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { base: Box<Expr>, index: Box<Expr> },
 
     /// If expression
     If {
@@ -170,9 +158,7 @@ pub enum ExprKind {
     Block(Block),
 
     /// Array literal: [1, 2, 3]
-    Array {
-        elements: Vec<Expr>,
-    },
+    Array { elements: Vec<Expr> },
 
     /// Record literal: .{ x: 1, y: 2 } or Point.{ x: 1, y: 2 }
     RecordLit {
@@ -181,10 +167,7 @@ pub enum ExprKind {
     },
 
     /// Variant literal: .Some(42) or .None
-    VariantLit {
-        name: String,
-        fields: Vec<Expr>,
-    },
+    VariantLit { name: String, fields: Vec<Expr> },
 
     /// Function expression: fn(x) { x + 1 }
     Function(FunctionExpr),
@@ -197,14 +180,10 @@ pub enum ExprKind {
     },
 
     /// Try expression: try expr
-    Try {
-        expr: Box<Expr>,
-    },
+    Try { expr: Box<Expr> },
 
     /// String with interpolation
-    StringInterpolation {
-        parts: Vec<StringPart>,
-    },
+    StringInterpolation { parts: Vec<StringPart> },
 }
 
 /// String part (literal or interpolation)
@@ -299,38 +278,23 @@ pub enum Stmt {
     },
 
     /// For loop with condition: for cond { body }
-    ForCond {
-        cond: Expr,
-        body: Block,
-        span: Span,
-    },
+    ForCond { cond: Expr, body: Block, span: Span },
 
     /// Expression statement
     Expr(Expr),
 
     /// Break statement
-    Break {
-        value: Option<Expr>,
-        span: Span,
-    },
+    Break { value: Option<Expr>, span: Span },
 
     /// Continue statement
-    Continue {
-        span: Span,
-    },
+    Continue { span: Span },
 
     /// Return statement
-    Return {
-        value: Option<Expr>,
-        span: Span,
-    },
+    Return { value: Option<Expr>, span: Span },
 
     /// Defer statement: schedules `expr` to run when the enclosing scope exits.
     /// Any expression type is accepted except `Never` (diverging expressions).
-    Defer {
-        expr: Expr,
-        span: Span,
-    },
+    Defer { expr: Expr, span: Span },
 }
 
 /// Block of statements

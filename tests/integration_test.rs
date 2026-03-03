@@ -1,6 +1,6 @@
+use insta::assert_debug_snapshot;
 use std::fs;
 use std::path::PathBuf;
-use insta::assert_debug_snapshot;
 
 #[test]
 fn test_parser_expression_cases() {
@@ -31,8 +31,8 @@ fn test_parser_expression_cases() {
         let file_name = path.file_name().unwrap().to_string_lossy();
         let snapshot_name = format!("expr_{}", file_name.trim_end_matches(".tw"));
 
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Failed to read {:?}", path));
+        let content =
+            fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {:?}", path));
 
         let result = twinkle::syntax::parse_source(&content, file_name.as_ref());
 
@@ -89,8 +89,8 @@ fn test_parser_full_programs() {
             continue;
         }
 
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Failed to read {:?}", path));
+        let content =
+            fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {:?}", path));
 
         let result = twinkle::syntax::parse_source(&content, file_name);
 
@@ -136,8 +136,8 @@ fn test_parser_error_cases() {
         let path = entry.path();
         let file_name = path.file_name().unwrap().to_string_lossy();
 
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Failed to read {:?}", path));
+        let content =
+            fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {:?}", path));
 
         let result = twinkle::syntax::parse_source(&content, file_name.as_ref());
 
@@ -151,7 +151,8 @@ fn test_parser_error_cases() {
         let err = result.unwrap_err();
         let err_msg = err.to_string();
         assert!(
-            err_msg.contains(&file_name.to_string()) && (err_msg.contains(':') || err_msg.contains("line")),
+            err_msg.contains(&file_name.to_string())
+                && (err_msg.contains(':') || err_msg.contains("line")),
             "Error message should contain location info: {}",
             err_msg
         );
@@ -160,7 +161,11 @@ fn test_parser_error_cases() {
         let snapshot_name = format!("error_{}", file_name.trim_end_matches(".tw"));
         assert_debug_snapshot!(snapshot_name, err_msg);
 
-        println!("✓ Correctly rejected: {} - {}", file_name, err_msg.lines().next().unwrap_or(""));
+        println!(
+            "✓ Correctly rejected: {} - {}",
+            file_name,
+            err_msg.lines().next().unwrap_or("")
+        );
     }
 }
 

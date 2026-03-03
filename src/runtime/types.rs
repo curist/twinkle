@@ -19,27 +19,45 @@ pub const F_STR_EQ: &str = "rt_str__eq";
 
 /// Ref-to-Array (non-null)
 pub fn ref_array() -> ValType {
-    ValType::Ref { nullable: false, heap: HeapType::Named(T_ARRAY.into()) }
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_ARRAY.into()),
+    }
 }
 /// Ref-to-Array (nullable)
 pub fn ref_array_null() -> ValType {
-    ValType::Ref { nullable: true, heap: HeapType::Named(T_ARRAY.into()) }
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.into()),
+    }
 }
 /// Ref-to-String (non-null)
 pub fn ref_string() -> ValType {
-    ValType::Ref { nullable: false, heap: HeapType::Named(T_STRING.into()) }
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_STRING.into()),
+    }
 }
 /// Ref-to-String (nullable)
 pub fn ref_string_null() -> ValType {
-    ValType::Ref { nullable: true, heap: HeapType::Named(T_STRING.into()) }
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_STRING.into()),
+    }
 }
 /// Ref-to-Dict (non-null)
 pub fn ref_dict() -> ValType {
-    ValType::Ref { nullable: false, heap: HeapType::Named(T_DICT.into()) }
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_DICT.into()),
+    }
 }
 /// Ref-to-Dict (nullable)
 pub fn ref_dict_null() -> ValType {
-    ValType::Ref { nullable: true, heap: HeapType::Named(T_DICT.into()) }
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_DICT.into()),
+    }
 }
 
 /// Build the `rt.types` module: all shared Wasm GC type definitions.
@@ -49,14 +67,22 @@ pub fn make() -> ModuleIR {
     // (type $Array (array (mut anyref)))
     m.types.push(TypeDef::Array {
         name: "Array".into(),
-        elem: FieldDef { name: None, mutable: true, ty: ValType::Anyref },
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::Anyref,
+        },
     });
 
     // (type $String (array (mut i8)))
     // Mutable so we can write during construction; "immutable by convention" at the API level.
     m.types.push(TypeDef::Array {
         name: "String".into(),
-        elem: FieldDef { name: None, mutable: true, ty: ValType::I8 },
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::I8,
+        },
     });
 
     // (type $DictEntry (struct (field $key anyref) (field $val anyref)))
@@ -84,7 +110,11 @@ pub fn make() -> ModuleIR {
     // (type $ClosureEnv (array anyref))
     m.types.push(TypeDef::Array {
         name: "ClosureEnv".into(),
-        elem: FieldDef { name: None, mutable: false, ty: ValType::Anyref },
+        elem: FieldDef {
+            name: None,
+            mutable: false,
+            ty: ValType::Anyref,
+        },
     });
 
     // (type $ClosureFunc (func (param anyref anyref) (result anyref)))

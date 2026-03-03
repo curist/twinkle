@@ -46,17 +46,41 @@ fn test_runtime_exports() {
     let modules = runtime::all_modules();
     let linked = link(modules, None).expect("link failed");
 
-    let exports: Vec<&str> = linked.exports.iter().map(|e| e.wasm_name.as_str()).collect();
+    let exports: Vec<&str> = linked
+        .exports
+        .iter()
+        .map(|e| e.wasm_name.as_str())
+        .collect();
 
     let expected = [
         // rt.arr
-        "make", "get", "set", "len", "concat", "slice",
+        "make",
+        "get",
+        "set",
+        "len",
+        "concat",
+        "slice",
         // rt.str
-        "len", "concat", "substring", "eq", "from_i64", "from_f64", "from_bool",
+        "len",
+        "concat",
+        "substring",
+        "eq",
+        "from_i64",
+        "from_f64",
+        "from_bool",
         // rt.dict
-        "make", "len", "keys", "has", "get", "set", "remove",
+        "make",
+        "len",
+        "keys",
+        "has",
+        "get",
+        "set",
+        "remove",
         // rt.core
-        "print", "println", "trap", "eq",
+        "print",
+        "println",
+        "trap",
+        "eq",
     ];
 
     for name in &expected {

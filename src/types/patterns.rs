@@ -1,9 +1,9 @@
-use crate::syntax::ast::{CaseArm, Literal, Pattern};
-use crate::syntax::span::Span;
+use super::check::{apply_subst, build_type_subst};
 use super::env::{LocalEnv, TypeEnv};
 use super::error::TypeError;
 use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID};
-use super::check::{apply_subst, build_type_subst};
+use crate::syntax::ast::{CaseArm, Literal, Pattern};
+use crate::syntax::span::Span;
 use std::collections::HashSet;
 
 /// Pattern checking utilities for case expressions
@@ -56,7 +56,7 @@ impl<'a> PatternChecker<'a> {
                         expected: expected.clone(),
                         actual: lit_ty,
                         span: *span,
-                    note: None,
+                        note: None,
                     });
                     Err(())
                 }
@@ -80,7 +80,7 @@ impl<'a> PatternChecker<'a> {
                                     expected: expected.clone(),
                                     actual: MonoType::Void, // Dummy
                                     span: *span,
-                    note: None,
+                                    note: None,
                                 });
                                 return Err(());
                             }
@@ -93,27 +93,35 @@ impl<'a> PatternChecker<'a> {
                             Some(v) => {
                                 // For Option<T> and Result<T,E>, the TypeDef holds placeholder
                                 // Void fields. Use the actual type args from the MonoType.
-                                let actual_field_tys: Vec<MonoType> =
-                                    if *type_id == OPTION_TYPE_ID {
-                                        match name.as_str() {
-                                            "None" => vec![],
-                                            "Some" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
-                                            _ => v.fields.clone(),
+                                let actual_field_tys: Vec<MonoType> = if *type_id == OPTION_TYPE_ID
+                                {
+                                    match name.as_str() {
+                                        "None" => vec![],
+                                        "Some" => {
+                                            vec![args.first().cloned().unwrap_or(MonoType::Void)]
                                         }
-                                    } else if *type_id == RESULT_TYPE_ID {
-                                        match name.as_str() {
-                                            "Ok"  => vec![args.first().cloned().unwrap_or(MonoType::Void)],
-                                            "Err" => vec![args.get(1).cloned().unwrap_or(MonoType::Void)],
-                                            _ => v.fields.clone(),
+                                        _ => v.fields.clone(),
+                                    }
+                                } else if *type_id == RESULT_TYPE_ID {
+                                    match name.as_str() {
+                                        "Ok" => {
+                                            vec![args.first().cloned().unwrap_or(MonoType::Void)]
                                         }
-                                    } else {
-                                        // User-defined generic sum type: apply type-arg substitution
-                                        let type_params = self.type_env.get_def(*type_id)
-                                            .map(|d| d.type_params().to_vec())
-                                            .unwrap_or_default();
-                                        let subst = build_type_subst(&type_params, args);
-                                        v.fields.iter().map(|f| apply_subst(f, &subst)).collect()
-                                    };
+                                        "Err" => {
+                                            vec![args.get(1).cloned().unwrap_or(MonoType::Void)]
+                                        }
+                                        _ => v.fields.clone(),
+                                    }
+                                } else {
+                                    // User-defined generic sum type: apply type-arg substitution
+                                    let type_params = self
+                                        .type_env
+                                        .get_def(*type_id)
+                                        .map(|d| d.type_params().to_vec())
+                                        .unwrap_or_default();
+                                    let subst = build_type_subst(&type_params, args);
+                                    v.fields.iter().map(|f| apply_subst(f, &subst)).collect()
+                                };
 
                                 // Check arity
                                 if actual_field_tys.len() != fields.len() {
@@ -126,7 +134,8 @@ impl<'a> PatternChecker<'a> {
                                 }
 
                                 // Check each field pattern
-                                for (field_pattern, field_ty) in fields.iter().zip(actual_field_tys.iter())
+                                for (field_pattern, field_ty) in
+                                    fields.iter().zip(actual_field_tys.iter())
                                 {
                                     self.check_pattern(field_pattern, field_ty)?;
                                 }
@@ -174,9 +183,9 @@ impl<'a> PatternChecker<'a> {
     ) -> Result<(), ()> {
         // For primitive types (Int, Bool, String), only a wildcard/identifier arm is exhaustive
         if matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String) {
-            let has_wildcard = arms.iter().any(|arm| {
-                matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _))
-            });
+            let has_wildcard = arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _)));
             if !has_wildcard {
                 errors.push(TypeError::NonExhaustiveMatch {
                     missing: vec!["_ (wildcard required for primitive match)".to_string()],

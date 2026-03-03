@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ir::anf::{Atom, AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp};
+use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::LocalId;
 
 /// Compute the set of locals that are *live* (may be read) at the entry of
@@ -54,7 +54,11 @@ fn live_in_op(op: &AnfOp, live: &mut HashSet<LocalId>) {
                 add_atom(a, live);
             }
         }
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             add_atom(cond, live);
             // Both branches may execute; union their live sets conservatively.
             let mut then_live = HashSet::new();
@@ -150,7 +154,12 @@ fn annotate_expr(expr: &mut AnfExpr) {
     match expr {
         AnfExpr::Let { local: _, op, body } => {
             // Check if op is ARecordUpdate with an ALocal base.
-            if let AnfOp::ARecordUpdate { base: Atom::ALocal(r), can_reuse_in_place, .. } = op.as_mut() {
+            if let AnfOp::ARecordUpdate {
+                base: Atom::ALocal(r),
+                can_reuse_in_place,
+                ..
+            } = op.as_mut()
+            {
                 let live = live_after(body);
                 if !live.contains(r) {
                     *can_reuse_in_place = true;
@@ -166,7 +175,11 @@ fn annotate_expr(expr: &mut AnfExpr) {
 
 fn annotate_op(op: &mut AnfOp) {
     match op {
-        AnfOp::AIf { then_branch, else_branch, .. } => {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             annotate_expr(then_branch);
             annotate_expr(else_branch);
         }

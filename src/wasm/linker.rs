@@ -16,10 +16,22 @@ pub struct LinkedModuleIR {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LinkError {
-    MissingExport { module: String, name: String },
-    AmbiguousExport { name: String, found_in: Vec<String> },
-    TypeMismatch { sym: FuncSym, expected: FuncSig, got: FuncSig },
-    NamespaceCollision { sym: String },
+    MissingExport {
+        module: String,
+        name: String,
+    },
+    AmbiguousExport {
+        name: String,
+        found_in: Vec<String>,
+    },
+    TypeMismatch {
+        sym: FuncSym,
+        expected: FuncSig,
+        got: FuncSig,
+    },
+    NamespaceCollision {
+        sym: String,
+    },
 }
 
 impl std::fmt::Display for LinkError {
@@ -29,7 +41,11 @@ impl std::fmt::Display for LinkError {
                 write!(f, "missing export: {module}.{name}")
             }
             LinkError::AmbiguousExport { name, found_in } => {
-                write!(f, "ambiguous export {name:?} found in: {}", found_in.join(", "))
+                write!(
+                    f,
+                    "ambiguous export {name:?} found in: {}",
+                    found_in.join(", ")
+                )
             }
             LinkError::TypeMismatch { sym, .. } => {
                 write!(f, "type mismatch for {sym}")
@@ -61,7 +77,11 @@ fn rewrite_calls(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
                     *sym = renamed.clone();
                 }
             }
-            Instr::If { then_body, else_body, .. } => {
+            Instr::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 rewrite_calls(then_body, renames);
                 rewrite_calls(else_body, renames);
             }
@@ -110,7 +130,11 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
                     }
                 }
             }
-            Instr::If { then_body, else_body, .. } => {
+            Instr::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 rewrite_type_refs(then_body, renames);
                 rewrite_type_refs(else_body, renames);
             }
@@ -123,7 +147,11 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
 }
 
 fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {
-    if let ValType::Ref { heap: HeapType::Named(ty), .. } = vt {
+    if let ValType::Ref {
+        heap: HeapType::Named(ty),
+        ..
+    } = vt
+    {
         if let Some(renamed) = renames.get(ty.as_str()) {
             *ty = renamed.clone();
         }
@@ -258,7 +286,11 @@ pub fn link(
                         elem,
                     }
                 }
-                TypeDef::FuncType { name, mut params, mut results } => {
+                TypeDef::FuncType {
+                    name,
+                    mut params,
+                    mut results,
+                } => {
                     for p in &mut params {
                         rewrite_val_type(p, type_renames);
                     }
@@ -379,10 +411,7 @@ pub fn link(
 
     // Synthesize __linked_init if there are start functions or an entry point
     let final_start = if !start_funcs.is_empty() || entry.is_some() {
-        let mut init_body: Vec<Instr> = start_funcs
-            .into_iter()
-            .map(|s| Instr::Call(s))
-            .collect();
+        let mut init_body: Vec<Instr> = start_funcs.into_iter().map(|s| Instr::Call(s)).collect();
         if let Some(entry_sym) = entry {
             init_body.push(Instr::Call(entry_sym));
         }

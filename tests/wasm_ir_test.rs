@@ -1,6 +1,6 @@
 use twinkle::wasm::emit::emit_wat;
 use twinkle::wasm::ir::*;
-use twinkle::wasm::linker::{link, LinkError, LinkedModuleIR};
+use twinkle::wasm::linker::{LinkError, LinkedModuleIR, link};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -65,10 +65,7 @@ fn test_emit_import_call() {
         params: vec![ValType::I64],
         results: vec![],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0),
-            Instr::Call("host_println".into()),
-        ],
+        body: vec![Instr::LocalGet(0), Instr::Call("host_println".into())],
     });
 
     let linked = link_one(m);
@@ -87,11 +84,7 @@ fn test_link_two_modules() {
         params: vec![ValType::I64, ValType::I64],
         results: vec![ValType::I64],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0),
-            Instr::LocalGet(1),
-            Instr::I64Add,
-        ],
+        body: vec![Instr::LocalGet(0), Instr::LocalGet(1), Instr::I64Add],
     });
     mod_a.exports.push(ExportDef {
         wasm_name: "add".into(),

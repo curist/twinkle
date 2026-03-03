@@ -14,13 +14,25 @@ pub enum LowerError {
     RecordNeedsTypeContext { span: Span },
 
     /// Unknown variant name for a sum type
-    UnknownVariant { name: String, type_name: String, span: Span },
+    UnknownVariant {
+        name: String,
+        type_name: String,
+        span: Span,
+    },
 
     /// Unknown field name for a record type
-    UnknownField { field: String, type_name: String, span: Span },
+    UnknownField {
+        field: String,
+        type_name: String,
+        span: Span,
+    },
 
     /// Pattern type mismatch
-    PatternMismatch { expected: String, found: String, span: Span },
+    PatternMismatch {
+        expected: String,
+        found: String,
+        span: Span,
+    },
 
     /// Result type not found (required for try desugaring)
     MissingResultType { span: Span },
@@ -33,30 +45,24 @@ impl LowerError {
     /// Format error message with file context
     pub fn format(&self, registry: &FileRegistry) -> String {
         match self {
-            LowerError::UnsupportedFeature { feature, span } => {
-                self.format_error(
-                    registry,
-                    *span,
-                    &format!("Unsupported feature: {}", feature),
-                    None,
-                )
-            }
-            LowerError::VariantNeedsTypeContext { span } => {
-                self.format_error(
-                    registry,
-                    *span,
-                    "Variant literal requires type context",
-                    Some("Annotate the binding or use qualified name"),
-                )
-            }
-            LowerError::RecordNeedsTypeContext { span } => {
-                self.format_error(
-                    registry,
-                    *span,
-                    "Record literal requires type context",
-                    Some("Annotate the binding or use qualified name"),
-                )
-            }
+            LowerError::UnsupportedFeature { feature, span } => self.format_error(
+                registry,
+                *span,
+                &format!("Unsupported feature: {}", feature),
+                None,
+            ),
+            LowerError::VariantNeedsTypeContext { span } => self.format_error(
+                registry,
+                *span,
+                "Variant literal requires type context",
+                Some("Annotate the binding or use qualified name"),
+            ),
+            LowerError::RecordNeedsTypeContext { span } => self.format_error(
+                registry,
+                *span,
+                "Record literal requires type context",
+                Some("Annotate the binding or use qualified name"),
+            ),
             LowerError::UnknownVariant {
                 name,
                 type_name,
@@ -157,14 +163,24 @@ impl fmt::Display for LowerError {
             LowerError::RecordNeedsTypeContext { .. } => {
                 write!(f, "Record literal requires type context")
             }
-            LowerError::UnknownVariant { name, type_name, .. } => {
+            LowerError::UnknownVariant {
+                name, type_name, ..
+            } => {
                 write!(f, "Unknown variant '{}' for type '{}'", name, type_name)
             }
-            LowerError::UnknownField { field, type_name, .. } => {
+            LowerError::UnknownField {
+                field, type_name, ..
+            } => {
                 write!(f, "Unknown field '{}' for type '{}'", field, type_name)
             }
-            LowerError::PatternMismatch { expected, found, .. } => {
-                write!(f, "Pattern type mismatch: expected {}, found {}", expected, found)
+            LowerError::PatternMismatch {
+                expected, found, ..
+            } => {
+                write!(
+                    f,
+                    "Pattern type mismatch: expected {}, found {}",
+                    expected, found
+                )
             }
             LowerError::MissingResultType { .. } => {
                 write!(f, "'try' expression requires 'Result' type to be defined")

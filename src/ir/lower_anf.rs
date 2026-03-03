@@ -11,7 +11,9 @@
 ///   - `build_lets(accum, tail_expr)` converts the accumulator into nested AnfExpr::Let.
 ///
 /// This avoids the nested-closure borrow problem completely and is equivalent to CPS.
-use crate::ir::anf::{Atom, AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, OpKind, IndexKind};
+use crate::ir::anf::{
+    AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, IndexKind, OpKind,
+};
 use crate::ir::core::{
     CoreExpr, CoreExprKind, CoreModule, CorePattern, FunctionDef, LocalId, MatchArm,
 };
@@ -24,7 +26,10 @@ fn op_kind_from(ty: &MonoType) -> OpKind {
         MonoType::Float => OpKind::Float,
         MonoType::Bool => OpKind::Bool,
         MonoType::String => OpKind::String,
-        other => panic!("op_kind_from: expected Int/Float/Bool/String, got {:?}", other),
+        other => panic!(
+            "op_kind_from: expected Int/Float/Bool/String, got {:?}",
+            other
+        ),
     }
 }
 
@@ -91,11 +96,14 @@ fn fresh(next_temp: &mut u32) -> LocalId {
 
 /// Wrap accumulated let-bindings around a tail expression, outermost first.
 fn build_lets(accum: LetAccum, tail: AnfExpr) -> AnfExpr {
-    accum.into_iter().rev().fold(tail, |body, (local, op)| AnfExpr::Let {
-        local,
-        op: Box::new(op),
-        body: Box::new(body),
-    })
+    accum
+        .into_iter()
+        .rev()
+        .fold(tail, |body, (local, op)| AnfExpr::Let {
+            local,
+            op: Box::new(op),
+            body: Box::new(body),
+        })
 }
 
 /// Lower a `CoreExpr` to a full `AnfExpr`.
@@ -134,7 +142,10 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::AMakeClosure { func_id: *func_id, free_vars: free_vars.clone() },
+                AnfOp::AMakeClosure {
+                    func_id: *func_id,
+                    free_vars: free_vars.clone(),
+                },
             ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
@@ -144,7 +155,15 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let left_atom = atomize(left, next_temp, accum);
             let right_atom = atomize(right, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ABinOp { op: *op, left: left_atom, right: right_atom, operand_ty }));
+            accum.push((
+                tmp,
+                AnfOp::ABinOp {
+                    op: *op,
+                    left: left_atom,
+                    right: right_atom,
+                    operand_ty,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -152,7 +171,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let operand_ty = op_kind_from(&inner.ty);
             let inner_atom = atomize(inner, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AUnOp { op: *op, expr: inner_atom, operand_ty }));
+            accum.push((
+                tmp,
+                AnfOp::AUnOp {
+                    op: *op,
+                    expr: inner_atom,
+                    operand_ty,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -160,7 +186,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let callee_atom = atomize(callee, next_temp, accum);
             let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ACall { callee: callee_atom, args: arg_atoms }));
+            accum.push((
+                tmp,
+                AnfOp::ACall {
+                    callee: callee_atom,
+                    args: arg_atoms,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -171,7 +203,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                 .map(|(fid, e)| (*fid, atomize(e, next_temp, accum)))
                 .collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ARecord { type_id, fields: anf_fields }));
+            accum.push((
+                tmp,
+                AnfOp::ARecord {
+                    type_id,
+                    fields: anf_fields,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -179,7 +217,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let tid = type_id_from(&target.ty);
             let target_atom = atomize(target, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ARecordGet { target: target_atom, field: *field, type_id: tid }));
+            accum.push((
+                tmp,
+                AnfOp::ARecordGet {
+                    target: target_atom,
+                    field: *field,
+                    type_id: tid,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -190,22 +235,42 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom, can_reuse_in_place: false, type_id: tid },
+                AnfOp::ARecordUpdate {
+                    base: base_atom,
+                    field: *field,
+                    value: value_atom,
+                    can_reuse_in_place: false,
+                    type_id: tid,
+                },
             ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
-        CoreExprKind::Variant { type_id, variant, args } => {
+        CoreExprKind::Variant {
+            type_id,
+            variant,
+            args,
+        } => {
             let type_id = *type_id;
             let variant = *variant;
             let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AVariant { type_id, variant, args: arg_atoms }));
+            accum.push((
+                tmp,
+                AnfOp::AVariant {
+                    type_id,
+                    variant,
+                    args: arg_atoms,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::ArrayLit { elements } => {
-            let atoms: Vec<Atom> = elements.iter().map(|e| atomize(e, next_temp, accum)).collect();
+            let atoms: Vec<Atom> = elements
+                .iter()
+                .map(|e| atomize(e, next_temp, accum))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::AArrayLit(atoms)));
             AnfExpr::Atom(Atom::ALocal(tmp))
@@ -216,7 +281,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let base_atom = atomize(base, next_temp, accum);
             let index_atom = atomize(index, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AIndex { base: base_atom, index: index_atom, base_ty: bty }));
+            accum.push((
+                tmp,
+                AnfOp::AIndex {
+                    base: base_atom,
+                    index: index_atom,
+                    base_ty: bty,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -232,13 +304,23 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
         CoreExprKind::Assign { local, value } => {
             let val_atom = atomize(value, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AAssign { local: *local, value: val_atom }));
+            accum.push((
+                tmp,
+                AnfOp::AAssign {
+                    local: *local,
+                    value: val_atom,
+                },
+            ));
             AnfExpr::Atom(Atom::ALitVoid)
         }
 
         // ── Let: introduce a new binding for orig_local, then lower body ────────
         // Uses AInit (not AAssign) — this is a fresh local introduction, not mutation.
-        CoreExprKind::Let { local: orig_local, value, body } => {
+        CoreExprKind::Let {
+            local: orig_local,
+            value,
+            body,
+        } => {
             let orig_local = *orig_local;
             // Lower value: collect its ops into accum, get the result atom/expr.
             let value_result = lower_expr(value, next_temp, accum);
@@ -258,7 +340,11 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
         }
 
         // ── If: atomize cond, lower branches independently ────────────────────
-        CoreExprKind::If { cond, then_branch, else_branch } => {
+        CoreExprKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let cond_atom = atomize(cond, next_temp, accum);
             let then_anf = lower_expr_top(then_branch, next_temp);
             let else_anf = lower_expr_top(else_branch, next_temp);
@@ -285,7 +371,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                 })
                 .collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AMatch { scrutinee: scrut_atom, arms: anf_arms }));
+            accum.push((
+                tmp,
+                AnfOp::AMatch {
+                    scrutinee: scrut_atom,
+                    arms: anf_arms,
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -293,7 +385,12 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
         CoreExprKind::Loop { body } => {
             let body_anf = lower_expr_top(body, next_temp);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ALoop { body: Box::new(body_anf) }));
+            accum.push((
+                tmp,
+                AnfOp::ALoop {
+                    body: Box::new(body_anf),
+                },
+            ));
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -369,7 +466,10 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::AMakeClosure { func_id: *func_id, free_vars: free_vars.clone() },
+                AnfOp::AMakeClosure {
+                    func_id: *func_id,
+                    free_vars: free_vars.clone(),
+                },
             ));
             Atom::ALocal(tmp)
         }
@@ -378,21 +478,42 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             let left_atom = atomize(left, next_temp, accum);
             let right_atom = atomize(right, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ABinOp { op: *op, left: left_atom, right: right_atom, operand_ty }));
+            accum.push((
+                tmp,
+                AnfOp::ABinOp {
+                    op: *op,
+                    left: left_atom,
+                    right: right_atom,
+                    operand_ty,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::UnOp { op, expr: inner } => {
             let operand_ty = op_kind_from(&inner.ty);
             let inner_atom = atomize(inner, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AUnOp { op: *op, expr: inner_atom, operand_ty }));
+            accum.push((
+                tmp,
+                AnfOp::AUnOp {
+                    op: *op,
+                    expr: inner_atom,
+                    operand_ty,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::Call { callee, args } => {
             let callee_atom = atomize(callee, next_temp, accum);
             let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ACall { callee: callee_atom, args: arg_atoms }));
+            accum.push((
+                tmp,
+                AnfOp::ACall {
+                    callee: callee_atom,
+                    args: arg_atoms,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::Record { type_id, fields } => {
@@ -402,14 +523,27 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                 .map(|(fid, e)| (*fid, atomize(e, next_temp, accum)))
                 .collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ARecord { type_id, fields: anf_fields }));
+            accum.push((
+                tmp,
+                AnfOp::ARecord {
+                    type_id,
+                    fields: anf_fields,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::RecordGet { target, field } => {
             let tid = type_id_from(&target.ty);
             let target_atom = atomize(target, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::ARecordGet { target: target_atom, field: *field, type_id: tid }));
+            accum.push((
+                tmp,
+                AnfOp::ARecordGet {
+                    target: target_atom,
+                    field: *field,
+                    type_id: tid,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::RecordUpdate { base, field, value } => {
@@ -419,20 +553,40 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
-                AnfOp::ARecordUpdate { base: base_atom, field: *field, value: value_atom, can_reuse_in_place: false, type_id: tid },
+                AnfOp::ARecordUpdate {
+                    base: base_atom,
+                    field: *field,
+                    value: value_atom,
+                    can_reuse_in_place: false,
+                    type_id: tid,
+                },
             ));
             Atom::ALocal(tmp)
         }
-        CoreExprKind::Variant { type_id, variant, args } => {
+        CoreExprKind::Variant {
+            type_id,
+            variant,
+            args,
+        } => {
             let type_id = *type_id;
             let variant = *variant;
             let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AVariant { type_id, variant, args: arg_atoms }));
+            accum.push((
+                tmp,
+                AnfOp::AVariant {
+                    type_id,
+                    variant,
+                    args: arg_atoms,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::ArrayLit { elements } => {
-            let atoms: Vec<Atom> = elements.iter().map(|e| atomize(e, next_temp, accum)).collect();
+            let atoms: Vec<Atom> = elements
+                .iter()
+                .map(|e| atomize(e, next_temp, accum))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::AArrayLit(atoms)));
             Atom::ALocal(tmp)
@@ -442,13 +596,26 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             let base_atom = atomize(base, next_temp, accum);
             let index_atom = atomize(index, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AIndex { base: base_atom, index: index_atom, base_ty: bty }));
+            accum.push((
+                tmp,
+                AnfOp::AIndex {
+                    base: base_atom,
+                    index: index_atom,
+                    base_ty: bty,
+                },
+            ));
             Atom::ALocal(tmp)
         }
         CoreExprKind::Assign { local, value } => {
             let val_atom = atomize(value, next_temp, accum);
             let tmp = fresh(next_temp);
-            accum.push((tmp, AnfOp::AAssign { local: *local, value: val_atom }));
+            accum.push((
+                tmp,
+                AnfOp::AAssign {
+                    local: *local,
+                    value: val_atom,
+                },
+            ));
             Atom::ALitVoid
         }
         CoreExprKind::Defer(inner) => {
@@ -558,7 +725,11 @@ fn max_local_id_in_expr(expr: &CoreExpr, max: &mut u32) {
                 max_local_id_in_expr(arg, max);
             }
         }
-        CoreExprKind::If { cond, then_branch, else_branch } => {
+        CoreExprKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             max_local_id_in_expr(cond, max);
             max_local_id_in_expr(then_branch, max);
             max_local_id_in_expr(else_branch, max);

@@ -1,24 +1,24 @@
 use std::path::Path;
 
+use twinkle::ir::lower::prelude;
 use twinkle::query::api::{
-    default_query_context, lower_stage, parse_file, preassign_module_function_ids, resolve_stage,
-    resolve_stage_with_diagnostics, symbols_stage, typecheck_stage,
-    typecheck_stage_with_diagnostics, QuerySymbolKind,
+    QuerySymbolKind, default_query_context, lower_stage, parse_file, preassign_module_function_ids,
+    resolve_stage, resolve_stage_with_diagnostics, symbols_stage, typecheck_stage,
+    typecheck_stage_with_diagnostics,
 };
 use twinkle::types::env::{TypeEnv, ValueEnv};
-use twinkle::ir::lower::prelude;
 
 #[test]
 fn query_stages_can_typecheck_without_compile_context() {
-    let parsed = parse_file(Path::new("tests/run/mutual_recursion.tw"))
-        .expect("parse should succeed");
+    let parsed =
+        parse_file(Path::new("tests/run/mutual_recursion.tw")).expect("parse should succeed");
 
     let resolved = resolve_stage(&parsed.ast, TypeEnv::new(), ValueEnv::new())
         .expect("resolve should succeed");
 
     let module_aliases = default_query_context().module_aliases;
-    let typed = typecheck_stage(&parsed.ast, resolved, module_aliases)
-        .expect("typecheck should succeed");
+    let typed =
+        typecheck_stage(&parsed.ast, resolved, module_aliases).expect("typecheck should succeed");
 
     assert!(typed.value_env.get_function("is_even").is_some());
     assert!(typed.value_env.get_function("is_odd").is_some());
@@ -26,8 +26,8 @@ fn query_stages_can_typecheck_without_compile_context() {
 
 #[test]
 fn query_lower_stage_handles_function_preassignment() {
-    let parsed = parse_file(Path::new("tests/run/mutual_recursion.tw"))
-        .expect("parse should succeed");
+    let parsed =
+        parse_file(Path::new("tests/run/mutual_recursion.tw")).expect("parse should succeed");
 
     let resolved = resolve_stage(&parsed.ast, TypeEnv::new(), ValueEnv::new())
         .expect("resolve should succeed");
@@ -48,8 +48,8 @@ fn query_lower_stage_handles_function_preassignment() {
 
 #[test]
 fn preassign_module_function_ids_is_idempotent() {
-    let parsed = parse_file(Path::new("tests/run/mutual_recursion.tw"))
-        .expect("parse should succeed");
+    let parsed =
+        parse_file(Path::new("tests/run/mutual_recursion.tw")).expect("parse should succeed");
 
     let mut func_table = default_query_context().func_table;
     let start_next = prelude::USER_FUNC_START;
@@ -122,25 +122,23 @@ fn query_typecheck_diagnostics_are_structured() {
 
 #[test]
 fn query_symbols_stage_returns_types_functions_and_values() {
-    let parsed = parse_file(Path::new("tests/run/module_globals.tw"))
-        .expect("parse should succeed");
+    let parsed =
+        parse_file(Path::new("tests/run/module_globals.tw")).expect("parse should succeed");
     let resolved = resolve_stage(&parsed.ast, TypeEnv::new(), ValueEnv::new())
         .expect("resolve should succeed");
     let module_aliases = default_query_context().module_aliases;
-    let typed = typecheck_stage(&parsed.ast, resolved, module_aliases)
-        .expect("typecheck should succeed");
+    let typed =
+        typecheck_stage(&parsed.ast, resolved, module_aliases).expect("typecheck should succeed");
 
     let symbols = symbols_stage(&parsed.ast, &typed, &parsed.file_registry);
     assert!(!symbols.is_empty());
 
     let has_double_pi = symbols.iter().any(|s| {
-        s.name == "double_pi"
-            && s.kind == QuerySymbolKind::Function
-            && s.detail.starts_with("fn(")
+        s.name == "double_pi" && s.kind == QuerySymbolKind::Function && s.detail.starts_with("fn(")
     });
-    let has_pi_value = symbols.iter().any(|s| {
-        s.name == "PI" && s.kind == QuerySymbolKind::Value && s.detail.contains("Int")
-    });
+    let has_pi_value = symbols
+        .iter()
+        .any(|s| s.name == "PI" && s.kind == QuerySymbolKind::Value && s.detail.contains("Int"));
 
     assert!(has_double_pi);
     assert!(has_pi_value);

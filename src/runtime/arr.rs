@@ -1,5 +1,5 @@
-use crate::wasm::ir::*;
 use crate::runtime::types::*;
+use crate::wasm::ir::*;
 
 /// Build the `rt.arr` module: persistent (COW) array operations.
 pub fn make() -> ModuleIR {
@@ -103,11 +103,7 @@ fn len_fn() -> FuncDef {
         params: vec![ref_array_null()],
         results: vec![ValType::I32],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0),
-            Instr::RefAsNonNull,
-            Instr::ArrayLen,
-        ],
+        body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen],
     }
 }
 

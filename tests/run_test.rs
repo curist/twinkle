@@ -3,17 +3,20 @@ use std::fs;
 /// Parse the `// Expected trap: <message>` line from a `.tw` file.
 fn parse_expected_trap(source: &str) -> Option<String> {
     source.lines().find_map(|l| {
-        l.trim().strip_prefix("// Expected trap: ").map(|s| s.to_string())
+        l.trim()
+            .strip_prefix("// Expected trap: ")
+            .map(|s| s.to_string())
     })
 }
 
 /// Run a `.tw` file that is expected to trap and assert the trap message.
 fn check_trap(path: &str) {
     let source = fs::read_to_string(path).expect("test file exists");
-    let expected_msg = parse_expected_trap(&source)
-        .unwrap_or_else(|| panic!("No '// Expected trap:' in {path}"));
-    let err = run_and_capture(path)
-        .expect_err(&format!("expected a trap in {path} but interpreter succeeded"));
+    let expected_msg =
+        parse_expected_trap(&source).unwrap_or_else(|| panic!("No '// Expected trap:' in {path}"));
+    let err = run_and_capture(path).expect_err(&format!(
+        "expected a trap in {path} but interpreter succeeded"
+    ));
     let actual = err.to_string();
     assert!(
         actual.contains(&expected_msg),
@@ -46,8 +49,8 @@ fn parse_expected(source: &str) -> Vec<String> {
 
 /// Run a `.tw` file through the interpreter and return captured stdout.
 fn run_and_capture(path: &str) -> anyhow::Result<String> {
-    let (core_module, _registry) = twinkle::module::compile_entry(path)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (core_module, _registry) =
+        twinkle::module::compile_entry(path).map_err(|e| anyhow::anyhow!("{}", e))?;
     let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
     interp.run()?;
     let bytes = interp.into_output();
@@ -64,9 +67,11 @@ fn check(path: &str) {
     let actual_raw = run_and_capture(path).expect("interpreter should not error");
     let actual: Vec<&str> = actual_raw.lines().collect();
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "Output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
-        expected.join("\n"), actual_raw
+        expected.join("\n"),
+        actual_raw
     );
 }
 

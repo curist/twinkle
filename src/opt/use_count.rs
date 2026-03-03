@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::anf::{Atom, AnfExpr, AnfMatchArm, AnfOp};
+use crate::ir::anf::{AnfExpr, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::LocalId;
 
 /// Count how many times each `LocalId` is *used* (read) in the expression.
@@ -29,7 +29,11 @@ fn count_op(op: &AnfOp, map: &mut HashMap<LocalId, usize>) {
                 count_atom(a, map);
             }
         }
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             count_atom(cond, map);
             count_expr(then_branch, map);
             count_expr(else_branch, map);

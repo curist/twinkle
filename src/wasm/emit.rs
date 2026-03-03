@@ -79,7 +79,11 @@ pub fn emit_wat(module: &LinkedModuleIR) -> String {
         };
         out.push_str(&format!(
             "  (table ${} {} {}{} {})\n",
-            table.name, table.min, max_str, "", emit_val_type(&table.elem_ty)
+            table.name,
+            table.min,
+            max_str,
+            "",
+            emit_val_type(&table.elem_ty)
         ));
     }
 
@@ -237,7 +241,11 @@ pub fn emit_typedef(td: &TypeDef) -> String {
             s.push_str("))");
             s
         }
-        TypeDef::FuncType { name, params, results } => {
+        TypeDef::FuncType {
+            name,
+            params,
+            results,
+        } => {
             let mut s = format!("  (type ${name} (func");
             if !params.is_empty() {
                 s.push_str(" (param");
@@ -278,10 +286,7 @@ pub fn emit_func(func: &FuncDef, type_idx: usize) -> String {
     let param_count = func.params.len() as u32;
     for (i, l) in func.locals.iter().enumerate() {
         let local_idx = param_count + i as u32;
-        s.push_str(&format!(
-            "\n    (local $p{local_idx} {})",
-            emit_val_type(l)
-        ));
+        s.push_str(&format!("\n    (local $p{local_idx} {})", emit_val_type(l)));
     }
 
     // Body
@@ -391,7 +396,11 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::Unreachable => format!("{pad}unreachable"),
         Instr::Nop => format!("{pad}nop"),
 
-        Instr::If { result, then_body, else_body } => {
+        Instr::If {
+            result,
+            then_body,
+            else_body,
+        } => {
             let mut s = format!("{pad}(if");
             if let Some(r) = result {
                 s.push_str(&format!(" (result {})", emit_val_type(r)));
@@ -414,7 +423,11 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
             s
         }
 
-        Instr::Block { label, result, body } => {
+        Instr::Block {
+            label,
+            result,
+            body,
+        } => {
             let mut s = format!("{pad}(block ${label}");
             if let Some(r) = result {
                 s.push_str(&format!(" (result {})", emit_val_type(r)));
@@ -427,7 +440,11 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
             s
         }
 
-        Instr::Loop { label, result, body } => {
+        Instr::Loop {
+            label,
+            result,
+            body,
+        } => {
             let mut s = format!("{pad}(loop ${label}");
             if let Some(r) = result {
                 s.push_str(&format!(" (result {})", emit_val_type(r)));

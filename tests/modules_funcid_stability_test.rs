@@ -7,8 +7,8 @@ fn modules_dir() -> PathBuf {
 
 fn compile_func_ids(relative: &str) -> HashMap<String, u32> {
     let path = modules_dir().join(relative);
-    let (core, _) = twinkle::module::compile_entry(path.to_str().unwrap())
-        .expect("compile should succeed");
+    let (core, _) =
+        twinkle::module::compile_entry(path.to_str().unwrap()).expect("compile should succeed");
 
     core.functions
         .into_iter()

@@ -1,15 +1,18 @@
-use crate::module::artifacts::TypedModule;
-use crate::syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile,
-    Stmt, StringPart, Type as AstType, UnOp,
-};
-use crate::syntax::span::Span;
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
-use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, CELL_TYPE_ID, RANGE_TYPE_ID, ITERATOR_TYPE_ID, ITER_ITEM_TYPE_ID, UNFOLD_STEP_TYPE_ID, zonk_ty, contains_meta};
+use super::ty::{
+    CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
+    RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID, contains_meta, zonk_ty,
+};
 use super::type_map::TypeMap;
-use std::collections::{HashSet, HashMap};
+use crate::module::artifacts::TypedModule;
+use crate::syntax::ast::{
+    BinOp, Block, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
+    StringPart, Type as AstType, UnOp,
+};
+use crate::syntax::span::Span;
+use std::collections::{HashMap, HashSet};
 
 /// Bidirectional type checker
 ///
@@ -68,7 +71,14 @@ impl TypeChecker {
         // This makes them available to all functions
         for item in &ast.items {
             if let Item::Stmt(stmt) = item {
-                if let Stmt::Let { pattern, ty, value, span, .. } = stmt {
+                if let Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    span,
+                    ..
+                } = stmt
+                {
                     // Only simple identifier patterns for top-level lets
                     if let Pattern::Ident(name, _) = pattern {
                         // Determine the expected type
@@ -93,7 +103,8 @@ impl TypeChecker {
                                 checker.errors.push(TypeError::AmbiguousType {
                                     name: name.clone(),
                                     span: value.span,
-                                    note: "type cannot be inferred; add a type annotation".to_string(),
+                                    note: "type cannot be inferred; add a type annotation"
+                                        .to_string(),
                                 });
                                 continue;
                             }
@@ -106,7 +117,8 @@ impl TypeChecker {
                         checker.errors.push(TypeError::UnsupportedFeature {
                             feature: "pattern matching in top-level let bindings",
                             span: *span,
-                            note: "Only simple identifiers are supported for top-level lets".to_string(),
+                            note: "Only simple identifiers are supported for top-level lets"
+                                .to_string(),
                         });
                     }
                 } else {
@@ -243,7 +255,11 @@ impl TypeChecker {
     /// Returns `(instantiated_type, var_to_meta)` where `var_to_meta` maps each
     /// type parameter name to the MetaVar created for it. After unification
     /// solves the MetaVars, callers can zonk these to get concrete type args.
-    fn instantiate_vars(&mut self, type_params: &[String], ty: &MonoType) -> (MonoType, Vec<(String, MonoType)>) {
+    fn instantiate_vars(
+        &mut self,
+        type_params: &[String],
+        ty: &MonoType,
+    ) -> (MonoType, Vec<(String, MonoType)>) {
         if type_params.is_empty() {
             return (ty.clone(), vec![]);
         }
@@ -316,7 +332,13 @@ impl TypeChecker {
             Stmt::Expr(e) => {
                 let _ = self.synth_expr(e);
             }
-            Stmt::For { pattern, index_pattern, iter, body, .. } => {
+            Stmt::For {
+                pattern,
+                index_pattern,
+                iter,
+                body,
+                ..
+            } => {
                 self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
             }
             Stmt::ForCond { cond, body, .. } => {
@@ -358,7 +380,11 @@ impl TypeChecker {
         }
     }
 
-    fn synth_function_expr(&mut self, fe: &crate::syntax::ast::FunctionExpr, span: Span) -> Result<MonoType, ()> {
+    fn synth_function_expr(
+        &mut self,
+        fe: &crate::syntax::ast::FunctionExpr,
+        span: Span,
+    ) -> Result<MonoType, ()> {
         // Resolve param types — annotations required for lambdas in Stage 5
         let mut param_types = Vec::new();
         for p in &fe.params {
@@ -371,7 +397,8 @@ impl TypeChecker {
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "lambda with unannotated parameters",
                         span,
-                        note: "All lambda parameters must have type annotations in Stage 5".to_string(),
+                        note: "All lambda parameters must have type annotations in Stage 5"
+                            .to_string(),
                     });
                     return Err(());
                 }
@@ -463,23 +490,19 @@ impl TypeChecker {
                 Err(())
             }
 
-            ExprKind::Binary { op, left, right } => {
-                self.synth_binary(*op, left, right, expr.span)
-            }
+            ExprKind::Binary { op, left, right } => self.synth_binary(*op, left, right, expr.span),
 
-            ExprKind::Unary { op, expr: inner } => {
-                self.synth_unary(*op, inner, expr.span)
-            }
+            ExprKind::Unary { op, expr: inner } => self.synth_unary(*op, inner, expr.span),
 
-            ExprKind::Call { callee, args } => {
-                self.synth_call(callee, args, expr.span)
-            }
+            ExprKind::Call { callee, args } => self.synth_call(callee, args, expr.span),
 
             ExprKind::Block(block) => self.synth_block(block),
 
-            ExprKind::If { cond, then_branch, else_branch } => {
-                self.synth_if(cond, then_branch, else_branch.as_deref(), expr.span)
-            }
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.synth_if(cond, then_branch, else_branch.as_deref(), expr.span),
 
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind {
@@ -508,13 +531,9 @@ impl TypeChecker {
                 self.synth_field_access(base, field, expr.span)
             }
 
-            ExprKind::Index { base, index } => {
-                self.synth_index(base, index, expr.span)
-            }
+            ExprKind::Index { base, index } => self.synth_index(base, index, expr.span),
 
-            ExprKind::Array { elements } => {
-                self.synth_array(elements, expr.span)
-            }
+            ExprKind::Array { elements } => self.synth_array(elements, expr.span),
 
             ExprKind::RecordLit { name, fields } => {
                 self.synth_record_lit(name.as_deref(), fields, expr.span)
@@ -524,9 +543,7 @@ impl TypeChecker {
                 self.synth_variant_lit(name, fields, expr.span)
             }
 
-            ExprKind::Case { scrutinee, arms } => {
-                self.synth_case(scrutinee, arms, expr.span)
-            }
+            ExprKind::Case { scrutinee, arms } => self.synth_case(scrutinee, arms, expr.span),
 
             ExprKind::StringInterpolation { parts } => {
                 // Type-check each interpolated expression
@@ -539,13 +556,13 @@ impl TypeChecker {
                 Ok(MonoType::String)
             }
 
-            ExprKind::Function(fe) => {
-                self.synth_function_expr(fe, expr.span)
-            }
+            ExprKind::Function(fe) => self.synth_function_expr(fe, expr.span),
 
-            ExprKind::Collect { pattern, iter, body } => {
-                self.synth_collect(pattern, iter, body, expr.span)
-            }
+            ExprKind::Collect {
+                pattern,
+                iter,
+                body,
+            } => self.synth_collect(pattern, iter, body, expr.span),
 
             ExprKind::Try { expr: inner } => {
                 let inner_ty = self.synth_expr(inner)?;
@@ -588,12 +605,14 @@ impl TypeChecker {
             }
 
             // Blocks: thread expected type into the last expression
-            ExprKind::Block(block) => {
-                self.check_block(block, expected)
-            }
+            ExprKind::Block(block) => self.check_block(block, expected),
 
             // If expressions: check both branches against expected type
-            ExprKind::If { cond, then_branch, else_branch } => {
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 self.check_expr(cond, &MonoType::Bool)?;
                 self.check_expr(then_branch, expected)?;
                 if let Some(else_b) = else_branch {
@@ -607,7 +626,8 @@ impl TypeChecker {
             // Case: check each arm body against expected type
             ExprKind::Case { scrutinee, arms } => {
                 let scrut_ty = self.synth_expr(scrutinee)?;
-                let is_primitive_match = matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
+                let is_primitive_match =
+                    matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
                 if !is_primitive_match && !scrut_ty.is_sum(&self.type_env) {
                     self.errors.push(TypeError::CaseScrutineeNotSumType {
                         actual_type: scrut_ty.clone(),
@@ -623,13 +643,16 @@ impl TypeChecker {
                     return Err(());
                 }
                 PatternChecker::check_exhaustiveness(
-                    &self.type_env, &mut self.errors, &scrut_ty, arms, expr.span,
+                    &self.type_env,
+                    &mut self.errors,
+                    &scrut_ty,
+                    arms,
+                    expr.span,
                 )?;
                 for arm in arms {
                     self.local_env.push_scope();
-                    let mut pc = PatternChecker::new(
-                        &self.type_env, &mut self.local_env, &mut self.errors,
-                    );
+                    let mut pc =
+                        PatternChecker::new(&self.type_env, &mut self.local_env, &mut self.errors);
                     pc.check_pattern(&arm.pattern, &scrut_ty)?;
                     drop(pc);
                     self.check_expr(&arm.body, expected)?;
@@ -640,7 +663,11 @@ impl TypeChecker {
 
             // Lambda: use expected Function type to supply unannotated param types
             ExprKind::Function(fe) => {
-                if let MonoType::Function { params: expected_params, ret: expected_ret } = expected {
+                if let MonoType::Function {
+                    params: expected_params,
+                    ret: expected_ret,
+                } = expected
+                {
                     if fe.params.len() != expected_params.len() {
                         self.errors.push(TypeError::WrongArity {
                             expected: expected_params.len(),
@@ -690,9 +717,7 @@ impl TypeChecker {
             }
 
             // Dict.new() — type comes entirely from context annotation
-            ExprKind::Call { callee, args }
-                if args.is_empty() =>
-            {
+            ExprKind::Call { callee, args } if args.is_empty() => {
                 if let ExprKind::FieldAccess { base, field } = &callee.kind {
                     if let ExprKind::Ident(alias) = &base.kind {
                         if alias == "Dict" && field == "new" {
@@ -715,7 +740,8 @@ impl TypeChecker {
                     if self.module_aliases.contains(alias.as_str()) {
                         let alias = alias.clone();
                         let field = field.clone();
-                        return self.check_module_func_ref(&alias, &field, expected, expr.id, expr.span);
+                        return self
+                            .check_module_func_ref(&alias, &field, expected, expr.id, expr.span);
                     }
                 }
                 let actual = self.synth_expr(expr)?;
@@ -754,7 +780,13 @@ impl TypeChecker {
     // Binary operators
     //
 
-    fn synth_binary(&mut self, op: BinOp, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
+    fn synth_binary(
+        &mut self,
+        op: BinOp,
+        left: &Expr,
+        right: &Expr,
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match op {
             // Arithmetic: Int × Int → Int, Float × Float → Float
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
@@ -769,7 +801,7 @@ impl TypeChecker {
                             expected: left_ty.clone(),
                             actual: right_ty,
                             span: right.span,
-                    note: None,
+                            note: None,
                         });
                         Err(())
                     }
@@ -793,10 +825,7 @@ impl TypeChecker {
             }
 
             // Assignment / rebinding operators
-            BinOp::Assign => {
-                self.synth_assign(left, right, span)
-            }
-
+            BinOp::Assign => self.synth_assign(left, right, span),
         }
     }
 
@@ -816,7 +845,7 @@ impl TypeChecker {
                             expected: MonoType::Int,
                             actual: ty,
                             span: expr.span,
-                    note: None,
+                            note: None,
                         });
                         Err(())
                     }
@@ -836,7 +865,11 @@ impl TypeChecker {
     fn synth_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Result<MonoType, ()> {
         // Special case: field-access calls — handles both module-qualified
         // calls (module.func(args)) and method calls (receiver.method(args)).
-        if let ExprKind::FieldAccess { base, field: method_name } = &callee.kind {
+        if let ExprKind::FieldAccess {
+            base,
+            field: method_name,
+        } = &callee.kind
+        {
             // Check for module-qualified call FIRST (before synthesising base type)
             if let ExprKind::Ident(alias) = &base.kind {
                 if self.module_aliases.contains(alias.as_str()) {
@@ -848,14 +881,27 @@ impl TypeChecker {
 
                 // TypeName.Variant(args) — variant construction with type prefix
                 if let Some(type_id) = self.type_env.lookup_type(alias) {
-                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name) {
+                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name)
+                    {
                         // Build named_ty with Var args for generic types
-                        let type_var_args: Vec<MonoType> = self.type_env.get_def(type_id)
-                            .map(|d| d.type_params().iter().map(|p| MonoType::Var(p.clone())).collect())
+                        let type_var_args: Vec<MonoType> = self
+                            .type_env
+                            .get_def(type_id)
+                            .map(|d| {
+                                d.type_params()
+                                    .iter()
+                                    .map(|p| MonoType::Var(p.clone()))
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        let named_ty = MonoType::Named { type_id, args: type_var_args };
+                        let named_ty = MonoType::Named {
+                            type_id,
+                            args: type_var_args,
+                        };
                         self.type_map.set_expr_type(base.id, named_ty.clone());
-                        let variants = self.type_env.get_variants(type_id)
+                        let variants = self
+                            .type_env
+                            .get_variants(type_id)
                             .expect("variant exists, variants must exist");
                         let variant_fields = variants[variant_idx].fields.clone();
                         // Check arity
@@ -868,13 +914,17 @@ impl TypeChecker {
                             return Err(());
                         }
                         // Instantiate type params with MetaVars (no-op for non-generic types)
-                        let type_params: Vec<String> = self.type_env.get_def(type_id)
+                        let type_params: Vec<String> = self
+                            .type_env
+                            .get_def(type_id)
                             .map(|d| d.type_params().to_vec())
                             .unwrap_or_default();
-                        let inst_map: HashMap<String, MonoType> = type_params.iter()
+                        let inst_map: HashMap<String, MonoType> = type_params
+                            .iter()
                             .map(|p| (p.clone(), self.fresh_meta()))
                             .collect();
-                        let inst_fields: Vec<MonoType> = variant_fields.iter()
+                        let inst_fields: Vec<MonoType> = variant_fields
+                            .iter()
                             .map(|f| apply_subst(f, &inst_map))
                             .collect();
                         let inst_named_ty = apply_subst(&named_ty, &inst_map);
@@ -1019,29 +1069,51 @@ impl TypeChecker {
     }
 
     /// Handle Cell.new / Cell.get / Cell.set / Cell.update polymorphically.
-    fn synth_cell_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_cell_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match func_name {
             "new" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let inner = self.synth_expr(&args[0])?;
-                Ok(MonoType::Named { type_id: CELL_TYPE_ID, args: vec![inner] })
+                Ok(MonoType::Named {
+                    type_id: CELL_TYPE_ID,
+                    args: vec![inner],
+                })
             }
             "get" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let cell_ty = self.synth_expr(&args[0])?;
                 match cell_ty {
-                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                    MonoType::Named {
+                        type_id,
+                        args: cell_args,
+                    } if type_id == CELL_TYPE_ID => {
                         Ok(cell_args.into_iter().next().unwrap_or(MonoType::Void))
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            expected: MonoType::Named {
+                                type_id: CELL_TYPE_ID,
+                                args: vec![],
+                            },
                             actual: other,
                             span,
                             note: None,
@@ -1052,19 +1124,29 @@ impl TypeChecker {
             }
             "set" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let cell_ty = self.synth_expr(&args[0])?;
                 match cell_ty {
-                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                    MonoType::Named {
+                        type_id,
+                        args: cell_args,
+                    } if type_id == CELL_TYPE_ID => {
                         let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
                         self.check_expr(&args[1], &inner)?;
                         Ok(MonoType::Void)
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            expected: MonoType::Named {
+                                type_id: CELL_TYPE_ID,
+                                args: vec![],
+                            },
                             actual: other,
                             span,
                             note: None,
@@ -1075,12 +1157,19 @@ impl TypeChecker {
             }
             "update" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let cell_ty = self.synth_expr(&args[0])?;
                 match cell_ty {
-                    MonoType::Named { type_id, args: cell_args } if type_id == CELL_TYPE_ID => {
+                    MonoType::Named {
+                        type_id,
+                        args: cell_args,
+                    } if type_id == CELL_TYPE_ID => {
                         let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
                         let expected_fn = MonoType::Function {
                             params: vec![inner.clone()],
@@ -1091,7 +1180,10 @@ impl TypeChecker {
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named { type_id: CELL_TYPE_ID, args: vec![] },
+                            expected: MonoType::Named {
+                                type_id: CELL_TYPE_ID,
+                                args: vec![],
+                            },
                             actual: other,
                             span,
                             note: None,
@@ -1112,7 +1204,12 @@ impl TypeChecker {
 
     /// Handle Dict module-qualified calls.
     /// Dict.new() requires annotation context; other methods synthesize from first arg.
-    fn synth_dict_module_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_dict_module_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match func_name {
             "new" => {
                 self.errors.push(TypeError::UnsupportedFeature {
@@ -1124,13 +1221,20 @@ impl TypeChecker {
             }
             "len" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let dict_ty = self.synth_expr(&args[0])?;
                 if !matches!(dict_ty, MonoType::Dict(_, _)) {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                        expected: MonoType::Dict(
+                            Box::new(MonoType::Void),
+                            Box::new(MonoType::Void),
+                        ),
                         actual: dict_ty,
                         span,
                         note: Some("Dict.len expects Dict<K,V> as first argument".to_string()),
@@ -1141,7 +1245,11 @@ impl TypeChecker {
             }
             "has" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let dict_ty = self.synth_expr(&args[0])?;
@@ -1153,7 +1261,10 @@ impl TypeChecker {
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            expected: MonoType::Dict(
+                                Box::new(MonoType::Void),
+                                Box::new(MonoType::Void),
+                            ),
                             actual: other,
                             span,
                             note: Some("Dict.has expects Dict<K,V> as first argument".to_string()),
@@ -1164,7 +1275,11 @@ impl TypeChecker {
             }
             "keys" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let dict_ty = self.synth_expr(&args[0])?;
@@ -1172,7 +1287,10 @@ impl TypeChecker {
                     MonoType::Dict(k_ty, _) => Ok(MonoType::Array(k_ty)),
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            expected: MonoType::Dict(
+                                Box::new(MonoType::Void),
+                                Box::new(MonoType::Void),
+                            ),
                             actual: other,
                             span,
                             note: Some("Dict.keys expects Dict<K,V> as first argument".to_string()),
@@ -1183,7 +1301,11 @@ impl TypeChecker {
             }
             "remove" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let dict_ty = self.synth_expr(&args[0])?;
@@ -1195,10 +1317,15 @@ impl TypeChecker {
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(Box::new(MonoType::Void), Box::new(MonoType::Void)),
+                            expected: MonoType::Dict(
+                                Box::new(MonoType::Void),
+                                Box::new(MonoType::Void),
+                            ),
                             actual: other,
                             span,
-                            note: Some("Dict.remove expects Dict<K,V> as first argument".to_string()),
+                            note: Some(
+                                "Dict.remove expects Dict<K,V> as first argument".to_string(),
+                            ),
                         });
                         Err(())
                     }
@@ -1215,27 +1342,45 @@ impl TypeChecker {
     }
 
     /// Handle Iterator.next / Iterator.unfold polymorphically.
-    fn synth_iterator_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_iterator_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match func_name {
             "next" => {
                 // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let it_ty = self.synth_expr(&args[0])?;
                 match it_ty {
-                    MonoType::Named { type_id, args: ref it_args } if type_id == ITERATOR_TYPE_ID => {
+                    MonoType::Named {
+                        type_id,
+                        args: ref it_args,
+                    } if type_id == ITERATOR_TYPE_ID => {
                         let elem_ty = it_args.first().cloned().unwrap_or(MonoType::Void);
                         let item_ty = MonoType::Named {
                             type_id: ITER_ITEM_TYPE_ID,
                             args: vec![elem_ty],
                         };
-                        Ok(MonoType::Named { type_id: OPTION_TYPE_ID, args: vec![item_ty] })
+                        Ok(MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![item_ty],
+                        })
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![] },
+                            expected: MonoType::Named {
+                                type_id: ITERATOR_TYPE_ID,
+                                args: vec![],
+                            },
                             actual: other,
                             span,
                             note: Some("Iterator.next expects an Iterator<T>".to_string()),
@@ -1248,7 +1393,11 @@ impl TypeChecker {
                 // Iterator.unfold(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
                 // We infer T and S from the step function's signature.
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 // Synthesize seed to determine S
@@ -1257,7 +1406,10 @@ impl TypeChecker {
                 let step_ty = self.synth_expr(&args[1])?;
                 // Validate: step must be fn(S) UnfoldStep<T,S>
                 match step_ty {
-                    MonoType::Function { ref params, ref ret } => {
+                    MonoType::Function {
+                        ref params,
+                        ref ret,
+                    } => {
                         if params.len() != 1 {
                             self.errors.push(TypeError::WrongArity {
                                 expected: 1,
@@ -1279,9 +1431,15 @@ impl TypeChecker {
                         }
                         // Return type should be UnfoldStep<T,S>; extract T
                         match ret.as_ref() {
-                            MonoType::Named { type_id, args: ret_args } if *type_id == UNFOLD_STEP_TYPE_ID => {
+                            MonoType::Named {
+                                type_id,
+                                args: ret_args,
+                            } if *type_id == UNFOLD_STEP_TYPE_ID => {
                                 let elem_ty = ret_args.first().cloned().unwrap_or(MonoType::Void);
-                                Ok(MonoType::Named { type_id: ITERATOR_TYPE_ID, args: vec![elem_ty] })
+                                Ok(MonoType::Named {
+                                    type_id: ITERATOR_TYPE_ID,
+                                    args: vec![elem_ty],
+                                })
                             }
                             other => {
                                 self.errors.push(TypeError::TypeMismatch {
@@ -1295,7 +1453,8 @@ impl TypeChecker {
                         }
                     }
                     other => {
-                        self.errors.push(TypeError::NotAFunction { ty: other, span });
+                        self.errors
+                            .push(TypeError::NotAFunction { ty: other, span });
                         Err(())
                     }
                 }
@@ -1311,11 +1470,20 @@ impl TypeChecker {
     }
 
     /// Handle Array.method(arr, ...) module-qualified calls.
-    fn synth_array_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_array_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match func_name {
             "len" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let arr_ty = self.synth_expr(&args[0])?;
@@ -1332,7 +1500,11 @@ impl TypeChecker {
             }
             "append" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let arr_ty = self.synth_expr(&args[0])?;
@@ -1347,7 +1519,9 @@ impl TypeChecker {
                             expected: MonoType::Array(Box::new(MonoType::Void)),
                             actual: other,
                             span,
-                            note: Some("Array.append expects Array<T> as first argument".to_string()),
+                            note: Some(
+                                "Array.append expects Array<T> as first argument".to_string(),
+                            ),
                         });
                         Err(())
                     }
@@ -1355,7 +1529,11 @@ impl TypeChecker {
             }
             "concat" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let arr_ty = self.synth_expr(&args[0])?;
@@ -1373,7 +1551,11 @@ impl TypeChecker {
             }
             "slice" => {
                 if args.len() != 3 {
-                    self.errors.push(TypeError::WrongArity { expected: 3, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 3,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 let arr_ty = self.synth_expr(&args[0])?;
@@ -1402,11 +1584,20 @@ impl TypeChecker {
     }
 
     /// Handle String.method(s, ...) module-qualified calls.
-    fn synth_string_call(&mut self, func_name: &str, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_string_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         match func_name {
             "len" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 self.check_expr(&args[0], &MonoType::String)?;
@@ -1414,7 +1605,11 @@ impl TypeChecker {
             }
             "concat" => {
                 if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 self.check_expr(&args[0], &MonoType::String)?;
@@ -1423,7 +1618,11 @@ impl TypeChecker {
             }
             "substring" => {
                 if args.len() != 3 {
-                    self.errors.push(TypeError::WrongArity { expected: 3, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 3,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 self.check_expr(&args[0], &MonoType::String)?;
@@ -1433,7 +1632,11 @@ impl TypeChecker {
             }
             "to_string" => {
                 if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
                     return Err(());
                 }
                 self.check_expr(&args[0], &MonoType::String)?;
@@ -1466,7 +1669,10 @@ impl TypeChecker {
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
                     expected: expected.clone(),
-                    actual: MonoType::Function { params: vec![], ret: Box::new(MonoType::Void) },
+                    actual: MonoType::Function {
+                        params: vec![],
+                        ret: Box::new(MonoType::Void),
+                    },
                     span,
                     note: Some(format!("'{}.{}' is a function", alias, method)),
                 });
@@ -1533,9 +1739,15 @@ impl TypeChecker {
         } else {
             self.errors.push(TypeError::TypeMismatch {
                 expected: expected.clone(),
-                actual: MonoType::Function { params: vec![], ret: Box::new(MonoType::Void) },
+                actual: MonoType::Function {
+                    params: vec![],
+                    ret: Box::new(MonoType::Void),
+                },
                 span,
-                note: Some(format!("'{}.{}' signature does not match annotation", alias, method)),
+                note: Some(format!(
+                    "'{}.{}' signature does not match annotation",
+                    alias, method
+                )),
             });
             Err(())
         }
@@ -1559,14 +1771,22 @@ impl TypeChecker {
                 match method {
                     "len" => {
                         if !args.is_empty() {
-                            self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 0,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         Ok(MonoType::Int)
                     }
                     "append" => {
                         if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         self.check_expr(&args[0], &elem_ty)?;
@@ -1574,7 +1794,11 @@ impl TypeChecker {
                     }
                     "concat" => {
                         if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         self.check_expr(&args[0], &base_ty)?;
@@ -1582,7 +1806,11 @@ impl TypeChecker {
                     }
                     "slice" => {
                         if args.len() != 2 {
-                            self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 2,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         self.check_expr(&args[0], &MonoType::Int)?;
@@ -1602,14 +1830,22 @@ impl TypeChecker {
             MonoType::String => match method {
                 "len" => {
                     if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     Ok(MonoType::Int)
                 }
                 "concat" => {
                     if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 1,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     self.check_expr(&args[0], &MonoType::String)?;
@@ -1617,14 +1853,22 @@ impl TypeChecker {
                 }
                 "to_string" => {
                     if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     Ok(MonoType::String)
                 }
                 "substring" => {
                     if args.len() != 2 {
-                        self.errors.push(TypeError::WrongArity { expected: 2, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 2,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     self.check_expr(&args[0], &MonoType::Int)?;
@@ -1643,21 +1887,33 @@ impl TypeChecker {
             MonoType::Dict(k_ty, v_ty) => match method {
                 "keys" => {
                     if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     Ok(MonoType::Array(k_ty))
                 }
                 "len" => {
                     if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     Ok(MonoType::Int)
                 }
                 "has" => {
                     if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 1,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     self.check_expr(&args[0], &k_ty)?;
@@ -1665,7 +1921,11 @@ impl TypeChecker {
                 }
                 "remove" => {
                     if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 1,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     self.check_expr(&args[0], &k_ty)?;
@@ -1683,7 +1943,11 @@ impl TypeChecker {
             MonoType::Int | MonoType::Float | MonoType::Bool => {
                 if method == "to_string" {
                     if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
                         return Err(());
                     }
                     Ok(MonoType::String)
@@ -1696,19 +1960,30 @@ impl TypeChecker {
                     Err(())
                 }
             }
-            MonoType::Named { type_id, args: ref cell_args } if type_id == CELL_TYPE_ID => {
+            MonoType::Named {
+                type_id,
+                args: ref cell_args,
+            } if type_id == CELL_TYPE_ID => {
                 let inner = cell_args.first().cloned().unwrap_or(MonoType::Void);
                 match method {
                     "get" => {
                         if !args.is_empty() {
-                            self.errors.push(TypeError::WrongArity { expected: 0, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 0,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         Ok(inner)
                     }
                     "set" => {
                         if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         self.check_expr(&args[0], &inner)?;
@@ -1716,7 +1991,11 @@ impl TypeChecker {
                     }
                     "update" => {
                         if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity { expected: 1, actual: args.len(), span });
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: args.len(),
+                                span,
+                            });
                             return Err(());
                         }
                         let expected_fn = MonoType::Function {
@@ -1730,15 +2009,22 @@ impl TypeChecker {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "unknown Cell method",
                             span,
-                            note: format!("Cell has no method '{}'; available: get, set, update", method),
+                            note: format!(
+                                "Cell has no method '{}'; available: get, set, update",
+                                method
+                            ),
                         });
                         Err(())
                     }
                 }
             }
-            MonoType::Named { type_id, args: named_args } => {
+            MonoType::Named {
+                type_id,
+                args: named_args,
+            } => {
                 // Look up user-defined inherent method
-                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned() {
+                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned()
+                {
                     if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
                         // all_args: receiver + explicit args
                         let explicit_count = args.len();
@@ -1758,7 +2044,8 @@ impl TypeChecker {
                             params: sig.params.clone(),
                             ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
                         };
-                        let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+                        let (inst_ty, _var_to_meta) =
+                            self.instantiate_vars(&sig.type_params, &full_fn_ty);
                         let (inst_params, inst_ret) = match inst_ty {
                             MonoType::Function { params, ret } => (params, *ret),
                             _ => unreachable!(),
@@ -1782,7 +2069,9 @@ impl TypeChecker {
                 // Apply type-arg substitution for generic capability records
                 if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
                     if let Some(fields) = self.type_env.get_record_fields(type_id) {
-                        let type_params = self.type_env.get_def(type_id)
+                        let type_params = self
+                            .type_env
+                            .get_def(type_id)
                             .map(|d| d.type_params().to_vec())
                             .unwrap_or_default();
                         let subst = build_type_subst(&type_params, &named_args);
@@ -1805,7 +2094,9 @@ impl TypeChecker {
                 }
 
                 // No method found — report as missing field
-                let type_name = self.type_env.get_def(type_id)
+                let type_name = self
+                    .type_env
+                    .get_def(type_id)
                     .map(|d| d.name().to_string())
                     .unwrap_or_else(|| format!("Type#{}", type_id.0));
                 self.errors.push(TypeError::NoSuchField {
@@ -1838,7 +2129,13 @@ impl TypeChecker {
 
         for stmt in &block.stmts {
             match stmt {
-                Stmt::Let { pattern, ty, value, span: _, .. } => {
+                Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    span: _,
+                    ..
+                } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
                 }
                 Stmt::Expr(e) => {
@@ -1862,7 +2159,13 @@ impl TypeChecker {
                     }
                     result_ty = MonoType::Never;
                 }
-                Stmt::For { pattern, index_pattern, iter, body, .. } => {
+                Stmt::For {
+                    pattern,
+                    index_pattern,
+                    iter,
+                    body,
+                    ..
+                } => {
                     self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
                     result_ty = MonoType::Void;
                 }
@@ -1917,7 +2220,13 @@ impl TypeChecker {
 
         for (i, stmt) in block.stmts.iter().enumerate() {
             match stmt {
-                Stmt::Let { pattern, ty, value, span: _, .. } => {
+                Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    span: _,
+                    ..
+                } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
                     diverges = false;
                 }
@@ -1940,7 +2249,13 @@ impl TypeChecker {
                     }
                     diverges = true;
                 }
-                Stmt::For { pattern, index_pattern, iter, body, .. } => {
+                Stmt::For {
+                    pattern,
+                    index_pattern,
+                    iter,
+                    body,
+                    ..
+                } => {
                     self.check_for_stmt(pattern, index_pattern.as_ref(), iter, body);
                     diverges = false;
                 }
@@ -1979,7 +2294,11 @@ impl TypeChecker {
         // Diverging blocks (ending with return/break/continue) have type Never,
         // which unifies with any expected type without emitting an error.
         if last_expr_idx.is_none() {
-            let block_ty = if diverges { MonoType::Never } else { MonoType::Void };
+            let block_ty = if diverges {
+                MonoType::Never
+            } else {
+                MonoType::Void
+            };
             let _ = self.unify(&block_ty, expected_ty, block.span);
         }
 
@@ -1991,7 +2310,12 @@ impl TypeChecker {
     // Let statements
     //
 
-    fn check_let_stmt(&mut self, pattern: &Pattern, ty: Option<&crate::syntax::ast::Type>, value: &Expr) {
+    fn check_let_stmt(
+        &mut self,
+        pattern: &Pattern,
+        ty: Option<&crate::syntax::ast::Type>,
+        value: &Expr,
+    ) {
         // For now, only support simple identifier patterns
         match pattern {
             Pattern::Ident(name, _span) => {
@@ -2035,7 +2359,8 @@ impl TypeChecker {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "pattern matching in let bindings",
                     span: value.span,
-                    note: "Only simple identifiers are supported in let bindings for now".to_string(),
+                    note: "Only simple identifiers are supported in let bindings for now"
+                        .to_string(),
                 });
             }
         }
@@ -2045,7 +2370,13 @@ impl TypeChecker {
     // If expressions
     //
 
-    fn synth_if(&mut self, cond: &Expr, then_branch: &Expr, else_branch: Option<&Expr>, _span: Span) -> Result<MonoType, ()> {
+    fn synth_if(
+        &mut self,
+        cond: &Expr,
+        then_branch: &Expr,
+        else_branch: Option<&Expr>,
+        _span: Span,
+    ) -> Result<MonoType, ()> {
         // Condition must be Bool
         self.check_expr(cond, &MonoType::Bool)?;
 
@@ -2057,7 +2388,11 @@ impl TypeChecker {
             let else_ty = self.synth_expr(else_expr)?;
             self.unify(&then_ty, &else_ty, else_expr.span)?;
             // If one branch diverges (Never), use the other branch's type
-            if then_ty == MonoType::Never { Ok(else_ty) } else { Ok(then_ty) }
+            if then_ty == MonoType::Never {
+                Ok(else_ty)
+            } else {
+                Ok(then_ty)
+            }
         } else {
             // No else branch - result type is Void
             self.unify(&then_ty, &MonoType::Void, then_branch.span)?;
@@ -2076,23 +2411,37 @@ impl TypeChecker {
                 if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
                     // Instantiate generic type params with fresh MetaVars so that
                     // unification (e.g. unifying Done with Yield's type) can solve them.
-                    let type_params: Vec<String> = self.type_env.get_def(type_id)
+                    let type_params: Vec<String> = self
+                        .type_env
+                        .get_def(type_id)
                         .map(|d| d.type_params().to_vec())
                         .unwrap_or_default();
-                    let inst_map: HashMap<String, MonoType> = type_params.iter()
+                    let inst_map: HashMap<String, MonoType> = type_params
+                        .iter()
                         .map(|p| (p.clone(), self.fresh_meta()))
                         .collect();
-                    let type_var_args: Vec<MonoType> = type_params.iter()
+                    let type_var_args: Vec<MonoType> = type_params
+                        .iter()
                         .map(|p| MonoType::Var(p.clone()))
                         .collect();
-                    let raw_named = MonoType::Named { type_id, args: type_var_args };
-                    let named_ty = if inst_map.is_empty() { raw_named } else { apply_subst(&raw_named, &inst_map) };
+                    let raw_named = MonoType::Named {
+                        type_id,
+                        args: type_var_args,
+                    };
+                    let named_ty = if inst_map.is_empty() {
+                        raw_named
+                    } else {
+                        apply_subst(&raw_named, &inst_map)
+                    };
                     // Record type of the type-name base as Named (so lowerer can identify it)
                     self.type_map.set_expr_type(base.id, named_ty.clone());
-                    let variants = self.type_env.get_variants(type_id)
+                    let variants = self
+                        .type_env
+                        .get_variants(type_id)
                         .expect("variant index exists, variants must exist");
                     let variant_fields_raw = variants[variant_idx].fields.clone();
-                    let variant_fields: Vec<MonoType> = variant_fields_raw.iter()
+                    let variant_fields: Vec<MonoType> = variant_fields_raw
+                        .iter()
                         .map(|f| apply_subst(f, &inst_map))
                         .collect();
                     return if variant_fields.is_empty() {
@@ -2100,7 +2449,10 @@ impl TypeChecker {
                         Ok(named_ty)
                     } else {
                         // Parameterized variant accessed as a value (not called here)
-                        Ok(MonoType::Function { params: variant_fields, ret: Box::new(named_ty) })
+                        Ok(MonoType::Function {
+                            params: variant_fields,
+                            ret: Box::new(named_ty),
+                        })
                     };
                 }
             }
@@ -2109,13 +2461,18 @@ impl TypeChecker {
         let base_ty = self.synth_expr(base)?;
 
         match base_ty {
-            MonoType::Named { type_id, args: ref type_args } => {
+            MonoType::Named {
+                type_id,
+                args: ref type_args,
+            } => {
                 // Check for field/method collision
                 let has_field = self.type_env.has_field(type_id, field);
                 let has_method = self.type_env.has_method(type_id, field);
 
                 if has_field && has_method {
-                    let type_name = self.type_env.get_def(type_id)
+                    let type_name = self
+                        .type_env
+                        .get_def(type_id)
                         .map(|d| d.name().to_string())
                         .unwrap_or_else(|| format!("Type#{}", type_id.0));
 
@@ -2129,7 +2486,9 @@ impl TypeChecker {
 
                 // Look up the record fields; apply type-arg substitution for generic types
                 if let Some(record_fields) = self.type_env.get_record_fields(type_id) {
-                    let type_params = self.type_env.get_def(type_id)
+                    let type_params = self
+                        .type_env
+                        .get_def(type_id)
                         .map(|d| d.type_params().to_vec())
                         .unwrap_or_default();
                     let subst = build_type_subst(&type_params, &type_args);
@@ -2147,13 +2506,18 @@ impl TypeChecker {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "inherent method calls",
                             span,
-                            note: format!("Method '{}' exists but method calls are not yet fully implemented", field),
+                            note: format!(
+                                "Method '{}' exists but method calls are not yet fully implemented",
+                                field
+                            ),
                         });
                         return Err(());
                     }
 
                     // Neither field nor method
-                    let record_name = self.type_env.get_def(type_id)
+                    let record_name = self
+                        .type_env
+                        .get_def(type_id)
                         .map(|d| d.name().to_string())
                         .unwrap_or_else(|| format!("Type#{}", type_id.0));
 
@@ -2169,7 +2533,7 @@ impl TypeChecker {
                         expected: MonoType::Int, // Dummy
                         actual: base_ty,
                         span: base.span,
-                    note: None,
+                        note: None,
                     });
                     Err(())
                 }
@@ -2253,7 +2617,12 @@ impl TypeChecker {
     // Record literals
     //
 
-    fn synth_record_lit(&mut self, name: Option<&str>, fields: &[(String, Expr)], span: Span) -> Result<MonoType, ()> {
+    fn synth_record_lit(
+        &mut self,
+        name: Option<&str>,
+        fields: &[(String, Expr)],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         if let Some(type_name) = name {
             // Named record literal: Point.{ x: 1, y: 2 }
             let type_id = match self.type_env.lookup_type(type_name) {
@@ -2267,7 +2636,9 @@ impl TypeChecker {
                 }
             };
 
-            let type_params = self.type_env.get_def(type_id)
+            let type_params = self
+                .type_env
+                .get_def(type_id)
                 .map(|d| d.type_params().to_vec())
                 .unwrap_or_default();
 
@@ -2278,12 +2649,15 @@ impl TypeChecker {
             } else {
                 // Generic: instantiate type params with MetaVars, then synth each field
                 // and unify against the instantiated declared type to solve the MetaVars.
-                let def_fields: Vec<(String, MonoType)> = self.type_env.get_record_fields(type_id)
+                let def_fields: Vec<(String, MonoType)> = self
+                    .type_env
+                    .get_record_fields(type_id)
                     .map(|fs| fs.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
                     .unwrap_or_default();
 
                 // Create a fresh MetaVar for each type param
-                let inst_map: HashMap<String, MonoType> = type_params.iter()
+                let inst_map: HashMap<String, MonoType> = type_params
+                    .iter()
                     .map(|p| (p.clone(), self.fresh_meta()))
                     .collect();
 
@@ -2292,7 +2666,9 @@ impl TypeChecker {
                 for (provided_name, provided_expr) in fields.iter() {
                     let result = self.synth_expr(provided_expr);
                     if let Ok(actual_ty) = &result {
-                        if let Some((_, declared_ty)) = def_fields.iter().find(|(n, _)| n == provided_name) {
+                        if let Some((_, declared_ty)) =
+                            def_fields.iter().find(|(n, _)| n == provided_name)
+                        {
                             let inst_decl_ty = apply_subst(declared_ty, &inst_map);
                             let _ = self.unify(actual_ty, &inst_decl_ty, provided_expr.span);
                         }
@@ -2301,17 +2677,21 @@ impl TypeChecker {
                 }
 
                 // Build concrete type args by zonking the MetaVars
-                let type_args: Vec<MonoType> = type_params.iter()
+                let type_args: Vec<MonoType> = type_params
+                    .iter()
                     .map(|p| self.zonk(inst_map.get(p).unwrap()))
                     .collect();
                 let subst2 = build_type_subst(&type_params, &type_args);
 
-                let record_name = self.type_env.get_def(type_id)
+                let record_name = self
+                    .type_env
+                    .get_def(type_id)
                     .map(|d| d.name().to_string())
                     .unwrap_or_else(|| format!("Type#{}", type_id.0));
 
                 // Check for extra (unknown) fields
-                let expected_names: Vec<&str> = def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                let expected_names: Vec<&str> =
+                    def_fields.iter().map(|(n, _)| n.as_str()).collect();
                 for (provided_name, _) in fields.iter() {
                     if !expected_names.contains(&provided_name.as_str()) {
                         self.errors.push(TypeError::NoSuchField {
@@ -2327,13 +2707,18 @@ impl TypeChecker {
                 let mut ok = true;
                 for (expected_name, declared_ty) in &def_fields {
                     let concrete_ty = apply_subst(declared_ty, &subst2);
-                    match field_synth.iter().find(|(n, _)| *n == expected_name.as_str()) {
+                    match field_synth
+                        .iter()
+                        .find(|(n, _)| *n == expected_name.as_str())
+                    {
                         Some((_, Ok(actual_ty))) => {
                             if self.unify(actual_ty, &concrete_ty, span).is_err() {
                                 ok = false;
                             }
                         }
-                        Some((_, Err(()))) => { ok = false; }
+                        Some((_, Err(()))) => {
+                            ok = false;
+                        }
                         None => {
                             self.errors.push(TypeError::NoSuchField {
                                 record_type: record_name.clone(),
@@ -2345,17 +2730,30 @@ impl TypeChecker {
                     }
                 }
 
-                if ok { Ok(MonoType::Named { type_id, args: type_args }) } else { Err(()) }
+                if ok {
+                    Ok(MonoType::Named {
+                        type_id,
+                        args: type_args,
+                    })
+                } else {
+                    Err(())
+                }
             }
         } else {
             // Anonymous record literal: .{ x: 1, y: 2 }
             // This requires expected type from context - error in synthesis mode
-            self.errors.push(TypeError::AnonymousRecordWithoutContext { span });
+            self.errors
+                .push(TypeError::AnonymousRecordWithoutContext { span });
             Err(())
         }
     }
 
-    fn check_anon_record_lit(&mut self, fields: &[(String, Expr)], expected: &MonoType, span: Span) -> Result<(), ()> {
+    fn check_anon_record_lit(
+        &mut self,
+        fields: &[(String, Expr)],
+        expected: &MonoType,
+        span: Span,
+    ) -> Result<(), ()> {
         match expected {
             MonoType::Named { type_id, args } => {
                 self.check_record_lit_fields(*type_id, args, fields, span)
@@ -2372,7 +2770,13 @@ impl TypeChecker {
         }
     }
 
-    fn check_record_lit_fields(&mut self, type_id: crate::types::ty::TypeId, type_args: &[MonoType], fields: &[(String, Expr)], span: Span) -> Result<(), ()> {
+    fn check_record_lit_fields(
+        &mut self,
+        type_id: crate::types::ty::TypeId,
+        type_args: &[MonoType],
+        fields: &[(String, Expr)],
+        span: Span,
+    ) -> Result<(), ()> {
         let expected_fields = match self.type_env.get_record_fields(type_id) {
             Some(f) => f,
             None => {
@@ -2388,7 +2792,9 @@ impl TypeChecker {
 
         // Build substitution for generic types
         let subst = {
-            let type_params = self.type_env.get_def(type_id)
+            let type_params = self
+                .type_env
+                .get_def(type_id)
                 .map(|d| d.type_params().to_vec())
                 .unwrap_or_default();
             build_type_subst(&type_params, type_args)
@@ -2396,11 +2802,13 @@ impl TypeChecker {
 
         // Check all expected fields are present and have correct types
         // Apply substitution to declared field types for generic types
-        let expected_fields_vec: Vec<_> = expected_fields.iter()
+        let expected_fields_vec: Vec<_> = expected_fields
+            .iter()
             .map(|f| (f.name.clone(), apply_subst(&f.ty, &subst)))
             .collect();
 
-        let expected_names: Vec<String> = expected_fields_vec.iter()
+        let expected_names: Vec<String> = expected_fields_vec
+            .iter()
             .map(|(name, _)| name.clone())
             .collect();
 
@@ -2411,7 +2819,9 @@ impl TypeChecker {
                 self.check_expr(value, field_ty)?;
             } else {
                 // Missing field
-                let record_name = self.type_env.get_def(type_id)
+                let record_name = self
+                    .type_env
+                    .get_def(type_id)
                     .map(|d| d.name().to_string())
                     .unwrap_or_else(|| format!("Type#{}", type_id.0));
 
@@ -2428,7 +2838,9 @@ impl TypeChecker {
 
         for (provided_name, _) in fields {
             if !expected_names.contains(provided_name) {
-                let record_name = self.type_env.get_def(type_id)
+                let record_name = self
+                    .type_env
+                    .get_def(type_id)
                     .map(|d| d.name().to_string())
                     .unwrap_or_else(|| format!("Type#{}", type_id.0));
 
@@ -2448,7 +2860,12 @@ impl TypeChecker {
     // Variant literals
     //
 
-    fn synth_variant_lit(&mut self, variant_name: &str, _fields: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_variant_lit(
+        &mut self,
+        variant_name: &str,
+        _fields: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         // Variant literals require type context to disambiguate which sum type they belong to
         // Multiple sum types may have variants with the same name
         // Use checking mode with type annotation: `x: Option<Int> = .Some(42)`
@@ -2456,12 +2873,21 @@ impl TypeChecker {
         self.errors.push(TypeError::UnsupportedFeature {
             feature: "variant literals without type context",
             span,
-            note: format!("Cannot infer type for variant .{}(...) - provide a type annotation", variant_name),
+            note: format!(
+                "Cannot infer type for variant .{}(...) - provide a type annotation",
+                variant_name
+            ),
         });
         Err(())
     }
 
-    fn check_variant_lit(&mut self, variant_name: &str, fields: &[Expr], expected: &MonoType, span: Span) -> Result<(), ()> {
+    fn check_variant_lit(
+        &mut self,
+        variant_name: &str,
+        fields: &[Expr],
+        expected: &MonoType,
+        span: Span,
+    ) -> Result<(), ()> {
         // Expected type must be a sum type
         match expected {
             MonoType::Named { type_id, args } => {
@@ -2474,7 +2900,7 @@ impl TypeChecker {
                             expected: expected.clone(),
                             actual: MonoType::Void, // Placeholder
                             span,
-                    note: None,
+                            note: None,
                         });
                         return Err(());
                     }
@@ -2495,13 +2921,15 @@ impl TypeChecker {
                             }
                         } else if *type_id == RESULT_TYPE_ID {
                             match variant_name {
-                                "Ok"  => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+                                "Ok" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
                                 "Err" => vec![args.get(1).cloned().unwrap_or(MonoType::Void)],
                                 _ => v.fields.clone(),
                             }
                         } else {
                             // User-defined generic sum type: apply type-arg substitution
-                            let type_params = self.type_env.get_def(*type_id)
+                            let type_params = self
+                                .type_env
+                                .get_def(*type_id)
                                 .map(|d| d.type_params().to_vec())
                                 .unwrap_or_default();
                             let subst = build_type_subst(&type_params, args);
@@ -2527,7 +2955,8 @@ impl TypeChecker {
                     }
                     None => {
                         // Variant not found in this sum type
-                        let sum_type_name = self.type_env
+                        let sum_type_name = self
+                            .type_env
                             .get_def(*type_id)
                             .map(|d| d.name().to_string())
                             .unwrap_or_else(|| format!("Type#{}", type_id.0));
@@ -2558,11 +2987,17 @@ impl TypeChecker {
     // Case expressions
     //
 
-    fn synth_case(&mut self, scrutinee: &Expr, arms: &[crate::syntax::ast::CaseArm], span: Span) -> Result<MonoType, ()> {
+    fn synth_case(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[crate::syntax::ast::CaseArm],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         let scrut_ty = self.synth_expr(scrutinee)?;
 
         // Scrutinee must be a sum type or a matchable primitive (Int, Bool, String)
-        let is_primitive_match = matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
+        let is_primitive_match =
+            matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String);
         if !is_primitive_match && !scrut_ty.is_sum(&self.type_env) {
             self.errors.push(TypeError::CaseScrutineeNotSumType {
                 actual_type: scrut_ty.clone(),
@@ -2600,7 +3035,11 @@ impl TypeChecker {
         Ok(result_ty)
     }
 
-    fn synth_case_arm(&mut self, arm: &crate::syntax::ast::CaseArm, scrut_ty: &MonoType) -> Result<MonoType, ()> {
+    fn synth_case_arm(
+        &mut self,
+        arm: &crate::syntax::ast::CaseArm,
+        scrut_ty: &MonoType,
+    ) -> Result<MonoType, ()> {
         // Push a new scope for pattern bindings
         self.local_env.push_scope();
 
@@ -2660,8 +3099,14 @@ impl TypeChecker {
             }
             // Structural: Function
             (
-                MonoType::Function { params: p1, ret: r1 },
-                MonoType::Function { params: p2, ret: r2 },
+                MonoType::Function {
+                    params: p1,
+                    ret: r1,
+                },
+                MonoType::Function {
+                    params: p2,
+                    ret: r2,
+                },
             ) => {
                 if p1.len() != p2.len() {
                     self.errors.push(TypeError::TypeMismatch {
@@ -2672,7 +3117,11 @@ impl TypeChecker {
                     });
                     return Err(());
                 }
-                let pairs: Vec<_> = p1.iter().zip(p2.iter()).map(|(a, b)| (a.clone(), b.clone())).collect();
+                let pairs: Vec<_> = p1
+                    .iter()
+                    .zip(p2.iter())
+                    .map(|(a, b)| (a.clone(), b.clone()))
+                    .collect();
                 for (a, b) in pairs {
                     self.unify(&a, &b, span)?;
                 }
@@ -2682,8 +3131,14 @@ impl TypeChecker {
             }
             // Structural: Named
             (
-                MonoType::Named { type_id: id1, args: a1 },
-                MonoType::Named { type_id: id2, args: a2 },
+                MonoType::Named {
+                    type_id: id1,
+                    args: a1,
+                },
+                MonoType::Named {
+                    type_id: id2,
+                    args: a2,
+                },
             ) => {
                 if id1 != id2 || a1.len() != a2.len() {
                     self.errors.push(TypeError::TypeMismatch {
@@ -2694,7 +3149,11 @@ impl TypeChecker {
                     });
                     return Err(());
                 }
-                let pairs: Vec<_> = a1.iter().zip(a2.iter()).map(|(a, b)| (a.clone(), b.clone())).collect();
+                let pairs: Vec<_> = a1
+                    .iter()
+                    .zip(a2.iter())
+                    .map(|(a, b)| (a.clone(), b.clone()))
+                    .collect();
                 for (a, b) in pairs {
                     self.unify(&a, &b, span)?;
                 }
@@ -2744,13 +3203,20 @@ impl TypeChecker {
                 // r.field = expr — type-check both sides conservatively
                 let base_ty = self.synth_expr(base)?;
                 match base_ty {
-                    MonoType::Named { type_id, args: type_args } => {
+                    MonoType::Named {
+                        type_id,
+                        args: type_args,
+                    } => {
                         if let Some(fields) = self.type_env.get_record_fields(type_id) {
-                            let type_params = self.type_env.get_def(type_id)
+                            let type_params = self
+                                .type_env
+                                .get_def(type_id)
                                 .map(|d| d.type_params().to_vec())
                                 .unwrap_or_default();
                             let subst = build_type_subst(&type_params, &type_args);
-                            let field_ty = fields.iter().find(|f| f.name == *field)
+                            let field_ty = fields
+                                .iter()
+                                .find(|f| f.name == *field)
                                 .map(|f| apply_subst(&f.ty, &subst));
                             if let Some(fty) = field_ty {
                                 self.check_expr(right, &fty)?;
@@ -2802,7 +3268,7 @@ impl TypeChecker {
                             expected: MonoType::Array(Box::new(MonoType::Int)),
                             actual: other,
                             span: base.span,
-                    note: None,
+                            note: None,
                         });
                         Err(())
                     }
@@ -2812,7 +3278,8 @@ impl TypeChecker {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "complex assignment target",
                     span,
-                    note: "Only identifiers, field accesses, and index expressions can be assigned".to_string(),
+                    note: "Only identifiers, field accesses, and index expressions can be assigned"
+                        .to_string(),
                 });
                 Err(())
             }
@@ -2940,7 +3407,13 @@ impl TypeChecker {
     // Collect expression type checking
     //
 
-    fn synth_collect(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr, span: Span) -> Result<MonoType, ()> {
+    fn synth_collect(
+        &mut self,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Expr,
+        span: Span,
+    ) -> Result<MonoType, ()> {
         let iter_ty = self.synth_expr(iter)?;
 
         let elem_ty = match iter_ty {
@@ -2989,7 +3462,9 @@ impl TypeChecker {
 
 /// Build a substitution map from type parameter names to concrete type arguments.
 pub fn build_type_subst(type_params: &[String], args: &[MonoType]) -> HashMap<String, MonoType> {
-    type_params.iter().zip(args.iter())
+    type_params
+        .iter()
+        .zip(args.iter())
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
 }
@@ -3014,4 +3489,3 @@ pub fn apply_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType
         other => other.clone(),
     }
 }
-

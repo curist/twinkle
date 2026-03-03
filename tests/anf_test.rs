@@ -6,7 +6,7 @@
 /// not nested expressions.
 use std::fs;
 use std::path::Path;
-use twinkle::ir::anf::{Atom, AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp};
+use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use twinkle::ir::lower_anf;
 
 // ── Invariant checker ─────────────────────────────────────────────────────────
@@ -55,9 +55,11 @@ fn check_anf_expr(expr: &AnfExpr, prog: &str, func: &str) {
             // Let.local must be a valid local (not a sentinel or garbage value).
             // u32::MAX was used as a broken sentinel before AInit was introduced.
             assert_ne!(
-                local.0, u32::MAX,
+                local.0,
+                u32::MAX,
                 "Sentinel LocalId(MAX) in Let.local — lowering bug in '{}' function '{}'",
-                prog, func
+                prog,
+                func
             );
             check_anf_op(op, prog, func);
             check_anf_expr(body, prog, func);
@@ -76,7 +78,11 @@ fn check_anf_op(op: &AnfOp, prog: &str, func: &str) {
                 assert_is_atom(arg, "ACall.arg", prog, func);
             }
         }
-        AnfOp::AIf { cond, then_branch, else_branch } => {
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             assert_is_atom(cond, "AIf.cond", prog, func);
             check_anf_expr(then_branch, prog, func);
             check_anf_expr(else_branch, prog, func);
@@ -169,148 +175,234 @@ fn lower_anf_for(path: &str) -> AnfModule {
 
 fn check(path: &str) {
     // Verify the file exists.
-    assert!(
-        Path::new(path).exists(),
-        "Test file not found: {}",
-        path
-    );
+    assert!(Path::new(path).exists(), "Test file not found: {}", path);
     let module = lower_anf_for(path);
-    let prog_name = Path::new(path).file_name().unwrap().to_string_lossy().to_string();
+    let prog_name = Path::new(path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     check_anf_invariants(&module, &prog_name);
 }
 
 // ── Individual test functions for each test/run/*.tw program ──────────────────
 
 #[test]
-fn anf_hello() { check("tests/run/hello.tw"); }
+fn anf_hello() {
+    check("tests/run/hello.tw");
+}
 
 #[test]
-fn anf_arithmetic() { check("tests/run/arithmetic.tw"); }
+fn anf_arithmetic() {
+    check("tests/run/arithmetic.tw");
+}
 
 #[test]
-fn anf_strings() { check("tests/run/strings.tw"); }
+fn anf_strings() {
+    check("tests/run/strings.tw");
+}
 
 #[test]
-fn anf_strings_escape() { check("tests/run/strings_escape.tw"); }
+fn anf_strings_escape() {
+    check("tests/run/strings_escape.tw");
+}
 
 #[test]
-fn anf_control_flow() { check("tests/run/control_flow.tw"); }
+fn anf_control_flow() {
+    check("tests/run/control_flow.tw");
+}
 
 #[test]
-fn anf_loops() { check("tests/run/loops.tw"); }
+fn anf_loops() {
+    check("tests/run/loops.tw");
+}
 
 #[test]
-fn anf_for_break() { check("tests/run/for_break.tw"); }
+fn anf_for_break() {
+    check("tests/run/for_break.tw");
+}
 
 #[test]
-fn anf_collect() { check("tests/run/collect.tw"); }
+fn anf_collect() {
+    check("tests/run/collect.tw");
+}
 
 #[test]
-fn anf_records() { check("tests/run/records.tw"); }
+fn anf_records() {
+    check("tests/run/records.tw");
+}
 
 #[test]
-fn anf_arrays() { check("tests/run/arrays.tw"); }
+fn anf_arrays() {
+    check("tests/run/arrays.tw");
+}
 
 #[test]
-fn anf_array_methods() { check("tests/run/array_methods.tw"); }
+fn anf_array_methods() {
+    check("tests/run/array_methods.tw");
+}
 
 #[test]
-fn anf_closures() { check("tests/run/closures.tw"); }
+fn anf_closures() {
+    check("tests/run/closures.tw");
+}
 
 #[test]
-fn anf_capability_records() { check("tests/run/capability_records.tw"); }
+fn anf_capability_records() {
+    check("tests/run/capability_records.tw");
+}
 
 #[test]
-fn anf_nested_field_update() { check("tests/run/nested_field_update.tw"); }
+fn anf_nested_field_update() {
+    check("tests/run/nested_field_update.tw");
+}
 
 #[test]
-fn anf_type_alias() { check("tests/run/type_alias.tw"); }
+fn anf_type_alias() {
+    check("tests/run/type_alias.tw");
+}
 
 #[test]
-fn anf_mutual_recursion() { check("tests/run/mutual_recursion.tw"); }
+fn anf_mutual_recursion() {
+    check("tests/run/mutual_recursion.tw");
+}
 
 #[test]
-fn anf_result_void() { check("tests/run/result_void.tw"); }
+fn anf_result_void() {
+    check("tests/run/result_void.tw");
+}
 
 #[test]
-fn anf_dicts() { check("tests/run/dicts.tw"); }
+fn anf_dicts() {
+    check("tests/run/dicts.tw");
+}
 
 #[test]
-fn anf_dict_methods() { check("tests/run/dict_methods.tw"); }
+fn anf_dict_methods() {
+    check("tests/run/dict_methods.tw");
+}
 
 #[test]
-fn anf_string_methods() { check("tests/run/string_methods.tw"); }
+fn anf_string_methods() {
+    check("tests/run/string_methods.tw");
+}
 
 #[test]
-fn anf_variant_collision() { check("tests/run/variant_collision.tw"); }
+fn anf_variant_collision() {
+    check("tests/run/variant_collision.tw");
+}
 
 #[test]
-fn anf_range() { check("tests/run/range.tw"); }
+fn anf_range() {
+    check("tests/run/range.tw");
+}
 
 #[test]
-fn anf_iterator() { check("tests/run/iterator.tw"); }
+fn anf_iterator() {
+    check("tests/run/iterator.tw");
+}
 
 #[test]
-fn anf_iterator_advanced() { check("tests/run/iterator_advanced.tw"); }
+fn anf_iterator_advanced() {
+    check("tests/run/iterator_advanced.tw");
+}
 
 #[test]
-fn anf_generic_types() { check("tests/run/generic_types.tw"); }
+fn anf_generic_types() {
+    check("tests/run/generic_types.tw");
+}
 
 #[test]
-fn anf_method_chaining() { check("tests/run/method_chaining.tw"); }
+fn anf_method_chaining() {
+    check("tests/run/method_chaining.tw");
+}
 
 #[test]
-fn anf_empty_array() { check("tests/run/empty_array.tw"); }
+fn anf_empty_array() {
+    check("tests/run/empty_array.tw");
+}
 
 #[test]
-fn anf_module_globals() { check("tests/run/module_globals.tw"); }
+fn anf_module_globals() {
+    check("tests/run/module_globals.tw");
+}
 
 #[test]
-fn anf_error_types() { check("tests/run/error_types.tw"); }
+fn anf_error_types() {
+    check("tests/run/error_types.tw");
+}
 
 #[test]
-fn anf_option_shorthand() { check("tests/run/option_shorthand.tw"); }
+fn anf_option_shorthand() {
+    check("tests/run/option_shorthand.tw");
+}
 
 #[test]
-fn anf_result_shorthand() { check("tests/run/result_shorthand.tw"); }
+fn anf_result_shorthand() {
+    check("tests/run/result_shorthand.tw");
+}
 
 #[test]
-fn anf_result_try() { check("tests/run/result_try.tw"); }
+fn anf_result_try() {
+    check("tests/run/result_try.tw");
+}
 
 #[test]
-fn anf_multi_module() { check("tests/run/multi_module/main.tw"); }
+fn anf_multi_module() {
+    check("tests/run/multi_module/main.tw");
+}
 
 #[test]
-fn anf_multi_module_alias() { check("tests/run/multi_module_alias/main.tw"); }
+fn anf_multi_module_alias() {
+    check("tests/run/multi_module_alias/main.tw");
+}
 
 #[test]
-fn anf_pub_values() { check("tests/run/pub_values/main.tw"); }
+fn anf_pub_values() {
+    check("tests/run/pub_values/main.tw");
+}
 
 #[test]
-fn anf_defer_basic() { check("tests/run/defer_basic.tw"); }
+fn anf_defer_basic() {
+    check("tests/run/defer_basic.tw");
+}
 
 #[test]
-fn anf_defer_return() { check("tests/run/defer_return.tw"); }
+fn anf_defer_return() {
+    check("tests/run/defer_return.tw");
+}
 
 #[test]
-fn anf_defer_loop() { check("tests/run/defer_loop.tw"); }
+fn anf_defer_loop() {
+    check("tests/run/defer_loop.tw");
+}
 
 #[test]
-fn anf_defer_capture() { check("tests/run/defer_capture.tw"); }
+fn anf_defer_capture() {
+    check("tests/run/defer_capture.tw");
+}
 
 #[test]
-fn anf_defer_if() { check("tests/run/defer_if.tw"); }
+fn anf_defer_if() {
+    check("tests/run/defer_if.tw");
+}
 
 // Trap tests — these panic at the interpreter level, but the lowering to ANF
 // should still succeed (trapping happens at runtime, not at compile time).
 #[test]
-fn anf_trap_array_oob() { check("tests/run/traps/array_oob.tw"); }
+fn anf_trap_array_oob() {
+    check("tests/run/traps/array_oob.tw");
+}
 
 #[test]
-fn anf_trap_div_zero() { check("tests/run/traps/div_zero.tw"); }
+fn anf_trap_div_zero() {
+    check("tests/run/traps/div_zero.tw");
+}
 
 #[test]
-fn anf_trap_error_call() { check("tests/run/traps/error_call.tw"); }
+fn anf_trap_error_call() {
+    check("tests/run/traps/error_call.tw");
+}
 
 // ── Golden snapshot tests ─────────────────────────────────────────────────────
 // These tests verify the exact ANF output for a few representative programs.

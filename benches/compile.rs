@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/run")
@@ -13,9 +13,9 @@ fn bench_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("check");
 
     let cases = [
-        ("hello",             "hello.tw"),
+        ("hello", "hello.tw"),
         ("iterator_advanced", "iterator_advanced.tw"),
-        ("multi_module",      "multi_module/main.tw"),
+        ("multi_module", "multi_module/main.tw"),
         ("twinkle_typechecker", "twinkle_typechecker.tw"),
     ];
 
@@ -36,9 +36,9 @@ fn bench_check_cold(c: &mut Criterion) {
     let mut group = c.benchmark_group("check_cold");
 
     let cases = [
-        ("hello",             "hello.tw"),
+        ("hello", "hello.tw"),
         ("iterator_advanced", "iterator_advanced.tw"),
-        ("multi_module",      "multi_module/main.tw"),
+        ("multi_module", "multi_module/main.tw"),
         ("twinkle_typechecker", "twinkle_typechecker.tw"),
     ];
 
@@ -62,9 +62,9 @@ fn bench_compile(c: &mut Criterion) {
     let mut group = c.benchmark_group("compile");
 
     let cases = [
-        ("hello",             "hello.tw"),
+        ("hello", "hello.tw"),
         ("iterator_advanced", "iterator_advanced.tw"),
-        ("multi_module",      "multi_module/main.tw"),
+        ("multi_module", "multi_module/main.tw"),
         ("twinkle_typechecker", "twinkle_typechecker.tw"),
     ];
 
@@ -85,9 +85,9 @@ fn bench_compile_cold(c: &mut Criterion) {
     let mut group = c.benchmark_group("compile_cold");
 
     let cases = [
-        ("hello",             "hello.tw"),
+        ("hello", "hello.tw"),
         ("iterator_advanced", "iterator_advanced.tw"),
-        ("multi_module",      "multi_module/main.tw"),
+        ("multi_module", "multi_module/main.tw"),
         ("twinkle_typechecker", "twinkle_typechecker.tw"),
     ];
 

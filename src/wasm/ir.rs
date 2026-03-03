@@ -15,7 +15,7 @@ pub enum HeapType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValType {
-    I8,  // packed storage type for array elements
+    I8, // packed storage type for array elements
     I32,
     I64,
     F32,
@@ -35,11 +35,19 @@ pub struct FieldDef {
 
 impl FieldDef {
     pub fn new(ty: ValType) -> Self {
-        FieldDef { name: None, mutable: false, ty }
+        FieldDef {
+            name: None,
+            mutable: false,
+            ty,
+        }
     }
 
     pub fn named(name: impl Into<String>, ty: ValType) -> Self {
-        FieldDef { name: Some(name.into()), mutable: false, ty }
+        FieldDef {
+            name: Some(name.into()),
+            mutable: false,
+            ty,
+        }
     }
 
     pub fn mutable(mut self) -> Self {
@@ -50,9 +58,19 @@ impl FieldDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeDef {
-    Struct { name: TypeSym, fields: Vec<FieldDef> },
-    Array { name: TypeSym, elem: FieldDef },
-    FuncType { name: TypeSym, params: Vec<ValType>, results: Vec<ValType> },
+    Struct {
+        name: TypeSym,
+        fields: Vec<FieldDef>,
+    },
+    Array {
+        name: TypeSym,
+        elem: FieldDef,
+    },
+    FuncType {
+        name: TypeSym,
+        params: Vec<ValType>,
+        results: Vec<ValType>,
+    },
 }
 
 impl TypeDef {
@@ -137,7 +155,10 @@ pub enum Instr {
     RefEq,
     RefI31,
     I31GetS,
-    RefCast { nullable: bool, heap: HeapType },
+    RefCast {
+        nullable: bool,
+        heap: HeapType,
+    },
 
     // Struct ops
     StructNew(TypeSym),
@@ -157,7 +178,10 @@ pub enum Instr {
 
     // Calls
     Call(FuncSym),
-    CallIndirect { ty: TypeSym, table: u32 },
+    CallIndirect {
+        ty: TypeSym,
+        table: u32,
+    },
     /// `ref.func $sym` — produce a typed function reference without a table.
     RefFunc(FuncSym),
     /// `call_ref $type` — call via typed function reference (pops funcref from stack).

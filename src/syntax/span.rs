@@ -20,12 +20,19 @@ pub struct Span {
 
 impl Span {
     pub fn new(file_id: FileId, start: u32, end: u32) -> Self {
-        Self { file_id, start, end }
+        Self {
+            file_id,
+            start,
+            end,
+        }
     }
 
     /// Merge two spans into one that covers both
     pub fn merge(&self, other: &Span) -> Span {
-        debug_assert_eq!(self.file_id, other.file_id, "Cannot merge spans from different files");
+        debug_assert_eq!(
+            self.file_id, other.file_id,
+            "Cannot merge spans from different files"
+        );
         Span {
             file_id: self.file_id,
             start: self.start.min(other.start),
@@ -103,7 +110,9 @@ impl FileRegistry {
 
     /// Get the full source for a file
     pub fn source(&self, file_id: FileId) -> Option<&str> {
-        self.files.get(file_id.0 as usize).map(|f| f.source.as_str())
+        self.files
+            .get(file_id.0 as usize)
+            .map(|f| f.source.as_str())
     }
 
     /// Convert a byte offset to (line, column)
@@ -132,7 +141,8 @@ impl FileRegistry {
         let line_index = line - 1;
 
         let line_start = file.line_starts.get(line_index).copied()? as usize;
-        let line_end = file.line_starts
+        let line_end = file
+            .line_starts
             .get(line_index + 1)
             .copied()
             .unwrap_or(file.source.len() as u32) as usize;
@@ -181,7 +191,7 @@ mod tests {
         assert_eq!(registry.source(file_id), Some(source));
 
         // Test line/col conversion
-        let span = Span::new(file_id, 7, 13);  // "line 2"
+        let span = Span::new(file_id, 7, 13); // "line 2"
         assert_eq!(registry.line_col(span), Some((2, 1)));
 
         // Test snippet

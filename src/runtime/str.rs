@@ -1,5 +1,5 @@
-use crate::wasm::ir::*;
 use crate::runtime::types::*;
+use crate::wasm::ir::*;
 
 /// Build the `rt.str` module: string operations.
 pub fn make() -> ModuleIR {
@@ -39,11 +39,7 @@ fn len_fn() -> FuncDef {
         params: vec![ref_string_null()],
         results: vec![ValType::I32],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0),
-            Instr::RefAsNonNull,
-            Instr::ArrayLen,
-        ],
+        body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen],
     }
 }
 
@@ -56,20 +52,42 @@ fn concat_fn() -> FuncDef {
         results: vec![ref_string()],
         locals: vec![ValType::I32, ValType::I32, ValType::I32, ref_string_null()],
         body: vec![
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(2),
-            Instr::LocalGet(1), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(3),
-            Instr::LocalGet(2), Instr::LocalGet(3), Instr::I32Add, Instr::LocalSet(4),
-            Instr::I32Const(0), Instr::LocalGet(4), Instr::ArrayNew(T_STRING.into()),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
+            Instr::LocalGet(2),
+            Instr::LocalGet(3),
+            Instr::I32Add,
+            Instr::LocalSet(4),
+            Instr::I32Const(0),
+            Instr::LocalGet(4),
+            Instr::ArrayNew(T_STRING.into()),
             Instr::LocalSet(5),
             // copy a into result[0..len_a]
-            Instr::LocalGet(5), Instr::RefAsNonNull, Instr::I32Const(0),
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::I32Const(0),
-            Instr::LocalGet(2), Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(2),
+            Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
             // copy b into result[len_a..total]
-            Instr::LocalGet(5), Instr::RefAsNonNull, Instr::LocalGet(2),
-            Instr::LocalGet(1), Instr::RefAsNonNull, Instr::I32Const(0),
-            Instr::LocalGet(3), Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
-            Instr::LocalGet(5), Instr::RefAsNonNull,
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(3),
+            Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
         ],
     }
 }
@@ -83,14 +101,24 @@ fn substring_fn() -> FuncDef {
         results: vec![ref_string()],
         locals: vec![ValType::I32, ref_string_null()],
         body: vec![
-            Instr::LocalGet(2), Instr::LocalGet(1), Instr::I32Sub, Instr::LocalSet(3),
-            Instr::I32Const(0), Instr::LocalGet(3), Instr::ArrayNew(T_STRING.into()),
+            Instr::LocalGet(2),
+            Instr::LocalGet(1),
+            Instr::I32Sub,
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalGet(3),
+            Instr::ArrayNew(T_STRING.into()),
             Instr::LocalSet(4),
-            Instr::LocalGet(4), Instr::RefAsNonNull, Instr::I32Const(0),
-            Instr::LocalGet(0), Instr::RefAsNonNull,
-            Instr::LocalGet(1), Instr::LocalGet(3),
+            Instr::LocalGet(4),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::LocalGet(3),
             Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
-            Instr::LocalGet(4), Instr::RefAsNonNull,
+            Instr::LocalGet(4),
+            Instr::RefAsNonNull,
         ],
     }
 }
@@ -105,10 +133,15 @@ fn eq_fn() -> FuncDef {
         locals: vec![ValType::I32, ValType::I32],
         body: vec![
             // p2 = len(a)
-            Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen, Instr::LocalSet(2),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
             // if len(a) != len(b): return 0
             Instr::LocalGet(2),
-            Instr::LocalGet(1), Instr::RefAsNonNull, Instr::ArrayLen,
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
             Instr::I32Ne,
             Instr::If {
                 result: None,
@@ -116,7 +149,8 @@ fn eq_fn() -> FuncDef {
                 else_body: vec![],
             },
             // p3 = 0
-            Instr::I32Const(0), Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
             Instr::Block {
                 label: "exit".into(),
                 result: None,
@@ -124,11 +158,17 @@ fn eq_fn() -> FuncDef {
                     label: "cmp".into(),
                     result: None,
                     body: vec![
-                        Instr::LocalGet(3), Instr::LocalGet(2), Instr::I32GeS,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
                         Instr::BrIf("exit".into()),
-                        Instr::LocalGet(0), Instr::RefAsNonNull, Instr::LocalGet(3),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
                         Instr::ArrayGetU(T_STRING.into()),
-                        Instr::LocalGet(1), Instr::RefAsNonNull, Instr::LocalGet(3),
+                        Instr::LocalGet(1),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
                         Instr::ArrayGetU(T_STRING.into()),
                         Instr::I32Ne,
                         Instr::If {
@@ -136,7 +176,9 @@ fn eq_fn() -> FuncDef {
                             then_body: vec![Instr::I32Const(0), Instr::Return],
                             else_body: vec![],
                         },
-                        Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Add,
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
                         Instr::LocalSet(3),
                         Instr::Br("cmp".into()),
                     ],
@@ -166,7 +208,8 @@ fn from_i64_fn() -> FuncDef {
         ],
         body: vec![
             // Special case: n == 0 → return "0"
-            Instr::LocalGet(0), Instr::I64Eqz,
+            Instr::LocalGet(0),
+            Instr::I64Eqz,
             Instr::If {
                 result: None,
                 then_body: vec![
@@ -177,7 +220,8 @@ fn from_i64_fn() -> FuncDef {
                 else_body: vec![],
             },
             // Special case: i64::MIN — negation would overflow, emit literal string
-            Instr::LocalGet(0), Instr::I64Const(i64::MIN),
+            Instr::LocalGet(0),
+            Instr::I64Const(i64::MIN),
             Instr::I64Eq,
             Instr::If {
                 result: None,
@@ -209,7 +253,10 @@ fn from_i64_fn() -> FuncDef {
                 else_body: vec![],
             },
             // neg = (n < 0)
-            Instr::LocalGet(0), Instr::I64Const(0), Instr::I64LtS, Instr::LocalSet(1),
+            Instr::LocalGet(0),
+            Instr::I64Const(0),
+            Instr::I64LtS,
+            Instr::LocalSet(1),
             // work = neg ? -n : n  (safe: i64::MIN already handled above)
             Instr::LocalGet(1),
             Instr::If {
@@ -219,29 +266,43 @@ fn from_i64_fn() -> FuncDef {
             },
             Instr::LocalSet(2),
             // buf = array.new $String (fill=0, len=20)
-            Instr::I32Const(0), Instr::I32Const(20), Instr::ArrayNew(T_STRING.into()),
+            Instr::I32Const(0),
+            Instr::I32Const(20),
+            Instr::ArrayNew(T_STRING.into()),
             Instr::LocalSet(5),
             // pos = 19
-            Instr::I32Const(19), Instr::LocalSet(3),
+            Instr::I32Const(19),
+            Instr::LocalSet(3),
             // digit extraction loop
             Instr::Loop {
                 label: "digits".into(),
                 result: None,
                 body: vec![
                     // buf[pos] = '0' + (work % 10)
-                    Instr::LocalGet(5), Instr::RefAsNonNull,
+                    Instr::LocalGet(5),
+                    Instr::RefAsNonNull,
                     Instr::LocalGet(3),
-                    Instr::LocalGet(2), Instr::I64Const(10), Instr::I64RemS,
+                    Instr::LocalGet(2),
+                    Instr::I64Const(10),
+                    Instr::I64RemS,
                     Instr::I32WrapI64,
-                    Instr::I32Const(48), Instr::I32Add,
+                    Instr::I32Const(48),
+                    Instr::I32Add,
                     Instr::ArraySet(T_STRING.into()),
                     // work /= 10
-                    Instr::LocalGet(2), Instr::I64Const(10), Instr::I64DivS,
+                    Instr::LocalGet(2),
+                    Instr::I64Const(10),
+                    Instr::I64DivS,
                     Instr::LocalSet(2),
                     // pos--
-                    Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Sub, Instr::LocalSet(3),
+                    Instr::LocalGet(3),
+                    Instr::I32Const(1),
+                    Instr::I32Sub,
+                    Instr::LocalSet(3),
                     // continue if work != 0
-                    Instr::LocalGet(2), Instr::I64Eqz, Instr::I32Eqz,
+                    Instr::LocalGet(2),
+                    Instr::I64Eqz,
+                    Instr::I32Eqz,
                     Instr::BrIf("digits".into()),
                 ],
             },
@@ -250,26 +311,41 @@ fn from_i64_fn() -> FuncDef {
             Instr::If {
                 result: None,
                 then_body: vec![
-                    Instr::LocalGet(5), Instr::RefAsNonNull,
+                    Instr::LocalGet(5),
+                    Instr::RefAsNonNull,
                     Instr::LocalGet(3),
                     Instr::I32Const(45), // '-'
                     Instr::ArraySet(T_STRING.into()),
-                    Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Sub, Instr::LocalSet(3),
+                    Instr::LocalGet(3),
+                    Instr::I32Const(1),
+                    Instr::I32Sub,
+                    Instr::LocalSet(3),
                 ],
                 else_body: vec![],
             },
             // result_len = 19 - pos
-            Instr::I32Const(19), Instr::LocalGet(3), Instr::I32Sub, Instr::LocalSet(4),
+            Instr::I32Const(19),
+            Instr::LocalGet(3),
+            Instr::I32Sub,
+            Instr::LocalSet(4),
             // result = array.new $String (0, result_len)
-            Instr::I32Const(0), Instr::LocalGet(4), Instr::ArrayNew(T_STRING.into()),
+            Instr::I32Const(0),
+            Instr::LocalGet(4),
+            Instr::ArrayNew(T_STRING.into()),
             Instr::LocalSet(6),
             // array.copy result 0 buf (pos+1) result_len
-            Instr::LocalGet(6), Instr::RefAsNonNull, Instr::I32Const(0),
-            Instr::LocalGet(5), Instr::RefAsNonNull,
-            Instr::LocalGet(3), Instr::I32Const(1), Instr::I32Add,
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(3),
+            Instr::I32Const(1),
+            Instr::I32Add,
             Instr::LocalGet(4),
             Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
-            Instr::LocalGet(6), Instr::RefAsNonNull,
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
         ],
     }
 }
@@ -281,10 +357,7 @@ fn from_f64_fn() -> FuncDef {
         params: vec![ValType::F64],
         results: vec![ref_string()],
         locals: vec![],
-        body: vec![
-            Instr::LocalGet(0),
-            Instr::Call("host_f64_to_string".into()),
-        ],
+        body: vec![Instr::LocalGet(0), Instr::Call("host_f64_to_string".into())],
     }
 }
 
@@ -300,13 +373,18 @@ fn from_bool_fn() -> FuncDef {
             Instr::If {
                 result: Some(ref_string()),
                 then_body: vec![
-                    Instr::I32Const(116), Instr::I32Const(114),
-                    Instr::I32Const(117), Instr::I32Const(101),
+                    Instr::I32Const(116),
+                    Instr::I32Const(114),
+                    Instr::I32Const(117),
+                    Instr::I32Const(101),
                     Instr::ArrayNewFixed(T_STRING.into(), 4),
                 ],
                 else_body: vec![
-                    Instr::I32Const(102), Instr::I32Const(97),
-                    Instr::I32Const(108), Instr::I32Const(115), Instr::I32Const(101),
+                    Instr::I32Const(102),
+                    Instr::I32Const(97),
+                    Instr::I32Const(108),
+                    Instr::I32Const(115),
+                    Instr::I32Const(101),
                     Instr::ArrayNewFixed(T_STRING.into(), 5),
                 ],
             },

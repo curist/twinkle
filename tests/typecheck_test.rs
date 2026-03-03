@@ -18,10 +18,7 @@ fn test_typecheck_pass_cases() {
 
     // Check if directory exists
     if !test_dir.exists() {
-        panic!(
-            "Test directory does not exist: {}",
-            test_dir.display()
-        );
+        panic!("Test directory does not exist: {}", test_dir.display());
     }
 
     let mut test_count = 0;
@@ -49,24 +46,30 @@ fn test_typecheck_pass_cases() {
         };
 
         // Resolve names
-        let resolved = match twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new()) {
-            Ok(r) => r,
-            Err(errors) => {
-                let error_msg = errors
-                    .iter()
-                    .map(|e| e.format(&registry, None))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                failed.push(format!(
-                    "{}: Name resolution failed:\n{}",
-                    file_name, error_msg
-                ));
-                continue;
-            }
-        };
+        let resolved =
+            match twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new()) {
+                Ok(r) => r,
+                Err(errors) => {
+                    let error_msg = errors
+                        .iter()
+                        .map(|e| e.format(&registry, None))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    failed.push(format!(
+                        "{}: Name resolution failed:\n{}",
+                        file_name, error_msg
+                    ));
+                    continue;
+                }
+            };
 
         // Type check
-        match twinkle::types::TypeChecker::check_module(&ast, resolved.type_env.clone(), resolved.value_env, builtin_aliases()) {
+        match twinkle::types::TypeChecker::check_module(
+            &ast,
+            resolved.type_env.clone(),
+            resolved.value_env,
+            builtin_aliases(),
+        ) {
             Ok(_typed) => {
                 passed += 1;
             }
@@ -85,7 +88,11 @@ fn test_typecheck_pass_cases() {
     }
 
     if !failed.is_empty() {
-        eprintln!("\n❌ Failed {} out of {} tests:\n", failed.len(), test_count);
+        eprintln!(
+            "\n❌ Failed {} out of {} tests:\n",
+            failed.len(),
+            test_count
+        );
         for failure in &failed {
             eprintln!("{}\n", failure);
         }
@@ -104,10 +111,7 @@ fn test_typecheck_fail_cases() {
 
     // Check if directory exists
     if !test_dir.exists() {
-        panic!(
-            "Test directory does not exist: {}",
-            test_dir.display()
-        );
+        panic!("Test directory does not exist: {}", test_dir.display());
     }
 
     let mut test_count = 0;
@@ -138,7 +142,12 @@ fn test_typecheck_fail_cases() {
         // Resolve names and type check
         let result = twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new())
             .and_then(|r| {
-                twinkle::types::TypeChecker::check_module(&ast, r.type_env, r.value_env, builtin_aliases())
+                twinkle::types::TypeChecker::check_module(
+                    &ast,
+                    r.type_env,
+                    r.value_env,
+                    builtin_aliases(),
+                )
             });
 
         match result {
@@ -156,7 +165,11 @@ fn test_typecheck_fail_cases() {
     }
 
     if !failed.is_empty() {
-        eprintln!("\n❌ Failed {} out of {} tests:\n", failed.len(), test_count);
+        eprintln!(
+            "\n❌ Failed {} out of {} tests:\n",
+            failed.len(),
+            test_count
+        );
         for failure in &failed {
             eprintln!("{}\n", failure);
         }
@@ -171,17 +184,24 @@ fn test_typecheck_fail_cases() {
 
 /// Run a program through parse → resolve → typecheck and return all formatted error messages.
 fn check_errors(src: &str) -> Vec<String> {
-    let (ast, registry) = twinkle::syntax::parse_source(src, "test.tw")
-        .expect("parse failed");
+    let (ast, registry) = twinkle::syntax::parse_source(src, "test.tw").expect("parse failed");
     let resolved = match twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new()) {
         Ok(r) => r,
         Err(errors) => {
             return errors.iter().map(|e| e.format(&registry, None)).collect();
         }
     };
-    match twinkle::types::TypeChecker::check_module(&ast, resolved.type_env.clone(), resolved.value_env, builtin_aliases()) {
+    match twinkle::types::TypeChecker::check_module(
+        &ast,
+        resolved.type_env.clone(),
+        resolved.value_env,
+        builtin_aliases(),
+    ) {
         Ok(_) => vec![],
-        Err(errors) => errors.iter().map(|e| e.format(&registry, Some(&resolved.type_env))).collect(),
+        Err(errors) => errors
+            .iter()
+            .map(|e| e.format(&registry, Some(&resolved.type_env)))
+            .collect(),
     }
 }
 
@@ -192,8 +212,16 @@ fn test_error_note_regular_call() {
     let errors = check_errors(src);
     assert!(!errors.is_empty(), "expected a type error");
     let joined = errors.join("\n");
-    assert!(joined.contains("argument 2"), "expected 'argument 2' in error:\n{}", joined);
-    assert!(joined.contains("add"), "expected function name 'add' in error:\n{}", joined);
+    assert!(
+        joined.contains("argument 2"),
+        "expected 'argument 2' in error:\n{}",
+        joined
+    );
+    assert!(
+        joined.contains("add"),
+        "expected function name 'add' in error:\n{}",
+        joined
+    );
 }
 
 #[test]
@@ -203,8 +231,16 @@ fn test_error_note_generic_call() {
     let errors = check_errors(src);
     assert!(!errors.is_empty(), "expected a type error");
     let joined = errors.join("\n");
-    assert!(joined.contains("argument 2"), "expected 'argument 2' in error:\n{}", joined);
-    assert!(joined.contains("first"), "expected function name 'first' in error:\n{}", joined);
+    assert!(
+        joined.contains("argument 2"),
+        "expected 'argument 2' in error:\n{}",
+        joined
+    );
+    assert!(
+        joined.contains("first"),
+        "expected function name 'first' in error:\n{}",
+        joined
+    );
 }
 
 // Closure capture-by-value semantics (spec §7.7).

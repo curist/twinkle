@@ -161,7 +161,7 @@ function (invoke via Wasmtime in test harness, deferred to Stage 9).
 
 ---
 
-## 8c — ANF → WAT Emitter (`src/codegen/`)
+## 8c — ANF → WAT Emitter (`src/codegen/`) ✅
 
 **Prerequisite — ANF type annotations:** Several ANF nodes lack the type information needed
 for code generation. Before starting the emitter, augment these nodes in `src/ir/anf.rs` and
@@ -337,7 +337,7 @@ them, persist the zonked concrete type args into this map. This is the primary i
 Stage 9.5 monomorphization pass — recording it now is trivial and avoids a retroactive change
 later.
 
-**Step 1 — Scaffold** (`prelude.rs`, `ctx.rs`, `mod.rs`) ← next
+**Step 1 — Scaffold** (`prelude.rs`, `ctx.rs`, `mod.rs`) ✅
 
 * `prelude.rs`: `PreludeMap` — `HashMap<FuncId, PreludeEntry>` where each entry has the
   runtime `FuncSym`, param types, result type. Covers all 35 prelude FuncIds.
@@ -348,7 +348,7 @@ later.
   assigns contiguous Wasm local indices after params, infers `ValType` from usage context.
 * Helper: `fn mono_to_valtype(ty: &MonoType) -> ValType` — central mapping function.
 
-**Step 2 — Atoms + literals** (`emit.rs`)
+**Step 2 — Atoms + literals** (`emit.rs`) ✅
 
 * `emit_atom(atom, expected_ty, ctx)` → `Vec<Instr>`:
   * `ALocal(id)` → `LocalGet(idx)`, with box/unbox if local type ≠ expected type.
@@ -359,14 +359,14 @@ later.
   * `ALitStr(s)` → `ArrayNewFixed $String` with UTF-8 bytes.
   * `ALitVoid` → (nothing, or `I32Const(0)` if a value is needed).
 
-**Step 3 — BinOp, UnOp, If**
+**Step 3 — BinOp, UnOp, If** ✅
 
 * `ABinOp` — emit left + right (both typed), apply `i64.add`/`f64.mul`/`i32.eq`/etc.
   Comparison ops that cross types (e.g. `==` on strings) → `call rt_str__eq`.
 * `AUnOp` — `Negate` → `i64.const 0; i64.sub` or `f64.neg`; `Not` → `i32.eqz`.
 * `AIf` → `If { result: Some(valtype), then_body, else_body }`.
 
-**Step 4 — Direct calls + prelude calls**
+**Step 4 — Direct calls + prelude calls** ✅
 
 * User-to-user direct call: push typed args, `call $func_N`.
 * Prelude call: look up `PreludeEntry`, convert each arg from Twinkle type to runtime
@@ -374,14 +374,14 @@ later.
   `call $rt_sym`, convert result back.
 * Register each used runtime func as an import in `EmitCtx`.
 
-**Step 5 — Closure calls + AMakeClosure**
+**Step 5 — Closure calls + AMakeClosure** ✅
 
 * `AMakeClosure` → generate trampoline `$func_N__closure` if not yet emitted; box free vars
   into `$ClosureEnv`, `ref.func $func_N__closure`, `struct.new $Closure`.
 * Closure call → cast to `$Closure`, box args into `$Array`, extract env + func_ref,
   `call_ref $ClosureFunc`, unbox result.
 
-**Step 6 — Records, variants, arrays**
+**Step 6 — Records, variants, arrays** ✅
 
 * `ARecord` → box fields, `struct.new $UserRecord_N`.
 * `ARecordGet` → cast, `struct.get`, unbox.
@@ -390,13 +390,13 @@ later.
 * `AArrayLit` → box elements, `array.new_fixed $Array`.
 * `AIndex` → `call rt.arr.get` / `call rt.dict.get`, unbox result.
 
-**Step 7 — Loops, break, continue**
+**Step 7 — Loops, break, continue** ✅
 
 * `ALoop` → `Block { label: $break_N } + Loop { label: $cont_N, body }`.
 * `Break` → `Br($break_N)`; `Continue` → `Br($cont_N)`.
 * Push/pop label pairs on `EmitCtx.label_stack`.
 
-**Step 8 — Pattern matching**
+**Step 8 — Pattern matching** ✅
 
 * `AMatch` → `Block` per arm. Cast scrutinee to `$Variant`. For each arm:
   extract `struct.get $Variant 0` (type_id) and `struct.get $Variant 1` (variant_id),
@@ -406,7 +406,7 @@ later.
   Literal patterns: compare constants.
   Wildcard `_`: fallthrough.
 
-**Step 9 — Build pipeline + CLI** (overlaps with 8d)
+**Step 9 — Build pipeline + CLI** (overlaps with 8d) ✅
 
 * Wire `emit_user_module` into the compilation pipeline.
 * Snapshot tests: compile `hello.tw`, `arithmetic.tw`, `records.tw` to WAT, assert valid
@@ -414,7 +414,7 @@ later.
 
 ---
 
-## 8d — Full build pipeline
+## 8d — Full build pipeline ← next
 
 Wire the complete pipeline in `src/cli/build.rs`:
 

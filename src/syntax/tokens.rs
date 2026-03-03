@@ -60,18 +60,18 @@ pub enum TokenKind {
     ColonEq, // :=
 
     // Punctuation
-    LParen,   // (
-    RParen,   // )
-    LBrace,   // {
-    RBrace,   // }
-    LBracket, // [
-    RBracket, // ]
-    Comma,    // ,
-    Colon,    // :
-    Dot,      // .
-    Question, // ?
-    Semi,     // ;
-    FatArrow, // =>
+    LParen,     // (
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    LBracket,   // [
+    RBracket,   // ]
+    Comma,      // ,
+    Colon,      // :
+    Dot,        // .
+    Question,   // ?
+    Semi,       // ;
+    FatArrow,   // =>
     Underscore, // _
 
     // Special
@@ -234,7 +234,12 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span, text: String) -> Self {
-        Self { kind, span, text, preceded_by_newline: false }
+        Self {
+            kind,
+            span,
+            text,
+            preceded_by_newline: false,
+        }
     }
 
     /// Create an EOF token

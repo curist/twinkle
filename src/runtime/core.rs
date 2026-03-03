@@ -1,5 +1,5 @@
-use crate::wasm::ir::*;
 use crate::runtime::types::*;
+use crate::wasm::ir::*;
 
 /// Build the `rt.core` module: equality, trap, and host I/O bindings.
 pub fn make() -> ModuleIR {
@@ -93,7 +93,9 @@ fn eq_fn() -> FuncDef {
         locals: vec![],
         body: vec![
             // Fast path: same pointer
-            Instr::LocalGet(0), Instr::LocalGet(1), Instr::RefEq,
+            Instr::LocalGet(0),
+            Instr::LocalGet(1),
+            Instr::RefEq,
             Instr::If {
                 result: None,
                 then_body: vec![Instr::I32Const(1), Instr::Return],
@@ -101,11 +103,17 @@ fn eq_fn() -> FuncDef {
             },
             // Check if both are $BoxedInt using nullable cast + ref.is_null
             Instr::LocalGet(0),
-            Instr::RefCast { nullable: true, heap: HeapType::Named(T_BOXED_INT.into()) },
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(T_BOXED_INT.into()),
+            },
             Instr::RefIsNull,
             Instr::I32Eqz, // is_boxed_int_a
             Instr::LocalGet(1),
-            Instr::RefCast { nullable: true, heap: HeapType::Named(T_BOXED_INT.into()) },
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(T_BOXED_INT.into()),
+            },
             Instr::RefIsNull,
             Instr::I32Eqz, // is_boxed_int_b
             Instr::I32And,
@@ -114,16 +122,24 @@ fn eq_fn() -> FuncDef {
                 then_body: vec![
                     // a.v == b.v
                     Instr::LocalGet(0),
-                    Instr::RefCast { nullable: false, heap: HeapType::Named(T_BOXED_INT.into()) },
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_INT.into()),
+                    },
                     Instr::StructGet(T_BOXED_INT.into(), 0),
                     Instr::LocalGet(1),
-                    Instr::RefCast { nullable: false, heap: HeapType::Named(T_BOXED_INT.into()) },
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_INT.into()),
+                    },
                     Instr::StructGet(T_BOXED_INT.into(), 0),
                     Instr::I64Eq,
                 ],
                 else_body: vec![
                     // Fall back to identity
-                    Instr::LocalGet(0), Instr::LocalGet(1), Instr::RefEq,
+                    Instr::LocalGet(0),
+                    Instr::LocalGet(1),
+                    Instr::RefEq,
                 ],
             },
         ],
