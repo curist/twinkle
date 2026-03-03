@@ -446,6 +446,10 @@ Proposed fixes (now implemented in stage0 `twk`):
    expression typing and use it in local assignment.
 5. Pattern binding typing: carry expected field types while traversing `CorePattern::Variant` and
    assign pattern locals with concrete `ValType` instead of unconditional `anyref`.
+6. `AMatch` result inference: ignore diverging arms when inferring value type; use the
+   non-diverging arm join type when available.
+7. `CorePattern::Var` binding typing in `match`: use scrutinee local `ValType` instead of default
+   `anyref` when pattern is a direct variable bind.
 
 Regression coverage (added and enabled):
 
@@ -454,10 +458,12 @@ Regression coverage (added and enabled):
 * `codegen::ctx::tests::local_type_record_get_prefers_field_type`
 * `codegen::ctx::tests::local_type_index_prefers_element_type`
 * `codegen::ctx::tests::local_type_match_variant_binding_prefers_variant_field_type`
+* `codegen::ctx::tests::local_type_match_var_binding_prefers_scrutinee_type`
+* `codegen::ctx::tests::local_type_match_with_diverging_arm_prefers_non_diverging_type`
 
 Acceptance criteria for this follow-up:
 
-* Keep all five regression tests enabled and green.
+* Keep all listed regression tests enabled and green.
 * Re-audit emitted WAT for fixture corpus: no `if/block (result anyref)` in user functions unless
   required by intentional type-erasure boundaries.
 * Numeric hot paths (e.g. recursive `fib`) emit typed control-flow results (`i64`) without
@@ -482,7 +488,8 @@ Implemented fixes:
 2. Closure capture layout/signatures/trampoline arity now use module-level
    `AMakeClosure.free_vars` as source of truth.
 3. `run-wasm` UTF-8 decoding is now strict (`String::from_utf8` + context-rich error).
-4. Match arm `if` now omits result type when both branches are known-diverging.
+4. `AIf` and match-arm `if` now omit result type when both branches are
+   known-diverging; diverging `AIf` bindings also skip dead `local.set`.
 5. `lower_anf` `Let` lowering now uses an isolated value accumulator and only
    commits it on non-terminal values; terminal values return a self-contained
    `build_lets(value_accum, terminal)` subtree (no partial binding leakage).
@@ -494,6 +501,7 @@ Regression coverage:
 * `opt::use_count::tests::is_pure_marks_integer_div_mod_impure`
 * `cli::run_wasm::tests::decode_runtime_utf8_bytes_rejects_invalid_utf8`
 * `codegen::emit::tests::emit_match_all_diverging_arms_emits_if_without_result_type`
+* `codegen::emit::tests::emit_if_all_diverging_branches_emits_if_without_result_type`
 * `ir::lower_anf::tests::let_value_terminal_keeps_value_bindings_inside_returned_subtree`
 * `ir::lower_anf::tests::let_value_non_terminal_still_commits_value_bindings_to_outer_accum`
 

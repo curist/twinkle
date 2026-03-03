@@ -160,13 +160,19 @@ impl<'a> EmitCtx<'a> {
                 self.assign_expr_locals(then_branch, next_idx, wasm_locals);
                 self.assign_expr_locals(else_branch, next_idx, wasm_locals);
             }
-            AnfOp::AMatch { arms, .. } => {
+            AnfOp::AMatch { scrutinee, arms } => {
                 // Pre-compute pattern binding types across all arms before visiting
                 // arm bodies so local type inference can use concrete binding types.
+                let scrutinee_ty = self.infer_atom_valtype(scrutinee);
                 let mut pat_types: HashMap<LocalId, ValType> = HashMap::new();
                 for AnfMatchArm { pattern, .. } in arms {
                     let mut typed = Vec::new();
-                    collect_pattern_locals_typed(pattern, None, self.type_env, &mut typed);
+                    collect_pattern_locals_typed(
+                        pattern,
+                        scrutinee_ty.as_ref(),
+                        self.type_env,
+                        &mut typed,
+                    );
                     for (local_id, inferred_ty) in typed {
                         pat_types
                             .entry(local_id)
@@ -216,16 +222,25 @@ impl<'a> EmitCtx<'a> {
                 }
             }
             AnfOp::AMatch { arms, .. } => {
-                let first_ty = arms
-                    .first()
-                    .and_then(|arm| self.infer_expr_valtype(&arm.body));
-                if let Some(ref expected) = first_ty {
-                    if arms
-                        .iter()
-                        .all(|arm| self.infer_expr_valtype(&arm.body).as_ref() == Some(expected))
-                    {
-                        return first_ty;
+                let mut value_ty: Option<ValType> = None;
+                for arm in arms {
+                    if expr_always_diverges(&arm.body) {
+                        continue;
                     }
+                    let arm_ty = self.infer_expr_valtype(&arm.body)?;
+                    match &value_ty {
+                        None => value_ty = Some(arm_ty),
+                        Some(expected) if *expected == arm_ty => {}
+                        Some(_) => return None,
+                    }
+                }
+                if value_ty.is_some() {
+                    return value_ty;
+                }
+                if !arms.is_empty() && arms.iter().all(|arm| expr_always_diverges(&arm.body)) {
+                    // Unreachable expression (all arms diverge): use void-like i32
+                    // rather than falling back to anyref.
+                    return Some(ValType::I32);
                 }
                 None
             }
@@ -482,15 +497,13 @@ pub fn user_record_type_sym(type_id: TypeId) -> String {
 
 fn collect_pattern_locals_typed(
     pattern: &CorePattern,
-    expected: Option<&MonoType>,
+    expected: Option<&ValType>,
     type_env: &TypeEnv,
     out: &mut Vec<(LocalId, ValType)>,
 ) {
     match pattern {
         CorePattern::Var(local_id) => {
-            let ty = expected
-                .map(|mono| mono_to_valtype(mono, type_env))
-                .unwrap_or(ValType::Anyref);
+            let ty = expected.cloned().unwrap_or(ValType::Anyref);
             out.push((*local_id, ty));
         }
         CorePattern::Variant {
@@ -498,22 +511,7 @@ fn collect_pattern_locals_typed(
             variant,
             fields,
         } => {
-            let field_tys = match type_env.get_def(*type_id) {
-                Some(TypeDef::Sum { variants, .. }) => {
-                    variants.get(variant.0).map(|v| v.fields.as_slice()).unwrap_or(&[])
-                }
-                Some(TypeDef::Alias { target, .. }) => match target {
-                    MonoType::Named { type_id, .. } => match type_env.get_def(*type_id) {
-                        Some(TypeDef::Sum { variants, .. }) => variants
-                            .get(variant.0)
-                            .map(|v| v.fields.as_slice())
-                            .unwrap_or(&[]),
-                        _ => &[],
-                    },
-                    _ => &[],
-                },
-                _ => &[],
-            };
+            let field_tys = sum_variant_field_valtypes(type_env, *type_id, variant.0);
             for (idx, field_pat) in fields.iter().enumerate() {
                 let field_expected = field_tys.get(idx);
                 collect_pattern_locals_typed(field_pat, field_expected, type_env, out);
@@ -524,6 +522,30 @@ fn collect_pattern_locals_typed(
         | CorePattern::LitBool(_)
         | CorePattern::LitStr(_) => {}
     }
+}
+
+fn sum_variant_field_valtypes(type_env: &TypeEnv, type_id: TypeId, variant_idx: usize) -> Vec<ValType> {
+    let fields: Vec<MonoType> = match type_env.get_def(type_id) {
+        Some(TypeDef::Sum { variants, .. }) => variants
+            .get(variant_idx)
+            .map(|v| v.fields.clone())
+            .unwrap_or_default(),
+        Some(TypeDef::Alias { target, .. }) => match target {
+            MonoType::Named { type_id, .. } => match type_env.get_def(*type_id) {
+                Some(TypeDef::Sum { variants, .. }) => variants
+                    .get(variant_idx)
+                    .map(|v| v.fields.clone())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    fields
+        .iter()
+        .map(|mono| mono_to_valtype(mono, type_env))
+        .collect()
 }
 
 #[cfg(test)]
@@ -697,6 +719,74 @@ mod tests {
         let (_, ty) = ctx
             .local(LocalId(2))
             .expect("missing pattern-bound local L2");
+        assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn local_type_match_var_binding_prefers_scrutinee_type() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id: FuncId(6),
+            name: "match_var_bind".to_string(),
+            params: vec![LocalId(0)],
+            param_tys: vec![MonoType::Int],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AMatch {
+                    scrutinee: Atom::ALocal(LocalId(0)),
+                    arms: vec![AnfMatchArm {
+                        pattern: CorePattern::Var(LocalId(2)),
+                        body: AnfExpr::Atom(Atom::ALocal(LocalId(2))),
+                    }],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
+            },
+            return_ty: MonoType::Int,
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty) = ctx
+            .local(LocalId(2))
+            .expect("missing pattern-bound local L2");
+        assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn local_type_match_with_diverging_arm_prefers_non_diverging_type() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id: FuncId(7),
+            name: "match_diverge".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AMatch {
+                    scrutinee: Atom::ALitBool(true),
+                    arms: vec![
+                        AnfMatchArm {
+                            pattern: CorePattern::LitBool(true),
+                            body: AnfExpr::Return(None),
+                        },
+                        AnfMatchArm {
+                            pattern: CorePattern::Wildcard,
+                            body: AnfExpr::Atom(Atom::ALitInt(1)),
+                        },
+                    ],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
+            },
+            return_ty: MonoType::Int,
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty) = ctx.local(LocalId(1)).expect("missing local L1");
         assert_eq!(*ty, ValType::I64);
     }
 }

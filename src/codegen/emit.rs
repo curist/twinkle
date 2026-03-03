@@ -481,12 +481,20 @@ fn emit_let_binding(
             let mut instrs = emit_atom(cond, Some(&ValType::I32), ctx);
             let then_body = emit_expr_value(then_branch, &bind_ty, fn_return_ty, ctx);
             let else_body = emit_expr_value(else_branch, &bind_ty, fn_return_ty, ctx);
+            let both_arms_diverge =
+                expr_always_diverges(then_branch) && expr_always_diverges(else_branch);
             instrs.push(Instr::If {
-                result: Some(bind_ty.clone()),
+                result: if both_arms_diverge {
+                    None
+                } else {
+                    Some(bind_ty.clone())
+                },
                 then_body,
                 else_body,
             });
-            instrs.push(Instr::LocalSet(bind_idx));
+            if !both_arms_diverge {
+                instrs.push(Instr::LocalSet(bind_idx));
+            }
             instrs
         }
         AnfOp::AMatch { scrutinee, arms } => {
@@ -3042,6 +3050,29 @@ mod tests {
         );
 
         assert!(instr_tree_any(&instrs, &|i| matches!(i, Instr::If { result: None, .. })));
+    }
+
+    #[test]
+    fn emit_if_all_diverging_branches_emits_if_without_result_type() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ValType::I64));
+
+        let instrs = emit_let_binding(
+            LocalId(1),
+            &AnfOp::AIf {
+                cond: Atom::ALitBool(true),
+                then_branch: Box::new(AnfExpr::Return(None)),
+                else_branch: Box::new(AnfExpr::Return(None)),
+            },
+            None,
+            &mut ctx,
+        );
+
+        assert!(instr_tree_any(&instrs, &|i| matches!(i, Instr::If { result: None, .. })));
+        assert!(!instrs.iter().any(|i| matches!(i, Instr::LocalSet(0))));
     }
 
     #[test]

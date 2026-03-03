@@ -247,11 +247,32 @@ fn test_error_note_generic_call() {
 // A closure must capture the value at definition time; later rebinding of
 // the source variable must not affect the captured value.
 //
-// Activate when the interpreter lands (Stage 4) and wires up tests/closure/.
 #[test]
-#[ignore = "requires interpreter (Stage 4)"]
 fn test_closure_capture_by_value() {
-    // Expected program output: "0\n1\n"
-    // See tests/closure/capture_by_value.tw for the source.
-    todo!("run capture_by_value.tw through interpreter and assert stdout == \"0\\n1\\n\"")
+    // Use top-level statements (not `fn main`) so interpreter execution path
+    // in tests matches other run fixtures.
+    let src = r#"
+fn main() {
+    acc := 0
+    f := fn() Int { acc }
+    acc = acc + 1
+    println("${f()}")
+    println("${acc}")
+}
+main()
+"#;
+    let path = std::env::temp_dir().join(format!(
+        "twinkle_capture_by_value_{}.tw",
+        std::process::id()
+    ));
+    fs::write(&path, src).expect("write temp tw source");
+    let (core_module, _registry) =
+        twinkle::module::compile_entry(path.to_str().expect("temp path utf8"))
+            .expect("compile capture_by_value snippet");
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("run capture_by_value snippet");
+    let bytes = interp.into_output();
+    let output = String::from_utf8(bytes).expect("interpreter output is valid UTF-8");
+    let _ = fs::remove_file(path);
+    assert_eq!(output, "0\n1\n");
 }
