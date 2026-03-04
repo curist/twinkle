@@ -348,6 +348,8 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::LocalGet(i) => format!("{pad}local.get $p{i}"),
         Instr::LocalSet(i) => format!("{pad}local.set $p{i}"),
         Instr::LocalTee(i) => format!("{pad}local.tee $p{i}"),
+        Instr::GlobalGet(sym) => format!("{pad}global.get ${sym}"),
+        Instr::GlobalSet(sym) => format!("{pad}global.set ${sym}"),
 
         Instr::I32Const(v) => format!("{pad}i32.const {v}"),
         Instr::I64Const(v) => format!("{pad}i64.const {v}"),
@@ -408,6 +410,14 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
                 format!("{pad}ref.cast (ref null {ht})")
             } else {
                 format!("{pad}ref.cast (ref {ht})")
+            }
+        }
+        Instr::RefTest { nullable, heap } => {
+            let ht = emit_heap_type(heap);
+            if *nullable {
+                format!("{pad}ref.test (ref null {ht})")
+            } else {
+                format!("{pad}ref.test (ref {ht})")
             }
         }
 

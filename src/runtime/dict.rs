@@ -21,6 +21,7 @@ pub fn make() -> ModuleIR {
     m.funcs.push(keys_fn());
     m.funcs.push(has_fn());
     m.funcs.push(get_fn());
+    m.funcs.push(get_option_fn());
     m.funcs.push(set_fn());
     m.funcs.push(remove_fn());
 
@@ -259,6 +260,95 @@ fn get_fn() -> FuncDef {
     }
 }
 
+fn ref_variant() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_VARIANT.into()),
+    }
+}
+
+fn ref_variant_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_VARIANT.into()),
+    }
+}
+
+/// `get_option(dict: Dict, key: anyref) -> Variant`
+///
+/// Like `get` but returns an Option variant: None (type_id=0, variant_id=0)
+/// when absent, Some(value) (type_id=0, variant_id=1) when present.
+fn get_option_fn() -> FuncDef {
+    // Locals: p2=n, p3=i, p4=entry
+    FuncDef {
+        name: "get_option".into(),
+        params: vec![ref_dict_null(), ValType::Anyref],
+        results: vec![ref_variant()],
+        locals: vec![ValType::I32, ValType::I32, ref_dict_entry_null()],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::Block {
+                label: "exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "scan".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("exit".into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(4),
+                        Instr::LocalGet(4),
+                        Instr::RefAsNonNull,
+                        Instr::StructGet(T_DICT_ENTRY.into(), 0),
+                        Instr::LocalGet(1),
+                    ]
+                    .into_iter()
+                    .chain(key_eq_call())
+                    .chain([
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                // Found: return Some(value) = Variant(0, 1, [value])
+                                Instr::I32Const(0),
+                                Instr::I32Const(1),
+                                Instr::LocalGet(4),
+                                Instr::RefAsNonNull,
+                                Instr::StructGet(T_DICT_ENTRY.into(), 1),
+                                Instr::ArrayNewFixed(T_ARRAY.into(), 1),
+                                Instr::StructNew(T_VARIANT.into()),
+                                Instr::Return,
+                            ],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("scan".into()),
+                    ])
+                    .collect(),
+                }],
+            },
+            // Not found: return None = Variant(0, 0, empty_array)
+            Instr::I32Const(0),
+            Instr::I32Const(0),
+            Instr::RefNull(HeapType::Named(T_ARRAY.into())),
+            Instr::StructNew(T_VARIANT.into()),
+        ],
+    }
+}
+
 /// `set(dict: Dict, key: anyref, val: anyref) -> Dict`  — COW insert/update
 fn set_fn() -> FuncDef {
     // Locals: p3=n (i32), p4=i (i32), p5=found (i32), p6=result (ref $Dict),
@@ -423,34 +513,35 @@ fn set_fn() -> FuncDef {
 
 /// `remove(dict: Dict, key: anyref) -> Dict`
 fn remove_fn() -> FuncDef {
-    // Locals: p2=n, p3=i (read), p4=j (write), p5=result, p6=entry
+    // Two-pass approach:
+    // Pass 1: scan to check if key exists → found flag
+    // Pass 2: copy non-matching entries into a correctly-sized result array
+    // Locals: p2=n, p3=i (scan), p4=j (write), p5=result, p6=entry, p7=found, p8=result_len
     FuncDef {
         name: "remove".into(),
         params: vec![ref_dict_null(), ValType::Anyref],
         results: vec![ref_dict()],
         locals: vec![
-            ValType::I32,
-            ValType::I32,
-            ValType::I32,
-            ref_dict_null(),
-            ref_dict_entry_null(),
+            ValType::I32,          // p2 = n
+            ValType::I32,          // p3 = i
+            ValType::I32,          // p4 = j (write cursor)
+            ref_dict_null(),       // p5 = result
+            ref_dict_entry_null(), // p6 = entry
+            ValType::I32,          // p7 = found
+            ValType::I32,          // p8 = result_len
         ],
         body: vec![
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::ArrayLen,
             Instr::LocalSet(2),
-            // result = array.new $Dict (null, n)
-            Instr::RefNull(HeapType::Named(T_DICT_ENTRY.into())),
-            Instr::LocalGet(2),
-            Instr::ArrayNew(T_DICT.into()),
-            Instr::LocalSet(5),
+            // Pass 1: scan for key
             Instr::I32Const(0),
             Instr::LocalSet(3),
             Instr::I32Const(0),
-            Instr::LocalSet(4),
+            Instr::LocalSet(7),
             Instr::Block {
-                label: "exit".into(),
+                label: "scan_exit".into(),
                 result: None,
                 body: vec![Instr::Loop {
                     label: "scan".into(),
@@ -459,7 +550,7 @@ fn remove_fn() -> FuncDef {
                         Instr::LocalGet(3),
                         Instr::LocalGet(2),
                         Instr::I32GeS,
-                        Instr::BrIf("exit".into()),
+                        Instr::BrIf("scan_exit".into()),
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::LocalGet(3),
@@ -475,7 +566,67 @@ fn remove_fn() -> FuncDef {
                     .chain([
                         Instr::If {
                             result: None,
-                            // skip this entry
+                            then_body: vec![
+                                Instr::I32Const(1),
+                                Instr::LocalSet(7),
+                                Instr::Br("scan_exit".into()),
+                            ],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("scan".into()),
+                    ])
+                    .collect(),
+                }],
+            },
+            // result_len = found ? n-1 : n
+            Instr::LocalGet(7),
+            Instr::If {
+                result: Some(ValType::I32),
+                then_body: vec![Instr::LocalGet(2), Instr::I32Const(1), Instr::I32Sub],
+                else_body: vec![Instr::LocalGet(2)],
+            },
+            Instr::LocalSet(8),
+            // result = array.new $Dict (null, result_len)
+            Instr::RefNull(HeapType::Named(T_DICT_ENTRY.into())),
+            Instr::LocalGet(8),
+            Instr::ArrayNew(T_DICT.into()),
+            Instr::LocalSet(5),
+            // Pass 2: copy non-matching entries
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
+            Instr::Block {
+                label: "copy_exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "copy".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("copy_exit".into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(6),
+                        Instr::LocalGet(6),
+                        Instr::RefAsNonNull,
+                        Instr::StructGet(T_DICT_ENTRY.into(), 0),
+                        Instr::LocalGet(1),
+                    ]
+                    .into_iter()
+                    .chain(key_eq_call())
+                    .chain([
+                        Instr::If {
+                            result: None,
+                            // skip matching entry
                             then_body: vec![],
                             else_body: vec![
                                 Instr::LocalGet(5),
@@ -493,12 +644,11 @@ fn remove_fn() -> FuncDef {
                         Instr::I32Const(1),
                         Instr::I32Add,
                         Instr::LocalSet(3),
-                        Instr::Br("scan".into()),
+                        Instr::Br("copy".into()),
                     ])
                     .collect(),
                 }],
             },
-            // v0: return result (may have 1 trailing null slot if key was found)
             Instr::LocalGet(5),
             Instr::RefAsNonNull,
         ],

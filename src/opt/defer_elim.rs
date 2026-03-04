@@ -6,10 +6,11 @@
 ///
 /// The pass threads two defer lists:
 ///
-/// * `fn_defers` — expressions active from the current point to the enclosing
-///   function boundary.  Run on `Return`.
-/// * `loop_defers` — expressions active within the current loop iteration.
-///   Run on `Break` and `Continue` (loop-level exits only).
+/// * `fn_defers` — expressions declared outside the current loop.  Run on
+///   `Return` and on normal function exit (terminal `Atom` at function tail).
+/// * `loop_defers` — expressions declared inside the current loop iteration.
+///   Run on `Break`, `Continue`, and end-of-iteration (terminal `Atom` at loop
+///   body tail).
 ///
 /// When a `Return` fires inside a loop, **both** lists run (loop_defers then
 /// fn_defers, both LIFO), so the inner-most defer always runs first.
@@ -23,7 +24,7 @@ use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp};
 use crate::ir::core::LocalId;
 
 pub fn eliminate_defers(func: AnfFunctionDef) -> AnfFunctionDef {
-    let body = elim(func.body, &[], &[], false);
+    let body = elim(func.body, &[], &[], false, false);
     AnfFunctionDef { body, ..func }
 }
 
@@ -35,11 +36,14 @@ pub fn eliminate_defers(func: AnfFunctionDef) -> AnfFunctionDef {
 ///   When true, terminal `Atom` nodes are NOT treated as scope exits and do NOT fire
 ///   defers — they are just value-producing positions, not function/loop exit points.
 ///   `Return`/`Break`/`Continue` always fire defers regardless of this flag.
+/// `in_loop` — true when inside a loop body. Controls whether terminal `Atom`
+///   fires only loop_defers (loop iteration end) or all defers (function exit).
 fn elim(
     expr: AnfExpr,
     fn_defers: &[AnfExpr],
     loop_defers: &[AnfExpr],
     in_sub_expr: bool,
+    in_loop: bool,
 ) -> AnfExpr {
     match expr {
         // ── ADefer: register and continue into body ───────────────────────────
@@ -47,14 +51,13 @@ fn elim(
             let AnfOp::ADefer(d) = *op else {
                 unreachable!()
             };
-            // Add to both lists (LIFO: append; later prepended in reverse).
-            let mut new_fn = fn_defers.to_vec();
-            new_fn.push(*d.clone());
+            // Add to loop_defers only — fn_defers is set by the loop handler
+            // when entering a loop (it folds loop_defers into fn_defers).
             let mut new_loop = loop_defers.to_vec();
             new_loop.push(*d);
             // The Let wrapper and the binding local are dropped — the ADefer op
             // produced void and had no observable result beyond registration.
-            elim(*body, &new_fn, &new_loop, in_sub_expr)
+            elim(*body, fn_defers, &new_loop, in_sub_expr, in_loop)
         }
 
         // ── ALoop: reset loop_defers; fold old loop_defers into fn_defers ────
@@ -62,17 +65,17 @@ fn elim(
             let AnfOp::ALoop { body: loop_body } = *op else {
                 unreachable!()
             };
-            // Inside the loop, fn_defers grows by the outer loop_defers;
+            // Inside the loop, fn_defers grows by the current loop_defers;
             // loop_defers resets to empty.
             let mut inner_fn = fn_defers.to_vec();
             inner_fn.extend_from_slice(loop_defers);
             // Loop body is a tail position for the iteration (not a sub-expr).
-            let new_loop_body = elim(*loop_body, &inner_fn, &[], false);
+            let new_loop_body = elim(*loop_body, &inner_fn, &[], false, true);
             let new_op = AnfOp::ALoop {
                 body: Box::new(new_loop_body),
             };
             // Continuation (rest after the loop) keeps original defer lists.
-            let new_body = elim(*body, fn_defers, loop_defers, in_sub_expr);
+            let new_body = elim(*body, fn_defers, loop_defers, in_sub_expr, in_loop);
             AnfExpr::Let {
                 local,
                 op: Box::new(new_op),
@@ -82,8 +85,8 @@ fn elim(
 
         // ── General Let: recurse into op sub-expressions and body ─────────────
         AnfExpr::Let { local, op, body } => {
-            let new_op = elim_op(*op, fn_defers, loop_defers);
-            let new_body = elim(*body, fn_defers, loop_defers, in_sub_expr);
+            let new_op = elim_op(*op, fn_defers, loop_defers, in_loop);
+            let new_body = elim(*body, fn_defers, loop_defers, in_sub_expr, in_loop);
             AnfExpr::Let {
                 local,
                 op: Box::new(new_op),
@@ -91,7 +94,7 @@ fn elim(
             }
         }
 
-        // ── Return: prepend fn_defers ++ loop_defers (LIFO) before returning ──
+        // ── Return: prepend all defers (LIFO) before returning ──────────────
         AnfExpr::Return(v) => {
             // Defers run innermost-first: loop_defers (most recent) then fn_defers.
             let all: Vec<AnfExpr> = loop_defers
@@ -115,11 +118,16 @@ fn elim(
         // ── Terminal Atom ──────────────────────────────────────────────────────
         // In sub-expression position (AIf/AMatch branch value): just a value,
         // not a scope exit — do NOT fire defers.
-        // In tail position (function or loop iteration body): fire all active defers.
+        // In loop body tail: fire loop_defers only (iteration end, like continue).
+        // In function body tail: fire all defers (function exit).
         AnfExpr::Atom(a) => {
             if in_sub_expr {
                 AnfExpr::Atom(a)
+            } else if in_loop {
+                // End of loop iteration — only loop-body-local defers
+                prepend_defers(loop_defers.iter().cloned().collect(), AnfExpr::Atom(a))
             } else {
+                // Function exit — all defers
                 let all: Vec<AnfExpr> = loop_defers
                     .iter()
                     .chain(fn_defers.iter())
@@ -132,7 +140,7 @@ fn elim(
 }
 
 /// Recurse into ops that contain sub-expressions.
-fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr]) -> AnfOp {
+fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr], in_loop: bool) -> AnfOp {
     match op {
         // Branches produce VALUES, not scope exits — pass in_sub_expr=true so
         // terminal Atom nodes inside branches don't fire defers prematurely.
@@ -142,8 +150,8 @@ fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr]) -> AnfOp {
             else_branch,
         } => AnfOp::AIf {
             cond,
-            then_branch: Box::new(elim(*then_branch, fn_defers, loop_defers, true)),
-            else_branch: Box::new(elim(*else_branch, fn_defers, loop_defers, true)),
+            then_branch: Box::new(elim(*then_branch, fn_defers, loop_defers, true, in_loop)),
+            else_branch: Box::new(elim(*else_branch, fn_defers, loop_defers, true, in_loop)),
         },
         AnfOp::AMatch { scrutinee, arms } => AnfOp::AMatch {
             scrutinee,
@@ -151,7 +159,7 @@ fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr]) -> AnfOp {
                 .into_iter()
                 .map(|AnfMatchArm { pattern, body }| AnfMatchArm {
                     pattern,
-                    body: elim(body, fn_defers, loop_defers, true),
+                    body: elim(body, fn_defers, loop_defers, true, in_loop),
                 })
                 .collect(),
         },
@@ -161,7 +169,7 @@ fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr]) -> AnfOp {
             let mut inner_fn = fn_defers.to_vec();
             inner_fn.extend_from_slice(loop_defers);
             AnfOp::ALoop {
-                body: Box::new(elim(*body, &inner_fn, &[], false)),
+                body: Box::new(elim(*body, &inner_fn, &[], false, true)),
             }
         }
         // ADefer in op position means it was never inside a Let — invalid ANF.
@@ -179,10 +187,11 @@ fn elim_op(op: AnfOp, fn_defers: &[AnfExpr], loop_defers: &[AnfExpr]) -> AnfOp {
 /// Each deferred `AnfExpr` is spliced in by walking its let-chain to its terminal
 /// `Atom` and replacing it with `tail`. The deferred void result is discarded.
 fn prepend_defers(defers: Vec<AnfExpr>, tail: AnfExpr) -> AnfExpr {
-    // LIFO: reverse so the last-declared defer runs first.
+    // LIFO: fold in declaration order — splice_defer_before puts each defer
+    // before the accumulator, so the last-declared defer ends up outermost
+    // (first to execute).
     defers
         .into_iter()
-        .rev()
         .fold(tail, |acc, d| splice_defer_before(d, acc))
 }
 

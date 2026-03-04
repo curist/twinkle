@@ -42,6 +42,15 @@ pub fn make() -> ModuleIR {
         results: vec![],
     });
 
+    // Import rt.str.eq for structural string comparison in eq()
+    m.imports.push(ImportDef {
+        module: "rt.str".into(),
+        name: "eq".into(),
+        as_sym: F_STR_EQ.into(),
+        params: vec![ref_string(), ref_string()],
+        results: vec![ValType::I32],
+    });
+
     m.funcs.push(print_fn());
     m.funcs.push(println_fn());
     m.funcs.push(eprint_fn());
@@ -121,14 +130,23 @@ fn trap_fn() -> FuncDef {
 /// `eq(a: anyref, b: anyref) -> i32`
 ///
 /// Structural equality: same pointer → equal; $BoxedInt → compare i64;
-/// $BoxedFloat → compare f64; $Variant → compare type_id + variant_id;
+/// $String → byte-level comparison via rt_str__eq;
 /// otherwise falls back to ref.eq (identity).
 ///
-/// `ref.eq` requires `eqref`, so we cast each operand before comparing.
+/// Uses `ref.test` (not `ref.cast`) for type checks to avoid trapping on
+/// type mismatch.
 fn eq_fn() -> FuncDef {
     let cast_to_eqref = Instr::RefCast {
         nullable: true,
         heap: HeapType::Eq,
+    };
+    let test_boxed_int = Instr::RefTest {
+        nullable: false,
+        heap: HeapType::Named(T_BOXED_INT.into()),
+    };
+    let test_string = Instr::RefTest {
+        nullable: false,
+        heap: HeapType::Named(T_STRING.into()),
     };
     FuncDef {
         name: "eq".into(),
@@ -147,26 +165,15 @@ fn eq_fn() -> FuncDef {
                 then_body: vec![Instr::I32Const(1), Instr::Return],
                 else_body: vec![],
             },
-            // Check if both are $BoxedInt using nullable cast + ref.is_null
+            // Check if both are $BoxedInt using ref.test
             Instr::LocalGet(0),
-            Instr::RefCast {
-                nullable: true,
-                heap: HeapType::Named(T_BOXED_INT.into()),
-            },
-            Instr::RefIsNull,
-            Instr::I32Eqz, // is_boxed_int_a
+            test_boxed_int.clone(),
             Instr::LocalGet(1),
-            Instr::RefCast {
-                nullable: true,
-                heap: HeapType::Named(T_BOXED_INT.into()),
-            },
-            Instr::RefIsNull,
-            Instr::I32Eqz, // is_boxed_int_b
+            test_boxed_int,
             Instr::I32And,
             Instr::If {
-                result: Some(ValType::I32),
+                result: None,
                 then_body: vec![
-                    // a.v == b.v
                     Instr::LocalGet(0),
                     Instr::RefCast {
                         nullable: false,
@@ -180,16 +187,40 @@ fn eq_fn() -> FuncDef {
                     },
                     Instr::StructGet(T_BOXED_INT.into(), 0),
                     Instr::I64Eq,
+                    Instr::Return,
                 ],
-                else_body: vec![
-                    // Fall back to identity (cast to eqref for ref.eq)
-                    Instr::LocalGet(0),
-                    cast_to_eqref.clone(),
-                    Instr::LocalGet(1),
-                    cast_to_eqref,
-                    Instr::RefEq,
-                ],
+                else_body: vec![],
             },
+            // Check if both are $String using ref.test
+            Instr::LocalGet(0),
+            test_string.clone(),
+            Instr::LocalGet(1),
+            test_string,
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_STRING.into()),
+                    },
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_STRING.into()),
+                    },
+                    Instr::Call(F_STR_EQ.into()),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            // Fallback: identity (ref.eq)
+            Instr::LocalGet(0),
+            cast_to_eqref.clone(),
+            Instr::LocalGet(1),
+            cast_to_eqref,
+            Instr::RefEq,
         ],
     }
 }

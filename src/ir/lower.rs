@@ -495,7 +495,17 @@ impl Lowerer {
             .unwrap_or_default();
 
         let body = self.lower_block(&decl.body)?;
-        let return_ty = body.ty.clone();
+        // When the body ends with a `return` (type Never) or is Void but the
+        // function has a declared return type, use the signature's return type
+        // so the Wasm codegen emits the correct result type.
+        let return_ty = match &body.ty {
+            MonoType::Never | MonoType::Void => self
+                .value_env
+                .get_function(&decl.name)
+                .and_then(|sig| sig.ret.clone())
+                .unwrap_or_else(|| body.ty.clone()),
+            _ => body.ty.clone(),
+        };
         let func_id = *self.func_table.get(&decl.name)?;
 
         Some(FunctionDef {
@@ -675,7 +685,7 @@ impl Lowerer {
                 };
                 Some(CoreExpr {
                     kind: CoreExprKind::Return { value: val },
-                    ty: MonoType::Void,
+                    ty: MonoType::Never,
                     span: *ret_span,
                 })
             }

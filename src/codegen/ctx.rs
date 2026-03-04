@@ -9,7 +9,8 @@ use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_STRING, T_VARIANT};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    CELL_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId,
+    UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
@@ -21,6 +22,7 @@ pub struct FuncSigInfo {
 
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
+    module_globals: HashMap<LocalId, String>,
     pub label_stack: Vec<(Label, Label)>,
     pub loop_result_stack: Vec<Option<ValType>>,
     next_label_id: u32,
@@ -38,6 +40,7 @@ impl<'a> EmitCtx<'a> {
     ) -> Self {
         Self {
             local_map: HashMap::new(),
+            module_globals: HashMap::new(),
             label_stack: Vec::new(),
             loop_result_stack: Vec::new(),
             next_label_id: 0,
@@ -118,6 +121,14 @@ impl<'a> EmitCtx<'a> {
 
     pub fn local(&self, local_id: LocalId) -> Option<&(u32, ValType)> {
         self.local_map.get(&local_id)
+    }
+
+    pub fn set_module_globals(&mut self, module_globals: HashMap<LocalId, String>) {
+        self.module_globals = module_globals;
+    }
+
+    pub fn module_global_sym(&self, local_id: LocalId) -> Option<&String> {
+        self.module_globals.get(&local_id)
     }
 
     pub fn user_func_sig(&self, func_id: FuncId) -> Option<&FuncSigInfo> {
@@ -282,11 +293,7 @@ impl<'a> EmitCtx<'a> {
             Atom::AGlobalFunc(func_id) => {
                 if let Some(entry) = self.prelude.get(func_id) {
                     return if entry.is_runtime_call() {
-                        match entry.runtime_results.as_slice() {
-                            [] => Some(ValType::I32),
-                            [single] => Some(single.clone()),
-                            _ => None,
-                        }
+                        runtime_result_valtype(*func_id, entry)
                     } else {
                         intrinsic_result_valtype(*func_id)
                     };
@@ -441,6 +448,22 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
     }
 }
 
+fn runtime_result_valtype(func_id: FuncId, entry: &PreludeEntry) -> Option<ValType> {
+    use crate::ir::lower::prelude as ids;
+
+    match func_id {
+        // Twinkle `Int` is i64 even though runtime length primitives return i32.
+        id if id == ids::ARRAY_LEN || id == ids::STRING_LEN || id == ids::DICT_LEN => {
+            Some(ValType::I64)
+        }
+        _ => match entry.runtime_results.as_slice() {
+            [] => Some(ValType::I32),
+            [single] => Some(single.clone()),
+            _ => None,
+        },
+    }
+}
+
 pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
     match ty {
         MonoType::Int => ValType::I64,
@@ -457,6 +480,9 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
 }
 
 fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
+    if type_id == CELL_TYPE_ID || type_id == ITERATOR_TYPE_ID {
+        return ref_named(true, T_ARRAY);
+    }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),
         Some(TypeDef::Record { .. }) => ref_named(true, &user_record_type_sym(type_id)),
@@ -592,6 +618,7 @@ fn sum_variant_field_valtypes(
 mod tests {
     use super::*;
     use crate::codegen::prelude::build_prelude_map;
+    use crate::ir::lower::prelude as prelude_ids;
     use crate::ir::{FieldId, VariantId};
     use crate::types::ty::{RESULT_TYPE_ID, Variant};
 
@@ -646,6 +673,37 @@ mod tests {
 
         let _locals = ctx.setup_locals(&func);
         let (_, ty) = ctx.local(LocalId(1)).expect("missing local L1");
+        assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn local_type_array_len_call_uses_i64_int_semantics() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id: FuncId(101),
+            name: "array_len_type".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AArrayLit(vec![Atom::ALitInt(1)])),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(2),
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(prelude_ids::ARRAY_LEN),
+                        args: vec![Atom::ALocal(LocalId(1))],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+                }),
+            },
+            return_ty: MonoType::Int,
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty) = ctx.local(LocalId(2)).expect("missing local L2");
         assert_eq!(*ty, ValType::I64);
     }
 

@@ -96,6 +96,8 @@ pub enum Instr {
     LocalGet(u32),
     LocalSet(u32),
     LocalTee(u32),
+    GlobalGet(GlobalSym),
+    GlobalSet(GlobalSym),
 
     // Numeric constants
     I32Const(i32),
@@ -157,6 +159,10 @@ pub enum Instr {
     RefI31,
     I31GetS,
     RefCast {
+        nullable: bool,
+        heap: HeapType,
+    },
+    RefTest {
         nullable: bool,
         heap: HeapType,
     },

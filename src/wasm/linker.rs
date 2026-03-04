@@ -72,7 +72,11 @@ fn qualify(ns: &str, sym: &str) -> String {
 fn rewrite_calls(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
     for instr in body.iter_mut() {
         match instr {
-            Instr::Call(sym) | Instr::RefFunc(sym) | Instr::ReturnCall(sym) => {
+            Instr::Call(sym)
+            | Instr::RefFunc(sym)
+            | Instr::ReturnCall(sym)
+            | Instr::GlobalGet(sym)
+            | Instr::GlobalSet(sym) => {
                 if let Some(renamed) = renames.get(sym.as_str()) {
                     *sym = renamed.clone();
                 }
@@ -123,7 +127,7 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
                     *src = r.clone();
                 }
             }
-            Instr::RefCast { heap, .. } | Instr::RefNull(heap) => {
+            Instr::RefCast { heap, .. } | Instr::RefTest { heap, .. } | Instr::RefNull(heap) => {
                 if let HeapType::Named(ty) = heap {
                     if let Some(renamed) = renames.get(ty.as_str()) {
                         *ty = renamed.clone();
@@ -321,6 +325,9 @@ pub fn link(
         // Build combined rename once per module: func renames + import redirects.
         // Used by both func bodies and global initialisers.
         let mut combined = func_renames.clone();
+        for global in &module.globals {
+            combined.insert(global.name.clone(), qualify(ns, &global.name));
+        }
         for (k, v) in redirects {
             combined.insert(k.clone(), v.clone());
         }

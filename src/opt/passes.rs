@@ -269,9 +269,14 @@ fn dead_let_elim_op(
 ///
 /// Returns `(new_expr, changed)`.
 pub fn copy_propagate(body: AnfExpr) -> (AnfExpr, bool) {
+    copy_propagate_with_pinned(body, &HashSet::new())
+}
+
+pub fn copy_propagate_with_pinned(body: AnfExpr, pinned: &HashSet<LocalId>) -> (AnfExpr, bool) {
     // Recompute use counts excluding free_var positions for safety.
     let uses = count_uses_excluding_free_vars(&body);
-    let assigned = collect_assigned_locals(&body);
+    let mut assigned = collect_assigned_locals(&body);
+    assigned.extend(pinned.iter().copied());
     copy_propagate_inner(body, &uses, &assigned)
 }
 

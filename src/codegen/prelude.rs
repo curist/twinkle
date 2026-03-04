@@ -38,7 +38,7 @@ impl PreludeEntry {
         }
     }
 
-    fn intrinsic(twinkle_name: &'static str) -> Self {
+    pub(crate) fn intrinsic(twinkle_name: &'static str) -> Self {
         Self {
             twinkle_name,
             runtime_module: None,
@@ -261,10 +261,15 @@ pub fn build_prelude_map() -> PreludeMap {
         PreludeEntry::runtime(
             "dict_get",
             "rt.dict",
-            "get",
-            "rt_dict__get",
+            "get_option",
+            "rt_dict__get_option",
             vec![ref_dict_null(), ValType::Anyref],
-            vec![ValType::Anyref],
+            vec![ValType::Ref {
+                nullable: false,
+                heap: crate::wasm::ir::HeapType::Named(
+                    crate::runtime::types::T_VARIANT.to_string(),
+                ),
+            }],
         ),
     );
     map.insert(
