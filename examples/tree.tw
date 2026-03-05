@@ -49,12 +49,12 @@ fn main() {
   //              1   4 7
   empty: Tree<Int> = Tree.Empty
   tree := Tree.Node(5,
-    Tree.Node(3,
-      Tree.Node(1, empty, empty),
-      Tree.Node(4, empty, empty)
+    .Node(3,
+      .Node(1, empty, empty),
+      .Node(4, empty, empty)
     ),
-    Tree.Node(8,
-      Tree.Node(7, empty, empty),
+    .Node(8,
+      .Node(7, empty, empty),
       empty
     )
   )
@@ -67,3 +67,5 @@ fn main() {
   println("Contains 4? ${contains(tree, 4)}")
   println("Contains 9? ${contains(tree, 9)}")
 }
+
+main()
