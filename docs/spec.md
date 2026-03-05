@@ -703,6 +703,17 @@ Defined for:
 * `String.len() Int` — length of the string
 * `Dict<K,V>.len() Int` — number of entries
 
+#### Conversion
+
+String conversion is exposed via inherent `.to_string()` methods.
+
+Defined for:
+
+* `Int.to_string() String`
+* `Float.to_string() String`
+* `Bool.to_string() String`
+* `String.to_string() String` (identity)
+
 ### Dot resolution rules
 
 * Check record fields first.
@@ -885,18 +896,28 @@ String interpolation uses:
 "hello ${x}"
 ```
 
-Interpolation is **not** driven by a capability or trait. Instead, it is defined only for a **small, fixed set** of primitive types.
+Interpolation is **not** driven by a capability or trait. It is defined in terms of
+inherent `to_string` methods.
 
-### Supported Types
+### Supported Conversion Rule
 
-In Twinkle, the expression inside `${...}` may have one of the following types:
+For each `${expr}`, the compiler resolves a zero-argument `to_string` method on the
+type of `expr` with return type `String`.
 
-* `String` — used as-is,
-* `Int`    — converted via a core `String.of_int` function,
-* `Float`  — converted via `String.of_float`,
-* `Bool`   — converted via `String.of_bool`.
+Built-in support exists for:
 
-Attempting to interpolate a value of any other type is a **compile-time error**.
+* `String` — identity
+* `Int` — decimal rendering
+* `Float` — float rendering
+* `Bool` — `true` / `false`
+
+User-defined named types are interpolable when they define an inherent method:
+
+```tw
+fn to_string(x: MyType) String { ... }
+```
+
+If no valid `to_string() String` is available, interpolation is a compile-time error.
 
 ### Example
 
@@ -908,13 +929,32 @@ ok: Bool = true
 s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
 
 type User = .{ name: String, age: Int }
+fn to_string(u: User) String { "${u.name} (${u.age})" }
 user: User = .{ name: "Ada", age: 30 }
-s2 := "user=${user}"                    // ❌ error: User not interpolable
+s2 := "user=${user}"                    // ✅ ok (uses User.to_string())
+```
+
+### Explicit `to_string` Calls
+
+Explicit method calls are valid inside interpolation and outside it:
+
+```tw
+println("${1.5.to_string()}")   // ✅ explicit call on Float literal
+
+f := 1.5
+println("${f.to_string()}")     // ✅ explicit call on identifier
+```
+
+Unary-minus literals must be parenthesized before method calls:
+
+```tw
+println("${(-1).to_string()}")  // ✅
+// println("${-1.to_string()}") // parsed as -(1.to_string()), so this is invalid
 ```
 
 ### Desugaring
 
-String literals with interpolation are desugared into calls on core string utilities.
+String literals with interpolation are desugared into string concatenation with method calls.
 
 For example:
 
@@ -925,30 +965,8 @@ For example:
 is conceptually lowered to:
 
 ```tw
-String.concat_many([
-  "n=",
-  String.of_int(n),
-])
+"n=".concat(n.to_string())
 ```
-
-(Canonical surface names use the `String.*` module namespace.)
-
-### Extension: Explicit Conversion Functions
-
-To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
-
-```tw
-type User = .{ name: String, age: Int }
-
-fn user_to_string(u: User) String {
-  "${u.name} (${u.age})"
-}
-
-user: User = .{ name: "Ada", age: 30 }
-s := "user=${user_to_string(user)}"    // ✅ ok
-```
-
-There is no automatic association between `User` and `user_to_string`. The choice of conversion is explicit at the call site.
 
 ---
 
@@ -1181,9 +1199,7 @@ String operations via module functions (all return new strings):
 
 * `String.concat(s1, s2) String`
 * `String.substring(s, start, end) String`
-* `String.of_int(n: Int) String`
-* `String.of_float(f: Float) String`
-* `String.of_bool(b: Bool) String`
+* `String.to_string(s) String` (identity helper; `s.to_string()` is preferred)
 * etc.
 
 ---
@@ -1310,10 +1326,10 @@ Includes:
 * array module: `Array.set`, `Array.append`, `Array.concat`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
-* string module: `String.concat`, `String.substring`, `String.of_int`, etc.
+* string module: `String.concat`, `String.substring`, `String.to_string`, etc.
 * iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/iterator.md](iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
-* snake_case intrinsics (e.g. `int_to_string`, `string_concat`) exist in the stage0 implementation but are not user-facing; user code uses `.to_string()`, `.len()`, `.concat()`, string interpolation, and `String.*` / `Array.*` / `Dict.*` module functions instead.
+* snake_case conversion helpers (`int_to_string`, `float_to_string`, `bool_to_string`, `string_to_string`) are **not** in the language and must not be callable from user code.
 
 ---
 
@@ -1420,7 +1436,8 @@ This avoids value-restriction complexity and keeps local bindings simple. If you
 
 Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
 
-String interpolation is type-checked by verifying the expression type is one of: `String`, `Int`, `Float`, `Bool`.
+String interpolation is type-checked by resolving a zero-arg inherent `to_string() String`
+on the interpolated expression type.
 
 ---
 
@@ -1436,7 +1453,7 @@ String interpolation is type-checked by verifying the expression type is one of:
 
   * ref types → nullable refs
   * value types → tagged struct
-* String interpolation → compiler inserts calls to `String.of_int`, `String.of_float`, `String.of_bool`
+* String interpolation → compiler inserts `to_string()` calls and string concatenation
 * For loops → type-directed lowering to primitive loops based on collection type
 
 ---
@@ -1449,8 +1466,8 @@ Examples:
 
 ```
 error: cannot interpolate value of type SocialPost
-note: string interpolation only supports String, Int, Float, and Bool
-help: consider using an explicit conversion function: "${post_to_string(post)}"
+note: type SocialPost has no inherent method `to_string() -> String`
+help: define `fn to_string(x: SocialPost) String { ... }` and use "${post}"
 ```
 
 **No inherent method**:
