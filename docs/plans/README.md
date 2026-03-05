@@ -181,7 +181,7 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 | 8c | ANF → WAT Emitter | Done | [wasm-backend.md](wasm-backend.md) |
 | 8d | Full Build Pipeline | Done | [wasm-backend.md](wasm-backend.md) |
 | 8e | Standard Library | Done | [wasm-backend.md](wasm-backend.md) |
-| 9 | Host Integration & Validation | Next | [host-validation.md](host-validation.md) |
+| 9 | Host Integration & Validation | Done | [host-validation.md](host-validation.md) |
 | 9.5 | Monomorphization | Planned | [monomorphization.md](monomorphization.md) |
 | 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |

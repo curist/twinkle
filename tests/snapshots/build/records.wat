@@ -229,6 +229,45 @@
     (result (ref $rt_types__String))
     (local $p3 i32)
     (local $p4 (ref null $rt_types__String))
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p3
+    local.get $p1
+    i32.const 0
+    i32.lt_s
+    (if
+      (then
+        local.get $p3
+        local.set $p1))
+    local.get $p1
+    local.get $p3
+    i32.gt_s
+    (if
+      (then
+        local.get $p3
+        local.set $p1))
+    local.get $p2
+    i32.const 0
+    i32.lt_s
+    (if
+      (then
+        local.get $p3
+        local.set $p2))
+    local.get $p2
+    local.get $p3
+    i32.gt_s
+    (if
+      (then
+        local.get $p3
+        local.set $p2))
+    local.get $p2
+    local.get $p1
+    i32.lt_s
+    (if
+      (then
+        local.get $p1
+        local.set $p2))
     local.get $p2
     local.get $p1
     i32.sub

@@ -94,13 +94,62 @@ fn concat_fn() -> FuncDef {
 
 /// `substring(s: String, start: i32, end: i32) -> String`
 fn substring_fn() -> FuncDef {
-    // Locals: p3=new_len, p4=result
+    // Locals: p3=len/new_len, p4=result
     FuncDef {
         name: "substring".into(),
         params: vec![ref_string_null(), ValType::I32, ValType::I32],
         results: vec![ref_string()],
         locals: vec![ValType::I32, ref_string_null()],
         body: vec![
+            // p3 = len(s)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
+            // Clamp start into [len if start < 0, min(start, len)]
+            Instr::LocalGet(1),
+            Instr::I32Const(0),
+            Instr::I32LtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::LocalGet(3), Instr::LocalSet(1)],
+                else_body: vec![],
+            },
+            Instr::LocalGet(1),
+            Instr::LocalGet(3),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::LocalGet(3), Instr::LocalSet(1)],
+                else_body: vec![],
+            },
+            // Clamp end into [len if end < 0, min(end, len)]
+            Instr::LocalGet(2),
+            Instr::I32Const(0),
+            Instr::I32LtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::LocalGet(3), Instr::LocalSet(2)],
+                else_body: vec![],
+            },
+            Instr::LocalGet(2),
+            Instr::LocalGet(3),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::LocalGet(3), Instr::LocalSet(2)],
+                else_body: vec![],
+            },
+            // end must be >= start
+            Instr::LocalGet(2),
+            Instr::LocalGet(1),
+            Instr::I32LtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::LocalGet(1), Instr::LocalSet(2)],
+                else_body: vec![],
+            },
+            // p3 = new_len = end - start
             Instr::LocalGet(2),
             Instr::LocalGet(1),
             Instr::I32Sub,

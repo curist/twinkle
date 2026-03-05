@@ -1,0 +1,13 @@
+// Expected output:
+//   inner
+//   outer
+
+fn foo() Void {
+    defer println("outer")
+    for i in range(1) {
+        defer println("inner")
+        return
+    }
+}
+
+foo()

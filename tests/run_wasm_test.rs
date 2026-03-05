@@ -62,8 +62,23 @@ fn run_wasm_strings() {
 }
 
 #[test]
+fn run_wasm_string_methods() {
+    check("tests/run/string_methods.tw");
+}
+
+#[test]
 fn run_wasm_closures() {
     check("tests/run/closures.tw");
+}
+
+#[test]
+fn run_wasm_defer_capture() {
+    check("tests/run/defer_capture.tw");
+}
+
+#[test]
+fn run_wasm_defer_return_loop_order() {
+    check("tests/run/defer_return_loop_order.tw");
 }
 
 #[test]
@@ -79,6 +94,11 @@ fn run_wasm_capability_records() {
 #[test]
 fn run_wasm_stdlib_path() {
     check("tests/run/stdlib_path.tw");
+}
+
+#[test]
+fn run_wasm_twinkle_typechecker() {
+    check("tests/run/twinkle_typechecker.tw");
 }
 
 #[test]

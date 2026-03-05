@@ -144,7 +144,7 @@ fn build_user_sig_map(
                 .collect::<Vec<_>>();
             params.extend(vec![ValType::Anyref; capture_locals.len()]);
             let result = match &func.return_ty {
-                MonoType::Void => None,
+                MonoType::Void | MonoType::Never => None,
                 other => Some(mono_to_valtype(other, type_env)),
             };
             (func.func_id, FuncSigInfo { params, result })
@@ -1858,6 +1858,16 @@ fn emit_prelude_call(
         id if id == prelude_ids::ARRAY_BUILDER_FREEZE => {
             emit_array_builder_freeze_intrinsic(args, bind_ty, ctx)
         }
+        id if id == prelude_ids::DEBUG_STDIN_READ_ALL => {
+            if !args.is_empty() {
+                panic!("__debug_stdin_read_all expects 0 args, got {}", args.len());
+            }
+            // Match interpreter behavior for interactive runs: non-blocking
+            // empty input when no piped stdin is available.
+            let mut instrs = emit_string_literal_atom("");
+            instrs.extend(emit_coerce_stack(&ref_string(), bind_ty));
+            instrs
+        }
         _ => emit_unimplemented_intrinsic_prelude_call(entry, ctx),
     }
 }
@@ -3474,10 +3484,11 @@ mod tests {
                 Instr::LocalSet(0),
             ]
         );
-        assert!(ctx
-            .imports()
-            .iter()
-            .any(|i| i.as_sym == "rt_dict__get_option"));
+        assert!(
+            ctx.imports()
+                .iter()
+                .any(|i| i.as_sym == "rt_dict__get_option")
+        );
     }
 
     #[test]

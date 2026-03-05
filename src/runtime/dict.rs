@@ -267,13 +267,6 @@ fn ref_variant() -> ValType {
     }
 }
 
-fn ref_variant_null() -> ValType {
-    ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(T_VARIANT.into()),
-    }
-}
-
 /// `get_option(dict: Dict, key: anyref) -> Variant`
 ///
 /// Like `get` but returns an Option variant: None (type_id=0, variant_id=0)

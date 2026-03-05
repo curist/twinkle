@@ -160,16 +160,11 @@ impl<W: Write> Interpreter<W> {
     // -----------------------------------------------------------------------
 
     fn call_func(&mut self, func_id: FuncId, args: Vec<Value>, captured: Frame) -> EvalResult {
-        // Prelude / built-in functions
-        if func_id.0 < crate::ir::lower::prelude::USER_FUNC_START {
-            return self.call_builtin(func_id, args);
-        }
-
+        // Prefer user-defined functions when present; otherwise dispatch to
+        // prelude/host builtins (including high IDs like __host_args).
         let idx = match self.func_index.get(&func_id) {
             Some(&i) => i,
-            None => {
-                return Err(Signal::Return(Some(Value::Void)));
-            }
+            None => return self.call_builtin(func_id, args),
         };
 
         // Clone body to avoid borrow issues

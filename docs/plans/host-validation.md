@@ -20,28 +20,31 @@ At Stage 9, the host shell only needs console imports (`host.print`, `host.print
 `host.error`) since the compiler pipeline is still in Rust. File I/O imports become live
 in Stage 10 when `twc.wasm` itself reads source files.
 
-**Status (2026-03-03):**
+**Status (2026-03-04):**
 
-Much of Stage 9 is already implemented as part of Stage 8d/8e:
+Stage 9 deliverables are complete in the current workspace state.
 
-* Wasmtime host shell exists in `src/cli/run_wasm.rs` with all host imports implemented:
-  console (`print`, `println`, `eprint`, `eprintln`, `error`), file I/O (`read_file`,
-  `write_file`, `write_bytes`, `mkdirp`, `list_dir`, `exists`), and process (`args`, `env`,
-  `cwd`, `exit`).
-* `twk run-wasm file.tw` compiles and runs programs end-to-end via Wasmtime.
-* `twk build file.tw -o output.wasm` compiles and links to `.wasm`.
-* Wasm run fixture tests exist in `tests/run_wasm_test.rs` for a subset of programs.
+Implemented:
 
-**Remaining work:**
-
-* Differential testing: systematically run *all* `tests/run/*.tw` through both interpreter
-  and Wasmtime, asserting identical stdout. Currently only a subset has wasm coverage.
-* Tail calls: emit `return_call` / `return_call_ref` for calls in tail position. The
-  `Instr::ReturnCall` and `Instr::ReturnCallRef` variants in `src/wasm/ir.rs` are available.
-  Identify tail-position calls in ANF IR (a `Return(ACall(...))` pattern) and emit the
-  tail-call form. This is a safety gate for Stage 10.
-* Host interface documentation: the exact set of imports, their types, and observable behavior.
-  This is the stability boundary for future hosts (Node.js, browser).
+* Wasmtime host shell in `src/cli/run_wasm.rs` with typed host imports for:
+  * Console: `print`, `println`, `eprint`, `eprintln`, `error`
+  * File I/O: `read_file`, `write_file`, `write_bytes`, `mkdirp`, `list_dir`, `exists`
+  * Process: `args`, `env`, `cwd`, `exit`
+* End-to-end CLI flow:
+  * `twk run-wasm file.tw` (compile + link + run via Wasmtime)
+  * `twk build file.tw -o output.wasm` (compile + link only)
+* Differential parity:
+  * `tests/differential_test.rs` now has an empty wasm skip list.
+  * `differential_interp_vs_wasm` passes for all discovered fixtures
+    (`45 passed, 0 skipped` at last run).
+* Tail-call emission:
+  * Tail-position calls emit `return_call` / `return_call_ref` in `src/codegen/emit.rs`.
+  * `Instr::ReturnCall` / `Instr::ReturnCallRef` are emitted by the WAT backend and validated
+    by codegen unit tests.
+* Additional Stage 9 parity fixes landed while closing differential gaps:
+  * `string_methods` substring bounds fix.
+  * `defer_capture` capture-by-value snapshot fix.
+  * Host/process intrinsic parity fixes for `twinkle_typechecker` and `stdlib_proc`.
 
 CLI:
 
@@ -51,7 +54,7 @@ twk run-wasm file.tw             # compile → link → run via Wasmtime
 twk build file.tw -o output.wasm # compile + link only
 ```
 
-**Differential testing (`tests/wasm_test.rs`):**
+**Differential testing (`tests/differential_test.rs`):**
 
 For every program in `tests/run/`:
 
@@ -62,21 +65,26 @@ For every program in `tests/run/`:
 Any divergence is a regression in the WAT emitter or runtime. The interpreter remains the
 reference semantic oracle.
 
-**Wasm 3.0 — Tail Calls:** The WAT emitter should emit `return_call $f` / `return_call_ref
-$ClosureFunc` for calls in tail position. Tail calls matter for:
+**Wasm 3.0 — Tail Calls:** The WAT emitter now emits `return_call $f` / `return_call_ref
+$ClosureFunc` for eligible calls in tail position.
+
+Tail calls matter for:
 
 * The recursive-descent parser in the self-hosted compiler (Stage 10).
 * Mutually-recursive functions that otherwise hit Wasm's call stack limit on large inputs.
 
-The `Instr::ReturnCall` and `Instr::ReturnCallRef` variants in `src/wasm/ir.rs` are available
-for the emitter to use. Identify tail-position calls in ANF IR (a `Return(ACall(...))` pattern)
-and emit the tail-call form. This is a safety gate for Stage 10 correctness.
+This remains a Stage 10 safety gate for deep recursion correctness.
 
 Deliverables:
 
-* All `tests/run/*.tw` programs produce correct output via Wasmtime.
-* Differential test suite passing.
-* Host interface documented: the exact set of imports `twc.wasm` requires from the host,
-  their types, and their observable behavior. This is the stability boundary for future hosts.
-* Tail-position calls emitted as `return_call` / `return_call_ref`; verified on a
-  deeply-recursive test program (e.g. Fibonacci with large N).
+* [x] All `tests/run/*.tw` fixtures in differential scope produce matching output via Wasmtime.
+* [x] Differential test suite passing.
+* [x] Tail-position calls emitted as `return_call` / `return_call_ref`.
+* [~] Host interface documentation exists but is still split across plan/docs and code.
+
+**Post-Stage 9 follow-ups (non-blocking):**
+
+* Consolidate host ABI docs into one canonical reference (imports, signatures, behavior).
+* Add explicit stdin-injection support in `run_wasm_capture` for deterministic
+  `__debug_stdin_read_all` testing (currently uses non-blocking empty-input fallback).
+* Add a deep-recursion fixture to stress tail-call behavior end-to-end.

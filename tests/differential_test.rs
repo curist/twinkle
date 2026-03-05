@@ -3,22 +3,12 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::Path;
 
 /// Fixtures that are known to fail in the Wasm backend. As bugs are fixed,
 /// entries are removed. The goal is an empty skip list.
 fn wasm_skip_list() -> BTreeSet<&'static str> {
-    [
-        // Defer capture-by-value semantics (wasm sees mutated value)
-        "defer_capture",
-        // Needs __debug_stdin_read_all stub
-        "twinkle_typechecker",
-        // Bug 5: String runtime bounds
-        "string_methods",
-        // Interpreter bug (proc.args() not supported in test harness)
-        "stdlib_proc",
-    ]
-    .into_iter()
-    .collect()
+    [].into_iter().collect()
 }
 
 /// Parse the expected output from leading comment block.
@@ -68,35 +58,32 @@ fn parse_expected_trap(source: &str) -> Option<String> {
 
 /// Discover all .tw test fixtures (non-trap) that have expected output.
 fn discover_fixtures() -> Vec<(String, String)> {
+    let root = Path::new("tests/run");
     let mut fixtures = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
 
-    // Single-file fixtures
-    for entry in fs::read_dir("tests/run").expect("tests/run dir exists") {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.extension().map_or(true, |e| e != "tw") {
-            continue;
-        }
-        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
-        let source = fs::read_to_string(&path).unwrap();
-        if !parse_expected(&source).is_empty() {
-            fixtures.push((name, path.to_str().unwrap().to_string()));
-        }
-    }
-
-    // Multi-file fixtures (directories with main.tw)
-    for entry in fs::read_dir("tests/run").expect("tests/run dir exists") {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let main_tw = path.join("main.tw");
-        if main_tw.exists() {
-            let name = path.file_name().unwrap().to_str().unwrap().to_string();
-            let source = fs::read_to_string(&main_tw).unwrap();
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("tests/run subtree dir exists") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().map_or(true, |e| e != "tw") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
             if !parse_expected(&source).is_empty() {
-                fixtures.push((name, main_tw.to_str().unwrap().to_string()));
+                let rel = path.strip_prefix(root).unwrap_or(&path);
+                let name = if path.file_name().and_then(|n| n.to_str()) == Some("main.tw") {
+                    rel.parent()
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|| "main".to_string())
+                } else {
+                    rel.with_extension("").to_string_lossy().replace('\\', "/")
+                };
+                fixtures.push((name, path.to_str().unwrap().to_string()));
             }
         }
     }
