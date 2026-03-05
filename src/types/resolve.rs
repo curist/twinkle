@@ -246,6 +246,10 @@ impl Resolver {
         for decl in &decls {
             match self.resolve_function_sig(decl) {
                 Ok(sig) => {
+                    if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
+                        self.type_env
+                            .add_method(*type_id, sig.name.clone(), sig.name.clone());
+                    }
                     self.value_env.add_function(sig);
                 }
                 Err(()) => {

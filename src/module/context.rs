@@ -92,10 +92,6 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("error".to_string(), prelude::ERROR);
     func_table.insert("eprint".to_string(), prelude::EPRINT);
     func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
-    func_table.insert("int_to_string".to_string(), prelude::INT_TO_STRING);
-    func_table.insert("float_to_string".to_string(), prelude::FLOAT_TO_STRING);
-    func_table.insert("bool_to_string".to_string(), prelude::BOOL_TO_STRING);
-    func_table.insert("string_to_string".to_string(), prelude::STRING_TO_STRING);
     func_table.insert("string_len".to_string(), prelude::STRING_LEN);
     func_table.insert("string_concat".to_string(), prelude::STRING_CONCAT);
     func_table.insert("array_len".to_string(), prelude::ARRAY_LEN);

@@ -1,0 +1,15 @@
+fn bad_int() String {
+    int_to_string(1)
+}
+
+fn bad_float() String {
+    float_to_string(1.0)
+}
+
+fn bad_bool() String {
+    bool_to_string(true)
+}
+
+fn bad_string() String {
+    string_to_string("x")
+}

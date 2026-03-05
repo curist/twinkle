@@ -1,0 +1,10 @@
+type Counter = .{ n: Int }
+
+fn to_string(c: Counter) Int {
+    c.n
+}
+
+fn render_counter() String {
+    c := Counter.{ n: 7 }
+    "${c}"
+}

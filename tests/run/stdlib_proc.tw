@@ -5,8 +5,8 @@
 
 use @std.proc
 
-println(bool_to_string(Array.len(proc.args()) >= 1))
-println(bool_to_string(proc.cwd() != ""))
+println((Array.len(proc.args()) >= 1).to_string())
+println((proc.cwd() != "").to_string())
 
 case proc.env("__TWINKLE_ENV_SHOULD_NOT_EXIST__") {
   .Some(value) => println(value),

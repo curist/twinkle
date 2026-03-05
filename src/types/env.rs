@@ -650,35 +650,6 @@ impl ValueEnv {
             },
         );
 
-        // Type conversion builtins
-        env.builtins.insert(
-            "int_to_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::Int],
-                ret: Box::new(MonoType::String),
-            },
-        );
-        env.builtins.insert(
-            "float_to_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::Float],
-                ret: Box::new(MonoType::String),
-            },
-        );
-        env.builtins.insert(
-            "bool_to_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::Bool],
-                ret: Box::new(MonoType::String),
-            },
-        );
-        env.builtins.insert(
-            "string_to_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::String],
-                ret: Box::new(MonoType::String),
-            },
-        );
         env.builtins.insert(
             "string_len".to_string(),
             MonoType::Function {

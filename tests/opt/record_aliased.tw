@@ -10,4 +10,4 @@ fn shift_and_sum(p: Point, dx: Int) Int {
     p.x + p.y
 }
 
-println(int_to_string(shift_and_sum(Point.{ x: 5, y: 3 }, 2)))
+println(shift_and_sum(Point.{ x: 5, y: 3 }, 2).to_string())

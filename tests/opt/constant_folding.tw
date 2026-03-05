@@ -5,12 +5,12 @@
 
 // Arithmetic folds
 x := 10 + 32
-println(int_to_string(x))
+println(x.to_string())
 
 // Comparison fold
 y := 5 < 10
-println(bool_to_string(y))
+println(y.to_string())
 
 // Float fold
 z := 1.57 + 1.57
-println(float_to_string(z))
+println(z.to_string())

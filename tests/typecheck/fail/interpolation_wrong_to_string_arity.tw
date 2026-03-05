@@ -1,0 +1,10 @@
+type User = .{ name: String }
+
+fn to_string(u: User, prefix: String) String {
+    prefix.concat(u.name)
+}
+
+fn render_user() String {
+    u := User.{ name: "Ada" }
+    "${u}"
+}

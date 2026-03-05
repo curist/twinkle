@@ -546,11 +546,9 @@ impl TypeChecker {
             ExprKind::Case { scrutinee, arms } => self.synth_case(scrutinee, arms, expr.span),
 
             ExprKind::StringInterpolation { parts } => {
-                // Type-check each interpolated expression
                 for part in parts {
                     if let StringPart::Interpolation(e) = part {
-                        // Any type is ok, will be stringified
-                        let _ = self.synth_expr(e);
+                        self.check_interpolation_expr(e)?;
                     }
                 }
                 Ok(MonoType::String)
@@ -1647,6 +1645,92 @@ impl TypeChecker {
                     feature: "unknown String method",
                     span,
                     note: format!("String has no method '{}'", func_name),
+                });
+                Err(())
+            }
+        }
+    }
+
+    fn check_interpolation_expr(&mut self, expr: &Expr) -> Result<(), ()> {
+        let expr_ty = self.synth_expr(expr)?;
+        let expr_ty = self.zonk(&expr_ty);
+        self.validate_interpolation_to_string(expr, &expr_ty)
+    }
+
+    fn validate_interpolation_to_string(
+        &mut self,
+        expr: &Expr,
+        expr_ty: &MonoType,
+    ) -> Result<(), ()> {
+        match expr_ty {
+            MonoType::Int | MonoType::Float | MonoType::Bool | MonoType::String => Ok(()),
+            MonoType::Named { type_id, .. } => {
+                if let Some(func_name) = self
+                    .type_env
+                    .get_method_function(*type_id, "to_string")
+                    .cloned()
+                {
+                    if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+                        let full_fn_ty = MonoType::Function {
+                            params: sig.params.clone(),
+                            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+                        };
+                        let (inst_ty, _) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+                        let (inst_params, inst_ret) = match inst_ty {
+                            MonoType::Function { params, ret } => (params, *ret),
+                            _ => unreachable!(),
+                        };
+
+                        if inst_params.len() != 1 {
+                            self.errors.push(TypeError::UnsupportedFeature {
+                                feature: "string interpolation",
+                                span: expr.span,
+                                note: format!(
+                                    "Type {} has inherent method `to_string`, but interpolation requires `to_string() -> String`",
+                                    expr_ty.format_with_names(&self.type_env)
+                                ),
+                            });
+                            return Err(());
+                        }
+
+                        self.unify(expr_ty, &inst_params[0], expr.span)?;
+
+                        let ret_ty = self.zonk(&inst_ret);
+                        if ret_ty == MonoType::String {
+                            return Ok(());
+                        }
+
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "string interpolation",
+                            span: expr.span,
+                            note: format!(
+                                "Type {} has `to_string`, but it returns {} (expected String)",
+                                expr_ty.format_with_names(&self.type_env),
+                                ret_ty.format_with_names(&self.type_env)
+                            ),
+                        });
+                        return Err(());
+                    }
+                }
+
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "string interpolation",
+                    span: expr.span,
+                    note: format!(
+                        "Cannot interpolate type {}: missing inherent `to_string() -> String`",
+                        expr_ty.format_with_names(&self.type_env)
+                    ),
+                });
+                Err(())
+            }
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "string interpolation",
+                    span: expr.span,
+                    note: format!(
+                        "Cannot interpolate type {}: missing inherent `to_string() -> String`",
+                        expr_ty.format_with_names(&self.type_env)
+                    ),
                 });
                 Err(())
             }

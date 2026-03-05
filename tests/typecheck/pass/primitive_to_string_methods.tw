@@ -1,0 +1,23 @@
+fn int_to_string_method() String {
+    n := 1
+    n.to_string()
+}
+
+fn float_to_string_method() String {
+    f := 1.5
+    f.to_string()
+}
+
+fn bool_to_string_method() String {
+    b := true
+    b.to_string()
+}
+
+fn string_to_string_method() String {
+    s := "abc"
+    s.to_string()
+}
+
+fn unary_minus_parenthesized() String {
+    (-1).to_string()
+}

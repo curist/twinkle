@@ -2712,37 +2712,10 @@ impl Lowerer {
                     span,
                 }),
                 StringPart::Interpolation(e) => {
-                    let inner = self.lower_expr(e)?;
-                    let ty = inner.ty.clone();
-
-                    let to_str_func_id = match &ty {
-                        MonoType::String => return Some(inner),
-                        MonoType::Int => prelude::INT_TO_STRING,
-                        MonoType::Float => prelude::FLOAT_TO_STRING,
-                        MonoType::Bool => prelude::BOOL_TO_STRING,
-                        _ => {
-                            self.errors.push(LowerError::UnsupportedFeature {
-                                feature: "interpolation of non-primitive type",
-                                span: e.span,
-                            });
-                            return None;
-                        }
-                    };
-
-                    let func_expr = CoreExpr {
-                        kind: CoreExprKind::GlobalFunc(to_str_func_id),
-                        ty: MonoType::Function {
-                            params: vec![ty],
-                            ret: Box::new(MonoType::String),
-                        },
-                        span: e.span,
-                    };
-
+                    let to_string_call =
+                        self.lower_method_call(e, "to_string", &[], &MonoType::String, e.span)?;
                     Some(CoreExpr {
-                        kind: CoreExprKind::Call {
-                            callee: Box::new(func_expr),
-                            args: vec![inner],
-                        },
+                        kind: to_string_call,
                         ty: MonoType::String,
                         span: e.span,
                     })

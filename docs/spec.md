@@ -1329,7 +1329,6 @@ Includes:
 * string module: `String.concat`, `String.substring`, `String.to_string`, etc.
 * iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/iterator.md](iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
-* snake_case conversion helpers (`int_to_string`, `float_to_string`, `bool_to_string`, `string_to_string`) are **not** in the language and must not be callable from user code.
 
 ---
 

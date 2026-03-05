@@ -19,5 +19,5 @@ fn depth(t: Tree) Int {
 }
 
 t := Tree.Node(1, Tree.Node(2, Tree.Leaf, Tree.Leaf), Tree.Leaf)
-println(int_to_string(depth(t)))
-println(int_to_string(depth(Tree.Leaf)))
+println(depth(t).to_string())
+println(depth(Tree.Leaf).to_string())

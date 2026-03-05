@@ -15,4 +15,4 @@ fn update_inner(o: Outer, v: Int) Outer {
 }
 
 result := update_inner(Outer.{ inner: Inner.{ val: 0 } }, 42)
-println(int_to_string(result.inner.val))
+println(result.inner.val.to_string())

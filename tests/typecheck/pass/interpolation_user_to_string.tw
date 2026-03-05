@@ -1,0 +1,10 @@
+type Point = .{ x: Int, y: Int }
+
+fn to_string(p: Point) String {
+    "(${p.x}, ${p.y})"
+}
+
+fn render_point() String {
+    p := Point.{ x: 3, y: 4 }
+    "${p}"
+}
