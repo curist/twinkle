@@ -84,7 +84,7 @@ fn compute() Result<Int, String> {
 
 ### Generics & Capabilities
 ```tw
-fn map<A, B>(xs: array<A>, f: fn(A) B) array<B> {
+fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs { f(x) }
 }
 

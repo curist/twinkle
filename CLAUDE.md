@@ -136,5 +136,5 @@ Variant names must be `PascalCase`. Pattern matching must be exhaustive unless u
   - `for cond { body }`
   - `for x in coll { body }`
   - `for x,i in coll { body }`
-- `collect` comprehension: `collect x in range(10) { x * x }` produces `Array<T>`
+- `collect` comprehension: `collect x in range(10) { x * x }` produces `Vector<T>`
 
