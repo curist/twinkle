@@ -338,15 +338,15 @@ impl TypeEnv {
                         }
                         Ok(MonoType::Void)
                     }
-                    "Array" => {
-                        // Array<T> requires exactly one type argument
+                    "Vector" => {
+                        // Vector<T> requires exactly one type argument
                         if args.len() != 1 {
                             errors.push(TypeError::UndefinedType {
                                 name: if args.is_empty() {
-                                    "Array (missing type argument)".to_string()
+                                    "Vector (missing type argument)".to_string()
                                 } else {
                                     format!(
-                                        "Array<...> (expected 1 type argument, found {})",
+                                        "Vector<...> (expected 1 type argument, found {})",
                                         args.len()
                                     )
                                 },
@@ -355,7 +355,7 @@ impl TypeEnv {
                             return Err(());
                         }
                         let elem_ty = self.resolve_type(&args[0], errors)?;
-                        Ok(MonoType::Array(Box::new(elem_ty)))
+                        Ok(MonoType::Vector(Box::new(elem_ty)))
                     }
                     "Dict" => {
                         // Dict<K, V> requires exactly two type arguments
@@ -722,7 +722,7 @@ impl ValueEnv {
         env.builtins.insert(
             "__host_write_bytes".to_string(),
             MonoType::Function {
-                params: vec![MonoType::String, MonoType::Array(Box::new(MonoType::Int))],
+                params: vec![MonoType::String, MonoType::Vector(Box::new(MonoType::Int))],
                 ret: Box::new(MonoType::Void),
             },
         );
@@ -737,7 +737,7 @@ impl ValueEnv {
             "__host_list_dir".to_string(),
             MonoType::Function {
                 params: vec![MonoType::String],
-                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+                ret: Box::new(MonoType::Vector(Box::new(MonoType::String))),
             },
         );
         env.builtins.insert(
@@ -751,14 +751,14 @@ impl ValueEnv {
             "__host_args".to_string(),
             MonoType::Function {
                 params: vec![],
-                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+                ret: Box::new(MonoType::Vector(Box::new(MonoType::String))),
             },
         );
         env.builtins.insert(
             "__host_env".to_string(),
             MonoType::Function {
                 params: vec![MonoType::String],
-                ret: Box::new(MonoType::Array(Box::new(MonoType::String))),
+                ret: Box::new(MonoType::Vector(Box::new(MonoType::String))),
             },
         );
         env.builtins.insert(

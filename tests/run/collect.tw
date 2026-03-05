@@ -7,17 +7,17 @@
 //   2
 //   4
 
-fn squares(xs: Array<Int>) Array<Int> {
+fn squares(xs: Vector<Int>) Vector<Int> {
     collect x in xs { x * x }
 }
 
-fn evens(xs: Array<Int>) Array<Int> {
+fn evens(xs: Vector<Int>) Vector<Int> {
     collect x in xs {
         if x % 2 == 0 { x } else { continue }
     }
 }
 
-nums: Array<Int> = [1, 2, 3, 4, 5]
+nums: Vector<Int> = [1, 2, 3, 4, 5]
 
 for n in squares(nums) {
     println("${n}")

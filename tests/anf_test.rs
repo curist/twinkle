@@ -233,13 +233,13 @@ fn anf_records() {
 }
 
 #[test]
-fn anf_arrays() {
-    check("tests/run/arrays.tw");
+fn anf_vectors() {
+    check("tests/run/vectors.tw");
 }
 
 #[test]
-fn anf_array_methods() {
-    check("tests/run/array_methods.tw");
+fn anf_vector_methods() {
+    check("tests/run/vector_methods.tw");
 }
 
 #[test]
@@ -318,8 +318,8 @@ fn anf_method_chaining() {
 }
 
 #[test]
-fn anf_empty_array() {
-    check("tests/run/empty_array.tw");
+fn anf_empty_vector() {
+    check("tests/run/empty_vector.tw");
 }
 
 #[test]

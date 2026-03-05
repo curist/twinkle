@@ -111,8 +111,8 @@ fn records() {
 }
 
 #[test]
-fn arrays() {
-    check("tests/run/arrays.tw");
+fn vectors() {
+    check("tests/run/vectors.tw");
 }
 
 #[test]
@@ -176,8 +176,8 @@ fn nested_field_update() {
 }
 
 #[test]
-fn array_methods() {
-    check("tests/run/array_methods.tw");
+fn vector_methods() {
+    check("tests/run/vector_methods.tw");
 }
 
 #[test]
@@ -226,8 +226,8 @@ fn stdlib_path() {
 }
 
 #[test]
-fn empty_array() {
-    check("tests/run/empty_array.tw");
+fn empty_vector() {
+    check("tests/run/empty_vector.tw");
 }
 
 #[test]

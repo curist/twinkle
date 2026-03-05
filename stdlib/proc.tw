@@ -1,4 +1,4 @@
-pub fn args() Array<String> {
+pub fn args() Vector<String> {
   __host_args()
 }
 

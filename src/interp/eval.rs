@@ -426,14 +426,14 @@ impl<W: Write> Interpreter<W> {
                 for e in elements {
                     vals.push(self.eval(e, frame)?);
                 }
-                Ok(Value::Arr(vals))
+                Ok(Value::Vec(vals))
             }
 
             Index { base, index } => {
                 let base_val = self.eval(base, frame)?;
                 let idx_val = self.eval(index, frame)?;
                 match (base_val, idx_val) {
-                    (Value::Arr(elems), Value::Int(i)) => {
+                    (Value::Vec(elems), Value::Int(i)) => {
                         let i = i as usize;
                         if i >= elems.len() {
                             return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
@@ -602,26 +602,26 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             10 => {
-                // array_len(arr: array<T>) Int
+                // vector_len(vec: Vector<T>) Int
                 match &args[0] {
-                    Value::Arr(elems) => Ok(Value::Int(elems.len() as i64)),
-                    _ => panic!("array_len: expected Array"),
+                    Value::Vec(elems) => Ok(Value::Int(elems.len() as i64)),
+                    _ => panic!("vector_len: expected Vector"),
                 }
             }
             11 => {
-                // array_append(arr: array<T>, elem: T) array<T>
+                // vector_push(vec: Vector<T>, elem: T) Vector<T>
                 match args[0].clone() {
-                    Value::Arr(mut elems) => {
+                    Value::Vec(mut elems) => {
                         elems.push(args[1].clone());
-                        Ok(Value::Arr(elems))
+                        Ok(Value::Vec(elems))
                     }
-                    _ => panic!("array_append: expected Array"),
+                    _ => panic!("vector_push: expected Vector"),
                 }
             }
             12 => {
-                // array_set(arr: array<T>, idx: Int, val: T) array<T>
+                // vector_set_unsafe(vec: Vector<T>, idx: Int, val: T) Vector<T>
                 match (args[0].clone(), &args[1], args[2].clone()) {
-                    (Value::Arr(mut elems), Value::Int(i), val) => {
+                    (Value::Vec(mut elems), Value::Int(i), val) => {
                         let i = *i as usize;
                         if i >= elems.len() {
                             return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
@@ -630,9 +630,9 @@ impl<W: Write> Interpreter<W> {
                             }));
                         }
                         elems[i] = val;
-                        Ok(Value::Arr(elems))
+                        Ok(Value::Vec(elems))
                     }
-                    _ => panic!("array_set: wrong argument types"),
+                    _ => panic!("vector_set_unsafe: wrong argument types"),
                 }
             }
             13 => {
@@ -659,10 +659,10 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             14 => {
-                // dict_keys(m: dict<K,V>) array<K>
+                // dict_keys(m: dict<K,V>) Vector<K>
                 match &args[0] {
                     Value::Dict(pairs) => {
-                        Ok(Value::Arr(pairs.iter().map(|(k, _)| k.clone()).collect()))
+                        Ok(Value::Vec(pairs.iter().map(|(k, _)| k.clone()).collect()))
                     }
                     _ => panic!("dict_keys: expected Dict"),
                 }
@@ -771,24 +771,24 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             25 => {
-                // Array.concat(a, b) -> Array<T>
+                // Vector.concat(a, b) -> Vector<T>
                 match (args[0].clone(), args[1].clone()) {
-                    (Value::Arr(mut a), Value::Arr(b)) => {
+                    (Value::Vec(mut a), Value::Vec(b)) => {
                         a.extend(b);
-                        Ok(Value::Arr(a))
+                        Ok(Value::Vec(a))
                     }
-                    _ => panic!("array_concat: expected two Arrays"),
+                    _ => panic!("vector_concat: expected two Vectors"),
                 }
             }
             26 => {
-                // Array.slice(arr, start, end) -> Array<T>
+                // Vector.slice(vec, start, end) -> Vector<T>
                 match (&args[0], &args[1], &args[2]) {
-                    (Value::Arr(elems), Value::Int(s), Value::Int(e)) => {
+                    (Value::Vec(elems), Value::Int(s), Value::Int(e)) => {
                         let s = (*s as usize).min(elems.len());
                         let e = (*e as usize).min(elems.len()).max(s);
-                        Ok(Value::Arr(elems[s..e].to_vec()))
+                        Ok(Value::Vec(elems[s..e].to_vec()))
                     }
-                    _ => panic!("array_slice: expected Array and two Ints"),
+                    _ => panic!("vector_slice: expected Vector and two Ints"),
                 }
             }
             27 => {
@@ -871,28 +871,28 @@ impl<W: Write> Interpreter<W> {
                 })))
             }
             33 => {
-                // ARRAY_BUILDER_NEW() -> Cell<Array<T>>
-                Ok(Value::Cell(Rc::new(RefCell::new(Value::Arr(vec![])))))
+                // VECTOR_BUILDER_NEW() -> Cell<Vector<T>>
+                Ok(Value::Cell(Rc::new(RefCell::new(Value::Vec(vec![])))))
             }
             34 => {
-                // ARRAY_BUILDER_PUSH(builder, elem) -> Void
+                // VECTOR_BUILDER_PUSH(builder, elem) -> Void
                 let cell = match &args[0] {
                     Value::Cell(c) => c.clone(),
-                    _ => panic!("ARRAY_BUILDER_PUSH: expected Cell"),
+                    _ => panic!("VECTOR_BUILDER_PUSH: expected Cell"),
                 };
                 let elem = args[1].clone();
-                if let Value::Arr(ref mut vec) = *cell.borrow_mut() {
+                if let Value::Vec(ref mut vec) = *cell.borrow_mut() {
                     vec.push(elem);
                 } else {
-                    panic!("ARRAY_BUILDER_PUSH: cell does not contain an Array");
+                    panic!("VECTOR_BUILDER_PUSH: cell does not contain a Vector");
                 }
                 Ok(Value::Void)
             }
             35 => {
-                // ARRAY_BUILDER_FREEZE(builder) -> Array<T>
+                // VECTOR_BUILDER_FREEZE(builder) -> Vector<T>
                 let cell = match &args[0] {
                     Value::Cell(c) => c.clone(),
-                    _ => panic!("ARRAY_BUILDER_FREEZE: expected Cell"),
+                    _ => panic!("VECTOR_BUILDER_FREEZE: expected Cell"),
                 };
                 Ok(cell.borrow().clone())
             }
@@ -929,13 +929,52 @@ impl<W: Write> Interpreter<W> {
                     )), // Err
                 }
             }
+            38 => {
+                // VECTOR_GET(vec: Vector<T>, i: Int) -> Option<T>  (safe)
+                match (&args[0], &args[1]) {
+                    (Value::Vec(elems), Value::Int(i)) => {
+                        let idx = *i as usize;
+                        if idx < elems.len() {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![elems[idx].clone()]))
+                        } else {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        }
+                    }
+                    _ => panic!("vector_get: wrong argument types"),
+                }
+            }
+            39 => {
+                // VECTOR_SET(vec: Vector<T>, i: Int, val: T) -> Option<Vector<T>>  (safe)
+                match (args[0].clone(), &args[1], args[2].clone()) {
+                    (Value::Vec(mut elems), Value::Int(i), val) => {
+                        let idx = *i as usize;
+                        if idx < elems.len() {
+                            elems[idx] = val;
+                            Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Vec(elems)]))
+                        } else {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        }
+                    }
+                    _ => panic!("vector_set: wrong argument types"),
+                }
+            }
+            40 => {
+                // VECTOR_MAKE(size: Int, fill: T) -> Vector<T>
+                match (&args[0], args[1].clone()) {
+                    (Value::Int(size), fill) => {
+                        let n = (*size).max(0) as usize;
+                        Ok(Value::Vec(vec![fill; n]))
+                    }
+                    _ => panic!("vector_make: expected Int size"),
+                }
+            }
             1009 => {
-                // __host_args() -> Array<String>
+                // __host_args() -> Vector<String>
                 let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
-                Ok(Value::Arr(argv))
+                Ok(Value::Vec(argv))
             }
             1010 => {
-                // __host_env(name: String) -> Array<String> (0 or 1 value)
+                // __host_env(name: String) -> Vector<String> (0 or 1 value)
                 let name = match &args[0] {
                     Value::Str(s) => s.clone(),
                     _ => panic!("__host_env: expected String name"),
@@ -944,7 +983,7 @@ impl<W: Write> Interpreter<W> {
                     .ok()
                     .map(|v| vec![Value::Str(v)])
                     .unwrap_or_default();
-                Ok(Value::Arr(values))
+                Ok(Value::Vec(values))
             }
             1011 => {
                 // __host_cwd() -> String

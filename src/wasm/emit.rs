@@ -368,6 +368,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I32GtS => format!("{pad}i32.gt_s"),
         Instr::I32LeS => format!("{pad}i32.le_s"),
         Instr::I32GeS => format!("{pad}i32.ge_s"),
+        Instr::I32LtU => format!("{pad}i32.lt_u"),
         Instr::I32Eqz => format!("{pad}i32.eqz"),
 
         Instr::I64Add => format!("{pad}i64.add"),

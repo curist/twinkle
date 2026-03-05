@@ -21,7 +21,7 @@ fn sum_iter(it: Iterator<Int>) Int {
 }
 
 // collect with outer capture
-names: Array<String> = ["a", "b", "c"]
+names: Vector<String> = ["a", "b", "c"]
 n := names.len()
 name_iter := Iterator.unfold(0, fn(i: Int) {
   if i < n { UnfoldStep.Yield(names[i], i + 1) }

@@ -143,12 +143,12 @@ fn opt_records() {
     invariant_check("tests/run/records.tw");
 }
 #[test]
-fn opt_arrays() {
-    invariant_check("tests/run/arrays.tw");
+fn opt_vectors() {
+    invariant_check("tests/run/vectors.tw");
 }
 #[test]
-fn opt_array_methods() {
-    invariant_check("tests/run/array_methods.tw");
+fn opt_vector_methods() {
+    invariant_check("tests/run/vector_methods.tw");
 }
 #[test]
 fn opt_closures() {
@@ -207,8 +207,8 @@ fn opt_generic_types() {
     invariant_check("tests/run/generic_types.tw");
 }
 #[test]
-fn opt_empty_array() {
-    invariant_check("tests/run/empty_array.tw");
+fn opt_empty_vector() {
+    invariant_check("tests/run/empty_vector.tw");
 }
 #[test]
 fn opt_module_globals() {

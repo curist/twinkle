@@ -1,0 +1,18 @@
+// Expected output:
+//   0
+//   3
+//   hello
+//   world
+
+xs: Vector<Int> = []
+println("${xs.len()}")
+
+xs2 := xs.push(1).push(2).push(3)
+println("${xs2.len()}")
+
+// Empty vector of strings
+words: Vector<String> = []
+words2 := words.push("hello").push("world")
+for w in words2 {
+    println(w)
+}

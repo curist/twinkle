@@ -1802,7 +1802,7 @@ fn emit_prelude_call(
             instrs.extend(emit_coerce_stack(&ref_string_null(), bind_ty));
             instrs
         }
-        id if id == prelude_ids::ARRAY_APPEND => emit_array_append_intrinsic(args, bind_ty, ctx),
+        id if id == prelude_ids::VECTOR_PUSH => emit_array_append_intrinsic(args, bind_ty, ctx),
         // Range constructors: build Record(RANGE_TYPE_ID, [start, end, step])
         id if id == prelude_ids::RANGE => {
             // range(n) -> Record(3, [0, n, 1])
@@ -1848,15 +1848,24 @@ fn emit_prelude_call(
             emit_iterator_unfold_intrinsic(args, bind_ty, ctx)
         }
         id if id == prelude_ids::ITERATOR_NEXT => emit_iterator_next_intrinsic(args, bind_ty, ctx),
-        // Array builder operations (used by collect)
-        id if id == prelude_ids::ARRAY_BUILDER_NEW => {
+        // Vector builder operations (used by collect)
+        id if id == prelude_ids::VECTOR_BUILDER_NEW => {
             emit_array_builder_new_intrinsic(bind_ty, ctx)
         }
-        id if id == prelude_ids::ARRAY_BUILDER_PUSH => {
+        id if id == prelude_ids::VECTOR_BUILDER_PUSH => {
             emit_array_builder_push_intrinsic(args, bind_ty, ctx)
         }
-        id if id == prelude_ids::ARRAY_BUILDER_FREEZE => {
+        id if id == prelude_ids::VECTOR_BUILDER_FREEZE => {
             emit_array_builder_freeze_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::VECTOR_MAKE => {
+            emit_vector_make_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::VECTOR_GET => {
+            emit_vector_get_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::VECTOR_SET => {
+            emit_vector_set_intrinsic(args, bind_ty, ctx)
         }
         id if id == prelude_ids::DEBUG_STDIN_READ_ALL => {
             if !args.is_empty() {
@@ -1888,6 +1897,121 @@ fn emit_array_append_intrinsic(
     instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     instrs.push(Instr::Call("rt_arr__concat".to_string()));
     instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs
+}
+
+// --- Vector safe/make intrinsics ---
+
+/// `Vector.make(size: Int, fill: T) -> Vector<T>`
+/// Wasm: `array.new $Array (fill_anyref, size_i32)`
+fn emit_vector_make_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    assert_eq!(args.len(), 2, "Vector.make expects 2 args");
+    let mut instrs = Vec::new();
+    // fill value (anyref)
+    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
+    // size (Int = i64) → i32
+    instrs.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64);
+    instrs.push(Instr::ArrayNew(T_ARRAY.to_string()));
+    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs
+}
+
+/// `v.get(i: Int) -> Option<T>`
+/// Bounds-checked: returns Some(v[i]) or None.
+/// ANF guarantees args are atoms (locals/literals), safe to re-emit.
+fn emit_vector_get_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    use crate::types::ty::OPTION_TYPE_ID;
+    assert_eq!(args.len(), 2, "Vector.get expects 2 args");
+
+    let mut instrs = Vec::new();
+
+    // condition: i_i32 < arr.len
+    // i32.lt_u pops [lhs, rhs] and pushes lhs < rhs
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64); // lhs = i as i32
+    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    instrs.push(Instr::ArrayLen); // rhs = arr.len
+    instrs.push(Instr::I32LtU);
+
+    // then: Some(arr[i])
+    let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
+    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    then_body.push(Instr::I32WrapI64);
+    then_body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    then_body.push(Instr::StructNew(T_VARIANT.to_string()));
+
+    let else_body = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(0), // None
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+
+    instrs.push(Instr::If {
+        result: Some(ref_variant()),
+        then_body,
+        else_body,
+    });
+    instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
+}
+
+/// `v.set(i: Int, val: T) -> Option<Vector<T>>`
+/// Bounds-checked: returns Some(updated_vec) or None.
+/// ANF guarantees args are atoms (locals/literals), safe to re-emit.
+fn emit_vector_set_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    use crate::types::ty::OPTION_TYPE_ID;
+    assert_eq!(args.len(), 3, "Vector.set expects 3 args");
+
+    ensure_rt_arr_set_import(ctx);
+
+    let mut instrs = Vec::new();
+
+    // condition: i_i32 < arr.len
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64);
+    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I32LtU);
+
+    // then: Some(rt_arr__set(arr, i, val))
+    let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
+    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    then_body.push(Instr::I32WrapI64);
+    then_body.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
+    then_body.push(Instr::Call("rt_arr__set".to_string()));
+    then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    then_body.push(Instr::StructNew(T_VARIANT.to_string()));
+
+    let else_body = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(0), // None
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+
+    instrs.push(Instr::If {
+        result: Some(ref_variant()),
+        then_body,
+        else_body,
+    });
+    instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
     instrs
 }
 
@@ -2518,6 +2642,16 @@ fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
     });
 }
 
+fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "set".to_string(),
+        as_sym: "rt_arr__set".to_string(),
+        params: vec![ref_array_null(), ValType::I32, ValType::Anyref],
+        results: vec![ref_array()],
+    });
+}
+
 fn ensure_rt_dict_get_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.dict".to_string(),
@@ -2710,11 +2844,11 @@ mod tests {
 
         let entry = ctx
             .prelude
-            .get(&prelude_ids::ARRAY_APPEND)
+            .get(&prelude_ids::VECTOR_PUSH)
             .cloned()
             .expect("missing prelude entry");
         let instrs = emit_prelude_call(
-            prelude_ids::ARRAY_APPEND,
+            prelude_ids::VECTOR_PUSH,
             &entry,
             &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
             &ref_array_null(),

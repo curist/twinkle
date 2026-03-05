@@ -11,14 +11,14 @@ s := "hello world"
 println("${s.substring(0, 5).len()}")        // 5: "hello"
 println("${s.substring(3, 8).len()}")        // 5: "lo wo"
 
-// Array method chaining
+// Vector method chaining
 a := [1, 2, 3]
 b := [4, 5, 6]
 println("${a.concat(b).slice(0, 3).len()}")  // 3
 println("${a.concat(b).slice(2, 6).len()}")  // 4
 
 // Chaining across string and array ops
-words: Array<String> = ["hello", " ", "world"]
+words: Vector<String> = ["hello", " ", "world"]
 joined := words[0].concat(words[1]).concat(words[2])
 println(joined)                               // hello world
 println("${joined.substring(0, 5).len()}")   // 5

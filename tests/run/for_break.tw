@@ -6,7 +6,7 @@
 //   found: 7
 
 // Break exits a for loop early
-fn print_until_zero(xs: Array<Int>) Void {
+fn print_until_zero(xs: Vector<Int>) Void {
     for x in xs {
         if x == 0 { break }
         println("${x}")
@@ -17,7 +17,7 @@ fn print_until_zero(xs: Array<Int>) Void {
 print_until_zero([1, 2, 3, 0, 4, 5])
 
 // Break inside a while-style for loop
-fn find_gt(xs: Array<Int>, threshold: Int) String {
+fn find_gt(xs: Vector<Int>, threshold: Int) String {
     result := "not found"
     for x in xs {
         if x > threshold {

@@ -1,8 +1,8 @@
-fn map<A, B>(xs: Array<A>, f: fn(A) B) Array<B> {
+fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs { f(x) }
 }
 
-fn filter<T>(xs: Array<T>, pred: fn(T) Bool) Array<T> {
+fn filter<T>(xs: Vector<T>, pred: fn(T) Bool) Vector<T> {
   collect x in xs {
     if pred(x) {
       x
@@ -12,7 +12,7 @@ fn filter<T>(xs: Array<T>, pred: fn(T) Bool) Array<T> {
   }
 }
 
-fn sum(xs: Array<Int>) Int {
+fn sum(xs: Vector<Int>) Int {
   total := 0
   for x in xs {
     total = total + x
@@ -20,7 +20,7 @@ fn sum(xs: Array<Int>) Int {
   total
 }
 
-fn fold<T, A>(xs: Array<T>, init: A, f: fn(A, T) A) A {
+fn fold<T, A>(xs: Vector<T>, init: A, f: fn(A, T) A) A {
   acc := init
   for x in xs {
     acc = f(acc, x)
@@ -40,7 +40,7 @@ fn add(a: Int, b: Int) Int {
   a + b
 }
 
-fn array_to_string(xs: Array<Int>) String {
+fn vector_to_string(xs: Vector<Int>) String {
   if len(xs) == 0 {
     return "[]"
   }
@@ -60,11 +60,11 @@ fn main() Void {
   numbers := [1, 2, 3, 4, 5]
 
   doubled := map(numbers, double)
-  println("Original: ${array_to_string(numbers)}")
-  println("Doubled:  ${array_to_string(doubled)}")
+  println("Original: ${vector_to_string(numbers)}")
+  println("Doubled:  ${vector_to_string(doubled)}")
 
   evens := filter(numbers, is_even)
-  println("Evens:    ${array_to_string(evens)}")
+  println("Evens:    ${vector_to_string(evens)}")
 
   total := sum(numbers)
   println("Sum:      ${total}")

@@ -941,7 +941,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_38 (type $functype_23)
+  (func $user__func_41 (type $functype_23)
     (local $p0 i32)
     i32.const 104
     i32.const 101
@@ -961,11 +961,11 @@
     array.new_fixed $rt_types__String 15
     return_call $rt_core__println
   )
-  (func $user__func_38__closure (type $functype_24)
+  (func $user__func_41__closure (type $functype_24)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_38
+    call $user__func_41
     i32.const 0
     ref.i31
   )
@@ -1033,7 +1033,7 @@
     return
   )
   (func $user____user_init (type $functype_23)
-    call $user__func_38
+    call $user__func_41
   )
   (func $__linked_init (type $functype_23)
     call $user____user_init

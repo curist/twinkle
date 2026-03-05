@@ -36,9 +36,9 @@ fn op_kind_from(ty: &MonoType) -> OpKind {
 /// Derive `IndexKind` from the base expression's `MonoType`.
 fn index_kind_from(ty: &MonoType) -> IndexKind {
     match ty {
-        MonoType::Array(_) => IndexKind::Array,
+        MonoType::Vector(_) => IndexKind::Array,
         MonoType::Dict(_, _) => IndexKind::Dict,
-        other => panic!("index_kind_from: expected Array/Dict, got {:?}", other),
+        other => panic!("index_kind_from: expected Vector/Dict, got {:?}", other),
     }
 }
 

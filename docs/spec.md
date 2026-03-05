@@ -40,7 +40,7 @@ Source files end with `.tw`.
 ### References (GC)
 
 * `String` — immutable text.
-* `Array<T>` — immutable GC array; element unboxed/ref depending on `T`.
+* `Vector<T>` — immutable GC array; element unboxed/ref depending on `T`.
 * `record` — immutable closed struct shape.
 * `Dict<K,V>` — immutable hash map reference.
 * `function` — closure with captured environment (GC).
@@ -58,7 +58,7 @@ Source files end with `.tw`.
 Parametric polymorphism:
 
 ```tw
-fn map<A, B>(xs: Array<A>, f: fn(A) B) Array<B> { ... }
+fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> { ... }
 ```
 
 No higher-kinded types.
@@ -296,7 +296,7 @@ Desugars conceptually to the core record-update operation (not Twinkle surface s
 r = RecordUpdate(r, field, expr)
 ```
 
-#### Array index update
+#### Vector index update
 
 ```tw
 arr[i] = value
@@ -305,7 +305,7 @@ arr[i] = value
 Desugars to:
 
 ```tw
-arr = Array.set(arr, i, value)
+arr = Vector.set_unsafe(arr, i, value)
 ```
 
 #### Dict index update
@@ -595,7 +595,7 @@ the last segment (`c`), or the alias if `as name` is provided.
 #### Stdlib modules
 
 Stdlib modules are prefixed with `@`. The prelude (primitive types, `println`,
-`Array`, `Dict`, `String`, `Range`, etc.) is always implicitly in scope — no
+`Vector`, `Dict`, `String`, `Range`, etc.) is always implicitly in scope — no
 `use` needed. Richer stdlib modules require an explicit `use @...`.
 
 #### Aliasing
@@ -699,7 +699,7 @@ value.len()
 
 Defined for:
 
-* `Array<T>.len() Int` — number of elements
+* `Vector<T>.len() Int` — number of elements
 * `String.len() Int` — length of the string
 * `Dict<K,V>.len() Int` — number of entries
 
@@ -770,7 +770,7 @@ A function that needs "anything that can be shown" is written by taking both:
 **Example: Generic printing**
 
 ```tw
-fn print_all<T>(xs: Array<T>, show: Show<T>) {
+fn print_all<T>(xs: Vector<T>, show: Show<T>) {
   for x in xs {
     println(show.to_string(x))
   }
@@ -794,7 +794,7 @@ ShowUser: Show<User> = .{
   to_string: show_user,
 }
 
-users: Array<User> = [...]
+users: Vector<User> = [...]
 print_all(users, ShowUser)
 ```
 
@@ -830,7 +830,7 @@ debug_value(user, ShowUser)  // ✅
 This applies uniformly:
 
 * No automatic wrapping of `T` into `Show<T>` (or similar),
-* No automatic rewriting of `Array<T>` into `Array<Show<T>>`,
+* No automatic rewriting of `Vector<T>` into `Vector<Show<T>>`,
 * No chained or inferred conversions.
 
 All adapter logic, if any, is explicit in user code.
@@ -846,7 +846,7 @@ type Eq<T> = .{
   equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
+fn contains<T>(xs: Vector<T>, needle: T, eq: Eq<T>) Bool {
   for x in xs {
     if eq.equals(x, needle) {
       return true
@@ -865,7 +865,7 @@ EqPoint: Eq<Point> = .{
   equals: point_equals,
 }
 
-points: Array<Point> = [...]
+points: Vector<Point> = [...]
 p: Point = .{ x: 1, y: 2 }
 found := contains(points, p, EqPoint)
 ```
@@ -875,7 +875,7 @@ found := contains(points, p, EqPoint)
 Instead of a general "Iterable" trait, provide small, concrete helpers:
 
 ```tw
-fn sum_array(xs: Array<Int>) Int {
+fn sum_array(xs: Vector<Int>) Int {
   acc := 0
   for x in xs {
     acc = acc + x
@@ -884,7 +884,7 @@ fn sum_array(xs: Array<Int>) Int {
 }
 ```
 
-User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Array<T>` or `Range`) from explicit conversion functions.
+User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Vector<T>` or `Range`) from explicit conversion functions.
 
 ---
 
@@ -1003,7 +1003,7 @@ for x,i in coll { body }
 
 The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
 
-* `Array<T>` — lowered to an indexed loop over the array length.
+* `Vector<T>` — lowered to an indexed loop over the array length.
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
 * `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/iterator.md](iterator.md)).
@@ -1014,20 +1014,20 @@ Any value used in `for x in coll` whose type is not one of the above is a **comp
 
 * `i: Int` starts from 0 and increments each iteration.
 * Break/continue as usual.
-* The indexed form (`for x, i in coll`) is supported for `Array<T>`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
+* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
 
 **User Extensions:**
 
 To iterate over a custom type, either:
 
-1. Define a helper that returns a supported built-in collection (`Array<T>`, `Range`), or
+1. Define a helper that returns a supported built-in collection (`Vector<T>`, `Range`), or
 2. Define a helper that returns `Iterator<T>` using `Iterator.unfold` (see [docs/iterator.md](iterator.md)).
 
 ```tw
-// Option 1: convert to Array
+// Option 1: convert to Vector
 fn sum_tree(t: Tree<Int>) Int {
   acc := 0
-  for x in t.to_array() {
+  for x in t.to_vector() {
     acc = acc + x
   }
   acc
@@ -1120,8 +1120,8 @@ xs := collect x in range(10) { x * x }
 
 Rules:
 
-* Produces `Array<T>`.
-* Works with the same collection types as `for` loops (see Section 12): `Array<T>`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
+* Produces `Vector<T>`.
+* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
 * `continue` skips emission.
 * `break` ends early, returns partial array.
 * If the body returns `Void` → error, because collect expects a value to push.
@@ -1131,55 +1131,56 @@ Example:
 
 ```tw
 squares := collect x in range(1, 10) { x * x }
-// squares: Array<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
+// squares: Vector<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
 
 evens := collect x in range(1, 20) {
   if x % 2 == 0 { x } else { continue }
 }
-// evens: Array<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
+// evens: Vector<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
 
 ---
 
-## 14. Arrays
+## 14. Vectors
 
-Arrays are **immutable** sequences.
+Vectors are **immutable** sequences (`Vector<T>`).
 
-`arr[i]` indexing, 0-based (read-only access).
+`vec[i]` indexing, 0-based (traps on out-of-bounds).
 
-Array operations via module functions (all return new arrays):
+Vector operations via method or module syntax:
 
-* `Array.set(arr, index, value) Array<T>` — returns new array with element at index replaced
-* `Array.append(arr, value) Array<T>` — returns new array with value appended
-* `Array.concat(arr1, arr2) Array<T>` — returns new array combining both
-* `Array.slice(arr, start, end) Array<T>` — returns new array with subset of elements
-* `Array.len(arr) Int` — returns length of array
-* etc.
+* `vec.len() Int` / `Vector.len(vec) Int` — number of elements
+* `vec.push(value) Vector<T>` — returns new vector with value appended
+* `vec.concat(other) Vector<T>` / `Vector.concat(a, b) Vector<T>` — concatenate two vectors
+* `vec.slice(start, end) Vector<T>` / `Vector.slice(vec, start, end) Vector<T>` — subset `[start, end)`
+* `vec.get(i) Option<T>` — safe index access; returns `None` if out of bounds
+* `vec.set(i, val) Option<Vector<T>>` — safe functional update; returns `None` if out of bounds
+* `Vector.make(size, fill) Vector<T>` — create a vector of `size` elements all equal to `fill`
 
-Array literals:
+Unsafe index write (traps on out-of-bounds):
 
 ```tw
-[1, 2, 3]  // Array<Int>
+vec[i] = value
+```
 
-xs: Array<Int> = []  // empty array requires type annotation
+Desugars to:
+
+```tw
+vec = Vector.set_unsafe(vec, i, value)
+```
+
+Vector literals:
+
+```tw
+[1, 2, 3]  // Vector<Int>
+
+xs: Vector<Int> = []  // empty vector requires type annotation
 ```
 
 If context can't determine element type => compiler error.
 
 ```tw
 [x, y, z]  // all elements must have the same type
-```
-
-**Update syntax:**
-
-```tw
-arr[i] = value
-```
-
-Desugars to:
-
-```tw
-arr = Array.set(arr, i, value)
 ```
 
 ---
@@ -1237,7 +1238,7 @@ Dict operations via module functions (all return new dicts):
 * `Dict.remove(m, k) Dict<K, V>` — returns new dict with key removed
 * `Dict.get(m, k) V?` — returns Option<V> for safe access
 * `Dict.has(m, k) Bool` — checks if key exists
-* `Dict.keys(m) Array<K>` — returns array of keys
+* `Dict.keys(m) Vector<K>` — returns array of keys
 * `Dict.len(m) Int` — returns length of keys
 
 Indexing syntax:
@@ -1259,7 +1260,7 @@ Core API:
 `Cell` does not change update-sugar semantics:
 
 * `x.y = v` still means record rebuild + rebinding of `x`.
-* `arr[i] = v` still means `arr = Array.set(arr, i, v)`.
+* `arr[i] = v` still means `arr = Vector.set_unsafe(arr, i, v)`.
 * `m[k] = v` still means `m = Dict.set(m, k, v)`.
 
 If multiple names refer to the same `Cell<T>`, updates through one name are visible through the others.
@@ -1297,7 +1298,7 @@ Examples:
 ```tw
 fn validate(n: Int) !ParseError { ... }          // Result<Void, ParseError>
 fn parse(s: String) Int!ParseError { ... }       // Result<Int, ParseError>
-fn find(xs: Array<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, String>
+fn find(xs: Vector<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, String>
 ```
 
 `try` sugar:
@@ -1321,9 +1322,9 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `error`
-* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Array<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
+* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Vector<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
 * range functions: `range`, `range_from`, `range_step`
-* array module: `Array.set`, `Array.append`, `Array.concat`, etc.
+* vector module: `Vector.make`, `Vector.len`, `Vector.concat`, `Vector.slice`, `Vector.get`, `Vector.set`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
 * string module: `String.concat`, `String.substring`, `String.to_string`, etc.
@@ -1444,7 +1445,7 @@ on the interpolated expression type.
 
 * Primitives → unboxed `i64/f64`
 * Records → immutable `struct` (new values created via structural sharing where possible)
-* Arrays → immutable `array` (new values created via structural sharing where possible)
+* Vectors → immutable `array` (new values created via structural sharing where possible)
 * Dicts → immutable hash map structures (structural sharing where possible)
 * Cells → mutable `struct` wrapper storing a `T` payload
 * Functions → closures allocated as small structs
@@ -1480,8 +1481,8 @@ note: dot syntax only resolves record fields and inherent methods from the defin
 
 ```
 error: cannot iterate over value of type Tree<Int>
-note: for loops only support Array<T>, Range, and Dict<K,V>
-help: consider defining a helper function that returns Array<Int>
+note: for loops only support Vector<T>, Range, and Dict<K,V>
+help: consider defining a helper function that returns Vector<Int>
 ```
 
 **Mutation attempt on non-name**:

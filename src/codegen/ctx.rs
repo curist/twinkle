@@ -425,8 +425,8 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
 
     match func_id {
         id if id == ids::STRING_TO_STRING => Some(named_ref(T_STRING)),
-        id if id == ids::ARRAY_APPEND => Some(named_ref(T_ARRAY)),
-        id if id == ids::ARRAY_BUILDER_FREEZE => Some(named_ref(T_ARRAY)),
+        id if id == ids::VECTOR_PUSH => Some(named_ref(T_ARRAY)),
+        id if id == ids::VECTOR_BUILDER_FREEZE => Some(named_ref(T_ARRAY)),
         id if id == ids::DEBUG_STDIN_READ_ALL => Some(named_ref(T_STRING)),
         id if id == ids::DEBUG_READ_FILE => Some(ValType::Anyref),
         id if id == ids::RANGE_FROM
@@ -439,8 +439,11 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
             || id == ids::DICT_GET_UNSAFE
             || id == ids::ITERATOR_NEXT
             || id == ids::ITERATOR_UNFOLD
-            || id == ids::ARRAY_BUILDER_NEW
-            || id == ids::ARRAY_BUILDER_PUSH =>
+            || id == ids::VECTOR_BUILDER_NEW
+            || id == ids::VECTOR_BUILDER_PUSH
+            || id == ids::VECTOR_GET
+            || id == ids::VECTOR_SET
+            || id == ids::VECTOR_MAKE =>
         {
             Some(ValType::Anyref)
         }
@@ -453,7 +456,7 @@ fn runtime_result_valtype(func_id: FuncId, entry: &PreludeEntry) -> Option<ValTy
 
     match func_id {
         // Twinkle `Int` is i64 even though runtime length primitives return i32.
-        id if id == ids::ARRAY_LEN || id == ids::STRING_LEN || id == ids::DICT_LEN => {
+        id if id == ids::VECTOR_LEN || id == ids::STRING_LEN || id == ids::DICT_LEN => {
             Some(ValType::I64)
         }
         _ => match entry.runtime_results.as_slice() {
@@ -471,7 +474,7 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
         MonoType::Bool => ValType::I32,
         MonoType::String => ref_named(true, T_STRING),
         MonoType::Void | MonoType::Never => ValType::I32,
-        MonoType::Array(_) => ref_named(true, T_ARRAY),
+        MonoType::Vector(_) => ref_named(true, T_ARRAY),
         MonoType::Dict(_, _) => ref_named(true, T_DICT),
         MonoType::Function { .. } => ref_named(true, T_CLOSURE),
         MonoType::Var(_) | MonoType::MetaVar(_) => ValType::Anyref,
@@ -693,7 +696,7 @@ mod tests {
                 body: Box::new(AnfExpr::Let {
                     local: LocalId(2),
                     op: Box::new(AnfOp::ACall {
-                        callee: Atom::AGlobalFunc(prelude_ids::ARRAY_LEN),
+                        callee: Atom::AGlobalFunc(prelude_ids::VECTOR_LEN),
                         args: vec![Atom::ALocal(LocalId(1))],
                     }),
                     body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
@@ -745,7 +748,7 @@ mod tests {
             func_id: FuncId(4),
             name: "index_get".to_string(),
             params: vec![LocalId(0)],
-            param_tys: vec![MonoType::Array(Box::new(MonoType::Int))],
+            param_tys: vec![MonoType::Vector(Box::new(MonoType::Int))],
             body: AnfExpr::Let {
                 local: LocalId(1),
                 op: Box::new(AnfOp::AIndex {

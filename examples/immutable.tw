@@ -6,7 +6,7 @@
 // === Record field update ===
 // alias still: (0, 0)
 // p after: (1, 42)
-// === Array update ===
+// === Vector update ===
 // arr after: 0 42 0
 // arr_alias: 0 0 0
 // === Rebinding in loop ===
@@ -36,8 +36,8 @@ p_str := point_str(p)
 println("alias still: ${alias_str}")   // alias sees old value
 println("p after: ${p_str}")
 
-println("=== Array update ===")
-arr: Array<Int> = [0, 0, 0]
+println("=== Vector update ===")
+arr: Vector<Int> = [0, 0, 0]
 arr_alias := arr
 arr[1] = 42
 println("arr after: ${arr[0]} ${arr[1]} ${arr[2]}")

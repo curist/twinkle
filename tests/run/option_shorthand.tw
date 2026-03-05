@@ -9,7 +9,7 @@
 // T? is shorthand for Option<T> in type positions
 
 // Function return type: Int? == Option<Int>
-fn find_first(xs: Array<Int>, target: Int) Int? {
+fn find_first(xs: Vector<Int>, target: Int) Int? {
     for x in xs {
         if x == target { return .Some(x) }
     }
@@ -43,7 +43,7 @@ case lookup("bye") {
 }
 
 // Chaining: find first even number using Int?
-fn first_even(xs: Array<Int>) Int? {
+fn first_even(xs: Vector<Int>) Int? {
     for x in xs {
         if x % 2 == 0 { return .Some(x) }
     }

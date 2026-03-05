@@ -186,9 +186,9 @@ pub fn build_prelude_map() -> PreludeMap {
     );
 
     map.insert(
-        prelude_ids::ARRAY_LEN,
+        prelude_ids::VECTOR_LEN,
         PreludeEntry::runtime(
-            "Array.len",
+            "Vector.len",
             "rt.arr",
             "len",
             "rt_arr__len",
@@ -197,13 +197,13 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::ARRAY_APPEND,
-        PreludeEntry::intrinsic("Array.append"),
+        prelude_ids::VECTOR_PUSH,
+        PreludeEntry::intrinsic("Vector.push"),
     );
     map.insert(
-        prelude_ids::ARRAY_SET,
+        prelude_ids::VECTOR_SET_UNSAFE,
         PreludeEntry::runtime(
-            "Array.set",
+            "Vector.set_unsafe",
             "rt.arr",
             "set",
             "rt_arr__set",
@@ -212,9 +212,9 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::ARRAY_CONCAT,
+        prelude_ids::VECTOR_CONCAT,
         PreludeEntry::runtime(
-            "Array.concat",
+            "Vector.concat",
             "rt.arr",
             "concat",
             "rt_arr__concat",
@@ -223,9 +223,9 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::ARRAY_SLICE,
+        prelude_ids::VECTOR_SLICE,
         PreludeEntry::runtime(
-            "Array.slice",
+            "Vector.slice",
             "rt.arr",
             "slice",
             "rt_arr__slice",
@@ -346,16 +346,28 @@ pub fn build_prelude_map() -> PreludeMap {
         PreludeEntry::intrinsic("Iterator.unfold"),
     );
     map.insert(
-        prelude_ids::ARRAY_BUILDER_NEW,
-        PreludeEntry::intrinsic("__array_builder_new"),
+        prelude_ids::VECTOR_BUILDER_NEW,
+        PreludeEntry::intrinsic("__vector_builder_new"),
     );
     map.insert(
-        prelude_ids::ARRAY_BUILDER_PUSH,
-        PreludeEntry::intrinsic("__array_builder_push"),
+        prelude_ids::VECTOR_BUILDER_PUSH,
+        PreludeEntry::intrinsic("__vector_builder_push"),
     );
     map.insert(
-        prelude_ids::ARRAY_BUILDER_FREEZE,
-        PreludeEntry::intrinsic("__array_builder_freeze"),
+        prelude_ids::VECTOR_BUILDER_FREEZE,
+        PreludeEntry::intrinsic("__vector_builder_freeze"),
+    );
+    map.insert(
+        prelude_ids::VECTOR_GET,
+        PreludeEntry::intrinsic("Vector.get"),
+    );
+    map.insert(
+        prelude_ids::VECTOR_SET,
+        PreludeEntry::intrinsic("Vector.set"),
+    );
+    map.insert(
+        prelude_ids::VECTOR_MAKE,
+        PreludeEntry::intrinsic("Vector.make"),
     );
     map.insert(
         prelude_ids::DEBUG_STDIN_READ_ALL,
@@ -495,6 +507,9 @@ mod tests {
             );
         }
         for id in [
+            prelude_ids::VECTOR_GET.0,
+            prelude_ids::VECTOR_SET.0,
+            prelude_ids::VECTOR_MAKE.0,
             prelude_ids::EPRINT.0,
             prelude_ids::EPRINTLN.0,
             prelude_ids::HOST_READ_FILE.0,

@@ -5,7 +5,7 @@
 
 use @std.proc
 
-println((Array.len(proc.args()) >= 1).to_string())
+println((Vector.len(proc.args()) >= 1).to_string())
 println((proc.cwd() != "").to_string())
 
 case proc.env("__TWINKLE_ENV_SHOULD_NOT_EXIST__") {

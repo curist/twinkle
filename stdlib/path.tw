@@ -20,7 +20,7 @@ pub fn join(base: String, part: String) String {
   }
 }
 
-pub fn join_all(parts: Array<String>) String {
+pub fn join_all(parts: Vector<String>) String {
   if parts.len() == 0 { return "" }
 
   out := parts[0]
@@ -93,7 +93,7 @@ pub fn normalize(path: String) String {
   abs := is_absolute(path)
   n := String.len(path)
 
-  segs: Array<String> = []
+  segs: Vector<String> = []
   start := 0
   i := 0
 
@@ -111,15 +111,15 @@ pub fn normalize(path: String) String {
         if segs.len() > 0 {
           last := segs[segs.len() - 1]
           if last == ".." {
-            if !abs { segs = segs.append(seg) }
+            if !abs { segs = segs.push(seg) }
           } else {
             segs = segs.slice(0, segs.len() - 1)
           }
         } else if !abs {
-          segs = segs.append(seg)
+          segs = segs.push(seg)
         }
       } else {
-        segs = segs.append(seg)
+        segs = segs.push(seg)
       }
       start = i + 1
     }

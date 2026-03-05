@@ -12,22 +12,22 @@ type Ty = {
     TString,
     TVoid,
     TNamed(String),
-    TFunc(Array<Ty>, Ty),
+    TFunc(Vector<Ty>, Ty),
 }
 
 type Binding = .{ name: String, ty: Ty }
 type Param = .{ name: String, ty: Ty }
-type VariantDecl = .{ name: String, fields: Array<Ty> }
-type TypeDecl = .{ name: String, variants: Array<VariantDecl> }
-type FnDecl = .{ name: String, params: Array<Param>, ret: Ty, body: Expr }
-type FnSig = .{ name: String, params: Array<Binding>, ret: Ty }
-type Program = .{ types: Array<TypeDecl>, functions: Array<FnDecl> }
-type CheckCtx = .{ types: Array<TypeDecl>, fns: Array<FnSig> }
+type VariantDecl = .{ name: String, fields: Vector<Ty> }
+type TypeDecl = .{ name: String, variants: Vector<VariantDecl> }
+type FnDecl = .{ name: String, params: Vector<Param>, ret: Ty, body: Expr }
+type FnSig = .{ name: String, params: Vector<Binding>, ret: Ty }
+type Program = .{ types: Vector<TypeDecl>, functions: Vector<FnDecl> }
+type CheckCtx = .{ types: Vector<TypeDecl>, fns: Vector<FnSig> }
 
 type Pattern = {
     PWildcard,
     PBind(String),
-    PVariant(String, Array<Pattern>),
+    PVariant(String, Vector<Pattern>),
 }
 
 type CaseArm = .{ pattern: Pattern, body: Expr }
@@ -42,12 +42,12 @@ type Expr = {
     Gt(Expr, Expr),
     Eq(Expr, Expr),
     If(Expr, Expr, Expr),
-    Call(String, Array<Expr>),
-    VariantLit(String, String, Array<Expr>),
-    Case(Expr, Array<CaseArm>),
+    Call(String, Vector<Expr>),
+    VariantLit(String, String, Vector<Expr>),
+    Case(Expr, Vector<CaseArm>),
 }
 
-fn ty_list_eq(xs: Array<Ty>, ys: Array<Ty>, i: Int) Bool {
+fn ty_list_eq(xs: Vector<Ty>, ys: Vector<Ty>, i: Int) Bool {
     if i >= xs.len() {
         true
     } else {
@@ -107,7 +107,7 @@ fn show_ty(ty: Ty) String {
     }
 }
 
-fn find_binding(bindings: Array<Binding>, name: String, i: Int) Binding? {
+fn find_binding(bindings: Vector<Binding>, name: String, i: Int) Binding? {
     if i >= bindings.len() {
         .None
     } else {
@@ -120,7 +120,7 @@ fn find_binding(bindings: Array<Binding>, name: String, i: Int) Binding? {
     }
 }
 
-fn find_fn_sig(fns: Array<FnSig>, name: String, i: Int) FnSig? {
+fn find_fn_sig(fns: Vector<FnSig>, name: String, i: Int) FnSig? {
     if i >= fns.len() {
         .None
     } else {
@@ -133,7 +133,7 @@ fn find_fn_sig(fns: Array<FnSig>, name: String, i: Int) FnSig? {
     }
 }
 
-fn find_type(types: Array<TypeDecl>, name: String, i: Int) TypeDecl? {
+fn find_type(types: Vector<TypeDecl>, name: String, i: Int) TypeDecl? {
     if i >= types.len() {
         .None
     } else {
@@ -146,7 +146,7 @@ fn find_type(types: Array<TypeDecl>, name: String, i: Int) TypeDecl? {
     }
 }
 
-fn find_variant(variants: Array<VariantDecl>, name: String, i: Int) VariantDecl? {
+fn find_variant(variants: Vector<VariantDecl>, name: String, i: Int) VariantDecl? {
     if i >= variants.len() {
         .None
     } else {
@@ -159,12 +159,12 @@ fn find_variant(variants: Array<VariantDecl>, name: String, i: Int) VariantDecl?
     }
 }
 
-fn params_to_bindings(params: Array<Param>, i: Int, out: Array<Binding>) Array<Binding> {
+fn params_to_bindings(params: Vector<Param>, i: Int, out: Vector<Binding>) Vector<Binding> {
     if i >= params.len() {
         out
     } else {
         p := params[i]
-        params_to_bindings(params, i + 1, out.append(.{ name: p.name, ty: p.ty }))
+        params_to_bindings(params, i + 1, out.push(.{ name: p.name, ty: p.ty }))
     }
 }
 
@@ -176,15 +176,15 @@ fn fn_decl_to_sig(decl: FnDecl) FnSig {
     }
 }
 
-fn collect_fn_sigs(fns: Array<FnDecl>, i: Int, out: Array<FnSig>) Array<FnSig> {
+fn collect_fn_sigs(fns: Vector<FnDecl>, i: Int, out: Vector<FnSig>) Vector<FnSig> {
     if i >= fns.len() {
         out
     } else {
-        collect_fn_sigs(fns, i + 1, out.append(fn_decl_to_sig(fns[i])))
+        collect_fn_sigs(fns, i + 1, out.push(fn_decl_to_sig(fns[i])))
     }
 }
 
-fn has_fn_name(fns: Array<FnDecl>, name: String, i: Int) Bool {
+fn has_fn_name(fns: Vector<FnDecl>, name: String, i: Int) Bool {
     if i >= fns.len() {
         false
     } else {
@@ -196,7 +196,7 @@ fn has_fn_name(fns: Array<FnDecl>, name: String, i: Int) Bool {
     }
 }
 
-fn check_no_duplicate_fn_names(fns: Array<FnDecl>, i: Int) !String {
+fn check_no_duplicate_fn_names(fns: Vector<FnDecl>, i: Int) !String {
     if i >= fns.len() {
         .Ok({})
     } else {
@@ -210,7 +210,7 @@ fn check_no_duplicate_fn_names(fns: Array<FnDecl>, i: Int) !String {
     }
 }
 
-fn has_type_name(types: Array<TypeDecl>, name: String, i: Int) Bool {
+fn has_type_name(types: Vector<TypeDecl>, name: String, i: Int) Bool {
     if i >= types.len() {
         false
     } else {
@@ -222,7 +222,7 @@ fn has_type_name(types: Array<TypeDecl>, name: String, i: Int) Bool {
     }
 }
 
-fn check_no_duplicate_type_names(types: Array<TypeDecl>, i: Int) !String {
+fn check_no_duplicate_type_names(types: Vector<TypeDecl>, i: Int) !String {
     if i >= types.len() {
         .Ok({})
     } else {
@@ -236,7 +236,7 @@ fn check_no_duplicate_type_names(types: Array<TypeDecl>, i: Int) !String {
     }
 }
 
-fn has_variant_name(variants: Array<VariantDecl>, name: String, i: Int) Bool {
+fn has_variant_name(variants: Vector<VariantDecl>, name: String, i: Int) Bool {
     if i >= variants.len() {
         false
     } else {
@@ -248,7 +248,7 @@ fn has_variant_name(variants: Array<VariantDecl>, name: String, i: Int) Bool {
     }
 }
 
-fn check_no_duplicate_variant_names(variants: Array<VariantDecl>, i: Int) !String {
+fn check_no_duplicate_variant_names(variants: Vector<VariantDecl>, i: Int) !String {
     if i >= variants.len() {
         .Ok({})
     } else {
@@ -279,7 +279,7 @@ fn check_ty_defined(ctx: CheckCtx, ty: Ty) !String {
     }
 }
 
-fn check_ty_list_defined(ctx: CheckCtx, tys: Array<Ty>, i: Int) !String {
+fn check_ty_list_defined(ctx: CheckCtx, tys: Vector<Ty>, i: Int) !String {
     if i >= tys.len() {
         .Ok({})
     } else {
@@ -314,11 +314,11 @@ fn check_fn_sig_types_defined(ctx: CheckCtx, sig: FnSig) !String {
     check_ty_defined(ctx, sig.ret)
 }
 
-fn collect_binding_types(bs: Array<Binding>, i: Int, out: Array<Ty>) Array<Ty> {
+fn collect_binding_types(bs: Vector<Binding>, i: Int, out: Vector<Ty>) Vector<Ty> {
     if i >= bs.len() {
         out
     } else {
-        collect_binding_types(bs, i + 1, out.append(bs[i].ty))
+        collect_binding_types(bs, i + 1, out.push(bs[i].ty))
     }
 }
 
@@ -331,14 +331,14 @@ fn check_fn_sigs_types_defined(ctx: CheckCtx, i: Int) !String {
     }
 }
 
-fn lookup_value(ctx: CheckCtx, env: Array<Binding>, name: String) Ty!String {
+fn lookup_value(ctx: CheckCtx, env: Vector<Binding>, name: String) Ty!String {
     case find_binding(env, name, 0) {
         .Some(b) => .Ok(b.ty),
         .None => .Err("undefined value: ${name}"),
     }
 }
 
-fn check_call_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, params: Array<Binding>, i: Int) !String {
+fn check_call_args(ctx: CheckCtx, env: Vector<Binding>, args: Vector<Expr>, params: Vector<Binding>, i: Int) !String {
     if i >= args.len() {
         .Ok({})
     } else {
@@ -352,7 +352,7 @@ fn check_call_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, params
     }
 }
 
-fn check_variant_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, fields: Array<Ty>, i: Int) !String {
+fn check_variant_args(ctx: CheckCtx, env: Vector<Binding>, args: Vector<Expr>, fields: Vector<Ty>, i: Int) !String {
     if i >= args.len() {
         .Ok({})
     } else {
@@ -366,7 +366,7 @@ fn check_variant_args(ctx: CheckCtx, env: Array<Binding>, args: Array<Expr>, fie
     }
 }
 
-fn bind_pattern_fields(ctx: CheckCtx, pats: Array<Pattern>, tys: Array<Ty>, i: Int, env: Array<Binding>) Array<Binding>!String {
+fn bind_pattern_fields(ctx: CheckCtx, pats: Vector<Pattern>, tys: Vector<Ty>, i: Int, env: Vector<Binding>) Vector<Binding>!String {
     if i >= pats.len() {
         .Ok(env)
     } else {
@@ -375,10 +375,10 @@ fn bind_pattern_fields(ctx: CheckCtx, pats: Array<Pattern>, tys: Array<Ty>, i: I
     }
 }
 
-fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Array<Binding>) Array<Binding>!String {
+fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Vector<Binding>) Vector<Binding>!String {
     case pat {
         .PWildcard => .Ok(env),
-        .PBind(name) => .Ok(env.append(.{ name: name, ty: expected })),
+        .PBind(name) => .Ok(env.push(.{ name: name, ty: expected })),
         .PVariant(variant_name, fields) => {
             case expected {
                 .TNamed(type_name) => {
@@ -404,7 +404,7 @@ fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Array<Binding>) 
     }
 }
 
-fn check_case_arms(ctx: CheckCtx, env: Array<Binding>, arms: Array<CaseArm>, scrut_ty: Ty, i: Int, expected: Ty) !String {
+fn check_case_arms(ctx: CheckCtx, env: Vector<Binding>, arms: Vector<CaseArm>, scrut_ty: Ty, i: Int, expected: Ty) !String {
     if i >= arms.len() {
         .Ok({})
     } else {
@@ -419,7 +419,7 @@ fn check_case_arms(ctx: CheckCtx, env: Array<Binding>, arms: Array<CaseArm>, scr
     }
 }
 
-fn check_expr(ctx: CheckCtx, env: Array<Binding>, expr: Expr) Ty!String {
+fn check_expr(ctx: CheckCtx, env: Vector<Binding>, expr: Expr) Ty!String {
     case expr {
         .IntLit(_) => .Ok(.TInt),
         .BoolLit(_) => .Ok(.TBool),
@@ -550,7 +550,7 @@ fn check_fn_decl(ctx: CheckCtx, decl: FnDecl) !String {
     }
 }
 
-fn check_fn_decls(ctx: CheckCtx, fns: Array<FnDecl>, i: Int) !String {
+fn check_fn_decls(ctx: CheckCtx, fns: Vector<FnDecl>, i: Int) !String {
     if i >= fns.len() {
         .Ok({})
     } else {

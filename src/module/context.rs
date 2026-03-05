@@ -94,9 +94,9 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
     func_table.insert("string_len".to_string(), prelude::STRING_LEN);
     func_table.insert("string_concat".to_string(), prelude::STRING_CONCAT);
-    func_table.insert("array_len".to_string(), prelude::ARRAY_LEN);
-    func_table.insert("array_append".to_string(), prelude::ARRAY_APPEND);
-    func_table.insert("array_set".to_string(), prelude::ARRAY_SET);
+    func_table.insert("vector_len".to_string(), prelude::VECTOR_LEN);
+    func_table.insert("vector_push".to_string(), prelude::VECTOR_PUSH);
+    func_table.insert("vector_set_unsafe".to_string(), prelude::VECTOR_SET_UNSAFE);
     func_table.insert("dict_set".to_string(), prelude::DICT_SET);
     func_table.insert("dict_keys".to_string(), prelude::DICT_KEYS);
     func_table.insert("range_from".to_string(), prelude::RANGE_FROM);
@@ -109,10 +109,10 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
     func_table.insert("Iterator.next".to_string(), prelude::ITERATOR_NEXT);
     func_table.insert("Iterator.unfold".to_string(), prelude::ITERATOR_UNFOLD);
-    func_table.insert("Array.len".to_string(), prelude::ARRAY_LEN);
-    func_table.insert("Array.append".to_string(), prelude::ARRAY_APPEND);
-    func_table.insert("Array.concat".to_string(), prelude::ARRAY_CONCAT);
-    func_table.insert("Array.slice".to_string(), prelude::ARRAY_SLICE);
+    func_table.insert("Vector.len".to_string(), prelude::VECTOR_LEN);
+    func_table.insert("Vector.concat".to_string(), prelude::VECTOR_CONCAT);
+    func_table.insert("Vector.slice".to_string(), prelude::VECTOR_SLICE);
+    func_table.insert("Vector.make".to_string(), prelude::VECTOR_MAKE);
     func_table.insert("String.len".to_string(), prelude::STRING_LEN);
     func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
     func_table.insert("String.substring".to_string(), prelude::STRING_SUBSTR);
@@ -147,7 +147,7 @@ pub fn default_module_aliases() -> HashSet<String> {
     module_aliases.insert("Cell".to_string());
     module_aliases.insert("Dict".to_string());
     module_aliases.insert("Iterator".to_string());
-    module_aliases.insert("Array".to_string());
+    module_aliases.insert("Vector".to_string());
     module_aliases.insert("String".to_string());
     module_aliases
 }

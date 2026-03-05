@@ -17,7 +17,7 @@ pub fn write_text(path: String, content: String) !FsError {
   .Ok({})
 }
 
-pub fn write_bytes(path: String, bytes: Array<Int>) !FsError {
+pub fn write_bytes(path: String, bytes: Vector<Int>) !FsError {
   __host_write_bytes(path, bytes)
   .Ok({})
 }
@@ -27,7 +27,7 @@ pub fn mkdirp(path: String) !FsError {
   .Ok({})
 }
 
-pub fn list_dir(path: String) Array<DirEntry>!FsError {
+pub fn list_dir(path: String) Vector<DirEntry>!FsError {
   if !__host_exists(path) {
     return .Err(FsError.NotFound)
   }

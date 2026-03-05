@@ -7,16 +7,16 @@
 //   99
 //   4
 
-xs: Array<Int> = [1, 2, 3]
+xs: Vector<Int> = [1, 2, 3]
 println("${xs.len()}")
 
-// append returns a new array; bind to a new name
-xs2 := xs.append(4)
+// push returns a new vector; bind to a new name
+xs2 := xs.push(4)
 for x in xs2 {
     println("${x}")
 }
 
-// Index update desugars to: xs2 = Array.set(xs2, 0, 99)
+// Index update desugars to: xs2 = Vector.set_unsafe(xs2, 0, 99)
 xs2[0] = 99
 println("${xs2[0]}")
 println("${xs2.len()}")

@@ -6,7 +6,7 @@
 //   2: c
 //   done
 
-fn sum(xs: Array<Int>) Int {
+fn sum(xs: Vector<Int>) Int {
     acc := 0
     for x in xs {
         acc = acc + x
@@ -14,7 +14,7 @@ fn sum(xs: Array<Int>) Int {
     acc
 }
 
-fn product(xs: Array<Int>) Int {
+fn product(xs: Vector<Int>) Int {
     acc := 1
     for x in xs {
         acc = acc * x
@@ -22,12 +22,12 @@ fn product(xs: Array<Int>) Int {
     acc
 }
 
-nums: Array<Int> = [1, 2, 3, 4, 5]
+nums: Vector<Int> = [1, 2, 3, 4, 5]
 println("${sum(nums)}")
 println("${product(nums)}")
 
 // Indexed for loop: for elem, idx in coll
-words: Array<String> = ["a", "b", "c"]
+words: Vector<String> = ["a", "b", "c"]
 for w, i in words {
     println("${i}: ${w}")
 }

@@ -57,8 +57,8 @@ pub enum MonoType {
         args: Vec<MonoType>,
     },
 
-    /// Array type (GC-managed, immutable)
-    Array(Box<MonoType>),
+    /// Vector type (GC-managed, persistent sequence)
+    Vector(Box<MonoType>),
 
     /// Dict type (GC-managed, persistent hash map)
     Dict(Box<MonoType>, Box<MonoType>),
@@ -134,8 +134,8 @@ impl MonoType {
                     format!("Type#{}", type_id.0)
                 }
             }
-            MonoType::Array(elem_ty) => {
-                format!("Array<{}>", elem_ty.format_with_names(type_env))
+            MonoType::Vector(elem_ty) => {
+                format!("Vector<{}>", elem_ty.format_with_names(type_env))
             }
             MonoType::Dict(k, v) => {
                 format!(
@@ -184,7 +184,7 @@ impl fmt::Display for MonoType {
                     write!(f, ">")
                 }
             }
-            MonoType::Array(elem_ty) => write!(f, "Array<{}>", elem_ty),
+            MonoType::Vector(elem_ty) => write!(f, "Vector<{}>", elem_ty),
             MonoType::Dict(k, v) => write!(f, "Dict<{}, {}>", k, v),
             MonoType::Function { params, ret } => {
                 write!(f, "fn(")?;
@@ -284,7 +284,7 @@ pub fn zonk_ty(ty: &MonoType, meta_subst: &HashMap<u32, MonoType>) -> MonoType {
             Some(resolved) => zonk_ty(resolved, meta_subst), // follow chains
             None => ty.clone(),                              // unsolved
         },
-        MonoType::Array(elem) => MonoType::Array(Box::new(zonk_ty(elem, meta_subst))),
+        MonoType::Vector(elem) => MonoType::Vector(Box::new(zonk_ty(elem, meta_subst))),
         MonoType::Dict(k, v) => MonoType::Dict(
             Box::new(zonk_ty(k, meta_subst)),
             Box::new(zonk_ty(v, meta_subst)),
@@ -305,7 +305,7 @@ pub fn zonk_ty(ty: &MonoType, meta_subst: &HashMap<u32, MonoType>) -> MonoType {
 pub fn contains_meta(ty: &MonoType) -> bool {
     match ty {
         MonoType::MetaVar(_) => true,
-        MonoType::Array(e) => contains_meta(e),
+        MonoType::Vector(e) => contains_meta(e),
         MonoType::Dict(k, v) => contains_meta(k) || contains_meta(v),
         MonoType::Function { params, ret } => {
             params.iter().any(contains_meta) || contains_meta(ret)

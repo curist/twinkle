@@ -118,6 +118,7 @@ pub enum Instr {
     I32GtS,
     I32LeS,
     I32GeS,
+    I32LtU,
     I32Eqz,
 
     // i64 arithmetic / comparison

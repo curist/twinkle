@@ -317,7 +317,7 @@ impl Resolver {
                 // Re-use env's logic by building a synthetic type with resolved args
                 // For known built-ins, handle directly
                 match name.as_str() {
-                    "Array" if resolved_args.len() == 1 => Ok(MonoType::Array(Box::new(
+                    "Vector" if resolved_args.len() == 1 => Ok(MonoType::Vector(Box::new(
                         resolved_args.into_iter().next().unwrap(),
                     ))),
                     "Dict" if resolved_args.len() == 2 => {

@@ -18,7 +18,7 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
-    Arr(Vec<Value>),
+    Vec(std::vec::Vec<Value>),
     /// Linear-scan dict; key equality via PartialEq
     Dict(Vec<(Value, Value)>),
     /// Record fields in FieldId order (index = FieldId.0)
@@ -50,7 +50,7 @@ impl std::fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Str(s) => write!(f, "{}", s),
             Value::Void => write!(f, "()"),
-            Value::Arr(elems) => {
+            Value::Vec(elems) => {
                 write!(f, "[")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
@@ -112,7 +112,7 @@ impl Value {
     pub fn deep_clone(&self) -> Value {
         match self {
             Value::Cell(rc) => Value::Cell(Rc::new(RefCell::new(rc.borrow().deep_clone()))),
-            Value::Arr(elems) => Value::Arr(elems.iter().map(|v| v.deep_clone()).collect()),
+            Value::Vec(elems) => Value::Vec(elems.iter().map(|v| v.deep_clone()).collect()),
             Value::Dict(kvs) => Value::Dict(
                 kvs.iter()
                     .map(|(k, v)| (k.deep_clone(), v.deep_clone()))

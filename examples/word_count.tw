@@ -1,4 +1,4 @@
-fn count_words(words: Array<String>) Dict<String, Int> {
+fn count_words(words: Vector<String>) Dict<String, Int> {
   counts: Dict<String, Int> = Dict.new()
 
   for word in words {

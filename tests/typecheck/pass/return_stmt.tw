@@ -18,7 +18,7 @@ fn return_void() Void {
 }
 
 // Block ending with return inside an annotated function
-fn find_first(arr: Array<Int>, target: Int) Int {
+fn find_first(arr: Vector<Int>, target: Int) Int {
   for x in arr {
     if x == target {
       return x

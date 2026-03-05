@@ -288,7 +288,7 @@ impl TypeChecker {
                     false
                 }
             }
-            MonoType::Array(e) => self.occurs(id, e),
+            MonoType::Vector(e) => self.occurs(id, e),
             MonoType::Dict(k, v) => self.occurs(id, k) || self.occurs(id, v),
             MonoType::Function { params, ret } => {
                 params.iter().any(|p| self.occurs(id, p)) || self.occurs(id, ret)
@@ -700,9 +700,9 @@ impl TypeChecker {
                 }
             }
 
-            // Array literals: check each element against the expected element type
+            // Vector literals: check each element against the expected element type
             ExprKind::Array { elements } => {
-                if let MonoType::Array(elem_ty) = expected {
+                if let MonoType::Vector(elem_ty) = expected {
                     let elem_ty = *elem_ty.clone();
                     for elem in elements {
                         self.check_expr(elem, &elem_ty)?;
@@ -732,7 +732,7 @@ impl TypeChecker {
                 self.unify(&actual, expected, expr.span)
             }
 
-            // First-class module method reference: Array.len, String.concat, etc.
+            // First-class module method reference: Vector.len, String.concat, etc.
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
@@ -1008,7 +1008,7 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        // Special: Cell, Dict, Iterator, Array, and String modules provide polymorphic operations.
+        // Special: Cell, Dict, Iterator, Vector, and String modules provide polymorphic operations.
         if alias == "Cell" {
             return self.synth_cell_call(func_name, args, span);
         }
@@ -1018,8 +1018,8 @@ impl TypeChecker {
         if alias == "Iterator" {
             return self.synth_iterator_call(func_name, args, span);
         }
-        if alias == "Array" {
-            return self.synth_array_call(func_name, args, span);
+        if alias == "Vector" {
+            return self.synth_vector_call(func_name, args, span);
         }
         if alias == "String" {
             return self.synth_string_call(func_name, args, span);
@@ -1282,7 +1282,7 @@ impl TypeChecker {
                 }
                 let dict_ty = self.synth_expr(&args[0])?;
                 match dict_ty {
-                    MonoType::Dict(k_ty, _) => Ok(MonoType::Array(k_ty)),
+                    MonoType::Dict(k_ty, _) => Ok(MonoType::Vector(k_ty)),
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
                             expected: MonoType::Dict(
@@ -1467,8 +1467,8 @@ impl TypeChecker {
         }
     }
 
-    /// Handle Array.method(arr, ...) module-qualified calls.
-    fn synth_array_call(
+    /// Handle Vector.method(vec, ...) module-qualified calls.
+    fn synth_vector_call(
         &mut self,
         func_name: &str,
         args: &[Expr],
@@ -1484,46 +1484,17 @@ impl TypeChecker {
                     });
                     return Err(());
                 }
-                let arr_ty = self.synth_expr(&args[0])?;
-                if !matches!(arr_ty, MonoType::Array(_)) {
+                let vec_ty = self.synth_expr(&args[0])?;
+                if !matches!(vec_ty, MonoType::Vector(_)) {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Array(Box::new(MonoType::Void)),
-                        actual: arr_ty,
+                        expected: MonoType::Vector(Box::new(MonoType::Void)),
+                        actual: vec_ty,
                         span,
-                        note: Some("Array.len expects Array<T> as first argument".to_string()),
+                        note: Some("Vector.len expects Vector<T> as first argument".to_string()),
                     });
                     return Err(());
                 }
                 Ok(MonoType::Int)
-            }
-            "append" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let arr_ty = self.synth_expr(&args[0])?;
-                match arr_ty {
-                    MonoType::Array(ref elem_ty) => {
-                        let elem_ty = *elem_ty.clone();
-                        self.check_expr(&args[1], &elem_ty)?;
-                        Ok(arr_ty)
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Array(Box::new(MonoType::Void)),
-                            actual: other,
-                            span,
-                            note: Some(
-                                "Array.append expects Array<T> as first argument".to_string(),
-                            ),
-                        });
-                        Err(())
-                    }
-                }
             }
             "concat" => {
                 if args.len() != 2 {
@@ -1534,18 +1505,18 @@ impl TypeChecker {
                     });
                     return Err(());
                 }
-                let arr_ty = self.synth_expr(&args[0])?;
-                if !matches!(arr_ty, MonoType::Array(_)) {
+                let vec_ty = self.synth_expr(&args[0])?;
+                if !matches!(vec_ty, MonoType::Vector(_)) {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Array(Box::new(MonoType::Void)),
-                        actual: arr_ty,
+                        expected: MonoType::Vector(Box::new(MonoType::Void)),
+                        actual: vec_ty,
                         span,
-                        note: Some("Array.concat expects Array<T> as first argument".to_string()),
+                        note: Some("Vector.concat expects Vector<T> as first argument".to_string()),
                     });
                     return Err(());
                 }
-                self.check_expr(&args[1], &arr_ty)?;
-                Ok(arr_ty)
+                self.check_expr(&args[1], &vec_ty)?;
+                Ok(vec_ty)
             }
             "slice" => {
                 if args.len() != 3 {
@@ -1556,25 +1527,39 @@ impl TypeChecker {
                     });
                     return Err(());
                 }
-                let arr_ty = self.synth_expr(&args[0])?;
-                if !matches!(arr_ty, MonoType::Array(_)) {
+                let vec_ty = self.synth_expr(&args[0])?;
+                if !matches!(vec_ty, MonoType::Vector(_)) {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Array(Box::new(MonoType::Void)),
-                        actual: arr_ty,
+                        expected: MonoType::Vector(Box::new(MonoType::Void)),
+                        actual: vec_ty,
                         span,
-                        note: Some("Array.slice expects Array<T> as first argument".to_string()),
+                        note: Some("Vector.slice expects Vector<T> as first argument".to_string()),
                     });
                     return Err(());
                 }
                 self.check_expr(&args[1], &MonoType::Int)?;
                 self.check_expr(&args[2], &MonoType::Int)?;
-                Ok(arr_ty)
+                Ok(vec_ty)
+            }
+            "make" => {
+                // Vector.make(size: Int, fill: T) Vector<T>
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::Int)?;
+                let elem_ty = self.synth_expr(&args[1])?;
+                Ok(MonoType::Vector(Box::new(elem_ty)))
             }
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "unknown Array method",
+                    feature: "unknown Vector method",
                     span,
-                    note: format!("Array has no method '{}'", func_name),
+                    note: format!("Vector has no method '{}'", func_name),
                 });
                 Err(())
             }
@@ -1737,7 +1722,7 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a first-class module method reference (e.g. `Array.len`) in check mode.
+    /// Validate a first-class module method reference (e.g. `Vector.len`) in check mode.
     /// Called when a FieldAccess with a module alias base appears in check_expr.
     fn check_module_func_ref(
         &mut self,
@@ -1775,15 +1760,14 @@ impl TypeChecker {
 
         // Validate the first param matches the base type and check the shape
         let valid = match alias {
-            "Array" => {
-                if !matches!(params[0], MonoType::Array(_)) {
+            "Vector" => {
+                if !matches!(params[0], MonoType::Vector(_)) {
                     false
                 } else {
                     match (method, params.len()) {
                         ("len", 1) => matches!(ret, MonoType::Int),
-                        ("append", 2) => matches!(ret, MonoType::Array(_)),
-                        ("concat", 2) => matches!(ret, MonoType::Array(_)),
-                        ("slice", 3) => matches!(ret, MonoType::Array(_)),
+                        ("concat", 2) => matches!(ret, MonoType::Vector(_)),
+                        ("slice", 3) => matches!(ret, MonoType::Vector(_)),
                         _ => false,
                     }
                 }
@@ -1808,7 +1792,7 @@ impl TypeChecker {
                     match (method, params.len()) {
                         ("len", 1) => matches!(ret, MonoType::Int),
                         ("has", 2) => matches!(ret, MonoType::Bool),
-                        ("keys", 1) => matches!(ret, MonoType::Array(_)),
+                        ("keys", 1) => matches!(ret, MonoType::Vector(_)),
                         ("remove", 2) => matches!(ret, MonoType::Dict(_, _)),
                         _ => false,
                     }
@@ -1838,7 +1822,7 @@ impl TypeChecker {
     }
 
     /// Handle method calls: `receiver.method(args)`.
-    /// Dispatches to builtin methods (Array, String, primitives) or user-defined
+    /// Dispatches to builtin methods (Vector, String, primitives) or user-defined
     /// inherent methods registered in TypeEnv.
     fn synth_method_call(
         &mut self,
@@ -1850,7 +1834,7 @@ impl TypeChecker {
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
         match base_ty.clone() {
-            MonoType::Array(ref elem_ty) => {
+            MonoType::Vector(ref elem_ty) => {
                 let elem_ty = *elem_ty.clone();
                 match method {
                     "len" => {
@@ -1864,7 +1848,7 @@ impl TypeChecker {
                         }
                         Ok(MonoType::Int)
                     }
-                    "append" => {
+                    "push" => {
                         if args.len() != 1 {
                             self.errors.push(TypeError::WrongArity {
                                 expected: 1,
@@ -1901,11 +1885,44 @@ impl TypeChecker {
                         self.check_expr(&args[1], &MonoType::Int)?;
                         Ok(base_ty)
                     }
+                    "get" => {
+                        // v.get(i) Option<T> — safe index access
+                        if args.len() != 1 {
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 1,
+                                actual: args.len(),
+                                span,
+                            });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &MonoType::Int)?;
+                        Ok(MonoType::Named {
+                            type_id: crate::types::ty::OPTION_TYPE_ID,
+                            args: vec![elem_ty],
+                        })
+                    }
+                    "set" => {
+                        // v.set(i, val) Option<Vector<T>> — safe update
+                        if args.len() != 2 {
+                            self.errors.push(TypeError::WrongArity {
+                                expected: 2,
+                                actual: args.len(),
+                                span,
+                            });
+                            return Err(());
+                        }
+                        self.check_expr(&args[0], &MonoType::Int)?;
+                        self.check_expr(&args[1], &elem_ty)?;
+                        Ok(MonoType::Named {
+                            type_id: crate::types::ty::OPTION_TYPE_ID,
+                            args: vec![base_ty],
+                        })
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "unknown array method",
+                            feature: "unknown vector method",
                             span,
-                            note: format!("Array has no method '{}'", method),
+                            note: format!("Vector has no method '{}'", method),
                         });
                         Err(())
                     }
@@ -1978,7 +1995,7 @@ impl TypeChecker {
                         });
                         return Err(());
                     }
-                    Ok(MonoType::Array(k_ty))
+                    Ok(MonoType::Vector(k_ty))
                 }
                 "len" => {
                     if !args.is_empty() {
@@ -2635,14 +2652,14 @@ impl TypeChecker {
     }
 
     //
-    // Array indexing
+    // Vector indexing
     //
 
     fn synth_index(&mut self, base: &Expr, index: &Expr, _span: Span) -> Result<MonoType, ()> {
         let base_ty = self.synth_expr(base)?;
 
         match base_ty {
-            MonoType::Array(elem_ty) => {
+            MonoType::Vector(elem_ty) => {
                 self.check_expr(index, &MonoType::Int)?;
                 Ok(*elem_ty)
             }
@@ -2660,7 +2677,7 @@ impl TypeChecker {
             }
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
-                    expected: MonoType::Array(Box::new(MonoType::Int)), // Dummy
+                    expected: MonoType::Vector(Box::new(MonoType::Int)), // Dummy
                     actual: base_ty,
                     span: base.span,
                     note: None,
@@ -2671,17 +2688,17 @@ impl TypeChecker {
     }
 
     //
-    // Array literals
+    // Vector literals
     //
 
     fn synth_array(&mut self, elements: &[Expr], span: Span) -> Result<MonoType, ()> {
         if elements.is_empty() {
-            // Empty array - we can't infer the type
+            // Empty vector - we can't infer the type
             // For now, error - require type annotation
             self.errors.push(TypeError::UnsupportedFeature {
-                feature: "empty array literals",
+                feature: "empty vector literals",
                 span,
-                note: "Empty arrays require type annotations (not yet supported)".to_string(),
+                note: "Empty vectors require type annotations (not yet supported)".to_string(),
             });
             return Err(());
         }
@@ -2694,7 +2711,7 @@ impl TypeChecker {
             self.check_expr(elem, &first_ty)?;
         }
 
-        Ok(MonoType::Array(Box::new(first_ty)))
+        Ok(MonoType::Vector(Box::new(first_ty)))
     }
 
     //
@@ -3166,8 +3183,8 @@ impl TypeChecker {
                 let id = *id;
                 return self.solve_meta(id, actual, span);
             }
-            // Structural: Array
-            (MonoType::Array(a), MonoType::Array(b)) => {
+            // Structural: Vector
+            (MonoType::Vector(a), MonoType::Vector(b)) => {
                 let a = a.as_ref().clone();
                 let b = b.as_ref().clone();
                 return self.unify(&a, &b, span);
@@ -3335,7 +3352,7 @@ impl TypeChecker {
             ExprKind::Index { base, index } => {
                 let base_ty = self.synth_expr(base)?;
                 match base_ty {
-                    MonoType::Array(elem_ty) => {
+                    MonoType::Vector(elem_ty) => {
                         // arr[i] = v — index must be Int, value must match element type
                         self.check_expr(index, &MonoType::Int)?;
                         self.check_expr(right, &elem_ty)?;
@@ -3349,7 +3366,7 @@ impl TypeChecker {
                     }
                     other => {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Array(Box::new(MonoType::Int)),
+                            expected: MonoType::Vector(Box::new(MonoType::Int)),
                             actual: other,
                             span: base.span,
                             note: None,
@@ -3389,7 +3406,7 @@ impl TypeChecker {
         self.local_env.push_scope();
 
         match iter_ty {
-            MonoType::Array(elem) => {
+            MonoType::Vector(elem) => {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
                     Pattern::Wildcard(_) => {}
@@ -3472,7 +3489,7 @@ impl TypeChecker {
             }
             other => {
                 self.errors.push(TypeError::TypeMismatch {
-                    expected: MonoType::Array(Box::new(MonoType::Int)),
+                    expected: MonoType::Vector(Box::new(MonoType::Int)),
                     actual: other,
                     span: iter.span,
                     note: None,
@@ -3501,14 +3518,14 @@ impl TypeChecker {
         let iter_ty = self.synth_expr(iter)?;
 
         let elem_ty = match iter_ty {
-            MonoType::Array(elem) => *elem,
+            MonoType::Vector(elem) => *elem,
             MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => MonoType::Int,
             MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
                 args.first().cloned().unwrap_or(MonoType::Void)
             }
             other => {
                 self.errors.push(TypeError::TypeMismatch {
-                    expected: MonoType::Array(Box::new(MonoType::Int)),
+                    expected: MonoType::Vector(Box::new(MonoType::Int)),
                     actual: other,
                     span: iter.span,
                     note: None,
@@ -3536,7 +3553,7 @@ impl TypeChecker {
         let body_ty = self.synth_expr(body)?;
         self.local_env.pop_scope();
 
-        Ok(MonoType::Array(Box::new(body_ty)))
+        Ok(MonoType::Vector(Box::new(body_ty)))
     }
 }
 
@@ -3557,7 +3574,7 @@ pub fn build_type_subst(type_params: &[String], args: &[MonoType]) -> HashMap<St
 pub fn apply_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType {
     match ty {
         MonoType::Var(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        MonoType::Array(elem) => MonoType::Array(Box::new(apply_subst(elem, subst))),
+        MonoType::Vector(elem) => MonoType::Vector(Box::new(apply_subst(elem, subst))),
         MonoType::Dict(k, v) => MonoType::Dict(
             Box::new(apply_subst(k, subst)),
             Box::new(apply_subst(v, subst)),

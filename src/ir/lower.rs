@@ -39,12 +39,12 @@ pub mod prelude {
     pub const STRING_LEN: FuncId = FuncId(8);
     pub const STRING_CONCAT: FuncId = FuncId(9);
 
-    pub const ARRAY_LEN: FuncId = FuncId(10);
-    pub const ARRAY_APPEND: FuncId = FuncId(11);
+    pub const VECTOR_LEN: FuncId = FuncId(10);
+    pub const VECTOR_PUSH: FuncId = FuncId(11);
 
-    pub const ARRAY_SET: FuncId = FuncId(12); // Array.set(arr, idx, val) -> Array<T>
+    pub const VECTOR_SET_UNSAFE: FuncId = FuncId(12); // Vector.set_unsafe(vec, idx, val) -> Vector<T>
     pub const DICT_SET: FuncId = FuncId(13); // Dict.set(m, k, v) -> Dict<K,V>
-    pub const DICT_KEYS: FuncId = FuncId(14); // Dict.keys(m) -> Array<K>
+    pub const DICT_KEYS: FuncId = FuncId(14); // Dict.keys(m) -> Vector<K>
 
     pub const RANGE_FROM: FuncId = FuncId(15); // range_from(start, end) -> Range
     pub const RANGE: FuncId = FuncId(16); // range(n) -> Range  (0..n)
@@ -61,8 +61,8 @@ pub mod prelude {
 
     pub const DICT_GET_UNSAFE: FuncId = FuncId(24); // internal: dict_get_unsafe(m, k) -> V  (panics if absent)
 
-    pub const ARRAY_CONCAT: FuncId = FuncId(25); // Array.concat(a, b) -> Array<T>
-    pub const ARRAY_SLICE: FuncId = FuncId(26); // Array.slice(arr, start, end) -> Array<T>
+    pub const VECTOR_CONCAT: FuncId = FuncId(25); // Vector.concat(a, b) -> Vector<T>
+    pub const VECTOR_SLICE: FuncId = FuncId(26); // Vector.slice(vec, start, end) -> Vector<T>
     pub const DICT_LEN: FuncId = FuncId(27); // Dict.len(m) -> Int
     pub const DICT_HAS: FuncId = FuncId(28); // Dict.has(m, k) -> Bool
     pub const DICT_REMOVE: FuncId = FuncId(29); // Dict.remove(m, k) -> Dict<K,V>
@@ -71,23 +71,27 @@ pub mod prelude {
     pub const ITERATOR_NEXT: FuncId = FuncId(31); // Iterator.next<T>(it: Iterator<T>) Option<IterItem<T>>
     pub const ITERATOR_UNFOLD: FuncId = FuncId(32); // Iterator.unfold<T,S>(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
 
-    // Internal array builder intrinsics (never user-visible)
-    pub const ARRAY_BUILDER_NEW: FuncId = FuncId(33); // () -> Cell<Array<T>>
-    pub const ARRAY_BUILDER_PUSH: FuncId = FuncId(34); // (Cell<Array<T>>, T) -> Void
-    pub const ARRAY_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Array<T>>) -> Array<T>
+    // Internal vector builder intrinsics (never user-visible)
+    pub const VECTOR_BUILDER_NEW: FuncId = FuncId(33); // () -> Cell<Vector<T>>
+    pub const VECTOR_BUILDER_PUSH: FuncId = FuncId(34); // (Cell<Vector<T>>, T) -> Void
+    pub const VECTOR_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Vector<T>>) -> Vector<T>
 
     // Debug/dev-only API (unstable): read all piped stdin as String
     pub const DEBUG_STDIN_READ_ALL: FuncId = FuncId(36); // () -> String
     // Debug/dev-only API (unstable): read UTF-8 file content
     pub const DEBUG_READ_FILE: FuncId = FuncId(37); // (path: String) -> Result<String, String>
 
-    // Additional prelude functions (kept outside fixed 1..=37 range).
+    pub const VECTOR_GET: FuncId = FuncId(38); // Vector.get(vec, i) -> Option<T>  (safe)
+    pub const VECTOR_SET: FuncId = FuncId(39); // Vector.set(vec, i, val) -> Option<Vector<T>> (safe)
+    pub const VECTOR_MAKE: FuncId = FuncId(40); // Vector.make(size: Int, fill: T) -> Vector<T>
+
+    // Additional prelude functions (kept outside fixed 1..=38 range).
     pub const EPRINT: FuncId = FuncId(1007); // eprint(s: String) -> Void
     pub const EPRINTLN: FuncId = FuncId(1008); // eprintln(s: String) -> Void
 
     // Host stdlib bridge intrinsics used by `@std.fs` and `@std.proc`.
     // Kept outside the fixed 1..=37 prelude range so existing user FuncId
-    // assignments (USER_FUNC_START=38) remain stable.
+    // assignments (USER_FUNC_START=41) remain stable.
     pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> String
     pub const HOST_WRITE_FILE: FuncId = FuncId(1002); // (path: String, content: String) -> Void
     pub const HOST_WRITE_BYTES: FuncId = FuncId(1003); // (path: String, bytes: Array<Int>) -> Void
@@ -100,7 +104,7 @@ pub mod prelude {
     pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
 
     // User functions start here
-    pub const USER_FUNC_START: u32 = 38;
+    pub const USER_FUNC_START: u32 = 41;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,10 +187,10 @@ impl Lowerer {
         func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
         func_table.insert("Iterator.next".to_string(), prelude::ITERATOR_NEXT);
         func_table.insert("Iterator.unfold".to_string(), prelude::ITERATOR_UNFOLD);
-        func_table.insert("Array.len".to_string(), prelude::ARRAY_LEN);
-        func_table.insert("Array.append".to_string(), prelude::ARRAY_APPEND);
-        func_table.insert("Array.concat".to_string(), prelude::ARRAY_CONCAT);
-        func_table.insert("Array.slice".to_string(), prelude::ARRAY_SLICE);
+        func_table.insert("Vector.len".to_string(), prelude::VECTOR_LEN);
+        func_table.insert("Vector.concat".to_string(), prelude::VECTOR_CONCAT);
+        func_table.insert("Vector.slice".to_string(), prelude::VECTOR_SLICE);
+        func_table.insert("Vector.make".to_string(), prelude::VECTOR_MAKE);
         func_table.insert("String.len".to_string(), prelude::STRING_LEN);
         func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
         func_table.insert("String.substring".to_string(), prelude::STRING_SUBSTR);
@@ -217,7 +221,7 @@ impl Lowerer {
         module_aliases.insert("Cell".to_string()); // built-in module alias
         module_aliases.insert("Dict".to_string()); // built-in module alias
         module_aliases.insert("Iterator".to_string()); // built-in module alias
-        module_aliases.insert("Array".to_string()); // built-in module alias
+        module_aliases.insert("Vector".to_string()); // built-in module alias
         module_aliases.insert("String".to_string()); // built-in module alias
 
         Self {
@@ -860,9 +864,9 @@ impl Lowerer {
 
                 // array_len call
                 let arr_len_func = CoreExpr {
-                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_LEN),
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_LEN),
                     ty: MonoType::Function {
-                        params: vec![MonoType::Array(Box::new(MonoType::Int))],
+                        params: vec![MonoType::Vector(Box::new(MonoType::Int))],
                         ret: Box::new(MonoType::Int),
                     },
                     span: iter_span,
@@ -886,7 +890,7 @@ impl Lowerer {
 
                 // Bind element variable
                 let elem_ty = match &iter_expr.ty {
-                    MonoType::Array(inner) => *inner.clone(),
+                    MonoType::Vector(inner) => *inner.clone(),
                     _ => MonoType::Void,
                 };
 
@@ -1129,7 +1133,7 @@ impl Lowerer {
             ty: iter_expr.ty.clone(),
             span: iter_span,
         };
-        let keys_ty = MonoType::Array(Box::new(key_ty.clone()));
+        let keys_ty = MonoType::Vector(Box::new(key_ty.clone()));
 
         // keys = Dict.keys(dict_tmp)
         let dict_keys_func = CoreExpr {
@@ -1157,7 +1161,7 @@ impl Lowerer {
 
         // len = array_len(keys_tmp)
         let arr_len_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::ARRAY_LEN),
+            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_LEN),
             ty: MonoType::Function {
                 params: vec![keys_ty.clone()],
                 ret: Box::new(MonoType::Int),
@@ -2000,7 +2004,7 @@ impl Lowerer {
 
             // --- Field access → RecordGet or method call ---
             ExprKind::FieldAccess { base, field } => {
-                // Module alias first-class function/value reference: Array.len, math.pi, etc.
+                // Module alias first-class function/value reference: Vector.len, math.pi, etc.
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
                         let qualified = format!("{}.{}", alias, field);
@@ -2482,10 +2486,12 @@ impl Lowerer {
         }
 
         let func_id = match (&base_ty, method) {
-            (MonoType::Array(_), "len") => prelude::ARRAY_LEN,
-            (MonoType::Array(_), "append") => prelude::ARRAY_APPEND,
-            (MonoType::Array(_), "concat") => prelude::ARRAY_CONCAT,
-            (MonoType::Array(_), "slice") => prelude::ARRAY_SLICE,
+            (MonoType::Vector(_), "len") => prelude::VECTOR_LEN,
+            (MonoType::Vector(_), "push") => prelude::VECTOR_PUSH,
+            (MonoType::Vector(_), "concat") => prelude::VECTOR_CONCAT,
+            (MonoType::Vector(_), "slice") => prelude::VECTOR_SLICE,
+            (MonoType::Vector(_), "get") => prelude::VECTOR_GET,
+            (MonoType::Vector(_), "set") => prelude::VECTOR_SET,
             (MonoType::Dict(_, _), "len") => prelude::DICT_LEN,
             (MonoType::Dict(_, _), "has") => prelude::DICT_HAS,
             (MonoType::Dict(_, _), "remove") => prelude::DICT_REMOVE,
@@ -2881,7 +2887,7 @@ impl Lowerer {
 
         // acc = array_append(acc, val)
         let append_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::ARRAY_APPEND),
+            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_PUSH),
             ty: MonoType::Function {
                 params: vec![result_ty.clone(), body_ty.clone()],
                 ret: Box::new(result_ty.clone()),
@@ -3043,20 +3049,20 @@ impl Lowerer {
 
     /// Lower `collect x in iter { body }` where iter: Iterator<T>.
     ///
-    /// Uses three array-builder intrinsics (ARRAY_BUILDER_NEW/PUSH/FREEZE) to
+    /// Uses three vector-builder intrinsics (VECTOR_BUILDER_NEW/PUSH/FREEZE) to
     /// accumulate elements without requiring a mutable acc local:
     ///
-    ///   Let(builder, ARRAY_BUILDER_NEW(),
+    ///   Let(builder, VECTOR_BUILDER_NEW(),
     ///     Let(loop_it, iter_expr,
     ///       Loop {
     ///         Let(opt, ITERATOR_NEXT(loop_it),
     ///           Match(opt) {
-    ///             None   → Break(ARRAY_BUILDER_FREEZE(builder))
+    ///             None   → Break(VECTOR_BUILDER_FREEZE(builder))
     ///             Some(item) →
     ///               Let(x, item.value,
     ///                 Let(_, Assign(loop_it, item.rest),
     ///                   Let(elem, body,
-    ///                     Let(_, ARRAY_BUILDER_PUSH(builder, elem),
+    ///                     Let(_, VECTOR_BUILDER_PUSH(builder, elem),
     ///                       Continue))))
     ///           })
     ///       }))
@@ -3106,11 +3112,11 @@ impl Lowerer {
         let body_ty = body_expr.ty.clone();
         self.local_allocator.pop_scope();
 
-        // ARRAY_BUILDER_PUSH(builder, body_val_local)
+        // VECTOR_BUILDER_PUSH(builder, body_val_local)
         let push_call = CoreExpr {
             kind: CoreExprKind::Call {
                 callee: Box::new(CoreExpr {
-                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_PUSH),
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_PUSH),
                     ty: MonoType::Void,
                     span: iter_span,
                 }),
@@ -3212,11 +3218,11 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // None arm: Break(ARRAY_BUILDER_FREEZE(builder))
+        // None arm: Break(VECTOR_BUILDER_FREEZE(builder))
         let freeze_call = CoreExpr {
             kind: CoreExprKind::Call {
                 callee: Box::new(CoreExpr {
-                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_FREEZE),
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_FREEZE),
                     ty: MonoType::Function {
                         params: vec![MonoType::Void],
                         ret: Box::new(result_ty.clone()),
@@ -3329,7 +3335,7 @@ impl Lowerer {
         let builder_new_call = CoreExpr {
             kind: CoreExprKind::Call {
                 callee: Box::new(CoreExpr {
-                    kind: CoreExprKind::GlobalFunc(prelude::ARRAY_BUILDER_NEW),
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_NEW),
                     ty: MonoType::Void,
                     span: iter_span,
                 }),
@@ -3378,7 +3384,7 @@ impl Lowerer {
         //         }))))
 
         let elem_ty = match iter_ty {
-            Some(MonoType::Array(inner)) => *inner,
+            Some(MonoType::Vector(inner)) => *inner,
             _ => MonoType::Void,
         };
 
@@ -3398,7 +3404,7 @@ impl Lowerer {
 
         // len = array_len(arr_tmp)
         let len_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::ARRAY_LEN),
+            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_LEN),
             ty: MonoType::Function {
                 params: vec![iter_expr.ty.clone()],
                 ret: Box::new(MonoType::Int),
@@ -3455,7 +3461,7 @@ impl Lowerer {
 
         // acc = array_append(acc, val)  [mutation via Assign]
         let append_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::ARRAY_APPEND),
+            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_PUSH),
             ty: MonoType::Function {
                 params: vec![result_ty.clone(), body_ty.clone()],
                 ret: Box::new(result_ty.clone()),
@@ -3657,7 +3663,7 @@ impl Lowerer {
     ///
     /// Recursion builds up the update from innermost to outermost:
     ///   `a.b.c = x`  → (a_local, RecordUpdate(Local(a), b_id, RecordUpdate(RecordGet(Local(a), b_id), c_id, x)))
-    ///   `arr[i] = x` → (arr_local, Call(ARRAY_SET, [Local(arr), lower(i), x]))
+    ///   `vec[i] = x` → (vec_local, Call(VECTOR_SET_UNSAFE, [Local(vec), lower(i), x]))
     ///   `m[k]   = x` → (m_local,   Call(DICT_SET,  [Local(m),   lower(k), x]))
     ///
     /// Returns None and records an error if the lvalue is invalid or unresolvable.
@@ -3721,11 +3727,11 @@ impl Lowerer {
                 self.lower_lvalue_chain(base, update)
             }
 
-            // Index write: base[index] = rhs  →  Call(ARRAY_SET or DICT_SET, [lower(base), lower(index), rhs])
+            // Index write: base[index] = rhs  →  Call(VECTOR_SET_UNSAFE or DICT_SET, [lower(base), lower(index), rhs])
             ExprKind::Index { base, index } => {
                 let base_ty = self.type_map.get_expr_type(base.id).cloned();
                 let func_id = match &base_ty {
-                    Some(MonoType::Array(_)) => prelude::ARRAY_SET,
+                    Some(MonoType::Vector(_)) => prelude::VECTOR_SET_UNSAFE,
                     Some(MonoType::Dict(_, _)) => prelude::DICT_SET,
                     _ => {
                         self.errors.push(LowerError::InternalError {

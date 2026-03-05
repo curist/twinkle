@@ -1,0 +1,89 @@
+// Expected output:
+//   6
+//   1
+//   2
+//   3
+//   4
+//   5
+//   6
+//   3
+//   2
+//   3
+//   4
+//   3
+//   6
+//   3
+//   3
+//   5
+//   None
+//   1
+//   None
+//   None
+//   None
+//   42
+//   updated
+
+a := [1, 2, 3]
+b := [4, 5, 6]
+
+// concat returns a new vector with elements of b appended to a
+c := a.concat(b)
+println("${c.len()}")
+for x in c { println("${x}") }
+
+// slice(start, end) returns elements [start, end)
+d := c.slice(1, 4)
+println("${d.len()}")
+for x in d { println("${x}") }
+
+// Qualified calls: Vector.len, Vector.concat, Vector.slice
+println("${Vector.len(a)}")
+e := Vector.concat(a, b)
+println("${Vector.len(e)}")
+f := Vector.slice(e, 0, 3)
+println("${Vector.len(f)}")
+
+// First-class reference: Vector.len as a value
+get_len : fn(Vector<Int>) Int = Vector.len
+println("${get_len(a)}")
+
+// make: creates a new vector of given size filled with a value
+v := Vector.make(5, 0)
+println("${v.len()}")
+
+// get: safe index access — returns Option<T>
+case v.get(10) {
+    .Some(n) => println("${n}"),
+    .None => println("None"),
+}
+case a.get(0) {
+    .Some(n) => println("${n}"),
+    .None => println("None"),
+}
+
+// set: safe update — returns Option<Vector<T>>
+case a.set(10, 99) {
+    .Some(_) => println("updated"),
+    .None => println("None"),
+}
+
+// negative index: must return None (not trap)
+case v.get(-1) {
+    .Some(n) => println("${n}"),
+    .None => println("None"),
+}
+case a.set(-1, 99) {
+    .Some(_) => println("updated"),
+    .None => println("None"),
+}
+
+// in-bounds set: returns Some with updated vector
+case a.set(0, 42) {
+    .Some(updated) => println("${updated[0]}"),
+    .None => println("None"),
+}
+// original unchanged
+case a.set(1, 99) {
+    .Some(_) => println("updated"),
+    .None => println("None"),
+}

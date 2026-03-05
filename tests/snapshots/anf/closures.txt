@@ -1,12 +1,12 @@
 // ANF Module
 // 6 function(s)
-// init = FuncId(43)
+// init = FuncId(46)
 
-fn test_capture  [FuncId(38)]  params=[]
+fn test_capture  [FuncId(41)]  params=[]
   return_ty: Void
   body:
     let L2 = init(0)
-    let L6 = closure(FuncId(40), free=[L2])
+    let L6 = closure(FuncId(43), free=[L2])
     let L3 = init(L6)
     let L7 = binop(Add, L2, 1, Int)
     let L8 = assign(L2 = L7)
@@ -21,18 +21,18 @@ fn test_capture  [FuncId(38)]  params=[]
     let L15 = call GlobalFunc(2) (L14)
     L15
 
-fn make_adder  [FuncId(39)]  params=[L2: Int]
+fn make_adder  [FuncId(42)]  params=[L2: Int]
   return_ty: Function { params: [Int], ret: Int }
   body:
-    let L3 = closure(FuncId(41), free=[L2])
+    let L3 = closure(FuncId(44), free=[L2])
     L3
 
-fn __init__  [FuncId(43)]  params=[]
+fn __init__  [FuncId(46)]  params=[]
   return_ty: Void
   body:
-    let L20 = call GlobalFunc(38) ()
+    let L20 = call GlobalFunc(41) ()
     let L19 = init(L20)
-    let L21 = call GlobalFunc(39) (10)
+    let L21 = call GlobalFunc(42) (10)
     let L0 = init(L21)
     let L22 = call L0 (0)
     let L23 = call GlobalFunc(4) (L22)
@@ -61,7 +61,7 @@ fn __init__  [FuncId(43)]  params=[]
         let L35 = binop(Add, L5, 1, Int)
         let L36 = assign(L5 = L35)
         let L9 = init(void)
-        let L37 = closure(FuncId(42), free=[L6])
+        let L37 = closure(FuncId(45), free=[L6])
         let L7 = init(L37)
         let L38 = call GlobalFunc(11) (L3, L7)
         let L39 = assign(L3 = L38)
@@ -97,18 +97,18 @@ fn __init__  [FuncId(43)]  params=[]
     let L16 = init(L52)
     void
 
-fn <lambda@268>  [FuncId(40)]  params=[]
+fn <lambda@268>  [FuncId(43)]  params=[]
   return_ty: Int
   body:
     L2
 
-fn <lambda@541>  [FuncId(41)]  params=[L3: Int]
+fn <lambda@541>  [FuncId(44)]  params=[L3: Int]
   return_ty: Int
   body:
     let L4 = binop(Add, L2, L3, Int)
     L4
 
-fn <lambda@805>  [FuncId(42)]  params=[]
+fn <lambda@805>  [FuncId(45)]  params=[]
   return_ty: Int
   body:
     L6
