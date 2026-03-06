@@ -1,0 +1,11 @@
+// Expected output:
+//   4999950000
+
+// Generic identity: in no-mono this boxes the Int argument to anyref and
+// unboxes the return; in mono it becomes a plain i64 → i64 call.
+fn wrap<T>(x: T) T { x }
+
+// 100 000 direct calls to wrap(i) — each one boxes/unboxes an Int without mono.
+total := 0
+for i in range(100000) { total = total + wrap(i) }
+println("${total}")

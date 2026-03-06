@@ -255,6 +255,11 @@ fn result_try() {
     check("tests/run/result_try.tw");
 }
 
+#[test]
+fn generic_user_funcs() {
+    check("tests/run/generic_user_funcs.tw");
+}
+
 // --- Trap tests ---
 
 #[test]

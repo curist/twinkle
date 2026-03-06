@@ -39,6 +39,7 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Resu
 pub fn build_wat(file_path: &str) -> Result<String> {
     let (core_module, _registry) = crate::module::compile_entry(file_path)
         .with_context(|| format!("compile failed for '{}'", file_path))?;
+    let core_module = crate::ir::monomorphize(core_module);
     let anf = lower_module(&core_module);
     let optimized = optimize_module(anf);
 

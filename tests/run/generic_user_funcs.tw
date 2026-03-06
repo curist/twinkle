@@ -1,0 +1,20 @@
+// Expected output:
+//   42
+//   hello
+//   true
+//   84
+//   Int wins
+
+fn id<T>(x: T) T { x }
+
+fn apply<A, B>(f: fn(A) B, x: A) B { f(x) }
+
+fn double(n: Int) Int { n * 2 }
+
+fn first<A, B>(a: A, b: B) A { a }
+
+println("${id(42)}")
+println(id("hello"))
+println("${id(true)}")
+println("${apply(double, 42)}")
+println(first("Int wins", false))

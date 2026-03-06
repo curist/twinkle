@@ -722,7 +722,7 @@ fn host_exit_code_from_val(val: &Val) -> Result<i64> {
     }
 }
 
-fn build_engine() -> Result<Engine> {
+pub fn build_engine() -> Result<Engine> {
     let mut config = Config::new();
     config.wasm_reference_types(true);
     config.wasm_function_references(true);
@@ -745,6 +745,37 @@ fn load_wasm_input(path: &str) -> Result<Vec<u8>> {
             std::fs::read(path).with_context(|| format!("failed to read input file '{}'", path))
         }
     }
+}
+
+/// Run a pre-compiled Wasmtime [`Module`] and return captured (stdout, stderr).
+/// Useful for benchmarks where the engine and module are built once outside the
+/// timed loop and only instantiation/execution is measured.
+pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, String)> {
+    let mut linker = Linker::new(engine);
+    let host_imports = HostImportTypes::from_module(module)?;
+    host_imports.define_all(&mut linker)?;
+
+    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+    let mut store = Store::new(
+        engine,
+        HostOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            cwd,
+            argv: vec![],
+            env: HashMap::new(),
+            exit_code: None,
+        },
+    );
+    if let Err(err) = linker.instantiate(&mut store, module) {
+        match store.data().exit_code {
+            Some(0) => {}
+            Some(code) => return Err(anyhow!("process exited with code {code}")),
+            None => return Err(err).context("failed to instantiate/run Wasm module"),
+        }
+    }
+    let out = store.data();
+    Ok((out.stdout.clone(), out.stderr.clone()))
 }
 
 pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {

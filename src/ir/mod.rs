@@ -6,6 +6,7 @@ pub mod error;
 pub mod local_allocator;
 pub mod lower;
 pub mod lower_anf;
+pub mod monomorphize;
 
 // Re-export commonly used types
 pub use anf::AnfModule;
@@ -16,3 +17,4 @@ pub use core::{
 pub use error::LowerError;
 pub use local_allocator::LocalAllocator;
 pub use lower::Lowerer;
+pub use monomorphize::monomorphize;
