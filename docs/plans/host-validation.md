@@ -85,6 +85,4 @@ Deliverables:
 **Post-Stage 9 follow-ups (non-blocking):**
 
 * Consolidate host ABI docs into one canonical reference (imports, signatures, behavior).
-* Add explicit stdin-injection support in `run_wasm_capture` for deterministic
-  `__debug_stdin_read_all` testing (currently uses non-blocking empty-input fallback).
 * Add a deep-recursion fixture to stress tail-call behavior end-to-end.

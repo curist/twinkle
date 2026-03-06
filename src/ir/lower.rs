@@ -76,8 +76,6 @@ pub mod prelude {
     pub const VECTOR_BUILDER_PUSH: FuncId = FuncId(34); // (Cell<Vector<T>>, T) -> Void
     pub const VECTOR_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Vector<T>>) -> Vector<T>
 
-    // Debug/dev-only API (unstable): read all piped stdin as String
-    pub const DEBUG_STDIN_READ_ALL: FuncId = FuncId(36); // () -> String
     // Debug/dev-only API (unstable): read UTF-8 file content
     pub const DEBUG_READ_FILE: FuncId = FuncId(37); // (path: String) -> Result<String, String>
 
@@ -209,10 +207,6 @@ impl Lowerer {
         func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
         func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
         func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-        func_table.insert(
-            "__debug_stdin_read_all".to_string(),
-            prelude::DEBUG_STDIN_READ_ALL,
-        );
         func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
         func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
         func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);

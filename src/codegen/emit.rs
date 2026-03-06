@@ -2036,16 +2036,6 @@ fn emit_prelude_call(
         id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
             emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
         }
-        id if id == prelude_ids::DEBUG_STDIN_READ_ALL => {
-            if !args.is_empty() {
-                panic!("__debug_stdin_read_all expects 0 args, got {}", args.len());
-            }
-            // Match interpreter behavior for interactive runs: non-blocking
-            // empty input when no piped stdin is available.
-            let mut instrs = emit_string_literal_atom("");
-            instrs.extend(emit_coerce_stack(&ref_string(), bind_ty));
-            instrs
-        }
         _ => emit_unimplemented_intrinsic_prelude_call(entry, ctx),
     }
 }

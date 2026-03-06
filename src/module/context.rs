@@ -121,10 +121,6 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
     func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
     func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-    func_table.insert(
-        "__debug_stdin_read_all".to_string(),
-        prelude::DEBUG_STDIN_READ_ALL,
-    );
     func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
     func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
     func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);

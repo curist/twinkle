@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{IsTerminal, Read, Write};
+use std::io::Write;
 use std::rc::Rc;
 
 use super::value::IteratorState;
@@ -896,20 +896,6 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("VECTOR_BUILDER_FREEZE: expected Cell"),
                 };
                 Ok(cell.borrow().clone())
-            }
-            prelude_ids::DEBUG_STDIN_READ_ALL => {
-                // __debug_stdin_read_all() -> String
-                // Dev/debug-only helper: when stdin is a terminal, return ""
-                // immediately to avoid blocking interactive runs.
-                let mut stdin = std::io::stdin();
-                if stdin.is_terminal() {
-                    return Ok(Value::Str(String::new()));
-                }
-                let mut buf = String::new();
-                stdin.read_to_string(&mut buf).map_err(|e| {
-                    Signal::Trap(TrapError::UserError(format!("stdin read failed: {}", e)))
-                })?;
-                Ok(Value::Str(buf))
             }
             prelude_ids::DEBUG_READ_FILE => {
                 // __debug_read_file(path: String) -> Result<String, String>

@@ -481,7 +481,6 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
         id if id == ids::VECTOR_PUSH => Some(named_ref(T_ARRAY)),
         id if id == ids::VECTOR_SET_IN_PLACE => Some(named_ref(T_ARRAY)),
         id if id == ids::VECTOR_BUILDER_FREEZE => Some(named_ref(T_ARRAY)),
-        id if id == ids::DEBUG_STDIN_READ_ALL => Some(named_ref(T_STRING)),
         id if id == ids::DEBUG_READ_FILE => Some(ValType::Anyref),
         id if id == ids::RANGE_FROM
             || id == ids::RANGE

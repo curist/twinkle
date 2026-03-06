@@ -428,10 +428,6 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::DEBUG_STDIN_READ_ALL,
-        PreludeEntry::intrinsic("__debug_stdin_read_all"),
-    );
-    map.insert(
         prelude_ids::DEBUG_READ_FILE,
         PreludeEntry::intrinsic("__debug_read_file"),
     );
@@ -558,13 +554,14 @@ mod tests {
     #[test]
     fn prelude_map_covers_all_fixed_ids() {
         let map = build_prelude_map();
-        for id in 1..=prelude_ids::DEBUG_READ_FILE.0 {
+        for id in 1..=prelude_ids::VECTOR_BUILDER_FREEZE.0 {
             assert!(
                 map.contains_key(&FuncId(id)),
                 "missing prelude FuncId({id})"
             );
         }
         for id in [
+            prelude_ids::DEBUG_READ_FILE.0,
             prelude_ids::VECTOR_GET.0,
             prelude_ids::VECTOR_SET.0,
             prelude_ids::VECTOR_MAKE.0,

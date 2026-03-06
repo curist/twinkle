@@ -668,28 +668,6 @@ fn print_check_result(label: String, result: !String) {
     }
 }
 
-fn trim_trailing_newlines(s: String) String {
-    n := s.len()
-    if n == 0 {
-        s
-    } else {
-        last := s.substring(n - 1, n)
-        if last == "\n" {
-            trim_trailing_newlines(s.substring(0, n - 1))
-        } else {
-            s
-        }
-    }
-}
-
-fn starts_with(s: String, prefix: String) Bool {
-    if s.len() < prefix.len() {
-        false
-    } else {
-        s.substring(0, prefix.len()) == prefix
-    }
-}
-
 fn contains(haystack: String, needle: String) Bool {
     if needle.len() == 0 {
         true
@@ -739,47 +717,6 @@ fn parse_recursive_types_source(source: String) Program!String {
     .Err("parse: unsupported depth body (expected recursive max-depth shape)")
 }
 
-fn run_mode(mode: String) {
-    if mode == "recursive_types" {
-        print_check_result("recursive_types", check_program(program_recursive_types_ok()))
-    } else if mode == "recursive_types_bad" {
-        print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
-    } else if mode == "bad_call_arity" {
-        print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
-    } else if starts_with(mode, "source_file:") {
-        path := mode.substring(12, mode.len())
-        case __debug_read_file(path) {
-            .Ok(source) => {
-                case parse_recursive_types_source(source) {
-                    .Ok(program) => print_check_result("source_file", check_program(program)),
-                    .Err(msg) => println("source_file_parse_error: ${msg}"),
-                }
-            },
-            .Err(msg) => println("source_file_read_error: ${msg}"),
-        }
-    } else if starts_with(mode, "mode_file:") {
-        path := mode.substring(10, mode.len())
-        case __debug_read_file(path) {
-            .Ok(content) => run_mode(trim_trailing_newlines(content)),
-            .Err(msg) => println("mode_file_read_error: ${msg}"),
-        }
-    } else {
-        println("unknown mode: ${mode}")
-    }
-}
-
-fn run_demo() {
-    // Debug mode selector:
-    //   - no stdin: run all demo checks
-    //   - piped stdin: run just one mode (e.g. recursive_types)
-    mode := trim_trailing_newlines(__debug_stdin_read_all())
-    if mode == "" {
-        print_check_result("recursive_types", check_program(program_recursive_types_ok()))
-        print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
-        print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
-    } else {
-        run_mode(mode)
-    }
-}
-
-run_demo()
+print_check_result("recursive_types", check_program(program_recursive_types_ok()))
+print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
+print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
