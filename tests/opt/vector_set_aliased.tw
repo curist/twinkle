@@ -1,0 +1,17 @@
+// The array is read after the index update (aliased use).
+// The uniqueness pass must NOT rewrite to in-place.
+//
+// Expected output:
+//   1
+//   99
+
+fn test() Void {
+    xs := [1, 2, 3]
+    ys := xs
+    xs[0] = 99
+    // ys still references the old array — must not have been mutated in-place
+    println("${ys[0]}")
+    println("${xs[0]}")
+}
+
+test()

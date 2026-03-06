@@ -9,7 +9,8 @@
 use std::fs;
 use std::path::Path;
 
-use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp};
+use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
+use twinkle::ir::core::FuncId;
 use twinkle::ir::lower_anf;
 use twinkle::opt::optimize_module;
 
@@ -421,5 +422,97 @@ fn opt_record_aliased_not_annotated() {
     assert!(
         !has_in_place_update(&module),
         "Expected no ARecordUpdate with can_reuse_in_place=true when base is reused"
+    );
+}
+
+// ── Uniqueness-based vector set rewrite tests ─────────────────────────────────
+
+const VECTOR_SET_UNSAFE: FuncId = FuncId(12);
+const VECTOR_SET_IN_PLACE: FuncId = FuncId(1013);
+
+/// Check whether any ACall in the module uses the given FuncId as callee.
+fn has_call_to(module: &AnfModule, func_id: FuncId) -> bool {
+    module
+        .functions
+        .iter()
+        .any(|f| expr_has_call_to(&f.body, func_id))
+}
+
+fn expr_has_call_to(expr: &AnfExpr, func_id: FuncId) -> bool {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            op_has_call_to(op, func_id) || expr_has_call_to(body, func_id)
+        }
+        _ => false,
+    }
+}
+
+fn op_has_call_to(op: &AnfOp, func_id: FuncId) -> bool {
+    match op {
+        AnfOp::ACall { callee, .. } => *callee == Atom::AGlobalFunc(func_id),
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_has_call_to(then_branch, func_id) || expr_has_call_to(else_branch, func_id),
+        AnfOp::AMatch { arms, .. } => arms.iter().any(|a| expr_has_call_to(&a.body, func_id)),
+        AnfOp::ALoop { body } => expr_has_call_to(body, func_id),
+        _ => false,
+    }
+}
+
+#[test]
+fn opt_vector_set_unique_rewritten_to_in_place() {
+    // Fresh array, index update, base dead after → should rewrite
+    let module = compile_opt("tests/opt/vector_set_unique.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected VECTOR_SET_UNSAFE to be rewritten to VECTOR_SET_IN_PLACE for unique array"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected no remaining VECTOR_SET_UNSAFE calls after uniqueness rewrite"
+    );
+}
+
+#[test]
+fn opt_vector_set_aliased_not_rewritten() {
+    // Array aliased (ys := xs) before index update → must NOT rewrite
+    let module = compile_opt("tests/opt/vector_set_aliased.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected VECTOR_SET_UNSAFE to remain when array is aliased"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE when array is aliased"
+    );
+}
+
+#[test]
+fn opt_vector_set_captured_not_rewritten() {
+    // Array captured by closure before index update → must NOT rewrite
+    let module = compile_opt("tests/opt/vector_set_captured.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected VECTOR_SET_UNSAFE to remain when array is closure-captured"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE when array is closure-captured"
+    );
+}
+
+#[test]
+fn opt_vector_set_param_not_rewritten() {
+    // Function parameter — not a fresh producer → must NOT rewrite
+    let module = compile_opt("tests/opt/vector_set_param.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected VECTOR_SET_UNSAFE to remain for function parameter array"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE for function parameter array"
     );
 }

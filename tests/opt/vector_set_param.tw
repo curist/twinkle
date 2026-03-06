@@ -1,0 +1,12 @@
+// A function parameter array — not a fresh producer.
+// The uniqueness pass must NOT rewrite to in-place.
+//
+// Expected output:
+//   99
+
+fn update(xs: Vector<Int>) Vector<Int> {
+    xs[0] = 99
+    xs
+}
+
+println("${update([1, 2, 3])[0]}")

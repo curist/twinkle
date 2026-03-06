@@ -1,0 +1,13 @@
+// A fresh array undergoes an index update where the original is dead afterward.
+// The uniqueness pass should rewrite VECTOR_SET_UNSAFE → VECTOR_SET_IN_PLACE.
+//
+// Expected output:
+//   99
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

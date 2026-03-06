@@ -1,0 +1,17 @@
+// The array is captured by a closure before the index update.
+// The uniqueness pass must NOT rewrite to in-place.
+//
+// Expected output:
+//   1
+//   99
+
+fn test() Void {
+    xs := [1, 2, 3]
+    get_first := fn() Int { xs[0] }
+    xs[0] = 99
+    // Closure captured the old xs — must not have been mutated
+    println("${get_first()}")
+    println("${xs[0]}")
+}
+
+test()

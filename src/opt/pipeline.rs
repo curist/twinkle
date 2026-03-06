@@ -7,6 +7,7 @@ use crate::opt::liveness::annotate_in_place;
 use crate::opt::passes::{
     branch_simplify, constant_fold, copy_propagate_with_pinned, dead_let_elim,
 };
+use crate::opt::uniqueness::uniqueness_rewrite;
 use crate::opt::use_count::{collect_assigned_locals, count_uses};
 
 const MAX_ROUNDS: usize = 10;
@@ -42,6 +43,7 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
     }
 
     annotate_in_place(&mut func);
+    uniqueness_rewrite(&mut func);
     // Eliminate all ADefer nodes — must run after peephole passes since it
     // restructures terminal nodes (Return/Break/Continue/Atom) irreversibly.
     func = eliminate_defers(func);
