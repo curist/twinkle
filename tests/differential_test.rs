@@ -56,11 +56,22 @@ fn parse_expected_trap(source: &str) -> Option<String> {
     })
 }
 
+fn include_benchmark_fixtures() -> bool {
+    std::env::var("TWINKLE_INCLUDE_BENCH_FIXTURES")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn is_benchmark_fixture(name: &str) -> bool {
+    name.starts_with("bench_") || name.ends_with("_perf")
+}
+
 /// Discover all .tw test fixtures (non-trap) that have expected output.
 fn discover_fixtures() -> Vec<(String, String)> {
     let root = Path::new("tests/run");
     let mut fixtures = Vec::new();
     let mut stack = vec![root.to_path_buf()];
+    let include_bench = include_benchmark_fixtures();
 
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(&dir).expect("tests/run subtree dir exists") {
@@ -83,6 +94,9 @@ fn discover_fixtures() -> Vec<(String, String)> {
                 } else {
                     rel.with_extension("").to_string_lossy().replace('\\', "/")
                 };
+                if !include_bench && is_benchmark_fixture(&name) {
+                    continue;
+                }
                 fixtures.push((name, path.to_str().unwrap().to_string()));
             }
         }
