@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use crate::ir::core::{CorePattern, LocalId};
 use crate::opt::defer_elim::eliminate_defers;
-use crate::opt::liveness::annotate_in_place;
 use crate::opt::passes::{
     branch_simplify, constant_fold, copy_propagate_with_pinned, dead_let_elim,
 };
@@ -13,7 +12,7 @@ use crate::opt::use_count::{collect_assigned_locals, count_uses};
 const MAX_ROUNDS: usize = 10;
 
 /// Run all peephole optimization passes to a fixed point on a single function,
-/// then annotate record updates with in-place reuse eligibility.
+/// then run uniqueness-based rewrites/annotations.
 pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> AnfFunctionDef {
     for _ in 0..MAX_ROUNDS {
         let uses = count_uses(&func.body);
@@ -42,7 +41,6 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
         }
     }
 
-    annotate_in_place(&mut func);
     uniqueness_rewrite(&mut func);
     // Eliminate all ADefer nodes — must run after peephole passes since it
     // restructures terminal nodes (Return/Break/Continue/Atom) irreversibly.

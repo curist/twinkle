@@ -1,0 +1,11 @@
+// VECTOR_SET (safe) returns Option<Vector<T>> and should not rewrite to IN_PLACE.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    case xs.set(0, 99) {
+        .Some(v) => v,
+        .None => xs,
+    }
+}
+
+println("${make()[0]}")

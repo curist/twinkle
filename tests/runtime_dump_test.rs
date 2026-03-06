@@ -76,6 +76,8 @@ fn test_runtime_exports() {
         "rt_dict__get",
         "rt_dict__set",
         "rt_dict__remove",
+        "rt_dict__set_in_place",
+        "rt_dict__remove_in_place",
         // rt.core
         "rt_core__print",
         "rt_core__println",

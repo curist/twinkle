@@ -1,0 +1,18 @@
+// Unique dict update chain should rewrite all set/remove operations.
+// Expected output:
+//   1
+//   false
+//   true
+
+fn make() Dict<String, Int> {
+    m: Dict<String, Int> = Dict.new()
+    m["a"] = 1
+    m = m.remove("a")
+    m["b"] = 2
+    m
+}
+
+out := make()
+println("${out.len()}")
+println("${out.has("a")}")
+println("${out.has("b")}")

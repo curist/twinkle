@@ -1,0 +1,14 @@
+// Each branch performs a consuming update on the same unique base.
+// Both branch-local updates should rewrite.
+
+fn make(c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    if c {
+        xs[0] = 1
+    } else {
+        xs[0] = 2
+    }
+    xs
+}
+
+println("${make(true)[0]}")

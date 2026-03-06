@@ -1,0 +1,17 @@
+// Branch-local reassignment can alias xs into ys that is read after the branch.
+// Must not rewrite subsequent xs update.
+
+fn make(c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    ys := [9]
+    if c {
+        ys = xs
+    } else {
+        ys = [8]
+    }
+    xs[0] = 99
+    println("${ys[0]}")
+    xs
+}
+
+println("${make(true)[0]}")

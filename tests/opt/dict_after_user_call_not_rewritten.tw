@@ -1,0 +1,16 @@
+// Passing dict to user function taints uniqueness, so set must not rewrite.
+// Expected output:
+//   1
+
+fn observe(m: Dict<String, Int>) Int {
+    m.len()
+}
+
+fn make() Dict<String, Int> {
+    m: Dict<String, Int> = Dict.new()
+    _n := observe(m)
+    m["a"] = 1
+    m
+}
+
+println("${make().len()}")

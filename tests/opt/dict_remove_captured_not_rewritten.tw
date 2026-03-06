@@ -1,0 +1,15 @@
+// Closure capture taints dict; remove must remain COW.
+// Expected output:
+//   1
+//   0
+
+fn make() Dict<String, Int> {
+    m: Dict<String, Int> = Dict.new()
+    m["a"] = 1
+    f := fn() Int { m.len() }
+    out := m.remove("a")
+    println("${f()}")
+    out
+}
+
+println("${make().len()}")

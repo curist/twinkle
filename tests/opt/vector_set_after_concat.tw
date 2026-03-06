@@ -1,0 +1,12 @@
+// Vector.concat is not in the no-retain set; it taints base conservatively.
+// Update must not rewrite.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    tmp := xs.concat([4])
+    println("${tmp.len()}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

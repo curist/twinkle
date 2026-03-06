@@ -24,6 +24,8 @@ pub fn make() -> ModuleIR {
     m.funcs.push(get_option_fn());
     m.funcs.push(set_fn());
     m.funcs.push(remove_fn());
+    m.funcs.push(set_in_place_fn());
+    m.funcs.push(remove_in_place_fn());
 
     for f in &m.funcs {
         m.exports.push(ExportDef {
@@ -643,6 +645,259 @@ fn remove_fn() -> FuncDef {
                 }],
             },
             Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
+/// `set_in_place(dict: Dict, key: anyref, val: anyref) -> Dict`
+///
+/// Uniqueness rewrite target:
+/// - If key exists, update that slot in place and return the same dict.
+/// - If key is absent, fall back to allocate+copy append semantics.
+fn set_in_place_fn() -> FuncDef {
+    // Locals: p3=n, p4=i, p5=entry, p6=result, p7=new_entry
+    FuncDef {
+        name: "set_in_place".into(),
+        params: vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
+        results: vec![ref_dict()],
+        locals: vec![
+            ValType::I32,          // p3 = n
+            ValType::I32,          // p4 = i
+            ref_dict_entry_null(), // p5 = entry
+            ref_dict_null(),       // p6 = result
+            ref_dict_entry(),      // p7 = new_entry
+        ],
+        body: vec![
+            // n = len(dict)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
+            // new_entry = DictEntry { key, val }
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::StructNew(T_DICT_ENTRY.into()),
+            Instr::LocalSet(7),
+            // Scan for existing key.
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
+            Instr::Block {
+                label: "not_found".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "scan".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(3),
+                        Instr::I32GeS,
+                        Instr::BrIf("not_found".into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(4),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(5),
+                        Instr::LocalGet(5),
+                        Instr::RefAsNonNull,
+                        Instr::StructGet(T_DICT_ENTRY.into(), 0),
+                        Instr::LocalGet(1),
+                    ]
+                    .into_iter()
+                    .chain(key_eq_call())
+                    .chain([
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                // dict[i] = new_entry; return dict
+                                Instr::LocalGet(0),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(4),
+                                Instr::LocalGet(7),
+                                Instr::ArraySet(T_DICT.into()),
+                                Instr::LocalGet(0),
+                                Instr::RefAsNonNull,
+                                Instr::Return,
+                            ],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(4),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(4),
+                        Instr::Br("scan".into()),
+                    ])
+                    .collect(),
+                }],
+            },
+            // Missing key: allocate n+1 and append.
+            Instr::RefNull(HeapType::Named(T_DICT_ENTRY.into())),
+            Instr::LocalGet(3),
+            Instr::I32Const(1),
+            Instr::I32Add,
+            Instr::ArrayNew(T_DICT.into()),
+            Instr::LocalSet(6),
+            // result[0..n] <- dict[0..n]
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(3),
+            Instr::ArrayCopy(T_DICT.into(), T_DICT.into()),
+            // result[n] = new_entry
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(3),
+            Instr::LocalGet(7),
+            Instr::ArraySet(T_DICT.into()),
+            Instr::LocalGet(6),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
+/// `remove_in_place(dict: Dict, key: anyref) -> Dict`
+///
+/// Uniqueness rewrite target:
+/// - If key absent, return original dict without allocating.
+/// - If key present, allocate n-1 dict and copy prefix/suffix.
+fn remove_in_place_fn() -> FuncDef {
+    // Locals: p2=n, p3=i, p4=found_idx, p5=entry, p6=result, p7=tail_len
+    FuncDef {
+        name: "remove_in_place".into(),
+        params: vec![ref_dict_null(), ValType::Anyref],
+        results: vec![ref_dict()],
+        locals: vec![
+            ValType::I32,          // p2 = n
+            ValType::I32,          // p3 = i
+            ValType::I32,          // p4 = found_idx (-1 if not found)
+            ref_dict_entry_null(), // p5 = entry
+            ref_dict_null(),       // p6 = result
+            ValType::I32,          // p7 = tail_len
+        ],
+        body: vec![
+            // n = len(dict)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            // found_idx = -1
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::I32Const(-1),
+            Instr::LocalSet(4),
+            // Scan for key and keep its index.
+            Instr::Block {
+                label: "scan_exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "scan".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("scan_exit".into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_DICT.into()),
+                        Instr::LocalSet(5),
+                        Instr::LocalGet(5),
+                        Instr::RefAsNonNull,
+                        Instr::StructGet(T_DICT_ENTRY.into(), 0),
+                        Instr::LocalGet(1),
+                    ]
+                    .into_iter()
+                    .chain(key_eq_call())
+                    .chain([
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                Instr::LocalGet(3),
+                                Instr::LocalSet(4),
+                                Instr::Br("scan_exit".into()),
+                            ],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("scan".into()),
+                    ])
+                    .collect(),
+                }],
+            },
+            // If not found (found_idx == -1), return original dict.
+            Instr::LocalGet(4),
+            Instr::I32Const(1),
+            Instr::I32Add,
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            // result = new dict of length n-1
+            Instr::RefNull(HeapType::Named(T_DICT_ENTRY.into())),
+            Instr::LocalGet(2),
+            Instr::I32Const(1),
+            Instr::I32Sub,
+            Instr::ArrayNew(T_DICT.into()),
+            Instr::LocalSet(6),
+            // Copy prefix [0..found_idx) when found_idx > 0.
+            Instr::LocalGet(4),
+            Instr::I32Const(0),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(4),
+                    Instr::ArrayCopy(T_DICT.into(), T_DICT.into()),
+                ],
+                else_body: vec![],
+            },
+            // tail_len = n - found_idx - 1
+            Instr::LocalGet(2),
+            Instr::LocalGet(4),
+            Instr::I32Sub,
+            Instr::I32Const(1),
+            Instr::I32Sub,
+            Instr::LocalSet(7),
+            // Copy suffix [found_idx+1 .. n) into result[found_idx ..].
+            Instr::LocalGet(7),
+            Instr::I32Const(0),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(4),
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(4),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::LocalGet(7),
+                    Instr::ArrayCopy(T_DICT.into(), T_DICT.into()),
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(6),
             Instr::RefAsNonNull,
         ],
     }

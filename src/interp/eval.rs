@@ -8,6 +8,7 @@ use crate::ir::CoreModule;
 use crate::ir::core::{
     CoreExpr, CoreExprKind, CorePattern, FuncId, FunctionDef, LocalId, MatchArm,
 };
+use crate::ir::lower::prelude as prelude_ids;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
 use crate::types::ty::{
@@ -529,86 +530,86 @@ impl<W: Write> Interpreter<W> {
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {
-        match func_id.0 {
-            1 => {
+        match func_id {
+            prelude_ids::PRINT => {
                 // print(s: String)
                 let s = args_to_string(&args, 0);
                 write!(self.output, "{}", s).ok();
                 Ok(Value::Void)
             }
-            2 => {
+            prelude_ids::PRINTLN => {
                 // println(s: String)
                 let s = args_to_string(&args, 0);
                 writeln!(self.output, "{}", s).ok();
                 Ok(Value::Void)
             }
-            3 => {
+            prelude_ids::ERROR => {
                 // error(s: String)
                 let s = args_to_string(&args, 0);
                 return Err(Signal::Trap(TrapError::UserError(s)));
             }
-            1007 => {
+            prelude_ids::EPRINT => {
                 // eprint(s: String)
                 let s = args_to_string(&args, 0);
                 write!(self.error_output, "{}", s).ok();
                 Ok(Value::Void)
             }
-            1008 => {
+            prelude_ids::EPRINTLN => {
                 // eprintln(s: String)
                 let s = args_to_string(&args, 0);
                 writeln!(self.error_output, "{}", s).ok();
                 Ok(Value::Void)
             }
-            4 => {
+            prelude_ids::INT_TO_STRING => {
                 // int_to_string(n: Int) String
                 match &args[0] {
                     Value::Int(n) => Ok(Value::Str(n.to_string())),
                     _ => panic!("int_to_string: expected Int"),
                 }
             }
-            5 => {
+            prelude_ids::FLOAT_TO_STRING => {
                 // float_to_string(f: Float) String
                 match &args[0] {
                     Value::Float(f) => Ok(Value::Str(format_float(*f))),
                     _ => panic!("float_to_string: expected Float"),
                 }
             }
-            6 => {
+            prelude_ids::BOOL_TO_STRING => {
                 // bool_to_string(b: Bool) String
                 match &args[0] {
                     Value::Bool(b) => Ok(Value::Str(b.to_string())),
                     _ => panic!("bool_to_string: expected Bool"),
                 }
             }
-            7 => {
+            prelude_ids::STRING_TO_STRING => {
                 // string_to_string(s: String) String  — identity
                 match args.into_iter().next() {
                     Some(v @ Value::Str(_)) => Ok(v),
                     _ => panic!("string_to_string: expected String"),
                 }
             }
-            8 => {
+            prelude_ids::STRING_LEN => {
                 // string_len(s: String) Int
                 match &args[0] {
                     Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
                     _ => panic!("string_len: expected String"),
                 }
             }
-            9 => {
+            prelude_ids::STRING_CONCAT => {
                 // string_concat(a: String, b: String) String
                 match (&args[0], &args[1]) {
                     (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{}{}", a, b))),
                     _ => panic!("string_concat: expected two Strings"),
                 }
             }
-            10 => {
+            prelude_ids::VECTOR_LEN => {
                 // vector_len(vec: Vector<T>) Int
                 match &args[0] {
                     Value::Vec(elems) => Ok(Value::Int(elems.len() as i64)),
                     _ => panic!("vector_len: expected Vector"),
                 }
             }
-            11 => {
+            prelude_ids::VECTOR_PUSH => {
                 // vector_push(vec: Vector<T>, elem: T) Vector<T>
                 match args[0].clone() {
                     Value::Vec(mut elems) => {
@@ -618,7 +619,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_push: expected Vector"),
                 }
             }
-            12 => {
+            prelude_ids::VECTOR_SET_UNSAFE => {
                 // vector_set_unsafe(vec: Vector<T>, idx: Int, val: T) Vector<T>
                 match (args[0].clone(), &args[1], args[2].clone()) {
                     (Value::Vec(mut elems), Value::Int(i), val) => {
@@ -635,7 +636,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_set_unsafe: wrong argument types"),
                 }
             }
-            13 => {
+            prelude_ids::DICT_SET => {
                 // dict_set(m: dict<K,V>, k: K, v: V) dict<K,V>
                 match args[0].clone() {
                     Value::Dict(mut pairs) => {
@@ -658,7 +659,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_set: expected Dict"),
                 }
             }
-            14 => {
+            prelude_ids::DICT_KEYS => {
                 // dict_keys(m: dict<K,V>) Vector<K>
                 match &args[0] {
                     Value::Dict(pairs) => {
@@ -667,7 +668,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_keys: expected Dict"),
                 }
             }
-            15 => {
+            prelude_ids::RANGE_FROM => {
                 // range_from(start: Int, end: Int) Range
                 match (&args[0], &args[1]) {
                     (Value::Int(start), Value::Int(end)) => Ok(Value::Record(
@@ -677,7 +678,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("range_from: expected two Ints"),
                 }
             }
-            16 => {
+            prelude_ids::RANGE => {
                 // range(n: Int) Range  — [0, n)
                 match &args[0] {
                     Value::Int(n) => Ok(Value::Record(
@@ -687,20 +688,20 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("range: expected Int"),
                 }
             }
-            17 => {
+            prelude_ids::CELL_NEW => {
                 // Cell.new(value: T) Cell<T>
                 Ok(Value::Cell(Rc::new(RefCell::new(
                     args.into_iter().next().unwrap_or(Value::Void),
                 ))))
             }
-            18 => {
+            prelude_ids::CELL_GET => {
                 // Cell.get(cell: Cell<T>) T
                 match &args[0] {
                     Value::Cell(inner) => Ok(inner.borrow().clone()),
                     _ => panic!("Cell.get: expected Cell"),
                 }
             }
-            19 => {
+            prelude_ids::CELL_SET => {
                 // Cell.set(cell: Cell<T>, value: T) Void
                 match &args[0] {
                     Value::Cell(inner) => {
@@ -710,7 +711,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("Cell.set: expected Cell"),
                 }
             }
-            20 => {
+            prelude_ids::CELL_UPDATE => {
                 // Cell.update(cell: Cell<T>, f: fn(T) T) Void
                 match (&args[0], &args[1]) {
                     (Value::Cell(inner), Value::Closure(func_id, captured)) => {
@@ -724,7 +725,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("Cell.update: expected Cell and Closure"),
                 }
             }
-            21 => {
+            prelude_ids::DICT_GET => {
                 // dict_get(m: Dict<K,V>, k: K) Option<V>
                 match args[0].clone() {
                     Value::Dict(pairs) => {
@@ -741,11 +742,11 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_get: expected Dict"),
                 }
             }
-            22 => {
+            prelude_ids::DICT_NEW => {
                 // Dict.new() Dict<K,V>
                 Ok(Value::Dict(vec![]))
             }
-            23 => {
+            prelude_ids::RANGE_STEP => {
                 // range_step(start: Int, end: Int, step: Int) Range
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Int(start), Value::Int(end), Value::Int(step)) => Ok(Value::Record(
@@ -755,7 +756,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("range_step: expected three Ints"),
                 }
             }
-            24 => {
+            prelude_ids::DICT_GET_UNSAFE => {
                 // dict_get_unsafe(m: Dict<K,V>, k: K) V  — internal use by for-loop lowering
                 match args[0].clone() {
                     Value::Dict(pairs) => {
@@ -770,7 +771,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_get_unsafe: expected Dict"),
                 }
             }
-            25 => {
+            prelude_ids::VECTOR_CONCAT => {
                 // Vector.concat(a, b) -> Vector<T>
                 match (args[0].clone(), args[1].clone()) {
                     (Value::Vec(mut a), Value::Vec(b)) => {
@@ -780,7 +781,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_concat: expected two Vectors"),
                 }
             }
-            26 => {
+            prelude_ids::VECTOR_SLICE => {
                 // Vector.slice(vec, start, end) -> Vector<T>
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Vec(elems), Value::Int(s), Value::Int(e)) => {
@@ -791,14 +792,14 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_slice: expected Vector and two Ints"),
                 }
             }
-            27 => {
+            prelude_ids::DICT_LEN => {
                 // Dict.len(m) -> Int
                 match &args[0] {
                     Value::Dict(pairs) => Ok(Value::Int(pairs.len() as i64)),
                     _ => panic!("dict_len: expected Dict"),
                 }
             }
-            28 => {
+            prelude_ids::DICT_HAS => {
                 // Dict.has(m, k) -> Bool
                 match &args[0] {
                     Value::Dict(pairs) => {
@@ -808,7 +809,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_has: expected Dict"),
                 }
             }
-            29 => {
+            prelude_ids::DICT_REMOVE => {
                 // Dict.remove(m, k) -> Dict<K,V>
                 match args[0].clone() {
                     Value::Dict(mut pairs) => {
@@ -818,7 +819,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_remove: expected Dict"),
                 }
             }
-            30 => {
+            prelude_ids::STRING_SUBSTR => {
                 // String.substring(s, start, end) -> String
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Str(s), Value::Int(start), Value::Int(end)) => {
@@ -830,7 +831,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("string_substring: expected String and two Ints"),
                 }
             }
-            31 => {
+            prelude_ids::ITERATOR_NEXT => {
                 // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
                 let iter_state = match &args[0] {
                     Value::Iterator(s) => s.clone(),
@@ -863,18 +864,18 @@ impl<W: Write> Interpreter<W> {
                     other => panic!("Iterator.next: unexpected step result {:?}", other),
                 }
             }
-            32 => {
+            prelude_ids::ITERATOR_UNFOLD => {
                 // Iterator.unfold(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
                 Ok(Value::Iterator(Rc::new(IteratorState {
                     seed: Box::new(args[0].clone()),
                     step: Box::new(args[1].clone()),
                 })))
             }
-            33 => {
+            prelude_ids::VECTOR_BUILDER_NEW => {
                 // VECTOR_BUILDER_NEW() -> Cell<Vector<T>>
                 Ok(Value::Cell(Rc::new(RefCell::new(Value::Vec(vec![])))))
             }
-            34 => {
+            prelude_ids::VECTOR_BUILDER_PUSH => {
                 // VECTOR_BUILDER_PUSH(builder, elem) -> Void
                 let cell = match &args[0] {
                     Value::Cell(c) => c.clone(),
@@ -888,7 +889,7 @@ impl<W: Write> Interpreter<W> {
                 }
                 Ok(Value::Void)
             }
-            35 => {
+            prelude_ids::VECTOR_BUILDER_FREEZE => {
                 // VECTOR_BUILDER_FREEZE(builder) -> Vector<T>
                 let cell = match &args[0] {
                     Value::Cell(c) => c.clone(),
@@ -896,7 +897,7 @@ impl<W: Write> Interpreter<W> {
                 };
                 Ok(cell.borrow().clone())
             }
-            36 => {
+            prelude_ids::DEBUG_STDIN_READ_ALL => {
                 // __debug_stdin_read_all() -> String
                 // Dev/debug-only helper: when stdin is a terminal, return ""
                 // immediately to avoid blocking interactive runs.
@@ -910,7 +911,7 @@ impl<W: Write> Interpreter<W> {
                 })?;
                 Ok(Value::Str(buf))
             }
-            37 => {
+            prelude_ids::DEBUG_READ_FILE => {
                 // __debug_read_file(path: String) -> Result<String, String>
                 let path = match &args[0] {
                     Value::Str(s) => s.clone(),
@@ -929,7 +930,7 @@ impl<W: Write> Interpreter<W> {
                     )), // Err
                 }
             }
-            38 => {
+            prelude_ids::VECTOR_GET => {
                 // VECTOR_GET(vec: Vector<T>, i: Int) -> Option<T>  (safe)
                 match (&args[0], &args[1]) {
                     (Value::Vec(elems), Value::Int(i)) => {
@@ -943,7 +944,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_get: wrong argument types"),
                 }
             }
-            39 => {
+            prelude_ids::VECTOR_SET => {
                 // VECTOR_SET(vec: Vector<T>, i: Int, val: T) -> Option<Vector<T>>  (safe)
                 match (args[0].clone(), &args[1], args[2].clone()) {
                     (Value::Vec(mut elems), Value::Int(i), val) => {
@@ -958,7 +959,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_set: wrong argument types"),
                 }
             }
-            40 => {
+            prelude_ids::VECTOR_MAKE => {
                 // VECTOR_MAKE(size: Int, fill: T) -> Vector<T>
                 match (&args[0], args[1].clone()) {
                     (Value::Int(size), fill) => {
@@ -968,7 +969,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_make: expected Int size"),
                 }
             }
-            1013 => {
+            prelude_ids::VECTOR_SET_IN_PLACE => {
                 // __vector_set_in_place(vec: Vector<T>, i: Int, val: T) -> Vector<T>
                 // Internal collect optimization helper.
                 match (args[0].clone(), &args[1], args[2].clone()) {
@@ -986,12 +987,54 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("__vector_set_in_place: wrong argument types"),
                 }
             }
-            1009 => {
+            prelude_ids::VECTOR_BUILDER_FROM => {
+                // __vector_builder_from(vec: Vector<T>) -> Cell<Vector<T>>
+                // Internal uniqueness loop rewrite helper.
+                match args[0].clone() {
+                    Value::Vec(elems) => Ok(Value::Cell(Rc::new(RefCell::new(Value::Vec(elems))))),
+                    _ => panic!("__vector_builder_from: expected Vector"),
+                }
+            }
+            prelude_ids::DICT_SET_IN_PLACE => {
+                // __dict_set_in_place(dict: Dict<K,V>, k: K, v: V) -> Dict<K,V>
+                // Internal uniqueness rewrite helper.
+                match args[0].clone() {
+                    Value::Dict(mut pairs) => {
+                        let k = args[1].clone();
+                        let v = args[2].clone();
+                        let mut found = false;
+                        for (ek, ev) in &mut pairs {
+                            if ek == &k {
+                                *ev = v.clone();
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            pairs.push((k, v));
+                        }
+                        Ok(Value::Dict(pairs))
+                    }
+                    _ => panic!("__dict_set_in_place: expected Dict"),
+                }
+            }
+            prelude_ids::DICT_REMOVE_IN_PLACE => {
+                // __dict_remove_in_place(dict: Dict<K,V>, k: K) -> Dict<K,V>
+                // Internal uniqueness rewrite helper.
+                match args[0].clone() {
+                    Value::Dict(mut pairs) => {
+                        pairs.retain(|(k, _)| k != &args[1]);
+                        Ok(Value::Dict(pairs))
+                    }
+                    _ => panic!("__dict_remove_in_place: expected Dict"),
+                }
+            }
+            prelude_ids::HOST_ARGS => {
                 // __host_args() -> Vector<String>
                 let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
                 Ok(Value::Vec(argv))
             }
-            1010 => {
+            prelude_ids::HOST_ENV => {
                 // __host_env(name: String) -> Vector<String> (0 or 1 value)
                 let name = match &args[0] {
                     Value::Str(s) => s.clone(),
@@ -1003,14 +1046,14 @@ impl<W: Write> Interpreter<W> {
                     .unwrap_or_default();
                 Ok(Value::Vec(values))
             }
-            1011 => {
+            prelude_ids::HOST_CWD => {
                 // __host_cwd() -> String
                 let cwd = std::env::current_dir().map_err(|e| {
                     Signal::Trap(TrapError::UserError(format!("cwd lookup failed: {e}")))
                 })?;
                 Ok(Value::Str(path_to_logical(&cwd)))
             }
-            1012 => {
+            prelude_ids::HOST_EXIT => {
                 // __host_exit(code: Int) -> Never
                 let code = match &args[0] {
                     Value::Int(i) => *i,

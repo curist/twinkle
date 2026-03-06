@@ -1,0 +1,12 @@
+// Uniqueness should survive repeated push+reassign before a point update.
+// Final set should rewrite.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    xs = xs.push(4)
+    xs = xs.push(5)
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

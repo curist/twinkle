@@ -442,7 +442,7 @@ AnfOp =
 
     | ARecord       { type_id: TypeId, fields: Vec<(FieldId, Atom)> }
     | ARecordGet    { target: Atom, field: FieldId }
-    // can_reuse_in_place set by liveness pass; WAT backend may emit struct.set instead of new.
+    // can_reuse_in_place set by uniqueness pass; WAT backend may emit struct.set instead of new.
     | ARecordUpdate { base: Atom, field: FieldId, value: Atom, can_reuse_in_place: bool }
 
     | AVariant  { type_id: TypeId, variant: VariantId, args: Vec<Atom> }

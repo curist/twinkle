@@ -12,6 +12,7 @@ pub fn make() -> ModuleIR {
     m.funcs.push(concat_fn());
     m.funcs.push(slice_fn());
     m.funcs.push(builder_new_fn());
+    m.funcs.push(builder_from_fn());
     m.funcs.push(builder_push_fn());
     m.funcs.push(builder_freeze_fn());
 
@@ -225,6 +226,45 @@ fn builder_new_fn() -> FuncDef {
             Instr::I64Const(BUILDER_INITIAL_CAPACITY as i64),
             Instr::StructNew(T_BOXED_INT.into()),
             // [buf, len, cap]
+            Instr::ArrayNewFixed(T_ARRAY.into(), 3),
+        ],
+    }
+}
+
+/// `builder_from(vec: Array) -> Array`
+///
+/// Seed a builder from an existing immutable vector without copying.
+/// Builder layout matches `builder_new`: [buf, len, cap].
+fn builder_from_fn() -> FuncDef {
+    FuncDef {
+        name: "builder_from".into(),
+        params: vec![ref_array_null()],
+        results: vec![ref_array()],
+        locals: vec![
+            ValType::I32, // p1: len
+            ValType::I32, // p2: cap
+        ],
+        body: vec![
+            // len = array.len(vec)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(1),
+            // cap = len
+            // IMPORTANT: builder_from reuses the original fixed-size buffer.
+            // Capacity must match that buffer's true length, otherwise
+            // builder_push could attempt an out-of-bounds array.set.
+            Instr::LocalGet(1),
+            Instr::LocalSet(2),
+            // [buf=vec, len=BoxedInt(len), cap=BoxedInt(cap)]
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::I64ExtendI32S,
+            Instr::StructNew(T_BOXED_INT.into()),
+            Instr::LocalGet(2),
+            Instr::I64ExtendI32S,
+            Instr::StructNew(T_BOXED_INT.into()),
             Instr::ArrayNewFixed(T_ARRAY.into(), 3),
         ],
     }

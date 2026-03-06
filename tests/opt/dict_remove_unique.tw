@@ -1,0 +1,20 @@
+// Unique dict remove should rewrite to __dict_remove_in_place.
+// Exercises both absent-key and present-key paths.
+// Expected output:
+//   1
+//   false
+//   true
+
+fn make() Dict<String, Int> {
+    m: Dict<String, Int> = Dict.new()
+    m["a"] = 1
+    m["b"] = 2
+    m = m.remove("z")
+    m = m.remove("a")
+    m
+}
+
+out := make()
+println("${out.len()}")
+println("${out.has("a")}")
+println("${out.has("b")}")

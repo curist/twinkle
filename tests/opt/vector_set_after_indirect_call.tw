@@ -1,0 +1,13 @@
+// Indirect/closure call taints all args conservatively.
+// Must not rewrite subsequent update.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    f : fn(Vector<Int>) Int = fn(v: Vector<Int>) Int { v.len() }
+    n := f(xs)
+    println("${n}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

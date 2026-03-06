@@ -87,6 +87,13 @@ pub mod prelude {
     // Internal helper: mutate a preallocated vector slot and return the same vector.
     // Used by range-collect specialization to avoid O(N^2) append/concat growth.
     pub const VECTOR_SET_IN_PLACE: FuncId = FuncId(1013); // (vec, i, val) -> vec
+    // Internal helper: create a vector builder seeded from an existing vector.
+    // Used by uniqueness loop rewrite for non-empty accumulators.
+    pub const VECTOR_BUILDER_FROM: FuncId = FuncId(1014); // (vec) -> Cell<Vector<T>>
+    // Internal helper: uniqueness rewrite target for Dict.set on a unique base.
+    pub const DICT_SET_IN_PLACE: FuncId = FuncId(1015); // (dict, key, val) -> Dict<K,V>
+    // Internal helper: uniqueness rewrite target for Dict.remove on a unique base.
+    pub const DICT_REMOVE_IN_PLACE: FuncId = FuncId(1016); // (dict, key) -> Dict<K,V>
 
     // Additional prelude functions (kept outside fixed 1..=38 range).
     pub const EPRINT: FuncId = FuncId(1007); // eprint(s: String) -> Void

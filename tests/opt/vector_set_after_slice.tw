@@ -1,0 +1,12 @@
+// Vector.slice is not in the no-retain set; it taints base conservatively.
+// Update must not rewrite.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    tmp := xs.slice(0, 2)
+    println("${tmp.len()}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

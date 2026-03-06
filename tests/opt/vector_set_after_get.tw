@@ -1,0 +1,15 @@
+// Vector.get is currently not in the no-retain set.
+// Must not rewrite subsequent update.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    probe := xs.get(0)
+    case probe {
+        .Some(n) => println("${n}"),
+        .None => println("none"),
+    }
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

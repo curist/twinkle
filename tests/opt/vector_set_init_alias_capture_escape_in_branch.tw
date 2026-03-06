@@ -1,0 +1,21 @@
+// Branch-local init alias captured into an escaping closure.
+// Must taint xs and prevent VECTOR_SET_IN_PLACE rewrite.
+// Expected output:
+//   1
+//   99
+
+fn make(c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    f := fn() Int { 0 }
+    if c {
+        ys := xs
+        f = fn() Int { ys[0] }
+    } else {
+        f = fn() Int { 7 }
+    }
+    xs[0] = 99
+    println("${f()}")
+    xs
+}
+
+println("${make(true)[0]}")

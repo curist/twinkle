@@ -1,0 +1,12 @@
+// Read-only length query should not taint uniqueness.
+// VECTOR_SET_UNSAFE should still rewrite to VECTOR_SET_IN_PLACE.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    n := xs.len()
+    println("${n}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

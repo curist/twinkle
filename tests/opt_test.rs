@@ -5,7 +5,7 @@
 ///    invariant checker from anf_test.rs via a shared helper).
 /// 2. Node-count reduction for programs with compile-time constants.
 /// 3. Golden snapshot tests for the optimized ANF of two fixtures.
-/// 4. Liveness annotation: `can_reuse_in_place` set/unset correctly.
+/// 4. Record-update in-place annotation: `can_reuse_in_place` set/unset correctly.
 use std::fs;
 use std::path::Path;
 
@@ -377,7 +377,7 @@ fn opt_snapshot_dead_let() {
     check_opt_snapshot("tests/opt/dead_let.tw", "dead_let");
 }
 
-// ── Liveness annotation tests ─────────────────────────────────────────────────
+// ── Record update in-place annotation tests ───────────────────────────────────
 
 fn has_in_place_update(module: &AnfModule) -> bool {
     module.functions.iter().any(|f| expr_has_in_place(&f.body))
@@ -409,7 +409,7 @@ fn op_has_in_place(op: &AnfOp) -> bool {
 
 #[test]
 fn opt_record_in_place_annotated() {
-    let module = compile_opt("tests/opt/record_in_place.tw");
+    let module = compile_opt("tests/opt/record_unique_in_place.tw");
     assert!(
         has_in_place_update(&module),
         "Expected at least one ARecordUpdate with can_reuse_in_place=true"
@@ -425,10 +425,38 @@ fn opt_record_aliased_not_annotated() {
     );
 }
 
+#[test]
+fn opt_record_alias_escape_not_annotated() {
+    let module = compile_opt("tests/opt/record_alias_escape_not_in_place.tw");
+    assert!(
+        !has_in_place_update(&module),
+        "Expected no in-place record update when aliased value remains observable"
+    );
+}
+
+#[test]
+fn opt_record_capture_escape_not_annotated() {
+    let module = compile_opt("tests/opt/record_capture_escape_not_in_place.tw");
+    assert!(
+        !has_in_place_update(&module),
+        "Expected no in-place record update when value is closure-captured"
+    );
+}
+
 // ── Uniqueness-based vector set rewrite tests ─────────────────────────────────
 
 const VECTOR_SET_UNSAFE: FuncId = FuncId(12);
+const VECTOR_SET: FuncId = FuncId(39);
 const VECTOR_SET_IN_PLACE: FuncId = FuncId(1013);
+const VECTOR_PUSH: FuncId = FuncId(11);
+const VECTOR_BUILDER_NEW: FuncId = FuncId(33);
+const VECTOR_BUILDER_PUSH: FuncId = FuncId(34);
+const VECTOR_BUILDER_FREEZE: FuncId = FuncId(35);
+const VECTOR_BUILDER_FROM: FuncId = FuncId(1014);
+const DICT_SET: FuncId = FuncId(13);
+const DICT_REMOVE: FuncId = FuncId(29);
+const DICT_SET_IN_PLACE: FuncId = FuncId(1015);
+const DICT_REMOVE_IN_PLACE: FuncId = FuncId(1016);
 
 /// Check whether any ACall in the module uses the given FuncId as callee.
 fn has_call_to(module: &AnfModule, func_id: FuncId) -> bool {
@@ -438,12 +466,27 @@ fn has_call_to(module: &AnfModule, func_id: FuncId) -> bool {
         .any(|f| expr_has_call_to(&f.body, func_id))
 }
 
+fn count_calls_to(module: &AnfModule, func_id: FuncId) -> usize {
+    module
+        .functions
+        .iter()
+        .map(|f| expr_count_calls_to(&f.body, func_id))
+        .sum()
+}
+
 fn expr_has_call_to(expr: &AnfExpr, func_id: FuncId) -> bool {
     match expr {
         AnfExpr::Let { op, body, .. } => {
             op_has_call_to(op, func_id) || expr_has_call_to(body, func_id)
         }
         _ => false,
+    }
+}
+
+fn expr_count_calls_to(expr: &AnfExpr, func_id: FuncId) -> usize {
+    match expr {
+        AnfExpr::Let { op, body, .. } => op_count_calls_to(op, func_id) + expr_count_calls_to(body, func_id),
+        _ => 0,
     }
 }
 
@@ -459,6 +502,60 @@ fn op_has_call_to(op: &AnfOp, func_id: FuncId) -> bool {
         AnfOp::ALoop { body } => expr_has_call_to(body, func_id),
         _ => false,
     }
+}
+
+fn op_count_calls_to(op: &AnfOp, func_id: FuncId) -> usize {
+    match op {
+        AnfOp::ACall { callee, .. } => usize::from(*callee == Atom::AGlobalFunc(func_id)),
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_count_calls_to(then_branch, func_id) + expr_count_calls_to(else_branch, func_id),
+        AnfOp::AMatch { arms, .. } => arms
+            .iter()
+            .map(|a| expr_count_calls_to(&a.body, func_id))
+            .sum(),
+        AnfOp::ALoop { body } => expr_count_calls_to(body, func_id),
+        _ => 0,
+    }
+}
+
+fn run_and_capture(path: &str) -> String {
+    let (core_module, _registry) = twinkle::module::compile_entry(path)
+        .unwrap_or_else(|e| panic!("compile_entry failed for {path}: {e}"));
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp
+        .run()
+        .unwrap_or_else(|e| panic!("interpreter run failed for {path}: {e}"));
+    String::from_utf8(interp.into_output()).expect("interpreter output is valid UTF-8")
+}
+
+fn assert_runtime_output(path: &str, expected: &[&str]) {
+    let actual_raw = run_and_capture(path);
+    let actual: Vec<&str> = actual_raw.lines().collect();
+    assert_eq!(
+        actual, expected,
+        "Runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
+        expected.join("\n"),
+        actual_raw
+    );
+}
+
+fn assert_runtime_output_wasm(path: &str, expected: &[&str]) {
+    let (stdout, stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)
+        .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
+    let actual: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        actual, expected,
+        "Wasm runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
+        expected.join("\n"),
+        stdout
+    );
+    assert!(
+        stderr.is_empty(),
+        "Expected empty stderr for {path}, got:\n{stderr}"
+    );
 }
 
 #[test]
@@ -515,4 +612,512 @@ fn opt_vector_set_param_not_rewritten() {
         !has_call_to(&module, VECTOR_SET_IN_PLACE),
         "Expected no VECTOR_SET_IN_PLACE for function parameter array"
     );
+}
+
+#[test]
+fn opt_vector_set_alias_via_init_not_rewritten() {
+    // ys := xs keeps alias alive; mutating ys must stay COW.
+    let module = compile_opt("tests/opt/vector_set_alias_via_init.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected VECTOR_SET_UNSAFE to remain for alias via init copy"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE for alias via init copy"
+    );
+}
+
+#[test]
+fn opt_vector_set_alias_via_assign_not_rewritten() {
+    // ys = xs keeps alias alive; mutating ys must stay COW.
+    let module = compile_opt("tests/opt/vector_set_alias_via_assign.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected VECTOR_SET_UNSAFE to remain for alias via assignment"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE for alias via assignment"
+    );
+}
+
+#[test]
+fn opt_vector_set_after_len_rewritten() {
+    // Read-only len() should not taint uniqueness.
+    let module = compile_opt("tests/opt/vector_set_after_len.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected VECTOR_SET_UNSAFE to rewrite after read-only len()"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected no remaining VECTOR_SET_UNSAFE after rewrite"
+    );
+}
+
+#[test]
+fn opt_vector_push_then_set_rewritten() {
+    // Consuming push + reassign should preserve uniqueness for later set.
+    let module = compile_opt("tests/opt/vector_push_then_set.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected VECTOR_SET_UNSAFE to rewrite after VECTOR_PUSH reassign"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected no remaining VECTOR_SET_UNSAFE after rewrite"
+    );
+}
+
+#[test]
+fn opt_vector_set_additional_positive_rewrites() {
+    let fixtures = [
+        "tests/opt/vector_set_move_via_init_rebind.tw",
+        "tests/opt/vector_set_move_via_assign_rebind.tw",
+        "tests/opt/vector_set_from_make.tw",
+        "tests/opt/vector_set_twice_chain.tw",
+        "tests/opt/vector_set_in_if_branches.tw",
+        "tests/opt/vector_set_after_branch_local_alias.tw",
+        "tests/opt/vector_set_after_len_in_branch.tw",
+        "tests/opt/vector_set_after_push_chain.tw",
+    ];
+
+    for path in fixtures {
+        let module = compile_opt(path);
+        assert!(
+            has_call_to(&module, VECTOR_SET_IN_PLACE),
+            "Expected VECTOR_SET_IN_PLACE in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, VECTOR_SET_UNSAFE),
+            "Expected no VECTOR_SET_UNSAFE in {}",
+            path
+        );
+    }
+}
+
+#[test]
+fn opt_vector_set_additional_negative_no_rewrite() {
+    let fixtures = [
+        "tests/opt/vector_set_after_user_call.tw",
+        "tests/opt/vector_set_after_indirect_call.tw",
+        "tests/opt/vector_set_after_get.tw",
+        "tests/opt/vector_set_stored_in_array.tw",
+        "tests/opt/vector_set_after_push_then_user_call.tw",
+        "tests/opt/vector_set_branch_alias_escape.tw",
+        "tests/opt/vector_set_capture_in_branch.tw",
+        "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
+        "tests/opt/vector_set_stored_in_option_variant.tw",
+        "tests/opt/vector_set_after_safe_set_call.tw",
+        "tests/opt/vector_set_after_concat.tw",
+        "tests/opt/vector_set_after_slice.tw",
+    ];
+
+    for path in fixtures {
+        let module = compile_opt(path);
+        assert!(
+            has_call_to(&module, VECTOR_SET_UNSAFE),
+            "Expected VECTOR_SET_UNSAFE to remain in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, VECTOR_SET_IN_PLACE),
+            "Expected no VECTOR_SET_IN_PLACE in {}",
+            path
+        );
+    }
+}
+
+#[test]
+fn opt_vector_set_safe_option_not_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/vector_set_safe_option_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, VECTOR_SET),
+        "Expected VECTOR_SET (safe) call to remain"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_IN_PLACE),
+        "Expected no VECTOR_SET_IN_PLACE for safe Vector.set"
+    );
+    assert!(
+        !has_call_to(&module, VECTOR_SET_UNSAFE),
+        "Expected no VECTOR_SET_UNSAFE for safe Vector.set fixture"
+    );
+}
+
+#[test]
+fn opt_vector_set_precise_call_counts() {
+    let matrix = [
+        (
+            "tests/opt/vector_set_twice_chain.tw",
+            2usize, // VECTOR_SET_IN_PLACE
+            0usize, // VECTOR_SET_UNSAFE
+            0usize, // VECTOR_SET (safe)
+        ),
+        (
+            "tests/opt/vector_set_in_if_branches.tw",
+            2usize,
+            0usize,
+            0usize,
+        ),
+        (
+            "tests/opt/vector_set_after_push_chain.tw",
+            1usize,
+            0usize,
+            0usize,
+        ),
+        (
+            "tests/opt/vector_set_safe_option_not_rewritten.tw",
+            0usize,
+            0usize,
+            1usize,
+        ),
+        (
+            "tests/opt/vector_set_after_user_call.tw",
+            0usize,
+            1usize,
+            0usize,
+        ),
+        (
+            "tests/opt/vector_set_branch_alias_escape.tw",
+            0usize,
+            1usize,
+            0usize,
+        ),
+        (
+            "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
+            0usize,
+            1usize,
+            0usize,
+        ),
+    ];
+
+    for (path, expected_in_place, expected_unsafe, expected_safe) in matrix {
+        let module = compile_opt(path);
+        assert_eq!(
+            count_calls_to(&module, VECTOR_SET_IN_PLACE),
+            expected_in_place,
+            "VECTOR_SET_IN_PLACE call count mismatch in {}",
+            path
+        );
+        assert_eq!(
+            count_calls_to(&module, VECTOR_SET_UNSAFE),
+            expected_unsafe,
+            "VECTOR_SET_UNSAFE call count mismatch in {}",
+            path
+        );
+        assert_eq!(
+            count_calls_to(&module, VECTOR_SET),
+            expected_safe,
+            "VECTOR_SET call count mismatch in {}",
+            path
+        );
+    }
+}
+
+#[test]
+fn opt_vector_set_runtime_semantics_matrix() {
+    let matrix: [(&str, &[&str]); 29] = [
+        ("tests/opt/vector_push_then_set.tw", &["99"]),
+        ("tests/opt/vector_set_unique.tw", &["99"]),
+        ("tests/opt/vector_set_param.tw", &["99"]),
+        ("tests/opt/vector_set_aliased.tw", &["1", "99"]),
+        ("tests/opt/vector_set_captured.tw", &["1", "99"]),
+        ("tests/opt/vector_set_alias_via_init.tw", &["1", "99"]),
+        ("tests/opt/vector_set_alias_via_assign.tw", &["1", "99"]),
+        ("tests/opt/vector_set_after_len.tw", &["3", "99"]),
+        ("tests/opt/vector_set_move_via_init_rebind.tw", &["99"]),
+        ("tests/opt/vector_set_move_via_assign_rebind.tw", &["99"]),
+        ("tests/opt/vector_set_from_make.tw", &["42"]),
+        ("tests/opt/vector_set_twice_chain.tw", &["20"]),
+        ("tests/opt/vector_set_in_if_branches.tw", &["1"]),
+        ("tests/opt/vector_set_after_user_call.tw", &["3", "99"]),
+        ("tests/opt/vector_set_after_indirect_call.tw", &["3", "99"]),
+        ("tests/opt/vector_set_after_get.tw", &["1", "99"]),
+        ("tests/opt/vector_set_stored_in_array.tw", &["1", "99"]),
+        ("tests/opt/vector_set_after_push_then_user_call.tw", &["4", "99"]),
+        ("tests/opt/vector_set_safe_option_not_rewritten.tw", &["99"]),
+        ("tests/opt/vector_set_branch_alias_escape.tw", &["1", "99"]),
+        ("tests/opt/vector_set_after_branch_local_alias.tw", &["1", "99"]),
+        ("tests/opt/vector_set_after_len_in_branch.tw", &["3", "99"]),
+        ("tests/opt/vector_set_after_push_chain.tw", &["99"]),
+        ("tests/opt/vector_set_capture_in_branch.tw", &["1", "99"]),
+        (
+            "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
+            &["1", "99"],
+        ),
+        ("tests/opt/vector_set_stored_in_option_variant.tw", &["1", "99"]),
+        ("tests/opt/vector_set_after_safe_set_call.tw", &["7", "99"]),
+        ("tests/opt/vector_set_after_concat.tw", &["4", "99"]),
+        ("tests/opt/vector_set_after_slice.tw", &["2", "99"]),
+    ];
+
+    for (path, expected) in matrix {
+        assert_runtime_output(path, expected);
+    }
+}
+
+#[test]
+fn opt_vector_set_init_alias_capture_escape_in_branch_wasm_semantics() {
+    // Regression guard: branch-local `ys := xs` captured into escaping closure
+    // must taint `xs`, preventing in-place rewrite.
+    assert_runtime_output_wasm(
+        "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
+        &["1", "99"],
+    );
+}
+
+#[test]
+fn opt_vector_push_loop_unique_rewritten_to_builder() {
+    let module = compile_opt("tests/opt/vector_push_loop_unique.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_PUSH),
+        0,
+        "Expected no VECTOR_PUSH in rewritten loop accumulator fixture"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_NEW),
+        1,
+        "Expected one VECTOR_BUILDER_NEW call"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FROM),
+        0,
+        "Expected no VECTOR_BUILDER_FROM call for empty-seed accumulator"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_PUSH),
+        1,
+        "Expected one VECTOR_BUILDER_PUSH call"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FREEZE),
+        1,
+        "Expected one VECTOR_BUILDER_FREEZE call"
+    );
+}
+
+#[test]
+fn opt_vector_push_loop_seeded_rewritten_to_builder_from() {
+    let module = compile_opt("tests/opt/vector_push_loop_seeded_not_rewritten.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_PUSH),
+        0,
+        "Expected no VECTOR_PUSH in seeded rewritten fixture"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FROM),
+        1,
+        "Expected one VECTOR_BUILDER_FROM call for seeded accumulator"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_NEW),
+        0,
+        "Expected no VECTOR_BUILDER_NEW call for seeded accumulator"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_PUSH),
+        1,
+        "Expected one VECTOR_BUILDER_PUSH call"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FREEZE),
+        1,
+        "Expected one VECTOR_BUILDER_FREEZE call"
+    );
+}
+
+#[test]
+fn opt_vector_push_loop_negative_cases_not_rewritten() {
+    let fixtures = [
+        "tests/opt/vector_push_loop_reads_acc_not_rewritten.tw",
+        "tests/opt/vector_push_loop_captured_not_rewritten.tw",
+    ];
+
+    for path in fixtures {
+        let module = compile_opt(path);
+        assert!(
+            has_call_to(&module, VECTOR_PUSH),
+            "Expected VECTOR_PUSH to remain in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, VECTOR_BUILDER_PUSH),
+            "Expected no VECTOR_BUILDER_PUSH in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, VECTOR_BUILDER_NEW),
+            "Expected no VECTOR_BUILDER_NEW in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, VECTOR_BUILDER_FREEZE),
+            "Expected no VECTOR_BUILDER_FREEZE in {}",
+            path
+        );
+    }
+}
+
+#[test]
+fn opt_vector_push_loop_runtime_semantics() {
+    assert_runtime_output("tests/opt/vector_push_loop_unique.tw", &["3", "6"]);
+    assert_runtime_output("tests/opt/vector_push_loop_seeded_not_rewritten.tw", &["10", "4"]);
+    assert_runtime_output(
+        "tests/opt/vector_push_loop_reads_acc_not_rewritten.tw",
+        &["0", "1", "2", "3"],
+    );
+    assert_runtime_output(
+        "tests/opt/vector_push_loop_captured_not_rewritten.tw",
+        &["0", "1", "2", "3"],
+    );
+}
+
+#[test]
+fn opt_vector_push_loop_seeded_runtime_wasm_semantics() {
+    // Regression guard for builder_from capacity correctness in Wasm runtime path.
+    assert_runtime_output_wasm("tests/opt/vector_push_loop_seeded_not_rewritten.tw", &["10", "4"]);
+}
+
+#[test]
+fn opt_dict_set_unique_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/dict_set_unique.tw");
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET to rewrite to DICT_SET_IN_PLACE for unique dict"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET),
+        "Expected no remaining DICT_SET calls after rewrite"
+    );
+}
+
+#[test]
+fn opt_dict_set_aliased_not_rewritten() {
+    let module = compile_opt("tests/opt/dict_set_aliased_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain when dict is aliased"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE when dict is aliased"
+    );
+}
+
+#[test]
+fn opt_dict_remove_unique_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/dict_remove_unique.tw");
+    assert_eq!(
+        count_calls_to(&module, DICT_REMOVE_IN_PLACE),
+        2,
+        "Expected two DICT_REMOVE_IN_PLACE calls for unique dict removes"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_REMOVE),
+        0,
+        "Expected no DICT_REMOVE calls after rewrite"
+    );
+}
+
+#[test]
+fn opt_dict_remove_captured_not_rewritten() {
+    let module = compile_opt("tests/opt/dict_remove_captured_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_REMOVE),
+        "Expected DICT_REMOVE to remain when dict is closure-captured"
+    );
+    assert!(
+        !has_call_to(&module, DICT_REMOVE_IN_PLACE),
+        "Expected no DICT_REMOVE_IN_PLACE when dict is closure-captured"
+    );
+}
+
+#[test]
+fn opt_dict_chain_unique_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/dict_chain_unique_rewritten.tw");
+    assert_eq!(
+        count_calls_to(&module, DICT_SET_IN_PLACE),
+        2,
+        "Expected two DICT_SET_IN_PLACE calls in unique dict update chain"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_REMOVE_IN_PLACE),
+        1,
+        "Expected one DICT_REMOVE_IN_PLACE call in unique dict update chain"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_SET),
+        0,
+        "Expected no DICT_SET calls after rewrite"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_REMOVE),
+        0,
+        "Expected no DICT_REMOVE calls after rewrite"
+    );
+}
+
+#[test]
+fn opt_dict_additional_negative_no_rewrite() {
+    let fixtures = [
+        "tests/opt/dict_after_user_call_not_rewritten.tw",
+        "tests/opt/dict_stored_in_array_not_rewritten.tw",
+    ];
+    for path in fixtures {
+        let module = compile_opt(path);
+        assert!(
+            has_call_to(&module, DICT_SET),
+            "Expected DICT_SET to remain in {}",
+            path
+        );
+        assert!(
+            !has_call_to(&module, DICT_SET_IN_PLACE),
+            "Expected no DICT_SET_IN_PLACE in {}",
+            path
+        );
+    }
+}
+
+#[test]
+fn opt_dict_phase4_runtime_semantics() {
+    assert_runtime_output("tests/opt/dict_set_unique.tw", &["7", "1"]);
+    assert_runtime_output("tests/opt/dict_set_aliased_not_rewritten.tw", &["0", "1"]);
+    assert_runtime_output("tests/opt/dict_remove_unique.tw", &["1", "false", "true"]);
+    assert_runtime_output(
+        "tests/opt/dict_remove_captured_not_rewritten.tw",
+        &["1", "0"],
+    );
+}
+
+#[test]
+fn opt_dict_phase6_runtime_semantics() {
+    assert_runtime_output("tests/opt/dict_chain_unique_rewritten.tw", &["1", "false", "true"]);
+    assert_runtime_output("tests/opt/dict_after_user_call_not_rewritten.tw", &["1"]);
+    assert_runtime_output("tests/opt/dict_stored_in_array_not_rewritten.tw", &["0", "1"]);
+}
+
+#[test]
+fn opt_dict_phase4_wasm_semantics() {
+    assert_runtime_output_wasm("tests/opt/dict_set_unique.tw", &["7", "1"]);
+    assert_runtime_output_wasm("tests/opt/dict_remove_unique.tw", &["1", "false", "true"]);
+}
+
+#[test]
+fn opt_dict_phase6_wasm_semantics() {
+    assert_runtime_output_wasm("tests/opt/dict_chain_unique_rewritten.tw", &["1", "false", "true"]);
+}
+
+#[test]
+fn opt_record_escape_runtime_semantics() {
+    assert_runtime_output("tests/opt/record_alias_escape_not_in_place.tw", &["1"]);
+    assert_runtime_output("tests/opt/record_capture_escape_not_in_place.tw", &["1"]);
+}
+
+#[test]
+fn opt_record_escape_wasm_semantics() {
+    assert_runtime_output_wasm("tests/opt/record_alias_escape_not_in_place.tw", &["1"]);
+    assert_runtime_output_wasm("tests/opt/record_capture_escape_not_in_place.tw", &["1"]);
 }

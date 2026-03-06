@@ -1,0 +1,16 @@
+// Branch-local alias that does not escape the branch.
+// Update after the branch should still rewrite.
+
+fn make(c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    if c {
+        ys := xs
+        println("${ys[0]}")
+    } else {
+        println("z")
+    }
+    xs[0] = 99
+    xs
+}
+
+println("${make(true)[0]}")

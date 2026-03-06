@@ -316,6 +316,28 @@ pub fn build_prelude_map() -> PreludeMap {
             vec![ref_dict()],
         ),
     );
+    map.insert(
+        prelude_ids::DICT_SET_IN_PLACE,
+        PreludeEntry::runtime(
+            "__dict_set_in_place",
+            "rt.dict",
+            "set_in_place",
+            "rt_dict__set_in_place",
+            vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
+            vec![ref_dict()],
+        ),
+    );
+    map.insert(
+        prelude_ids::DICT_REMOVE_IN_PLACE,
+        PreludeEntry::runtime(
+            "__dict_remove_in_place",
+            "rt.dict",
+            "remove_in_place",
+            "rt_dict__remove_in_place",
+            vec![ref_dict_null(), ValType::Anyref],
+            vec![ref_dict()],
+        ),
+    );
 
     map.insert(
         prelude_ids::RANGE_FROM,
@@ -393,6 +415,17 @@ pub fn build_prelude_map() -> PreludeMap {
     map.insert(
         prelude_ids::VECTOR_SET_IN_PLACE,
         PreludeEntry::intrinsic("__vector_set_in_place"),
+    );
+    map.insert(
+        prelude_ids::VECTOR_BUILDER_FROM,
+        PreludeEntry::runtime(
+            "__vector_builder_from",
+            "rt.arr",
+            "builder_from",
+            "rt_arr__builder_from",
+            vec![ref_array_null()],
+            vec![ref_array()],
+        ),
     );
     map.insert(
         prelude_ids::DEBUG_STDIN_READ_ALL,

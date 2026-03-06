@@ -1,0 +1,17 @@
+// Even if uniqueness survives push+assign, a later retain-capable call taints it.
+// Must not rewrite subsequent update.
+
+fn touch(v: Vector<Int>) Int {
+    v.len()
+}
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    xs = xs.push(4)
+    n := touch(xs)
+    println("${n}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

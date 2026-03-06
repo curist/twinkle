@@ -1,0 +1,17 @@
+// Storing dict in another live container creates an alias; set must stay COW.
+// Expected output:
+//   0
+//   1
+
+fn probe() Int {
+    m: Dict<String, Int> = Dict.new()
+    hold := [m]
+    m["a"] = 1
+    hold[0].len()
+}
+
+println("${probe()}")
+
+n: Dict<String, Int> = Dict.new()
+n["x"] = 1
+println("${n.len()}")

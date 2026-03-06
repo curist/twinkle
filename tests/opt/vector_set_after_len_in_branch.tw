@@ -1,0 +1,15 @@
+// Read-only len() inside a branch should not taint uniqueness.
+// Update after the branch should rewrite.
+
+fn make(c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    if c {
+        println("${xs.len()}")
+    } else {
+        println("x")
+    }
+    xs[0] = 99
+    xs
+}
+
+println("${make(true)[0]}")

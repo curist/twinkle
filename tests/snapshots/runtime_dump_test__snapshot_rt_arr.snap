@@ -20,8 +20,8 @@ expression: wat
   (type $functype_4 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
   (type $functype_5 (func (param (ref null $rt_types__Array) i32 i32) (result (ref $rt_types__Array))))
   (type $functype_6 (func (result (ref $rt_types__Array))))
-  (type $functype_7 (func (param (ref null $rt_types__Array) anyref)))
-  (type $functype_8 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
+  (type $functype_7 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
+  (type $functype_8 (func (param (ref null $rt_types__Array) anyref)))
   (func $rt_arr__make (type $functype_0)
     (param $p0 i32)
     (param $p1 anyref)
@@ -157,7 +157,28 @@ expression: wat
     struct.new $rt_types__BoxedInt
     array.new_fixed $rt_types__Array 3
   )
-  (func $rt_arr__builder_push (type $functype_7)
+  (func $rt_arr__builder_from (type $functype_7)
+    (param $p0 (ref null $rt_types__Array))
+    (result (ref $rt_types__Array))
+    (local $p1 i32)
+    (local $p2 i32)
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p1
+    local.get $p1
+    local.set $p2
+    local.get $p0
+    ref.as_non_null
+    local.get $p1
+    i64.extend_i32_s
+    struct.new $rt_types__BoxedInt
+    local.get $p2
+    i64.extend_i32_s
+    struct.new $rt_types__BoxedInt
+    array.new_fixed $rt_types__Array 3
+  )
+  (func $rt_arr__builder_push (type $functype_8)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 anyref)
     (local $p2 (ref null $rt_types__Array))
@@ -262,7 +283,7 @@ expression: wat
         struct.new $rt_types__BoxedInt
         array.set $rt_types__Array))
   )
-  (func $rt_arr__builder_freeze (type $functype_8)
+  (func $rt_arr__builder_freeze (type $functype_7)
     (param $p0 (ref null $rt_types__Array))
     (result (ref $rt_types__Array))
     (local $p1 (ref null $rt_types__Array))
@@ -304,6 +325,7 @@ expression: wat
   (export "rt_arr__concat" (func $rt_arr__concat))
   (export "rt_arr__slice" (func $rt_arr__slice))
   (export "rt_arr__builder_new" (func $rt_arr__builder_new))
+  (export "rt_arr__builder_from" (func $rt_arr__builder_from))
   (export "rt_arr__builder_push" (func $rt_arr__builder_push))
   (export "rt_arr__builder_freeze" (func $rt_arr__builder_freeze))
 )

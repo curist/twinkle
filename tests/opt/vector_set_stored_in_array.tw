@@ -1,0 +1,12 @@
+// Storing xs into another container escapes the reference.
+// Must not rewrite subsequent update.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    bag := [xs]
+    println("${bag[0][0]}")
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

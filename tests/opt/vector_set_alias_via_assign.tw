@@ -1,0 +1,13 @@
+// Alias through reassignment (ys = xs) then mutate through ys.
+// Uniqueness pass must NOT rewrite to VECTOR_SET_IN_PLACE.
+
+fn test() Void {
+    xs := [1, 2, 3]
+    ys := [0]
+    ys = xs
+    ys[0] = 99
+    println("${xs[0]}")
+    println("${ys[0]}")
+}
+
+test()

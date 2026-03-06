@@ -1,0 +1,14 @@
+// Safe Vector.set is currently outside the known no-retain set.
+// A following unsafe set-update path must not rewrite.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    case xs.set(1, 7) {
+        .Some(v) => println("${v[1]}"),
+        .None => println("n"),
+    }
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

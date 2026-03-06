@@ -130,8 +130,8 @@ pub enum AnfOp {
     },
     /// Functional record update: base and value are atoms.
     ///
-    /// `can_reuse_in_place` is set by the liveness pass (Stage 7.5) when the
-    /// base local is provably dead after this update. The WAT backend may then
+    /// `can_reuse_in_place` is set by the uniqueness pass when the base local
+    /// is proven unique + consumed at this update. The WAT backend may then
     /// emit an in-place `struct.set` instead of allocating a new struct.
     ARecordUpdate {
         base: Atom,

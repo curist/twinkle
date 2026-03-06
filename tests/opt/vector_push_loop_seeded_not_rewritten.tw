@@ -1,0 +1,16 @@
+// Non-empty seed should rewrite using VECTOR_BUILDER_FROM.
+// Expected output:
+//   10
+//   4
+
+fn make() Vector<Int> {
+    xs := [10]
+    for x in [1, 2, 3] {
+        xs = xs.push(x)
+    }
+    xs
+}
+
+out := make()
+println("${out[0]}")
+println("${out.len()}")

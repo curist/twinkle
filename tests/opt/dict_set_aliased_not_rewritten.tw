@@ -1,0 +1,11 @@
+// Alias keeps original dict live, so DICT_SET must remain COW.
+// Expected output:
+//   0
+//   1
+
+m: Dict<String, Int> = Dict.new()
+alias := m
+m["x"] = 1
+
+println("${alias.len()}")
+println("${m.len()}")

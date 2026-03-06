@@ -1,5 +1,6 @@
 ---
 source: tests/runtime_dump_test.rs
+assertion_line: 19
 expression: wat
 ---
 (module
@@ -22,8 +23,8 @@ expression: wat
   (type $functype_6 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
   (type $functype_7 (func (param (ref null $rt_types__Array) i32 i32) (result (ref $rt_types__Array))))
   (type $functype_8 (func (result (ref $rt_types__Array))))
-  (type $functype_9 (func (param (ref null $rt_types__Array) anyref)))
-  (type $functype_10 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
+  (type $functype_9 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
+  (type $functype_10 (func (param (ref null $rt_types__Array) anyref)))
   (type $functype_11 (func (param (ref null $rt_types__String)) (result i32)))
   (type $functype_12 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result (ref $rt_types__String))))
   (type $functype_13 (func (param (ref null $rt_types__String) i32 i32) (result (ref $rt_types__String))))
@@ -180,7 +181,28 @@ expression: wat
     struct.new $rt_types__BoxedInt
     array.new_fixed $rt_types__Array 3
   )
-  (func $rt_arr__builder_push (type $functype_9)
+  (func $rt_arr__builder_from (type $functype_9)
+    (param $p0 (ref null $rt_types__Array))
+    (result (ref $rt_types__Array))
+    (local $p1 i32)
+    (local $p2 i32)
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p1
+    local.get $p1
+    local.set $p2
+    local.get $p0
+    ref.as_non_null
+    local.get $p1
+    i64.extend_i32_s
+    struct.new $rt_types__BoxedInt
+    local.get $p2
+    i64.extend_i32_s
+    struct.new $rt_types__BoxedInt
+    array.new_fixed $rt_types__Array 3
+  )
+  (func $rt_arr__builder_push (type $functype_10)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 anyref)
     (local $p2 (ref null $rt_types__Array))
@@ -285,7 +307,7 @@ expression: wat
         struct.new $rt_types__BoxedInt
         array.set $rt_types__Array))
   )
-  (func $rt_arr__builder_freeze (type $functype_10)
+  (func $rt_arr__builder_freeze (type $functype_9)
     (param $p0 (ref null $rt_types__Array))
     (result (ref $rt_types__Array))
     (local $p1 (ref null $rt_types__Array))
@@ -1019,6 +1041,175 @@ expression: wat
     local.get $p5
     ref.as_non_null
   )
+  (func $rt_dict__set_in_place (type $functype_23)
+    (param $p0 (ref null $rt_types__Dict))
+    (param $p1 anyref)
+    (param $p2 anyref)
+    (result (ref $rt_types__Dict))
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 (ref null $rt_types__DictEntry))
+    (local $p6 (ref null $rt_types__Dict))
+    (local $p7 (ref $rt_types__DictEntry))
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p3
+    local.get $p1
+    local.get $p2
+    struct.new $rt_types__DictEntry
+    local.set $p7
+    i32.const 0
+    local.set $p4
+    (block $not_found
+      (loop $scan
+        local.get $p4
+        local.get $p3
+        i32.ge_s
+        br_if $not_found
+        local.get $p0
+        ref.as_non_null
+        local.get $p4
+        array.get $rt_types__Dict
+        local.set $p5
+        local.get $p5
+        ref.as_non_null
+        struct.get $rt_types__DictEntry 0
+        local.get $p1
+        call $rt_core__eq
+        (if
+          (then
+            local.get $p0
+            ref.as_non_null
+            local.get $p4
+            local.get $p7
+            array.set $rt_types__Dict
+            local.get $p0
+            ref.as_non_null
+            return))
+        local.get $p4
+        i32.const 1
+        i32.add
+        local.set $p4
+        br $scan))
+    ref.null $rt_types__DictEntry
+    local.get $p3
+    i32.const 1
+    i32.add
+    array.new $rt_types__Dict
+    local.set $p6
+    local.get $p6
+    ref.as_non_null
+    i32.const 0
+    local.get $p0
+    ref.as_non_null
+    i32.const 0
+    local.get $p3
+    array.copy $rt_types__Dict $rt_types__Dict
+    local.get $p6
+    ref.as_non_null
+    local.get $p3
+    local.get $p7
+    array.set $rt_types__Dict
+    local.get $p6
+    ref.as_non_null
+  )
+  (func $rt_dict__remove_in_place (type $functype_24)
+    (param $p0 (ref null $rt_types__Dict))
+    (param $p1 anyref)
+    (result (ref $rt_types__Dict))
+    (local $p2 i32)
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 (ref null $rt_types__DictEntry))
+    (local $p6 (ref null $rt_types__Dict))
+    (local $p7 i32)
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p2
+    i32.const 0
+    local.set $p3
+    i32.const -1
+    local.set $p4
+    (block $scan_exit
+      (loop $scan
+        local.get $p3
+        local.get $p2
+        i32.ge_s
+        br_if $scan_exit
+        local.get $p0
+        ref.as_non_null
+        local.get $p3
+        array.get $rt_types__Dict
+        local.set $p5
+        local.get $p5
+        ref.as_non_null
+        struct.get $rt_types__DictEntry 0
+        local.get $p1
+        call $rt_core__eq
+        (if
+          (then
+            local.get $p3
+            local.set $p4
+            br $scan_exit))
+        local.get $p3
+        i32.const 1
+        i32.add
+        local.set $p3
+        br $scan))
+    local.get $p4
+    i32.const 1
+    i32.add
+    i32.eqz
+    (if
+      (then
+        local.get $p0
+        ref.as_non_null
+        return))
+    ref.null $rt_types__DictEntry
+    local.get $p2
+    i32.const 1
+    i32.sub
+    array.new $rt_types__Dict
+    local.set $p6
+    local.get $p4
+    i32.const 0
+    i32.gt_s
+    (if
+      (then
+        local.get $p6
+        ref.as_non_null
+        i32.const 0
+        local.get $p0
+        ref.as_non_null
+        i32.const 0
+        local.get $p4
+        array.copy $rt_types__Dict $rt_types__Dict))
+    local.get $p2
+    local.get $p4
+    i32.sub
+    i32.const 1
+    i32.sub
+    local.set $p7
+    local.get $p7
+    i32.const 0
+    i32.gt_s
+    (if
+      (then
+        local.get $p6
+        ref.as_non_null
+        local.get $p4
+        local.get $p0
+        ref.as_non_null
+        local.get $p4
+        i32.const 1
+        i32.add
+        local.get $p7
+        array.copy $rt_types__Dict $rt_types__Dict))
+    local.get $p6
+    ref.as_non_null
+  )
   (func $rt_core__print (type $functype_1)
     (param $p0 (ref null $rt_types__String))
     local.get $p0
@@ -1099,6 +1290,7 @@ expression: wat
   (export "rt_arr__concat" (func $rt_arr__concat))
   (export "rt_arr__slice" (func $rt_arr__slice))
   (export "rt_arr__builder_new" (func $rt_arr__builder_new))
+  (export "rt_arr__builder_from" (func $rt_arr__builder_from))
   (export "rt_arr__builder_push" (func $rt_arr__builder_push))
   (export "rt_arr__builder_freeze" (func $rt_arr__builder_freeze))
   (export "rt_str__len" (func $rt_str__len))
@@ -1116,6 +1308,8 @@ expression: wat
   (export "rt_dict__get_option" (func $rt_dict__get_option))
   (export "rt_dict__set" (func $rt_dict__set))
   (export "rt_dict__remove" (func $rt_dict__remove))
+  (export "rt_dict__set_in_place" (func $rt_dict__set_in_place))
+  (export "rt_dict__remove_in_place" (func $rt_dict__remove_in_place))
   (export "rt_core__print" (func $rt_core__print))
   (export "rt_core__println" (func $rt_core__println))
   (export "rt_core__eprint" (func $rt_core__eprint))

@@ -1,0 +1,13 @@
+// Fresh local record update should be eligible for in-place reuse.
+// Expected output:
+//   13
+
+type Point = .{ x: Int, y: Int }
+
+fn bump() Int {
+    p := Point.{ x: 1, y: 2 }
+    p.x = p.x + 10
+    p.x + p.y
+}
+
+println(bump().to_string())

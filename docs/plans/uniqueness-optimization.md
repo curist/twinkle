@@ -164,9 +164,9 @@ Initial set:
 proving `b` is not a view into `a`, which needs alias reasoning beyond the
 scope of v1. Add after alias tracking improves.
 
-Record updates (`ARecordUpdate`) are already handled by the existing
-`annotate_in_place` pass in `src/opt/liveness.rs` and would be subsumed
-by the general pass.
+Record updates (`ARecordUpdate`) are handled directly by the uniqueness pass:
+`can_reuse_in_place` is set only when the base local is unique, non-escaped,
+and consumed (dead-after or immediate consume-reassign).
 
 **Note on tree/hash structures (dicts):** For persistent hash maps that use
 path-copy updates, in-place mutation when the root is Unique means reusing
@@ -220,7 +220,8 @@ locals may be `Shared` unless the consume-reassign pattern is detected.
 
 ```
 parse -> resolve -> typecheck -> lower (Core IR) -> monomorphize
-  -> lower (ANF) -> peephole opts -> UNIQUENESS PASS -> emit (WAT)
+  -> lower (ANF) -> peephole opts
+  -> UNIQUENESS PASS -> eliminate_defers -> emit (WAT)
 ```
 
 The uniqueness pass runs after peephole optimization (constant folding, DCE,
@@ -240,21 +241,17 @@ introduce aliasing, so this holds.
 
 New file: `src/opt/uniqueness.rs`
 Integrated into the pipeline in `src/opt/pipeline.rs`, called after the
-existing peephole fixed-point loop and before `annotate_in_place`.
-
-Eventually `annotate_in_place` (record update reuse) can be folded into
-the uniqueness pass, since it's a special case of point-rewrite on a
-Unique record.
+existing peephole fixed-point loop.
 
 ## Staging
 
 | Phase | Work |
 |---|---|
 | 1 | `src/opt/uniqueness.rs`: uniqueness state map, fresh-producer recognition, escape check, last-use detection |
-| 2 | Point rewrites: `VECTOR_SET` -> `VECTOR_SET_IN_PLACE` when unique + consumed |
+| 2 | Point rewrites: `VECTOR_SET_UNSAFE` -> `VECTOR_SET_IN_PLACE` when unique + consumed |
 | 3 | Region rewrites: `VECTOR_PUSH` in loop-accumulator pattern -> builder wrapping |
-| 4 | Extend to `DICT_SET`, `DICT_REMOVE`, `VECTOR_CONCAT` |
-| 5 | Subsume `annotate_in_place` for records into the general pass |
+| 4 | Rewrite `DICT_SET`/`DICT_REMOVE` to uniqueness-safe internal helpers; keep `VECTOR_CONCAT` deferred |
+| 5 | Record updates (`ARecordUpdate`) handled in uniqueness pass with unique+consumed guard |
 | 6 | Verification tests: aliasing boundaries, closure capture, branch merges, fallback behavior |
 
 Phase 1-2 are the minimal useful version. Phase 3 handles the benchmark
@@ -283,11 +280,12 @@ These are lowerer-level specializations, not optimizer rewrites. They remain
 as-is. The uniqueness pass handles the *user-written* equivalent:
 `for x in iter { xs = xs.push(f(x)) }`.
 
-### Record update in-place (`annotate_in_place`)
+### Record update in-place (integrated)
 
-The existing pass in `src/opt/liveness.rs` sets `can_reuse_in_place` on
-`ARecordUpdate` when the base local is dead in the continuation. This is
-a correct special case of point-rewrite-on-unique-value. Phase 5 subsumes it.
+`ARecordUpdate` reuse is now inferred in `src/opt/uniqueness.rs`.
+Unlike the prior dead-after-only annotation, reuse is guarded by uniqueness
+and non-escape checks to avoid mutating records that are still observable
+through aliases or closure captures.
 
 ### Typed closure specialization (Stage 9.6)
 

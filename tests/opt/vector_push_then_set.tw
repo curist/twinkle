@@ -1,0 +1,11 @@
+// Uniqueness should propagate through consuming VECTOR_PUSH + reassignment,
+// so a subsequent index update can rewrite in-place.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    xs = xs.push(4)
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

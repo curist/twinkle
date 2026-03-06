@@ -1,0 +1,15 @@
+// Storing xs in an Option variant escapes the reference.
+// Update must not rewrite.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    wrapped : Option<Vector<Int>> = .Some(xs)
+    case wrapped {
+        .Some(v) => println("${v[0]}"),
+        .None => println("n"),
+    }
+    xs[0] = 99
+    xs
+}
+
+println("${make()[0]}")

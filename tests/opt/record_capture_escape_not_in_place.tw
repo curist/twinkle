@@ -1,0 +1,15 @@
+// Closure capture before update means pre-update value can still be observed.
+// In-place update must not fire.
+// Expected output:
+//   1
+
+type Point = .{ x: Int, y: Int }
+
+fn captured_view() Int {
+    p := Point.{ x: 1, y: 2 }
+    f := fn() Int { p.x }
+    p.x = 9
+    f()
+}
+
+println(captured_view().to_string())

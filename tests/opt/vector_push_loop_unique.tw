@@ -1,0 +1,16 @@
+// Empty unique loop accumulator should rewrite from VECTOR_PUSH to builder ops.
+// Expected output:
+//   3
+//   6
+
+fn make() Vector<Int> {
+    xs: Vector<Int> = []
+    for x in [1, 2, 3] {
+        xs = xs.push(x * 2)
+    }
+    xs
+}
+
+out := make()
+println("${out.len()}")
+println("${out[2]}")

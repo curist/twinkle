@@ -1,0 +1,13 @@
+// Move-like reassignment copy followed by source rebind; old value is uniquely owned by ys.
+// Should rewrite ys[0] update to VECTOR_SET_IN_PLACE.
+
+fn make() Vector<Int> {
+    xs := [1, 2, 3]
+    ys := [0]
+    ys = xs
+    xs = [7, 8, 9]
+    ys[0] = 99
+    ys
+}
+
+println("${make()[0]}")
