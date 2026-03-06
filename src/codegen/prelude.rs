@@ -347,15 +347,36 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::VECTOR_BUILDER_NEW,
-        PreludeEntry::intrinsic("__vector_builder_new"),
+        PreludeEntry::runtime(
+            "__vector_builder_new",
+            "rt.arr",
+            "builder_new",
+            "rt_arr__builder_new",
+            vec![],
+            vec![ref_array()],
+        ),
     );
     map.insert(
         prelude_ids::VECTOR_BUILDER_PUSH,
-        PreludeEntry::intrinsic("__vector_builder_push"),
+        PreludeEntry::runtime(
+            "__vector_builder_push",
+            "rt.arr",
+            "builder_push",
+            "rt_arr__builder_push",
+            vec![ref_array_null(), ValType::Anyref],
+            vec![],
+        ),
     );
     map.insert(
         prelude_ids::VECTOR_BUILDER_FREEZE,
-        PreludeEntry::intrinsic("__vector_builder_freeze"),
+        PreludeEntry::runtime(
+            "__vector_builder_freeze",
+            "rt.arr",
+            "builder_freeze",
+            "rt_arr__builder_freeze",
+            vec![ref_array_null()],
+            vec![ref_array()],
+        ),
     );
     map.insert(
         prelude_ids::VECTOR_GET,
@@ -368,6 +389,10 @@ pub fn build_prelude_map() -> PreludeMap {
     map.insert(
         prelude_ids::VECTOR_MAKE,
         PreludeEntry::intrinsic("Vector.make"),
+    );
+    map.insert(
+        prelude_ids::VECTOR_SET_IN_PLACE,
+        PreludeEntry::intrinsic("__vector_set_in_place"),
     );
     map.insert(
         prelude_ids::DEBUG_STDIN_READ_ALL,

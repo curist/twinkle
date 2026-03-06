@@ -1,0 +1,12 @@
+// Expected output:
+//   45
+
+// Small fold-with-closure fixture for correctness tests (sum of 0..9 = 45).
+fn fold(xs: Vector<Int>, init: Int, f: fn(Int, Int) Int) Int {
+  result := init
+  for x in xs { result = f(result, x) }
+  result
+}
+
+xs := collect i in range(10) { i }
+println("${fold(xs, 0, fn(acc, x) { acc + x })}")

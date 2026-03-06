@@ -19,6 +19,9 @@ expression: wat
   (type $functype_3 (func (param (ref null $rt_types__Array)) (result i32)))
   (type $functype_4 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
   (type $functype_5 (func (param (ref null $rt_types__Array) i32 i32) (result (ref $rt_types__Array))))
+  (type $functype_6 (func (result (ref $rt_types__Array))))
+  (type $functype_7 (func (param (ref null $rt_types__Array) anyref)))
+  (type $functype_8 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
   (func $rt_arr__make (type $functype_0)
     (param $p0 i32)
     (param $p1 anyref)
@@ -143,10 +146,164 @@ expression: wat
     local.get $p4
     ref.as_non_null
   )
+  (func $rt_arr__builder_new (type $functype_6)
+    (result (ref $rt_types__Array))
+    ref.null none
+    i32.const 8
+    array.new $rt_types__Array
+    i64.const 0
+    struct.new $rt_types__BoxedInt
+    i64.const 8
+    struct.new $rt_types__BoxedInt
+    array.new_fixed $rt_types__Array 3
+  )
+  (func $rt_arr__builder_push (type $functype_7)
+    (param $p0 (ref null $rt_types__Array))
+    (param $p1 anyref)
+    (local $p2 (ref null $rt_types__Array))
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 (ref null $rt_types__Array))
+    local.get $p0
+    ref.as_non_null
+    i32.const 0
+    array.get $rt_types__Array
+    ref.cast (ref null $rt_types__Array)
+    local.set $p2
+    local.get $p0
+    ref.as_non_null
+    i32.const 1
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    i32.wrap_i64
+    local.set $p3
+    local.get $p0
+    ref.as_non_null
+    i32.const 2
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    i32.wrap_i64
+    local.set $p4
+    local.get $p3
+    local.get $p4
+    i32.lt_s
+    (if
+      (then
+        local.get $p2
+        ref.as_non_null
+        local.get $p3
+        local.get $p1
+        array.set $rt_types__Array
+        local.get $p3
+        i32.const 1
+        i32.add
+        local.set $p3
+        local.get $p0
+        ref.as_non_null
+        i32.const 1
+        local.get $p3
+        i64.extend_i32_s
+        struct.new $rt_types__BoxedInt
+        array.set $rt_types__Array)
+      (else
+        local.get $p4
+        i32.eqz
+        (if (result i32)
+          (then
+            i32.const 8)
+          (else
+            local.get $p4
+            i32.const 2
+            i32.mul))
+        local.set $p5
+        ref.null none
+        local.get $p5
+        array.new $rt_types__Array
+        local.set $p6
+        local.get $p6
+        ref.as_non_null
+        i32.const 0
+        local.get $p2
+        ref.as_non_null
+        i32.const 0
+        local.get $p3
+        array.copy $rt_types__Array $rt_types__Array
+        local.get $p6
+        ref.as_non_null
+        local.get $p3
+        local.get $p1
+        array.set $rt_types__Array
+        local.get $p3
+        i32.const 1
+        i32.add
+        local.set $p3
+        local.get $p5
+        local.set $p4
+        local.get $p0
+        ref.as_non_null
+        i32.const 0
+        local.get $p6
+        array.set $rt_types__Array
+        local.get $p0
+        ref.as_non_null
+        i32.const 1
+        local.get $p3
+        i64.extend_i32_s
+        struct.new $rt_types__BoxedInt
+        array.set $rt_types__Array
+        local.get $p0
+        ref.as_non_null
+        i32.const 2
+        local.get $p4
+        i64.extend_i32_s
+        struct.new $rt_types__BoxedInt
+        array.set $rt_types__Array))
+  )
+  (func $rt_arr__builder_freeze (type $functype_8)
+    (param $p0 (ref null $rt_types__Array))
+    (result (ref $rt_types__Array))
+    (local $p1 (ref null $rt_types__Array))
+    (local $p2 i32)
+    (local $p3 (ref null $rt_types__Array))
+    local.get $p0
+    ref.as_non_null
+    i32.const 0
+    array.get $rt_types__Array
+    ref.cast (ref null $rt_types__Array)
+    local.set $p1
+    local.get $p0
+    ref.as_non_null
+    i32.const 1
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    i32.wrap_i64
+    local.set $p2
+    ref.null none
+    local.get $p2
+    array.new $rt_types__Array
+    local.set $p3
+    local.get $p3
+    ref.as_non_null
+    i32.const 0
+    local.get $p1
+    ref.as_non_null
+    i32.const 0
+    local.get $p2
+    array.copy $rt_types__Array $rt_types__Array
+    local.get $p3
+    ref.as_non_null
+  )
   (export "rt_arr__make" (func $rt_arr__make))
   (export "rt_arr__get" (func $rt_arr__get))
   (export "rt_arr__set" (func $rt_arr__set))
   (export "rt_arr__len" (func $rt_arr__len))
   (export "rt_arr__concat" (func $rt_arr__concat))
   (export "rt_arr__slice" (func $rt_arr__slice))
+  (export "rt_arr__builder_new" (func $rt_arr__builder_new))
+  (export "rt_arr__builder_push" (func $rt_arr__builder_push))
+  (export "rt_arr__builder_freeze" (func $rt_arr__builder_freeze))
 )

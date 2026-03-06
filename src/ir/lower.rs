@@ -84,6 +84,9 @@ pub mod prelude {
     pub const VECTOR_GET: FuncId = FuncId(38); // Vector.get(vec, i) -> Option<T>  (safe)
     pub const VECTOR_SET: FuncId = FuncId(39); // Vector.set(vec, i, val) -> Option<Vector<T>> (safe)
     pub const VECTOR_MAKE: FuncId = FuncId(40); // Vector.make(size: Int, fill: T) -> Vector<T>
+    // Internal helper: mutate a preallocated vector slot and return the same vector.
+    // Used by range-collect specialization to avoid O(N^2) append/concat growth.
+    pub const VECTOR_SET_IN_PLACE: FuncId = FuncId(1013); // (vec, i, val) -> vec
 
     // Additional prelude functions (kept outside fixed 1..=38 range).
     pub const EPRINT: FuncId = FuncId(1007); // eprint(s: String) -> Void
@@ -2768,21 +2771,11 @@ impl Lowerer {
         result_ty: &MonoType,
         span: Span,
     ) -> Option<CoreExprKind> {
-        // collect x in range(n) { body }
-        // →
-        // Let(r, iter,
-        //   Let(cur, r.start,
-        //     Let(end, r.end,
-        //       Let(step, r.step,
-        //         Let(acc, [],
-        //           Loop {
-        //             If(cur >= end, Break(acc),
-        //               Let(x, cur,
-        //                 Let(_, cur += step, ← advance BEFORE body so continue skips append
-        //                   Let(val, body,
-        //                     Let(_, acc_assign,
-        //                       Continue)))))
-        //           })))))
+        // Stage 10.1: range-collect specialization.
+        //
+        // Preallocate once with Vector.make(len, void), fill in-place by index,
+        // and trim once at the end with Vector.slice(0, idx). This removes the
+        // O(N^2) append/concat behavior while preserving `continue` filtering.
 
         let iter_expr = self.lower_expr(iter)?;
         let iter_span = iter.span;
@@ -2792,6 +2785,8 @@ impl Lowerer {
         let cur_tmp = self.local_allocator.alloc_and_bind("__rc_cur".to_string());
         let end_tmp = self.local_allocator.alloc_and_bind("__rc_end".to_string());
         let step_tmp = self.local_allocator.alloc_and_bind("__rc_step".to_string());
+        let len_local = self.local_allocator.alloc_and_bind("__rc_len".to_string());
+        let idx_local = self.local_allocator.alloc_and_bind("__rc_idx".to_string());
         let acc_local = self.local_allocator.alloc_and_bind("__rc_acc".to_string());
 
         // Field access: r.start (0), r.end (1), r.step (2)
@@ -2847,9 +2842,237 @@ impl Lowerer {
             ty: MonoType::Int,
             span: iter_span,
         };
+        let idx_expr = CoreExpr {
+            kind: CoreExprKind::Local(idx_local),
+            ty: MonoType::Int,
+            span: iter_span,
+        };
         let acc_expr = CoreExpr {
             kind: CoreExprKind::Local(acc_local),
             ty: result_ty.clone(),
+            span: iter_span,
+        };
+
+        // done = if step > 0 { cur >= end } else if step < 0 { cur <= end } else true
+        let step_gt_zero = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Gt,
+                left: Box::new(step_expr.clone()),
+                right: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(0),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Bool,
+            span: iter_span,
+        };
+        let step_lt_zero = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Lt,
+                left: Box::new(step_expr.clone()),
+                right: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(0),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Bool,
+            span: iter_span,
+        };
+        let pos_done = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Ge,
+                left: Box::new(cur_expr.clone()),
+                right: Box::new(end_expr.clone()),
+            },
+            ty: MonoType::Bool,
+            span: iter_span,
+        };
+        let neg_done = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Le,
+                left: Box::new(cur_expr.clone()),
+                right: Box::new(end_expr.clone()),
+            },
+            ty: MonoType::Bool,
+            span: iter_span,
+        };
+        let done_cond = CoreExpr {
+            kind: CoreExprKind::If {
+                cond: Box::new(step_gt_zero.clone()),
+                then_branch: Box::new(pos_done),
+                else_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::If {
+                        cond: Box::new(step_lt_zero.clone()),
+                        then_branch: Box::new(neg_done),
+                        else_branch: Box::new(CoreExpr {
+                            kind: CoreExprKind::LitBool(true),
+                            ty: MonoType::Bool,
+                            span: iter_span,
+                        }),
+                    },
+                    ty: MonoType::Bool,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Bool,
+            span: iter_span,
+        };
+
+        // len =
+        //   if step > 0 {
+        //     if cur >= end { 0 } else { (end - cur + (step - 1)) / step }
+        //   } else if step < 0 {
+        //     abs = 0 - step
+        //     if cur <= end { 0 } else { (cur - end + (abs - 1)) / abs }
+        //   } else { 0 }
+        let pos_len = CoreExpr {
+            kind: CoreExprKind::If {
+                cond: Box::new(CoreExpr {
+                    kind: CoreExprKind::BinOp {
+                        op: BinOp::Ge,
+                        left: Box::new(cur_expr.clone()),
+                        right: Box::new(end_expr.clone()),
+                    },
+                    ty: MonoType::Bool,
+                    span: iter_span,
+                }),
+                then_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(0),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+                else_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::BinOp {
+                        op: BinOp::Div,
+                        left: Box::new(CoreExpr {
+                            kind: CoreExprKind::BinOp {
+                                op: BinOp::Add,
+                                left: Box::new(CoreExpr {
+                                    kind: CoreExprKind::BinOp {
+                                        op: BinOp::Sub,
+                                        left: Box::new(end_expr.clone()),
+                                        right: Box::new(cur_expr.clone()),
+                                    },
+                                    ty: MonoType::Int,
+                                    span: iter_span,
+                                }),
+                                right: Box::new(CoreExpr {
+                                    kind: CoreExprKind::BinOp {
+                                        op: BinOp::Sub,
+                                        left: Box::new(step_expr.clone()),
+                                        right: Box::new(CoreExpr {
+                                            kind: CoreExprKind::LitInt(1),
+                                            ty: MonoType::Int,
+                                            span: iter_span,
+                                        }),
+                                    },
+                                    ty: MonoType::Int,
+                                    span: iter_span,
+                                }),
+                            },
+                            ty: MonoType::Int,
+                            span: iter_span,
+                        }),
+                        right: Box::new(step_expr.clone()),
+                    },
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Int,
+            span: iter_span,
+        };
+        let abs_step = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Sub,
+                left: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(0),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+                right: Box::new(step_expr.clone()),
+            },
+            ty: MonoType::Int,
+            span: iter_span,
+        };
+        let neg_len = CoreExpr {
+            kind: CoreExprKind::If {
+                cond: Box::new(CoreExpr {
+                    kind: CoreExprKind::BinOp {
+                        op: BinOp::Le,
+                        left: Box::new(cur_expr.clone()),
+                        right: Box::new(end_expr.clone()),
+                    },
+                    ty: MonoType::Bool,
+                    span: iter_span,
+                }),
+                then_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(0),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+                else_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::BinOp {
+                        op: BinOp::Div,
+                        left: Box::new(CoreExpr {
+                            kind: CoreExprKind::BinOp {
+                                op: BinOp::Add,
+                                left: Box::new(CoreExpr {
+                                    kind: CoreExprKind::BinOp {
+                                        op: BinOp::Sub,
+                                        left: Box::new(cur_expr.clone()),
+                                        right: Box::new(end_expr.clone()),
+                                    },
+                                    ty: MonoType::Int,
+                                    span: iter_span,
+                                }),
+                                right: Box::new(CoreExpr {
+                                    kind: CoreExprKind::BinOp {
+                                        op: BinOp::Sub,
+                                        left: Box::new(abs_step.clone()),
+                                        right: Box::new(CoreExpr {
+                                            kind: CoreExprKind::LitInt(1),
+                                            ty: MonoType::Int,
+                                            span: iter_span,
+                                        }),
+                                    },
+                                    ty: MonoType::Int,
+                                    span: iter_span,
+                                }),
+                            },
+                            ty: MonoType::Int,
+                            span: iter_span,
+                        }),
+                        right: Box::new(abs_step.clone()),
+                    },
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Int,
+            span: iter_span,
+        };
+        let len_expr = CoreExpr {
+            kind: CoreExprKind::If {
+                cond: Box::new(step_gt_zero),
+                then_branch: Box::new(pos_len),
+                else_branch: Box::new(CoreExpr {
+                    kind: CoreExprKind::If {
+                        cond: Box::new(step_lt_zero),
+                        then_branch: Box::new(neg_len),
+                        else_branch: Box::new(CoreExpr {
+                            kind: CoreExprKind::LitInt(0),
+                            ty: MonoType::Int,
+                            span: iter_span,
+                        }),
+                    },
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Int,
             span: iter_span,
         };
 
@@ -2885,20 +3108,21 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // acc = array_append(acc, val)
-        let append_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_PUSH),
+        // acc = __vector_set_in_place(acc, idx, val)
+        let set_in_place_func = CoreExpr {
+            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_SET_IN_PLACE),
             ty: MonoType::Function {
-                params: vec![result_ty.clone(), body_ty.clone()],
+                params: vec![result_ty.clone(), MonoType::Int, body_ty.clone()],
                 ret: Box::new(result_ty.clone()),
             },
             span: iter_span,
         };
         let acc_new_val = CoreExpr {
             kind: CoreExprKind::Call {
-                callee: Box::new(append_func),
+                callee: Box::new(set_in_place_func),
                 args: vec![
                     acc_expr.clone(),
+                    idx_expr.clone(),
                     CoreExpr {
                         kind: CoreExprKind::Local(body_val_local),
                         ty: body_ty,
@@ -2917,6 +3141,27 @@ impl Lowerer {
             ty: MonoType::Void,
             span: iter_span,
         };
+        let idx_plus_one = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Add,
+                left: Box::new(idx_expr.clone()),
+                right: Box::new(CoreExpr {
+                    kind: CoreExprKind::LitInt(1),
+                    ty: MonoType::Int,
+                    span: iter_span,
+                }),
+            },
+            ty: MonoType::Int,
+            span: iter_span,
+        };
+        let idx_inc = CoreExpr {
+            kind: CoreExprKind::Assign {
+                local: idx_local,
+                value: Box::new(idx_plus_one),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
 
         let continue_expr = CoreExpr {
             kind: CoreExprKind::Continue,
@@ -2924,28 +3169,39 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Build from inside out: Let(_, acc_assign, Continue)
-        let tmp1 = self.local_allocator.alloc();
-        let after_append = CoreExpr {
+        // Build from inside out:
+        // Let(_, acc_assign, Let(_, idx_inc, Continue))
+        let tmp_idx = self.local_allocator.alloc();
+        let after_idx_inc = CoreExpr {
             kind: CoreExprKind::Let {
-                local: tmp1,
-                value: Box::new(acc_assign),
+                local: tmp_idx,
+                value: Box::new(idx_inc),
                 body: Box::new(continue_expr),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
-        // Let(val, body, after_append)
-        let with_val = CoreExpr {
+        let tmp_set = self.local_allocator.alloc();
+        let after_set = CoreExpr {
             kind: CoreExprKind::Let {
-                local: body_val_local,
-                value: Box::new(body_expr),
-                body: Box::new(after_append),
+                local: tmp_set,
+                value: Box::new(acc_assign),
+                body: Box::new(after_idx_inc),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
-        // Let(_, cur_inc, with_val) — increment BEFORE body so continue advances
+        // Let(val, body, after_set)
+        let with_val = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: body_val_local,
+                value: Box::new(body_expr),
+                body: Box::new(after_set),
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        // Let(_, cur_inc, with_val) — increment BEFORE body so `continue` advances.
         let tmp2 = self.local_allocator.alloc();
         let with_inc = CoreExpr {
             kind: CoreExprKind::Let {
@@ -2967,30 +3223,22 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Break condition: cur >= end → Break(acc)
-        let cond_ge = CoreExpr {
-            kind: CoreExprKind::BinOp {
-                op: BinOp::Ge,
-                left: Box::new(cur_expr),
-                right: Box::new(end_expr),
-            },
-            ty: MonoType::Bool,
-            span: iter_span,
-        };
+        // Break condition: done_cond (handles positive/negative/zero step).
+        // Break with the current accumulator; we compact to [0, idx) after loop.
         let break_acc = CoreExpr {
             kind: CoreExprKind::Break {
-                value: Some(Box::new(acc_expr)),
+                value: Some(Box::new(acc_expr.clone())),
             },
             ty: result_ty.clone(),
             span: iter_span,
         };
         let loop_if = CoreExpr {
             kind: CoreExprKind::If {
-                cond: Box::new(cond_ge),
+                cond: Box::new(done_cond),
                 then_branch: Box::new(break_acc),
                 else_branch: Box::new(with_elem),
             },
-            ty: result_ty.clone(),
+            ty: MonoType::Void,
             span: iter_span,
         };
         let loop_expr = CoreExpr {
@@ -3000,14 +3248,76 @@ impl Lowerer {
             ty: result_ty.clone(),
             span,
         };
+        let slice_after_loop = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_SLICE),
+                    ty: MonoType::Function {
+                        params: vec![result_ty.clone(), MonoType::Int, MonoType::Int],
+                        ret: Box::new(result_ty.clone()),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![
+                    acc_expr.clone(),
+                    CoreExpr {
+                        kind: CoreExprKind::LitInt(0),
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    },
+                    idx_expr.clone(),
+                ],
+            },
+            ty: result_ty.clone(),
+            span: iter_span,
+        };
+        let loop_done_local = self.local_allocator.alloc();
+        let run_loop_then_slice = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: loop_done_local,
+                value: Box::new(loop_expr),
+                body: Box::new(slice_after_loop),
+            },
+            ty: result_ty.clone(),
+            span,
+        };
 
-        let empty_arr = CoreExpr {
-            kind: CoreExprKind::ArrayLit { elements: vec![] },
+        let make_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_MAKE),
+                    ty: MonoType::Function {
+                        params: vec![MonoType::Int, MonoType::Void],
+                        ret: Box::new(result_ty.clone()),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![
+                    CoreExpr {
+                        kind: CoreExprKind::Local(len_local),
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    },
+                    CoreExpr {
+                        kind: CoreExprKind::LitVoid,
+                        ty: MonoType::Void,
+                        span: iter_span,
+                    },
+                ],
+            },
             ty: result_ty.clone(),
             span: iter_span,
         };
 
-        // Wrap: Let(r, iter, Let(cur, start_get, Let(end, end_get, Let(step, step_get, Let(acc, [], loop)))))
+        // Wrap:
+        // Let(r, iter,
+        //   Let(cur, start,
+        //     Let(end, end,
+        //       Let(step, step,
+        //         Let(len, computed_len,
+        //           Let(idx, 0,
+        //             Let(acc, Vector.make(len, ()),
+        //               Loop ... )))))))
         Some(CoreExprKind::Let {
             local: r_tmp,
             value: Box::new(iter_expr),
@@ -3025,9 +3335,29 @@ impl Lowerer {
                                     value: Box::new(step_get),
                                     body: Box::new(CoreExpr {
                                         kind: CoreExprKind::Let {
-                                            local: acc_local,
-                                            value: Box::new(empty_arr),
-                                            body: Box::new(loop_expr),
+                                            local: len_local,
+                                            value: Box::new(len_expr),
+                                            body: Box::new(CoreExpr {
+                                                kind: CoreExprKind::Let {
+                                                    local: idx_local,
+                                                    value: Box::new(CoreExpr {
+                                                        kind: CoreExprKind::LitInt(0),
+                                                        ty: MonoType::Int,
+                                                        span: iter_span,
+                                                    }),
+                                                    body: Box::new(CoreExpr {
+                                                        kind: CoreExprKind::Let {
+                                                            local: acc_local,
+                                                            value: Box::new(make_call),
+                                                            body: Box::new(run_loop_then_slice),
+                                                        },
+                                                        ty: result_ty.clone(),
+                                                        span,
+                                                    }),
+                                                },
+                                                ty: result_ty.clone(),
+                                                span,
+                                            }),
                                         },
                                         ty: result_ty.clone(),
                                         span,
@@ -3392,7 +3722,7 @@ impl Lowerer {
         let iter_span = iter.span;
 
         let arr_tmp = self.local_allocator.alloc_and_bind("__c_arr".to_string());
-        let acc_local = self.local_allocator.alloc_and_bind("__c_acc".to_string());
+        let builder_local = self.local_allocator.alloc_and_bind("__c_builder".to_string());
         let len_local = self.local_allocator.alloc_and_bind("__c_len".to_string());
         let idx_local = self.local_allocator.alloc_and_bind("__c_idx".to_string());
 
@@ -3430,12 +3760,6 @@ impl Lowerer {
             ty: MonoType::Int,
             span: iter_span,
         };
-        let acc_expr = CoreExpr {
-            kind: CoreExprKind::Local(acc_local),
-            ty: result_ty.clone(),
-            span: iter_span,
-        };
-
         // Loop body: bind element, lower body, append, inc idx
         self.local_allocator.push_scope();
 
@@ -3459,34 +3783,26 @@ impl Lowerer {
 
         self.local_allocator.pop_scope();
 
-        // acc = array_append(acc, val)  [mutation via Assign]
-        let append_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_PUSH),
-            ty: MonoType::Function {
-                params: vec![result_ty.clone(), body_ty.clone()],
-                ret: Box::new(result_ty.clone()),
-            },
-            span: iter_span,
-        };
-        let acc_new_val = CoreExpr {
+        // VECTOR_BUILDER_PUSH(builder, body_val_local)
+        let push_call = CoreExpr {
             kind: CoreExprKind::Call {
-                callee: Box::new(append_func),
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_PUSH),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }),
                 args: vec![
-                    acc_expr.clone(),
+                    CoreExpr {
+                        kind: CoreExprKind::Local(builder_local),
+                        ty: MonoType::Void,
+                        span: iter_span,
+                    },
                     CoreExpr {
                         kind: CoreExprKind::Local(body_val_local),
                         ty: body_ty,
                         span: iter_span,
                     },
                 ],
-            },
-            ty: result_ty.clone(),
-            span: iter_span,
-        };
-        let acc_assign = CoreExpr {
-            kind: CoreExprKind::Assign {
-                local: acc_local,
-                value: Box::new(acc_new_val),
             },
             ty: MonoType::Void,
             span: iter_span,
@@ -3522,12 +3838,12 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Build innermost: Assign(acc, append(acc, val)); Continue
+        // Build innermost: VECTOR_BUILDER_PUSH(builder, val); Continue
         let tmp1 = self.local_allocator.alloc();
         let tail = CoreExpr {
             kind: CoreExprKind::Let {
                 local: tmp1,
-                value: Box::new(acc_assign),
+                value: Box::new(push_call),
                 body: Box::new(continue_expr),
             },
             ty: MonoType::Void,
@@ -3572,7 +3888,8 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Break condition: idx >= len → Break(acc)
+        // Break condition: idx >= len → Break()
+        // Freeze is performed once after the loop.
         let cond_ge = CoreExpr {
             kind: CoreExprKind::BinOp {
                 op: BinOp::Ge,
@@ -3583,10 +3900,8 @@ impl Lowerer {
             span: iter_span,
         };
         let break_acc = CoreExpr {
-            kind: CoreExprKind::Break {
-                value: Some(Box::new(acc_expr)),
-            },
-            ty: result_ty.clone(),
+            kind: CoreExprKind::Break { value: None },
+            ty: MonoType::Void,
             span: iter_span,
         };
 
@@ -3596,7 +3911,7 @@ impl Lowerer {
                 then_branch: Box::new(break_acc),
                 else_branch: Box::new(with_elem),
             },
-            ty: result_ty.clone(),
+            ty: MonoType::Void,
             span: iter_span,
         };
 
@@ -3604,19 +3919,46 @@ impl Lowerer {
             kind: CoreExprKind::Loop {
                 body: Box::new(loop_if),
             },
+            ty: MonoType::Void,
+            span,
+        };
+        let freeze_after_loop = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_FREEZE),
+                    ty: MonoType::Function {
+                        params: vec![MonoType::Void],
+                        ret: Box::new(result_ty.clone()),
+                    },
+                    span: iter_span,
+                }),
+                args: vec![CoreExpr {
+                    kind: CoreExprKind::Local(builder_local),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }],
+            },
+            ty: result_ty.clone(),
+            span: iter_span,
+        };
+        let loop_done_local = self.local_allocator.alloc();
+        let run_loop_then_freeze = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: loop_done_local,
+                value: Box::new(loop_expr),
+                body: Box::new(freeze_after_loop),
+            },
             ty: result_ty.clone(),
             span,
         };
 
-        // Wrap: Let(arr_tmp, iter, Let(acc, [], Let(len, len_call, Let(idx, 0, loop))))
+        // Wrap:
+        // Let(arr_tmp, iter,
+        //   Let(builder, VECTOR_BUILDER_NEW(),
+        //     Let(len, len_call, Let(idx, 0, loop))))
         let zero = CoreExpr {
             kind: CoreExprKind::LitInt(0),
             ty: MonoType::Int,
-            span: iter_span,
-        };
-        let empty_arr = CoreExpr {
-            kind: CoreExprKind::ArrayLit { elements: vec![] },
-            ty: result_ty.clone(),
             span: iter_span,
         };
 
@@ -3624,7 +3966,7 @@ impl Lowerer {
             kind: CoreExprKind::Let {
                 local: idx_local,
                 value: Box::new(zero),
-                body: Box::new(loop_expr),
+                body: Box::new(run_loop_then_freeze),
             },
             ty: result_ty.clone(),
             span,
@@ -3638,10 +3980,22 @@ impl Lowerer {
             ty: result_ty.clone(),
             span,
         };
-        let with_acc_init = CoreExpr {
+        let builder_new_call = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(CoreExpr {
+                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_BUILDER_NEW),
+                    ty: MonoType::Void,
+                    span: iter_span,
+                }),
+                args: vec![],
+            },
+            ty: MonoType::Void,
+            span: iter_span,
+        };
+        let with_builder_init = CoreExpr {
             kind: CoreExprKind::Let {
-                local: acc_local,
-                value: Box::new(empty_arr),
+                local: builder_local,
+                value: Box::new(builder_new_call),
                 body: Box::new(with_len),
             },
             ty: result_ty.clone(),
@@ -3651,7 +4005,7 @@ impl Lowerer {
         Some(CoreExprKind::Let {
             local: arr_tmp,
             value: Box::new(iter_expr),
-            body: Box::new(with_acc_init),
+            body: Box::new(with_builder_init),
         })
     }
 

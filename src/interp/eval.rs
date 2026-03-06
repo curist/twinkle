@@ -968,6 +968,24 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_make: expected Int size"),
                 }
             }
+            1013 => {
+                // __vector_set_in_place(vec: Vector<T>, i: Int, val: T) -> Vector<T>
+                // Internal collect optimization helper.
+                match (args[0].clone(), &args[1], args[2].clone()) {
+                    (Value::Vec(mut elems), Value::Int(i), val) => {
+                        let idx = *i as usize;
+                        if idx >= elems.len() {
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
+                                index: idx,
+                                len: elems.len(),
+                            }));
+                        }
+                        elems[idx] = val;
+                        Ok(Value::Vec(elems))
+                    }
+                    _ => panic!("__vector_set_in_place: wrong argument types"),
+                }
+            }
             1009 => {
                 // __host_args() -> Vector<String>
                 let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();

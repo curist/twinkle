@@ -12,9 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::ir::core::{
-    CoreExpr, CoreExprKind, CoreModule, FuncId, FunctionDef, MatchArm,
-};
+use crate::ir::core::{CoreExpr, CoreExprKind, CoreModule, FuncId, FunctionDef, MatchArm};
 use crate::types::ty::MonoType;
 
 // ─── Public helpers (also used by tests) ─────────────────────────────────────
@@ -25,9 +23,7 @@ pub fn contains_var(ty: &MonoType) -> bool {
         MonoType::Var(_) => true,
         MonoType::Vector(e) => contains_var(e),
         MonoType::Dict(k, v) => contains_var(k) || contains_var(v),
-        MonoType::Function { params, ret } => {
-            params.iter().any(contains_var) || contains_var(ret)
-        }
+        MonoType::Function { params, ret } => params.iter().any(contains_var) || contains_var(ret),
         MonoType::Named { args, .. } => args.iter().any(contains_var),
         _ => false,
     }
@@ -315,10 +311,7 @@ fn apply_subst_to_expr(expr: &CoreExpr, subst: &HashMap<String, MonoType>) -> Co
     }
 }
 
-fn apply_subst_to_kind(
-    kind: &CoreExprKind,
-    subst: &HashMap<String, MonoType>,
-) -> CoreExprKind {
+fn apply_subst_to_kind(kind: &CoreExprKind, subst: &HashMap<String, MonoType>) -> CoreExprKind {
     match kind {
         CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
@@ -471,8 +464,7 @@ fn rewrite_calls_in_kind(
 
             if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
                 if let Some(gf) = generic_funcs.get(fid) {
-                    let type_params =
-                        collect_type_params(&gf.param_tys, &gf.return_ty);
+                    let type_params = collect_type_params(&gf.param_tys, &gf.return_ty);
                     let mut subst = HashMap::new();
                     for (param_ty, arg) in gf.param_tys.iter().zip(new_args.iter()) {
                         match_type_against(param_ty, &arg.ty, &mut subst);
@@ -484,13 +476,17 @@ fn rewrite_calls_in_kind(
                     debug_assert!(
                         type_params.iter().all(|p| subst.contains_key(p)),
                         "unsolved type params {:?} at call site for {:?}",
-                        type_params.iter().filter(|p| !subst.contains_key(*p)).collect::<Vec<_>>(),
+                        type_params
+                            .iter()
+                            .filter(|p| !subst.contains_key(*p))
+                            .collect::<Vec<_>>(),
                         fid,
                     );
                     debug_assert!(
                         spec_map.contains_key(&(*fid, type_args.clone())),
                         "no specialization found for {:?} with type_args={:?}; call site will be left unpatched",
-                        fid, type_args,
+                        fid,
+                        type_args,
                     );
                     if let Some(&new_fid) = spec_map.get(&(*fid, type_args)) {
                         return CoreExprKind::Call {
@@ -528,7 +524,10 @@ fn rewrite_calls_in_kind(
                 debug_assert!(
                     type_params.iter().all(|p| subst.contains_key(p)),
                     "unsolved type params {:?} for non-call-position ref to {:?}",
-                    type_params.iter().filter(|p| !subst.contains_key(*p)).collect::<Vec<_>>(),
+                    type_params
+                        .iter()
+                        .filter(|p| !subst.contains_key(*p))
+                        .collect::<Vec<_>>(),
                     fid,
                 );
                 if let Some(&new_fid) = spec_map.get(&(*fid, type_args)) {
@@ -567,16 +566,8 @@ fn rewrite_calls_in_kind(
             else_branch,
         } => CoreExprKind::If {
             cond: Box::new(rewrite_calls_in_expr(cond, spec_map, generic_funcs)),
-            then_branch: Box::new(rewrite_calls_in_expr(
-                then_branch,
-                spec_map,
-                generic_funcs,
-            )),
-            else_branch: Box::new(rewrite_calls_in_expr(
-                else_branch,
-                spec_map,
-                generic_funcs,
-            )),
+            then_branch: Box::new(rewrite_calls_in_expr(then_branch, spec_map, generic_funcs)),
+            else_branch: Box::new(rewrite_calls_in_expr(else_branch, spec_map, generic_funcs)),
         },
         CoreExprKind::Match { scrutinee, arms } => CoreExprKind::Match {
             scrutinee: Box::new(rewrite_calls_in_expr(scrutinee, spec_map, generic_funcs)),
@@ -601,9 +592,11 @@ fn rewrite_calls_in_kind(
                 .as_ref()
                 .map(|v| Box::new(rewrite_calls_in_expr(v, spec_map, generic_funcs))),
         },
-        CoreExprKind::Defer(inner) => CoreExprKind::Defer(Box::new(
-            rewrite_calls_in_expr(inner, spec_map, generic_funcs),
-        )),
+        CoreExprKind::Defer(inner) => CoreExprKind::Defer(Box::new(rewrite_calls_in_expr(
+            inner,
+            spec_map,
+            generic_funcs,
+        ))),
         CoreExprKind::Record { type_id, fields } => CoreExprKind::Record {
             type_id: *type_id,
             fields: fields
@@ -715,7 +708,10 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
         debug_assert!(
             type_params.iter().all(|p| subst.contains_key(p)),
             "unsolved type params {:?} for {:?}",
-            type_params.iter().filter(|p| !subst.contains_key(*p)).collect::<Vec<_>>(),
+            type_params
+                .iter()
+                .filter(|p| !subst.contains_key(*p))
+                .collect::<Vec<_>>(),
             orig_fid,
         );
 
@@ -736,7 +732,11 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
             func_id: new_fid,
             name: format!("{}__{}", gf.name, suffix),
             params: gf.params.clone(),
-            param_tys: gf.param_tys.iter().map(|ty| apply_mono_subst(ty, &subst)).collect(),
+            param_tys: gf
+                .param_tys
+                .iter()
+                .map(|ty| apply_mono_subst(ty, &subst))
+                .collect(),
             body: apply_subst_to_expr(&gf.body, &subst),
             return_ty: apply_mono_subst(&gf.return_ty, &subst),
         };
@@ -876,7 +876,10 @@ mod tests {
         let subst: HashMap<String, MonoType> =
             [("T".to_string(), MonoType::Bool)].into_iter().collect();
         assert_eq!(
-            apply_mono_subst(&MonoType::Vector(Box::new(MonoType::Var("T".into()))), &subst),
+            apply_mono_subst(
+                &MonoType::Vector(Box::new(MonoType::Var("T".into()))),
+                &subst
+            ),
             MonoType::Vector(Box::new(MonoType::Bool))
         );
     }
@@ -950,11 +953,19 @@ mod tests {
     use crate::types::env::TypeEnv;
 
     fn dummy_span() -> Span {
-        Span { file_id: FileId(0), start: 0, end: 0 }
+        Span {
+            file_id: FileId(0),
+            start: 0,
+            end: 0,
+        }
     }
 
     fn expr(kind: CoreExprKind, ty: MonoType) -> CoreExpr {
-        CoreExpr { kind, ty, span: dummy_span() }
+        CoreExpr {
+            kind,
+            ty,
+            span: dummy_span(),
+        }
     }
 
     fn make_func(
@@ -1072,7 +1083,10 @@ mod tests {
                         ret: Box::new(MonoType::Var("T".into())),
                     },
                 )),
-                args: vec![expr(CoreExprKind::Local(LocalId(0)), MonoType::Var("T".into()))],
+                args: vec![expr(
+                    CoreExprKind::Local(LocalId(0)),
+                    MonoType::Var("T".into()),
+                )],
             },
             MonoType::Var("T".into()),
         );
@@ -1161,7 +1175,11 @@ mod tests {
         assert_eq!(result.functions.len(), 2);
         assert!(result.functions.iter().all(|f| !is_generic(f)));
         // The GlobalFunc in __init__ body should now point to the specialization.
-        let init = result.functions.iter().find(|f| f.name == "__init__").unwrap();
+        let init = result
+            .functions
+            .iter()
+            .find(|f| f.name == "__init__")
+            .unwrap();
         if let CoreExprKind::Let { value, .. } = &init.body.kind {
             assert!(
                 matches!(value.kind, CoreExprKind::GlobalFunc(_)),
@@ -1169,7 +1187,10 @@ mod tests {
             );
             // The rewritten fid must not be the original generic id_fid.
             if let CoreExprKind::GlobalFunc(rewritten_fid) = value.kind {
-                assert_ne!(rewritten_fid, id_fid, "should point to specialization, not original");
+                assert_ne!(
+                    rewritten_fid, id_fid,
+                    "should point to specialization, not original"
+                );
             }
         } else {
             panic!("expected Let in __init__ body");

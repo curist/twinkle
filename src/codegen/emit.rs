@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::codegen::ctx::{EmitCtx, FuncSigInfo, mono_to_valtype, user_record_type_sym};
+use crate::codegen::ctx::{
+    EmitCtx, FuncSigInfo, is_concrete_mono_type, mono_to_valtype, mono_to_valtype_for_param,
+    typed_closure_struct_sym, typed_closurefunc_sym, user_record_type_sym,
+};
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
@@ -68,6 +71,109 @@ pub fn emit_user_module(
         ));
     }
     // Emit __iterator_next helper if any function references Iterator.next
+    if needs_iterator_next_helper(&ctx) {
+        module.funcs.push(emit_iterator_next_helper());
+    }
+
+    if let Some(init) = emit_user_init_func(anf) {
+        module.start = Some(init.name.clone());
+        module.funcs.push(init);
+    }
+
+    module.imports.extend(ctx.imports());
+    module
+}
+
+/// Typed-closure variant of [`emit_user_module`].
+///
+/// Emits specialized `ClosureFunc` / `Closure` struct types and typed
+/// trampolines for each distinct concrete closure signature found in the
+/// module.  At typed call sites a concrete `call_ref` is used — no anyref
+/// arg-boxing.  Dispatch through universal closures is unchanged.
+pub fn emit_user_module_typed(
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+    _func_table: &HashMap<String, FuncId>,
+) -> ModuleIR {
+    let prelude = build_prelude_map();
+    let concrete_func_sigs = collect_concrete_func_signatures(anf);
+    let closure_capture_layouts = collect_closure_capture_layouts(anf);
+    let user_sigs =
+        build_user_sig_map_typed(anf, type_env, &closure_capture_layouts, &concrete_func_sigs);
+    let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
+    ctx.set_concrete_func_sigs(concrete_func_sigs.clone());
+    let module_global_ids = collect_module_global_locals(anf);
+    let module_global_map = module_global_ids
+        .iter()
+        .copied()
+        .map(|id| (id, module_global_sym(id)))
+        .collect::<HashMap<_, _>>();
+    ctx.set_module_globals(module_global_map.clone());
+
+    let mut module = ModuleIR::new("user");
+    module.types.extend(emit_user_record_type_defs(type_env));
+
+    // Emit typed ClosureFunc and Closure struct types for each unique concrete
+    // closure signature.  Use a BTreeMap to deduplicate and get stable order.
+    let mut seen_sigs: std::collections::BTreeMap<
+        String,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    > = std::collections::BTreeMap::new();
+    for (params, ret) in concrete_func_sigs.values() {
+        let sym = typed_closurefunc_sym(params, ret);
+        seen_sigs
+            .entry(sym)
+            .or_insert_with(|| (params.clone(), ret.clone()));
+    }
+    for (params, ret) in seen_sigs.values() {
+        module
+            .types
+            .push(emit_typed_closurefunc_def(params, ret, type_env));
+        module
+            .types
+            .push(emit_typed_closure_struct_def(params, ret));
+    }
+
+    module
+        .globals
+        .extend(module_global_ids.iter().map(|id| GlobalDef {
+            name: module_global_sym(*id),
+            mutable: true,
+            ty: ValType::Anyref,
+            init: vec![Instr::RefNull(HeapType::None)],
+        }));
+
+    for func in &anf.functions {
+        let capture_locals = closure_capture_layouts
+            .get(&func.func_id)
+            .cloned()
+            .unwrap_or_default();
+        module
+            .funcs
+            .push(emit_func_stub(func, &capture_locals, &mut ctx));
+    }
+
+    // Emit typed trampolines for concrete-signature functions, universal
+    // trampolines for all others.
+    for func in &anf.functions {
+        let capture_count = closure_capture_layouts
+            .get(&func.func_id)
+            .map_or(0, std::vec::Vec::len);
+        if let Some((params, ret)) = concrete_func_sigs.get(&func.func_id) {
+            module.funcs.push(emit_typed_closure_trampoline(
+                func,
+                capture_count,
+                params,
+                ret,
+                type_env,
+            ));
+        } else {
+            module
+                .funcs
+                .push(emit_user_closure_trampoline(func, capture_count, &ctx));
+        }
+    }
+
     if needs_iterator_next_helper(&ctx) {
         module.funcs.push(emit_iterator_next_helper());
     }
@@ -166,7 +272,7 @@ fn emit_func_stub(
     let mut params = func
         .param_tys
         .iter()
-        .map(|ty| mono_to_valtype(ty, ctx.type_env))
+        .map(|ty| mono_to_valtype_for_param(ty, ctx.type_env, &ctx.concrete_func_sigs))
         .collect::<Vec<_>>();
     params.extend(vec![ValType::Anyref; capture_locals.len()]);
     let results = mono_result_types(&func.return_ty, ctx.type_env);
@@ -1655,6 +1761,49 @@ fn emit_closure_call(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    // Typed closure path (Stage 9.6): if the callee local holds a typed closure,
+    // use concrete arg types and a typed call_ref — no anyref boxing.
+    // Guard: only when concrete_func_sigs is non-empty (typed mode active).
+    if !ctx.concrete_func_sigs.is_empty() {
+        if let Atom::ALocal(local_id) = callee {
+            if let Some(crate::types::ty::MonoType::Function { params, ret }) =
+                ctx.local_mono.get(local_id).cloned()
+            {
+                if is_concrete_mono_type(&crate::types::ty::MonoType::Function {
+                    params: params.clone(),
+                    ret: ret.clone(),
+                }) {
+                    let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+                    let closure_sym = typed_closure_struct_sym(&params, &ret);
+                    let closure_ref = ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Named(closure_sym.clone()),
+                    };
+                    // call_ref convention: push params in order (env first, then concrete args),
+                    // then push funcref last (on top of stack). Field layout mirrors $Closure:
+                    //   field 0 = func_ref, field 1 = env.
+                    // Push env (first param of closurefunc, field 1).
+                    let mut instrs = emit_atom(callee, Some(&closure_ref), ctx);
+                    instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+                    // Push concrete args (remaining params of closurefunc).
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        let wasm_ty = mono_to_valtype(param_ty, ctx.type_env);
+                        instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
+                    }
+                    // Push funcref last (field 0, on top for call_ref).
+                    instrs.extend(emit_atom(callee, Some(&closure_ref), ctx));
+                    instrs.push(Instr::StructGet(closure_sym, 0));
+                    instrs.push(Instr::CallRef(closurefunc_sym));
+                    // Coerce result to bind_ty (ret is already concrete).
+                    let ret_ty = mono_to_valtype(&ret, ctx.type_env);
+                    instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
+                    return instrs;
+                }
+            }
+        }
+    } // end if !concrete_func_sigs.is_empty()
+
+    // Universal closure path.
     let mut instrs = emit_atom(callee, Some(&ref_closure_null()), ctx);
     instrs.push(Instr::StructGet(T_CLOSURE.to_string(), 1));
 
@@ -1721,6 +1870,29 @@ fn emit_make_closure(
     let mut sorted_vars = free_vars.to_vec();
     sorted_vars.sort_by_key(|id| id.0);
     sorted_vars.dedup_by_key(|id| id.0);
+
+    // Typed closure path (Stage 9.6): if this function has a concrete signature,
+    // emit a typed closure struct instead of the universal $Closure.
+    if let Some((params, ret)) = ctx.concrete_func_sigs.get(&func_id).cloned() {
+        let closure_sym = typed_closure_struct_sym(&params, &ret);
+        let mut instrs = vec![Instr::RefFunc(typed_closure_trampoline_sym(func_id))];
+        for local_id in &sorted_vars {
+            instrs.extend(emit_atom(
+                &Atom::ALocal(*local_id),
+                Some(&ValType::Anyref),
+                ctx,
+            ));
+        }
+        instrs.push(Instr::ArrayNewFixed(
+            T_CLOSURE_ENV.to_string(),
+            sorted_vars.len() as u32,
+        ));
+        instrs.push(Instr::StructNew(closure_sym));
+        instrs.extend(emit_coerce_stack(bind_ty, bind_ty));
+        return instrs;
+    }
+
+    // Universal closure path (Stage 9.5 / no typed closures).
     let mut instrs = vec![Instr::RefFunc(global_func_trampoline_sym(func_id))];
     for local_id in &sorted_vars {
         instrs.extend(emit_atom(
@@ -1858,14 +2030,11 @@ fn emit_prelude_call(
         id if id == prelude_ids::VECTOR_BUILDER_FREEZE => {
             emit_array_builder_freeze_intrinsic(args, bind_ty, ctx)
         }
-        id if id == prelude_ids::VECTOR_MAKE => {
-            emit_vector_make_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::VECTOR_GET => {
-            emit_vector_get_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::VECTOR_SET => {
-            emit_vector_set_intrinsic(args, bind_ty, ctx)
+        id if id == prelude_ids::VECTOR_MAKE => emit_vector_make_intrinsic(args, bind_ty, ctx),
+        id if id == prelude_ids::VECTOR_GET => emit_vector_get_intrinsic(args, bind_ty, ctx),
+        id if id == prelude_ids::VECTOR_SET => emit_vector_set_intrinsic(args, bind_ty, ctx),
+        id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
+            emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
         }
         id if id == prelude_ids::DEBUG_STDIN_READ_ALL => {
             if !args.is_empty() {
@@ -2012,6 +2181,30 @@ fn emit_vector_set_intrinsic(
         else_body,
     });
     instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
+}
+
+/// Internal collect helper:
+/// `__vector_set_in_place(vec: Vector<T>, i: Int, val: T) -> Vector<T>`
+///
+/// Mutates `vec[i]` directly with `array.set` and returns the same vector ref.
+fn emit_vector_set_in_place_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    assert_eq!(args.len(), 3, "__vector_set_in_place expects 3 args");
+
+    // array.set expects: arr, idx(i32), val
+    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64);
+    instrs.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
+    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
+
+    // Return the same vector reference.
+    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
     instrs
 }
 
@@ -2688,6 +2881,231 @@ fn atom_produces_value(atom: &Atom) -> bool {
 
 fn global_func_trampoline_sym(func_id: FuncId) -> String {
     format!("{}__closure", user_func_sym(func_id))
+}
+
+fn typed_closure_trampoline_sym(func_id: FuncId) -> String {
+    format!("{}__typed_closure", user_func_sym(func_id))
+}
+
+// ─── Stage 9.6: Typed Closure Specialization ─────────────────────────────────
+
+/// Collect all functions that appear in `AMakeClosure` nodes with fully
+/// concrete (non-generic) param and return types.  These are the functions
+/// for which we emit typed closure structs and typed trampolines.
+fn collect_concrete_func_signatures(
+    anf: &AnfModule,
+) -> std::collections::HashMap<FuncId, (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType)>
+{
+    let mut sigs = std::collections::HashMap::new();
+    for func in &anf.functions {
+        collect_concrete_sigs_expr(&func.body, anf, &mut sigs);
+    }
+    sigs
+}
+
+fn collect_concrete_sigs_expr(
+    expr: &AnfExpr,
+    anf: &AnfModule,
+    sigs: &mut std::collections::HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
+) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_concrete_sigs_op(op, anf, sigs);
+            collect_concrete_sigs_expr(body, anf, sigs);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_concrete_sigs_op(
+    op: &AnfOp,
+    anf: &AnfModule,
+    sigs: &mut std::collections::HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
+) {
+    match op {
+        AnfOp::AMakeClosure { func_id, .. } => {
+            if let Some(func) = anf.functions.iter().find(|f| f.func_id == *func_id) {
+                if func.param_tys.iter().all(is_concrete_mono_type)
+                    && is_concrete_mono_type(&func.return_ty)
+                {
+                    sigs.insert(*func_id, (func.param_tys.clone(), func.return_ty.clone()));
+                }
+            }
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_concrete_sigs_expr(then_branch, anf, sigs);
+            collect_concrete_sigs_expr(else_branch, anf, sigs);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_concrete_sigs_expr(&arm.body, anf, sigs);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_concrete_sigs_expr(body, anf, sigs);
+        }
+        _ => {}
+    }
+}
+
+/// Build the WAT `FuncType` definition for a typed closure func type.
+/// e.g. `(type $closurefunc_i64_i64_i64 (func (param (ref null $ClosureEnv)) (param i64) (param i64) (result i64)))`
+fn emit_typed_closurefunc_def(
+    params: &[crate::types::ty::MonoType],
+    ret: &crate::types::ty::MonoType,
+    type_env: &TypeEnv,
+) -> crate::wasm::ir::TypeDef {
+    let sym = typed_closurefunc_sym(params, ret);
+    let mut wasm_params = vec![ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
+    }];
+    wasm_params.extend(params.iter().map(|p| mono_to_valtype(p, type_env)));
+    let results = mono_result_types(ret, type_env);
+    crate::wasm::ir::TypeDef::FuncType {
+        name: sym,
+        params: wasm_params,
+        results,
+    }
+}
+
+/// Build the WAT `Struct` definition for a typed closure struct.
+/// e.g. `(type $closure_i64_i64_i64 (struct (field $env (ref null $ClosureEnv)) (field $func (ref null $closurefunc_i64_i64_i64))))`
+fn emit_typed_closure_struct_def(
+    params: &[crate::types::ty::MonoType],
+    ret: &crate::types::ty::MonoType,
+) -> crate::wasm::ir::TypeDef {
+    let closurefunc_sym = typed_closurefunc_sym(params, ret);
+    let closure_sym = typed_closure_struct_sym(params, ret);
+    // Field layout mirrors the universal $Closure struct:
+    //   field 0 = func_ref (ref null $closurefunc_...)  ← pushed first in struct.new
+    //   field 1 = env      (ref null $ClosureEnv)       ← pushed second in struct.new
+    // This allows emit_make_closure to push funcref then env (matching struct field order),
+    // and emit_closure_call to do struct.get 1 (env) then struct.get 0 (funcref) for call_ref.
+    crate::wasm::ir::TypeDef::Struct {
+        name: closure_sym,
+        fields: vec![
+            crate::wasm::ir::FieldDef {
+                name: Some("func_ref".to_string()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(closurefunc_sym),
+                },
+            },
+            crate::wasm::ir::FieldDef {
+                name: Some("env".to_string()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
+                },
+            },
+        ],
+    }
+}
+
+/// Emit a typed closure trampoline for `func`.
+///
+/// The trampoline signature is:
+///   `(param (ref null $ClosureEnv)) (param p0_ty) (param p1_ty) ... (result ret_ty)`
+///
+/// It directly passes concrete args to the underlying user function, then
+/// loads captures from the env array.  No anyref boxing/unboxing.
+fn emit_typed_closure_trampoline(
+    func: &AnfFunctionDef,
+    capture_count: usize,
+    params: &[crate::types::ty::MonoType],
+    ret: &crate::types::ty::MonoType,
+    type_env: &TypeEnv,
+) -> FuncDef {
+    let mut trampoline_params = vec![ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
+    }];
+    trampoline_params.extend(params.iter().map(|p| mono_to_valtype(p, type_env)));
+
+    let mut body = Vec::new();
+
+    // Push concrete args (params 1..N in the trampoline — param 0 is env).
+    for i in 0..params.len() {
+        body.push(crate::wasm::ir::Instr::LocalGet((i + 1) as u32));
+    }
+
+    // Load captures from env (param 0).
+    for capture_idx in 0..capture_count {
+        body.push(crate::wasm::ir::Instr::LocalGet(0));
+        body.push(crate::wasm::ir::Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
+        });
+        body.push(crate::wasm::ir::Instr::I32Const(capture_idx as i32));
+        body.push(crate::wasm::ir::Instr::ArrayGet(T_CLOSURE_ENV.to_string()));
+    }
+
+    body.push(crate::wasm::ir::Instr::Call(user_func_sym(func.func_id)));
+
+    // No result coercion needed — trampoline returns same type as user func.
+    if matches!(
+        ret,
+        crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never
+    ) {
+        // Void functions: produce an i32 0 as the functype result (closurefunc for void
+        // still returns nothing, handled by `mono_result_types`).
+    }
+
+    let results = mono_result_types(ret, type_env);
+
+    FuncDef {
+        name: typed_closure_trampoline_sym(func.func_id),
+        params: trampoline_params,
+        results,
+        locals: Vec::new(),
+        body,
+    }
+}
+
+/// Like [`build_user_sig_map`] but maps concrete `MonoType::Function` params
+/// to typed closure struct ValTypes instead of the universal `$Closure`.
+fn build_user_sig_map_typed(
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
+    concrete_func_sigs: &HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
+) -> HashMap<FuncId, FuncSigInfo> {
+    anf.functions
+        .iter()
+        .map(|func| {
+            let capture_locals = closure_capture_layouts
+                .get(&func.func_id)
+                .cloned()
+                .unwrap_or_default();
+            let mut params = func
+                .param_tys
+                .iter()
+                .map(|ty| mono_to_valtype_for_param(ty, type_env, concrete_func_sigs))
+                .collect::<Vec<_>>();
+            params.extend(vec![ValType::Anyref; capture_locals.len()]);
+            let result = match &func.return_ty {
+                crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
+                other => Some(mono_to_valtype(other, type_env)),
+            };
+            (func.func_id, FuncSigInfo { params, result })
+        })
+        .collect()
 }
 
 #[cfg(test)]

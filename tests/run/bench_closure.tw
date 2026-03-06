@@ -1,0 +1,17 @@
+// Expected output:
+//   499500
+
+// Closure specialization benchmark: fold calls a `fn(Int, Int) Int` closure
+// per element. Without typed closures each call boxes two i64 args into an
+// anyref array and unboxes the i64 result (multiple heap allocs per iter).
+// With typed closures the call_ref uses concrete i64 params — no boxing at all.
+
+fn fold(xs: Vector<Int>, init: Int, f: fn(Int, Int) Int) Int {
+  result := init
+  for x in xs { result = f(result, x) }
+  result
+}
+
+xs := collect i in range(1000) { i }
+total := fold(xs, 0, fn(acc, x) { acc + x })
+println("${total}")

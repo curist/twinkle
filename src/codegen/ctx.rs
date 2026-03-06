@@ -22,6 +22,11 @@ pub struct FuncSigInfo {
 
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
+    /// Tracks `MonoType::Function` for locals that hold typed closures.
+    /// Populated for function-typed params and for `AMakeClosure` let-bindings
+    /// with concrete signatures.  Used at call sites to select the typed
+    /// `call_ref` path instead of the universal anyref boxing path.
+    pub local_mono: HashMap<LocalId, MonoType>,
     module_globals: HashMap<LocalId, String>,
     pub label_stack: Vec<(Label, Label)>,
     pub loop_result_stack: Vec<Option<ValType>>,
@@ -30,6 +35,9 @@ pub struct EmitCtx<'a> {
     pub type_env: &'a TypeEnv,
     pub prelude: &'a PreludeMap,
     user_funcs: &'a HashMap<FuncId, FuncSigInfo>,
+    /// Functions with fully-concrete signatures that appear in `AMakeClosure`
+    /// nodes.  Maps `func_id → (real_param_types, return_type)`.
+    pub concrete_func_sigs: HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -40,6 +48,7 @@ impl<'a> EmitCtx<'a> {
     ) -> Self {
         Self {
             local_map: HashMap::new(),
+            local_mono: HashMap::new(),
             module_globals: HashMap::new(),
             label_stack: Vec::new(),
             loop_result_stack: Vec::new(),
@@ -48,7 +57,21 @@ impl<'a> EmitCtx<'a> {
             type_env,
             prelude,
             user_funcs,
+            concrete_func_sigs: HashMap::new(),
         }
+    }
+
+    /// Install the concrete-function-signature map for Stage 9.6 typed
+    /// closure emission.  Must be called before any local setup or emission.
+    pub fn set_concrete_func_sigs(&mut self, sigs: HashMap<FuncId, (Vec<MonoType>, MonoType)>) {
+        self.concrete_func_sigs = sigs;
+    }
+
+    /// Return the concrete `(params, ret)` for `func_id` if it has a fully
+    /// concrete signature that qualifies for typed closure emission, or `None`
+    /// if the universal anyref path should be used.
+    pub fn concrete_func_sig(&self, func_id: FuncId) -> Option<&(Vec<MonoType>, MonoType)> {
+        self.concrete_func_sigs.get(&func_id)
     }
 
     pub fn setup_locals(&mut self, func: &AnfFunctionDef) -> Vec<ValType> {
@@ -61,17 +84,19 @@ impl<'a> EmitCtx<'a> {
         extra_params: &[(LocalId, ValType)],
     ) -> Vec<ValType> {
         self.local_map.clear();
+        self.local_mono.clear();
         self.label_stack.clear();
         self.loop_result_stack.clear();
         self.next_label_id = 0;
         let mut next_idx = 0_u32;
 
         for (i, local_id) in func.params.iter().enumerate() {
-            let ty = func
-                .param_tys
-                .get(i)
-                .map(|t| mono_to_valtype(t, self.type_env))
-                .unwrap_or(ValType::Anyref);
+            let mono_ty = func.param_tys.get(i).cloned().unwrap_or(MonoType::Void);
+            // Track function-typed params so call sites can use typed call_ref.
+            if matches!(&mono_ty, MonoType::Function { .. }) {
+                self.local_mono.insert(*local_id, mono_ty.clone());
+            }
+            let ty = mono_to_valtype_for_param(&mono_ty, self.type_env, &self.concrete_func_sigs);
             self.local_map.insert(*local_id, (next_idx, ty));
             next_idx += 1;
         }
@@ -149,6 +174,20 @@ impl<'a> EmitCtx<'a> {
 
                 if !self.local_map.contains_key(local) {
                     let local_ty = self.infer_op_valtype(op).unwrap_or(ValType::Anyref);
+                    // For AMakeClosure with a concrete func signature, track the
+                    // MonoType::Function so downstream closure call sites can use
+                    // the typed call_ref path.
+                    if let AnfOp::AMakeClosure { func_id, .. } = op.as_ref() {
+                        if let Some((params, ret)) = self.concrete_func_sigs.get(func_id) {
+                            self.local_mono.insert(
+                                *local,
+                                MonoType::Function {
+                                    params: params.clone(),
+                                    ret: Box::new(ret.clone()),
+                                },
+                            );
+                        }
+                    }
                     self.local_map.insert(*local, (*next_idx, local_ty.clone()));
                     wasm_locals.push(local_ty);
                     *next_idx += 1;
@@ -260,7 +299,14 @@ impl<'a> EmitCtx<'a> {
             }
             AnfOp::ABinOp { op, operand_ty, .. } => Some(binop_result_ty(*op, *operand_ty)),
             AnfOp::AUnOp { op, operand_ty, .. } => Some(unop_result_ty(*op, *operand_ty)),
-            AnfOp::AMakeClosure { .. } => Some(ref_named(true, T_CLOSURE)),
+            AnfOp::AMakeClosure { func_id, .. } => {
+                if let Some((params, ret)) = self.concrete_func_sigs.get(func_id) {
+                    let sym = typed_closure_struct_sym(params, ret);
+                    Some(ref_named(true, &sym))
+                } else {
+                    Some(ref_named(true, T_CLOSURE))
+                }
+            }
             AnfOp::ARecord { type_id, .. } | AnfOp::ARecordUpdate { type_id, .. } => {
                 Some(ref_named(true, &user_record_type_sym(*type_id)))
             }
@@ -302,7 +348,14 @@ impl<'a> EmitCtx<'a> {
                     .get(func_id)
                     .and_then(|sig| sig.result.clone())
             }
-            Atom::ALocal(_) => Some(ValType::Anyref),
+            Atom::ALocal(local_id) => {
+                if let Some(MonoType::Function { ret, .. }) = self.local_mono.get(local_id) {
+                    if is_concrete_mono_type(ret) {
+                        return Some(mono_to_valtype(ret, self.type_env));
+                    }
+                }
+                Some(ValType::Anyref)
+            }
             _ => None,
         }
     }
@@ -426,6 +479,7 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
     match func_id {
         id if id == ids::STRING_TO_STRING => Some(named_ref(T_STRING)),
         id if id == ids::VECTOR_PUSH => Some(named_ref(T_ARRAY)),
+        id if id == ids::VECTOR_SET_IN_PLACE => Some(named_ref(T_ARRAY)),
         id if id == ids::VECTOR_BUILDER_FREEZE => Some(named_ref(T_ARRAY)),
         id if id == ids::DEBUG_STDIN_READ_ALL => Some(named_ref(T_STRING)),
         id if id == ids::DEBUG_READ_FILE => Some(ValType::Anyref),
@@ -529,6 +583,97 @@ fn ref_named(nullable: bool, type_sym: &str) -> ValType {
 
 pub fn user_record_type_sym(type_id: TypeId) -> String {
     format!("UserRecord_{}", type_id.0)
+}
+
+/// Returns true if `ty` has no generic type variables — i.e., it is
+/// a fully-instantiated concrete type that can be used in typed closure
+/// specialization.
+pub fn is_concrete_mono_type(ty: &MonoType) -> bool {
+    match ty {
+        MonoType::Int
+        | MonoType::Float
+        | MonoType::Bool
+        | MonoType::String
+        | MonoType::Void
+        | MonoType::Never => true,
+        MonoType::Vector(inner) => is_concrete_mono_type(inner),
+        MonoType::Dict(k, v) => is_concrete_mono_type(k) && is_concrete_mono_type(v),
+        MonoType::Function { params, ret } => {
+            params.iter().all(is_concrete_mono_type) && is_concrete_mono_type(ret)
+        }
+        MonoType::Named { args, .. } => args.iter().all(is_concrete_mono_type),
+        MonoType::Var(_) | MonoType::MetaVar(_) => false,
+    }
+}
+
+/// Map a `MonoType` to a short tag string for use in mangled type symbols.
+/// e.g. `Int` → `"i64"`, `String` → `"str"`, `Vector<Int>` → `"arr"`.
+pub fn mono_to_type_tag(ty: &MonoType) -> String {
+    match ty {
+        MonoType::Int => "i64".to_string(),
+        MonoType::Float => "f64".to_string(),
+        MonoType::Bool => "i32".to_string(),
+        MonoType::String => "str".to_string(),
+        MonoType::Void | MonoType::Never => "void".to_string(),
+        MonoType::Vector(_) => "arr".to_string(),
+        MonoType::Dict(_, _) => "dict".to_string(),
+        MonoType::Function { .. } => "cls".to_string(),
+        MonoType::Named { .. } => "ref".to_string(),
+        MonoType::Var(_) | MonoType::MetaVar(_) => "any".to_string(),
+    }
+}
+
+/// Symbol for a typed closure func type with the given signature.
+/// e.g. `[Int, Int] -> Int` → `"closurefunc_i64_i64_i64"`.
+/// Zero-param functions use the prefix `"closurefunc_nil__<ret>"`.
+pub fn typed_closurefunc_sym(params: &[MonoType], ret: &MonoType) -> String {
+    if params.is_empty() {
+        format!("closurefunc_nil__{}", mono_to_type_tag(ret))
+    } else {
+        let param_tags = params
+            .iter()
+            .map(mono_to_type_tag)
+            .collect::<Vec<_>>()
+            .join("_");
+        format!("closurefunc_{}_{}", param_tags, mono_to_type_tag(ret))
+    }
+}
+
+/// Symbol for a typed closure struct with the given signature.
+/// e.g. `[Int, Int] -> Int` → `"closure_i64_i64_i64"`.
+pub fn typed_closure_struct_sym(params: &[MonoType], ret: &MonoType) -> String {
+    if params.is_empty() {
+        format!("closure_nil__{}", mono_to_type_tag(ret))
+    } else {
+        let param_tags = params
+            .iter()
+            .map(mono_to_type_tag)
+            .collect::<Vec<_>>()
+            .join("_");
+        format!("closure_{}_{}", param_tags, mono_to_type_tag(ret))
+    }
+}
+
+/// Like [`mono_to_valtype`] but maps a concrete `MonoType::Function` to the
+/// typed closure struct ValType instead of the universal `$Closure`.
+///
+/// Falls back to [`mono_to_valtype`] when `concrete_func_sigs` is empty
+/// (universal / non-typed-closure path) or when the function type contains
+/// generic variables.
+pub fn mono_to_valtype_for_param(
+    mono_ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> ValType {
+    if !concrete_func_sigs.is_empty() {
+        if let MonoType::Function { params, ret } = mono_ty {
+            if is_concrete_mono_type(mono_ty) {
+                let sym = typed_closure_struct_sym(params, ret);
+                return ref_named(true, &sym);
+            }
+        }
+    }
+    mono_to_valtype(mono_ty, type_env)
 }
 
 fn collect_pattern_locals_typed(

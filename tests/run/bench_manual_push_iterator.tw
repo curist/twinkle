@@ -1,0 +1,20 @@
+// Expected output:
+//   999000
+
+fn my_range(n: Int) Iterator<Int> {
+  Iterator.unfold(0, fn(i: Int) {
+    if i < n { UnfoldStep.Yield(i, i + 1) }
+    else { UnfoldStep.Done }
+  })
+}
+
+xs: Vector<Int> = []
+for x in my_range(1000) {
+  xs = xs.push(x * 2)
+}
+
+sum := 0
+for x in xs {
+  sum = sum + x
+}
+println("${sum}")

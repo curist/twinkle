@@ -27,8 +27,7 @@ fn fixture(name: &str) -> String {
 
 /// Build WAT **without** monomorphization (pre-9.5 behaviour).
 fn build_wat_no_mono(file_path: &str) -> String {
-    let (core_module, _) =
-        twinkle::module::compile_entry(file_path).expect("compile failed");
+    let (core_module, _) = twinkle::module::compile_entry(file_path).expect("compile failed");
     let anf = lower_module(&core_module);
     let optimized = optimize_module(anf);
     let user_module = emit_user_module(&optimized, &core_module.type_env, &HashMap::new());
@@ -40,8 +39,7 @@ fn build_wat_no_mono(file_path: &str) -> String {
 
 /// Build WAT **with** monomorphization (post-9.5 behaviour).
 fn build_wat_with_mono(file_path: &str) -> String {
-    let (core_module, _) =
-        twinkle::module::compile_entry(file_path).expect("compile failed");
+    let (core_module, _) = twinkle::module::compile_entry(file_path).expect("compile failed");
     let core_module = monomorphize(core_module);
     let anf = lower_module(&core_module);
     let optimized = optimize_module(anf);
@@ -92,7 +90,6 @@ fn count_user_funcs(wat: &str) -> usize {
         .filter(|l| l.trim().starts_with("(func $user__func_"))
         .count()
 }
-
 
 struct Report {
     label: &'static str,
