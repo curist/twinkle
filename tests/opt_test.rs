@@ -819,7 +819,7 @@ fn opt_vector_set_precise_call_counts() {
 
 #[test]
 fn opt_vector_set_runtime_semantics_matrix() {
-    let matrix: [(&str, &[&str]); 29] = [
+    let matrix: [(&str, &[&str]); 30] = [
         ("tests/opt/vector_push_then_set.tw", &["99"]),
         ("tests/opt/vector_set_unique.tw", &["99"]),
         ("tests/opt/vector_set_param.tw", &["99"]),
@@ -848,6 +848,10 @@ fn opt_vector_set_runtime_semantics_matrix() {
             "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
             &["1", "99"],
         ),
+        (
+            "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
+            &["1", "99"],
+        ),
         ("tests/opt/vector_set_stored_in_option_variant.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_safe_set_call.tw", &["7", "99"]),
         ("tests/opt/vector_set_after_concat.tw", &["4", "99"]),
@@ -865,6 +869,29 @@ fn opt_vector_set_init_alias_capture_escape_in_branch_wasm_semantics() {
     // must taint `xs`, preventing in-place rewrite.
     assert_runtime_output_wasm(
         "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
+        &["1", "99"],
+    );
+}
+
+#[test]
+fn opt_vector_set_cell_closure_loop_branch_escape_not_rewritten() {
+    // This fixture includes `collect range(...)` which can contribute legitimate
+    // VECTOR_SET_IN_PLACE calls from collect lowering. Guard only the user update
+    // path: VECTOR_SET_UNSAFE for xs[0] must remain.
+    let module = compile_opt("tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_SET_UNSAFE),
+        1,
+        "Expected one VECTOR_SET_UNSAFE for user xs[0] update in stress fixture"
+    );
+}
+
+#[test]
+fn opt_vector_set_cell_closure_loop_branch_escape_wasm_semantics() {
+    // Stress case: loop + branch + Cell + closure-captured init alias.
+    // Must not rewrite vector set in place.
+    assert_runtime_output_wasm(
+        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
         &["1", "99"],
     );
 }

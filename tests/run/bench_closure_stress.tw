@@ -1,0 +1,31 @@
+// Expected output:
+//   1649835952
+
+// Stress benchmark for closure dispatch specialization with:
+// - collect i in range(n) { i }
+// - fold over a closure callback with richer arithmetic
+// - Cell usage + loop mutation to keep mixed runtime paths active
+
+fn fold(xs: Vector<Int>, init: Int, f: fn(Int, Int) Int) Int {
+  acc := init
+  for x in xs { acc = f(acc, x) }
+  acc
+}
+
+fn stress(n: Int) Int {
+  xs := collect i in range(n) { i }
+  slot := Cell.new(0)
+
+  for i in xs {
+    if i % 2 == 0 {
+      Cell.set(slot, Cell.get(slot) + 1)
+    }
+  }
+
+  even_count := Cell.get(slot)
+  fold(xs, even_count, fn(acc, x) {
+    (acc * 31 + (x * x + 3 * x + 7)) % 2147483647
+  })
+}
+
+println("${stress(10000)}")

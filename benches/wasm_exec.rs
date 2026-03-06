@@ -88,27 +88,33 @@ fn bench_wasm_exec(c: &mut Criterion) {
 ///   with_typed_closure — Stage 9.5 + 9.6: typed call_ref, no arg boxing
 fn bench_closure_exec(c: &mut Criterion) {
     let engine = build_engine().expect("failed to build Wasmtime engine");
-    let path = fixture("bench_closure.tw");
+    let cases = [
+        ("bench_closure", "bench_closure.tw"),
+        ("bench_closure_stress", "bench_closure_stress.tw"),
+    ];
 
-    let bytes_no_mono = build_wasm_no_mono(&path);
-    let bytes_with_mono = build_wasm_with_mono(&path);
-    let bytes_typed = build_wasm_with_typed_closure(&path);
+    for (label, file) in cases {
+        let path = fixture(file);
+        let bytes_no_mono = build_wasm_no_mono(&path);
+        let bytes_with_mono = build_wasm_with_mono(&path);
+        let bytes_typed = build_wasm_with_typed_closure(&path);
 
-    let module_no_mono = Module::new(&engine, &bytes_no_mono).expect("module (no mono)");
-    let module_with_mono = Module::new(&engine, &bytes_with_mono).expect("module (with mono)");
-    let module_typed = Module::new(&engine, &bytes_typed).expect("module (typed closure)");
+        let module_no_mono = Module::new(&engine, &bytes_no_mono).expect("module (no mono)");
+        let module_with_mono = Module::new(&engine, &bytes_with_mono).expect("module (with mono)");
+        let module_typed = Module::new(&engine, &bytes_typed).expect("module (typed closure)");
 
-    let mut group = c.benchmark_group("bench_closure");
-    group.bench_function(BenchmarkId::new("exec", "no_mono"), |b| {
-        b.iter(|| execute_module(&engine, &module_no_mono).expect("execution failed"))
-    });
-    group.bench_function(BenchmarkId::new("exec", "with_mono"), |b| {
-        b.iter(|| execute_module(&engine, &module_with_mono).expect("execution failed"))
-    });
-    group.bench_function(BenchmarkId::new("exec", "with_typed_closure"), |b| {
-        b.iter(|| execute_module(&engine, &module_typed).expect("execution failed"))
-    });
-    group.finish();
+        let mut group = c.benchmark_group(label);
+        group.bench_function(BenchmarkId::new("exec", "no_mono"), |b| {
+            b.iter(|| execute_module(&engine, &module_no_mono).expect("execution failed"))
+        });
+        group.bench_function(BenchmarkId::new("exec", "with_mono"), |b| {
+            b.iter(|| execute_module(&engine, &module_with_mono).expect("execution failed"))
+        });
+        group.bench_function(BenchmarkId::new("exec", "with_typed_closure"), |b| {
+            b.iter(|| execute_module(&engine, &module_typed).expect("execution failed"))
+        });
+        group.finish();
+    }
 }
 
 /// Compare optimized collect lowering (Stage 10.2 builder path) against a
