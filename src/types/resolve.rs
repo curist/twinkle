@@ -268,11 +268,10 @@ impl Resolver {
             let ty = if let Some(param_ty) = &param.ty {
                 self.resolve_type_with_vars(param_ty, &type_params)?
             } else {
-                // No type annotation - not allowed in Stage 2
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "type inference for function parameters",
                     span: param.span,
-                    note: "All function parameters must have type annotations in Stage 2"
+                    note: "Function declaration parameters must have type annotations"
                         .to_string(),
                 });
                 return Err(());

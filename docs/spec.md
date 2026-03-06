@@ -175,9 +175,12 @@ fn f(x: Int, y: Int) Int { x + y }
 Functions cannot mutate caller-visible ordinary values via assignment syntax.
 All assignment-like updates create new values and rebind local names. Side effects are explicit (e.g. `print`, `println`, `error`, `Cell.set`, `Cell.update`).
 
+Function declaration parameters must be explicitly annotated (`fn f(x: Int) ...`).
 Parameters are ordinary local bindings and may be rebound within the function body (see §7.3).
 
 The return type is written after the parameter list (no `->`). It may be omitted when inference suffices; when omitted, the function body’s value determines the return type.
+
+For **function expressions** (`fn (...) { ... }`) used as callbacks, parameter and return types may be omitted when a contextual function type is available (for example, from a function parameter type or an annotated binding). If explicit callback annotations are present, they must agree with that contextual type.
 
 Functions form **lexical scope boundaries**: names defined outside a function cannot be rebound inside the function.
 

@@ -14,3 +14,10 @@ fn apply<A, B>(f: fn(A) B, x: A) B {
 }
 
 doubled := apply(fn(n: Int) Int { n * 2 }, 5)
+
+// Callback function expression: infer param + return from expected type.
+doubled_inferred := apply(fn(n) { n * 2 }, 5)
+
+// Callback function expression: infer from annotated binding context.
+inc: fn(Int) Int = fn(n) { n + 1 }
+three := inc(2)

@@ -111,8 +111,10 @@ ParamList =
 Param =
     Identifier [ ":" Type ] ;
 (* Implementation note:
-   - Param types are optional; when omitted, bidirectional type checking
-     must infer them from usage context. *)
+   - In FunctionDecl, parameter type annotations are required by the
+     language rules (enforced during name/type analysis).
+   - In FnExpr (callbacks), parameter annotations may be omitted when
+     bidirectional checking provides an expected function type. *)
 
 (* ===== Function Expressions (values) ===== *)
 

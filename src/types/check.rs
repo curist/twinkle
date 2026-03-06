@@ -397,7 +397,7 @@ impl TypeChecker {
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "lambda with unannotated parameters",
                         span,
-                        note: "All lambda parameters must have type annotations in Stage 5"
+                        note: "Lambda parameters can be inferred only when a contextual function type is available; add parameter annotations here"
                             .to_string(),
                     });
                     return Err(());
@@ -676,20 +676,31 @@ impl TypeChecker {
                     }
                     let mut param_types = Vec::new();
                     for (p, exp_ty) in fe.params.iter().zip(expected_params.iter()) {
-                        let ty = match &p.ty {
-                            Some(ann) => self.resolve_type(ann)?,
-                            None => exp_ty.clone(),
-                        };
-                        param_types.push(ty);
+                        match &p.ty {
+                            Some(ann) => {
+                                let ann_ty = self.resolve_type(ann)?;
+                                self.unify(&ann_ty, exp_ty, p.span)?;
+                                param_types.push(self.zonk(exp_ty));
+                            }
+                            None => param_types.push(exp_ty.clone()),
+                        }
                     }
+                    let ret_ty = match &fe.return_type {
+                        Some(ann) => {
+                            let ann_ret = self.resolve_type(ann)?;
+                            self.unify(&ann_ret, expected_ret.as_ref(), ann.span())?;
+                            self.zonk(expected_ret.as_ref())
+                        }
+                        None => expected_ret.as_ref().clone(),
+                    };
                     self.local_env.push_scope();
                     for (p, ty) in fe.params.iter().zip(&param_types) {
                         self.local_env.bind(p.name.clone(), ty.clone());
                     }
                     let saved = self.current_function_ret.take();
-                    self.current_function_ret = Some(*expected_ret.clone());
+                    self.current_function_ret = Some(ret_ty.clone());
                     let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
-                    let result = self.check_expr(&fe.body, expected_ret);
+                    let result = self.check_expr(&fe.body, &ret_ty);
                     self.local_env.pop_scope();
                     self.current_function_ret = saved;
                     self.at_module_scope = saved_scope;
@@ -788,12 +799,31 @@ impl TypeChecker {
         match op {
             // Arithmetic: Int × Int → Int, Float × Float → Float
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                let left_ty = self.synth_expr(left)?;
-                let right_ty = self.synth_expr(right)?;
+                let left_raw = self.synth_expr(left)?;
+                let right_raw = self.synth_expr(right)?;
+                let left_ty = self.zonk(&left_raw);
+                let right_ty = self.zonk(&right_raw);
 
                 match (&left_ty, &right_ty) {
                     (MonoType::Int, MonoType::Int) => Ok(MonoType::Int),
                     (MonoType::Float, MonoType::Float) => Ok(MonoType::Float),
+                    // Allow numeric constraints to solve metas during inference
+                    (MonoType::MetaVar(id), MonoType::Int) => {
+                        self.solve_meta(*id, MonoType::Int, left.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    (MonoType::Int, MonoType::MetaVar(id)) => {
+                        self.solve_meta(*id, MonoType::Int, right.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    (MonoType::MetaVar(id), MonoType::Float) => {
+                        self.solve_meta(*id, MonoType::Float, left.span)?;
+                        Ok(MonoType::Float)
+                    }
+                    (MonoType::Float, MonoType::MetaVar(id)) => {
+                        self.solve_meta(*id, MonoType::Float, right.span)?;
+                        Ok(MonoType::Float)
+                    }
                     _ => {
                         self.errors.push(TypeError::TypeMismatch {
                             expected: left_ty.clone(),

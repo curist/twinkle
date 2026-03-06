@@ -1,0 +1,13 @@
+// Expected output:
+//   332833500
+
+// Generic fold using inferred callback parameter/return types from context.
+fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
+  acc := init
+  for x in xs { acc = f(acc, x) }
+  acc
+}
+
+nums := collect i in range(1000) { i }
+total := fold(nums, 0, fn(acc, x) { acc + x * x })
+println("${total}")

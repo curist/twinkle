@@ -260,6 +260,11 @@ fn generic_user_funcs() {
     check("tests/run/generic_user_funcs.tw");
 }
 
+#[test]
+fn fold_inferred_callback() {
+    check("tests/run/fold_inferred_callback.tw");
+}
+
 // --- Trap tests ---
 
 #[test]

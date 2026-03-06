@@ -1,0 +1,7 @@
+// Error: callback annotations must agree with the expected function type.
+
+fn apply<A, B>(f: fn(A) B, x: A) B {
+    f(x)
+}
+
+value := apply(fn(n: String) Int { 1 }, 5)
