@@ -25,9 +25,9 @@ Three internal states, not visible to users:
 
 | State | Meaning |
 |---|---|
-| **Unique** | Compiler believes this value has exactly one owner |
-| **Shared** | Multiple references may exist, or unknown origin |
-| **Escaped** | Definitely not safe for in-place update |
+| **Unique** | Compiler has proven the object has exactly one live reference at this program point |
+| **Shared** | Multiple live references may exist, or origin unknown |
+| **Escaped** | The optimizer must assume aliases may exist outside the current analysis scope |
 
 ### Fresh producers (-> Unique)
 
@@ -39,11 +39,19 @@ Three internal states, not visible to users:
 - `VECTOR_MAKE(n, fill)` — fresh preallocated array
 - `DICT_NEW()` — fresh empty dict
 
+### Uniqueness transfer
+
+Assignment `x := y` does **not** create aliasing if `y` dies immediately afterward.
+The rule: `AAssign(r = v)` transfers uniqueness from `v` to `r` if `v` has no
+other live aliases at that point. This avoids being overly pessimistic about
+simple rebindings like `x := make_array(); y := x; use(y)`.
+
 ### Uniqueness killers (-> Shared or Escaped)
 
-- Assigning the same value to multiple live locals (aliasing)
+- Assigning the same value to multiple **live** locals (aliasing — both still reachable)
 - Closure capture (`AMakeClosure { free_vars: [..., x, ...] }`)
-- Passing to unknown/external/impure function
+- Passing to any function not in the known-safe "no-retain" set (even pure
+  functions may store the reference internally)
 - Storing inside another live container
 - Return from function
 - Branch merge where both sides produce the same local (conservative)
@@ -59,6 +67,11 @@ If a consuming use feeds a known COW operation, and `x` is Unique, the
 compiler may lower it to a destructive in-place operation.
 
 This is the single most important concept in the pass.
+
+**v1 scope:** Last-use detection is intra-block (straight-line) only. Across
+branches (`AIf`, `AMatch`) the value is conservatively considered Shared.
+This avoids incorrect rewrites when a value is consumed in one branch but
+observed in another.
 
 ## Two Rewrite Strategies
 
@@ -112,7 +125,11 @@ inherits uniqueness from the COW operation's result.
 The analysis must verify:
 - `L0` is Unique at loop entry
 - Every use of `L0` inside the loop follows the consume-reassign pattern
-- `L0` is not used elsewhere in the loop body (between iterations)
+- `L0` is not read between the consuming call and the assign (e.g.,
+  `tmp = push(xs, v); print(xs); xs = tmp` is illegal — `xs` is still observed)
+- Inside the loop, `L0` **only** appears as the base argument of the COW
+  operation — no other reads (e.g., `xs.length` would prevent rewriting,
+  because builder rewriting changes the timing of observable state)
 - `L0` is not captured or escaped inside the loop
 
 When verified, the pass rewrites:
@@ -140,13 +157,21 @@ Initial set:
 | `VECTOR_SET` (39) | `Vector.set(xs, i, v)` | PointUpdate | 0 |
 | `VECTOR_SET_UNSAFE` (12) | `Vector.set_unsafe(xs, i, v)` | PointUpdate | 0 |
 | `VECTOR_PUSH` (11) | `Vector.push(xs, v)` | Growth | 0 |
-| `VECTOR_CONCAT` (25) | `Vector.concat(a, b)` | Growth | 0 |
 | `DICT_SET` (13) | `Dict.set(d, k, v)` | Growth | 0 |
 | `DICT_REMOVE` (29) | `Dict.remove(d, k)` | Growth | 0 |
+
+**Deferred:** `VECTOR_CONCAT` is excluded from v1. `concat(a, b)` requires
+proving `b` is not a view into `a`, which needs alias reasoning beyond the
+scope of v1. Add after alias tracking improves.
 
 Record updates (`ARecordUpdate`) are already handled by the existing
 `annotate_in_place` pass in `src/opt/liveness.rs` and would be subsumed
 by the general pass.
+
+**Note on tree/hash structures (dicts):** For persistent hash maps that use
+path-copy updates, in-place mutation when the root is Unique means reusing
+nodes along the update path rather than mutating the root structure directly.
+The uniqueness guarantee on the root is sufficient for safety.
 
 ## Analysis: What to Compute on ANF
 
@@ -206,6 +231,11 @@ The pass produces rewritten ANF where eligible COW operations are replaced
 with their in-place variants. The emitter already knows how to emit these
 (e.g., `VECTOR_SET_IN_PLACE` emits `array.set`).
 
+**Invariant:** No pass running after uniqueness may introduce new aliasing
+(e.g., CSE that shares object references, or local duplication). Otherwise
+the uniqueness proofs become invalid. Currently `eliminate_defers` does not
+introduce aliasing, so this holds.
+
 ### Location in codebase
 
 New file: `src/opt/uniqueness.rs`
@@ -264,3 +294,19 @@ a correct special case of point-rewrite-on-unique-value. Phase 5 subsumes it.
 Orthogonal. Typed closures eliminate anyref boxing at call sites.
 Uniqueness optimization eliminates unnecessary copying at update sites.
 They compose cleanly.
+
+## Why Twinkle's IR Makes This Cheap
+
+Most functional compilers must convert to SSA and build def-use graphs to
+recover value lifetimes. Twinkle's ANF + `AAssign` rebinding model already
+encodes lifetime boundaries syntactically:
+
+- `AAssign(x = v)` is an explicit kill point — old `x` is dead here
+- ANF forces every computation to a binding, so lifetime segments are
+  `[definition → assign]`, `[assign → assign]`, etc.
+- The loop accumulator pattern `push(L0, v); assign(L0 = result)` guarantees
+  `push` always consumes the current `L0` without needing phi-node reasoning
+- Last-use detection often reduces to "scan forward until assign"
+
+This means uniqueness inference is **mostly local** — no full SSA or
+interprocedural alias analysis needed for the common patterns.
