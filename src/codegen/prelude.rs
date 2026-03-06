@@ -428,10 +428,6 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::DEBUG_READ_FILE,
-        PreludeEntry::intrinsic("__debug_read_file"),
-    );
-    map.insert(
         prelude_ids::HOST_READ_FILE,
         PreludeEntry::runtime(
             "__host_read_file",
@@ -542,7 +538,6 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
 
-    debug_assert!(map.contains_key(&prelude_ids::DEBUG_READ_FILE));
     debug_assert!(map.contains_key(&prelude_ids::HOST_EXIT));
     map
 }
@@ -561,7 +556,6 @@ mod tests {
             );
         }
         for id in [
-            prelude_ids::DEBUG_READ_FILE.0,
             prelude_ids::VECTOR_GET.0,
             prelude_ids::VECTOR_SET.0,
             prelude_ids::VECTOR_MAKE.0,

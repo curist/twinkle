@@ -12,7 +12,7 @@ use crate::ir::lower::prelude as prelude_ids;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 use super::value::Value;
@@ -896,25 +896,6 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("VECTOR_BUILDER_FREEZE: expected Cell"),
                 };
                 Ok(cell.borrow().clone())
-            }
-            prelude_ids::DEBUG_READ_FILE => {
-                // __debug_read_file(path: String) -> Result<String, String>
-                let path = match &args[0] {
-                    Value::Str(s) => s.clone(),
-                    _ => panic!("__debug_read_file: expected String path"),
-                };
-                match std::fs::read_to_string(&path) {
-                    Ok(contents) => Ok(Value::Variant(
-                        RESULT_TYPE_ID,
-                        0,
-                        vec![Value::Str(contents)],
-                    )), // Ok
-                    Err(err) => Ok(Value::Variant(
-                        RESULT_TYPE_ID,
-                        1,
-                        vec![Value::Str(err.to_string())],
-                    )), // Err
-                }
             }
             prelude_ids::VECTOR_GET => {
                 // VECTOR_GET(vec: Vector<T>, i: Int) -> Option<T>  (safe)

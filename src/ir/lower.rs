@@ -76,9 +76,6 @@ pub mod prelude {
     pub const VECTOR_BUILDER_PUSH: FuncId = FuncId(34); // (Cell<Vector<T>>, T) -> Void
     pub const VECTOR_BUILDER_FREEZE: FuncId = FuncId(35); // (Cell<Vector<T>>) -> Vector<T>
 
-    // Debug/dev-only API (unstable): read UTF-8 file content
-    pub const DEBUG_READ_FILE: FuncId = FuncId(37); // (path: String) -> Result<String, String>
-
     pub const VECTOR_GET: FuncId = FuncId(38); // Vector.get(vec, i) -> Option<T>  (safe)
     pub const VECTOR_SET: FuncId = FuncId(39); // Vector.set(vec, i, val) -> Option<Vector<T>> (safe)
     pub const VECTOR_MAKE: FuncId = FuncId(40); // Vector.make(size: Int, fill: T) -> Vector<T>
@@ -98,7 +95,7 @@ pub mod prelude {
     pub const EPRINTLN: FuncId = FuncId(1008); // eprintln(s: String) -> Void
 
     // Host stdlib bridge intrinsics used by `@std.fs` and `@std.proc`.
-    // Kept outside the fixed 1..=37 prelude range so existing user FuncId
+    // Kept outside the fixed 1..=40 prelude range so existing user FuncId
     // assignments (USER_FUNC_START=41) remain stable.
     pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> String
     pub const HOST_WRITE_FILE: FuncId = FuncId(1002); // (path: String, content: String) -> Void
@@ -207,7 +204,6 @@ impl Lowerer {
         func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
         func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
         func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-        func_table.insert("__debug_read_file".to_string(), prelude::DEBUG_READ_FILE);
         func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
         func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
         func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);

@@ -687,17 +687,6 @@ impl ValueEnv {
             },
         );
 
-        // Debug/dev-only API (unstable)
-        env.builtins.insert(
-            "__debug_read_file".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::String],
-                ret: Box::new(MonoType::Named {
-                    type_id: RESULT_TYPE_ID,
-                    args: vec![MonoType::String, MonoType::String],
-                }),
-            },
-        );
         env.builtins.insert(
             "__host_read_file".to_string(),
             MonoType::Function {
