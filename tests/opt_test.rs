@@ -542,6 +542,12 @@ fn assert_runtime_output(path: &str, expected: &[&str]) {
     );
 }
 
+fn assert_runtime_matrix(matrix: &[(&str, &[&str])]) {
+    for (path, expected) in matrix {
+        assert_runtime_output(path, expected);
+    }
+}
+
 fn assert_runtime_output_wasm(path: &str, expected: &[&str]) {
     let (stdout, stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)
         .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
@@ -818,8 +824,8 @@ fn opt_vector_set_precise_call_counts() {
 }
 
 #[test]
-fn opt_vector_set_runtime_semantics_matrix() {
-    let matrix: [(&str, &[&str]); 30] = [
+fn opt_vector_set_runtime_semantics_core_paths() {
+    let matrix: [(&str, &[&str]); 9] = [
         ("tests/opt/vector_push_then_set.tw", &["99"]),
         ("tests/opt/vector_set_unique.tw", &["99"]),
         ("tests/opt/vector_set_param.tw", &["99"]),
@@ -829,6 +835,13 @@ fn opt_vector_set_runtime_semantics_matrix() {
         ("tests/opt/vector_set_alias_via_assign.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_len.tw", &["3", "99"]),
         ("tests/opt/vector_set_move_via_init_rebind.tw", &["99"]),
+    ];
+    assert_runtime_matrix(&matrix);
+}
+
+#[test]
+fn opt_vector_set_runtime_semantics_call_and_branch_paths() {
+    let matrix: [(&str, &[&str]); 10] = [
         ("tests/opt/vector_set_move_via_assign_rebind.tw", &["99"]),
         ("tests/opt/vector_set_from_make.tw", &["42"]),
         ("tests/opt/vector_set_twice_chain.tw", &["20"]),
@@ -839,6 +852,13 @@ fn opt_vector_set_runtime_semantics_matrix() {
         ("tests/opt/vector_set_stored_in_array.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_push_then_user_call.tw", &["4", "99"]),
         ("tests/opt/vector_set_safe_option_not_rewritten.tw", &["99"]),
+    ];
+    assert_runtime_matrix(&matrix);
+}
+
+#[test]
+fn opt_vector_set_runtime_semantics_escape_paths() {
+    let matrix: [(&str, &[&str]); 9] = [
         ("tests/opt/vector_set_branch_alias_escape.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_branch_local_alias.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_len_in_branch.tw", &["3", "99"]),
@@ -848,19 +868,24 @@ fn opt_vector_set_runtime_semantics_matrix() {
             "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
             &["1", "99"],
         ),
-        (
-            "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
-            &["1", "99"],
-        ),
         ("tests/opt/vector_set_stored_in_option_variant.tw", &["1", "99"]),
         ("tests/opt/vector_set_after_safe_set_call.tw", &["7", "99"]),
         ("tests/opt/vector_set_after_concat.tw", &["4", "99"]),
-        ("tests/opt/vector_set_after_slice.tw", &["2", "99"]),
     ];
+    assert_runtime_matrix(&matrix);
+}
 
-    for (path, expected) in matrix {
-        assert_runtime_output(path, expected);
-    }
+#[test]
+fn opt_vector_set_runtime_semantics_slice_path() {
+    assert_runtime_output("tests/opt/vector_set_after_slice.tw", &["2", "99"]);
+}
+
+#[test]
+fn opt_vector_set_runtime_semantics_stress_escape_path() {
+    assert_runtime_output(
+        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
+        &["1", "99"],
+    );
 }
 
 #[test]
