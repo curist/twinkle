@@ -485,7 +485,9 @@ fn expr_has_call_to(expr: &AnfExpr, func_id: FuncId) -> bool {
 
 fn expr_count_calls_to(expr: &AnfExpr, func_id: FuncId) -> usize {
     match expr {
-        AnfExpr::Let { op, body, .. } => op_count_calls_to(op, func_id) + expr_count_calls_to(body, func_id),
+        AnfExpr::Let { op, body, .. } => {
+            op_count_calls_to(op, func_id) + expr_count_calls_to(body, func_id)
+        }
         _ => 0,
     }
 }
@@ -535,7 +537,8 @@ fn assert_runtime_output(path: &str, expected: &[&str]) {
     let actual_raw = run_and_capture(path);
     let actual: Vec<&str> = actual_raw.lines().collect();
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "Runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
         expected.join("\n"),
         actual_raw
@@ -553,7 +556,8 @@ fn assert_runtime_output_wasm(path: &str, expected: &[&str]) {
         .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
     let actual: Vec<&str> = stdout.lines().collect();
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "Wasm runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
         expected.join("\n"),
         stdout
@@ -850,7 +854,10 @@ fn opt_vector_set_runtime_semantics_call_and_branch_paths() {
         ("tests/opt/vector_set_after_indirect_call.tw", &["3", "99"]),
         ("tests/opt/vector_set_after_get.tw", &["1", "99"]),
         ("tests/opt/vector_set_stored_in_array.tw", &["1", "99"]),
-        ("tests/opt/vector_set_after_push_then_user_call.tw", &["4", "99"]),
+        (
+            "tests/opt/vector_set_after_push_then_user_call.tw",
+            &["4", "99"],
+        ),
         ("tests/opt/vector_set_safe_option_not_rewritten.tw", &["99"]),
     ];
     assert_runtime_matrix(&matrix);
@@ -860,7 +867,10 @@ fn opt_vector_set_runtime_semantics_call_and_branch_paths() {
 fn opt_vector_set_runtime_semantics_escape_paths() {
     let matrix: [(&str, &[&str]); 9] = [
         ("tests/opt/vector_set_branch_alias_escape.tw", &["1", "99"]),
-        ("tests/opt/vector_set_after_branch_local_alias.tw", &["1", "99"]),
+        (
+            "tests/opt/vector_set_after_branch_local_alias.tw",
+            &["1", "99"],
+        ),
         ("tests/opt/vector_set_after_len_in_branch.tw", &["3", "99"]),
         ("tests/opt/vector_set_after_push_chain.tw", &["99"]),
         ("tests/opt/vector_set_capture_in_branch.tw", &["1", "99"]),
@@ -868,7 +878,10 @@ fn opt_vector_set_runtime_semantics_escape_paths() {
             "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
             &["1", "99"],
         ),
-        ("tests/opt/vector_set_stored_in_option_variant.tw", &["1", "99"]),
+        (
+            "tests/opt/vector_set_stored_in_option_variant.tw",
+            &["1", "99"],
+        ),
         ("tests/opt/vector_set_after_safe_set_call.tw", &["7", "99"]),
         ("tests/opt/vector_set_after_concat.tw", &["4", "99"]),
     ];
@@ -903,7 +916,8 @@ fn opt_vector_set_cell_closure_loop_branch_escape_not_rewritten() {
     // This fixture includes `collect range(...)` which can contribute legitimate
     // VECTOR_SET_IN_PLACE calls from collect lowering. Guard only the user update
     // path: VECTOR_SET_UNSAFE for xs[0] must remain.
-    let module = compile_opt("tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw");
+    let module =
+        compile_opt("tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw");
     assert_eq!(
         count_calls_to(&module, VECTOR_SET_UNSAFE),
         1,
@@ -1026,7 +1040,10 @@ fn opt_vector_push_loop_negative_cases_not_rewritten() {
 #[test]
 fn opt_vector_push_loop_runtime_semantics() {
     assert_runtime_output("tests/opt/vector_push_loop_unique.tw", &["3", "6"]);
-    assert_runtime_output("tests/opt/vector_push_loop_seeded_not_rewritten.tw", &["10", "4"]);
+    assert_runtime_output(
+        "tests/opt/vector_push_loop_seeded_not_rewritten.tw",
+        &["10", "4"],
+    );
     assert_runtime_output(
         "tests/opt/vector_push_loop_reads_acc_not_rewritten.tw",
         &["0", "1", "2", "3"],
@@ -1040,7 +1057,10 @@ fn opt_vector_push_loop_runtime_semantics() {
 #[test]
 fn opt_vector_push_loop_seeded_runtime_wasm_semantics() {
     // Regression guard for builder_from capacity correctness in Wasm runtime path.
-    assert_runtime_output_wasm("tests/opt/vector_push_loop_seeded_not_rewritten.tw", &["10", "4"]);
+    assert_runtime_output_wasm(
+        "tests/opt/vector_push_loop_seeded_not_rewritten.tw",
+        &["10", "4"],
+    );
 }
 
 #[test]
@@ -1156,9 +1176,15 @@ fn opt_dict_phase4_runtime_semantics() {
 
 #[test]
 fn opt_dict_phase6_runtime_semantics() {
-    assert_runtime_output("tests/opt/dict_chain_unique_rewritten.tw", &["1", "false", "true"]);
+    assert_runtime_output(
+        "tests/opt/dict_chain_unique_rewritten.tw",
+        &["1", "false", "true"],
+    );
     assert_runtime_output("tests/opt/dict_after_user_call_not_rewritten.tw", &["1"]);
-    assert_runtime_output("tests/opt/dict_stored_in_array_not_rewritten.tw", &["0", "1"]);
+    assert_runtime_output(
+        "tests/opt/dict_stored_in_array_not_rewritten.tw",
+        &["0", "1"],
+    );
 }
 
 #[test]
@@ -1169,7 +1195,10 @@ fn opt_dict_phase4_wasm_semantics() {
 
 #[test]
 fn opt_dict_phase6_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/dict_chain_unique_rewritten.tw", &["1", "false", "true"]);
+    assert_runtime_output_wasm(
+        "tests/opt/dict_chain_unique_rewritten.tw",
+        &["1", "false", "true"],
+    );
 }
 
 #[test]

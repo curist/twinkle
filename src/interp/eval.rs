@@ -11,9 +11,7 @@ use crate::ir::core::{
 use crate::ir::lower::prelude as prelude_ids;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID,
-};
+use crate::types::ty::{ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID};
 
 use super::value::Value;
 
@@ -632,11 +630,7 @@ impl<W: Write> Interpreter<W> {
                 // Int.from_string(s: String) -> Option<Int>
                 match &args[0] {
                     Value::Str(s) => match s.parse::<i64>() {
-                        Ok(n) => Ok(Value::Variant(
-                            OPTION_TYPE_ID,
-                            1,
-                            vec![Value::Int(n)],
-                        )),
+                        Ok(n) => Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Int(n)])),
                         Err(_) => Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![])),
                     },
                     _ => panic!("Int.from_string: expected String"),
@@ -646,11 +640,7 @@ impl<W: Write> Interpreter<W> {
                 // Float.from_string(s: String) -> Option<Float>
                 match &args[0] {
                     Value::Str(s) => match s.parse::<f64>() {
-                        Ok(f) => Ok(Value::Variant(
-                            OPTION_TYPE_ID,
-                            1,
-                            vec![Value::Float(f)],
-                        )),
+                        Ok(f) => Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Float(f)])),
                         Err(_) => Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![])),
                     },
                     _ => panic!("Float.from_string: expected String"),

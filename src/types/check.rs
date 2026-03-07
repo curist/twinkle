@@ -1842,21 +1842,30 @@ impl TypeChecker {
                 if !matches!(params[0], MonoType::Int) {
                     false
                 } else {
-                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
+                    matches!(
+                        (method, params.len(), ret),
+                        ("to_string", 1, MonoType::String)
+                    )
                 }
             }
             "Float" => {
                 if !matches!(params[0], MonoType::Float) {
                     false
                 } else {
-                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
+                    matches!(
+                        (method, params.len(), ret),
+                        ("to_string", 1, MonoType::String)
+                    )
                 }
             }
             "Bool" => {
                 if !matches!(params[0], MonoType::Bool) {
                     false
                 } else {
-                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
+                    matches!(
+                        (method, params.len(), ret),
+                        ("to_string", 1, MonoType::String)
+                    )
                 }
             }
             _ => false,
@@ -2035,8 +2044,8 @@ impl TypeChecker {
                         })
                     }
                     _ => {
-                        if let Some(ret_ty) =
-                            self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                        if let Some(ret_ty) = self
+                            .try_synth_registered_method_call(base, &base_ty, method, args, span)?
                         {
                             return Ok(ret_ty);
                         }
@@ -3716,8 +3725,7 @@ impl TypeChecker {
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "indexed collect over Iterator",
                         span: iter.span,
-                        note: "Iterator<T> does not support the 'collect x, i in' form"
-                            .to_string(),
+                        note: "Iterator<T> does not support the 'collect x, i in' form".to_string(),
                     });
                     had_error = true;
                 }

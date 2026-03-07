@@ -1,6 +1,8 @@
 use super::env::{TypeEnv, ValueEnv};
 use super::error::TypeError;
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, method_receiver_type_id};
+use super::ty::{
+    FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, method_receiver_type_id,
+};
 use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
     FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl, TypeDef as AstTypeDef,
@@ -273,8 +275,7 @@ impl Resolver {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "type inference for function parameters",
                     span: param.span,
-                    note: "Function declaration parameters must have type annotations"
-                        .to_string(),
+                    note: "Function declaration parameters must have type annotations".to_string(),
                 });
                 return Err(());
             };

@@ -838,11 +838,7 @@ fn remove_in_place_fn() -> FuncDef {
             Instr::I32Eqz,
             Instr::If {
                 result: None,
-                then_body: vec![
-                    Instr::LocalGet(0),
-                    Instr::RefAsNonNull,
-                    Instr::Return,
-                ],
+                then_body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::Return],
                 else_body: vec![],
             },
             // result = new dict of length n-1

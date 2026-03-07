@@ -212,8 +212,11 @@ impl CompileState {
             // receiver type (named or builtin synthetic receiver) become methods.
             if let Some(receiver_ty) = sig.params.first() {
                 if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
-                    self.type_env
-                        .add_method(receiver_type_id, func_name.clone(), qualified_name.clone());
+                    self.type_env.add_method(
+                        receiver_type_id,
+                        func_name.clone(),
+                        qualified_name.clone(),
+                    );
 
                     // Builtin receiver methods can also be called via canonical
                     // module aliases, e.g. `Vector.map(xs, f)`.

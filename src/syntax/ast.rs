@@ -181,10 +181,7 @@ pub enum ExprKind {
     },
 
     /// Collect-while expression: collect cond { expr }
-    CollectWhile {
-        cond: Box<Expr>,
-        body: Box<Expr>,
-    },
+    CollectWhile { cond: Box<Expr>, body: Box<Expr> },
 
     /// Try expression: try expr
     Try { expr: Box<Expr> },

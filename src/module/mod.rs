@@ -20,9 +20,7 @@ use crate::query::keys as query_keys;
 use crate::syntax::ast::{Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
 use crate::types::env::{TypeEnv, ValueEnv};
-use crate::types::ty::{
-    FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id,
-};
+use crate::types::ty::{FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};

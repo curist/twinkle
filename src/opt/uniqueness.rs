@@ -81,11 +81,7 @@ fn collect_tainted(func: &AnfFunctionDef) -> HashSet<LocalId> {
     tainted
 }
 
-fn scan_tainted_expr(
-    expr: &AnfExpr,
-    tainted: &mut HashSet<LocalId>,
-    live_out: &HashSet<LocalId>,
-) {
+fn scan_tainted_expr(expr: &AnfExpr, tainted: &mut HashSet<LocalId>, live_out: &HashSet<LocalId>) {
     match expr {
         AnfExpr::Let { local, op, body } => {
             let bind_local = *local;
@@ -222,7 +218,11 @@ fn scan_tainted_op(op: &AnfOp, tainted: &mut HashSet<LocalId>, live_out: &HashSe
 /// Checks if `body` starts with `Let { op: AAssign { local: base, value: result } }`.
 fn is_consume_reassign(body: &AnfExpr, base: LocalId, result: LocalId) -> bool {
     if let AnfExpr::Let { op, .. } = body {
-        if let AnfOp::AAssign { local, value: Atom::ALocal(v) } = op.as_ref() {
+        if let AnfOp::AAssign {
+            local,
+            value: Atom::ALocal(v),
+        } = op.as_ref()
+        {
             return *local == base && *v == result;
         }
     }
@@ -642,7 +642,11 @@ fn rewrite_expr(
     }
 
     // AAssign always redefines target; old target uniqueness is killed.
-    if let AnfOp::AAssign { local: target, value } = op.as_ref() {
+    if let AnfOp::AAssign {
+        local: target,
+        value,
+    } = op.as_ref()
+    {
         unique.remove(target);
         known_empty.remove(target);
         if let Atom::ALocal(source) = value {

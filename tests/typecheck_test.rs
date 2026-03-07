@@ -9,9 +9,9 @@ fn builtin_aliases() -> HashSet<String> {
     [
         "Cell", "Dict", "Iterator", "Vector", "String", "Int", "Float", "Bool",
     ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 #[test]

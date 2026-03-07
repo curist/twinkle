@@ -3445,7 +3445,7 @@ impl Lowerer {
                                                                     local: acc_local,
                                                                     value: Box::new(make_call),
                                                                     body: Box::new(
-                                                                        run_loop_then_slice
+                                                                        run_loop_then_slice,
                                                                     ),
                                                                 },
                                                                 ty: result_ty.clone(),
@@ -3805,7 +3805,9 @@ impl Lowerer {
         let keys_tmp = self.local_allocator.alloc_and_bind("__cd_keys".to_string());
         let len_tmp = self.local_allocator.alloc_and_bind("__cd_len".to_string());
         let idx_tmp = self.local_allocator.alloc_and_bind("__cd_idx".to_string());
-        let builder_local = self.local_allocator.alloc_and_bind("__cd_builder".to_string());
+        let builder_local = self
+            .local_allocator
+            .alloc_and_bind("__cd_builder".to_string());
 
         let dict_local_expr = CoreExpr {
             kind: CoreExprKind::Local(dict_tmp),
@@ -4123,7 +4125,9 @@ impl Lowerer {
         span: Span,
     ) -> Option<CoreExprKind> {
         let loop_span = cond.span.merge(&body.span);
-        let builder_local = self.local_allocator.alloc_and_bind("__cw_builder".to_string());
+        let builder_local = self
+            .local_allocator
+            .alloc_and_bind("__cw_builder".to_string());
 
         self.local_allocator.push_scope();
         let body_val_local = self.local_allocator.alloc_and_bind("__cw_val".to_string());
@@ -4298,7 +4302,9 @@ impl Lowerer {
         let iter_span = iter.span;
 
         let arr_tmp = self.local_allocator.alloc_and_bind("__c_arr".to_string());
-        let builder_local = self.local_allocator.alloc_and_bind("__c_builder".to_string());
+        let builder_local = self
+            .local_allocator
+            .alloc_and_bind("__c_builder".to_string());
         let len_local = self.local_allocator.alloc_and_bind("__c_len".to_string());
         let idx_local = self.local_allocator.alloc_and_bind("__c_idx".to_string());
 
