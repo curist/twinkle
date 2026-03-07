@@ -15,7 +15,10 @@ Done so far:
 
 * named function values now participate in typed closure specialization in the normal
   build path
-* `Cell.update` is implemented on the Wasm backend
+* typed closures now use a stronger Wasm representation: typed closure structs are
+  subtypes of the universal `$Closure`, so the same runtime value can flow through both
+  universal and typed call paths
+* `Cell.update` has a real Wasm implementation instead of trapping
 
 Still open:
 
@@ -33,8 +36,6 @@ higher-order call boundaries such as `fold(xs, init, f)`.
 However, a WAT audit of `examples/*` and `tests/run/*` still shows several broader
 type-erasure patterns:
 
-* named function values passed as first-class arguments can still miss typed
-  specialization
 * user record fields are emitted as `Anyref` unconditionally
 * iterator state is represented as a generic `[seed_anyref, step_closure_anyref]` array
 * runtime helpers such as `Iterator.next` still unpack closures and payloads through the
@@ -52,6 +53,8 @@ monomorphized.
 
 ### 1. Named function values
 
+Status: mostly done.
+
 Example:
 
 ```tw
@@ -59,13 +62,13 @@ fn apply<A, B>(f: fn(A) B, x: A) B { f(x) }
 println("${apply(double, 42)}")
 ```
 
-Today this can still go through universal closure dispatch if the specialization logic
-does not discover the concrete signature through a plain named-function path.
+This used to fall back to universal closure dispatch. The build path now specializes
+plain named-function values in first-class positions as well.
 
-Target:
+Follow-up:
 
-* Treat concrete `AGlobalFunc` values as specialization candidates in the same spirit as
-  concrete `AMakeClosure` values.
+* keep regression coverage for named-function specialization
+* make sure new closure representation changes do not accidentally drop this path
 
 ### 2. User record fields are always `Anyref`
 
@@ -113,11 +116,11 @@ Target:
 
 ## Proposed Work Items
 
-### A. Finish closure-adjacent specialization
+### A. Stabilize closure-adjacent specialization
 
-* Extend concrete-signature discovery so plain named-function values participate in
-  specialization.
-* Add focused tests for `apply(double, 42)`-style monomorphized higher-order calls.
+* Keep the named-function specialization coverage in place.
+* Add focused Wasm regression coverage for helper/intrinsic paths that depend on the
+  subtype-based typed-closure layout.
 
 ### B. Add typed user-record fields
 
@@ -151,7 +154,7 @@ This plan does not require:
 
 ## Suggested Ordering
 
-1. Finish named-function typed specialization.
+1. Finish the closure-subtyping follow-up fixes.
 2. Add typed user-record fields.
 3. Revisit iterator representation.
 4. Only then decide whether typed variant payloads are worth the complexity.
@@ -164,6 +167,8 @@ This plan is successful when:
 
 * monomorphized higher-order calls using named functions no longer fall back to universal
   closure dispatch
+* closure helper/intrinsic paths remain correct under the subtype-based typed closure
+  representation
 * record field access preserves concrete Wasm types where possible
 * iterator step closures no longer require universal arg-array packing in the common
   monomorphized case

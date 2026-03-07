@@ -2383,7 +2383,7 @@ fn emit_cell_update_intrinsic(
                     instrs.extend(emit_coerce_stack(&ValType::Anyref, &arg_ty));
 
                     instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
-                    instrs.push(Instr::StructGet(closure_sym, 0));
+                    instrs.push(Instr::StructGet(closure_sym, 2));
                     instrs.push(Instr::CallRef(closurefunc_sym));
                     instrs.extend(emit_coerce_stack(&ret_ty, &ValType::Anyref));
 
