@@ -187,3 +187,13 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 | 9.7 | Standard Library & API Gaps | Planned | [stdlib-api-gaps.md](stdlib-api-gaps.md) |
 | 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
+
+### Cross-cutting plans
+
+These are not tied to a specific stage:
+
+| Plan | Description |
+|------|-------------|
+| [vector-type.md](vector-type.md) | Replace `Array<T>` with `Vector<T>` |
+| [to-string-method-unification.md](to-string-method-unification.md) | Unify string conversion via `.to_string()` |
+| [uniqueness-optimization.md](uniqueness-optimization.md) | Uniqueness-based in-place update optimization |

@@ -17,7 +17,7 @@ at this stage. Behavioral preservation is validated by structural invariant chec
 golden output snapshots; full equivalence testing against the interpreter is deferred to
 Stage 8 where the WAT backend becomes the second execution path.
 
-ANF IR structure (full spec in `docs/ir.md §3`):
+ANF IR structure (full spec in `docs/internals/ir.md §3`):
 
 * **Atom** — trivially available values (locals or literals):
   * `ALocal(LocalId)`, `ALitInt(i64)`, `ALitFloat(f64)`, `ALitBool(bool)`,
@@ -48,7 +48,7 @@ ANF IR structure (full spec in `docs/ir.md §3`):
   * `AIndex { base: Atom, index: Atom }`
   * `AAssign { local: LocalId, value: Atom }` — maps to Wasm `local.set`.
 
-Core → ANF lowering rules (from `docs/ir.md §4`):
+Core → ANF lowering rules (from `docs/internals/ir.md §4`):
 
 * **A1** — Non-atom subexpressions are let-bound to fresh temporaries before use.
   The lowering is continuation-passing: `lower_expr(expr, cont)` where `cont` is
@@ -304,7 +304,7 @@ Deliverables:
 **Goal:** Implement `defer` end-to-end: interpreter execution and ANF-level elimination,
 leaving no `Defer` nodes for the WAT backend.
 
-> **Full design:** See [docs/defer.md](../defer.md).
+> **Full design:** See [docs/design/defer.md](../design/defer.md).
 
 `defer expr` is a block-scoped statement that schedules an expression to run when the
 enclosing block exits. Semantics: LIFO ordering, capture-by-value, triggers on normal

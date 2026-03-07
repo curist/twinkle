@@ -482,5 +482,5 @@ This test plan ensures:
 * cross-platform WASI compatibility,
 * safe evolution of the language.
 
-Together with `docs/ir.md`, this establishes a robust foundation for Twinkle’s long-term health.
+Together with `docs/internals/ir.md`, this establishes a robust foundation for Twinkle’s long-term health.
 

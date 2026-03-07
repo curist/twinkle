@@ -1,6 +1,6 @@
 # Later Stages — Tooling & Ecosystem
 
-> **Full design:** See [docs/tooling.md](../tooling.md).
+> **Full design:** See [docs/internals/tooling.md](../internals/tooling.md).
 
 **Prerequisites before tooling:**
 

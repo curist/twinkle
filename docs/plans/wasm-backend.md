@@ -576,7 +576,7 @@ Deliverables:
 
 New directory `stdlib/` containing Twinkle source files for the MVP standard library modules.
 These are compiled via the same Wasm GC backend pipeline as user programs and linked into
-`twc.wasm` alongside the runtime. See [docs/stdlib.md](../stdlib.md) for the full API spec.
+`twc.wasm` alongside the runtime. See [docs/design/stdlib.md](../design/stdlib.md) for the full API spec.
 
 **`stdlib/path.tw` (`@std.path`)** — pure Twinkle, no host imports:
 

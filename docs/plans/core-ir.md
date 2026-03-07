@@ -63,7 +63,7 @@ These two features are implemented together because user-defined inherent method
 (`p.translate(1,2)` → `point.translate(p,1,2)`) require knowing which module
 defines the receiver type — they are fundamentally coupled.
 
-> **Full design rationale:** See [docs/module.md](../module.md) D-001 through D-009.
+> **Full design rationale:** See [docs/design/module.md](../design/decisions.md) D-001 through D-009.
 
 Features:
 

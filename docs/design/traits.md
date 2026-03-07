@@ -149,7 +149,7 @@ Any value used in `for x in collection` whose type is not one of the supported b
 
 ### 11.3. Example Lowerings (Informal)
 
-The compiler performs type-directed lowering for each supported collection. The exact IR is described in `docs/ir.md`; the following is informal pseudocode only.
+The compiler performs type-directed lowering for each supported collection. The exact IR is described in `docs/internals/ir.md`; the following is informal pseudocode only.
 
 For `Array<T>`: lowered to an indexed loop over length, binding each element in turn.
 

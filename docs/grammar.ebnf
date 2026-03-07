@@ -46,7 +46,7 @@ ModulePath =
    - `use utils`          → loads <root>/utils.tw, bound as "utils"
    - Project root: nearest ancestor directory containing twinkle.toml;
      overridable via TWINKLE_ROOT env var.
-   - No wildcard or destructuring in MVP (see docs/module.md D-006). *)
+   - No wildcard or destructuring in MVP (see docs/design/module.md D-006). *)
 
 (* ===== Type Declarations ===== *)
 
@@ -386,7 +386,7 @@ DeferStmt =
    - Does NOT trigger on traps (OOB, div-by-zero, `error()`).
    - Since `{ ... }` is an expression, `defer { a(); b() }` is valid.
    - There is no type constraint on the deferred expression; the result is discarded.
-   - Full design: see docs/defer.md. *)
+   - Full design: see docs/design/defer.md. *)
 
 BreakStmt =
     "break" ;

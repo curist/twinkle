@@ -572,7 +572,7 @@ The host can then call `run()` again on demand via the Wasm export.
 
 ### 8.2 Imports
 
-> **Design rationale:** See [docs/module.md](module.md) entries D-001 through D-009.
+> **Design rationale:** See [docs/design/module.md](design/decisions.md) entries D-001 through D-009.
 
 #### Syntax
 
@@ -1049,7 +1049,7 @@ The `for x in coll` syntax supports the following types, each with dedicated typ
 * `Vector<T>` — lowered to an indexed loop over the array length.
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
-* `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/iterator.md](iterator.md)).
+* `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
 
 Any value used in `for x in coll` whose type is not one of the above is a **compile-time error**.
 
@@ -1064,7 +1064,7 @@ Any value used in `for x in coll` whose type is not one of the above is a **comp
 To iterate over a custom type, either:
 
 1. Define a helper that returns a supported built-in collection (`Vector<T>`, `Range`), or
-2. Define a helper that returns `Iterator<T>` using `Iterator.unfold` (see [docs/iterator.md](iterator.md)).
+2. Define a helper that returns `Iterator<T>` using `Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md)).
 
 ```tw
 // Option 1: convert to Vector
@@ -1151,7 +1151,7 @@ x = 2
 
 **Type:** no constraint on the deferred expression; the result is silently discarded.
 
-> **Implementation note:** `defer` is not implemented until Stage 7.6 (after CFG). At the CFG level it desugars completely via edge insertion — zero runtime overhead. See [docs/defer.md](defer.md).
+> **Implementation note:** `defer` is not implemented until Stage 7.6 (after CFG). At the CFG level it desugars completely via edge insertion — zero runtime overhead. See [docs/design/defer.md](design/defer.md).
 
 ---
 
@@ -1371,7 +1371,7 @@ Includes:
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
 * string module: `String.concat`, `String.substring`, `String.to_string`, etc.
-* iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/iterator.md](iterator.md))
+* iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
 
 ---

@@ -25,7 +25,7 @@ see Stage 6b.
 inputs and outputs, enabling independent stage invocation, per-file incremental
 re-compilation, and better testability — without adding any framework dependency.
 
-> **Full design:** See [docs/query-pipeline.md](../query-pipeline.md).
+> **Full design:** See [docs/internals/query-pipeline.md](../internals/query-pipeline.md).
 
 Key changes:
 
