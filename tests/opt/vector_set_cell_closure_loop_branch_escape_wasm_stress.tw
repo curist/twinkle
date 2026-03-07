@@ -1,0 +1,40 @@
+// Wasm-only stress variant of the loop + branch + Cell + escaping-closure case.
+// Keep the alias/escape shape identical to the regular stress fixture, but use
+// a larger loop count so Wasm gets a more demanding runtime path.
+//
+// Expected output:
+//   1
+//   99
+
+fn fold(xs: Vector<Int>, init: Int, f: fn(Int, Int) Int) Int {
+    acc := init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+fn make(n: Int, c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    slot := Cell.new(fn() Int { 7 })
+    idxs := collect i in range(n) { i }
+    checksum := fold(idxs, 0, fn(acc, x) {
+        (acc + (x * x + 3 * x + 7)) % 1000003
+    })
+
+    for i in idxs {
+        if c {
+            if i == checksum - checksum {
+                ys := xs
+                Cell.set(slot, fn() Int { ys[0] })
+            }
+        }
+        xs[0] = 99
+    }
+
+    f := Cell.get(slot)
+    println("${f()}")
+    xs
+}
+
+println("${make(100000, true)[0]}")

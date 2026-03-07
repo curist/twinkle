@@ -922,6 +922,16 @@ fn opt_vector_set_cell_closure_loop_branch_escape_wasm_semantics() {
 }
 
 #[test]
+fn opt_vector_set_cell_closure_loop_branch_escape_wasm_stress() {
+    // Stronger Wasm-only stress case. Keep the interpreter-side semantics test
+    // lightweight, but push the Wasm runtime with a larger loop count.
+    assert_runtime_output_wasm(
+        "tests/opt/vector_set_cell_closure_loop_branch_escape_wasm_stress.tw",
+        &["1", "99"],
+    );
+}
+
+#[test]
 fn opt_vector_push_loop_unique_rewritten_to_builder() {
     let module = compile_opt("tests/opt/vector_push_loop_unique.tw");
     assert_eq!(
