@@ -36,6 +36,8 @@ This plan therefore assumes:
 
 * monomorphization is the prerequisite that makes concrete helper/layout emission possible
 * backend erasure reduction is the follow-up that actually exploits that information
+* the backend pipeline is first aligned with
+  [backend-pipeline-alignment.md](backend-pipeline-alignment.md)
 
 ## Status
 
@@ -58,6 +60,10 @@ Still open:
 
 * fully typed iterator state representation instead of the current erased array payload
 * targeted reduction of `Anyref` payload layouts in hot helper/variant paths
+
+These remaining items are downstream of
+[backend-pipeline-alignment.md](backend-pipeline-alignment.md). The pipeline update
+comes first; this plan resumes after that alignment is done.
 
 ---
 
@@ -225,13 +231,13 @@ What it does require is making the default concrete path better:
 **Related docs:**
 
 * [../internals/monomorphization.md](../internals/monomorphization.md)
-* [monomorphization.md](monomorphization.md)
+* [backend-pipeline-alignment.md](backend-pipeline-alignment.md)
 
 ---
 
 ## Suggested Ordering
 
-1. Finish the closure-subtyping follow-up fixes.
+1. Finish [backend-pipeline-alignment.md](backend-pipeline-alignment.md).
 2. Finish iterator state layout specialization.
 3. Only then decide whether typed variant payloads are worth the complexity.
 

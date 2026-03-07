@@ -173,11 +173,12 @@ That means these are separate layers:
 
 This distinction is why Twinkle has both:
 
-* [../plans/monomorphization.md](../plans/monomorphization.md)
+* this internal monomorphization design note
+* [../plans/backend-pipeline-alignment.md](../plans/backend-pipeline-alignment.md)
 * [../plans/wasm-type-erasure-reduction.md](../plans/wasm-type-erasure-reduction.md)
 
-The first is about producing concrete IR.
-The second is about taking advantage of that concreteness in Wasm codegen.
+The pipeline-alignment plan is about making the backend-oriented pipeline match this design.
+The Wasm plan is about taking advantage of that concreteness in codegen.
 
 ---
 
