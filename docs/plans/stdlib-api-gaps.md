@@ -10,42 +10,29 @@ over adding Rust builtins, wherever possible.
 
 ## Priorities
 
-### P0 — Blocks self-hosting
+### P0 — Blocks self-hosting ✅ DONE
 
-#### String ordering comparisons
+#### String ordering comparisons ✅
 
-`<`, `>`, `<=`, `>=` on strings. The type checker already accepts these but
-the interpreter and codegen panic/trap at runtime. Needed for character
-classification in a lexer (`s[i] >= "0" && s[i] <= "9"`).
+`<`, `>`, `<=`, `>=` on strings. Lexicographic byte comparison via `rt_str__cmp`.
+Works in both interpreter and Wasm codegen.
 
-- Interpreter: add `(Lt/Le/Gt/Ge, Value::Str, Value::Str)` arms
-- ANF: add `OpKind::String` variant
-- Codegen: emit `rt_str__lt` (or general `rt_str__cmp`) runtime function
-
-#### `char_code_at` / `from_char_code`
-
-Runtime builtins for efficient character-level access:
+#### `char_code_at` / `from_char_code` ✅
 
 ```tw
-// Get Unicode code point at position i
-char_code_at(s: String, i: Int) -> Int
-
-// Build single-char string from code point; None if invalid
-from_char_code(n: Int) -> Option<String>
+char_code_at(s: String, i: Int) -> Int      // byte value at index
+from_char_code(n: Int) -> Option<String>    // ASCII (0-127) to 1-char string
 ```
 
-Needed for: lexer character classification, efficient inner loops.
-
-#### `Int.from_string` / `Float.from_string`
-
-Parse numeric literals from source text:
+#### `int_from_string` / `float_from_string` ✅
 
 ```tw
-Int.from_string(s: String) -> Option<Int>
-Float.from_string(s: String) -> Option<Float>
+int_from_string(s: String) -> Option<Int>    // pure Wasm, no host call
+float_from_string(s: String) -> Option<Float> // delegates to host
 ```
 
-Needed for: parsing integer and float literals in the self-hosted lexer.
+`int_from_string` is implemented entirely in Wasm (digit loop with sign handling).
+`float_from_string` delegates to a host import (`host.parse_float`).
 
 ---
 

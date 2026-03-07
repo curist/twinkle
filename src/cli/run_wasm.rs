@@ -35,6 +35,8 @@ struct HostImportTypes {
     env: Option<FuncType>,
     cwd: Option<FuncType>,
     exit: Option<FuncType>,
+    parse_int: Option<FuncType>,
+    parse_float: Option<FuncType>,
     string_array_ty: Option<ArrayType>,
     runtime_array_ty: Option<ArrayType>,
 }
@@ -167,6 +169,27 @@ impl HostImportTypes {
                 "exit" => {
                     ensure!(out.exit.is_none(), "duplicate host import: exit");
                     out.exit = Some(func_ty);
+                }
+                "parse_int" => {
+                    let str_ty = concrete_array_from_func_param(&func_ty, 0)
+                        .with_context(|| format!("invalid host import signature for {name}"))?;
+                    merge_string_array_ty(&mut out.string_array_ty, str_ty)?;
+                    ensure!(out.parse_int.is_none(), "duplicate host import: parse_int");
+                    out.parse_int = Some(func_ty);
+                }
+                "parse_float" => {
+                    let str_ty = concrete_array_from_func_param(&func_ty, 0)
+                        .with_context(|| format!("invalid host import signature for {name}"))?;
+                    merge_string_array_ty(&mut out.string_array_ty, str_ty)?;
+                    ensure!(
+                        out.parse_float.is_none(),
+                        "duplicate host import: parse_float"
+                    );
+                    out.parse_float = Some(func_ty);
+                }
+                "from_char_code" => {
+                    // Accepted but no-op: from_char_code is handled inline in codegen
+                    // for ASCII range. Future: full Unicode support via host.
                 }
                 other => bail!("unsupported host import: host.{other}"),
             }
@@ -510,6 +533,62 @@ impl HostImportTypes {
                     let code = host_exit_code_from_val(&params[0])?;
                     caller.data_mut().exit_code = Some(code);
                     Err(anyhow!("host.exit({code})"))
+                },
+            )?;
+        }
+
+        if let Some(ty) = &self.parse_int {
+            let _string_array_ty = self
+                .string_array_ty
+                .clone()
+                .ok_or_else(|| anyhow!("missing string array type for host.parse_int"))?;
+            linker.func_new(
+                "host",
+                "parse_int",
+                ty.clone(),
+                move |mut caller, params, results| {
+                    ensure!(params.len() == 1, "host.parse_int expected 1 argument");
+                    ensure!(results.len() == 2, "host.parse_int expected 2 results");
+                    let text = decode_runtime_string(&mut caller, &params[0])?;
+                    match text.parse::<i64>() {
+                        Ok(n) => {
+                            results[0] = Val::I64(n);
+                            results[1] = Val::I32(1);
+                        }
+                        Err(_) => {
+                            results[0] = Val::I64(0);
+                            results[1] = Val::I32(0);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+
+        if let Some(ty) = &self.parse_float {
+            let _string_array_ty = self
+                .string_array_ty
+                .clone()
+                .ok_or_else(|| anyhow!("missing string array type for host.parse_float"))?;
+            linker.func_new(
+                "host",
+                "parse_float",
+                ty.clone(),
+                move |mut caller, params, results| {
+                    ensure!(params.len() == 1, "host.parse_float expected 1 argument");
+                    ensure!(results.len() == 2, "host.parse_float expected 2 results");
+                    let text = decode_runtime_string(&mut caller, &params[0])?;
+                    match text.parse::<f64>() {
+                        Ok(f) => {
+                            results[0] = Val::F64(f.to_bits());
+                            results[1] = Val::I32(1);
+                        }
+                        Err(_) => {
+                            results[0] = Val::F64(0.0f64.to_bits());
+                            results[1] = Val::I32(0);
+                        }
+                    }
+                    Ok(())
                 },
             )?;
         }

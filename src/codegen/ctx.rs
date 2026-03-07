@@ -495,10 +495,14 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
             || id == ids::VECTOR_BUILDER_PUSH
             || id == ids::VECTOR_GET
             || id == ids::VECTOR_SET
-            || id == ids::VECTOR_MAKE =>
+            || id == ids::VECTOR_MAKE
+            || id == ids::FROM_CHAR_CODE
+            || id == ids::INT_FROM_STRING
+            || id == ids::FLOAT_FROM_STRING =>
         {
             Some(ValType::Anyref)
         }
+        id if id == ids::CHAR_CODE_AT => Some(ValType::I64),
         _ => None,
     }
 }

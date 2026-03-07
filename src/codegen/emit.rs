@@ -75,6 +75,13 @@ pub fn emit_user_module(
         module.funcs.push(emit_iterator_next_helper());
     }
 
+    // Emit parse helpers if needed
+    // Always emit parse helpers — they're small and may be referenced by intrinsics
+    module.funcs.push(emit_int_from_string_helper());
+    if ctx.imports().iter().any(|i| i.as_sym == "host_parse_float") {
+        module.funcs.push(emit_float_from_string_helper());
+    }
+
     if let Some(init) = emit_user_init_func(anf) {
         module.start = Some(init.name.clone());
         module.funcs.push(init);
@@ -176,6 +183,12 @@ pub fn emit_user_module_typed(
 
     if needs_iterator_next_helper(&ctx) {
         module.funcs.push(emit_iterator_next_helper());
+    }
+
+    // Always emit parse helpers — they're small and may be referenced by intrinsics
+    module.funcs.push(emit_int_from_string_helper());
+    if ctx.imports().iter().any(|i| i.as_sym == "host_parse_float") {
+        module.funcs.push(emit_float_from_string_helper());
     }
 
     if let Some(init) = emit_user_init_func(anf) {
@@ -1574,6 +1587,30 @@ fn emit_binop(
             instrs.push(Instr::Call("rt_str__eq".to_string()));
             instrs.push(Instr::I32Eqz);
         }
+        (crate::ir::anf::OpKind::String, crate::syntax::ast::BinOp::Lt) => {
+            ensure_rt_str_cmp_import(ctx);
+            instrs.push(Instr::Call("rt_str__cmp".to_string()));
+            instrs.push(Instr::I32Const(0));
+            instrs.push(Instr::I32LtS); // cmp(a,b) < 0
+        }
+        (crate::ir::anf::OpKind::String, crate::syntax::ast::BinOp::Le) => {
+            ensure_rt_str_cmp_import(ctx);
+            instrs.push(Instr::Call("rt_str__cmp".to_string()));
+            instrs.push(Instr::I32Const(0));
+            instrs.push(Instr::I32LeS); // cmp(a,b) <= 0
+        }
+        (crate::ir::anf::OpKind::String, crate::syntax::ast::BinOp::Gt) => {
+            ensure_rt_str_cmp_import(ctx);
+            instrs.push(Instr::Call("rt_str__cmp".to_string()));
+            instrs.push(Instr::I32Const(0));
+            instrs.push(Instr::I32GtS); // cmp(a,b) > 0
+        }
+        (crate::ir::anf::OpKind::String, crate::syntax::ast::BinOp::Ge) => {
+            ensure_rt_str_cmp_import(ctx);
+            instrs.push(Instr::Call("rt_str__cmp".to_string()));
+            instrs.push(Instr::I32Const(0));
+            instrs.push(Instr::I32GeS); // cmp(a,b) >= 0
+        }
 
         _ => panic!(
             "unsupported binop {:?} for operand type {:?}",
@@ -2035,6 +2072,18 @@ fn emit_prelude_call(
         id if id == prelude_ids::VECTOR_SET => emit_vector_set_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
             emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::CHAR_CODE_AT => {
+            emit_char_code_at_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::FROM_CHAR_CODE => {
+            emit_from_char_code_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::INT_FROM_STRING => {
+            emit_int_from_string_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::FLOAT_FROM_STRING => {
+            emit_float_from_string_intrinsic(args, bind_ty, ctx)
         }
         _ => emit_unimplemented_intrinsic_prelude_call(entry, ctx),
     }
@@ -2650,6 +2699,368 @@ fn emit_array_builder_freeze_intrinsic(
     instrs
 }
 
+fn emit_char_code_at_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // char_code_at(s: String, i: Int) -> Int
+    // Read byte from string array, zero-extend to i64
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.push(Instr::RefAsNonNull);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64);
+    instrs.push(Instr::ArrayGetU(T_STRING.to_string()));
+    instrs.push(Instr::I64ExtendI32U);
+    instrs.extend(emit_coerce_stack(&ValType::I64, bind_ty));
+    instrs
+}
+
+fn emit_from_char_code_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // from_char_code(n: Int) -> Option<String>
+    // For single-byte values (0-127 ASCII), create a 1-byte string.
+    // Values outside 0-127 → None (full Unicode support via host in future).
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::I32WrapI64);
+    instrs.push(Instr::I32Const(128));
+    instrs.push(Instr::I32LtU); // code < 128
+    instrs.push(Instr::If {
+        result: Some(ValType::Anyref),
+        then_body: {
+            // Some(single-byte string)
+            let mut v = vec![
+                Instr::I32Const(0),  // type_id (Option)
+                Instr::I32Const(1),  // variant_id (Some)
+            ];
+            v.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+            v.push(Instr::I32WrapI64);
+            v.push(Instr::ArrayNewFixed(T_STRING.to_string(), 1));
+            v.extend(emit_coerce_stack(&ref_string(), &ValType::Anyref));
+            v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+            v.push(Instr::StructNew(T_VARIANT.to_string()));
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+        else_body: {
+            // None
+            let mut v = vec![
+                Instr::I32Const(0),  // type_id
+                Instr::I32Const(0),  // variant_id (None)
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                Instr::StructNew(T_VARIANT.to_string()),
+            ];
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+    });
+    instrs
+}
+
+fn emit_int_from_string_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.push(Instr::Call("$int_from_string_helper".to_string()));
+    instrs
+}
+
+fn emit_float_from_string_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_host_parse_float_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.push(Instr::Call("$float_from_string_helper".to_string()));
+    instrs
+}
+
+fn ensure_host_parse_float_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "host".to_string(),
+        name: "parse_float".to_string(),
+        as_sym: "host_parse_float".to_string(),
+        params: vec![ref_string_null()],
+        results: vec![ValType::F64, ValType::I32],
+    });
+}
+
+/// Generate helper function: $int_from_string_helper
+/// Parses an integer from a string (pure Wasm, no host call).
+/// Takes (ref null $String) → anyref (Option<Int> variant)
+///
+/// Locals layout:
+///   param 0: ref null $String (input)
+///   local 1: i64 (accumulator)
+///   local 2: i32 (index)
+///   local 3: i32 (len)
+///   local 4: i64 (sign: 1 or -1)
+///   local 5: i32 (byte)
+///   local 6: i32 (ok flag)
+fn emit_int_from_string_helper() -> FuncDef {
+    // param 0: ref null $String (input)
+    // local 1: i64 (accumulator)
+    // local 2: i32 (index)
+    // local 3: i32 (len)
+    // local 4: i64 (sign: 1 or -1)
+    // local 5: i32 (byte)
+    // local 6: i32 (ok flag, 1=success, 0=failure)
+    let done_label = "$done".to_string();
+    let loop_label = "$digit_loop".to_string();
+
+    let body = vec![
+        // sign = 1, ok = 1
+        Instr::I64Const(1),
+        Instr::LocalSet(4),
+        Instr::I32Const(1),
+        Instr::LocalSet(6),
+        // len = array.len(s)
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::ArrayLen,
+        Instr::LocalSet(3),
+        // if len == 0: ok = 0, skip to end
+        Instr::LocalGet(3),
+        Instr::I32Eqz,
+        Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::I32Const(0),
+                Instr::LocalSet(6),
+            ],
+            else_body: vec![
+                // Check first byte for sign
+                Instr::LocalGet(0),
+                Instr::RefAsNonNull,
+                Instr::I32Const(0),
+                Instr::ArrayGetU(T_STRING.to_string()),
+                Instr::LocalSet(5),
+                // if byte == 45 ('-')
+                Instr::LocalGet(5),
+                Instr::I32Const(45),
+                Instr::I32Eq,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::I64Const(-1),
+                        Instr::LocalSet(4),
+                        Instr::I32Const(1),
+                        Instr::LocalSet(2),
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Eq,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                Instr::I32Const(0),
+                                Instr::LocalSet(6), // just "-" → fail
+                            ],
+                            else_body: vec![],
+                        },
+                    ],
+                    else_body: vec![
+                        // Check for '+'
+                        Instr::LocalGet(5),
+                        Instr::I32Const(43),
+                        Instr::I32Eq,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![
+                                Instr::I32Const(1),
+                                Instr::LocalSet(2),
+                                Instr::LocalGet(3),
+                                Instr::I32Const(1),
+                                Instr::I32Eq,
+                                Instr::If {
+                                    result: None,
+                                    then_body: vec![
+                                        Instr::I32Const(0),
+                                        Instr::LocalSet(6),
+                                    ],
+                                    else_body: vec![],
+                                },
+                            ],
+                            else_body: vec![
+                                Instr::I32Const(0),
+                                Instr::LocalSet(2),
+                            ],
+                        },
+                    ],
+                },
+                // Digit loop (only if ok still 1)
+                Instr::LocalGet(6),
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::Block {
+                            label: done_label.clone(),
+                            result: None,
+                            body: vec![
+                                Instr::Loop {
+                                    label: loop_label.clone(),
+                                    result: None,
+                                    body: vec![
+                                        // if i >= len: break
+                                        Instr::LocalGet(2),
+                                        Instr::LocalGet(3),
+                                        Instr::I32GeS,
+                                        Instr::BrIf(done_label.clone()),
+                                        // byte = s[i]
+                                        Instr::LocalGet(0),
+                                        Instr::RefAsNonNull,
+                                        Instr::LocalGet(2),
+                                        Instr::ArrayGetU(T_STRING.to_string()),
+                                        Instr::LocalSet(5),
+                                        // if byte < 48 or byte > 57: ok = 0, break
+                                        Instr::LocalGet(5),
+                                        Instr::I32Const(48),
+                                        Instr::I32LtS,
+                                        Instr::LocalGet(5),
+                                        Instr::I32Const(57),
+                                        Instr::I32GtS,
+                                        Instr::I32Or,
+                                        Instr::If {
+                                            result: None,
+                                            then_body: vec![
+                                                Instr::I32Const(0),
+                                                Instr::LocalSet(6),
+                                                Instr::Br(done_label.clone()),
+                                            ],
+                                            else_body: vec![],
+                                        },
+                                        // value = value * 10 + (byte - 48)
+                                        Instr::LocalGet(1),
+                                        Instr::I64Const(10),
+                                        Instr::I64Mul,
+                                        Instr::LocalGet(5),
+                                        Instr::I32Const(48),
+                                        Instr::I32Sub,
+                                        Instr::I64ExtendI32U,
+                                        Instr::I64Add,
+                                        Instr::LocalSet(1),
+                                        // i++
+                                        Instr::LocalGet(2),
+                                        Instr::I32Const(1),
+                                        Instr::I32Add,
+                                        Instr::LocalSet(2),
+                                        Instr::Br(loop_label.clone()),
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                    else_body: vec![],
+                },
+            ],
+        },
+        // Check ok flag → build Some or None
+        Instr::LocalGet(6),
+        Instr::If {
+            result: Some(ValType::Anyref),
+            then_body: {
+                let mut v = vec![
+                    Instr::I32Const(0),
+                    Instr::I32Const(1),
+                    Instr::LocalGet(1),
+                    Instr::LocalGet(4),
+                    Instr::I64Mul,
+                    Instr::StructNew(T_BOXED_INT.to_string()),
+                ];
+                v.extend(emit_coerce_stack(
+                    &ValType::Ref { nullable: false, heap: HeapType::Named(T_BOXED_INT.to_string()) },
+                    &ValType::Anyref,
+                ));
+                v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+                v.push(Instr::StructNew(T_VARIANT.to_string()));
+                v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+                v
+            },
+            else_body: {
+                let mut v = vec![
+                    Instr::I32Const(0),
+                    Instr::I32Const(0),
+                    Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                    Instr::StructNew(T_VARIANT.to_string()),
+                ];
+                v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+                v
+            },
+        },
+    ];
+
+    FuncDef {
+        name: "$int_from_string_helper".to_string(),
+        params: vec![ref_string_null()],
+        results: vec![ValType::Anyref],
+        locals: vec![
+            ValType::I64,  // 1: accumulator
+            ValType::I32,  // 2: index
+            ValType::I32,  // 3: len
+            ValType::I64,  // 4: sign
+            ValType::I32,  // 5: byte
+            ValType::I32,  // 6: ok flag
+        ],
+        body,
+    }
+}
+
+/// Generate helper function: $float_from_string_helper
+/// Takes (ref null $String) → anyref (Option<Float> variant)
+fn emit_float_from_string_helper() -> FuncDef {
+    let body = vec![
+        Instr::LocalGet(0),
+        Instr::Call("host_parse_float".to_string()),
+        // Stack: [f64, i32]
+        Instr::LocalSet(2), // save ok
+        Instr::LocalSet(1), // save value
+        Instr::LocalGet(2),
+        Instr::If {
+            result: Some(ValType::Anyref),
+            then_body: {
+                let mut v = vec![
+                    Instr::I32Const(0),
+                    Instr::I32Const(1),
+                    Instr::LocalGet(1),
+                    Instr::StructNew(T_BOXED_FLOAT.to_string()),
+                ];
+                v.extend(emit_coerce_stack(
+                    &ValType::Ref { nullable: false, heap: HeapType::Named(T_BOXED_FLOAT.to_string()) },
+                    &ValType::Anyref,
+                ));
+                v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+                v.push(Instr::StructNew(T_VARIANT.to_string()));
+                v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+                v
+            },
+            else_body: {
+                let mut v = vec![
+                    Instr::I32Const(0),
+                    Instr::I32Const(0),
+                    Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                    Instr::StructNew(T_VARIANT.to_string()),
+                ];
+                v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+                v
+            },
+        },
+    ];
+
+    FuncDef {
+        name: "$float_from_string_helper".to_string(),
+        params: vec![ref_string_null()],
+        results: vec![ValType::Anyref],
+        locals: vec![ValType::F64, ValType::I32],
+        body,
+    }
+}
+
+
 fn emit_unimplemented_intrinsic_prelude_call(
     entry: &crate::codegen::prelude::PreludeEntry,
     ctx: &mut EmitCtx<'_>,
@@ -2790,6 +3201,16 @@ fn ensure_rt_str_eq_import(ctx: &mut EmitCtx<'_>) {
         module: "rt.str".to_string(),
         name: "eq".to_string(),
         as_sym: "rt_str__eq".to_string(),
+        params: vec![ref_string_null(), ref_string_null()],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_rt_str_cmp_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.str".to_string(),
+        name: "cmp".to_string(),
+        as_sym: "rt_str__cmp".to_string(),
         params: vec![ref_string_null(), ref_string_null()],
         results: vec![ValType::I32],
     });

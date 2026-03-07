@@ -428,6 +428,22 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
+        prelude_ids::CHAR_CODE_AT,
+        PreludeEntry::intrinsic("char_code_at"),
+    );
+    map.insert(
+        prelude_ids::FROM_CHAR_CODE,
+        PreludeEntry::intrinsic("from_char_code"),
+    );
+    map.insert(
+        prelude_ids::INT_FROM_STRING,
+        PreludeEntry::intrinsic("Int.from_string"),
+    );
+    map.insert(
+        prelude_ids::FLOAT_FROM_STRING,
+        PreludeEntry::intrinsic("Float.from_string"),
+    );
+    map.insert(
         prelude_ids::HOST_READ_FILE,
         PreludeEntry::runtime(
             "__host_read_file",
@@ -571,6 +587,10 @@ mod tests {
             prelude_ids::HOST_ENV.0,
             prelude_ids::HOST_CWD.0,
             prelude_ids::HOST_EXIT.0,
+            prelude_ids::CHAR_CODE_AT.0,
+            prelude_ids::FROM_CHAR_CODE.0,
+            prelude_ids::INT_FROM_STRING.0,
+            prelude_ids::FLOAT_FROM_STRING.0,
         ] {
             assert!(
                 map.contains_key(&FuncId(id)),

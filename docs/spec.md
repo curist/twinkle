@@ -717,6 +717,46 @@ Defined for:
 * `Bool.to_string() String`
 * `String.to_string() String` (identity)
 
+#### Parsing
+
+Parsing from strings to numeric types returns `Option<T>`:
+
+* `int_from_string(s: String) Option<Int>` — parses a decimal integer (optional `+`/`-` prefix)
+* `float_from_string(s: String) Option<Float>` — parses a floating-point number
+
+```tw
+case int_from_string("42") {
+  .Some(n) => println("${n}"),   // prints 42
+  .None => println("not a number"),
+}
+```
+
+#### String ordering
+
+Strings support lexicographic comparison via the standard relational operators:
+
+```tw
+"a" < "b"    // true
+"abc" < "abcd"  // true (prefix is less)
+"abc" <= "abc"  // true
+```
+
+These comparisons use byte-level lexicographic ordering (UTF-8).
+
+#### Character utilities
+
+* `char_code_at(s: String, i: Int) Int` — returns the byte value at index `i` (0-based)
+* `from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-character string; returns `None` for values outside that range
+
+```tw
+char_code_at("abc", 0)  // 97 (ASCII 'a')
+
+case from_char_code(97) {
+  .Some(s) => println(s),  // prints "a"
+  .None => println("invalid"),
+}
+```
+
 ### Dot resolution rules
 
 * Check record fields first.

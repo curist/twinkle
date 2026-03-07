@@ -306,3 +306,18 @@ fn defer_capture() {
 fn defer_if() {
     check("tests/run/defer_if.tw");
 }
+
+#[test]
+fn string_ordering() {
+    check("tests/run/string_ordering.tw");
+}
+
+#[test]
+fn char_code_at() {
+    check("tests/run/char_code_at.tw");
+}
+
+#[test]
+fn numeric_parsing() {
+    check("tests/run/numeric_parsing.tw");
+}

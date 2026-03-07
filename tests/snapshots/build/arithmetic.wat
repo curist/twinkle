@@ -43,6 +43,7 @@
   (type $functype_27 (func))
   (type $functype_28 (func (param anyref anyref) (result anyref)))
   (type $functype_29 (func (param anyref) (result anyref)))
+  (type $functype_30 (func (param (ref null $rt_types__String)) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -506,6 +507,84 @@
         local.set $p3
         br $cmp))
     i32.const 1
+  )
+  (func $rt_str__cmp (type $functype_14)
+    (param $p0 (ref null $rt_types__String))
+    (param $p1 (ref null $rt_types__String))
+    (result i32)
+    (local $p2 i32)
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 i32)
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p6
+    local.get $p1
+    ref.as_non_null
+    array.len
+    local.set $p7
+    local.get $p6
+    local.get $p7
+    local.get $p6
+    local.get $p7
+    i32.le_s
+    select
+    local.set $p2
+    i32.const 0
+    local.set $p3
+    (block $done
+      (loop $cmp_loop
+        local.get $p3
+        local.get $p2
+        i32.ge_s
+        br_if $done
+        local.get $p0
+        ref.as_non_null
+        local.get $p3
+        array.get_u $rt_types__String
+        local.set $p4
+        local.get $p1
+        ref.as_non_null
+        local.get $p3
+        array.get_u $rt_types__String
+        local.set $p5
+        local.get $p4
+        local.get $p5
+        i32.lt_u
+        (if
+          (then
+            i32.const -1
+            return))
+        local.get $p4
+        local.get $p5
+        i32.gt_u
+        (if
+          (then
+            i32.const 1
+            return))
+        local.get $p3
+        i32.const 1
+        i32.add
+        local.set $p3
+        br $cmp_loop))
+    local.get $p6
+    local.get $p7
+    i32.lt_s
+    (if
+      (then
+        i32.const -1
+        return))
+    local.get $p6
+    local.get $p7
+    i32.gt_s
+    (if
+      (then
+        i32.const 1
+        return))
+    i32.const 0
   )
   (func $rt_str__from_i64 (type $functype_15)
     (param $p0 i64)
@@ -1546,6 +1625,126 @@
         struct.new $rt_types__Variant))
     return
   )
+  (func $user__$int_from_string_helper (type $functype_30)
+    (param $p0 (ref null $rt_types__String))
+    (result anyref)
+    (local $p1 i64)
+    (local $p2 i32)
+    (local $p3 i32)
+    (local $p4 i64)
+    (local $p5 i32)
+    (local $p6 i32)
+    i64.const 1
+    local.set $p4
+    i32.const 1
+    local.set $p6
+    local.get $p0
+    ref.as_non_null
+    array.len
+    local.set $p3
+    local.get $p3
+    i32.eqz
+    (if
+      (then
+        i32.const 0
+        local.set $p6)
+      (else
+        local.get $p0
+        ref.as_non_null
+        i32.const 0
+        array.get_u $rt_types__String
+        local.set $p5
+        local.get $p5
+        i32.const 45
+        i32.eq
+        (if
+          (then
+            i64.const -1
+            local.set $p4
+            i32.const 1
+            local.set $p2
+            local.get $p3
+            i32.const 1
+            i32.eq
+            (if
+              (then
+                i32.const 0
+                local.set $p6)))
+          (else
+            local.get $p5
+            i32.const 43
+            i32.eq
+            (if
+              (then
+                i32.const 1
+                local.set $p2
+                local.get $p3
+                i32.const 1
+                i32.eq
+                (if
+                  (then
+                    i32.const 0
+                    local.set $p6)))
+              (else
+                i32.const 0
+                local.set $p2))))
+        local.get $p6
+        (if
+          (then
+            (block $$done
+              (loop $$digit_loop
+                local.get $p2
+                local.get $p3
+                i32.ge_s
+                br_if $$done
+                local.get $p0
+                ref.as_non_null
+                local.get $p2
+                array.get_u $rt_types__String
+                local.set $p5
+                local.get $p5
+                i32.const 48
+                i32.lt_s
+                local.get $p5
+                i32.const 57
+                i32.gt_s
+                i32.or
+                (if
+                  (then
+                    i32.const 0
+                    local.set $p6
+                    br $$done))
+                local.get $p1
+                i64.const 10
+                i64.mul
+                local.get $p5
+                i32.const 48
+                i32.sub
+                i64.extend_i32_u
+                i64.add
+                local.set $p1
+                local.get $p2
+                i32.const 1
+                i32.add
+                local.set $p2
+                br $$digit_loop))))))
+    local.get $p6
+    (if (result anyref)
+      (then
+        i32.const 0
+        i32.const 1
+        local.get $p1
+        local.get $p4
+        i64.mul
+        struct.new $rt_types__BoxedInt
+        array.new_fixed $rt_types__Array 1
+        struct.new $rt_types__Variant)
+      (else
+        i32.const 0
+        i32.const 0
+        array.new_fixed $rt_types__Array 0
+        struct.new $rt_types__Variant))
+  )
   (func $user____user_init (type $functype_27)
     call $user__func_43
   )
@@ -1566,6 +1765,7 @@
   (export "rt_str__concat" (func $rt_str__concat))
   (export "rt_str__substring" (func $rt_str__substring))
   (export "rt_str__eq" (func $rt_str__eq))
+  (export "rt_str__cmp" (func $rt_str__cmp))
   (export "rt_str__from_i64" (func $rt_str__from_i64))
   (export "rt_str__from_f64" (func $rt_str__from_f64))
   (export "rt_str__from_bool" (func $rt_str__from_bool))

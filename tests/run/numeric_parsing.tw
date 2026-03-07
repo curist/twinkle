@@ -1,0 +1,27 @@
+// Expected output:
+//   42
+//   none
+//   3
+//   none
+
+// int_from_string
+case int_from_string("42") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+case int_from_string("abc") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+// float_from_string
+case float_from_string("3.14") {
+  .Some(f) => println("${f.to_string().substring(0, 1)}"),
+  .None => println("none"),
+}
+
+case float_from_string("not_a_number") {
+  .Some(f) => println("${f}"),
+  .None => println("none"),
+}

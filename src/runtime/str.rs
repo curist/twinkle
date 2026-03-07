@@ -18,6 +18,7 @@ pub fn make() -> ModuleIR {
     m.funcs.push(concat_fn());
     m.funcs.push(substring_fn());
     m.funcs.push(eq_fn());
+    m.funcs.push(cmp_fn());
     m.funcs.push(from_i64_fn());
     m.funcs.push(from_f64_fn());
     m.funcs.push(from_bool_fn());
@@ -234,6 +235,121 @@ fn eq_fn() -> FuncDef {
                 }],
             },
             Instr::I32Const(1),
+        ],
+    }
+}
+
+/// `cmp(a: String, b: String) -> i32`  — returns -1, 0, or 1 (lexicographic)
+///
+/// Locals: p2=min_len, p3=i, p4=byte_a, p5=byte_b, p6=len_a, p7=len_b
+fn cmp_fn() -> FuncDef {
+    FuncDef {
+        name: "cmp".into(),
+        params: vec![ref_string_null(), ref_string_null()],
+        results: vec![ValType::I32],
+        locals: vec![
+            ValType::I32, // p2 = min_len
+            ValType::I32, // p3 = i
+            ValType::I32, // p4 = byte_a
+            ValType::I32, // p5 = byte_b
+            ValType::I32, // p6 = len_a
+            ValType::I32, // p7 = len_b
+        ],
+        body: vec![
+            // p6 = len(a)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(6),
+            // p7 = len(b)
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(7),
+            // p2 = min(len_a, len_b)
+            Instr::LocalGet(6),
+            Instr::LocalGet(7),
+            Instr::LocalGet(6),
+            Instr::LocalGet(7),
+            Instr::I32LeS,
+            Instr::Select,
+            Instr::LocalSet(2),
+            // p3 = 0
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            // byte-by-byte comparison loop
+            Instr::Block {
+                label: "done".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "cmp_loop".into(),
+                    result: None,
+                    body: vec![
+                        // if i >= min_len: break
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("done".into()),
+                        // p4 = a[i]
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGetU(T_STRING.into()),
+                        Instr::LocalSet(4),
+                        // p5 = b[i]
+                        Instr::LocalGet(1),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGetU(T_STRING.into()),
+                        Instr::LocalSet(5),
+                        // if byte_a < byte_b: return -1
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(5),
+                        Instr::I32LtU,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(-1), Instr::Return],
+                            else_body: vec![],
+                        },
+                        // if byte_a > byte_b: return 1
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(5),
+                        Instr::I32GtU,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(1), Instr::Return],
+                            else_body: vec![],
+                        },
+                        // i++
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("cmp_loop".into()),
+                    ],
+                }],
+            },
+            // All shared bytes equal — compare lengths
+            // if len_a < len_b: return -1
+            Instr::LocalGet(6),
+            Instr::LocalGet(7),
+            Instr::I32LtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(-1), Instr::Return],
+                else_body: vec![],
+            },
+            // if len_a > len_b: return 1
+            Instr::LocalGet(6),
+            Instr::LocalGet(7),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(1), Instr::Return],
+                else_body: vec![],
+            },
+            // equal
+            Instr::I32Const(0),
         ],
     }
 }

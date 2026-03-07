@@ -520,6 +520,10 @@ impl<W: Write> Interpreter<W> {
             (BinOp::Le, Value::Float(a), Value::Float(b)) => Value::Bool(a <= b),
             (BinOp::Gt, Value::Float(a), Value::Float(b)) => Value::Bool(a > b),
             (BinOp::Ge, Value::Float(a), Value::Float(b)) => Value::Bool(a >= b),
+            (BinOp::Lt, Value::Str(a), Value::Str(b)) => Value::Bool(a < b),
+            (BinOp::Le, Value::Str(a), Value::Str(b)) => Value::Bool(a <= b),
+            (BinOp::Gt, Value::Str(a), Value::Str(b)) => Value::Bool(a > b),
+            (BinOp::Ge, Value::Str(a), Value::Str(b)) => Value::Bool(a >= b),
 
             (op, a, b) => panic!("type error: {:?} on {:?} and {:?}", op, a, b),
         })
@@ -586,6 +590,70 @@ impl<W: Write> Interpreter<W> {
                 match args.into_iter().next() {
                     Some(v @ Value::Str(_)) => Ok(v),
                     _ => panic!("string_to_string: expected String"),
+                }
+            }
+            prelude_ids::CHAR_CODE_AT => {
+                // char_code_at(s: String, i: Int) -> Int
+                match (&args[0], &args[1]) {
+                    (Value::Str(s), Value::Int(i)) => {
+                        let idx = *i as usize;
+                        match s.chars().nth(idx) {
+                            Some(c) => Ok(Value::Int(c as i64)),
+                            None => Err(Signal::Trap(TrapError::UserError(format!(
+                                "char_code_at: index {} out of bounds for string of length {}",
+                                idx,
+                                s.chars().count()
+                            )))),
+                        }
+                    }
+                    _ => panic!("char_code_at: expected (String, Int)"),
+                }
+            }
+            prelude_ids::FROM_CHAR_CODE => {
+                // from_char_code(n: Int) -> Option<String>
+                match &args[0] {
+                    Value::Int(n) => {
+                        let n = *n;
+                        if n >= 0 && n < 128 {
+                            let c = n as u8 as char;
+                            Ok(Value::Variant(
+                                OPTION_TYPE_ID,
+                                1,
+                                vec![Value::Str(c.to_string())],
+                            ))
+                        } else {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        }
+                    }
+                    _ => panic!("from_char_code: expected Int"),
+                }
+            }
+            prelude_ids::INT_FROM_STRING => {
+                // Int.from_string(s: String) -> Option<Int>
+                match &args[0] {
+                    Value::Str(s) => match s.parse::<i64>() {
+                        Ok(n) => Ok(Value::Variant(
+                            OPTION_TYPE_ID,
+                            1,
+                            vec![Value::Int(n)],
+                        )),
+                        Err(_) => Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![])),
+                    },
+                    _ => panic!("Int.from_string: expected String"),
+                }
+            }
+            prelude_ids::FLOAT_FROM_STRING => {
+                // Float.from_string(s: String) -> Option<Float>
+                match &args[0] {
+                    Value::Str(s) => match s.parse::<f64>() {
+                        Ok(f) => Ok(Value::Variant(
+                            OPTION_TYPE_ID,
+                            1,
+                            vec![Value::Float(f)],
+                        )),
+                        Err(_) => Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![])),
+                    },
+                    _ => panic!("Float.from_string: expected String"),
                 }
             }
             prelude_ids::STRING_LEN => {

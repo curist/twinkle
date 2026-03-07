@@ -119,6 +119,7 @@ pub enum Instr {
     I32LeS,
     I32GeS,
     I32LtU,
+    I32GtU,
     I32Eqz,
 
     // i64 arithmetic / comparison
@@ -150,7 +151,11 @@ pub enum Instr {
 
     // Numeric conversions
     I64ExtendI32S,
+    I64ExtendI32U,
     I32WrapI64,
+
+    // Select (ternary: select picks one of two values based on i32 condition)
+    Select,
 
     // Reference ops
     RefNull(HeapType),

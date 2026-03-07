@@ -1,0 +1,41 @@
+// Expected output:
+//   true
+//   false
+//   true
+//   true
+//   false
+//   true
+//   true
+//   true
+//   true
+//   true
+
+// Basic string comparisons
+r1 := "a" < "b"
+println("${r1}")
+r2 := "b" < "a"
+println("${r2}")
+r3 := "a" <= "a"
+println("${r3}")
+r4 := "a" >= "a"
+println("${r4}")
+r5 := "a" > "b"
+println("${r5}")
+r6 := "b" > "a"
+println("${r6}")
+
+// Character classification via substring
+s := "hello5world"
+c := s.substring(5, 6)
+is_digit := c >= "0" and c <= "9"
+println("${is_digit}")
+
+// Prefix comparison (shorter string is less)
+r7 := "abc" < "abcd"
+println("${r7}")
+
+// Equal strings
+r8 := "abc" <= "abc"
+println("${r8}")
+r9 := "abc" >= "abc"
+println("${r9}")

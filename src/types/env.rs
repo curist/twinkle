@@ -687,6 +687,48 @@ impl ValueEnv {
             },
         );
 
+        // char_code_at(s: String, i: Int) -> Int
+        env.builtins.insert(
+            "char_code_at".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String, MonoType::Int],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+        // from_char_code(n: Int) -> Option<String>
+        env.builtins.insert(
+            "from_char_code".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Named {
+                    type_id: OPTION_TYPE_ID,
+                    args: vec![MonoType::String],
+                }),
+            },
+        );
+        // int_from_string(s: String) -> Option<Int>
+        env.builtins.insert(
+            "int_from_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Named {
+                    type_id: OPTION_TYPE_ID,
+                    args: vec![MonoType::Int],
+                }),
+            },
+        );
+        // float_from_string(s: String) -> Option<Float>
+        env.builtins.insert(
+            "float_from_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Named {
+                    type_id: OPTION_TYPE_ID,
+                    args: vec![MonoType::Float],
+                }),
+            },
+        );
+
         env.builtins.insert(
             "__host_read_file".to_string(),
             MonoType::Function {

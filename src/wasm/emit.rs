@@ -369,6 +369,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I32LeS => format!("{pad}i32.le_s"),
         Instr::I32GeS => format!("{pad}i32.ge_s"),
         Instr::I32LtU => format!("{pad}i32.lt_u"),
+        Instr::I32GtU => format!("{pad}i32.gt_u"),
         Instr::I32Eqz => format!("{pad}i32.eqz"),
 
         Instr::I64Add => format!("{pad}i64.add"),
@@ -397,7 +398,9 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::F64Ge => format!("{pad}f64.ge"),
 
         Instr::I64ExtendI32S => format!("{pad}i64.extend_i32_s"),
+        Instr::I64ExtendI32U => format!("{pad}i64.extend_i32_u"),
         Instr::I32WrapI64 => format!("{pad}i32.wrap_i64"),
+        Instr::Select => format!("{pad}select"),
 
         Instr::RefNull(ht) => format!("{pad}ref.null {}", emit_heap_type(ht)),
         Instr::RefIsNull => format!("{pad}ref.is_null"),
