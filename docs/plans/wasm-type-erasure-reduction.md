@@ -19,6 +19,8 @@ Done so far:
   subtypes of the universal `$Closure`, so the same runtime value can flow through both
   universal and typed call paths
 * `Cell.update` has a real Wasm implementation instead of trapping
+* concrete `Cell<T>` instantiations now use typed Wasm cell layouts, with the old erased
+  `anyref` container retained only as a fallback path
 
 Still open:
 
@@ -36,6 +38,7 @@ higher-order call boundaries such as `fold(xs, init, f)`.
 However, a WAT audit of `examples/*` and `tests/run/*` still shows several broader
 type-erasure patterns:
 
+* `Cell<T>` is still represented as a 1-slot `anyref` container even when `T` is concrete
 * user record fields are emitted as `Anyref` unconditionally
 * iterator state is represented as a generic `[seed_anyref, step_closure_anyref]` array
 * runtime helpers such as `Iterator.next` still unpack closures and payloads through the
@@ -70,7 +73,27 @@ Follow-up:
 * keep regression coverage for named-function specialization
 * make sure new closure representation changes do not accidentally drop this path
 
-### 2. User record fields are always `Anyref`
+### 2. `Cell<T>` layout specialization
+
+Status: mostly done.
+
+Concrete `Cell<T>` instantiations now lower to typed Wasm structs, which means `Cell<Int>`
+and `Cell<fn(...) ...>` can preserve their concrete payload type through `new`, `get`,
+`set`, and `update`.
+
+What changed:
+
+* concrete payload cells no longer default to a 1-slot `anyref` runtime container
+* typed closure payloads can stay concrete inside cells
+* flow-sensitive local mono tracking keeps the typed path available even in `__init__`
+  functions where module globals may be rebound to later values
+
+Follow-up:
+
+* keep regression coverage for concrete `Cell<Int>` and `Cell<fn(...) ...>` Wasm paths
+* keep the erased fallback path only for genuinely unsupported or erased cases
+
+### 3. User record fields are always `Anyref`
 
 Today [records are emitted with `Anyref` fields](../../src/codegen/emit.rs), even when
 the source field type is concrete.
@@ -87,7 +110,7 @@ Target:
   concrete
 * preserve `Anyref` only for genuinely erased or polymorphic fields
 
-### 3. Iterator representation erases both seed and step closure
+### 4. Iterator representation erases both seed and step closure
 
 Today `Iterator.unfold(seed, step)` is represented as:
 
@@ -102,7 +125,7 @@ Target:
 * introduce a typed iterator state representation after monomorphization
 * specialize the step closure call when the iterator state type is concrete
 
-### 4. Variant / helper payloads remain array-of-anyref based
+### 5. Variant / helper payloads remain array-of-anyref based
 
 Option/Result/iterator-step payloads still travel through generic payload arrays in many
 places. This is not always wrong, but it means concrete payload types are often erased
@@ -169,6 +192,7 @@ This plan is successful when:
   closure dispatch
 * closure helper/intrinsic paths remain correct under the subtype-based typed closure
   representation
+* concrete `Cell<T>` uses no longer default to an erased `anyref` cell layout
 * record field access preserves concrete Wasm types where possible
 * iterator step closures no longer require universal arg-array packing in the common
   monomorphized case

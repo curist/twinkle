@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::codegen::prelude::{PreludeEntry, PreludeMap};
 use crate::ir::FuncId;
@@ -18,18 +18,22 @@ use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 pub struct FuncSigInfo {
     pub params: Vec<ValType>,
     pub result: Option<ValType>,
+    pub result_mono: Option<MonoType>,
 }
 
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
-    /// Tracks `MonoType::Function` for locals that hold typed closures.
-    /// Populated for function-typed params and for `AMakeClosure` let-bindings
-    /// with concrete signatures. Used at call sites to select the typed
-    /// `call_ref` path instead of the universal anyref boxing path.
+    /// Tracks concrete monomorphic types for locals when codegen can preserve a
+    /// more specific Wasm representation than plain `Anyref`.
     pub local_mono: HashMap<LocalId, MonoType>,
+    pub capture_mono_by_func: HashMap<FuncId, HashMap<LocalId, MonoType>>,
     /// Tracks local bindings created from `AMakeClosure` so direct user calls
     /// can materialize typed closures only at concrete higher-order boundaries.
     pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
+    assigned_locals: HashSet<LocalId>,
+    rebound_locals: HashSet<LocalId>,
+    in_init_func: bool,
+    pub current_func_id: Option<FuncId>,
     module_globals: HashMap<LocalId, String>,
     pub label_stack: Vec<(Label, Label)>,
     pub loop_result_stack: Vec<Option<ValType>>,
@@ -52,7 +56,12 @@ impl<'a> EmitCtx<'a> {
         Self {
             local_map: HashMap::new(),
             local_mono: HashMap::new(),
+            capture_mono_by_func: HashMap::new(),
             closure_locals: HashMap::new(),
+            assigned_locals: HashSet::new(),
+            rebound_locals: HashSet::new(),
+            in_init_func: false,
+            current_func_id: None,
             module_globals: HashMap::new(),
             label_stack: Vec::new(),
             loop_result_stack: Vec::new(),
@@ -90,24 +99,50 @@ impl<'a> EmitCtx<'a> {
         self.local_map.clear();
         self.local_mono.clear();
         self.closure_locals.clear();
+        self.assigned_locals.clear();
+        self.rebound_locals.clear();
         self.label_stack.clear();
         self.loop_result_stack.clear();
         self.next_label_id = 0;
+        self.in_init_func = func.name == "__init__";
+        self.current_func_id = Some(func.func_id);
+        collect_assigned_locals_expr(&func.body, &mut self.assigned_locals);
+        let mut local_bind_counts = HashMap::new();
+        collect_local_binding_counts_expr(&func.body, &mut local_bind_counts);
+        self.rebound_locals.extend(
+            local_bind_counts
+                .into_iter()
+                .filter_map(|(local_id, count)| (count > 1).then_some(local_id)),
+        );
         let mut next_idx = 0_u32;
 
         for (i, local_id) in func.params.iter().enumerate() {
             let mono_ty = func.param_tys.get(i).cloned().unwrap_or(MonoType::Void);
-            // Track function-typed params so call sites can use typed call_ref.
-            if matches!(&mono_ty, MonoType::Function { .. }) {
-                self.local_mono.insert(*local_id, mono_ty.clone());
+            let erased_assignment = (self.assigned_locals.contains(local_id)
+                || self.rebound_locals.contains(local_id))
+                && should_erase_assigned_local(&mono_ty);
+            let erase_init_cell = self.in_init_func && is_cell_mono(&mono_ty);
+            if !erased_assignment {
+                if !erase_init_cell {
+                    self.local_mono.insert(*local_id, mono_ty.clone());
+                }
             }
-            let ty = mono_to_valtype_for_param(&mono_ty, self.type_env, &self.concrete_func_sigs);
+            let ty = if erased_assignment || erase_init_cell {
+                ValType::Anyref
+            } else {
+                mono_to_valtype_specialized(&mono_ty, self.type_env, &self.concrete_func_sigs)
+            };
             self.local_map.insert(*local_id, (next_idx, ty));
             next_idx += 1;
         }
         for (local_id, ty) in extra_params {
             self.local_map.insert(*local_id, (next_idx, ty.clone()));
             next_idx += 1;
+        }
+        if let Some(capture_mono) = self.capture_mono_by_func.get(&func.func_id) {
+            for (local_id, mono) in capture_mono {
+                self.local_mono.insert(*local_id, mono.clone());
+            }
         }
 
         let mut wasm_locals = Vec::new();
@@ -157,12 +192,23 @@ impl<'a> EmitCtx<'a> {
         self.module_globals = module_globals;
     }
 
+    pub fn set_capture_mono_by_func(
+        &mut self,
+        capture_mono_by_func: HashMap<FuncId, HashMap<LocalId, MonoType>>,
+    ) {
+        self.capture_mono_by_func = capture_mono_by_func;
+    }
+
     pub fn module_global_sym(&self, local_id: LocalId) -> Option<&String> {
         self.module_globals.get(&local_id)
     }
 
     pub fn user_func_sig(&self, func_id: FuncId) -> Option<&FuncSigInfo> {
         self.user_funcs.get(&func_id)
+    }
+
+    pub fn infer_op_mono_for_emit(&self, op: &AnfOp) -> Option<MonoType> {
+        self.infer_op_mono(op)
     }
 
     fn assign_expr_locals(
@@ -178,29 +224,41 @@ impl<'a> EmitCtx<'a> {
                 self.assign_op_locals(op, next_idx, wasm_locals);
 
                 if !self.local_map.contains_key(local) {
-                    let local_ty = self.infer_op_valtype(op).unwrap_or(ValType::Anyref);
+                    let inferred_mono = if self.module_global_sym(*local).is_some() {
+                        None
+                    } else {
+                        self.infer_op_mono(op)
+                    };
+                    let erase_assignment = (self.assigned_locals.contains(local)
+                        || self.rebound_locals.contains(local))
+                        && inferred_mono
+                            .as_ref()
+                            .is_some_and(should_erase_assigned_local);
+                    let erase_init_cell =
+                        self.in_init_func && inferred_mono.as_ref().is_some_and(is_cell_mono);
+                    let local_ty = if erase_assignment || erase_init_cell {
+                        ValType::Anyref
+                    } else {
+                        inferred_mono
+                            .as_ref()
+                            .map(|mono| {
+                                mono_to_valtype_specialized(
+                                    mono,
+                                    self.type_env,
+                                    &self.concrete_func_sigs,
+                                )
+                            })
+                            .or_else(|| self.infer_op_valtype(op))
+                            .unwrap_or(ValType::Anyref)
+                    };
+                    if let Some(mono) =
+                        inferred_mono.filter(|_| !(erase_assignment || erase_init_cell))
+                    {
+                        self.local_mono.insert(*local, mono);
+                    }
                     if let AnfOp::AMakeClosure { func_id, free_vars } = op.as_ref() {
                         self.closure_locals
                             .insert(*local, (*func_id, free_vars.clone()));
-                        if let Some((params, ret)) = self.concrete_func_sigs.get(func_id) {
-                            self.local_mono.insert(
-                                *local,
-                                MonoType::Function {
-                                    params: params.clone(),
-                                    ret: Box::new(ret.clone()),
-                                },
-                            );
-                        }
-                    }
-                    // Propagate local_mono through AInit when the source is a
-                    // local with a known Function type (e.g. `f2 := f1`).
-                    if let AnfOp::AInit {
-                        value: Atom::ALocal(src),
-                    } = op.as_ref()
-                    {
-                        if let Some(mono) = self.local_mono.get(src).cloned() {
-                            self.local_mono.insert(*local, mono);
-                        }
                     }
                     self.local_map.insert(*local, (*next_idx, local_ty.clone()));
                     wasm_locals.push(local_ty);
@@ -273,7 +331,7 @@ impl<'a> EmitCtx<'a> {
 
     fn infer_op_valtype(&self, op: &AnfOp) -> Option<ValType> {
         match op {
-            AnfOp::ACall { callee, .. } => self.infer_call_result_valtype(callee),
+            AnfOp::ACall { callee, args } => self.infer_call_result_valtype(callee, args),
             AnfOp::AIf {
                 then_branch,
                 else_branch,
@@ -337,18 +395,41 @@ impl<'a> EmitCtx<'a> {
     }
 
     fn infer_atom_valtype(&self, atom: &Atom) -> Option<ValType> {
+        self.infer_atom_mono(atom)
+            .map(|mono| mono_to_valtype_specialized(&mono, self.type_env, &self.concrete_func_sigs))
+    }
+
+    fn infer_atom_mono(&self, atom: &Atom) -> Option<MonoType> {
         match atom {
-            Atom::ALocal(local_id) => self.local_map.get(local_id).map(|(_, ty)| ty.clone()),
-            Atom::AGlobalFunc(_) => Some(ref_named(true, T_CLOSURE)),
-            Atom::ALitInt(_) => Some(ValType::I64),
-            Atom::ALitFloat(_) => Some(ValType::F64),
-            Atom::ALitBool(_) => Some(ValType::I32),
-            Atom::ALitStr(_) => Some(ref_named(true, T_STRING)),
-            Atom::ALitVoid => Some(ValType::I32),
+            Atom::ALocal(local_id) => self.local_mono.get(local_id).cloned().or_else(|| {
+                self.current_func_id
+                    .and_then(|func_id| self.capture_mono_by_func.get(&func_id))
+                    .and_then(|m| m.get(local_id).cloned())
+            }),
+            Atom::AGlobalFunc(func_id) => {
+                self.concrete_func_sigs
+                    .get(func_id)
+                    .map(|(params, ret)| MonoType::Function {
+                        params: params.clone(),
+                        ret: Box::new(ret.clone()),
+                    })
+            }
+            Atom::ALitInt(_) => Some(MonoType::Int),
+            Atom::ALitFloat(_) => Some(MonoType::Float),
+            Atom::ALitBool(_) => Some(MonoType::Bool),
+            Atom::ALitStr(_) => Some(MonoType::String),
+            Atom::ALitVoid => Some(MonoType::Void),
         }
     }
 
-    fn infer_call_result_valtype(&self, callee: &Atom) -> Option<ValType> {
+    fn infer_call_result_valtype(&self, callee: &Atom, args: &[Atom]) -> Option<ValType> {
+        if let Some(mono) = self.infer_call_result_mono(callee, args) {
+            return Some(mono_to_valtype_specialized(
+                &mono,
+                self.type_env,
+                &self.concrete_func_sigs,
+            ));
+        }
         match callee {
             Atom::AGlobalFunc(func_id) => {
                 if let Some(entry) = self.prelude.get(func_id) {
@@ -365,7 +446,11 @@ impl<'a> EmitCtx<'a> {
             Atom::ALocal(local_id) => {
                 if let Some(MonoType::Function { ret, .. }) = self.local_mono.get(local_id) {
                     if is_concrete_mono_type(ret) {
-                        return Some(mono_to_valtype(ret, self.type_env));
+                        return Some(mono_to_valtype_specialized(
+                            ret,
+                            self.type_env,
+                            &self.concrete_func_sigs,
+                        ));
                     }
                 }
                 Some(ValType::Anyref)
@@ -375,6 +460,13 @@ impl<'a> EmitCtx<'a> {
     }
 
     fn infer_expr_valtype(&self, expr: &AnfExpr) -> Option<ValType> {
+        if let Some(mono) = self.infer_expr_mono(expr) {
+            return Some(mono_to_valtype_specialized(
+                &mono,
+                self.type_env,
+                &self.concrete_func_sigs,
+            ));
+        }
         match expr {
             AnfExpr::Let { body, .. } => self.infer_expr_valtype(body),
             AnfExpr::Atom(atom) => self.infer_atom_valtype(atom),
@@ -403,7 +495,147 @@ impl<'a> EmitCtx<'a> {
         field: crate::ir::FieldId,
     ) -> Option<ValType> {
         let field_ty = record_field_mono(self.type_env, type_id, field.0)?;
-        Some(mono_to_valtype(field_ty, self.type_env))
+        Some(mono_to_valtype_specialized(
+            field_ty,
+            self.type_env,
+            &self.concrete_func_sigs,
+        ))
+    }
+
+    fn infer_op_mono(&self, op: &AnfOp) -> Option<MonoType> {
+        match op {
+            AnfOp::ACall { callee, args } => self.infer_call_result_mono(callee, args),
+            AnfOp::AIf {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_ty = self.infer_expr_mono(then_branch);
+                let else_ty = self.infer_expr_mono(else_branch);
+                match (then_ty, else_ty) {
+                    (Some(a), Some(b)) if a == b => Some(a),
+                    (Some(a), _) if expr_always_diverges(else_branch) => Some(a),
+                    (_, Some(b)) if expr_always_diverges(then_branch) => Some(b),
+                    _ => None,
+                }
+            }
+            AnfOp::AMatch { arms, .. } => {
+                let mut value_ty: Option<MonoType> = None;
+                for arm in arms {
+                    if expr_always_diverges(&arm.body) {
+                        continue;
+                    }
+                    let arm_ty = self.infer_expr_mono(&arm.body)?;
+                    match &value_ty {
+                        None => value_ty = Some(arm_ty),
+                        Some(expected) if *expected == arm_ty => {}
+                        Some(_) => return None,
+                    }
+                }
+                value_ty
+            }
+            AnfOp::ABinOp { op, operand_ty, .. } => Some(match op {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                    match operand_ty {
+                        OpKind::Int => MonoType::Int,
+                        OpKind::Float => MonoType::Float,
+                        OpKind::Bool => MonoType::Bool,
+                        OpKind::String => MonoType::String,
+                    }
+                }
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                    MonoType::Bool
+                }
+                BinOp::And | BinOp::Or => MonoType::Bool,
+                BinOp::Assign => MonoType::Void,
+            }),
+            AnfOp::AUnOp { op, operand_ty, .. } => Some(match op {
+                UnOp::Neg => match operand_ty {
+                    OpKind::Int => MonoType::Int,
+                    OpKind::Float => MonoType::Float,
+                    OpKind::Bool => MonoType::Bool,
+                    OpKind::String => MonoType::String,
+                },
+                UnOp::Not => MonoType::Bool,
+            }),
+            AnfOp::AMakeClosure { func_id, .. } => {
+                self.concrete_func_sigs
+                    .get(func_id)
+                    .map(|(params, ret)| MonoType::Function {
+                        params: params.clone(),
+                        ret: Box::new(ret.clone()),
+                    })
+            }
+            AnfOp::ARecord { type_id, .. } | AnfOp::ARecordUpdate { type_id, .. } => {
+                Some(MonoType::named(*type_id))
+            }
+            AnfOp::ARecordGet { type_id, field, .. } => {
+                record_field_mono(self.type_env, *type_id, field.0).cloned()
+            }
+            AnfOp::AVariant { type_id, .. } => Some(MonoType::named(*type_id)),
+            AnfOp::AArrayLit(elems) => {
+                let first = elems.first()?;
+                let elem_ty = self.infer_atom_mono(first)?;
+                if elems
+                    .iter()
+                    .all(|elem| self.infer_atom_mono(elem).as_ref() == Some(&elem_ty))
+                {
+                    Some(MonoType::Vector(Box::new(elem_ty)))
+                } else {
+                    None
+                }
+            }
+            AnfOp::AIndex { result_ty, .. } => Some(result_ty.clone()),
+            AnfOp::AInit { value } => self.infer_atom_mono(value),
+            AnfOp::AAssign { .. } | AnfOp::ADefer(_) | AnfOp::ALoop { .. } => None,
+        }
+    }
+
+    fn infer_call_result_mono(&self, callee: &Atom, args: &[Atom]) -> Option<MonoType> {
+        match callee {
+            Atom::AGlobalFunc(func_id) => {
+                use crate::ir::lower::prelude as ids;
+
+                match *func_id {
+                    id if id == ids::CELL_NEW => {
+                        let inner = self.infer_atom_mono(args.first()?)?;
+                        Some(MonoType::Named {
+                            type_id: CELL_TYPE_ID,
+                            args: vec![inner],
+                        })
+                    }
+                    id if id == ids::CELL_GET => match self.infer_atom_mono(args.first()?)? {
+                        MonoType::Named { type_id, args } if type_id == CELL_TYPE_ID => {
+                            args.into_iter().next()
+                        }
+                        _ => None,
+                    },
+                    id if id == ids::CELL_SET || id == ids::CELL_UPDATE => Some(MonoType::Void),
+                    _ => self
+                        .user_funcs
+                        .get(func_id)
+                        .and_then(|sig| sig.result_mono.clone()),
+                }
+            }
+            Atom::ALocal(local_id) => {
+                if let Some(MonoType::Function { ret, .. }) = self.local_mono.get(local_id) {
+                    Some((**ret).clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_expr_mono(&self, expr: &AnfExpr) -> Option<MonoType> {
+        match expr {
+            AnfExpr::Let { body, .. } => self.infer_expr_mono(body),
+            AnfExpr::Atom(atom) => self.infer_atom_mono(atom),
+            AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => self.infer_atom_mono(atom),
+            AnfExpr::Return(None) | AnfExpr::Break(None) => Some(MonoType::Void),
+            AnfExpr::Continue => None,
+        }
     }
 }
 
@@ -427,6 +659,90 @@ fn expr_always_diverges(expr: &AnfExpr) -> bool {
         AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => true,
         AnfExpr::Atom(_) => false,
         AnfExpr::Let { op, body, .. } => op_always_diverges(op) || expr_always_diverges(body),
+    }
+}
+
+fn should_erase_assigned_local(mono: &MonoType) -> bool {
+    !matches!(
+        mono,
+        MonoType::Int
+            | MonoType::Float
+            | MonoType::Bool
+            | MonoType::String
+            | MonoType::Void
+            | MonoType::Never
+    )
+}
+
+fn is_cell_mono(mono: &MonoType) -> bool {
+    matches!(mono, MonoType::Named { type_id, .. } if *type_id == CELL_TYPE_ID)
+}
+
+fn collect_assigned_locals_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_assigned_locals_op(op, out);
+            collect_assigned_locals_expr(body, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_assigned_locals_op(op: &AnfOp, out: &mut HashSet<LocalId>) {
+    match op {
+        AnfOp::AAssign { local, .. } => {
+            out.insert(*local);
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_assigned_locals_expr(then_branch, out);
+            collect_assigned_locals_expr(else_branch, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_assigned_locals_expr(&arm.body, out);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_assigned_locals_expr(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_local_binding_counts_expr(expr: &AnfExpr, out: &mut HashMap<LocalId, usize>) {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            *out.entry(*local).or_insert(0) += 1;
+            collect_local_binding_counts_op(op, out);
+            collect_local_binding_counts_expr(body, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_local_binding_counts_op(op: &AnfOp, out: &mut HashMap<LocalId, usize>) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_local_binding_counts_expr(then_branch, out);
+            collect_local_binding_counts_expr(else_branch, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_local_binding_counts_expr(&arm.body, out);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_local_binding_counts_expr(body, out);
+        }
+        _ => {}
     }
 }
 
@@ -552,6 +868,29 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
     }
 }
 
+pub fn mono_to_valtype_specialized(
+    ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> ValType {
+    match ty {
+        MonoType::Function { params, ret }
+            if !concrete_func_sigs.is_empty() && is_concrete_mono_type(ty) =>
+        {
+            ref_named(true, &typed_closure_struct_sym(params, ret))
+        }
+        MonoType::Named { type_id, args }
+            if !concrete_func_sigs.is_empty()
+                && *type_id == CELL_TYPE_ID
+                && args.len() == 1
+                && is_concrete_mono_type(&args[0]) =>
+        {
+            ref_named(true, &typed_cell_struct_sym(&args[0]))
+        }
+        _ => mono_to_valtype(ty, type_env),
+    }
+}
+
 fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
     if type_id == CELL_TYPE_ID || type_id == ITERATOR_TYPE_ID {
         return ref_named(true, T_ARRAY);
@@ -639,6 +978,45 @@ pub fn mono_to_type_tag(ty: &MonoType) -> String {
     }
 }
 
+pub fn mono_to_symbol_key(ty: &MonoType) -> String {
+    match ty {
+        MonoType::Int => "Int".to_string(),
+        MonoType::Float => "Float".to_string(),
+        MonoType::Bool => "Bool".to_string(),
+        MonoType::String => "String".to_string(),
+        MonoType::Void => "Void".to_string(),
+        MonoType::Never => "Never".to_string(),
+        MonoType::Var(name) => name.clone(),
+        MonoType::MetaVar(id) => format!("M{}", id),
+        MonoType::Vector(elem) => format!("Vec_{}", mono_to_symbol_key(elem)),
+        MonoType::Dict(k, v) => format!("Dict_{}_{}", mono_to_symbol_key(k), mono_to_symbol_key(v)),
+        MonoType::Named { type_id, args } => {
+            if args.is_empty() {
+                format!("T{}", type_id.0)
+            } else {
+                let args_str = args
+                    .iter()
+                    .map(mono_to_symbol_key)
+                    .collect::<Vec<_>>()
+                    .join("_");
+                format!("T{}_{}", type_id.0, args_str)
+            }
+        }
+        MonoType::Function { params, ret } => {
+            let params_str = params
+                .iter()
+                .map(mono_to_symbol_key)
+                .collect::<Vec<_>>()
+                .join("_");
+            format!("Fn_{}_{}", params_str, mono_to_symbol_key(ret))
+        }
+    }
+}
+
+pub fn typed_cell_struct_sym(elem: &MonoType) -> String {
+    format!("cell_{}", mono_to_symbol_key(elem))
+}
+
 /// Symbol for a typed closure func type with the given signature.
 /// e.g. `[Int, Int] -> Int` → `"closurefunc_i64_i64_i64"`.
 /// Zero-param functions use the prefix `"closurefunc_nil__<ret>"`.
@@ -681,15 +1059,7 @@ pub fn mono_to_valtype_for_param(
     type_env: &TypeEnv,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> ValType {
-    if !concrete_func_sigs.is_empty() {
-        if let MonoType::Function { params, ret } = mono_ty {
-            if is_concrete_mono_type(mono_ty) {
-                let sym = typed_closure_struct_sym(params, ret);
-                return ref_named(true, &sym);
-            }
-        }
-    }
-    mono_to_valtype(mono_ty, type_env)
+    mono_to_valtype_specialized(mono_ty, type_env, concrete_func_sigs)
 }
 
 fn collect_pattern_locals_typed(

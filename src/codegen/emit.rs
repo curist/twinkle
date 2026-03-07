@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::codegen::ctx::{
     EmitCtx, FuncSigInfo, is_concrete_mono_type, mono_to_valtype, mono_to_valtype_for_param,
-    typed_closure_struct_sym, typed_closurefunc_sym, user_record_type_sym,
+    mono_to_valtype_specialized, typed_cell_struct_sym, typed_closure_struct_sym,
+    typed_closurefunc_sym, user_record_type_sym,
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
@@ -116,9 +117,19 @@ pub fn emit_user_module_typed(
         .map(|id| (id, module_global_sym(id)))
         .collect::<HashMap<_, _>>();
     ctx.set_module_globals(module_global_map.clone());
+    let capture_mono_by_func =
+        collect_capture_mono_by_func(anf, &closure_capture_layouts, &mut ctx);
+    ctx.set_capture_mono_by_func(capture_mono_by_func);
 
     let mut module = ModuleIR::new("user");
     module.types.extend(emit_user_record_type_defs(type_env));
+    for elem in collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).values() {
+        module.types.push(emit_typed_cell_struct_def(
+            elem,
+            type_env,
+            &concrete_func_sigs,
+        ));
+    }
 
     // Emit typed ClosureFunc and Closure struct types for each unique concrete
     // closure signature.  Use a BTreeMap to deduplicate and get stable order.
@@ -133,9 +144,12 @@ pub fn emit_user_module_typed(
             .or_insert_with(|| (params.clone(), ret.clone()));
     }
     for (params, ret) in seen_sigs.values() {
-        module
-            .types
-            .push(emit_typed_closurefunc_def(params, ret, type_env));
+        module.types.push(emit_typed_closurefunc_def(
+            params,
+            ret,
+            type_env,
+            &concrete_func_sigs,
+        ));
         module
             .types
             .push(emit_typed_closure_struct_def(params, ret));
@@ -269,7 +283,17 @@ fn build_user_sig_map(
                 MonoType::Void | MonoType::Never => None,
                 other => Some(mono_to_valtype(other, type_env)),
             };
-            (func.func_id, FuncSigInfo { params, result })
+            (
+                func.func_id,
+                FuncSigInfo {
+                    params,
+                    result,
+                    result_mono: match &func.return_ty {
+                        MonoType::Void | MonoType::Never => None,
+                        other => Some(other.clone()),
+                    },
+                },
+            )
         })
         .collect()
 }
@@ -291,7 +315,8 @@ fn emit_func_stub(
         .map(|ty| mono_to_valtype_for_param(ty, ctx.type_env, &ctx.concrete_func_sigs))
         .collect::<Vec<_>>();
     params.extend(vec![ValType::Anyref; capture_locals.len()]);
-    let results = mono_result_types(&func.return_ty, ctx.type_env);
+    let results =
+        mono_result_types_specialized(&func.return_ty, ctx.type_env, &ctx.concrete_func_sigs);
     let body = emit_expr(&func.body, results.first(), ctx);
 
     FuncDef {
@@ -358,6 +383,92 @@ fn collect_make_closure_captures_op(
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
             collect_make_closure_captures_expr(body, captures);
+        }
+        AnfOp::ACall { .. }
+        | AnfOp::ABinOp { .. }
+        | AnfOp::AUnOp { .. }
+        | AnfOp::ARecord { .. }
+        | AnfOp::ARecordGet { .. }
+        | AnfOp::ARecordUpdate { .. }
+        | AnfOp::AVariant { .. }
+        | AnfOp::AArrayLit(_)
+        | AnfOp::AIndex { .. }
+        | AnfOp::AInit { .. }
+        | AnfOp::AAssign { .. } => {}
+    }
+}
+
+fn collect_capture_mono_by_func(
+    anf: &AnfModule,
+    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
+    ctx: &mut EmitCtx<'_>,
+) -> HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>> {
+    let mut out: HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>> = HashMap::new();
+    loop {
+        let snapshot = out.clone();
+        ctx.set_capture_mono_by_func(out.clone());
+        for func in &anf.functions {
+            let capture_locals = closure_capture_layouts
+                .get(&func.func_id)
+                .cloned()
+                .unwrap_or_default();
+            let extra_params = capture_locals
+                .iter()
+                .copied()
+                .map(|local_id| (local_id, ValType::Anyref))
+                .collect::<Vec<_>>();
+            let _locals = ctx.setup_locals_with_extra(func, &extra_params);
+            collect_capture_mono_expr(&func.body, &ctx.local_mono, &mut out);
+        }
+        if out == snapshot {
+            return out;
+        }
+    }
+}
+
+fn collect_capture_mono_expr(
+    expr: &AnfExpr,
+    local_mono: &HashMap<crate::ir::LocalId, MonoType>,
+    out: &mut HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>>,
+) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_capture_mono_op(op, local_mono, out);
+            collect_capture_mono_expr(body, local_mono, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_capture_mono_op(
+    op: &AnfOp,
+    local_mono: &HashMap<crate::ir::LocalId, MonoType>,
+    out: &mut HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>>,
+) {
+    match op {
+        AnfOp::AMakeClosure { func_id, free_vars } => {
+            let entry = out.entry(*func_id).or_default();
+            for local_id in free_vars {
+                if let Some(mono) = local_mono.get(local_id) {
+                    entry.entry(*local_id).or_insert_with(|| mono.clone());
+                }
+            }
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_capture_mono_expr(then_branch, local_mono, out);
+            collect_capture_mono_expr(else_branch, local_mono, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_capture_mono_expr(&arm.body, local_mono, out);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_capture_mono_expr(body, local_mono, out);
         }
         AnfOp::ACall { .. }
         | AnfOp::ABinOp { .. }
@@ -580,10 +691,18 @@ fn collect_free_locals_atom(
     }
 }
 
-fn mono_result_types(ty: &MonoType, type_env: &TypeEnv) -> Vec<crate::wasm::ir::ValType> {
+fn mono_result_types_specialized(
+    ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> Vec<crate::wasm::ir::ValType> {
     match ty {
         MonoType::Void | MonoType::Never => Vec::new(),
-        _ => vec![mono_to_valtype(ty, type_env)],
+        _ => vec![mono_to_valtype_specialized(
+            ty,
+            type_env,
+            concrete_func_sigs,
+        )],
     }
 }
 
@@ -597,9 +716,9 @@ fn emit_expr(expr: &AnfExpr, return_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>)
             if let Some(instrs) = emit_tail_let_call(*local, op, body, return_ty, ctx) {
                 return instrs;
             }
-            let mut instrs = emit_let_binding(*local, op, return_ty, ctx);
-            instrs.extend(emit_expr(body, return_ty, ctx));
-            instrs
+            emit_let_expr(*local, op, body, return_ty, ctx, |ctx, body| {
+                emit_expr(body, return_ty, ctx)
+            })
         }
         AnfExpr::Return(None) => vec![Instr::Return],
         AnfExpr::Return(Some(atom)) => {
@@ -622,6 +741,59 @@ fn emit_expr(expr: &AnfExpr, return_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>)
                 instrs
             }
         }
+    }
+}
+
+fn emit_let_expr(
+    local: crate::ir::LocalId,
+    op: &AnfOp,
+    body: &AnfExpr,
+    fn_return_ty: Option<&ValType>,
+    ctx: &mut EmitCtx<'_>,
+    emit_body: impl FnOnce(&mut EmitCtx<'_>, &AnfExpr) -> Vec<Instr>,
+) -> Vec<Instr> {
+    let mut restores = Vec::new();
+    push_flow_mono_binding(local, ctx.infer_op_mono_for_emit(op), &mut restores, ctx);
+    if let AnfOp::AAssign {
+        local: target,
+        value,
+    } = op
+    {
+        push_flow_mono_binding(*target, atom_mono(value, ctx), &mut restores, ctx);
+    }
+
+    let mut instrs = emit_let_binding(local, op, fn_return_ty, ctx);
+    instrs.extend(emit_body(ctx, body));
+
+    while let Some((local_id, prev)) = restores.pop() {
+        restore_flow_mono_binding(local_id, prev, ctx);
+    }
+
+    instrs
+}
+
+fn push_flow_mono_binding(
+    local: crate::ir::LocalId,
+    mono: Option<MonoType>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<MonoType>)>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    let prev = match mono {
+        Some(mono) => ctx.local_mono.insert(local, mono),
+        None => ctx.local_mono.remove(&local),
+    };
+    restores.push((local, prev));
+}
+
+fn restore_flow_mono_binding(
+    local: crate::ir::LocalId,
+    prev: Option<MonoType>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    if let Some(prev) = prev {
+        ctx.local_mono.insert(local, prev);
+    } else {
+        ctx.local_mono.remove(&local);
     }
 }
 
@@ -1076,9 +1248,9 @@ fn emit_loop_body_expr(
 ) -> Vec<Instr> {
     match expr {
         AnfExpr::Let { local, op, body } => {
-            let mut instrs = emit_let_binding(*local, op, fn_return_ty, ctx);
-            instrs.extend(emit_loop_body_expr(body, fn_return_ty, ctx));
-            instrs
+            emit_let_expr(*local, op, body, fn_return_ty, ctx, |ctx, body| {
+                emit_loop_body_expr(body, fn_return_ty, ctx)
+            })
         }
         AnfExpr::Return(None) => vec![Instr::Return],
         AnfExpr::Return(Some(atom)) => {
@@ -1106,9 +1278,9 @@ fn emit_expr_value(
 ) -> Vec<Instr> {
     match expr {
         AnfExpr::Let { local, op, body } => {
-            let mut instrs = emit_let_binding(*local, op, fn_return_ty, ctx);
-            instrs.extend(emit_expr_value(body, expected_ty, fn_return_ty, ctx));
-            instrs
+            emit_let_expr(*local, op, body, fn_return_ty, ctx, |ctx, body| {
+                emit_expr_value(body, expected_ty, fn_return_ty, ctx)
+            })
         }
         AnfExpr::Atom(atom) => emit_atom(atom, Some(expected_ty), ctx),
         AnfExpr::Return(None) => vec![Instr::Return],
@@ -1346,7 +1518,14 @@ fn emit_tail_closure_call(
 fn emit_atom(atom: &Atom, expected_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     match atom {
         Atom::ALocal(local_id) => emit_local_atom(*local_id, expected_ty, ctx),
-        Atom::AGlobalFunc(func_id) => emit_global_func_atom(*func_id, expected_ty),
+        Atom::AGlobalFunc(func_id) => {
+            if let Some(expected_ty) = expected_ty {
+                if let Some(instrs) = emit_specialized_closure_arg(atom, expected_ty, ctx) {
+                    return instrs;
+                }
+            }
+            emit_global_func_atom(*func_id, expected_ty)
+        }
         Atom::ALitInt(n) => emit_int_literal(*n, expected_ty),
         Atom::ALitFloat(v) => emit_float_literal(*v, expected_ty),
         Atom::ALitBool(b) => emit_bool_literal(*b, expected_ty),
@@ -2316,9 +2495,72 @@ fn emit_range_intrinsic(fields: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_
 }
 
 // --- Cell intrinsics ---
-// Cell is represented as a 1-element mutable rt_types__Array (anyref[1]).
+// Fallback Cell representation is a 1-element mutable rt_types__Array (anyref[1]).
+
+fn atom_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_mono.get(local_id).cloned().or_else(|| {
+            ctx.current_func_id
+                .and_then(|func_id| ctx.capture_mono_by_func.get(&func_id))
+                .and_then(|m| m.get(local_id).cloned())
+        }),
+        Atom::AGlobalFunc(func_id) => {
+            ctx.concrete_func_sig(*func_id)
+                .map(|(params, ret)| MonoType::Function {
+                    params: params.clone(),
+                    ret: Box::new(ret.clone()),
+                })
+        }
+        Atom::ALitInt(_) => Some(MonoType::Int),
+        Atom::ALitFloat(_) => Some(MonoType::Float),
+        Atom::ALitBool(_) => Some(MonoType::Bool),
+        Atom::ALitStr(_) => Some(MonoType::String),
+        Atom::ALitVoid => Some(MonoType::Void),
+    }
+}
+
+fn typed_cell_info_from_inner_mono(
+    inner: &MonoType,
+    ctx: &EmitCtx<'_>,
+) -> Option<(String, ValType, MonoType)> {
+    if ctx.concrete_func_sigs.is_empty() || !is_concrete_mono_type(inner) {
+        return None;
+    }
+    Some((
+        typed_cell_struct_sym(inner),
+        mono_to_valtype_specialized(inner, ctx.type_env, &ctx.concrete_func_sigs),
+        inner.clone(),
+    ))
+}
+
+fn typed_cell_info_from_atom(
+    atom: &Atom,
+    ctx: &EmitCtx<'_>,
+) -> Option<(String, ValType, MonoType)> {
+    let MonoType::Named { type_id, args } = atom_mono(atom, ctx)? else {
+        return None;
+    };
+    if type_id != crate::types::ty::CELL_TYPE_ID || args.len() != 1 {
+        return None;
+    }
+    typed_cell_info_from_inner_mono(&args[0], ctx)
+}
 
 fn emit_cell_new_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    if let Some(inner_mono) = atom_mono(&args[0], ctx) {
+        if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_inner_mono(&inner_mono, ctx) {
+            let mut instrs = emit_atom(&args[0], Some(&payload_ty), ctx);
+            instrs.push(Instr::StructNew(cell_sym.clone()));
+            instrs.extend(emit_coerce_stack(
+                &ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(cell_sym),
+                },
+                bind_ty,
+            ));
+            return instrs;
+        }
+    }
     let mut instrs = emit_atom(&args[0], Some(&ValType::Anyref), ctx);
     instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
@@ -2326,6 +2568,16 @@ fn emit_cell_new_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'
 }
 
 fn emit_cell_get_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_atom(&args[0], ctx) {
+        let cell_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(cell_sym.clone()),
+        };
+        let mut instrs = emit_atom(&args[0], Some(&cell_ref), ctx);
+        instrs.push(Instr::StructGet(cell_sym, 0));
+        instrs.extend(emit_coerce_stack(&payload_ty, bind_ty));
+        return instrs;
+    }
     let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
     instrs.push(Instr::I32Const(0));
     instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
@@ -2334,6 +2586,17 @@ fn emit_cell_get_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'
 }
 
 fn emit_cell_set_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_atom(&args[0], ctx) {
+        let cell_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(cell_sym.clone()),
+        };
+        let mut instrs = emit_atom(&args[0], Some(&cell_ref), ctx);
+        instrs.extend(emit_atom(&args[1], Some(&payload_ty), ctx));
+        instrs.push(Instr::StructSet(cell_sym, 0));
+        instrs.extend(emit_void_value(Some(bind_ty)));
+        return instrs;
+    }
     let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
     instrs.push(Instr::I32Const(0));
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
@@ -2349,48 +2612,38 @@ fn emit_cell_update_intrinsic(
 ) -> Vec<Instr> {
     assert_eq!(args.len(), 2, "Cell.update expects 2 args");
 
-    // Typed closure path for function-typed locals: call the specialized
-    // closure directly, then box the result back to Anyref for array.set.
-    if !ctx.concrete_func_sigs.is_empty() {
-        if let Atom::ALocal(local_id) = &args[1] {
-            if let Some(crate::types::ty::MonoType::Function { params, ret }) =
-                ctx.local_mono.get(local_id).cloned()
-            {
-                if params.len() == 1
-                    && is_concrete_mono_type(&crate::types::ty::MonoType::Function {
-                        params: params.clone(),
-                        ret: ret.clone(),
-                    })
-                {
-                    let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
-                    let closure_sym = typed_closure_struct_sym(&params, &ret);
-                    let closure_ref = ValType::Ref {
-                        nullable: true,
-                        heap: HeapType::Named(closure_sym.clone()),
-                    };
-                    let arg_ty = mono_to_valtype(&params[0], ctx.type_env);
-                    let ret_ty = mono_to_valtype(&ret, ctx.type_env);
+    if let Some((cell_sym, payload_ty, inner_mono)) = typed_cell_info_from_atom(&args[0], ctx) {
+        if let Some(MonoType::Function { params, ret }) = atom_mono(&args[1], ctx) {
+            if params.len() == 1 && params[0] == inner_mono && *ret == inner_mono {
+                let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+                let closure_sym = typed_closure_struct_sym(&params, &ret);
+                let closure_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(closure_sym.clone()),
+                };
+                let cell_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(cell_sym.clone()),
+                };
 
-                    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
-                    instrs.push(Instr::I32Const(0));
+                let mut instrs = emit_atom(&args[0], Some(&cell_ref), ctx);
+                instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+                instrs.push(Instr::StructGet(closure_sym.clone(), 1));
 
-                    instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
-                    instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+                instrs.extend(emit_atom(&args[0], Some(&cell_ref), ctx));
+                instrs.push(Instr::StructGet(cell_sym.clone(), 0));
 
-                    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-                    instrs.push(Instr::I32Const(0));
-                    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-                    instrs.extend(emit_coerce_stack(&ValType::Anyref, &arg_ty));
+                instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+                instrs.push(Instr::StructGet(closure_sym, 2));
+                instrs.push(Instr::CallRef(closurefunc_sym));
+                instrs.extend(emit_coerce_stack(
+                    &mono_to_valtype_specialized(&ret, ctx.type_env, &ctx.concrete_func_sigs),
+                    &payload_ty,
+                ));
 
-                    instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
-                    instrs.push(Instr::StructGet(closure_sym, 2));
-                    instrs.push(Instr::CallRef(closurefunc_sym));
-                    instrs.extend(emit_coerce_stack(&ret_ty, &ValType::Anyref));
-
-                    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
-                    instrs.extend(emit_void_value(Some(bind_ty)));
-                    return instrs;
-                }
+                instrs.push(Instr::StructSet(cell_sym, 0));
+                instrs.extend(emit_void_value(Some(bind_ty)));
+                return instrs;
             }
         }
     }
@@ -3500,14 +3753,19 @@ fn emit_typed_closurefunc_def(
     params: &[crate::types::ty::MonoType],
     ret: &crate::types::ty::MonoType,
     type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> crate::wasm::ir::TypeDef {
     let sym = typed_closurefunc_sym(params, ret);
     let mut wasm_params = vec![ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
     }];
-    wasm_params.extend(params.iter().map(|p| mono_to_valtype(p, type_env)));
-    let results = mono_result_types(ret, type_env);
+    wasm_params.extend(
+        params
+            .iter()
+            .map(|p| mono_to_valtype_specialized(p, type_env, concrete_func_sigs)),
+    );
+    let results = mono_result_types_specialized(ret, type_env, concrete_func_sigs);
     crate::wasm::ir::TypeDef::FuncType {
         name: sym,
         params: wasm_params,
@@ -3564,6 +3822,23 @@ fn emit_typed_closure_struct_def(
                 },
             },
         ],
+    }
+}
+
+fn emit_typed_cell_struct_def(
+    elem: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> crate::wasm::ir::TypeDef {
+    crate::wasm::ir::TypeDef::Struct {
+        name: typed_cell_struct_sym(elem),
+        supertype: None,
+        non_final: false,
+        fields: vec![crate::wasm::ir::FieldDef {
+            name: Some("value".to_string()),
+            mutable: true,
+            ty: mono_to_valtype_specialized(elem, type_env, concrete_func_sigs),
+        }],
     }
 }
 
@@ -3624,7 +3899,7 @@ fn emit_typed_closure_trampoline(
         // still returns nothing, handled by `mono_result_types`).
     }
 
-    let results = mono_result_types(ret, type_env);
+    let results = mono_result_types_specialized(ret, type_env, concrete_func_sigs);
 
     FuncDef {
         name: typed_closure_trampoline_sym(func.func_id),
@@ -3661,11 +3936,99 @@ fn build_user_sig_map_typed(
             params.extend(vec![ValType::Anyref; capture_locals.len()]);
             let result = match &func.return_ty {
                 crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
-                other => Some(mono_to_valtype(other, type_env)),
+                other => Some(mono_to_valtype_specialized(
+                    other,
+                    type_env,
+                    concrete_func_sigs,
+                )),
             };
-            (func.func_id, FuncSigInfo { params, result })
+            (
+                func.func_id,
+                FuncSigInfo {
+                    params,
+                    result,
+                    result_mono: match &func.return_ty {
+                        crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => {
+                            None
+                        }
+                        other => Some(other.clone()),
+                    },
+                },
+            )
         })
         .collect()
+}
+
+fn collect_cell_payloads_from_mono(
+    ty: &MonoType,
+    out: &mut std::collections::BTreeMap<String, MonoType>,
+) {
+    match ty {
+        MonoType::Named { type_id, args }
+            if *type_id == crate::types::ty::CELL_TYPE_ID && args.len() == 1 =>
+        {
+            if is_concrete_mono_type(&args[0]) {
+                out.entry(typed_cell_struct_sym(&args[0]))
+                    .or_insert_with(|| args[0].clone());
+            }
+            collect_cell_payloads_from_mono(&args[0], out);
+        }
+        MonoType::Named { args, .. } => {
+            for arg in args {
+                collect_cell_payloads_from_mono(arg, out);
+            }
+        }
+        MonoType::Vector(inner) => collect_cell_payloads_from_mono(inner, out),
+        MonoType::Dict(k, v) => {
+            collect_cell_payloads_from_mono(k, out);
+            collect_cell_payloads_from_mono(v, out);
+        }
+        MonoType::Function { params, ret } => {
+            for param in params {
+                collect_cell_payloads_from_mono(param, out);
+            }
+            collect_cell_payloads_from_mono(ret, out);
+        }
+        MonoType::Int
+        | MonoType::Float
+        | MonoType::Bool
+        | MonoType::String
+        | MonoType::Void
+        | MonoType::Never
+        | MonoType::Var(_)
+        | MonoType::MetaVar(_) => {}
+    }
+}
+
+fn collect_typed_cell_payloads(
+    anf: &AnfModule,
+    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
+    ctx: &mut EmitCtx<'_>,
+) -> std::collections::BTreeMap<String, MonoType> {
+    let mut out = std::collections::BTreeMap::new();
+    for func in &anf.functions {
+        for ty in func
+            .param_tys
+            .iter()
+            .chain(std::iter::once(&func.return_ty))
+        {
+            collect_cell_payloads_from_mono(ty, &mut out);
+        }
+        let capture_locals = closure_capture_layouts
+            .get(&func.func_id)
+            .cloned()
+            .unwrap_or_default();
+        let extra_params = capture_locals
+            .iter()
+            .copied()
+            .map(|local_id| (local_id, ValType::Anyref))
+            .collect::<Vec<_>>();
+        let _locals = ctx.setup_locals_with_extra(func, &extra_params);
+        for mono in ctx.local_mono.values() {
+            collect_cell_payloads_from_mono(mono, &mut out);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -3961,6 +4324,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![],
                 result: Some(ValType::I64),
+                result_mono: Some(MonoType::Int),
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
@@ -4004,6 +4368,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![],
                 result: Some(ValType::I64),
+                result_mono: Some(MonoType::Int),
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
@@ -4072,6 +4437,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![ValType::I64],
                 result: Some(ValType::I64),
+                result_mono: Some(MonoType::Int),
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
@@ -4142,6 +4508,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![ValType::I64],
                 result: Some(ValType::Anyref),
+                result_mono: None,
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
@@ -4181,6 +4548,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![ValType::I64],
                 result: Some(ValType::I64),
+                result_mono: Some(MonoType::Int),
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
@@ -4221,6 +4589,7 @@ mod tests {
             FuncSigInfo {
                 params: vec![ValType::I64],
                 result: Some(ValType::I64),
+                result_mono: Some(MonoType::Int),
             },
         );
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);

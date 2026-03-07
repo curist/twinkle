@@ -4,6 +4,11 @@
 instantiation. After this pass, no `MonoType::Var` survives into ANF or codegen — every
 function has fully concrete typed params and locals.
 
+This plan is about IR and function specialization, not final Wasm data layout choices.
+After monomorphization, codegen should see concrete types such as `Cell<Int>` instead of
+`Cell<T>`, but deciding whether `Cell<Int>` lowers to a typed Wasm struct or an erased
+runtime container is a separate backend concern tracked elsewhere.
+
 **Why not type erasure permanently:** Type erasure (`Var → anyref`) requires boxing/unboxing
 at every generic call boundary. For `fn id<T>(x: T) T` called as `id(42)`, the caller boxes
 `i64` → `struct.new $BoxedInt` → `anyref`, passes it, the generic body treats `x` as `anyref`,
@@ -61,8 +66,12 @@ It is a whole-program transform:
 
 After monomorphization, the emitter never sees `MonoType::Var`. The `mono_to_valtype` mapping
 for `Var` becomes `unreachable!()`. All functions have concrete Wasm signatures. The closure
-trampoline generator uses concrete types. The `anyref` row in the value representation table
-is dead code.
+trampoline generator uses concrete types.
+
+This does **not** by itself eliminate every erased backend representation. Some runtime
+layouts may still choose `Anyref` or boxed payloads even when the source type is concrete.
+Those backend follow-ups, such as monomorphized `Cell<T>` layouts, belong in the Wasm
+type-erasure reduction plan rather than this pass.
 
 **Pipeline position:**
 
