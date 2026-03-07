@@ -119,6 +119,36 @@ fn find_func_block_containing<'a>(wat: &'a str, needle: &str) -> Option<String> 
     None
 }
 
+fn find_named_func_block(wat: &str, func_name: &str) -> Option<String> {
+    let lines = wat.lines().collect::<Vec<_>>();
+    for (start, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !(trimmed.starts_with("(func") && trimmed.contains(func_name)) {
+            continue;
+        }
+
+        let mut depth: i32 = 0;
+        let mut block = Vec::new();
+        for line in &lines[start..] {
+            let trimmed = line.trim();
+            block.push(*line);
+            for ch in trimmed.chars() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(block.join("\n"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
 // ─── Baseline sanity checks (should pass both before and after Stage 9.6) ────
 
 /// The universal-closure (mono-only) baseline DOES box args into an anyref
@@ -236,5 +266,20 @@ fn build_wat_specializes_named_function_args() {
     assert!(
         wat.contains("ref.func $user__func_43__typed_closure"),
         "Expected build_wat to materialize a typed closure for the named function argument"
+    );
+}
+
+#[test]
+fn build_wat_specializes_iterator_next_helper_for_concrete_unfold() {
+    let path = fixture("iterator_direct_next.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let helper = find_named_func_block(&wat, "$user__user____iterator_next__Int__Int")
+        .expect("expected specialized iterator-next helper in build_wat output");
+    assert!(
+        helper.contains("struct.get $user__closure_i64_ref 2")
+            && helper.contains("call_ref $user__closurefunc_i64_ref")
+            && !helper.contains("call_ref $rt_types__ClosureFunc"),
+        "Expected concrete iterator-next helper to use typed closure dispatch.\n{helper}"
     );
 }

@@ -231,6 +231,11 @@ fn iterator_advanced() {
 }
 
 #[test]
+fn iterator_direct_next() {
+    check("tests/run/iterator_direct_next.tw");
+}
+
+#[test]
 fn stdlib_path() {
     check("tests/run/stdlib_path.tw");
 }

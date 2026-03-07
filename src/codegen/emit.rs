@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, is_concrete_mono_type, mono_to_valtype, mono_to_valtype_for_param,
-    mono_to_valtype_specialized, typed_cell_struct_sym, typed_closure_struct_sym,
-    typed_closurefunc_sym, user_record_type_sym,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, is_concrete_mono_type, mono_to_symbol_key,
+    mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized, typed_cell_struct_sym,
+    typed_closure_struct_sym, typed_closurefunc_sym, user_record_type_sym,
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
@@ -15,7 +15,10 @@ use crate::runtime::types::{
     T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
-use crate::types::ty::{MonoType, TypeDef as LangTypeDef, TypeId};
+use crate::types::ty::{
+    ITER_ITEM_TYPE_ID, MonoType, OPTION_TYPE_ID, TypeDef as LangTypeDef, TypeId,
+    UNFOLD_STEP_TYPE_ID,
+};
 use crate::wasm::ir::{
     FieldDef as WasmFieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ModuleIR,
     TypeDef as WasmTypeDef, ValType,
@@ -123,6 +126,9 @@ pub fn emit_user_module_typed(
     let capture_mono_by_func =
         collect_capture_mono_by_func(anf, &closure_capture_layouts, &mut ctx);
     ctx.set_capture_mono_by_func(capture_mono_by_func);
+    let user_func_iterator_states =
+        collect_user_func_iterator_states(anf, &closure_capture_layouts, &mut ctx);
+    ctx.set_user_func_iterator_states(user_func_iterator_states);
 
     let mut module = ModuleIR::new("user");
 
@@ -204,6 +210,13 @@ pub fn emit_user_module_typed(
 
     if needs_iterator_next_helper(&ctx) {
         module.funcs.push(emit_iterator_next_helper());
+        for info in ctx.requested_iterator_helpers().values() {
+            module.funcs.push(emit_typed_iterator_next_helper(
+                info,
+                type_env,
+                &concrete_func_sigs,
+            ));
+        }
     }
 
     // Always emit parse helpers — they're small and may be referenced by intrinsics
@@ -762,13 +775,26 @@ fn emit_let_expr(
     emit_body: impl FnOnce(&mut EmitCtx<'_>, &AnfExpr) -> Vec<Instr>,
 ) -> Vec<Instr> {
     let mut restores = Vec::new();
+    let mut iterator_restores = Vec::new();
     push_flow_mono_binding(local, ctx.infer_op_mono_for_emit(op), &mut restores, ctx);
+    push_flow_iterator_binding(
+        local,
+        iterator_state_from_op(op, ctx),
+        &mut iterator_restores,
+        ctx,
+    );
     if let AnfOp::AAssign {
         local: target,
         value,
     } = op
     {
         push_flow_mono_binding(*target, atom_mono(value, ctx), &mut restores, ctx);
+        push_flow_iterator_binding(
+            *target,
+            atom_iterator_state(value, ctx),
+            &mut iterator_restores,
+            ctx,
+        );
     }
 
     let mut instrs = emit_let_binding(local, op, fn_return_ty, ctx);
@@ -776,6 +802,9 @@ fn emit_let_expr(
 
     while let Some((local_id, prev)) = restores.pop() {
         restore_flow_mono_binding(local_id, prev, ctx);
+    }
+    while let Some((local_id, prev)) = iterator_restores.pop() {
+        restore_flow_iterator_binding(local_id, prev, ctx);
     }
 
     instrs
@@ -803,6 +832,31 @@ fn restore_flow_mono_binding(
         ctx.local_mono.insert(local, prev);
     } else {
         ctx.local_mono.remove(&local);
+    }
+}
+
+fn push_flow_iterator_binding(
+    local: crate::ir::LocalId,
+    info: Option<IteratorStateInfo>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<IteratorStateInfo>)>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    let prev = match info {
+        Some(info) => ctx.local_iterator_states.insert(local, info),
+        None => ctx.local_iterator_states.remove(&local),
+    };
+    restores.push((local, prev));
+}
+
+fn restore_flow_iterator_binding(
+    local: crate::ir::LocalId,
+    prev: Option<IteratorStateInfo>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    if let Some(prev) = prev {
+        ctx.local_iterator_states.insert(local, prev);
+    } else {
+        ctx.local_iterator_states.remove(&local);
     }
 }
 
@@ -2553,6 +2607,59 @@ fn emit_range_intrinsic(fields: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_
 // --- Cell intrinsics ---
 // Fallback Cell representation is a 1-element mutable rt_types__Array (anyref[1]).
 
+fn unfold_step_type(item_ty: MonoType, seed_ty: MonoType) -> MonoType {
+    MonoType::Named {
+        type_id: UNFOLD_STEP_TYPE_ID,
+        args: vec![item_ty, seed_ty],
+    }
+}
+
+fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iterator_states.get(local_id).cloned(),
+        _ => None,
+    }
+}
+
+fn iterator_state_from_unfold_args(
+    seed: &Atom,
+    step: &Atom,
+    ctx: &EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    let seed_ty = atom_mono(seed, ctx)?;
+    let MonoType::Function { params, ret } = atom_mono(step, ctx)? else {
+        return None;
+    };
+    if params.len() != 1 || params[0] != seed_ty {
+        return None;
+    }
+    let MonoType::Named { type_id, args } = ret.as_ref() else {
+        return None;
+    };
+    if *type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 || args[1] != seed_ty {
+        return None;
+    }
+    Some(IteratorStateInfo {
+        yield_ty: args[0].clone(),
+        seed_ty,
+    })
+}
+
+fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id) if *func_id == prelude_ids::ITERATOR_UNFOLD => {
+                iterator_state_from_unfold_args(args.first()?, args.get(1)?, ctx)
+            }
+            Atom::AGlobalFunc(func_id) => ctx.user_func_iterator_state(*func_id).cloned(),
+            Atom::ALocal(_) => None,
+            _ => None,
+        },
+        AnfOp::AInit { value } => atom_iterator_state(value, ctx),
+        _ => None,
+    }
+}
+
 fn atom_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     match atom {
         Atom::ALocal(local_id) => ctx.local_mono.get(local_id).cloned().or_else(|| {
@@ -2747,12 +2854,32 @@ fn emit_iterator_next_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
-    instrs.push(Instr::Call(ITERATOR_NEXT_HELPER.to_string()));
+    if !ctx.concrete_func_sigs.is_empty() {
+        if let Some(info) = atom_iterator_state(&args[0], ctx).filter(|info| {
+            is_concrete_mono_type(&info.yield_ty) && is_concrete_mono_type(&info.seed_ty)
+        }) {
+            let helper_sym = typed_iterator_next_helper_sym(&info);
+            ctx.request_iterator_helper(helper_sym.clone(), info);
+            instrs.push(Instr::Call(helper_sym));
+        } else {
+            instrs.push(Instr::Call(ITERATOR_NEXT_HELPER.to_string()));
+        }
+    } else {
+        instrs.push(Instr::Call(ITERATOR_NEXT_HELPER.to_string()));
+    }
     instrs.extend(emit_coerce_stack(&ref_variant_null(), bind_ty));
     instrs
 }
 
 const ITERATOR_NEXT_HELPER: &str = "user____iterator_next";
+
+fn typed_iterator_next_helper_sym(info: &IteratorStateInfo) -> String {
+    format!(
+        "user____iterator_next__{}__{}",
+        mono_to_symbol_key(&info.yield_ty),
+        mono_to_symbol_key(&info.seed_ty),
+    )
+}
 
 fn needs_iterator_next_helper(ctx: &EmitCtx<'_>) -> bool {
     // Check if any imports reference the iterator next helper
@@ -2769,8 +2896,6 @@ fn needs_iterator_next_helper(ctx: &EmitCtx<'_>) -> bool {
 /// Emit the `__iterator_next` Wasm helper function.
 /// Takes an iterator (anyref array [seed, step_closure]) and returns Option<IterItem> variant.
 fn emit_iterator_next_helper() -> FuncDef {
-    use crate::types::ty::{ITER_ITEM_TYPE_ID, OPTION_TYPE_ID};
-
     // Locals:
     // 0: param it (anyref = iterator array ref)
     // 1: step_result (variant ref)
@@ -2995,6 +3120,115 @@ fn emit_iterator_next_helper() -> FuncDef {
             ValType::I32,       // local 2: variant_id
             ValType::Anyref,    // local 3: payload / temp
             ref_array_null(),   // local 4: it_arr (cast of param 0)
+        ],
+        body,
+    }
+}
+
+fn emit_typed_iterator_next_helper(
+    info: &IteratorStateInfo,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> FuncDef {
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, type_env, concrete_func_sigs);
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let closure_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let closurefunc_sym = typed_closurefunc_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+
+    let mut body = Vec::new();
+
+    body.push(Instr::LocalGet(0));
+    body.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    });
+    body.push(Instr::LocalSet(4));
+
+    body.push(Instr::LocalGet(4));
+    body.push(Instr::I32Const(1));
+    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::RefCast {
+        nullable: false,
+        heap: HeapType::Named(closure_sym.clone()),
+    });
+    body.push(Instr::StructGet(closure_sym.clone(), 1));
+
+    body.push(Instr::LocalGet(4));
+    body.push(Instr::I32Const(0));
+    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
+
+    body.push(Instr::LocalGet(4));
+    body.push(Instr::I32Const(1));
+    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::RefCast {
+        nullable: false,
+        heap: HeapType::Named(closure_sym.clone()),
+    });
+    body.push(Instr::StructGet(closure_sym, 2));
+    body.push(Instr::CallRef(closurefunc_sym));
+    body.push(Instr::LocalSet(1));
+
+    body.push(Instr::LocalGet(1));
+    body.push(Instr::StructGet(T_VARIANT.to_string(), 1));
+    body.push(Instr::LocalSet(2));
+
+    body.push(Instr::LocalGet(2));
+    body.push(Instr::I32Eqz);
+    body.push(Instr::If {
+        result: Some(ValType::Anyref),
+        then_body: vec![
+            Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+            Instr::I32Const(0),
+            Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+            Instr::StructNew(T_VARIANT.to_string()),
+        ],
+        else_body: {
+            let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
+            let else_instrs = vec![
+                Instr::LocalGet(1),
+                Instr::StructGet(T_VARIANT.to_string(), 2),
+                Instr::LocalSet(3),
+                Instr::LocalGet(3),
+                Instr::RefCast {
+                    nullable: true,
+                    heap: HeapType::Named(T_ARRAY.to_string()),
+                },
+                Instr::I32Const(0),
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::LocalGet(3),
+                Instr::RefCast {
+                    nullable: true,
+                    heap: HeapType::Named(T_ARRAY.to_string()),
+                },
+                Instr::I32Const(1),
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::LocalGet(4),
+                Instr::I32Const(1),
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 2),
+                Instr::StructNew(iter_item_sym),
+                Instr::LocalSet(3),
+                Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                Instr::I32Const(1),
+                Instr::LocalGet(3),
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
+                Instr::StructNew(T_VARIANT.to_string()),
+            ];
+            else_instrs
+        },
+    });
+    body.push(Instr::Return);
+
+    FuncDef {
+        name: typed_iterator_next_helper_sym(info),
+        params: vec![ValType::Anyref],
+        results: vec![ValType::Anyref],
+        locals: vec![
+            ref_variant_null(),
+            ValType::I32,
+            ValType::Anyref,
+            ref_array_null(),
         ],
         body,
     }
@@ -4085,6 +4319,116 @@ fn collect_typed_cell_payloads(
         }
     }
     out
+}
+
+fn collect_user_func_iterator_states(
+    anf: &AnfModule,
+    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
+    ctx: &mut EmitCtx<'_>,
+) -> HashMap<FuncId, IteratorStateInfo> {
+    let mut out = HashMap::new();
+    for func in &anf.functions {
+        let capture_locals = closure_capture_layouts
+            .get(&func.func_id)
+            .cloned()
+            .unwrap_or_default();
+        let extra_params = capture_locals
+            .iter()
+            .copied()
+            .map(|local_id| (local_id, ValType::Anyref))
+            .collect::<Vec<_>>();
+        let _locals = ctx.setup_locals_with_extra(func, &extra_params);
+        if let Some(info) = infer_expr_iterator_state(&func.body, ctx) {
+            out.insert(func.func_id, info);
+        }
+    }
+    out
+}
+
+fn infer_expr_iterator_state(expr: &AnfExpr, ctx: &mut EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            let mut restores = Vec::new();
+            push_flow_iterator_binding(
+                *local,
+                iterator_state_from_inference_op(op, ctx),
+                &mut restores,
+                ctx,
+            );
+            if let AnfOp::AAssign {
+                local: target,
+                value,
+            } = op.as_ref()
+            {
+                push_flow_iterator_binding(
+                    *target,
+                    atom_iterator_state(value, ctx),
+                    &mut restores,
+                    ctx,
+                );
+            }
+            let result = infer_expr_iterator_state(body, ctx);
+            while let Some((local_id, prev)) = restores.pop() {
+                restore_flow_iterator_binding(local_id, prev, ctx);
+            }
+            result
+        }
+        AnfExpr::Return(Some(atom)) | AnfExpr::Atom(atom) | AnfExpr::Break(Some(atom)) => {
+            atom_iterator_state(atom, ctx)
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => None,
+    }
+}
+
+fn iterator_state_from_inference_op(
+    op: &AnfOp,
+    ctx: &mut EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id) if *func_id == prelude_ids::ITERATOR_UNFOLD => {
+                iterator_state_from_unfold_args(args.first()?, args.get(1)?, ctx)
+            }
+            _ => None,
+        },
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let then_info = infer_expr_iterator_state(then_branch, ctx);
+            let else_info = infer_expr_iterator_state(else_branch, ctx);
+            match (then_info, else_info) {
+                (Some(a), Some(b)) if a == b => Some(a),
+                _ => None,
+            }
+        }
+        AnfOp::AMatch { arms, .. } => {
+            let mut state = None;
+            for arm in arms {
+                let arm_state = infer_expr_iterator_state(&arm.body, ctx)?;
+                match &state {
+                    None => state = Some(arm_state),
+                    Some(existing) if *existing == arm_state => {}
+                    Some(_) => return None,
+                }
+            }
+            state
+        }
+        AnfOp::AInit { value } => atom_iterator_state(value, ctx),
+        AnfOp::AAssign { .. }
+        | AnfOp::ALoop { .. }
+        | AnfOp::ABinOp { .. }
+        | AnfOp::AUnOp { .. }
+        | AnfOp::AMakeClosure { .. }
+        | AnfOp::ARecord { .. }
+        | AnfOp::ARecordGet { .. }
+        | AnfOp::ARecordUpdate { .. }
+        | AnfOp::AVariant { .. }
+        | AnfOp::AArrayLit(_)
+        | AnfOp::AIndex { .. }
+        | AnfOp::ADefer(_) => None,
+    }
 }
 
 #[cfg(test)]

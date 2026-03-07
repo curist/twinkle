@@ -21,6 +21,12 @@ pub struct FuncSigInfo {
     pub result_mono: Option<MonoType>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IteratorStateInfo {
+    pub yield_ty: MonoType,
+    pub seed_ty: MonoType,
+}
+
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
     /// Tracks concrete monomorphic types for locals when codegen can preserve a
@@ -30,6 +36,9 @@ pub struct EmitCtx<'a> {
     /// Tracks local bindings created from `AMakeClosure` so direct user calls
     /// can materialize typed closures only at concrete higher-order boundaries.
     pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
+    /// Tracks iterator locals that are known to come from a concrete
+    /// `Iterator.unfold(seed, step)` instantiation.
+    pub local_iterator_states: HashMap<LocalId, IteratorStateInfo>,
     assigned_locals: HashSet<LocalId>,
     rebound_locals: HashSet<LocalId>,
     in_init_func: bool,
@@ -45,6 +54,11 @@ pub struct EmitCtx<'a> {
     /// Functions with fully-concrete signatures that appear in `AMakeClosure`
     /// nodes.  Maps `func_id → (real_param_types, return_type)`.
     pub concrete_func_sigs: HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+    /// User functions whose return value is known to be a concrete
+    /// iterator-unfold state. This lets callers specialize `Iterator.next`
+    /// even though the surface type is only `Iterator<T>`.
+    pub user_func_iterator_states: HashMap<FuncId, IteratorStateInfo>,
+    requested_iterator_helpers: BTreeMap<String, IteratorStateInfo>,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -58,6 +72,7 @@ impl<'a> EmitCtx<'a> {
             local_mono: HashMap::new(),
             capture_mono_by_func: HashMap::new(),
             closure_locals: HashMap::new(),
+            local_iterator_states: HashMap::new(),
             assigned_locals: HashSet::new(),
             rebound_locals: HashSet::new(),
             in_init_func: false,
@@ -71,6 +86,8 @@ impl<'a> EmitCtx<'a> {
             prelude,
             user_funcs,
             concrete_func_sigs: HashMap::new(),
+            user_func_iterator_states: HashMap::new(),
+            requested_iterator_helpers: BTreeMap::new(),
         }
     }
 
@@ -87,6 +104,22 @@ impl<'a> EmitCtx<'a> {
         self.concrete_func_sigs.get(&func_id)
     }
 
+    pub fn set_user_func_iterator_states(&mut self, states: HashMap<FuncId, IteratorStateInfo>) {
+        self.user_func_iterator_states = states;
+    }
+
+    pub fn user_func_iterator_state(&self, func_id: FuncId) -> Option<&IteratorStateInfo> {
+        self.user_func_iterator_states.get(&func_id)
+    }
+
+    pub fn request_iterator_helper(&mut self, sym: String, info: IteratorStateInfo) {
+        self.requested_iterator_helpers.entry(sym).or_insert(info);
+    }
+
+    pub fn requested_iterator_helpers(&self) -> &BTreeMap<String, IteratorStateInfo> {
+        &self.requested_iterator_helpers
+    }
+
     pub fn setup_locals(&mut self, func: &AnfFunctionDef) -> Vec<ValType> {
         self.setup_locals_with_extra(func, &[])
     }
@@ -99,6 +132,7 @@ impl<'a> EmitCtx<'a> {
         self.local_map.clear();
         self.local_mono.clear();
         self.closure_locals.clear();
+        self.local_iterator_states.clear();
         self.assigned_locals.clear();
         self.rebound_locals.clear();
         self.label_stack.clear();

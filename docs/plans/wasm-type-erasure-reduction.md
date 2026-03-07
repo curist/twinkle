@@ -23,10 +23,12 @@ Done so far:
   `anyref` container retained only as a fallback path
 * concrete user-record fields now preserve their Wasm field types, including typed closure
   refs in capability-style records and raw scalar fields in plain data records
+* concrete `Iterator.unfold` producers can now route `Iterator.next` through typed helper
+  dispatch when the compiler can still prove the hidden seed/step state
 
 Still open:
 
-* typed iterator state / less-erased iterator helper paths
+* fully typed iterator state representation instead of the current erased array payload
 * targeted reduction of `Anyref` payload layouts in hot helper/variant paths
 
 ---
@@ -39,11 +41,10 @@ higher-order call boundaries such as `fold(xs, init, f)`.
 However, a WAT audit of `examples/*` and `tests/run/*` still shows several broader
 type-erasure patterns:
 
-* iterator state is represented as a generic `[seed_anyref, step_closure_anyref]` array
-* runtime helpers such as `Iterator.next` still unpack closures and payloads through the
-  universal closure ABI
-* iterator / helper code still uses universal closure dispatch and erased payloads more
-  often than necessary
+* iterator state is still represented as a generic `[seed_anyref, step_closure_anyref]` array
+* iterator helper paths still erase seed and payload values even when the step dispatch itself
+  can now specialize
+* iterator / helper code still uses erased payloads more often than necessary
 
 The result is that some hot paths still allocate argument arrays, cast through
 `$rt_types__Closure`, or box concrete payloads even though the program is fully
@@ -111,20 +112,37 @@ Follow-up:
 * keep regression coverage for scalar and capability-style records
 * preserve `Anyref` only for genuinely erased or polymorphic record fields
 
-### 4. Iterator representation erases both seed and step closure
+### 4. Iterator representation still erases seed and payload layout
 
-Today `Iterator.unfold(seed, step)` is represented as:
+Status: partially done.
+
+Today `Iterator.unfold(seed, step)` still stores state as:
 
 ```text
 [seed_anyref, step_closure_anyref]
 ```
 
-and `Iterator.next` reconstructs the step call through universal closure dispatch.
+What changed:
+
+* when the compiler can still prove the concrete unfold state, `Iterator.next` now routes
+  through a typed helper that:
+  * casts the stored step closure back to its typed subtype
+  * calls the step function via concrete `call_ref`
+  * avoids the universal `$ClosureFunc` dispatch path
+* this currently works for direct unfold-backed locals and for user functions whose return
+  value is provably a concrete unfold state
+
+What is still missing:
+
+* the iterator state container itself is still an erased array
+* seeds and `UnfoldStep` payloads still move through `Anyref`
+* generic `Iterator<T>` parameters still use the fallback helper path
 
 Target:
 
-* introduce a typed iterator state representation after monomorphization
-* specialize the step closure call when the iterator state type is concrete
+* replace the erased array-backed iterator representation with a typed state record or
+  typed runtime struct after monomorphization
+* preserve the typed helper dispatch as the fast path on top of that concrete state layout
 
 ### 5. Variant / helper payloads remain array-of-anyref based
 
@@ -150,7 +168,8 @@ Target:
 
 * Replace the generic array-backed iterator representation with a typed state record or
   typed runtime struct when the iterator is monomorphized.
-* Specialize `Iterator.next` so the step closure call avoids universal arg packing.
+* Extend the current typed `Iterator.next` helper path so generic iterator plumbing no longer
+  erases seed/rest payload layout in the common concrete case.
 
 ### C. Audit hot sum-type payload paths
 
@@ -172,7 +191,7 @@ This plan does not require:
 ## Suggested Ordering
 
 1. Finish the closure-subtyping follow-up fixes.
-2. Revisit iterator representation.
+2. Finish iterator state layout specialization.
 3. Only then decide whether typed variant payloads are worth the complexity.
 
 ---
@@ -187,8 +206,9 @@ This plan is successful when:
   representation
 * concrete `Cell<T>` uses no longer default to an erased `anyref` cell layout
 * record field access preserves concrete Wasm types where possible
-* iterator step closures no longer require universal arg-array packing in the common
+* iterator step closures no longer require universal closure dispatch in the common
   monomorphized case
+* monomorphized iterator state no longer defaults to an erased array container
 * representative WAT audits of `examples/*` and `tests/run/*` show materially less
   unnecessary `Anyref`, `BoxedInt`, `BoxedFloat`, and `$rt_types__ClosureFunc` traffic
   outside genuinely erased/escaping cases
