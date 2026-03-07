@@ -1,6 +1,6 @@
 use super::env::{TypeEnv, ValueEnv};
 use super::error::TypeError;
-use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant};
+use super::ty::{FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, method_receiver_type_id};
 use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
     FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl, TypeDef as AstTypeDef,
@@ -246,9 +246,11 @@ impl Resolver {
         for decl in &decls {
             match self.resolve_function_sig(decl) {
                 Ok(sig) => {
-                    if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
-                        self.type_env
-                            .add_method(*type_id, sig.name.clone(), sig.name.clone());
+                    if let Some(receiver_ty) = sig.params.first() {
+                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
+                            self.type_env
+                                .add_method(type_id, sig.name.clone(), sig.name.clone());
+                        }
                     }
                     self.value_env.add_function(sig);
                 }

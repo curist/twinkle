@@ -1,0 +1,88 @@
+// Expected output:
+//   4
+//   2
+//   8
+//   2
+//   2
+//   4
+//   10
+//   3
+//   none
+//   true
+//   true
+//   true
+//   false
+//   4
+//   1
+//   a-b-c
+//   true
+//   7
+//   none
+//   true
+//   true
+//   2
+//   hello
+//   world
+//   [ok]
+//   1
+//   abc
+
+use @std.vector
+use @std.string_ext
+
+nums := [1, 2, 3, 4]
+doubled := nums.map(fn(n: Int) Int { n * 2 })
+println("${doubled.len()}")
+println("${doubled[0]}")
+println("${doubled[3]}")
+
+evens := nums.filter(fn(n: Int) Bool { n % 2 == 0 })
+println("${evens.len()}")
+println("${evens[0]}")
+println("${evens[1]}")
+
+println("${nums.fold(0, fn(acc: Int, x: Int) Int { acc + x })}")
+
+case nums.find(fn(n: Int) Bool { n == 3 }) {
+  .Some(v) => println("${v}"),
+  .None => println("none"),
+}
+case nums.find(fn(n: Int) Bool { n == 9 }) {
+  .Some(v) => println("${v}"),
+  .None => println("none"),
+}
+
+println("${nums.any(fn(n: Int) Bool { n == 2 })}")
+println("${nums.all(fn(n: Int) Bool { n > 0 })}")
+println("${nums.contains(4)}")
+println("${nums.contains(9)}")
+
+rev := nums.reverse()
+println("${rev[0]}")
+println("${rev[3]}")
+
+println(["a", "b", "c"].join("-"))
+
+s := "  hello,world  "
+println("${s.contains("hello")}")
+case s.index_of(",") {
+  .Some(i) => println("${i}"),
+  .None => println("none"),
+}
+case s.index_of("zzz") {
+  .Some(i) => println("${i}"),
+  .None => println("none"),
+}
+println("${s.starts_with("  he")}")
+println("${s.ends_with("ld  ")}")
+
+parts := s.trim().split(",")
+println("${parts.len()}")
+println(parts[0])
+println(parts[1])
+
+println("[${"   ok  ".trim()}]")
+
+single := "abc".split("")
+println("${single.len()}")
+println(single[0])

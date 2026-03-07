@@ -20,7 +20,9 @@ use crate::query::keys as query_keys;
 use crate::syntax::ast::{Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
 use crate::types::env::{TypeEnv, ValueEnv};
-use crate::types::ty::{FunctionSignature, MonoType, TypeId};
+use crate::types::ty::{
+    FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id,
+};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};
@@ -793,30 +795,43 @@ fn register_inherent_methods(
     type_env: &mut TypeEnv,
     value_env: &mut ValueEnv,
 ) {
-    let registrations: Vec<(TypeId, String, FunctionSignature)> = ast
+    let registrations: Vec<(TypeId, String, FunctionSignature, Option<FunctionSignature>)> = ast
         .items
         .iter()
         .filter_map(|item| {
             if let Item::Function(decl) = item {
                 if let Some(sig) = value_env.get_function(&decl.name) {
-                    if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
-                        let qname = format!("{}.{}", alias, &decl.name);
-                        let qsig = FunctionSignature {
-                            name: qname,
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            ret: sig.ret.clone(),
-                        };
-                        return Some((*type_id, decl.name.clone(), qsig));
+                    if let Some(receiver_ty) = sig.params.first() {
+                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
+                            let method_qname = format!("{}.{}", alias, &decl.name);
+                            let method_sig = FunctionSignature {
+                                name: method_qname,
+                                type_params: sig.type_params.clone(),
+                                params: sig.params.clone(),
+                                ret: sig.ret.clone(),
+                            };
+                            let builtin_sig = builtin_method_alias(type_id).map(|builtin_alias| {
+                                FunctionSignature {
+                                    name: format!("{}.{}", builtin_alias, &decl.name),
+                                    type_params: sig.type_params.clone(),
+                                    params: sig.params.clone(),
+                                    ret: sig.ret.clone(),
+                                }
+                            });
+                            return Some((type_id, decl.name.clone(), method_sig, builtin_sig));
+                        }
                     }
                 }
             }
             None
         })
         .collect();
-    for (type_id, method_name, qsig) in registrations {
+    for (type_id, method_name, qsig, builtin_sig) in registrations {
         type_env.add_method(type_id, method_name, qsig.name.clone());
         value_env.add_function(qsig);
+        if let Some(sig) = builtin_sig {
+            value_env.add_function(sig);
+        }
     }
 }
 

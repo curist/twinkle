@@ -1,0 +1,45 @@
+// Expected output:
+//   42
+//   -7
+//   12
+//   12
+//   3
+//   6
+//   3
+//   6
+
+use @std.numeric
+use @std.dict_ext
+
+println("${42.to_float().to_int()}")
+println("${(-7).to_float().to_int()}")
+println("${Int.to_float(12).to_int()}")
+println("${Float.to_int(12.0)}")
+
+fn make_dict() Dict<String, Int> {
+  m: Dict<String, Int> = Dict.new()
+  m["a"] = 1
+  m["b"] = 2
+  m["c"] = 3
+  m
+}
+
+m := make_dict()
+
+vals := m.values()
+println("${vals.len()}")
+
+sum := 0
+for v in vals {
+  sum = sum + v
+}
+println("${sum}")
+
+vals2 := Dict.values(m)
+println("${vals2.len()}")
+
+sum2 := 0
+for v in vals2 {
+  sum2 = sum2 + v
+}
+println("${sum2}")

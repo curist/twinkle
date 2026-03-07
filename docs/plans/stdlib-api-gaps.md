@@ -36,7 +36,7 @@ float_from_string(s: String) -> Option<Float> // delegates to host
 
 ---
 
-### P1 — Writeable in Twinkle, needed for ergonomic compiler code
+### P1 — Writeable in Twinkle, needed for ergonomic compiler code ✅ DONE
 
 These can be implemented as Twinkle functions and registered as inherent
 methods on builtin types (requires the inherent-method-for-builtins
@@ -67,9 +67,13 @@ fn split(s: String, sep: String) Vector<String>
 fn trim(s: String) String
 ```
 
+Implemented in:
+- `@std.vector` (`stdlib/vector.tw`)
+- `@std.string_ext` (`stdlib/string_ext.tw`)
+
 ---
 
-### P2 — Nice to have
+### P2 — Nice to have ✅ DONE
 
 #### Numeric conversions
 
@@ -84,23 +88,20 @@ Float.to_int(f: Float) -> Int
 fn values<K, V>(d: Dict<K, V>) Vector<V>
 ```
 
+Implemented in:
+- `@std.numeric` (`stdlib/numeric.tw`)
+- `@std.dict_ext` (`stdlib/dict_ext.tw`)
+
 ---
 
 ## Infrastructure: inherent methods for builtin types
 
-Today, inherent methods (via `TypeEnv::add_method`) only work for
-`MonoType::Named` types. Builtin types (`Vector`, `String`, `Dict`) have
-their methods hard-coded in the type checker and lowerer.
-
-To register Twinkle-defined functions as inherent methods on builtins:
-
-1. Give builtin types a synthetic TypeId (or key) for method lookup
-2. Add a fallback in `synth_method_call`'s builtin arms: before erroring on
-   unknown method, check `TypeEnv::get_method_function`
-3. Write the functions in a stdlib `.tw` module and register them during
-   module loading
-
-This unblocks all P1 items above without adding more Rust builtins.
+Completed:
+1. Builtin receiver types use synthetic method-lookup TypeIds
+2. `synth_method_call` builtin arms now fall back to `TypeEnv::get_method_function`
+3. Lowering has matching builtin-method fallback
+4. Module registration now records builtin receiver methods and exposes
+   `Vector.*` / `String.*` / `Dict.*` qualified entries when available
 
 ---
 
@@ -108,11 +109,11 @@ This unblocks all P1 items above without adding more Rust builtins.
 
 | Item | Priority | Status |
 |------|----------|--------|
-| String ordering (`<`, `>`, `<=`, `>=`) | P0 | Not started |
-| `char_code_at` / `from_char_code` | P0 | Not started |
-| `Int.from_string` / `Float.from_string` | P0 | Not started |
-| Inherent methods for builtins (infra) | P1 | Not started |
-| Vector combinators | P1 | Not started |
-| String utilities | P1 | Not started |
-| Numeric conversions | P2 | Not started |
-| Dict extras | P2 | Not started |
+| String ordering (`<`, `>`, `<=`, `>=`) | P0 | Done |
+| `char_code_at` / `from_char_code` | P0 | Done |
+| `int_from_string` / `float_from_string` | P0 | Done |
+| Inherent methods for builtins (infra) | P1 | Done |
+| Vector combinators | P1 | Done |
+| String utilities | P1 | Done |
+| Numeric conversions | P2 | Done |
+| Dict extras | P2 | Done |

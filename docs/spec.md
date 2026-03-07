@@ -717,6 +717,12 @@ Defined for:
 * `Bool.to_string() String`
 * `String.to_string() String` (identity)
 
+Additional numeric conversion helpers are available via stdlib extension
+methods (import `@std.numeric`):
+
+* `Int.to_float() Float` / `Int.to_float(n) Float`
+* `Float.to_int() Int` / `Float.to_int(f) Int`
+
 #### Parsing
 
 Parsing from strings to numeric types returns `Option<T>`:
@@ -1291,6 +1297,7 @@ Dict operations via module functions (all return new dicts):
 * `Dict.get(m, k) V?` — returns Option<V> for safe access
 * `Dict.has(m, k) Bool` — checks if key exists
 * `Dict.keys(m) Vector<K>` — returns array of keys
+* `Dict.values(m) Vector<V>` — returns array of values (via `@std.dict_ext`)
 * `Dict.len(m) Int` — returns length of keys
 
 Indexing syntax:

@@ -1783,6 +1783,21 @@ impl TypeChecker {
             return Err(());
         }
 
+        // Prefer registered/qualified function signatures when available.
+        // This covers stdlib-defined builtin receiver methods (e.g. Vector.map,
+        // Dict.values, Int.to_float) without hard-coding every method shape.
+        let qualified = format!("{}.{}", alias, method);
+        if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
+            let full_fn_ty = MonoType::Function {
+                params: sig.params.clone(),
+                ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+            };
+            let (inst_ty, _) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+            self.unify(expected, &inst_ty, span)?;
+            self.type_map.set_expr_type(expr_id, self.zonk(expected));
+            return Ok(());
+        }
+
         // Validate the first param matches the base type and check the shape
         let valid = match alias {
             "Vector" => {
@@ -1821,6 +1836,27 @@ impl TypeChecker {
                         ("remove", 2) => matches!(ret, MonoType::Dict(_, _)),
                         _ => false,
                     }
+                }
+            }
+            "Int" => {
+                if !matches!(params[0], MonoType::Int) {
+                    false
+                } else {
+                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
+                }
+            }
+            "Float" => {
+                if !matches!(params[0], MonoType::Float) {
+                    false
+                } else {
+                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
+                }
+            }
+            "Bool" => {
+                if !matches!(params[0], MonoType::Bool) {
+                    false
+                } else {
+                    matches!((method, params.len(), ret), ("to_string", 1, MonoType::String))
                 }
             }
             _ => false,

@@ -1,0 +1,96 @@
+fn is_ascii_space(code: Int) Bool {
+  code == 32 or code == 9 or code == 10 or code == 11 or code == 12 or code == 13
+}
+
+pub fn index_of(s: String, needle: String) Int? {
+  n := s.len()
+  m := needle.len()
+
+  if m == 0 {
+    return .Some(0)
+  }
+  if m > n {
+    return .None
+  }
+
+  i := 0
+  last := n - m
+  for i <= last {
+    if s.substring(i, i + m) == needle {
+      return .Some(i)
+    }
+    i = i + 1
+  }
+  .None
+}
+
+pub fn contains(s: String, needle: String) Bool {
+  case s.index_of(needle) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+pub fn starts_with(s: String, prefix: String) Bool {
+  n := s.len()
+  m := prefix.len()
+  if m > n {
+    return false
+  }
+  s.substring(0, m) == prefix
+}
+
+pub fn ends_with(s: String, suffix: String) Bool {
+  n := s.len()
+  m := suffix.len()
+  if m > n {
+    return false
+  }
+  s.substring(n - m, n) == suffix
+}
+
+pub fn split(s: String, sep: String) Vector<String> {
+  if sep == "" {
+    return [s]
+  }
+
+  n := s.len()
+  m := sep.len()
+  parts: Vector<String> = []
+  start := 0
+  i := 0
+
+  for i <= n - m {
+    if s.substring(i, i + m) == sep {
+      parts = parts.push(s.substring(start, i))
+      i = i + m
+      start = i
+    } else {
+      i = i + 1
+    }
+  }
+
+  parts.push(s.substring(start, n))
+}
+
+pub fn trim(s: String) String {
+  n := s.len()
+  if n == 0 {
+    return s
+  }
+
+  start := 0
+  for start < n and is_ascii_space(char_code_at(s, start)) {
+    start = start + 1
+  }
+  if start == n {
+    return ""
+  }
+
+  end := n - 1
+  for end >= start and is_ascii_space(char_code_at(s, end)) {
+    end = end - 1
+  }
+
+  s.substring(start, end + 1)
+}

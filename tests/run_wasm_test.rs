@@ -112,6 +112,11 @@ fn run_wasm_stdlib_vector_string_ext() {
 }
 
 #[test]
+fn run_wasm_stdlib_numeric_dict_ext() {
+    check("tests/run/stdlib_numeric_dict_ext.tw");
+}
+
+#[test]
 fn run_wasm_twinkle_typechecker() {
     check("tests/run/twinkle_typechecker.tw");
 }

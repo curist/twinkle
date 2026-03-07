@@ -1,0 +1,83 @@
+pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
+  collect x in xs { f(x) }
+}
+
+pub fn filter<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A> {
+  collect x in xs {
+    if f(x) { x } else { continue }
+  }
+}
+
+pub fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
+  acc := init
+  for x in xs {
+    acc = f(acc, x)
+  }
+  acc
+}
+
+pub fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
+  for x in xs {
+    if f(x) {
+      return .Some(x)
+    }
+  }
+  .None
+}
+
+pub fn any<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
+  for x in xs {
+    if f(x) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn all<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
+  for x in xs {
+    if !f(x) {
+      return false
+    }
+  }
+  true
+}
+
+pub fn contains<A>(xs: Vector<A>, elem: A) Bool {
+  for x in xs {
+    if x == elem {
+      return true
+    }
+  }
+  false
+}
+
+pub fn reverse<A>(xs: Vector<A>) Vector<A> {
+  n := xs.len()
+  if n == 0 {
+    return []
+  }
+
+  out := [xs[n - 1]]
+  i := n - 2
+  for i >= 0 {
+    out = out.push(xs[i])
+    i = i - 1
+  }
+  out
+}
+
+pub fn join(xs: Vector<String>, sep: String) String {
+  n := xs.len()
+  if n == 0 {
+    return ""
+  }
+
+  out := xs[0]
+  i := 1
+  for i < n {
+    out = "${out}${sep}${xs[i]}"
+    i = i + 1
+  }
+  out
+}

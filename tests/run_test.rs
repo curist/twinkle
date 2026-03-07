@@ -241,6 +241,11 @@ fn stdlib_vector_string_ext() {
 }
 
 #[test]
+fn stdlib_numeric_dict_ext() {
+    check("tests/run/stdlib_numeric_dict_ext.tw");
+}
+
+#[test]
 fn empty_vector() {
     check("tests/run/empty_vector.tw");
 }

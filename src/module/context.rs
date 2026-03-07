@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use crate::ir::core::{FuncId, LocalId};
 use crate::ir::lower::prelude;
 use crate::types::env::{TypeEnv, ValueEnv};
-use crate::types::ty::{FunctionSignature, MonoType, TypeId};
+use crate::types::ty::{
+    FunctionSignature, MonoType, TypeId, builtin_method_alias, method_receiver_type_id,
+};
 
 use super::artifacts::{ExternalFuncRef, LoweredModule};
 
@@ -148,6 +150,9 @@ pub fn default_module_aliases() -> HashSet<String> {
     module_aliases.insert("Iterator".to_string());
     module_aliases.insert("Vector".to_string());
     module_aliases.insert("String".to_string());
+    module_aliases.insert("Int".to_string());
+    module_aliases.insert("Float".to_string());
+    module_aliases.insert("Bool".to_string());
     module_aliases
 }
 
@@ -203,11 +208,36 @@ impl CompileState {
                 );
             }
 
-            // Register inherent methods: if first param is a Named type,
-            // register (type_id, method_name) → qualified_func_name
-            if let Some(MonoType::Named { type_id, .. }) = sig.params.first() {
-                self.type_env
-                    .add_method(*type_id, func_name.clone(), qualified_name);
+            // Register inherent methods: functions whose first parameter is a
+            // receiver type (named or builtin synthetic receiver) become methods.
+            if let Some(receiver_ty) = sig.params.first() {
+                if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
+                    self.type_env
+                        .add_method(receiver_type_id, func_name.clone(), qualified_name.clone());
+
+                    // Builtin receiver methods can also be called via canonical
+                    // module aliases, e.g. `Vector.map(xs, f)`.
+                    if let Some(alias_name) = builtin_method_alias(receiver_type_id) {
+                        let builtin_name = format!("{}.{}", alias_name, func_name);
+                        let builtin_sig = FunctionSignature {
+                            name: builtin_name.clone(),
+                            type_params: sig.type_params.clone(),
+                            params: sig.params.clone(),
+                            ret: sig.ret.clone(),
+                        };
+                        self.value_env.add_function(builtin_sig);
+                        if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                            self.func_table.insert(builtin_name.clone(), func_id);
+                            self.qualified_func_targets.insert(
+                                builtin_name,
+                                ExternalFuncRef {
+                                    module_path: exports.canonical_path.clone(),
+                                    local_func_id: func_id,
+                                },
+                            );
+                        }
+                    }
+                }
             }
         }
 

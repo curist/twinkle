@@ -1,0 +1,3 @@
+pub fn values<K, V>(d: Dict<K, V>) Vector<V> {
+  collect k, v in d { v }
+}

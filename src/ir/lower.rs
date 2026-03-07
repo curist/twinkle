@@ -234,6 +234,9 @@ impl Lowerer {
         module_aliases.insert("Iterator".to_string()); // built-in module alias
         module_aliases.insert("Vector".to_string()); // built-in module alias
         module_aliases.insert("String".to_string()); // built-in module alias
+        module_aliases.insert("Int".to_string()); // built-in module alias
+        module_aliases.insert("Float".to_string()); // built-in module alias
+        module_aliases.insert("Bool".to_string()); // built-in module alias
 
         Self {
             type_map,
