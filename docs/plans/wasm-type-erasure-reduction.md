@@ -1,13 +1,41 @@
 # Wasm Type Erasure Reduction
 
-**Goal:** Reduce unnecessary `Anyref`-based representations in the Wasm backend after
-typed closure specialization, so concrete Twinkle values do not lose type information
+**Goal:** Drive the Wasm backend toward monomorphized helper emission and concrete runtime
+layouts for monomorphized Twinkle code, so concrete values do not lose type information
 when they move through records, iterators, and other runtime helper structures.
 
 This is a follow-up plan, not an extension of Stage 9.6 itself. Stage 9.6 focuses on
 typed higher-order parameter calls. This plan tracks the remaining places where the
 backend still falls back to universal `Anyref`-heavy layouts even when concrete Wasm
 types are available.
+
+For the monomorphization guarantees this plan relies on, and for the distinction between
+“concrete IR type” and “concrete Wasm runtime layout,” see
+[../internals/monomorphization.md](../internals/monomorphization.md).
+
+## Intended End State
+
+The intended direction is stronger than “reduce `Anyref` a bit.”
+
+For concrete, monomorphized programs, the backend should prefer:
+
+* concrete Wasm layouts for concrete Twinkle types
+* monomorphized helper emission for hot concrete helper paths
+* typed helper dispatch over universal helper dispatch
+
+`Anyref` should remain only as the fallback for cases that are genuinely erased,
+existential, or otherwise not worth specializing.
+
+In other words:
+
+* monomorphization should ensure codegen sees concrete types
+* the backend should then exploit that by emitting concrete layouts and helper families
+* universal `Anyref`-based helpers should be the fallback path, not the default path
+
+This plan therefore assumes:
+
+* monomorphization is the prerequisite that makes concrete helper/layout emission possible
+* backend erasure reduction is the follow-up that actually exploits that information
 
 ## Status
 
@@ -48,7 +76,7 @@ type-erasure patterns:
 
 The result is that some hot paths still allocate argument arrays, cast through
 `$rt_types__Closure`, or box concrete payloads even though the program is fully
-monomorphized.
+monomorphized and should be eligible for a monomorphized helper/layout path.
 
 ---
 
@@ -143,6 +171,7 @@ Target:
 * replace the erased array-backed iterator representation with a typed state record or
   typed runtime struct after monomorphization
 * preserve the typed helper dispatch as the fast path on top of that concrete state layout
+* move toward a monomorphized `Iterator.next__T__S`-style helper family for concrete cases
 
 ### 5. Variant / helper payloads remain array-of-anyref based
 
@@ -152,8 +181,8 @@ even after monomorphization.
 
 Target:
 
-* audit which variants are hot enough to justify typed payload structs or typed helper
-  layouts
+* audit which variants are hot enough to justify typed payload structs or monomorphized
+  helper families
 * avoid broad refactors where the payoff is too small
 
 ## Proposed Work Items
@@ -170,11 +199,13 @@ Target:
   typed runtime struct when the iterator is monomorphized.
 * Extend the current typed `Iterator.next` helper path so generic iterator plumbing no longer
   erases seed/rest payload layout in the common concrete case.
+* Treat the long-term target as monomorphized helper emission for concrete iterator state,
+  with the current universal helper retained only as fallback.
 
 ### C. Audit hot sum-type payload paths
 
 * Identify whether `Option`, `Result`, and `UnfoldStep` are large enough contributors to
-  justify typed payload layouts.
+  justify typed payload layouts or monomorphized helper emission.
 * Prefer targeted hot-path wins over global complexity.
 
 ## Non-Goals
@@ -185,6 +216,16 @@ This plan does not require:
 * rewriting every variant/runtime helper into a typed family immediately
 * removing the universal closure ABI, which is still needed for escaping and erased
   function values
+
+What it does require is making the default concrete path better:
+
+* concrete monomorphized code should not pay `Anyref` costs by default when the backend can
+  reasonably emit a concrete layout/helper instead
+
+**Related docs:**
+
+* [../internals/monomorphization.md](../internals/monomorphization.md)
+* [monomorphization.md](monomorphization.md)
 
 ---
 
@@ -209,6 +250,8 @@ This plan is successful when:
 * iterator step closures no longer require universal closure dispatch in the common
   monomorphized case
 * monomorphized iterator state no longer defaults to an erased array container
+* hot helper paths such as iterator/variant plumbing prefer monomorphized helper emission
+  when the relevant concrete types are available
 * representative WAT audits of `examples/*` and `tests/run/*` show materially less
   unnecessary `Anyref`, `BoxedInt`, `BoxedFloat`, and `$rt_types__ClosureFunc` traffic
   outside genuinely erased/escaping cases

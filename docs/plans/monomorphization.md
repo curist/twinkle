@@ -9,11 +9,10 @@ After monomorphization, codegen should see concrete types such as `Cell<Int>` in
 `Cell<T>`, but deciding whether `Cell<Int>` lowers to a typed Wasm struct or an erased
 runtime container is a separate backend concern tracked elsewhere.
 
-**Why not type erasure permanently:** Type erasure (`Var → anyref`) requires boxing/unboxing
-at every generic call boundary. For `fn id<T>(x: T) T` called as `id(42)`, the caller boxes
-`i64` → `struct.new $BoxedInt` → `anyref`, passes it, the generic body treats `x` as `anyref`,
-and the caller unboxes the result. This is 2 heap allocations and 2 casts per call. With
-monomorphization, `id` is specialized to `id__Int(x: i64) -> i64` — zero overhead.
+For the conceptual model, pipeline position, and the boundary between monomorphization and
+backend representation decisions, see
+[../internals/monomorphization.md](../internals/monomorphization.md).
+This plan focuses on the pass itself and its deliverables.
 
 **Approach — Core IR → Core IR transform:**
 
@@ -73,12 +72,6 @@ layouts may still choose `Anyref` or boxed payloads even when the source type is
 Those backend follow-ups, such as monomorphized `Cell<T>` layouts, belong in the Wasm
 type-erasure reduction plan rather than this pass.
 
-**Pipeline position:**
-
-```text
-parse → resolve → typecheck → lower (Core IR) → **monomorphize** → lower (ANF) → optimize → emit
-```
-
 **Deliverables:**
 
 * `src/ir/monomorphize.rs` — the pass.
@@ -88,3 +81,8 @@ parse → resolve → typecheck → lower (Core IR) → **monomorphize** → low
   shows specialized function names and no `anyref` locals in specialized bodies.
 * Code-size report: compare total WAT line count with and without monomorphization on the
   test suite. Document the bloat ratio.
+
+**Related docs:**
+
+* [../internals/monomorphization.md](../internals/monomorphization.md)
+* [wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md)
