@@ -7,7 +7,6 @@
 use std::fs;
 use std::path::Path;
 use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
-use twinkle::ir::lower_anf;
 
 // ── Invariant checker ─────────────────────────────────────────────────────────
 
@@ -168,9 +167,9 @@ fn assert_is_atom(atom: &Atom, _context: &str, _prog: &str, _func: &str) {
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 fn lower_anf_for(path: &str) -> AnfModule {
-    let (core_module, _) = twinkle::module::compile_entry(path)
-        .unwrap_or_else(|e| panic!("compile_entry failed for {}: {}", path, e));
-    lower_anf::lower_module(&core_module)
+    twinkle::backend_pipeline::compile_backend_anf(path)
+        .unwrap_or_else(|e| panic!("compile_backend_anf failed for {}: {}", path, e))
+        .anf_module
 }
 
 fn check(path: &str) {

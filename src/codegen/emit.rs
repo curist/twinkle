@@ -5242,9 +5242,9 @@ mod tests {
         let wat = crate::cli::build::build_wat(&path).expect("build_wat failed");
 
         assert!(
-            wat.contains("(type $user__UserRecord_7 (struct (field $f0 (mut (ref null $user__closure_str_void)))))")
-                || wat.contains("(type $user__UserRecord_8 (struct (field $f0 (mut (ref null $user__closure_i64_void)))))"),
-            "expected capability record field to preserve typed closure ref:\n{wat}"
+            wat.contains("(field $f0 (mut (ref null $user__closure_i64_void)))")
+                && wat.contains("(field $f0 (mut (ref null $user__closure_str_void)))"),
+            "expected capability record fields to preserve both typed closure refs:\n{wat}"
         );
     }
 

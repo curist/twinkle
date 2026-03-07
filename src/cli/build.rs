@@ -6,8 +6,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::codegen::emit::emit_user_module_typed;
-use crate::ir::lower_anf::lower_module;
-use crate::opt::optimize_module;
 use crate::runtime;
 use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link};
@@ -37,14 +35,14 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Resu
 }
 
 pub fn build_wat(file_path: &str) -> Result<String> {
-    let (core_module, _registry) = crate::module::compile_entry(file_path)
-        .with_context(|| format!("compile failed for '{}'", file_path))?;
-    let core_module = crate::ir::monomorphize(core_module);
-    let anf = lower_module(&core_module);
-    let optimized = optimize_module(anf);
+    let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
 
     let func_table = HashMap::new();
-    let user_module = emit_user_module_typed(&optimized, &core_module.type_env, &func_table);
+    let user_module = emit_user_module_typed(
+        &pipeline.optimized_anf_module,
+        &pipeline.core_module.type_env,
+        &func_table,
+    );
     let mut modules = runtime::all_modules();
     modules.push(user_module);
 

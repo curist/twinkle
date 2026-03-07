@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use twinkle::codegen::emit::emit_user_module;
-use twinkle::ir::lower_anf::lower_module;
-use twinkle::opt::optimize_module;
 use twinkle::runtime;
 use twinkle::wasm::{emit::emit_wat, linker::link};
 
@@ -16,10 +14,13 @@ fn fixture(name: &str) -> String {
 }
 
 fn build_wat(file_path: &str) -> String {
-    let (core_module, _) = twinkle::module::compile_entry(file_path).expect("compile failed");
-    let anf = lower_module(&core_module);
-    let optimized = optimize_module(anf);
-    let user_module = emit_user_module(&optimized, &core_module.type_env, &HashMap::new());
+    let pipeline = twinkle::backend_pipeline::compile_backend_opt(file_path)
+        .expect("backend pipeline compile failed");
+    let user_module = emit_user_module(
+        &pipeline.optimized_anf_module,
+        &pipeline.core_module.type_env,
+        &HashMap::new(),
+    );
     let mut modules = runtime::all_modules();
     modules.push(user_module);
     let linked = link(modules, None).expect("link failed");

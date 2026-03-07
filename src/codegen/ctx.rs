@@ -431,6 +431,10 @@ impl<'a> EmitCtx<'a> {
     fn infer_atom_valtype(&self, atom: &Atom) -> Option<ValType> {
         self.infer_atom_mono(atom)
             .map(|mono| mono_to_valtype_specialized(&mono, self.type_env, &self.concrete_func_sigs))
+            .or_else(|| match atom {
+                Atom::ALocal(local_id) => self.local(*local_id).map(|(_, ty)| ty.clone()),
+                _ => None,
+            })
     }
 
     fn infer_atom_mono(&self, atom: &Atom) -> Option<MonoType> {
@@ -1263,6 +1267,39 @@ mod tests {
                     op: Box::new(AnfOp::ACall {
                         callee: Atom::AGlobalFunc(prelude_ids::VECTOR_LEN),
                         args: vec![Atom::ALocal(LocalId(1))],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+                }),
+            },
+            return_ty: MonoType::Int,
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty) = ctx.local(LocalId(2)).expect("missing local L2");
+        assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn local_type_init_of_runtime_int_call_stays_i64() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id: FuncId(102),
+            name: "init_runtime_int".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(prelude_ids::STRING_LEN),
+                    args: vec![Atom::ALitStr("abc".to_string())],
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(2),
+                    op: Box::new(AnfOp::AInit {
+                        value: Atom::ALocal(LocalId(1)),
                     }),
                     body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
                 }),

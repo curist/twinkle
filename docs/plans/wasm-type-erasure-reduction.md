@@ -36,8 +36,8 @@ This plan therefore assumes:
 
 * monomorphization is the prerequisite that makes concrete helper/layout emission possible
 * backend erasure reduction is the follow-up that actually exploits that information
-* the backend pipeline is first aligned with
-  [backend-pipeline-alignment.md](backend-pipeline-alignment.md)
+* the backend pipeline alignment from
+  [backend-pipeline-alignment.md](backend-pipeline-alignment.md) is now in place
 
 ## Status
 
@@ -61,9 +61,10 @@ Still open:
 * fully typed iterator state representation instead of the current erased array payload
 * targeted reduction of `Anyref` payload layouts in hot helper/variant paths
 
-These remaining items are downstream of
-[backend-pipeline-alignment.md](backend-pipeline-alignment.md). The pipeline update
-comes first; this plan resumes after that alignment is done.
+These remaining items now build on top of the completed
+[backend-pipeline-alignment.md](backend-pipeline-alignment.md) work: backend-facing ANF is
+monomorphized before optimization/codegen, while the interpreter remains a separate Core IR
+path.
 
 ---
 

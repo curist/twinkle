@@ -38,6 +38,10 @@ easy to:
 
 This plan makes the pipeline contract explicit and brings the implementation in line with it.
 
+## Status
+
+Completed on March 7, 2026.
+
 ---
 
 ## Current State
@@ -46,19 +50,18 @@ Aligned with the intended backend pipeline:
 
 * `twk build`
 * `twk run-wasm`
-* Wasm-oriented build/test helpers that already go through `build_wat`
-
-Still not aligned:
-
 * `twk lower-anf`
 * `twk opt`
+* backend-facing ANF/opt tests and snapshots
+* Wasm-oriented build/test helpers that go through the shared backend pipeline
 
-Open design decision:
+Intentional exception:
 
-* `twk run` (interpreter) may intentionally remain on pre-monomorphized Core IR
+* `twk run` (interpreter) remains on linked Core IR rather than the backend ANF pipeline
 
-The key mismatch today is that some CLI/debug surfaces still show ANF lowered directly from
-linked Core IR rather than from monomorphized Core IR.
+The earlier mismatch was that some CLI/debug surfaces showed ANF lowered directly from linked
+Core IR rather than from monomorphized Core IR. That mismatch is now removed from the
+backend-oriented paths.
 
 ---
 
@@ -93,7 +96,7 @@ Out of scope:
 
 ## Work Items
 
-### 1. Align `lower-anf`
+### 1. Align `lower-anf` ✅
 
 Update `twk lower-anf` so it reflects the intended backend pipeline:
 
@@ -110,7 +113,7 @@ Recommended default:
 
 * make monomorphized ANF the default
 
-### 2. Align `opt`
+### 2. Align `opt` ✅
 
 Update `twk opt` so optimization is shown on top of monomorphized ANF, matching the actual
 Wasm build path.
@@ -123,7 +126,7 @@ not:
 
 * ANF before monomorphization
 
-### 3. Audit ANF-facing tests and snapshots
+### 3. Audit ANF-facing tests and snapshots ✅
 
 Update tests that currently inspect pre-monomorphization ANF or optimized ANF shapes.
 
@@ -136,29 +139,19 @@ Likely areas:
 The important rule is that backend-facing ANF tests should validate the canonical
 monomorphized pipeline, not an older intermediate pipeline.
 
-### 4. Decide interpreter-path policy
+### 4. Decide interpreter-path policy ✅
 
 Decide whether interpreter paths are intentionally exempt.
 
-Likely answer:
-
 * interpreter continues to consume linked Core IR directly
 * backend-oriented paths consume monomorphized Core IR before ANF/codegen
+* this split is now documented explicitly rather than treated as an accidental inconsistency
 
-If that remains the split, document it explicitly so the architecture is clear and not read as
-an inconsistency.
-
-### 5. Re-baseline downstream plans
+### 5. Re-baseline downstream plans ✅
 
 Once this pipeline is aligned, downstream backend plans should assume it.
 
-In particular:
-
-* [wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md) should only continue once
-  this plan is complete
-
-That means no new major Wasm erasure-reduction work should be treated as unblocked until the
-backend pipeline contract is stabilized.
+Downstream backend plans may now assume monomorphized ANF as the canonical input.
 
 ---
 

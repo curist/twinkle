@@ -11,19 +11,20 @@ use std::path::Path;
 
 use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use twinkle::ir::core::FuncId;
-use twinkle::ir::lower_anf;
 use twinkle::opt::optimize_module;
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 fn compile_anf(path: &str) -> AnfModule {
-    let (core_module, _) = twinkle::module::compile_entry(path)
-        .unwrap_or_else(|e| panic!("compile_entry failed for {}: {}", path, e));
-    lower_anf::lower_module(&core_module)
+    twinkle::backend_pipeline::compile_backend_anf(path)
+        .unwrap_or_else(|e| panic!("compile_backend_anf failed for {}: {}", path, e))
+        .anf_module
 }
 
 fn compile_opt(path: &str) -> AnfModule {
-    optimize_module(compile_anf(path))
+    twinkle::backend_pipeline::compile_backend_opt(path)
+        .unwrap_or_else(|e| panic!("compile_backend_opt failed for {}: {}", path, e))
+        .optimized_anf_module
 }
 
 // ── ANF invariant checker (mirrors anf_test.rs) ───────────────────────────────

@@ -1,3 +1,4 @@
+pub mod backend_pipeline;
 pub mod cli;
 pub mod codegen;
 pub mod interp;
