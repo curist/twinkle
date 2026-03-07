@@ -567,6 +567,10 @@ impl TypeEnv {
         self.methods.insert((type_id, method_name), func_name);
     }
 
+    pub fn remove_method(&mut self, type_id: TypeId, method_name: &str) {
+        self.methods.remove(&(type_id, method_name.to_string()));
+    }
+
     /// Check if a type has a method with the given name
     pub fn has_method(&self, type_id: TypeId, method_name: &str) -> bool {
         self.methods
@@ -706,28 +710,24 @@ impl ValueEnv {
                 }),
             },
         );
-        // int_from_string(s: String) -> Option<Int>
-        env.builtins.insert(
-            "int_from_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::String],
-                ret: Box::new(MonoType::Named {
-                    type_id: OPTION_TYPE_ID,
-                    args: vec![MonoType::Int],
-                }),
-            },
-        );
-        // float_from_string(s: String) -> Option<Float>
-        env.builtins.insert(
-            "float_from_string".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::String],
-                ret: Box::new(MonoType::Named {
-                    type_id: OPTION_TYPE_ID,
-                    args: vec![MonoType::Float],
-                }),
-            },
-        );
+        env.add_function(FunctionSignature {
+            name: "Int.from_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::Int],
+            }),
+        });
+        env.add_function(FunctionSignature {
+            name: "Float.from_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::Float],
+            }),
+        });
 
         env.builtins.insert(
             "__host_read_file".to_string(),
@@ -820,6 +820,14 @@ impl ValueEnv {
     /// Add a top-level value binding
     pub fn add_value(&mut self, name: String, ty: MonoType) {
         self.values.insert(name, ty);
+    }
+
+    pub fn remove_function(&mut self, name: &str) {
+        self.functions.remove(name);
+    }
+
+    pub fn remove_value(&mut self, name: &str) {
+        self.values.remove(name);
     }
 
     /// Look up a value (checks functions, then values, then builtins)

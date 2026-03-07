@@ -8,7 +8,7 @@ fn normalize_integral_float_text(s: String) String {
 }
 
 pub fn to_float(n: Int) Float {
-  case float_from_string(n.to_string()) {
+  case Float.from_string(n.to_string()) {
     .Some(v) => v,
     .None => {
       error("Int.to_float: internal conversion failure")
@@ -19,7 +19,7 @@ pub fn to_float(n: Int) Float {
 
 pub fn to_int(f: Float) Int {
   s := normalize_integral_float_text(f.to_string())
-  case int_from_string(s) {
+  case Int.from_string(s) {
     .Some(v) => v,
     .None => {
       error("Float.to_int: value is not an integral number")

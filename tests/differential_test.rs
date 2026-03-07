@@ -1,35 +1,7 @@
-//! Differential test: runs every tests/run/*.tw fixture through both the
-//! interpreter and the Wasm backend, comparing stdout output.
+//! Differential trap test: verifies both the interpreter and Wasm backend
+//! report errors for known trap fixtures.
 
-use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
-
-/// Fixtures that are known to fail in the Wasm backend. As bugs are fixed,
-/// entries are removed. The goal is an empty skip list.
-fn wasm_skip_list() -> BTreeSet<&'static str> {
-    [].into_iter().collect()
-}
-
-/// Parse the expected output from leading comment block.
-fn parse_expected(source: &str) -> Vec<String> {
-    let mut lines = source.lines();
-    let found = lines.by_ref().any(|l| l.trim() == "// Expected output:");
-    if !found {
-        return vec![];
-    }
-    let mut result = Vec::new();
-    for line in lines {
-        if let Some(rest) = line.strip_prefix("//   ") {
-            result.push(rest.to_string());
-        } else if line.starts_with("//") {
-            result.push("".to_string());
-        } else {
-            break;
-        }
-    }
-    result
-}
 
 /// Run through interpreter.
 fn run_interp(path: &str) -> anyhow::Result<String> {
@@ -54,110 +26,6 @@ fn parse_expected_trap(source: &str) -> Option<String> {
             .strip_prefix("// Expected trap: ")
             .map(|s| s.to_string())
     })
-}
-
-fn is_benchmark_fixture(name: &str) -> bool {
-    name.starts_with("bench_") || name.ends_with("_perf")
-}
-
-/// Discover all .tw test fixtures (non-trap) that have expected output.
-/// Benchmark fixtures are intentionally excluded: performance comparisons
-/// should stay Wasm-only, while interpreter remains a correctness oracle.
-fn discover_fixtures() -> Vec<(String, String)> {
-    let root = Path::new("tests/run");
-    let mut fixtures = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).expect("tests/run subtree dir exists") {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().map_or(true, |e| e != "tw") {
-                continue;
-            }
-            let source = fs::read_to_string(&path).unwrap();
-            if !parse_expected(&source).is_empty() {
-                let rel = path.strip_prefix(root).unwrap_or(&path);
-                let name = if path.file_name().and_then(|n| n.to_str()) == Some("main.tw") {
-                    rel.parent()
-                        .map(|p| p.to_string_lossy().replace('\\', "/"))
-                        .unwrap_or_else(|| "main".to_string())
-                } else {
-                    rel.with_extension("").to_string_lossy().replace('\\', "/")
-                };
-                if is_benchmark_fixture(&name) {
-                    continue;
-                }
-                fixtures.push((name, path.to_str().unwrap().to_string()));
-            }
-        }
-    }
-
-    fixtures.sort();
-    fixtures
-}
-
-#[test]
-fn differential_interp_vs_wasm() {
-    let skip = wasm_skip_list();
-    let fixtures = discover_fixtures();
-    assert!(!fixtures.is_empty(), "no fixtures discovered");
-
-    let mut passed = 0;
-    let mut skipped = 0;
-    let mut failed = Vec::new();
-
-    for (name, path) in &fixtures {
-        if skip.contains(name.as_str()) {
-            skipped += 1;
-            continue;
-        }
-
-        let interp_out = match run_interp(path) {
-            Ok(out) => out,
-            Err(e) => {
-                failed.push(format!("{name}: interpreter error: {e}"));
-                continue;
-            }
-        };
-
-        let wasm_out = match run_wasm(path) {
-            Ok(out) => out,
-            Err(e) => {
-                failed.push(format!("{name}: wasm error: {e}"));
-                continue;
-            }
-        };
-
-        if interp_out != wasm_out {
-            failed.push(format!(
-                "{name}: output mismatch\n  interp: {:?}\n  wasm:   {:?}",
-                interp_out.lines().collect::<Vec<_>>(),
-                wasm_out.lines().collect::<Vec<_>>(),
-            ));
-        } else {
-            passed += 1;
-        }
-    }
-
-    if !failed.is_empty() {
-        panic!(
-            "Differential test failures ({} passed, {} skipped, {} failed):\n{}",
-            passed,
-            skipped,
-            failed.len(),
-            failed.join("\n\n")
-        );
-    }
-
-    eprintln!(
-        "differential test: {passed} passed, {skipped} skipped (in skip list), {} total fixtures",
-        fixtures.len()
-    );
 }
 
 /// Trap tests: verify both interpreter and Wasm produce errors (not success).

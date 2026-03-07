@@ -24,15 +24,17 @@ char_code_at(s: String, i: Int) -> Int      // byte value at index
 from_char_code(n: Int) -> Option<String>    // ASCII (0-127) to 1-char string
 ```
 
-#### `int_from_string` / `float_from_string` ✅
+#### `Int.from_string` / `Float.from_string` ✅
 
 ```tw
-int_from_string(s: String) -> Option<Int>    // pure Wasm, no host call
-float_from_string(s: String) -> Option<Float> // delegates to host
+Int.from_string(s: String) -> Option<Int>      // pure Wasm, no host call
+Float.from_string(s: String) -> Option<Float>  // delegates to host
 ```
 
-`int_from_string` is implemented entirely in Wasm (digit loop with sign handling).
-`float_from_string` delegates to a host import (`host.parse_float`).
+The public surface is type-qualified; the compiler may lower these to internal
+parsing intrinsics. `Int.from_string` is implemented entirely in Wasm (digit loop
+with sign handling). `Float.from_string` delegates to a host import
+(`host.parse_float`).
 
 ---
 
@@ -111,7 +113,7 @@ Completed:
 |------|----------|--------|
 | String ordering (`<`, `>`, `<=`, `>=`) | P0 | Done |
 | `char_code_at` / `from_char_code` | P0 | Done |
-| `int_from_string` / `float_from_string` | P0 | Done |
+| `Int.from_string` / `Float.from_string` | P0 | Done |
 | Inherent methods for builtins (infra) | P1 | Done |
 | Vector combinators | P1 | Done |
 | String utilities | P1 | Done |

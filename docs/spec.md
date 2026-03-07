@@ -725,13 +725,17 @@ methods (import `@std.numeric`):
 
 #### Parsing
 
-Parsing from strings to numeric types returns `Option<T>`:
+Parsing from strings to numeric types uses type-qualified constructors and returns
+`Option<T>`:
 
-* `int_from_string(s: String) Option<Int>` — parses a decimal integer (optional `+`/`-` prefix)
-* `float_from_string(s: String) Option<Float>` — parses a floating-point number
+* `Int.from_string(s: String) Option<Int>` — parses a decimal integer (optional `+`/`-` prefix)
+* `Float.from_string(s: String) Option<Float>` — parses a floating-point number
+
+The compiler/runtime may implement these through internal parsing intrinsics, but
+the raw intrinsic names are not part of the user-facing language.
 
 ```tw
-case int_from_string("42") {
+case Int.from_string("42") {
   .Some(n) => println("${n}"),   // prints 42
   .None => println("not a number"),
 }

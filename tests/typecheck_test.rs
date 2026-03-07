@@ -6,7 +6,9 @@ use twinkle::types::env::{TypeEnv, ValueEnv};
 
 /// Built-in module aliases recognised by the type checker.
 fn builtin_aliases() -> HashSet<String> {
-    ["Cell", "Dict", "Iterator", "Vector", "String"]
+    [
+        "Cell", "Dict", "Iterator", "Vector", "String", "Int", "Float", "Bool",
+    ]
         .iter()
         .map(|s| s.to_string())
         .collect()

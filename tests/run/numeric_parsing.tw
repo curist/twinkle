@@ -10,56 +10,56 @@
 //   3
 //   none
 
-// int_from_string — basic
-case int_from_string("42") {
+// Int.from_string — basic
+case Int.from_string("42") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-case int_from_string("abc") {
+case Int.from_string("abc") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-// int_from_string — sign handling
-case int_from_string("-7") {
+// Int.from_string — sign handling
+case Int.from_string("-7") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-case int_from_string("+99") {
+case Int.from_string("+99") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-// int_from_string — edge cases
-case int_from_string("-") {
+// Int.from_string — edge cases
+case Int.from_string("-") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-case int_from_string("") {
+case Int.from_string("") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-case int_from_string("12x") {
+case Int.from_string("12x") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-case int_from_string("0") {
+case Int.from_string("0") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
-// float_from_string
-case float_from_string("3.14") {
+// Float.from_string
+case Float.from_string("3.14") {
   .Some(f) => println("${f.to_string().substring(0, 1)}"),
   .None => println("none"),
 }
 
-case float_from_string("not_a_number") {
+case Float.from_string("not_a_number") {
   .Some(f) => println("${f}"),
   .None => println("none"),
 }

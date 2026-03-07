@@ -1,0 +1,7 @@
+fn bad_int_parse() Option<Int> {
+    int_from_string("42")
+}
+
+fn bad_float_parse() Option<Float> {
+    float_from_string("3.14")
+}

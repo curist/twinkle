@@ -117,6 +117,11 @@ fn run_wasm_stdlib_numeric_dict_ext() {
 }
 
 #[test]
+fn run_wasm_numeric_parsing() {
+    check("tests/run/numeric_parsing.tw");
+}
+
+#[test]
 fn run_wasm_twinkle_typechecker() {
     check("tests/run/twinkle_typechecker.tw");
 }

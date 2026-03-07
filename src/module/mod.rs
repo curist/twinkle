@@ -242,18 +242,6 @@ pub fn compile_module(
         }
     }
 
-    // Remove this module's bare type names from the shared TypeEnv.
-    // They were needed during resolve and typecheck, but must not persist into
-    // subsequent modules' resolution — otherwise two modules declaring a type
-    // with the same name would silently overwrite each other's TypeId.
-    // Cross-module access goes through qualified aliases ("module.TypeName")
-    // registered by the importing module via register_module_exports.
-    for item in &ast.items {
-        if let Item::TypeDecl(decl) = item {
-            state.type_env.remove_bare_type_name(&decl.name);
-        }
-    }
-
     // Lower (if requested) — pure function via explicit LowerInput
     if do_lower {
         let lower_key = query_keys::with_context(
@@ -304,6 +292,8 @@ pub fn compile_module(
     let module_hash = query_keys::module_hash(source_hash, deps_hash);
     state.module_hashes.insert(canonical.clone(), module_hash);
     with_global_cache(|cache| cache.set_module_hash(&canonical, module_hash));
+
+    cleanup_module_local_bindings(&ast, alias, state);
 
     importing_stack.pop();
 
@@ -831,6 +821,55 @@ fn register_inherent_methods(
         value_env.add_function(qsig);
         if let Some(sig) = builtin_sig {
             value_env.add_function(sig);
+        }
+    }
+}
+
+fn cleanup_module_local_bindings(
+    ast: &crate::syntax::ast::SourceFile,
+    alias: &str,
+    state: &mut CompileState,
+) {
+    // This module's declarations were needed during its own resolve/typecheck/lower
+    // passes, but must not leak into subsequent modules. Cross-module access goes
+    // through ModuleExports + register_module_exports.
+    for item in &ast.items {
+        match item {
+            Item::TypeDecl(decl) => {
+                state.type_env.remove_bare_type_name(&decl.name);
+            }
+            Item::Function(decl) => {
+                let sig = state.value_env.get_function(&decl.name).cloned();
+
+                state.value_env.remove_function(&decl.name);
+                state.func_table.remove(&decl.name);
+
+                let qualified = format!("{}.{}", alias, decl.name);
+                state.value_env.remove_function(&qualified);
+                state.func_table.remove(&qualified);
+                state.qualified_func_targets.remove(&qualified);
+
+                if let Some(sig) = sig {
+                    if let Some(receiver_ty) = sig.params.first() {
+                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
+                            state.type_env.remove_method(type_id, &decl.name);
+                            if let Some(builtin_alias) = builtin_method_alias(type_id) {
+                                let builtin_name = format!("{}.{}", builtin_alias, decl.name);
+                                state.value_env.remove_function(&builtin_name);
+                                state.func_table.remove(&builtin_name);
+                                state.qualified_func_targets.remove(&builtin_name);
+                            }
+                        }
+                    }
+                }
+            }
+            Item::Stmt(Stmt::Let {
+                pattern: Pattern::Ident(name, _),
+                ..
+            }) => {
+                state.value_env.remove_value(name);
+            }
+            _ => {}
         }
     }
 }

@@ -51,9 +51,10 @@ Source: `src/runtime/str.rs`
 |---|---|---|
 | `host.parse_float` | `(ref null $String) → (f64, i32)` | Parse float from string; returns `(value, ok)` where `ok=1` on success |
 
-`int_from_string` is implemented in pure Wasm (no host import needed).
-`float_from_string` delegates to this host function because float parsing
-(decimals, exponents, special values) is impractical in inline Wasm.
+The public APIs are `Int.from_string` and `Float.from_string`.
+Internally, integer parsing is implemented in pure Wasm (no host import needed),
+while float parsing delegates to this host function because decimals, exponents,
+and special values are impractical in inline Wasm.
 
 Source: `src/codegen/emit.rs` (`ensure_host_parse_float_import`)
 
