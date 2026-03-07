@@ -176,6 +176,7 @@ pub fn emit_user_module_typed(
                 params,
                 ret,
                 type_env,
+                &concrete_func_sigs,
             ));
         }
     }
@@ -3335,9 +3336,10 @@ fn typed_closure_trampoline_sym(func_id: FuncId) -> String {
 
 // ─── Stage 9.6: Typed Closure Specialization ─────────────────────────────────
 
-/// Collect all functions that appear in `AMakeClosure` nodes with fully
-/// concrete (non-generic) param and return types.  These are the functions
-/// for which we emit typed closure structs and typed trampolines.
+/// Collect user functions that appear as first-class function values and have
+/// fully concrete (non-generic) param and return types. This includes both
+/// `AMakeClosure`-originated functions and plain named function values that
+/// flow through non-callee positions.
 fn collect_concrete_func_signatures(
     anf: &AnfModule,
 ) -> std::collections::HashMap<FuncId, (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType)>
@@ -3362,7 +3364,40 @@ fn collect_concrete_sigs_expr(
             collect_concrete_sigs_op(op, anf, sigs);
             collect_concrete_sigs_expr(body, anf, sigs);
         }
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+        AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) | AnfExpr::Atom(atom) => {
+            collect_concrete_sigs_atom(atom, anf, sigs);
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => {}
+    }
+}
+
+fn maybe_insert_concrete_sig(
+    func_id: FuncId,
+    anf: &AnfModule,
+    sigs: &mut std::collections::HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
+) {
+    if let Some(func) = anf.functions.iter().find(|f| f.func_id == func_id) {
+        if func.param_tys.iter().all(is_concrete_mono_type)
+            && is_concrete_mono_type(&func.return_ty)
+        {
+            sigs.insert(func_id, (func.param_tys.clone(), func.return_ty.clone()));
+        }
+    }
+}
+
+fn collect_concrete_sigs_atom(
+    atom: &Atom,
+    anf: &AnfModule,
+    sigs: &mut std::collections::HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
+) {
+    if let Atom::AGlobalFunc(func_id) = atom {
+        maybe_insert_concrete_sig(*func_id, anf, sigs);
     }
 }
 
@@ -3375,24 +3410,22 @@ fn collect_concrete_sigs_op(
     >,
 ) {
     match op {
-        AnfOp::AMakeClosure { func_id, .. } => {
-            if let Some(func) = anf.functions.iter().find(|f| f.func_id == *func_id) {
-                if func.param_tys.iter().all(is_concrete_mono_type)
-                    && is_concrete_mono_type(&func.return_ty)
-                {
-                    sigs.insert(*func_id, (func.param_tys.clone(), func.return_ty.clone()));
-                }
+        AnfOp::ACall { args, .. } => {
+            for arg in args {
+                collect_concrete_sigs_atom(arg, anf, sigs);
             }
         }
         AnfOp::AIf {
+            cond,
             then_branch,
             else_branch,
-            ..
         } => {
+            collect_concrete_sigs_atom(cond, anf, sigs);
             collect_concrete_sigs_expr(then_branch, anf, sigs);
             collect_concrete_sigs_expr(else_branch, anf, sigs);
         }
-        AnfOp::AMatch { arms, .. } => {
+        AnfOp::AMatch { scrutinee, arms } => {
+            collect_concrete_sigs_atom(scrutinee, anf, sigs);
             for arm in arms {
                 collect_concrete_sigs_expr(&arm.body, anf, sigs);
             }
@@ -3400,7 +3433,43 @@ fn collect_concrete_sigs_op(
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
             collect_concrete_sigs_expr(body, anf, sigs);
         }
-        _ => {}
+        AnfOp::ABinOp { left, right, .. } => {
+            collect_concrete_sigs_atom(left, anf, sigs);
+            collect_concrete_sigs_atom(right, anf, sigs);
+        }
+        AnfOp::AUnOp { expr, .. } => {
+            collect_concrete_sigs_atom(expr, anf, sigs);
+        }
+        AnfOp::AMakeClosure { func_id, .. } => {
+            maybe_insert_concrete_sig(*func_id, anf, sigs);
+        }
+        AnfOp::ARecord { fields, .. } => {
+            for (_, atom) in fields {
+                collect_concrete_sigs_atom(atom, anf, sigs);
+            }
+        }
+        AnfOp::ARecordGet { target, .. } => {
+            collect_concrete_sigs_atom(target, anf, sigs);
+        }
+        AnfOp::ARecordUpdate { base, value, .. } => {
+            collect_concrete_sigs_atom(base, anf, sigs);
+            collect_concrete_sigs_atom(value, anf, sigs);
+        }
+        AnfOp::AVariant { args, .. } | AnfOp::AArrayLit(args) => {
+            for atom in args {
+                collect_concrete_sigs_atom(atom, anf, sigs);
+            }
+        }
+        AnfOp::AIndex { base, index, .. } => {
+            collect_concrete_sigs_atom(base, anf, sigs);
+            collect_concrete_sigs_atom(index, anf, sigs);
+        }
+        AnfOp::AInit { value } => {
+            collect_concrete_sigs_atom(value, anf, sigs);
+        }
+        AnfOp::AAssign { value, .. } => {
+            collect_concrete_sigs_atom(value, anf, sigs);
+        }
     }
 }
 
@@ -3474,12 +3543,20 @@ fn emit_typed_closure_trampoline(
     params: &[crate::types::ty::MonoType],
     ret: &crate::types::ty::MonoType,
     type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<
+        FuncId,
+        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
+    >,
 ) -> FuncDef {
     let mut trampoline_params = vec![ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
     }];
-    trampoline_params.extend(params.iter().map(|p| mono_to_valtype(p, type_env)));
+    trampoline_params.extend(
+        params
+            .iter()
+            .map(|p| mono_to_valtype_for_param(p, type_env, concrete_func_sigs)),
+    );
 
     let mut body = Vec::new();
 

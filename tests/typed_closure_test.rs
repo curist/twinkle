@@ -215,3 +215,26 @@ fn build_wat_uses_typed_closure_specialization() {
         "Expected build_wat to specialize the fold call site.\n{fold_block}"
     );
 }
+
+/// Named function values passed as first-class arguments should also
+/// specialize to typed closures, not just anonymous `fn(...) { ... }` values.
+#[test]
+fn build_wat_specializes_named_function_args() {
+    let path = fixture("generic_user_funcs.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let apply_block =
+        find_func_block_containing(&wat, "(param $p0 (ref null $user__closure_i64_i64))")
+            .expect("expected monomorphized apply(Int, Int) block in build_wat output");
+    assert!(
+        apply_block.contains("call_ref $user__closurefunc_i64_i64")
+            && !apply_block.contains("call_ref $rt_types__ClosureFunc")
+            && !apply_block.contains("array.new_fixed $rt_types__Array 1"),
+        "Expected named-function higher-order call to use typed closure dispatch.\n{apply_block}"
+    );
+
+    assert!(
+        wat.contains("ref.func $user__func_43__typed_closure"),
+        "Expected build_wat to materialize a typed closure for the named function argument"
+    );
+}
