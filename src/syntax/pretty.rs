@@ -305,13 +305,23 @@ fn print_expr(expr: &Expr, out: &mut String, indent: usize) {
         }
         ExprKind::Collect {
             pattern,
+            index_pattern,
             iter,
             body,
         } => {
             write!(out, "{}Collect ", prefix).unwrap();
             print_pattern(pattern, out);
+            if let Some(idx_pat) = index_pattern {
+                write!(out, ", ").unwrap();
+                print_pattern(idx_pat, out);
+            }
             writeln!(out, " in").unwrap();
             print_expr(iter, out, indent + 2);
+            print_expr(body, out, indent + 2);
+        }
+        ExprKind::CollectWhile { cond, body } => {
+            writeln!(out, "{}CollectWhile", prefix).unwrap();
+            print_expr(cond, out, indent + 2);
             print_expr(body, out, indent + 2);
         }
         ExprKind::StringInterpolation { parts } => {

@@ -1071,17 +1071,42 @@ impl Parser {
 
     fn parse_collect(&mut self) -> ParseResult<Expr> {
         let start = self.expect(TokenKind::Collect)?;
-        let pattern = self.parse_pattern()?;
-        self.expect(TokenKind::In)?;
-        let iter = self.parse_expr()?;
+        let saved_pos = self.pos;
+
+        if let Ok(pattern) = self.parse_pattern() {
+            let index_pattern = if self.peek_is(TokenKind::Comma) {
+                self.expect(TokenKind::Comma)?;
+                Some(self.parse_pattern()?)
+            } else {
+                None
+            };
+            if self.peek_is(TokenKind::In) {
+                self.expect(TokenKind::In)?;
+                let iter = self.parse_expr()?;
+                let body = self.parse_block_expr()?;
+                let span = start.span.merge(&body.span);
+                return Ok(Expr::new(
+                    self.alloc_expr_id(),
+                    ExprKind::Collect {
+                        pattern,
+                        index_pattern,
+                        iter: Box::new(iter),
+                        body: Box::new(body),
+                    },
+                    span,
+                ));
+            }
+        }
+
+        // Backtrack: collect cond { body }
+        self.pos = saved_pos;
+        let cond = self.parse_expr()?;
         let body = self.parse_block_expr()?;
         let span = start.span.merge(&body.span);
-
         Ok(Expr::new(
             self.alloc_expr_id(),
-            ExprKind::Collect {
-                pattern,
-                iter: Box::new(iter),
+            ExprKind::CollectWhile {
+                cond: Box::new(cond),
                 body: Box::new(body),
             },
             span,

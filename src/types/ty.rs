@@ -24,6 +24,44 @@ pub const RANGE_TYPE_ID: TypeId = TypeId(3);
 pub const ITERATOR_TYPE_ID: TypeId = TypeId(4);
 pub const ITER_ITEM_TYPE_ID: TypeId = TypeId(5);
 pub const UNFOLD_STEP_TYPE_ID: TypeId = TypeId(6);
+// Synthetic method-only TypeIds for builtin receiver types that are not
+// represented as MonoType::Named variants.
+pub const BUILTIN_VECTOR_TYPE_ID: TypeId = TypeId(u32::MAX - 5);
+pub const BUILTIN_STRING_TYPE_ID: TypeId = TypeId(u32::MAX - 4);
+pub const BUILTIN_DICT_TYPE_ID: TypeId = TypeId(u32::MAX - 3);
+pub const BUILTIN_INT_TYPE_ID: TypeId = TypeId(u32::MAX - 2);
+pub const BUILTIN_FLOAT_TYPE_ID: TypeId = TypeId(u32::MAX - 1);
+pub const BUILTIN_BOOL_TYPE_ID: TypeId = TypeId(u32::MAX);
+
+/// Return the method-lookup TypeId for a receiver type.
+/// Named types map to their real TypeId; builtin receiver types map to
+/// synthetic method-only TypeIds.
+pub fn method_receiver_type_id(ty: &MonoType) -> Option<TypeId> {
+    match ty {
+        MonoType::Named { type_id, .. } => Some(*type_id),
+        MonoType::Vector(_) => Some(BUILTIN_VECTOR_TYPE_ID),
+        MonoType::String => Some(BUILTIN_STRING_TYPE_ID),
+        MonoType::Dict(_, _) => Some(BUILTIN_DICT_TYPE_ID),
+        MonoType::Int => Some(BUILTIN_INT_TYPE_ID),
+        MonoType::Float => Some(BUILTIN_FLOAT_TYPE_ID),
+        MonoType::Bool => Some(BUILTIN_BOOL_TYPE_ID),
+        _ => None,
+    }
+}
+
+/// Canonical module alias used for module-qualified calls on builtin receiver
+/// methods (e.g. `Vector.map(...)`).
+pub fn builtin_method_alias(type_id: TypeId) -> Option<&'static str> {
+    match type_id {
+        BUILTIN_VECTOR_TYPE_ID => Some("Vector"),
+        BUILTIN_STRING_TYPE_ID => Some("String"),
+        BUILTIN_DICT_TYPE_ID => Some("Dict"),
+        BUILTIN_INT_TYPE_ID => Some("Int"),
+        BUILTIN_FLOAT_TYPE_ID => Some("Float"),
+        BUILTIN_BOOL_TYPE_ID => Some("Bool"),
+        _ => None,
+    }
+}
 
 /// Monomorphic type representation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

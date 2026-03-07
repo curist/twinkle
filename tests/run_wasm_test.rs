@@ -57,6 +57,16 @@ fn run_wasm_arithmetic() {
 }
 
 #[test]
+fn run_wasm_collect_parity() {
+    check("tests/run/collect_parity.tw");
+}
+
+#[test]
+fn run_wasm_collect_while() {
+    check("tests/run/collect_while.tw");
+}
+
+#[test]
 fn run_wasm_strings() {
     check("tests/run/strings.tw");
 }
@@ -94,6 +104,11 @@ fn run_wasm_capability_records() {
 #[test]
 fn run_wasm_stdlib_path() {
     check("tests/run/stdlib_path.tw");
+}
+
+#[test]
+fn run_wasm_stdlib_vector_string_ext() {
+    check("tests/run/stdlib_vector_string_ext.tw");
 }
 
 #[test]

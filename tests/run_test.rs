@@ -106,6 +106,16 @@ fn collect() {
 }
 
 #[test]
+fn collect_parity() {
+    check("tests/run/collect_parity.tw");
+}
+
+#[test]
+fn collect_while() {
+    check("tests/run/collect_while.tw");
+}
+
+#[test]
 fn records() {
     check("tests/run/records.tw");
 }
@@ -223,6 +233,11 @@ fn iterator_advanced() {
 #[test]
 fn stdlib_path() {
     check("tests/run/stdlib_path.tw");
+}
+
+#[test]
+fn stdlib_vector_string_ext() {
+    check("tests/run/stdlib_vector_string_ext.tw");
 }
 
 #[test]

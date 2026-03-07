@@ -3,7 +3,7 @@ use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
     CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID, contains_meta, zonk_ty,
+    RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID, contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -558,9 +558,14 @@ impl TypeChecker {
 
             ExprKind::Collect {
                 pattern,
+                index_pattern,
                 iter,
                 body,
-            } => self.synth_collect(pattern, iter, body, expr.span),
+            } => self.synth_collect(pattern, index_pattern.as_ref(), iter, body, expr.span),
+
+            ExprKind::CollectWhile { cond, body } => {
+                self.synth_collect_while(cond, body, expr.span)
+            }
 
             ExprKind::Try { expr: inner } => {
                 let inner_ty = self.synth_expr(inner)?;
@@ -1055,6 +1060,16 @@ impl TypeChecker {
             return self.synth_string_call(func_name, args, span);
         }
 
+        self.synth_qualified_call(alias, func_name, args, span)
+    }
+
+    fn synth_qualified_call(
+        &mut self,
+        alias: &str,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
         let qualified = format!("{}.{}", alias, func_name);
         // Look up full function signature for proper MetaVar instantiation of generics.
         if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
@@ -1359,13 +1374,7 @@ impl TypeChecker {
                     }
                 }
             }
-            other => {
-                self.errors.push(TypeError::UndefinedVariable {
-                    name: format!("Dict.{}", other),
-                    span,
-                });
-                Err(())
-            }
+            other => self.synth_qualified_call("Dict", other, args, span),
         }
     }
 
@@ -1585,14 +1594,7 @@ impl TypeChecker {
                 let elem_ty = self.synth_expr(&args[1])?;
                 Ok(MonoType::Vector(Box::new(elem_ty)))
             }
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "unknown Vector method",
-                    span,
-                    note: format!("Vector has no method '{}'", func_name),
-                });
-                Err(())
-            }
+            other => self.synth_qualified_call("Vector", other, args, span),
         }
     }
 
@@ -1655,14 +1657,7 @@ impl TypeChecker {
                 self.check_expr(&args[0], &MonoType::String)?;
                 Ok(MonoType::String)
             }
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "unknown String method",
-                    span,
-                    note: format!("String has no method '{}'", func_name),
-                });
-                Err(())
-            }
+            other => self.synth_qualified_call("String", other, args, span),
         }
     }
 
@@ -1851,6 +1846,61 @@ impl TypeChecker {
         }
     }
 
+    fn try_synth_registered_method_call(
+        &mut self,
+        base: &Expr,
+        base_ty: &MonoType,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Option<MonoType>, ()> {
+        let receiver_type_id = if let Some(type_id) = method_receiver_type_id(base_ty) {
+            type_id
+        } else {
+            return Ok(None);
+        };
+        let func_name = if let Some(name) = self
+            .type_env
+            .get_method_function(receiver_type_id, method)
+            .cloned()
+        {
+            name
+        } else {
+            return Ok(None);
+        };
+        let sig = if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+            sig
+        } else {
+            return Ok(None);
+        };
+        let explicit_count = args.len();
+        let expected_count = sig.params.len().saturating_sub(1);
+        if explicit_count != expected_count {
+            self.errors.push(TypeError::WrongArity {
+                expected: expected_count,
+                actual: explicit_count,
+                span,
+            });
+            return Err(());
+        }
+        let full_fn_ty = MonoType::Function {
+            params: sig.params.clone(),
+            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+        };
+        let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+        let (inst_params, inst_ret) = match inst_ty {
+            MonoType::Function { params, ret } => (params, *ret),
+            _ => unreachable!(),
+        };
+        if let Some(recv_ty) = inst_params.first() {
+            self.unify(base_ty, recv_ty, base.span)?;
+        }
+        for (arg, expected_ty) in args.iter().zip(inst_params.iter().skip(1)) {
+            self.check_expr(arg, expected_ty)?;
+        }
+        Ok(Some(self.zonk(&inst_ret)))
+    }
+
     /// Handle method calls: `receiver.method(args)`.
     /// Dispatches to builtin methods (Vector, String, primitives) or user-defined
     /// inherent methods registered in TypeEnv.
@@ -1949,6 +1999,11 @@ impl TypeChecker {
                         })
                     }
                     _ => {
+                        if let Some(ret_ty) =
+                            self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                        {
+                            return Ok(ret_ty);
+                        }
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "unknown vector method",
                             span,
@@ -2007,6 +2062,11 @@ impl TypeChecker {
                     Ok(MonoType::String)
                 }
                 _ => {
+                    if let Some(ret_ty) =
+                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                    {
+                        return Ok(ret_ty);
+                    }
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "unknown string method",
                         span,
@@ -2063,6 +2123,11 @@ impl TypeChecker {
                     Ok(MonoType::Dict(k_ty, v_ty))
                 }
                 _ => {
+                    if let Some(ret_ty) =
+                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                    {
+                        return Ok(ret_ty);
+                    }
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "unknown dict method",
                         span,
@@ -2083,6 +2148,11 @@ impl TypeChecker {
                     }
                     Ok(MonoType::String)
                 } else {
+                    if let Some(ret_ty) =
+                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                    {
+                        return Ok(ret_ty);
+                    }
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "method on primitive type",
                         span,
@@ -3541,17 +3611,100 @@ impl TypeChecker {
     fn synth_collect(
         &mut self,
         pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
         iter: &Expr,
         body: &Expr,
         span: Span,
     ) -> Result<MonoType, ()> {
         let iter_ty = self.synth_expr(iter)?;
 
-        let elem_ty = match iter_ty {
-            MonoType::Vector(elem) => *elem,
-            MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => MonoType::Int,
+        self.local_env.push_scope();
+        let mut had_error = false;
+
+        match iter_ty {
+            MonoType::Vector(elem) => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in collect",
+                            span,
+                            note: "Only simple identifiers are supported in collect patterns"
+                                .to_string(),
+                        });
+                        had_error = true;
+                    }
+                }
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
+            MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Int),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in collect",
+                            span,
+                            note: "Only simple identifiers are supported in collect patterns"
+                                .to_string(),
+                        });
+                        had_error = true;
+                    }
+                }
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
             MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
-                args.first().cloned().unwrap_or(MonoType::Void)
+                let elem_ty = args.first().cloned().unwrap_or(MonoType::Void);
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in collect over Iterator",
+                            span,
+                            note: "Only simple identifiers are supported in collect patterns over Iterator<T>".to_string(),
+                        });
+                        had_error = true;
+                    }
+                }
+                if index_pattern.is_some() {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "indexed collect over Iterator",
+                        span: iter.span,
+                        note: "Iterator<T> does not support the 'collect x, i in' form"
+                            .to_string(),
+                    });
+                    had_error = true;
+                }
+            }
+            MonoType::Dict(key_ty, val_ty) => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in collect",
+                            span,
+                            note: "Only simple identifiers are supported in collect patterns"
+                                .to_string(),
+                        });
+                        had_error = true;
+                    }
+                }
+                if let Some(val_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = val_pat {
+                        self.local_env.bind(name.clone(), *val_ty);
+                    }
+                }
             }
             other => {
                 self.errors.push(TypeError::TypeMismatch {
@@ -3560,29 +3713,38 @@ impl TypeChecker {
                     span: iter.span,
                     note: None,
                 });
-                return Err(());
-            }
-        };
-
-        self.local_env.push_scope();
-
-        match pattern {
-            Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
-            Pattern::Wildcard(_) => {}
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "complex pattern in collect",
-                    span,
-                    note: "Only simple identifiers are supported in collect patterns".to_string(),
-                });
-                self.local_env.pop_scope();
-                return Err(());
+                had_error = true;
             }
         }
 
-        let body_ty = self.synth_expr(body)?;
+        let body_ty = if had_error {
+            MonoType::Void
+        } else {
+            match self.synth_expr(body) {
+                Ok(ty) => ty,
+                Err(()) => {
+                    self.local_env.pop_scope();
+                    return Err(());
+                }
+            }
+        };
         self.local_env.pop_scope();
 
+        if had_error {
+            Err(())
+        } else {
+            Ok(MonoType::Vector(Box::new(body_ty)))
+        }
+    }
+
+    fn synth_collect_while(
+        &mut self,
+        cond: &Expr,
+        body: &Expr,
+        _span: Span,
+    ) -> Result<MonoType, ()> {
+        self.check_expr(cond, &MonoType::Bool)?;
+        let body_ty = self.synth_expr(body)?;
         Ok(MonoType::Vector(Box::new(body_ty)))
     }
 }

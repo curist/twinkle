@@ -1,0 +1,9 @@
+it := Iterator.unfold(0, fn(i: Int) {
+  if i < 3 {
+    UnfoldStep.Yield(i, i + 1)
+  } else {
+    UnfoldStep.Done
+  }
+})
+
+_ := collect x, i in it { x + i }

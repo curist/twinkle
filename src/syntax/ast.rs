@@ -175,7 +175,14 @@ pub enum ExprKind {
     /// Collect expression: collect x in xs { x * 2 }
     Collect {
         pattern: Pattern,
+        index_pattern: Option<Pattern>,
         iter: Box<Expr>,
+        body: Box<Expr>,
+    },
+
+    /// Collect-while expression: collect cond { expr }
+    CollectWhile {
+        cond: Box<Expr>,
         body: Box<Expr>,
     },
 

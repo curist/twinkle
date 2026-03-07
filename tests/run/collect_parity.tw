@@ -1,0 +1,39 @@
+// Expected output:
+//   3
+//   3
+//   6
+//   2
+//   0:10
+//   2:30
+//   2
+//   6
+
+m: Dict<String, Int> = Dict.new()
+m["a"] = 1
+m["b"] = 2
+m["c"] = 3
+
+keys := collect k in m { k }
+println("${keys.len()}")
+
+values := collect k, v in m { v }
+println("${values.len()}")
+
+sum := 0
+for n in values {
+  sum = sum + n
+}
+println("${sum}")
+
+odd_values := collect k, v in m {
+  if v % 2 == 1 { v } else { continue }
+}
+println("${odd_values.len()}")
+
+tagged := collect x, i in [10, 20, 30] { "${i}:${x}" }
+println(tagged[0])
+println(tagged[2])
+
+from_range := collect x, i in range_from(2, 5) { x + i }
+println("${from_range[0]}")
+println("${from_range[2]}")

@@ -1159,12 +1159,21 @@ x = 2
 
 ```tw
 xs := collect x in range(10) { x * x }
+ys := collect x, i in range(10) { x + i }
+zs := collect n < 10 { n }
 ```
 
 Rules:
 
 * Produces `Vector<T>`.
 * Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
+* Also supports conditional form `collect cond { body }`:
+  * `cond` must be `Bool`.
+  * Evaluates like a `while` loop and collects values produced by `body`.
+* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `Range`, and `Dict<K,V>`:
+  * For `Vector<T>` and `Range`, `i: Int` is the iteration index.
+  * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
+  * `Iterator<T>` does not support the two-binder form.
 * `continue` skips emission.
 * `break` ends early, returns partial array.
 * If the body returns `Void` → error, because collect expects a value to push.
