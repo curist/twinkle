@@ -5,6 +5,33 @@ concrete-typed closures a specialized Wasm function reference type, allowing `ca
 to use concrete value types (`i64`, `f64`, `i32`) instead of boxing through
 `$rt_types__ClosureFunc`.
 
+## Status
+
+This stage is now partially implemented and wired into the normal build path.
+
+What works today:
+
+* The normal Wasm build path uses the typed emitter.
+* Concrete higher-order parameter call sites such as `fold(xs, init, fn(acc, x) { ... })`
+  emit typed closure structs and typed `call_ref` instead of universal
+  `$rt_types__ClosureFunc` dispatch.
+* Both universal and typed closure trampolines coexist in the generated module, so
+  generic/escaping uses can still fall back to the universal ABI.
+
+What is intentionally still out of scope for this stage:
+
+* Closures stored in arrays, cells, records, variants, iterators, or other generic
+  containers still use the universal closure ABI.
+* Iterator state and other runtime helper payloads that currently erase values to
+  `Anyref` are not changed here.
+
+What remains as a closure-specific gap:
+
+* Concrete named function values passed as first-class arguments (for example
+  `apply(double, 42)`) still miss specialization in some cases because the current
+  discovery logic only tracks concrete closure signatures originating from
+  `AMakeClosure`.
+
 ---
 
 ## The Gap Left by Stage 9.5
@@ -127,9 +154,18 @@ local.set $p3           ;; result: i64 directly
   This stage targets function-typed *parameters* in monomorphized functions, not
   collection elements.
 
+* **Closures stored in records / cells / iterator state**: these are also still on
+  the universal ABI today. The current implementation only materializes a typed closure
+  when the surrounding expected Wasm type is the matching specialized closure struct.
+
 * **Generic closures still in use** (e.g. a closure passed to a non-monomorphized
   generic function): those call sites continue using `$rt_types__ClosureFunc`. Both
   wrapper variants (universal and typed) coexist; the hoisted function is shared.
+
+* **Named function values used as first-class arguments**: this is only partially
+  handled. Local `AMakeClosure` values and some direct global-function argument paths
+  are specialized, but the concrete-signature discovery pass should be widened to cover
+  all relevant named-function cases.
 
 * **Multiple concrete signatures for the same closure:** if `id` is used as both
   `fn(Int) Int` and `fn(String) String`, two `__closure` wrappers are generated
@@ -166,9 +202,19 @@ definitions.
 
 ## Deliverables
 
-* New typed `ClosureFunc` variants in `src/wasm/ir.rs` / runtime type definitions.
-* `emit.rs`: detect concrete `MonoType::Function` params in post-mono `FunctionDef`s;
-  emit typed `call_ref` and typed `__closure` wrappers.
-* `benches/wasm_exec.rs` `bench_generic` shows meaningful speedup for higher-order
-  functions over large collections.
-* All existing `tests/run_wasm_test.rs` fixtures continue to pass.
+Implemented:
+
+* Typed closure function and struct types in the emitted Wasm module.
+* Typed closure trampolines alongside universal closure trampolines.
+* Typed `call_ref` for concrete higher-order parameter call sites in the normal build
+  path.
+* Regression coverage for the normal build path and for escaping-closure safety.
+
+Remaining:
+
+* Extend concrete-signature discovery beyond `AMakeClosure`-originated values so named
+  function values consistently specialize too.
+* Keep benchmark coverage showing speedup for higher-order functions over large
+  collections.
+* Preserve Wasm correctness for escaping/container-stored closures while expanding
+  specialization.
