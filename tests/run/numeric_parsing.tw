@@ -1,16 +1,54 @@
 // Expected output:
 //   42
 //   none
+//   -7
+//   99
+//   none
+//   none
+//   none
+//   0
 //   3
 //   none
 
-// int_from_string
+// int_from_string — basic
 case int_from_string("42") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
 
 case int_from_string("abc") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+// int_from_string — sign handling
+case int_from_string("-7") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+case int_from_string("+99") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+// int_from_string — edge cases
+case int_from_string("-") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+case int_from_string("") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+case int_from_string("12x") {
+  .Some(n) => println("${n}"),
+  .None => println("none"),
+}
+
+case int_from_string("0") {
   .Some(n) => println("${n}"),
   .None => println("none"),
 }
