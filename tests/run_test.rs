@@ -281,6 +281,11 @@ fn generic_user_funcs() {
 }
 
 #[test]
+fn cell_update() {
+    check("tests/run/cell_update.tw");
+}
+
+#[test]
 fn fold_inferred_callback() {
     check("tests/run/fold_inferred_callback.tw");
 }

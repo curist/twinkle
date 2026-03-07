@@ -82,6 +82,11 @@ fn run_wasm_closures() {
 }
 
 #[test]
+fn run_wasm_cell_update() {
+    check("tests/run/cell_update.tw");
+}
+
+#[test]
 fn run_wasm_defer_capture() {
     check("tests/run/defer_capture.tw");
 }

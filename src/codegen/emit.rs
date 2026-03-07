@@ -2338,60 +2338,75 @@ fn emit_cell_set_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'
 
 fn emit_cell_update_intrinsic(
     args: &[Atom],
-    _bind_ty: &ValType,
+    bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // Cell.update(cell, f) = cell[0] = f(cell[0])
-    // cell is args[0] (array), f is args[1] (closure)
-    let mut instrs = Vec::new();
+    assert_eq!(args.len(), 2, "Cell.update expects 2 args");
 
-    // Get the cell ref
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    // Duplicate: one copy for the set target, one for reading old value
-    // We need: cell, 0, f(cell[0])
-    // Strategy: read cell[0], call closure with it, store result back
-    instrs.push(Instr::I32Const(0)); // cell, 0  (for array.set later)
+    // Typed closure path for function-typed locals: call the specialized
+    // closure directly, then box the result back to Anyref for array.set.
+    if !ctx.concrete_func_sigs.is_empty() {
+        if let Atom::ALocal(local_id) = &args[1] {
+            if let Some(crate::types::ty::MonoType::Function { params, ret }) =
+                ctx.local_mono.get(local_id).cloned()
+            {
+                if params.len() == 1
+                    && is_concrete_mono_type(&crate::types::ty::MonoType::Function {
+                        params: params.clone(),
+                        ret: ret.clone(),
+                    })
+                {
+                    let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+                    let closure_sym = typed_closure_struct_sym(&params, &ret);
+                    let closure_ref = ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Named(closure_sym.clone()),
+                    };
+                    let arg_ty = mono_to_valtype(&params[0], ctx.type_env);
+                    let ret_ty = mono_to_valtype(&ret, ctx.type_env);
 
-    // Read old value: cell[0]
+                    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+                    instrs.push(Instr::I32Const(0));
+
+                    instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+                    instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+
+                    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+                    instrs.push(Instr::I32Const(0));
+                    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
+                    instrs.extend(emit_coerce_stack(&ValType::Anyref, &arg_ty));
+
+                    instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+                    instrs.push(Instr::StructGet(closure_sym, 0));
+                    instrs.push(Instr::CallRef(closurefunc_sym));
+                    instrs.extend(emit_coerce_stack(&ret_ty, &ValType::Anyref));
+
+                    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
+                    instrs.extend(emit_void_value(Some(bind_ty)));
+                    return instrs;
+                }
+            }
+        }
+    }
+
+    // Universal closure path.
+    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    instrs.push(Instr::I32Const(0));
+
+    instrs.extend(emit_atom(&args[1], Some(&ref_closure_null()), ctx));
+    instrs.push(Instr::StructGet(T_CLOSURE.to_string(), 1));
+
     instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
     instrs.push(Instr::I32Const(0));
     instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-
-    // Call closure with old value: f(old_val)
-    // Pack the single arg into an args array
     instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
-    // Get closure's env
+
     instrs.extend(emit_atom(&args[1], Some(&ref_closure_null()), ctx));
-    instrs.push(Instr::StructGet(T_CLOSURE.to_string(), 1)); // env
-    // Swap: we need (args_array, env) but have (env). Actually we need env first, then args
-    // call_ref convention: (env: anyref, args: Array) -> anyref
-    // Wait - let me check the closure call convention...
+    instrs.push(Instr::StructGet(T_CLOSURE.to_string(), 0));
+    instrs.push(Instr::CallRef(T_CLOSURE_FUNC.to_string()));
 
-    // Actually the closure calling convention in Wasm is:
-    // (args_array: ref $rt_types__Array, closure_ref) -> call_ref $ClosureFunc
-    // Where ClosureFunc = (env: anyref, args: anyref) -> anyref
-
-    // Let me redo this. The call convention requires:
-    // stack: [env_array, args_array, func_ref] then call_ref
-    // Actually looking at emit_closure_call:
-    // 1. Push callee.env (StructGet(closure, 1))
-    // 2. Push args array
-    // 3. Push callee.func_ref (StructGet(closure, 0))
-    // 4. CallRef
-
-    // But we can't easily do this inline because we need the array.set too.
-    // Simpler: just push trap for now and implement Cell.update later if needed.
-
-    // Actually, let me simplify. Most uses of Cell.update aren't in the failing test fixtures.
-    // Let me check...
-    instrs.clear();
-
-    ensure_rt_core_trap_import(ctx);
-    instrs.extend(emit_string_literal_atom(
-        "unimplemented intrinsic prelude call: Cell.update",
-    ));
-    instrs.push(Instr::Call("rt_core__trap".to_string()));
-    instrs.push(Instr::Unreachable);
+    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
+    instrs.extend(emit_void_value(Some(bind_ty)));
     instrs
 }
 

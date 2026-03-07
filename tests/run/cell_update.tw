@@ -1,0 +1,16 @@
+// Expected output:
+//   1
+//   5
+
+fn add4(n: Int) Int { n + 4 }
+
+fn apply_update(c: Cell<Int>, f: fn(Int) Int) Void {
+  Cell.update(c, f)
+}
+
+counter := Cell.new(0)
+Cell.update(counter, fn(n: Int) Int { n + 1 })
+println("${Cell.get(counter)}")
+
+apply_update(counter, add4)
+println("${Cell.get(counter)}")

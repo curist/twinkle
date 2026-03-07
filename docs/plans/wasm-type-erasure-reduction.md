@@ -9,6 +9,20 @@ typed higher-order parameter calls. This plan tracks the remaining places where 
 backend still falls back to universal `Anyref`-heavy layouts even when concrete Wasm
 types are available.
 
+## Status
+
+Done so far:
+
+* named function values now participate in typed closure specialization in the normal
+  build path
+* `Cell.update` is implemented on the Wasm backend
+
+Still open:
+
+* typed user-record fields
+* typed iterator state / less-erased iterator helper paths
+* targeted reduction of `Anyref` payload layouts in hot helper/variant paths
+
 ---
 
 ## Motivation
@@ -25,7 +39,8 @@ type-erasure patterns:
 * iterator state is represented as a generic `[seed_anyref, step_closure_anyref]` array
 * runtime helpers such as `Iterator.next` still unpack closures and payloads through the
   universal closure ABI
-* `Cell.update` is not implemented in Wasm yet
+* iterator / helper code still uses universal closure dispatch and erased payloads more
+  often than necessary
 
 The result is that some hot paths still allocate argument arrays, cast through
 `$rt_types__Closure`, or box concrete payloads even though the program is fully
@@ -96,17 +111,6 @@ Target:
   layouts
 * avoid broad refactors where the payoff is too small
 
-### 5. `Cell.update` correctness gap
-
-`Cell.update` currently traps in the Wasm backend instead of being implemented.
-
-Target:
-
-* implement `Cell.update` correctly on Wasm
-* keep closure ABI handling aligned with the typed/universal split
-
----
-
 ## Proposed Work Items
 
 ### A. Finish closure-adjacent specialization
@@ -134,13 +138,6 @@ Target:
   justify typed payload layouts.
 * Prefer targeted hot-path wins over global complexity.
 
-### E. Implement `Cell.update`
-
-* Lower it to a real Wasm implementation instead of trapping.
-* Add Wasm coverage using the existing `examples/cell.tw`-style patterns.
-
----
-
 ## Non-Goals
 
 This plan does not require:
@@ -155,10 +152,9 @@ This plan does not require:
 ## Suggested Ordering
 
 1. Finish named-function typed specialization.
-2. Implement `Cell.update` so Wasm behavior is no longer incomplete.
-3. Add typed user-record fields.
-4. Revisit iterator representation.
-5. Only then decide whether typed variant payloads are worth the complexity.
+2. Add typed user-record fields.
+3. Revisit iterator representation.
+4. Only then decide whether typed variant payloads are worth the complexity.
 
 ---
 
@@ -171,7 +167,6 @@ This plan is successful when:
 * record field access preserves concrete Wasm types where possible
 * iterator step closures no longer require universal arg-array packing in the common
   monomorphized case
-* `Cell.update` works on Wasm
 * representative WAT audits of `examples/*` and `tests/run/*` show materially less
   unnecessary `Anyref`, `BoxedInt`, `BoxedFloat`, and `$rt_types__ClosureFunc` traffic
   outside genuinely erased/escaping cases
