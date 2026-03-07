@@ -9,10 +9,11 @@
   (type $rt_types__Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $rt_types__Array))))
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))
+  (type $rt_types__IterState (sub (struct (field $seed anyref) (field $step anyref))))
   (type $user__UserRecord_2 (struct))
   (type $user__UserRecord_3 (struct (field $f0 (mut i64)) (field $f1 (mut i64)) (field $f2 (mut i64))))
   (type $user__UserRecord_4 (struct))
-  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut (ref null $rt_types__Array)))))
+  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut (ref null $rt_types__IterState)))))
   (type $functype_0 (func (param f64) (result (ref $rt_types__String))))
   (type $functype_1 (func (param (ref null $rt_types__String))))
   (type $functype_2 (func (param i32 anyref) (result (ref $rt_types__Array))))
@@ -1568,22 +1569,19 @@
     (local $p1 (ref null $rt_types__Variant))
     (local $p2 i32)
     (local $p3 anyref)
-    (local $p4 (ref null $rt_types__Array))
+    (local $p4 (ref null $rt_types__IterState))
     local.get $p0
-    ref.cast (ref null $rt_types__Array)
+    ref.cast (ref null $rt_types__IterState)
     local.set $p4
     local.get $p4
-    i32.const 1
-    array.get $rt_types__Array
+    struct.get $rt_types__IterState 1
     ref.cast (ref $rt_types__Closure)
     struct.get $rt_types__Closure 1
     local.get $p4
-    i32.const 0
-    array.get $rt_types__Array
+    struct.get $rt_types__IterState 0
     array.new_fixed $rt_types__Array 1
     local.get $p4
-    i32.const 1
-    array.get $rt_types__Array
+    struct.get $rt_types__IterState 1
     ref.cast (ref $rt_types__Closure)
     struct.get $rt_types__Closure 0
     call_ref $rt_types__ClosureFunc
@@ -1613,9 +1611,8 @@
         i32.const 1
         array.get $rt_types__Array
         local.get $p4
-        i32.const 1
-        array.get $rt_types__Array
-        array.new_fixed $rt_types__Array 2
+        struct.get $rt_types__IterState 1
+        struct.new $rt_types__IterState
         struct.new $user__UserRecord_5
         local.set $p3
         i32.const 0

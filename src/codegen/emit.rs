@@ -11,8 +11,9 @@ use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Ato
 use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_STRING,
-    T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_string, ref_string_null,
+    T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
+    T_STRING, T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_iter_state_null, ref_string,
+    ref_string_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -2840,11 +2841,12 @@ fn emit_iterator_unfold_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // Iterator.unfold(seed, step) -> [seed, step] as anyref array
+    // Iterator.unfold(seed, step) -> IterState struct { seed: anyref, step: anyref }
     let mut instrs = emit_atom(&args[0], Some(&ValType::Anyref), ctx);
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
-    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 2));
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs.push(Instr::StructNew(T_ITER_STATE.to_string()));
+    let result_ty = ref_iter_state_null();
+    instrs.extend(emit_coerce_stack(&result_ty, bind_ty));
     instrs
 }
 
@@ -2853,7 +2855,7 @@ fn emit_iterator_next_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_iter_state_null()), ctx);
     if !ctx.concrete_func_sigs.is_empty() {
         if let Some(info) = atom_iterator_state(&args[0], ctx).filter(|info| {
             is_concrete_mono_type(&info.yield_ty) && is_concrete_mono_type(&info.seed_ty)
@@ -2894,22 +2896,22 @@ fn needs_iterator_next_helper(ctx: &EmitCtx<'_>) -> bool {
 }
 
 /// Emit the `__iterator_next` Wasm helper function.
-/// Takes an iterator (anyref array [seed, step_closure]) and returns Option<IterItem> variant.
+/// Takes an iterator (IterState struct { seed, step }) and returns Option<IterItem> variant.
 fn emit_iterator_next_helper() -> FuncDef {
     // Locals:
-    // 0: param it (anyref = iterator array ref)
+    // 0: param it (anyref = IterState ref)
     // 1: step_result (variant ref)
     // 2: variant_id (i32)
     // 3: payload / temp (anyref)
-    // 4: it_arr (ref null $Array = cast of param 0)
+    // 4: it_state (ref null $IterState = cast of param 0)
 
     let mut body = Vec::new();
 
-    // Cast param 0 to array ref, store in local 4
+    // Cast param 0 to IterState ref, store in local 4
     body.push(Instr::LocalGet(0));
     body.push(Instr::RefCast {
         nullable: true,
-        heap: HeapType::Named(T_ARRAY.to_string()),
+        heap: HeapType::Named(T_ITER_STATE.to_string()),
     });
     body.push(Instr::LocalSet(4));
 
@@ -2917,8 +2919,7 @@ fn emit_iterator_next_helper() -> FuncDef {
 
     // Push closure env
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(1));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(T_CLOSURE.to_string()),
@@ -2927,14 +2928,12 @@ fn emit_iterator_next_helper() -> FuncDef {
 
     // Push args array (containing seed)
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(0));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 0)); // seed
     body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
 
     // Push func_ref from step closure
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(1));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(T_CLOSURE.to_string()),
@@ -2976,100 +2975,14 @@ fn emit_iterator_next_helper() -> FuncDef {
         },
         else_body: {
             // Yield(value, next_seed) -> Option.Some(IterItem { value, rest: next_iter })
-            let mut else_instrs = Vec::new();
-
-            // Extract payload from step_result
-            else_instrs.push(Instr::LocalGet(1));
-            else_instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2)); // payload array
-            else_instrs.push(Instr::LocalSet(3));
-
-            // Get yielded value (payload[0])
-            // Get next_seed (payload[1])
-            // Construct next_iter = [next_seed, step]
-            // Construct IterItem record (TypeId=5) = { value, next_iter }
-
-            // Build IterItem record: UserRecord_5 with fields [value_anyref, rest_anyref]
-            let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
-
-            // Field 0 = value = payload[0]
-            else_instrs.push(Instr::LocalGet(3));
-            else_instrs.push(Instr::I32Const(0));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-
-            // Field 1 = rest = new iterator [next_seed, step]
-            // next_seed = payload[1]
-            else_instrs.push(Instr::LocalGet(3));
-            else_instrs.push(Instr::I32Const(1));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-            // step = original it[1]
-            else_instrs.push(Instr::LocalGet(0));
-            else_instrs.push(Instr::I32Const(1));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-            // Pack into iterator array
-            else_instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 2));
-
-            // Construct IterItem struct
-            else_instrs.push(Instr::StructNew(iter_item_sym));
-
-            // Wrap in Option.Some = Variant(OPTION_TYPE_ID, 1, [item])
-            else_instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
-            else_instrs.push(Instr::I32Const(OPTION_TYPE_ID.0 as i32));
-            else_instrs.push(Instr::I32Const(1)); // Some variant
-
-            // Wait, StructNew for Variant needs args in order: type_id, variant_id, payload
-            // So we need: i32(type_id), i32(variant_id), ref(payload_array)
-            // Let me fix the order:
-
-            else_instrs.clear();
-
-            // Extract payload
-            else_instrs.push(Instr::LocalGet(1));
-            else_instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2));
-            else_instrs.push(Instr::LocalSet(3));
-
-            // Build the IterItem record
-            let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
-
-            // Field 0: value = payload[0]
-            else_instrs.push(Instr::LocalGet(3));
-            else_instrs.push(Instr::I32Const(0));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-
-            // Field 1: rest = [payload[1], it[1]] (new iterator)
-            else_instrs.push(Instr::LocalGet(3));
-            else_instrs.push(Instr::I32Const(1));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-            else_instrs.push(Instr::LocalGet(0));
-            else_instrs.push(Instr::I32Const(1));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-            else_instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 2));
-
-            // struct.new IterItem (2 anyref fields)
-            else_instrs.push(Instr::StructNew(iter_item_sym));
-
-            // Now construct Option.Some(iter_item):
-            // Variant struct fields: (type_id: i32, variant_id: i32, payload: array<anyref>)
-            // Push: type_id, variant_id, payload_array
-            else_instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1)); // wrap item in payload
-            // We need type_id and variant_id BEFORE payload on stack for struct.new
-            // struct.new takes fields in order: type_id, variant_id, payload
-
-            // Hmm, struct.new pops args in reverse? No, struct.new pops in field order.
-            // Variant struct has fields: [type_id: i32, variant_id: i32, payload: ref array]
-            // So we need: i32(type_id), i32(variant_id), ref(payload) on stack, then struct.new
-
-            // We currently have payload on top. Need to reorganize.
-            // Easiest: store payload in local 3, push type_id, variant_id, then load payload
-
-            else_instrs.clear();
 
             // Extract UnfoldStep payload
-            else_instrs.push(Instr::LocalGet(1));
-            else_instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2));
-            else_instrs.push(Instr::LocalSet(3)); // payload array
-
-            // --- Build IterItem record ---
             let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
+            let mut else_instrs = vec![
+                Instr::LocalGet(1),
+                Instr::StructGet(T_VARIANT.to_string(), 2),
+                Instr::LocalSet(3), // payload array
+            ];
 
             // Field 0: value = payload[0]
             else_instrs.push(Instr::LocalGet(3));
@@ -3080,7 +2993,7 @@ fn emit_iterator_next_helper() -> FuncDef {
             else_instrs.push(Instr::I32Const(0));
             else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
 
-            // Field 1: rest iterator = [next_seed, step]
+            // Field 1: rest iterator = IterState { next_seed, step }
             else_instrs.push(Instr::LocalGet(3));
             else_instrs.push(Instr::RefCast {
                 nullable: true,
@@ -3088,10 +3001,10 @@ fn emit_iterator_next_helper() -> FuncDef {
             });
             else_instrs.push(Instr::I32Const(1));
             else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
+            // step = original IterState field 1
             else_instrs.push(Instr::LocalGet(4));
-            else_instrs.push(Instr::I32Const(1));
-            else_instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-            else_instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 2));
+            else_instrs.push(Instr::StructGet(T_ITER_STATE.to_string(), 1));
+            else_instrs.push(Instr::StructNew(T_ITER_STATE.to_string()));
 
             else_instrs.push(Instr::StructNew(iter_item_sym));
             // IterItem ref on stack. Store temporarily.
@@ -3113,13 +3026,13 @@ fn emit_iterator_next_helper() -> FuncDef {
 
     FuncDef {
         name: ITERATOR_NEXT_HELPER.to_string(),
-        params: vec![ValType::Anyref],  // iterator array ref
+        params: vec![ValType::Anyref],  // IterState ref
         results: vec![ValType::Anyref], // Option variant ref
         locals: vec![
-            ref_variant_null(), // local 1: step_result variant
-            ValType::I32,       // local 2: variant_id
-            ValType::Anyref,    // local 3: payload / temp
-            ref_array_null(),   // local 4: it_arr (cast of param 0)
+            ref_variant_null(),    // local 1: step_result variant
+            ValType::I32,          // local 2: variant_id
+            ValType::Anyref,       // local 3: payload / temp
+            ref_iter_state_null(), // local 4: it_state (cast of param 0)
         ],
         body,
     }
@@ -3137,35 +3050,36 @@ fn emit_typed_iterator_next_helper(
 
     let mut body = Vec::new();
 
+    // Cast param 0 to IterState, store in local 4
     body.push(Instr::LocalGet(0));
     body.push(Instr::RefCast {
         nullable: true,
-        heap: HeapType::Named(T_ARRAY.to_string()),
+        heap: HeapType::Named(T_ITER_STATE.to_string()),
     });
     body.push(Instr::LocalSet(4));
 
+    // Push closure env from step (IterState field 1)
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(1));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(closure_sym.clone()),
     });
-    body.push(Instr::StructGet(closure_sym.clone(), 1));
+    body.push(Instr::StructGet(closure_sym.clone(), 1)); // env
 
+    // Push seed (IterState field 0), coerce to concrete type
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(0));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 0)); // seed
     body.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
 
+    // Push typed funcref from step closure (IterState field 1)
     body.push(Instr::LocalGet(4));
-    body.push(Instr::I32Const(1));
-    body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(closure_sym.clone()),
     });
-    body.push(Instr::StructGet(closure_sym, 2));
+    body.push(Instr::StructGet(closure_sym, 2)); // typed funcref
     body.push(Instr::CallRef(closurefunc_sym));
     body.push(Instr::LocalSet(1));
 
@@ -3186,9 +3100,11 @@ fn emit_typed_iterator_next_helper(
         else_body: {
             let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
             let else_instrs = vec![
+                // Extract UnfoldStep payload
                 Instr::LocalGet(1),
                 Instr::StructGet(T_VARIANT.to_string(), 2),
                 Instr::LocalSet(3),
+                // IterItem field 0: value = payload[0]
                 Instr::LocalGet(3),
                 Instr::RefCast {
                     nullable: true,
@@ -3196,6 +3112,7 @@ fn emit_typed_iterator_next_helper(
                 },
                 Instr::I32Const(0),
                 Instr::ArrayGet(T_ARRAY.to_string()),
+                // IterItem field 1: rest = IterState { next_seed, step }
                 Instr::LocalGet(3),
                 Instr::RefCast {
                     nullable: true,
@@ -3203,10 +3120,10 @@ fn emit_typed_iterator_next_helper(
                 },
                 Instr::I32Const(1),
                 Instr::ArrayGet(T_ARRAY.to_string()),
+                // step = original IterState field 1
                 Instr::LocalGet(4),
-                Instr::I32Const(1),
-                Instr::ArrayGet(T_ARRAY.to_string()),
-                Instr::ArrayNewFixed(T_ARRAY.to_string(), 2),
+                Instr::StructGet(T_ITER_STATE.to_string(), 1),
+                Instr::StructNew(T_ITER_STATE.to_string()),
                 Instr::StructNew(iter_item_sym),
                 Instr::LocalSet(3),
                 Instr::I32Const(OPTION_TYPE_ID.0 as i32),
@@ -3228,7 +3145,7 @@ fn emit_typed_iterator_next_helper(
             ref_variant_null(),
             ValType::I32,
             ValType::Anyref,
-            ref_array_null(),
+            ref_iter_state_null(),
         ],
         body,
     }

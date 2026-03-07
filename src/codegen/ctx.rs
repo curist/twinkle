@@ -5,7 +5,7 @@ use crate::ir::FuncId;
 use crate::ir::LocalId;
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
-use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_STRING, T_VARIANT};
+use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -930,8 +930,11 @@ pub fn mono_to_valtype_specialized(
 }
 
 fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
-    if type_id == CELL_TYPE_ID || type_id == ITERATOR_TYPE_ID {
+    if type_id == CELL_TYPE_ID {
         return ref_named(true, T_ARRAY);
+    }
+    if type_id == ITERATOR_TYPE_ID {
+        return ref_named(true, T_ITER_STATE);
     }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),

@@ -1,5 +1,6 @@
 ---
 source: tests/runtime_dump_test.rs
+assertion_line: 130
 expression: wat
 ---
 (module
@@ -13,6 +14,7 @@ expression: wat
   (type $rt_types__Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $rt_types__Array))))
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))
+  (type $rt_types__IterState (sub (struct (field $seed anyref) (field $step anyref))))
   (type $functype_0 (func (param i32 anyref) (result (ref $rt_types__Array))))
   (type $functype_1 (func (param (ref null $rt_types__Array) i32) (result anyref)))
   (type $functype_2 (func (param (ref null $rt_types__Array) i32 anyref) (result (ref $rt_types__Array))))

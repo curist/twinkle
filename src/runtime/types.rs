@@ -13,6 +13,7 @@ pub const T_CLOSURE: &str = "rt_types__Closure";
 pub const T_VARIANT: &str = "rt_types__Variant";
 pub const T_BOXED_INT: &str = "rt_types__BoxedInt";
 pub const T_BOXED_FLOAT: &str = "rt_types__BoxedFloat";
+pub const T_ITER_STATE: &str = "rt_types__IterState";
 
 /// Qualified function names for cross-module calls (after linking).
 pub const F_STR_EQ: &str = "rt_str__eq";
@@ -57,6 +58,21 @@ pub fn ref_dict_null() -> ValType {
     ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_DICT.into()),
+    }
+}
+
+/// Ref-to-IterState (non-null)
+pub fn ref_iter_state() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_ITER_STATE.into()),
+    }
+}
+/// Ref-to-IterState (nullable)
+pub fn ref_iter_state_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_ITER_STATE.into()),
     }
 }
 
@@ -186,6 +202,27 @@ pub fn make() -> ModuleIR {
         supertype: None,
         non_final: false,
         fields: vec![FieldDef::named("v", ValType::F64)],
+    });
+
+    // (type $IterState (sub (struct (field $seed anyref) (field $step anyref))))
+    // Base iterator state: holds seed and step closure as anyref.
+    // Typed subtypes extend this with concrete seed/step fields.
+    m.types.push(TypeDef::Struct {
+        name: "IterState".into(),
+        supertype: None,
+        non_final: true,
+        fields: vec![
+            FieldDef {
+                name: Some("seed".into()),
+                mutable: false,
+                ty: ValType::Anyref,
+            },
+            FieldDef {
+                name: Some("step".into()),
+                mutable: false,
+                ty: ValType::Anyref,
+            },
+        ],
     });
 
     m
