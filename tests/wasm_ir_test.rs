@@ -17,6 +17,8 @@ fn test_emit_simple_struct() {
     // type Point = .{ x: i64, y: i64 }
     m.types.push(TypeDef::Struct {
         name: "Point".into(),
+        supertype: None,
+        non_final: false,
         fields: vec![
             FieldDef::named("x", ValType::I64),
             FieldDef::named("y", ValType::I64),

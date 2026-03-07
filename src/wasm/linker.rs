@@ -274,13 +274,21 @@ pub fn link(
         // Merge types (qualified names)
         for td in module.types {
             let renamed = match td {
-                TypeDef::Struct { name, mut fields } => {
+                TypeDef::Struct {
+                    name,
+                    mut fields,
+                    supertype,
+                    non_final,
+                } => {
                     for field in &mut fields {
                         rewrite_val_type(&mut field.ty, type_renames);
                     }
                     TypeDef::Struct {
                         name: qualify(ns, &name),
                         fields,
+                        supertype: supertype
+                            .map(|s| type_renames.get(s.as_str()).cloned().unwrap_or(s)),
+                        non_final,
                     }
                 }
                 TypeDef::Array { name, mut elem } => {

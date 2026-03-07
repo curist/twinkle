@@ -255,8 +255,20 @@ pub fn emit_heap_type(ht: &HeapType) -> String {
 
 pub fn emit_typedef(td: &TypeDef) -> String {
     match td {
-        TypeDef::Struct { name, fields } => {
-            let mut s = format!("  (type ${name} (struct");
+        TypeDef::Struct {
+            name,
+            fields,
+            supertype,
+            non_final,
+        } => {
+            let has_sub = supertype.is_some() || *non_final;
+            let mut s = if let Some(parent) = supertype {
+                format!("  (type ${name} (sub ${parent} (struct")
+            } else if *non_final {
+                format!("  (type ${name} (sub (struct")
+            } else {
+                format!("  (type ${name} (struct")
+            };
             for field in fields {
                 s.push_str(" (field");
                 if let Some(n) = &field.name {
@@ -270,7 +282,11 @@ pub fn emit_typedef(td: &TypeDef) -> String {
                 }
                 s.push(')');
             }
-            s.push_str("))");
+            if has_sub {
+                s.push_str(")))"); // close struct, sub, type
+            } else {
+                s.push_str("))"); // close struct, type
+            }
             s
         }
         TypeDef::Array { name, elem } => {

@@ -62,6 +62,11 @@ pub enum TypeDef {
     Struct {
         name: TypeSym,
         fields: Vec<FieldDef>,
+        /// Optional supertype for Wasm GC struct subtyping (`sub $parent`).
+        supertype: Option<TypeSym>,
+        /// If true, declare as `(sub ...)` even without a supertype, making
+        /// the type non-final so it can be subtyped.
+        non_final: bool,
     },
     Array {
         name: TypeSym,

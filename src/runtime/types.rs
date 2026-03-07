@@ -88,6 +88,8 @@ pub fn make() -> ModuleIR {
     // (type $DictEntry (struct (field $key anyref) (field $val anyref)))
     m.types.push(TypeDef::Struct {
         name: "DictEntry".into(),
+        supertype: None,
+        non_final: false,
         fields: vec![
             FieldDef::named("key", ValType::Anyref),
             FieldDef::named("val", ValType::Anyref),
@@ -126,9 +128,11 @@ pub fn make() -> ModuleIR {
         results: vec![ValType::Anyref],
     });
 
-    // (type $Closure (struct (field $func_ref (ref null $ClosureFunc)) (field $env (ref null $ClosureEnv))))
+    // (type $Closure (sub (struct ...))) — non-final to allow typed closure subtypes
     m.types.push(TypeDef::Struct {
         name: "Closure".into(),
+        supertype: None,
+        non_final: true,
         fields: vec![
             FieldDef {
                 name: Some("func_ref".into()),
@@ -152,6 +156,8 @@ pub fn make() -> ModuleIR {
     // (type $Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $Array))))
     m.types.push(TypeDef::Struct {
         name: "Variant".into(),
+        supertype: None,
+        non_final: false,
         fields: vec![
             FieldDef::named("type_id", ValType::I32),
             FieldDef::named("variant_id", ValType::I32),
@@ -169,12 +175,16 @@ pub fn make() -> ModuleIR {
     // (type $BoxedInt (struct (field $v i64)))
     m.types.push(TypeDef::Struct {
         name: "BoxedInt".into(),
+        supertype: None,
+        non_final: false,
         fields: vec![FieldDef::named("v", ValType::I64)],
     });
 
     // (type $BoxedFloat (struct (field $v f64)))
     m.types.push(TypeDef::Struct {
         name: "BoxedFloat".into(),
+        supertype: None,
+        non_final: false,
         fields: vec![FieldDef::named("v", ValType::F64)],
     });
 

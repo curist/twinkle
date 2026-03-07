@@ -160,8 +160,9 @@ pub fn emit_user_module_typed(
             .push(emit_func_stub(func, &capture_locals, &mut ctx));
     }
 
-    // Emit universal trampolines for all closures so generic/container escape
-    // paths keep working, then add typed trampolines for concrete signatures.
+    // Emit trampolines: always emit the universal trampoline (needed for
+    // closures stored in data structures). Additionally emit a typed
+    // trampoline for concrete-signature functions used in typed call sites.
     for func in &anf.functions {
         let capture_count = closure_capture_layouts
             .get(&func.func_id)
@@ -228,6 +229,8 @@ fn emit_user_record_type_defs(type_env: &TypeEnv) -> Vec<WasmTypeDef> {
         if let LangTypeDef::Record { fields, .. } = def {
             defs.push(WasmTypeDef::Struct {
                 name: user_record_type_sym(type_id),
+                supertype: None,
+                non_final: false,
                 fields: fields
                     .iter()
                     .enumerate()
@@ -1837,7 +1840,8 @@ fn emit_closure_call(
 ) -> Vec<Instr> {
     // Typed closure path (Stage 9.6): if the callee local holds a typed closure,
     // use concrete arg types and a typed call_ref — no anyref boxing.
-    // Guard: only when concrete_func_sigs is non-empty (typed mode active).
+    // The callee may be typed as $Closure (function param) or typed closure struct.
+    // We cast to the typed struct to access field 2 (typed funcref).
     if !ctx.concrete_func_sigs.is_empty() {
         if let Atom::ALocal(local_id) = callee {
             if let Some(crate::types::ty::MonoType::Function { params, ret }) =
@@ -1849,26 +1853,27 @@ fn emit_closure_call(
                 }) {
                     let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
                     let closure_sym = typed_closure_struct_sym(&params, &ret);
-                    let closure_ref = ValType::Ref {
+                    // Cast callee to the typed closure struct subtype.
+                    // The callee might be stored as (ref null $Closure) for a
+                    // function param, but the actual runtime value is always the
+                    // typed subtype struct.
+                    let typed_ref = ValType::Ref {
                         nullable: true,
                         heap: HeapType::Named(closure_sym.clone()),
                     };
-                    // call_ref convention: push params in order (env first, then concrete args),
-                    // then push funcref last (on top of stack). Field layout mirrors $Closure:
-                    //   field 0 = func_ref, field 1 = env.
-                    // Push env (first param of closurefunc, field 1).
-                    let mut instrs = emit_atom(callee, Some(&closure_ref), ctx);
+                    // Push env (field 1, inherited from $Closure).
+                    let mut instrs = emit_atom(callee, Some(&typed_ref), ctx);
                     instrs.push(Instr::StructGet(closure_sym.clone(), 1));
-                    // Push concrete args (remaining params of closurefunc).
+                    // Push concrete args.
                     for (arg, param_ty) in args.iter().zip(params.iter()) {
                         let wasm_ty = mono_to_valtype(param_ty, ctx.type_env);
                         instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
                     }
-                    // Push funcref last (field 0, on top for call_ref).
-                    instrs.extend(emit_atom(callee, Some(&closure_ref), ctx));
-                    instrs.push(Instr::StructGet(closure_sym, 0));
+                    // Push typed funcref (field 2) last for call_ref.
+                    instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
+                    instrs.push(Instr::StructGet(closure_sym, 2));
                     instrs.push(Instr::CallRef(closurefunc_sym));
-                    // Coerce result to bind_ty (ret is already concrete).
+                    // Coerce result to bind_ty.
                     let ret_ty = mono_to_valtype(&ret, ctx.type_env);
                     instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
                     return instrs;
@@ -1949,33 +1954,34 @@ fn emit_make_closure(
     sorted_vars.sort_by_key(|id| id.0);
     sorted_vars.dedup_by_key(|id| id.0);
 
-    // Typed closure path (Stage 9.6): materialize a typed closure only when the
-    // surrounding expected type is the matching specialized closure struct.
+    // Typed closure path (Stage 9.6): if this function has a concrete signature,
+    // create a typed closure struct (subtype of $Closure). This works in all
+    // contexts: typed call sites use field 2 (typed funcref), universal call
+    // sites use fields 0+1 (universal funcref + env) via the $Closure supertype.
     if let Some((params, ret)) = ctx.concrete_func_sigs.get(&func_id).cloned() {
-        let closure_ty = ValType::Ref {
-            nullable: true,
-            heap: HeapType::Named(typed_closure_struct_sym(&params, &ret)),
-        };
-        if &closure_ty == bind_ty {
-            let closure_sym = typed_closure_struct_sym(&params, &ret);
-            let mut instrs = vec![Instr::RefFunc(typed_closure_trampoline_sym(func_id))];
-            for local_id in &sorted_vars {
-                instrs.extend(emit_atom(
-                    &Atom::ALocal(*local_id),
-                    Some(&ValType::Anyref),
-                    ctx,
-                ));
-            }
-            instrs.push(Instr::ArrayNewFixed(
-                T_CLOSURE_ENV.to_string(),
-                sorted_vars.len() as u32,
+        let closure_sym = typed_closure_struct_sym(&params, &ret);
+        // field 0: universal funcref (for compatibility with $Closure dispatch)
+        let mut instrs = vec![Instr::RefFunc(global_func_trampoline_sym(func_id))];
+        // field 1: env
+        for local_id in &sorted_vars {
+            instrs.extend(emit_atom(
+                &Atom::ALocal(*local_id),
+                Some(&ValType::Anyref),
+                ctx,
             ));
-            instrs.push(Instr::StructNew(closure_sym));
-            return instrs;
         }
+        instrs.push(Instr::ArrayNewFixed(
+            T_CLOSURE_ENV.to_string(),
+            sorted_vars.len() as u32,
+        ));
+        // field 2: typed funcref
+        instrs.push(Instr::RefFunc(typed_closure_trampoline_sym(func_id)));
+        instrs.push(Instr::StructNew(closure_sym));
+        instrs.extend(emit_coerce_stack(&ref_closure(), bind_ty));
+        return instrs;
     }
 
-    // Universal closure path (Stage 9.5 / no typed closures).
+    // Universal closure path (no concrete sig available).
     let mut instrs = vec![Instr::RefFunc(global_func_trampoline_sym(func_id))];
     for local_id in &sorted_vars {
         instrs.extend(emit_atom(
@@ -3510,35 +3516,51 @@ fn emit_typed_closurefunc_def(
 }
 
 /// Build the WAT `Struct` definition for a typed closure struct.
-/// e.g. `(type $closure_i64_i64_i64 (struct (field $env (ref null $ClosureEnv)) (field $func (ref null $closurefunc_i64_i64_i64))))`
+///
+/// The typed closure struct is a **subtype** of the universal `$Closure`:
+///   field 0 = func_ref  (ref null $ClosureFunc)         — universal funcref (inherited)
+///   field 1 = env       (ref null $ClosureEnv)           — capture env (inherited)
+///   field 2 = typed_ref (ref null $closurefunc_i64_...) — typed funcref (new)
+///
+/// Because it's a subtype, a typed closure can be stored in `anyref` / passed
+/// as `(ref null $Closure)` and dispatched via the universal path. Typed call
+/// sites access field 2 for the concrete `call_ref`.
 fn emit_typed_closure_struct_def(
     params: &[crate::types::ty::MonoType],
     ret: &crate::types::ty::MonoType,
 ) -> crate::wasm::ir::TypeDef {
     let closurefunc_sym = typed_closurefunc_sym(params, ret);
     let closure_sym = typed_closure_struct_sym(params, ret);
-    // Field layout mirrors the universal $Closure struct:
-    //   field 0 = func_ref (ref null $closurefunc_...)  ← pushed first in struct.new
-    //   field 1 = env      (ref null $ClosureEnv)       ← pushed second in struct.new
-    // This allows emit_make_closure to push funcref then env (matching struct field order),
-    // and emit_closure_call to do struct.get 1 (env) then struct.get 0 (funcref) for call_ref.
     crate::wasm::ir::TypeDef::Struct {
         name: closure_sym,
+        supertype: Some(format!("{T_CLOSURE}")),
+        non_final: false,
         fields: vec![
+            // field 0: universal funcref (must match $Closure field 0)
             crate::wasm::ir::FieldDef {
                 name: Some("func_ref".to_string()),
                 mutable: false,
                 ty: ValType::Ref {
                     nullable: true,
-                    heap: HeapType::Named(closurefunc_sym),
+                    heap: HeapType::Named(T_CLOSURE_FUNC.to_string()),
                 },
             },
+            // field 1: env (must match $Closure field 1)
             crate::wasm::ir::FieldDef {
                 name: Some("env".to_string()),
                 mutable: false,
                 ty: ValType::Ref {
                     nullable: true,
                     heap: HeapType::Named(T_CLOSURE_ENV.to_string()),
+                },
+            },
+            // field 2: typed funcref (new field)
+            crate::wasm::ir::FieldDef {
+                name: Some("typed_ref".to_string()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(closurefunc_sym),
                 },
             },
         ],
