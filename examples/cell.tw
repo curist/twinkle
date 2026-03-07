@@ -2,9 +2,9 @@
 
 // 1. Simple counter
 counter := Cell.new(0)
-counter.update(fn(n: Int) Int { n + 1 })
-counter.update(fn(n: Int) Int { n + 1 })
-counter.update(fn(n: Int) Int { n + 1 })
+counter.update(fn(n) { n + 1 })
+counter.update(fn(n) { n + 1 })
+counter.update(fn(n) { n + 1 })
 println("counter = ${counter.get()}")   // 3
 
 // 2. Two names, same cell (aliasable mutation)
@@ -17,7 +17,7 @@ println("b = ${b.get()}")  // 42  (b sees the mutation through a)
 fn make_counter() fn() Int {
   c := Cell.new(0)
   fn() {
-    c.update(fn(n: Int) Int { n + 1 })
+    c.update(fn(n) { n + 1 })
     c.get()
   }
 }
@@ -31,6 +31,6 @@ println("count = ${counter()}")  // 3
 // 4. Accumulate in a loop
 sum := Cell.new(0)
 for i in range(10) {
-  sum.update(fn(s: Int) Int { s + i })
+  sum.update(fn(s) { s + i })
 }
 println("sum 0..9 = ${sum.get()}")  // 45
