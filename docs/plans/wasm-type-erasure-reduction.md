@@ -21,10 +21,11 @@ Done so far:
 * `Cell.update` has a real Wasm implementation instead of trapping
 * concrete `Cell<T>` instantiations now use typed Wasm cell layouts, with the old erased
   `anyref` container retained only as a fallback path
+* concrete user-record fields now preserve their Wasm field types, including typed closure
+  refs in capability-style records and raw scalar fields in plain data records
 
 Still open:
 
-* typed user-record fields
 * typed iterator state / less-erased iterator helper paths
 * targeted reduction of `Anyref` payload layouts in hot helper/variant paths
 
@@ -38,8 +39,6 @@ higher-order call boundaries such as `fold(xs, init, f)`.
 However, a WAT audit of `examples/*` and `tests/run/*` still shows several broader
 type-erasure patterns:
 
-* `Cell<T>` is still represented as a 1-slot `anyref` container even when `T` is concrete
-* user record fields are emitted as `Anyref` unconditionally
 * iterator state is represented as a generic `[seed_anyref, step_closure_anyref]` array
 * runtime helpers such as `Iterator.next` still unpack closures and payloads through the
   universal closure ABI
@@ -93,22 +92,24 @@ Follow-up:
 * keep regression coverage for concrete `Cell<Int>` and `Cell<fn(...) ...>` Wasm paths
 * keep the erased fallback path only for genuinely unsupported or erased cases
 
-### 3. User record fields are always `Anyref`
+### 3. User record field specialization
 
-Today [records are emitted with `Anyref` fields](../../src/codegen/emit.rs), even when
-the source field type is concrete.
+Status: mostly done.
 
-Consequences:
+Concrete record fields now lower to field-specific Wasm types instead of unconditional
+`Anyref`.
 
-* function-valued record fields lose typed-closure information
-* scalar fields like `Int` / `Bool` / `Float` also lose their concrete Wasm types
-* record field access reintroduces casts/boxing that should not be necessary
+What changed:
 
-Target:
+* scalar fields like `Int` / `Bool` / `Float` stay unboxed in record structs
+* function-valued record fields preserve typed closure refs on the typed emitter path
+* record literal / get / update lowering now uses the actual field Wasm type
+* range constructor lowering was updated to match the typed record layout
 
-* emit record fields with concrete Wasm field types wherever the language type is
-  concrete
-* preserve `Anyref` only for genuinely erased or polymorphic fields
+Follow-up:
+
+* keep regression coverage for scalar and capability-style records
+* preserve `Anyref` only for genuinely erased or polymorphic record fields
 
 ### 4. Iterator representation erases both seed and step closure
 
@@ -145,20 +146,13 @@ Target:
 * Add focused Wasm regression coverage for helper/intrinsic paths that depend on the
   subtype-based typed-closure layout.
 
-### B. Add typed user-record fields
-
-* Change record type emission to use field-specific Wasm types instead of unconditional
-  `Anyref`.
-* Update record literal / get / update emission accordingly.
-* Add regression tests for capability records and scalar-field records.
-
-### C. Introduce typed iterator state
+### B. Introduce typed iterator state
 
 * Replace the generic array-backed iterator representation with a typed state record or
   typed runtime struct when the iterator is monomorphized.
 * Specialize `Iterator.next` so the step closure call avoids universal arg packing.
 
-### D. Audit hot sum-type payload paths
+### C. Audit hot sum-type payload paths
 
 * Identify whether `Option`, `Result`, and `UnfoldStep` are large enough contributors to
   justify typed payload layouts.
@@ -178,9 +172,8 @@ This plan does not require:
 ## Suggested Ordering
 
 1. Finish the closure-subtyping follow-up fixes.
-2. Add typed user-record fields.
-3. Revisit iterator representation.
-4. Only then decide whether typed variant payloads are worth the complexity.
+2. Revisit iterator representation.
+3. Only then decide whether typed variant payloads are worth the complexity.
 
 ---
 

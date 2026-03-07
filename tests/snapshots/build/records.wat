@@ -10,10 +10,10 @@
   (type $rt_types__BoxedInt (struct (field $v i64)))
   (type $rt_types__BoxedFloat (struct (field $v f64)))
   (type $user__UserRecord_2 (struct))
-  (type $user__UserRecord_3 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref)) (field $f2 (mut anyref))))
+  (type $user__UserRecord_3 (struct (field $f0 (mut i64)) (field $f1 (mut i64)) (field $f2 (mut i64))))
   (type $user__UserRecord_4 (struct))
-  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref))))
-  (type $user__UserRecord_7 (struct (field $f0 (mut anyref)) (field $f1 (mut anyref))))
+  (type $user__UserRecord_5 (struct (field $f0 (mut anyref)) (field $f1 (mut (ref null $rt_types__Array)))))
+  (type $user__UserRecord_7 (struct (field $f0 (mut i64)) (field $f1 (mut i64))))
   (type $functype_0 (func (param f64) (result (ref $rt_types__String))))
   (type $functype_1 (func (param (ref null $rt_types__String))))
   (type $functype_2 (func (param i32 anyref) (result (ref $rt_types__Array))))
@@ -1379,13 +1379,9 @@
     (local $p7 i64)
     local.get $p0
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p1
     local.get $p0
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p2
     local.get $p1
     local.get $p2
@@ -1393,13 +1389,9 @@
     local.set $p3
     local.get $p0
     struct.get $user__UserRecord_7 1
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p4
     local.get $p0
     struct.get $user__UserRecord_7 1
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p5
     local.get $p4
     local.get $p5
@@ -1424,8 +1416,6 @@
     (local $p7 (ref null $user__UserRecord_7))
     local.get $p0
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p3
     local.get $p3
     local.get $p1
@@ -1433,17 +1423,13 @@
     local.set $p4
     local.get $p0
     struct.get $user__UserRecord_7 1
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p5
     local.get $p5
     local.get $p2
     i64.add
     local.set $p6
     local.get $p4
-    struct.new $rt_types__BoxedInt
     local.get $p6
-    struct.new $rt_types__BoxedInt
     struct.new $user__UserRecord_7
     ref.cast (ref null $user__UserRecord_7)
     local.set $p7
@@ -1452,7 +1438,7 @@
   )
   (func $user__func_43 (type $functype_28)
     (local $p0 (ref null $user__UserRecord_7))
-    (local $p1 (ref null $user__UserRecord_7))
+    (local $p1 anyref)
     (local $p2 i64)
     (local $p3 (ref $rt_types__String))
     (local $p4 (ref $rt_types__String))
@@ -1482,18 +1468,15 @@
     (local $p28 (ref $rt_types__String))
     (local $p29 i32)
     i64.const 3
-    struct.new $rt_types__BoxedInt
     i64.const 4
-    struct.new $rt_types__BoxedInt
     struct.new $user__UserRecord_7
     ref.cast (ref null $user__UserRecord_7)
     local.set $p0
     local.get $p0
     local.set $p1
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p2
     local.get $p2
     call $rt_str__from_i64
@@ -1509,9 +1492,8 @@
     i32.const 0
     local.set $p5
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     struct.get $user__UserRecord_7 1
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p6
     local.get $p6
     call $rt_str__from_i64
@@ -1527,6 +1509,7 @@
     i32.const 0
     local.set $p9
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     call $user__func_41
     local.set $p10
     local.get $p10
@@ -1543,8 +1526,8 @@
     i32.const 0
     local.set $p13
     i64.const 4
-    struct.new $rt_types__BoxedInt
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     struct.get $user__UserRecord_7 1
     struct.new $user__UserRecord_7
     ref.cast (ref null $user__UserRecord_7)
@@ -1554,9 +1537,8 @@
     i32.const 0
     local.set $p15
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p16
     local.get $p16
     call $rt_str__from_i64
@@ -1572,6 +1554,7 @@
     i32.const 0
     local.set $p19
     local.get $p1
+    ref.cast (ref null $user__UserRecord_7)
     i64.const 2
     i64.const 2
     call $user__func_42
@@ -1580,8 +1563,6 @@
     local.set $p21
     local.get $p21
     struct.get $user__UserRecord_7 0
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
     local.set $p22
     local.get $p22
     call $rt_str__from_i64

@@ -43,7 +43,10 @@ pub fn emit_user_module(
         .collect::<HashMap<_, _>>();
     ctx.set_module_globals(module_global_map.clone());
     let mut module = ModuleIR::new("user");
-    module.types.extend(emit_user_record_type_defs(type_env));
+    module.types.extend(emit_user_record_type_defs(
+        type_env,
+        &ctx.concrete_func_sigs,
+    ));
     module
         .globals
         .extend(module_global_ids.iter().map(|id| GlobalDef {
@@ -122,14 +125,6 @@ pub fn emit_user_module_typed(
     ctx.set_capture_mono_by_func(capture_mono_by_func);
 
     let mut module = ModuleIR::new("user");
-    module.types.extend(emit_user_record_type_defs(type_env));
-    for elem in collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).values() {
-        module.types.push(emit_typed_cell_struct_def(
-            elem,
-            type_env,
-            &concrete_func_sigs,
-        ));
-    }
 
     // Emit typed ClosureFunc and Closure struct types for each unique concrete
     // closure signature.  Use a BTreeMap to deduplicate and get stable order.
@@ -154,6 +149,17 @@ pub fn emit_user_module_typed(
             .types
             .push(emit_typed_closure_struct_def(params, ret));
     }
+    for elem in collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).values() {
+        module.types.push(emit_typed_cell_struct_def(
+            elem,
+            type_env,
+            &concrete_func_sigs,
+        ));
+    }
+    module.types.extend(emit_user_record_type_defs(
+        type_env,
+        &ctx.concrete_func_sigs,
+    ));
 
     module
         .globals
@@ -232,7 +238,10 @@ fn emit_user_init_func(anf: &AnfModule) -> Option<FuncDef> {
     })
 }
 
-fn emit_user_record_type_defs(type_env: &TypeEnv) -> Vec<WasmTypeDef> {
+fn emit_user_record_type_defs(
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> Vec<WasmTypeDef> {
     let mut defs = Vec::new();
     let mut next_type_id = 0_u32;
     loop {
@@ -248,10 +257,10 @@ fn emit_user_record_type_defs(type_env: &TypeEnv) -> Vec<WasmTypeDef> {
                 fields: fields
                     .iter()
                     .enumerate()
-                    .map(|(idx, _)| WasmFieldDef {
+                    .map(|(idx, field)| WasmFieldDef {
                         name: Some(format!("f{idx}")),
                         mutable: true,
-                        ty: ValType::Anyref,
+                        ty: mono_to_valtype_specialized(&field.ty, type_env, concrete_func_sigs),
                     })
                     .collect(),
             });
@@ -1865,8 +1874,9 @@ fn emit_record_literal(
     }
 
     let mut instrs = Vec::new();
-    for atom in ordered.into_iter().flatten() {
-        instrs.extend(emit_atom(atom, Some(&ValType::Anyref), ctx));
+    for (idx, atom) in ordered.into_iter().flatten().enumerate() {
+        let field_ty = record_field_valtype(type_id, idx, ctx);
+        instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
     }
     instrs.push(Instr::StructNew(user_record_type_sym(type_id)));
     instrs.extend(emit_coerce_stack(&ref_user_record(type_id), bind_ty));
@@ -1881,9 +1891,10 @@ fn emit_record_get(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     let record_sym = user_record_type_sym(type_id);
+    let field_ty = record_field_valtype(type_id, field.0, ctx);
     let mut instrs = emit_atom(target, Some(&ref_user_record_null(type_id)), ctx);
     instrs.push(Instr::StructGet(record_sym, field.0 as u32));
-    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+    instrs.extend(emit_coerce_stack(&field_ty, bind_ty));
     instrs
 }
 
@@ -1902,7 +1913,8 @@ fn emit_record_update(
     if can_reuse_in_place {
         instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
         instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
-        instrs.extend(emit_atom(value, Some(&ValType::Anyref), ctx));
+        let field_ty = record_field_valtype(type_id, field.0, ctx);
+        instrs.extend(emit_atom(value, Some(&field_ty), ctx));
         instrs.push(Instr::StructSet(record_sym, field.0 as u32));
         instrs.extend(emit_coerce_stack(&ref_user_record_null(type_id), bind_ty));
         return instrs;
@@ -1911,7 +1923,8 @@ fn emit_record_update(
     let field_count = record_field_count(type_id, ctx);
     for idx in 0..field_count {
         if idx == field.0 {
-            instrs.extend(emit_atom(value, Some(&ValType::Anyref), ctx));
+            let field_ty = record_field_valtype(type_id, idx, ctx);
+            instrs.extend(emit_atom(value, Some(&field_ty), ctx));
         } else {
             instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
             instrs.push(Instr::StructGet(user_record_type_sym(type_id), idx as u32));
@@ -1920,6 +1933,34 @@ fn emit_record_update(
     instrs.push(Instr::StructNew(user_record_type_sym(type_id)));
     instrs.extend(emit_coerce_stack(&ref_user_record(type_id), bind_ty));
     instrs
+}
+
+fn record_field_mono(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> MonoType {
+    match ctx.type_env.get_def(type_id) {
+        Some(LangTypeDef::Record { fields, .. }) => fields
+            .get(field_idx)
+            .map(|field| field.ty.clone())
+            .unwrap_or_else(|| {
+                panic!(
+                    "record field index {field_idx} out of bounds for type {}",
+                    type_id.0
+                )
+            }),
+        Some(LangTypeDef::Alias { target, .. }) => match target {
+            MonoType::Named { type_id, .. } => record_field_mono(*type_id, field_idx, ctx),
+            other => panic!(
+                "record alias Type#{} points to non-record type {other:?}",
+                type_id.0
+            ),
+        },
+        Some(other) => panic!("Type#{} is not a record: {other:?}", type_id.0),
+        None => panic!("unknown record type id {}", type_id.0),
+    }
+}
+
+fn record_field_valtype(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> ValType {
+    let mono = record_field_mono(type_id, field_idx, ctx);
+    mono_to_valtype_specialized(&mono, ctx.type_env, &ctx.concrete_func_sigs)
 }
 
 fn emit_variant_literal(
@@ -2045,16 +2086,30 @@ fn emit_closure_call(
                     instrs.push(Instr::StructGet(closure_sym.clone(), 1));
                     // Push concrete args.
                     for (arg, param_ty) in args.iter().zip(params.iter()) {
-                        let wasm_ty = mono_to_valtype(param_ty, ctx.type_env);
+                        let wasm_ty = mono_to_valtype_specialized(
+                            param_ty,
+                            ctx.type_env,
+                            &ctx.concrete_func_sigs,
+                        );
                         instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
                     }
                     // Push typed funcref (field 2) last for call_ref.
                     instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
                     instrs.push(Instr::StructGet(closure_sym, 2));
                     instrs.push(Instr::CallRef(closurefunc_sym));
-                    // Coerce result to bind_ty.
-                    let ret_ty = mono_to_valtype(&ret, ctx.type_env);
-                    instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
+                    match ret.as_ref() {
+                        MonoType::Void | MonoType::Never => {
+                            instrs.extend(emit_void_value(Some(bind_ty)));
+                        }
+                        _ => {
+                            let ret_ty = mono_to_valtype_specialized(
+                                &ret,
+                                ctx.type_env,
+                                &ctx.concrete_func_sigs,
+                            );
+                            instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
+                        }
+                    }
                     return instrs;
                 }
             }
@@ -2482,8 +2537,9 @@ fn emit_range_intrinsic(fields: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_
     use crate::types::ty::RANGE_TYPE_ID;
     let range_sym = user_record_type_sym(RANGE_TYPE_ID);
     let mut instrs = Vec::new();
-    for atom in fields {
-        instrs.extend(emit_atom(atom, Some(&ValType::Anyref), ctx));
+    for (idx, atom) in fields.iter().enumerate() {
+        let field_ty = record_field_valtype(RANGE_TYPE_ID, idx, ctx);
+        instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
     }
     instrs.push(Instr::StructNew(range_sym.clone()));
     let result_ty = ValType::Ref {
@@ -4749,10 +4805,17 @@ mod tests {
             t,
             WasmTypeDef::Struct { name, .. } if name == "UserRecord_3"
         )));
+        assert!(module.types.iter().any(|t| matches!(
+            t,
+            WasmTypeDef::Struct { name, fields, .. }
+                if name == "UserRecord_3"
+                    && fields.len() == 3
+                    && fields.iter().all(|field| field.ty == ValType::I64)
+        )));
     }
 
     #[test]
-    fn emit_record_get_unboxes_anyref_field_to_i64() {
+    fn emit_record_get_reads_typed_i64_field_directly() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
@@ -4777,11 +4840,6 @@ mod tests {
             vec![
                 Instr::LocalGet(1),
                 Instr::StructGet("UserRecord_3".to_string(), 0),
-                Instr::RefCast {
-                    nullable: false,
-                    heap: HeapType::Named(T_BOXED_INT.to_string()),
-                },
-                Instr::StructGet(T_BOXED_INT.to_string(), 0),
                 Instr::LocalSet(0),
             ]
         );
@@ -4817,7 +4875,6 @@ mod tests {
                 Instr::LocalGet(1),
                 Instr::StructGet("UserRecord_3".to_string(), 0),
                 Instr::I64Const(9),
-                Instr::StructNew(T_BOXED_INT.to_string()),
                 Instr::LocalGet(1),
                 Instr::StructGet("UserRecord_3".to_string(), 2),
                 Instr::StructNew("UserRecord_3".to_string()),
@@ -4827,6 +4884,23 @@ mod tests {
                 },
                 Instr::LocalSet(0),
             ]
+        );
+    }
+
+    #[test]
+    fn emit_user_module_typed_preserves_function_record_field_types() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/run/capability_records.tw")
+            .to_string_lossy()
+            .to_string();
+        let wat = crate::cli::build::build_wat(&path).expect("build_wat failed");
+
+        assert!(
+            wat.contains("(type $user__UserRecord_7 (struct (field $f0 (mut (ref null $user__closure_str_void)))))")
+                || wat.contains("(type $user__UserRecord_8 (struct (field $f0 (mut (ref null $user__closure_i64_void)))))"),
+            "expected capability record field to preserve typed closure ref:\n{wat}"
         );
     }
 
