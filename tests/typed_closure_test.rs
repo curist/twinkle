@@ -85,6 +85,40 @@ fn count_array_new_fixed_in_user_funcs(wat: &str) -> usize {
     count
 }
 
+fn find_func_block_containing<'a>(wat: &'a str, needle: &str) -> Option<String> {
+    let lines = wat.lines().collect::<Vec<_>>();
+    for (start, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !(trimmed.starts_with("(func") && trimmed.contains("$user__func_")) {
+            continue;
+        }
+
+        let mut depth: i32 = 0;
+        let mut block = Vec::new();
+        for line in &lines[start..] {
+            let trimmed = line.trim();
+            block.push(*line);
+            for ch in trimmed.chars() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let joined = block.join("\n");
+                            if joined.contains(needle) {
+                                return Some(joined);
+                            }
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
 // ─── Baseline sanity checks (should pass both before and after Stage 9.6) ────
 
 /// The universal-closure (mono-only) baseline DOES box args into an anyref
@@ -121,15 +155,21 @@ fn typed_closure_emit_produces_typed_closurefunc_types() {
 #[test]
 fn typed_closure_call_eliminates_arg_boxing() {
     let path = fixture("fold_small.tw");
-    let before = count_array_new_fixed_in_user_funcs(&build_wat_with_mono(&path));
-    let after = count_array_new_fixed_in_user_funcs(&build_wat_with_typed_closure(&path));
-
-    println!("array.new_fixed in user funcs — before: {before}, after: {after}");
+    let wat = build_wat_with_typed_closure(&path);
+    let fold_block = find_func_block_containing(&wat, "(ref null $user__closure_i64_i64_i64)")
+        .expect("expected specialized fold function in WAT");
 
     assert!(
-        after < before,
-        "Expected typed closure to eliminate arg boxing.\n\
-         array.new_fixed count: before={before}, after={after}"
+        fold_block.contains("call_ref $user__closurefunc_i64_i64_i64"),
+        "Expected specialized fold function to use typed call_ref.\n{fold_block}"
+    );
+    assert!(
+        !fold_block.contains("call_ref $rt_types__ClosureFunc"),
+        "Expected specialized fold function to avoid universal closure dispatch.\n{fold_block}"
+    );
+    assert!(
+        !fold_block.contains("array.new_fixed $rt_types__Array 2"),
+        "Expected specialized fold function to avoid per-call arg array boxing.\n{fold_block}"
     );
 }
 
@@ -152,5 +192,26 @@ fn typed_closure_execution_produces_correct_output() {
         stdout.trim(),
         "45",
         "fold_small.tw produced wrong output with typed closures"
+    );
+}
+
+/// The normal build pipeline should also use typed closure specialization,
+/// not just the explicit test-only emitter path.
+#[test]
+fn build_wat_uses_typed_closure_specialization() {
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+    assert!(
+        wat.contains("closurefunc_"),
+        "Expected build_wat output to contain typed closure func types"
+    );
+
+    let fold_block = find_func_block_containing(&wat, "(ref null $user__closure_i64_i64_i64)")
+        .expect("expected specialized fold function in build_wat output");
+    assert!(
+        fold_block.contains("call_ref $user__closurefunc_i64_i64_i64")
+            && !fold_block.contains("call_ref $rt_types__ClosureFunc")
+            && !fold_block.contains("array.new_fixed $rt_types__Array 2"),
+        "Expected build_wat to specialize the fold call site.\n{fold_block}"
     );
 }

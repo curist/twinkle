@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::codegen::emit::emit_user_module;
+use crate::codegen::emit::emit_user_module_typed;
 use crate::ir::lower_anf::lower_module;
 use crate::opt::optimize_module;
 use crate::runtime;
@@ -44,7 +44,7 @@ pub fn build_wat(file_path: &str) -> Result<String> {
     let optimized = optimize_module(anf);
 
     let func_table = HashMap::new();
-    let user_module = emit_user_module(&optimized, &core_module.type_env, &func_table);
+    let user_module = emit_user_module_typed(&optimized, &core_module.type_env, &func_table);
     let mut modules = runtime::all_modules();
     modules.push(user_module);
 

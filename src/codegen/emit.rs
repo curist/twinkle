@@ -160,12 +160,15 @@ pub fn emit_user_module_typed(
             .push(emit_func_stub(func, &capture_locals, &mut ctx));
     }
 
-    // Emit typed trampolines for concrete-signature functions, universal
-    // trampolines for all others.
+    // Emit universal trampolines for all closures so generic/container escape
+    // paths keep working, then add typed trampolines for concrete signatures.
     for func in &anf.functions {
         let capture_count = closure_capture_layouts
             .get(&func.func_id)
             .map_or(0, std::vec::Vec::len);
+        module
+            .funcs
+            .push(emit_user_closure_trampoline(func, capture_count, &ctx));
         if let Some((params, ret)) = concrete_func_sigs.get(&func.func_id) {
             module.funcs.push(emit_typed_closure_trampoline(
                 func,
@@ -174,10 +177,6 @@ pub fn emit_user_module_typed(
                 ret,
                 type_env,
             ));
-        } else {
-            module
-                .funcs
-                .push(emit_user_closure_trampoline(func, capture_count, &ctx));
         }
     }
 
@@ -1238,6 +1237,39 @@ fn tail_runtime_result_compatible(
     }
 }
 
+fn typed_closure_valtype(func_id: FuncId, ctx: &EmitCtx<'_>) -> Option<ValType> {
+    let (params, ret) = ctx.concrete_func_sigs.get(&func_id)?;
+    Some(ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(typed_closure_struct_sym(params, ret)),
+    })
+}
+
+fn emit_specialized_closure_arg(
+    arg: &Atom,
+    expected_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Option<Vec<Instr>> {
+    match arg {
+        Atom::ALocal(local_id) => {
+            let (func_id, free_vars) = ctx.closure_locals.get(local_id)?.clone();
+            let typed_ty = typed_closure_valtype(func_id, ctx)?;
+            if &typed_ty != expected_ty {
+                return None;
+            }
+            Some(emit_make_closure(func_id, &free_vars, expected_ty, ctx))
+        }
+        Atom::AGlobalFunc(func_id) => {
+            let typed_ty = typed_closure_valtype(*func_id, ctx)?;
+            if &typed_ty != expected_ty {
+                return None;
+            }
+            Some(emit_make_closure(*func_id, &[], expected_ty, ctx))
+        }
+        _ => None,
+    }
+}
+
 fn emit_tail_direct_user_call(
     func_id: FuncId,
     args: &[Atom],
@@ -1262,7 +1294,11 @@ fn emit_tail_direct_user_call(
 
     let mut instrs = Vec::new();
     for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        if let Some(specialized) = emit_specialized_closure_arg(arg, param_ty, ctx) {
+            instrs.extend(specialized);
+        } else {
+            instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        }
     }
     instrs.push(Instr::ReturnCall(user_func_sym(func_id)));
     Some(instrs)
@@ -1882,7 +1918,11 @@ fn emit_direct_user_call(
 
     let mut instrs = Vec::new();
     for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        if let Some(specialized) = emit_specialized_closure_arg(arg, param_ty, ctx) {
+            instrs.extend(specialized);
+        } else {
+            instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        }
     }
     instrs.push(Instr::Call(user_func_sym(func_id)));
 
@@ -1908,25 +1948,30 @@ fn emit_make_closure(
     sorted_vars.sort_by_key(|id| id.0);
     sorted_vars.dedup_by_key(|id| id.0);
 
-    // Typed closure path (Stage 9.6): if this function has a concrete signature,
-    // emit a typed closure struct instead of the universal $Closure.
+    // Typed closure path (Stage 9.6): materialize a typed closure only when the
+    // surrounding expected type is the matching specialized closure struct.
     if let Some((params, ret)) = ctx.concrete_func_sigs.get(&func_id).cloned() {
-        let closure_sym = typed_closure_struct_sym(&params, &ret);
-        let mut instrs = vec![Instr::RefFunc(typed_closure_trampoline_sym(func_id))];
-        for local_id in &sorted_vars {
-            instrs.extend(emit_atom(
-                &Atom::ALocal(*local_id),
-                Some(&ValType::Anyref),
-                ctx,
+        let closure_ty = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(typed_closure_struct_sym(&params, &ret)),
+        };
+        if &closure_ty == bind_ty {
+            let closure_sym = typed_closure_struct_sym(&params, &ret);
+            let mut instrs = vec![Instr::RefFunc(typed_closure_trampoline_sym(func_id))];
+            for local_id in &sorted_vars {
+                instrs.extend(emit_atom(
+                    &Atom::ALocal(*local_id),
+                    Some(&ValType::Anyref),
+                    ctx,
+                ));
+            }
+            instrs.push(Instr::ArrayNewFixed(
+                T_CLOSURE_ENV.to_string(),
+                sorted_vars.len() as u32,
             ));
+            instrs.push(Instr::StructNew(closure_sym));
+            return instrs;
         }
-        instrs.push(Instr::ArrayNewFixed(
-            T_CLOSURE_ENV.to_string(),
-            sorted_vars.len() as u32,
-        ));
-        instrs.push(Instr::StructNew(closure_sym));
-        instrs.extend(emit_coerce_stack(bind_ty, bind_ty));
-        return instrs;
     }
 
     // Universal closure path (Stage 9.5 / no typed closures).
@@ -2073,9 +2118,7 @@ fn emit_prelude_call(
         id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
             emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
         }
-        id if id == prelude_ids::CHAR_CODE_AT => {
-            emit_char_code_at_intrinsic(args, bind_ty, ctx)
-        }
+        id if id == prelude_ids::CHAR_CODE_AT => emit_char_code_at_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::FROM_CHAR_CODE => {
             emit_from_char_code_intrinsic(args, bind_ty, ctx)
         }
@@ -2733,8 +2776,8 @@ fn emit_from_char_code_intrinsic(
         then_body: {
             // Some(single-byte string)
             let mut v = vec![
-                Instr::I32Const(0),  // type_id (Option)
-                Instr::I32Const(1),  // variant_id (Some)
+                Instr::I32Const(0), // type_id (Option)
+                Instr::I32Const(1), // variant_id (Some)
             ];
             v.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
             v.push(Instr::I32WrapI64);
@@ -2748,8 +2791,8 @@ fn emit_from_char_code_intrinsic(
         else_body: {
             // None
             let mut v = vec![
-                Instr::I32Const(0),  // type_id
-                Instr::I32Const(0),  // variant_id (None)
+                Instr::I32Const(0), // type_id
+                Instr::I32Const(0), // variant_id (None)
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
                 Instr::StructNew(T_VARIANT.to_string()),
             ];
@@ -2830,10 +2873,7 @@ fn emit_int_from_string_helper() -> FuncDef {
         Instr::I32Eqz,
         Instr::If {
             result: None,
-            then_body: vec![
-                Instr::I32Const(0),
-                Instr::LocalSet(6),
-            ],
+            then_body: vec![Instr::I32Const(0), Instr::LocalSet(6)],
             else_body: vec![
                 // Check first byte for sign
                 Instr::LocalGet(0),
@@ -2879,17 +2919,11 @@ fn emit_int_from_string_helper() -> FuncDef {
                                 Instr::I32Eq,
                                 Instr::If {
                                     result: None,
-                                    then_body: vec![
-                                        Instr::I32Const(0),
-                                        Instr::LocalSet(6),
-                                    ],
+                                    then_body: vec![Instr::I32Const(0), Instr::LocalSet(6)],
                                     else_body: vec![],
                                 },
                             ],
-                            else_body: vec![
-                                Instr::I32Const(0),
-                                Instr::LocalSet(2),
-                            ],
+                            else_body: vec![Instr::I32Const(0), Instr::LocalSet(2)],
                         },
                     ],
                 },
@@ -2897,64 +2931,60 @@ fn emit_int_from_string_helper() -> FuncDef {
                 Instr::LocalGet(6),
                 Instr::If {
                     result: None,
-                    then_body: vec![
-                        Instr::Block {
-                            label: done_label.clone(),
+                    then_body: vec![Instr::Block {
+                        label: done_label.clone(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: loop_label.clone(),
                             result: None,
                             body: vec![
-                                Instr::Loop {
-                                    label: loop_label.clone(),
+                                // if i >= len: break
+                                Instr::LocalGet(2),
+                                Instr::LocalGet(3),
+                                Instr::I32GeS,
+                                Instr::BrIf(done_label.clone()),
+                                // byte = s[i]
+                                Instr::LocalGet(0),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(2),
+                                Instr::ArrayGetU(T_STRING.to_string()),
+                                Instr::LocalSet(5),
+                                // if byte < 48 or byte > 57: ok = 0, break
+                                Instr::LocalGet(5),
+                                Instr::I32Const(48),
+                                Instr::I32LtS,
+                                Instr::LocalGet(5),
+                                Instr::I32Const(57),
+                                Instr::I32GtS,
+                                Instr::I32Or,
+                                Instr::If {
                                     result: None,
-                                    body: vec![
-                                        // if i >= len: break
-                                        Instr::LocalGet(2),
-                                        Instr::LocalGet(3),
-                                        Instr::I32GeS,
-                                        Instr::BrIf(done_label.clone()),
-                                        // byte = s[i]
-                                        Instr::LocalGet(0),
-                                        Instr::RefAsNonNull,
-                                        Instr::LocalGet(2),
-                                        Instr::ArrayGetU(T_STRING.to_string()),
-                                        Instr::LocalSet(5),
-                                        // if byte < 48 or byte > 57: ok = 0, break
-                                        Instr::LocalGet(5),
-                                        Instr::I32Const(48),
-                                        Instr::I32LtS,
-                                        Instr::LocalGet(5),
-                                        Instr::I32Const(57),
-                                        Instr::I32GtS,
-                                        Instr::I32Or,
-                                        Instr::If {
-                                            result: None,
-                                            then_body: vec![
-                                                Instr::I32Const(0),
-                                                Instr::LocalSet(6),
-                                                Instr::Br(done_label.clone()),
-                                            ],
-                                            else_body: vec![],
-                                        },
-                                        // value = value * 10 + (byte - 48)
-                                        Instr::LocalGet(1),
-                                        Instr::I64Const(10),
-                                        Instr::I64Mul,
-                                        Instr::LocalGet(5),
-                                        Instr::I32Const(48),
-                                        Instr::I32Sub,
-                                        Instr::I64ExtendI32U,
-                                        Instr::I64Add,
-                                        Instr::LocalSet(1),
-                                        // i++
-                                        Instr::LocalGet(2),
-                                        Instr::I32Const(1),
-                                        Instr::I32Add,
-                                        Instr::LocalSet(2),
-                                        Instr::Br(loop_label.clone()),
+                                    then_body: vec![
+                                        Instr::I32Const(0),
+                                        Instr::LocalSet(6),
+                                        Instr::Br(done_label.clone()),
                                     ],
+                                    else_body: vec![],
                                 },
+                                // value = value * 10 + (byte - 48)
+                                Instr::LocalGet(1),
+                                Instr::I64Const(10),
+                                Instr::I64Mul,
+                                Instr::LocalGet(5),
+                                Instr::I32Const(48),
+                                Instr::I32Sub,
+                                Instr::I64ExtendI32U,
+                                Instr::I64Add,
+                                Instr::LocalSet(1),
+                                // i++
+                                Instr::LocalGet(2),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(2),
+                                Instr::Br(loop_label.clone()),
                             ],
-                        },
-                    ],
+                        }],
+                    }],
                     else_body: vec![],
                 },
             ],
@@ -2973,7 +3003,10 @@ fn emit_int_from_string_helper() -> FuncDef {
                     Instr::StructNew(T_BOXED_INT.to_string()),
                 ];
                 v.extend(emit_coerce_stack(
-                    &ValType::Ref { nullable: false, heap: HeapType::Named(T_BOXED_INT.to_string()) },
+                    &ValType::Ref {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_INT.to_string()),
+                    },
                     &ValType::Anyref,
                 ));
                 v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
@@ -2999,12 +3032,12 @@ fn emit_int_from_string_helper() -> FuncDef {
         params: vec![ref_string_null()],
         results: vec![ValType::Anyref],
         locals: vec![
-            ValType::I64,  // 1: accumulator
-            ValType::I32,  // 2: index
-            ValType::I32,  // 3: len
-            ValType::I64,  // 4: sign
-            ValType::I32,  // 5: byte
-            ValType::I32,  // 6: ok flag
+            ValType::I64, // 1: accumulator
+            ValType::I32, // 2: index
+            ValType::I32, // 3: len
+            ValType::I64, // 4: sign
+            ValType::I32, // 5: byte
+            ValType::I32, // 6: ok flag
         ],
         body,
     }
@@ -3030,7 +3063,10 @@ fn emit_float_from_string_helper() -> FuncDef {
                     Instr::StructNew(T_BOXED_FLOAT.to_string()),
                 ];
                 v.extend(emit_coerce_stack(
-                    &ValType::Ref { nullable: false, heap: HeapType::Named(T_BOXED_FLOAT.to_string()) },
+                    &ValType::Ref {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_FLOAT.to_string()),
+                    },
                     &ValType::Anyref,
                 ));
                 v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
@@ -3059,7 +3095,6 @@ fn emit_float_from_string_helper() -> FuncDef {
         body,
     }
 }
-
 
 fn emit_unimplemented_intrinsic_prelude_call(
     entry: &crate::codegen::prelude::PreludeEntry,

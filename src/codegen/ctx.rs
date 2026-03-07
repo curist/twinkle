@@ -23,10 +23,12 @@ pub struct FuncSigInfo {
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
     /// Tracks `MonoType::Function` for locals that hold typed closures.
-    /// Populated for function-typed params and for `AMakeClosure` let-bindings
-    /// with concrete signatures.  Used at call sites to select the typed
-    /// `call_ref` path instead of the universal anyref boxing path.
+    /// Populated for function-typed params. Used at call sites to select the
+    /// typed `call_ref` path instead of the universal anyref boxing path.
     pub local_mono: HashMap<LocalId, MonoType>,
+    /// Tracks local bindings created from `AMakeClosure` so direct user calls
+    /// can materialize typed closures only at concrete higher-order boundaries.
+    pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
     module_globals: HashMap<LocalId, String>,
     pub label_stack: Vec<(Label, Label)>,
     pub loop_result_stack: Vec<Option<ValType>>,
@@ -49,6 +51,7 @@ impl<'a> EmitCtx<'a> {
         Self {
             local_map: HashMap::new(),
             local_mono: HashMap::new(),
+            closure_locals: HashMap::new(),
             module_globals: HashMap::new(),
             label_stack: Vec::new(),
             loop_result_stack: Vec::new(),
@@ -85,6 +88,7 @@ impl<'a> EmitCtx<'a> {
     ) -> Vec<ValType> {
         self.local_map.clear();
         self.local_mono.clear();
+        self.closure_locals.clear();
         self.label_stack.clear();
         self.loop_result_stack.clear();
         self.next_label_id = 0;
@@ -174,19 +178,9 @@ impl<'a> EmitCtx<'a> {
 
                 if !self.local_map.contains_key(local) {
                     let local_ty = self.infer_op_valtype(op).unwrap_or(ValType::Anyref);
-                    // For AMakeClosure with a concrete func signature, track the
-                    // MonoType::Function so downstream closure call sites can use
-                    // the typed call_ref path.
-                    if let AnfOp::AMakeClosure { func_id, .. } = op.as_ref() {
-                        if let Some((params, ret)) = self.concrete_func_sigs.get(func_id) {
-                            self.local_mono.insert(
-                                *local,
-                                MonoType::Function {
-                                    params: params.clone(),
-                                    ret: Box::new(ret.clone()),
-                                },
-                            );
-                        }
+                    if let AnfOp::AMakeClosure { func_id, free_vars } = op.as_ref() {
+                        self.closure_locals
+                            .insert(*local, (*func_id, free_vars.clone()));
                     }
                     self.local_map.insert(*local, (*next_idx, local_ty.clone()));
                     wasm_locals.push(local_ty);
@@ -299,14 +293,7 @@ impl<'a> EmitCtx<'a> {
             }
             AnfOp::ABinOp { op, operand_ty, .. } => Some(binop_result_ty(*op, *operand_ty)),
             AnfOp::AUnOp { op, operand_ty, .. } => Some(unop_result_ty(*op, *operand_ty)),
-            AnfOp::AMakeClosure { func_id, .. } => {
-                if let Some((params, ret)) = self.concrete_func_sigs.get(func_id) {
-                    let sym = typed_closure_struct_sym(params, ret);
-                    Some(ref_named(true, &sym))
-                } else {
-                    Some(ref_named(true, T_CLOSURE))
-                }
-            }
+            AnfOp::AMakeClosure { .. } => Some(ref_named(true, T_CLOSURE)),
             AnfOp::ARecord { type_id, .. } | AnfOp::ARecordUpdate { type_id, .. } => {
                 Some(ref_named(true, &user_record_type_sym(*type_id)))
             }
