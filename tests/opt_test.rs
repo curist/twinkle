@@ -881,9 +881,9 @@ fn opt_vector_set_runtime_semantics_slice_path() {
 }
 
 #[test]
-fn opt_vector_set_runtime_semantics_stress_escape_path() {
+fn opt_vector_set_runtime_semantics_loop_branch_escape_path() {
     assert_runtime_output(
-        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
+        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten_interp.tw",
         &["1", "99"],
     );
 }

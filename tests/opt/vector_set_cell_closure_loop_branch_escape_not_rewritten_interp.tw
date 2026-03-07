@@ -1,0 +1,39 @@
+// Same alias/escape shape as the Wasm stress fixture, but with a small loop
+// count so interpreter-only semantics checks stay cheap.
+//
+// Expected output:
+//   1
+//   99
+
+fn fold(xs: Vector<Int>, init: Int, f: fn(Int, Int) Int) Int {
+    acc := init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+fn make(n: Int, c: Bool) Vector<Int> {
+    xs := [1, 2, 3]
+    slot := Cell.new(fn() Int { 7 })
+    idxs := collect i in range(n) { i }
+    checksum := fold(idxs, 0, fn(acc, x) {
+        (acc + (x * x + 3 * x + 7)) % 1000003
+    })
+
+    for i in idxs {
+        if c {
+            if i == checksum - checksum {
+                ys := xs
+                Cell.set(slot, fn() Int { ys[0] })
+            }
+        }
+        xs[0] = 99
+    }
+
+    f := Cell.get(slot)
+    println("${f()}")
+    xs
+}
+
+println("${make(8, true)[0]}")
