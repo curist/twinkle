@@ -1,40 +1,28 @@
-> Note: This is a design note. Canonical language syntax/rules are `docs/spec.md` and `docs/grammar.ebnf`.
+# Capabilities Without Traits
 
-Traits are all about callee-side magic.
-Records-of-functions are all about caller-side adaptation.
+Twinkle does not have traits, interfaces, or typeclasses. Polymorphic behavior
+is expressed through ordinary functions and records of functions (capability
+records). This document explains the rationale and the patterns that replace
+traits.
 
+---
 
-Traits: “callee magically gets what it needs.”
-Records-of-functions: “caller explicitly adapts args to what the callee needs.”
+## Why No Traits
 
+Traits are callee-side magic — the callee declares what it needs, and the
+compiler automatically finds the right implementation. Records of functions are
+caller-side adaptation — the caller explicitly passes the capability.
 
+Avoiding traits keeps the type system rank-1 polymorphic (Damas–Milner) and
+the compiler free from trait solvers, global coherence checks, and complex
+instance resolution.
 
-## 10. Capabilities, Traits, and Built-in Sugar
+---
 
-### 10.1. No Traits or Interfaces in Twinkle v1
+## Capability Records
 
-Twinkle **does not** support traits, interfaces, or typeclass-style implicit capability systems in v1.
-
-* There is **no** syntax for declaring traits/interfaces (e.g. `trait Show`, `interface Iterable`).
-* There is **no** way to write generic constraints such as `T: Show` or `T: Iterable`.
-* There is **no** implicit resolution of “methods provided by a trait” based on the static type of a value.
-
-All polymorphic behavior is expressed using:
-
-* Ordinary **functions**,
-* **Records of functions** (capability records),
-* Modules and first-class values.
-
-This keeps:
-
-* The type system rank-1 polymorphic (Damas–Milner) and simple,
-* The compiler free from trait solvers, global coherence checks, and complex instance resolution.
-
-### 10.2. Capabilities via Records of Functions
-
-Instead of traits, Twinkle uses **records of functions** to model capabilities.
-
-A capability is a nominal type that captures a set of operations on some data type `T`. For example, a “Show”-like capability:
+A capability is a nominal record type that captures a set of operations on
+some type `T`:
 
 ```tw
 type Show<T> = .{
@@ -42,12 +30,8 @@ type Show<T> = .{
 }
 ```
 
-A function that needs “anything that can be shown” is written by taking both:
-
-* the value(s),
-* and a corresponding capability record.
-
-Example:
+Functions that need "anything that can be shown" take both the value and a
+corresponding capability record:
 
 ```tw
 fn print_all<T>(xs: Array<T>, show: Show<T>) {
@@ -74,241 +58,72 @@ users: Array<User> = ...
 print_all(users, ShowUser)
 ```
 
-Notes:
-
-* The compiler does **not** invent or find `Show<User>` automatically.
-* The call site is always **explicit** about which capability record is passed.
-
-### 10.3. No Implicit Conversions
-
-Twinkle does **not** perform implicit conversions to satisfy capability records.
-
-Given a parameter of type `Show<T>`:
-
-```tw
-fn debug_value<T>(x: T, show: Show<T>) { ... }
-```
-
-the call:
-
-```tw
-debug_value(user)       // ❌ illegal: missing Show<User>
-```
-
-is rejected. The caller must explicitly supply a value of type `Show<User>`:
-
-```tw
-debug_value(user, ShowUser)  // ✅
-```
-
-This applies uniformly:
-
-* No automatic wrapping of `T` into `Show<T>` (or similar),
-* No automatic rewriting of `Array<T>` into `Array<Show<T>>`,
-* No chained or inferred conversions.
-
-All adapter logic, if any, is explicit in user code.
-
-Twinkle may introduce future **syntactic sugar** to make it more convenient to construct capability records (e.g. shorter record literals or helper functions), but these are purely local syntactic conveniences. They **do not** change the explicitness of which values and capability records are passed where.
+The compiler does not find or invent `Show<User>` automatically. The call site
+is always explicit about which capability record is passed.
 
 ---
 
-## 11. `for` over Collections
+## No Implicit Conversions
 
-### 11.1. Overview
-
-The `for` syntax in Twinkle:
+There is no automatic wrapping, rewriting, or chained conversion:
 
 ```tw
-for x in collection {
-  body
-}
+debug_value(user)             // error: missing Show<User>
+debug_value(user, ShowUser)   // ok
 ```
 
-is supported only for a **closed set** of built-in collection types. The compiler lowers `for` loops into primitive operations depending on the static type of `collection`.
-
-There is **no** general “Iterable” trait or interface that user types can implement to participate in `for` syntactically in v1.
-
-### 11.2. Supported Collection Types
-
-In Twinkle v1, `for` is defined for the following core types (exact names may be adjusted as the core library evolves):
-
-* `Array<T>` — homogeneous indexable arrays,
-* `Range`    — integer ranges (e.g. `0..10`),
-* `Dict<K, V>` — dictionaries (if present),
-* `Iterator<T>` — an explicit iterator type from the standard library (if present).
-
-The compiler performs a **type-directed** lowering:
-
-* If `collection` has type `Array<T>`, the loop is lowered to an indexed loop over the array length.
-* If `collection` has type `Range`, the loop is lowered to a simple integer loop over the range bounds.
-* If `collection` has type `Dict<K, V>`, the loop is lowered to iteration over key–value pairs.
-* If `collection` has type `Iterator<T>`, the loop is lowered to repeated `next` calls until the iterator is exhausted.
-
-Any value used in `for x in collection` whose type is not one of the supported built-ins is a **compile-time error**.
-
-### 11.3. Example Lowerings (Informal)
-
-The compiler performs type-directed lowering for each supported collection. The exact IR is described in `docs/internals/ir.md`; the following is informal pseudocode only.
-
-For `Array<T>`: lowered to an indexed loop over length, binding each element in turn.
-
-For `Range`: lowered to a simple integer loop over the range bounds.
-
-For `Dict<K,V>`: lowered to a loop over `Dict.keys(d)`, binding the key and optionally looking up the value.
-
-For `Iterator<T>`: lowered to repeated `next` calls until exhausted.
-
-### 11.4. Idiomatic User Extensions Without Traits
-
-To iterate over a custom type without direct `for` support, users define a **helper function** that produces a built-in collection or iterator.
-
-Example: iterate over a `Tree<T>` using an explicit iterator.
-
-```tw
-type Tree<T> =
-  | Leaf(T)
-  | Node(Tree<T>, Tree<T>)
-
-fn tree_preorder_iter<T>(t: Tree<T>) Iterator<T> {
-  // implementation creates an Iterator<T> over the tree
-}
-
-fn sum_tree(t: Tree<Int>) Int {
-  acc := 0
-  for x in tree_preorder_iter(t) {
-    acc = acc + x
-  }
-  acc
-}
-```
-
-Here:
-
-* `Tree<T>` does **not** participate directly in `for`.
-* The user writes `for x in tree_preorder_iter(t)` instead of `for x in t`.
-
-This pattern is preferred over adding a trait-style “Iterable” system.
+All adapter logic is explicit in user code.
 
 ---
 
-## 12. String Interpolation
+## `for` Over Collections
 
-### 12.1. Overview
+The `for` syntax works with a closed set of built-in collection types. There is
+no "Iterable" trait that user types can implement.
 
-Twinkle supports String interpolation of the form:
+Supported types:
 
-```tw
-"Value = ${expr}"
-```
+* `Array<T>` — lowered to an indexed loop over length
+* `Range` — lowered to an integer loop over bounds
+* `Dict<K, V>` — lowered to iteration over keys
+* `Iterator<T>` — lowered to repeated `next` calls
 
-Interpolation is **not** driven by a `Show` trait or interface. Instead, it is defined only for a **small, fixed set** of primitive types.
+The compiler performs type-directed lowering. Any other type in `for x in coll`
+is a compile-time error. The exact IR is described in `docs/internals/ir.md`.
 
-### 12.2. Supported Types
-
-In Twinkle v1, the expression inside `${...}` may have one of the following types:
-
-* `String` — used as-is,
-* `Int`    — converted via a core `String.of_int` function,
-* `Float`  — converted via `String.of_float`,
-* `Bool`   — converted via `String.of_bool`.
-
-Attempting to interpolate a value of any other type is a **compile-time error**.
-
-Example:
+To iterate over a custom type, users write a helper that returns a built-in
+collection or iterator:
 
 ```tw
-name: String = "Twinkle"
-n: Int = 42
-ok: Bool = true
+fn tree_preorder_iter<T>(t: Tree<T>) Iterator<T> { ... }
 
-s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
-
-user: User = .{ name: "Ada", age: 30 }
-s2 := "user=${user}"                    // ❌ error: User not interpolable
-```
-
-### 12.3. Informal Desugaring
-
-String literals with interpolation are desugared into calls on core String utilities.
-
-For example:
-
-```tw
-"n=${n}"
-```
-
-is conceptually lowered to:
-
-```tw
-String.concat_many([
-  "n=",
-  String.of_int(n),
-])
-```
-
-Canonical surface names use the `String.*` namespace (e.g. `String.concat`, `String.of_int`); desugaring may use helpers like `String.concat_many`, but:
-
-* desugaring is **local and explicit**, and
-* interpolation does **not** perform implicit conversions for arbitrary types.
-
-### 12.4. Idiomatic Extension: Explicit Conversion Functions
-
-To interpolate user-defined types, users write **explicit conversion functions** and use them inside the interpolation expression:
-
-```tw
-type User = .{ name: String, age: Int }
-
-fn user_to_string(u: User) String {
-  "${u.name} (${u.age})"
+for x in tree_preorder_iter(t) {
+  // ...
 }
-
-user: User = .{ name: "Ada", age: 30 }
-s := "user=${user_to_string(user)}"    // ✅ ok
 ```
-
-There is no automatic association between `User` and `user_to_string`. The choice of conversion is explicit at the call site.
 
 ---
 
-## 13. Idiomatic Patterns Without Traits
+## String Interpolation
 
-This section illustrates common patterns Twinkle programmers should prefer instead of traits/interfaces.
+String interpolation (`"${expr}"`) is defined for a fixed set of primitive types:
+`String`, `Int`, `Float`, `Bool`. Other types are a compile-time error.
 
-### 13.1. Generic Pretty-Printing via Capability Records
-
-```tw
-type Show<T> = .{
-  to_string: fn(T) String,
-}
-
-fn print_all<T>(xs: Array<T>, show: Show<T>) {
-  for x in xs {
-    println(show.to_string(x))
-  }
-}
-```
-
-Usage:
+To interpolate user-defined types, use an explicit conversion:
 
 ```tw
-type User = .{ name: String, age: Int }
-
-fn show_user(u: User) String {
-  "${u.name} (${u.age})"
-}
-
-ShowUser: Show<User> = .{
-  to_string: show_user,
-}
-
-users: Array<User> = ...
-print_all(users, ShowUser)
+s := "user=${user_to_string(user)}"
 ```
 
-### 13.2. Equality and Ordering
+There is no automatic association between a type and its string conversion.
 
-Instead of `Eq`/`Ord` traits, define concrete capability records and pass them explicitly:
+---
+
+## Idiomatic Patterns
+
+### Equality and ordering
+
+Instead of `Eq`/`Ord` traits, define capability records and pass them explicitly:
 
 ```tw
 type Eq<T> = .{
@@ -323,54 +138,29 @@ fn contains<T>(xs: Array<T>, needle: T, eq: Eq<T>) Bool {
   }
   false
 }
-
-type Point = .{ x: Int, y: Int }
-
-EqPoint: Eq<Point> = .{
-  equals: fn(a: Point, b: Point) Bool { a.x == b.x && a.y == b.y },
-}
-
-points: Array<Point> = ...
-p: Point = .{ x: 1, y: 2 }
-found := contains(points, p, EqPoint)
 ```
 
-### 13.3. Collection-Specific Helpers
+### Collection helpers
 
-Instead of a general “Iterable” trait, provide small, concrete helpers:
+Instead of a general "Iterable" trait, provide concrete helpers:
 
 ```tw
 fn sum_array(xs: Array<Int>) Int {
   acc := 0
-  for x in xs {
-    acc = acc + x
-  }
+  for x in xs { acc = acc + x }
   acc
 }
 ```
 
-Or, via an explicit iterator type:
-
-```tw
-fn sum_iter(it: Iterator<Int>) Int {
-  acc := 0
-  for x in it {
-    acc = acc + x
-  }
-  acc
-}
-```
-
-User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Iterator<T>`) from explicit functions.
+Or use `Iterator<T>` for generic versions.
 
 ---
 
-## 14. Future Ergonomics (Non-Normative)
+## Future Ergonomics
 
-Twinkle may evolve syntactic conveniences to make constructing and passing capability records easier (e.g. more concise record-literal syntax or helper builders), but:
+Twinkle may add syntactic conveniences to make constructing capability records
+easier, but:
 
-* Such sugar will desugar **locally**, where written,
-* Twinkle will **not** introduce implicit conversions or trait-like instance search,
-* All capability passing will remain **explicit** in function signatures and at call sites.
-
-This preserves Twinkle’s design goals: a small, predictable, statically typed language where data and functions are the primary abstraction mechanisms, and built-ins provide a small amount of carefully delimited “magic” (`for` and String interpolation) without a general trait or interface system.
+* Sugar will desugar locally, where written
+* No implicit conversions or trait-like instance search will be introduced
+* All capability passing will remain explicit in function signatures and at call sites

@@ -572,7 +572,7 @@ The host can then call `run()` again on demand via the Wasm export.
 
 ### 8.2 Imports
 
-> **Design rationale:** See [docs/design/module.md](design/decisions.md) entries D-001 through D-009.
+> **Design rationale:** See [docs/design/module.md](design/module.md).
 
 #### Syntax
 

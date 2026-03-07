@@ -9,7 +9,7 @@
 
 Language design notes, rationale, and open questions.
 
-- [module.md](design/module.md) — Module system design decisions (D-001 through D-009+)
+- [module.md](design/module.md) — Module system design (imports, resolution, aliasing, re-exports)
 - [records.md](design/records.md) — Nominal record types
 - [traits.md](design/traits.md) — Why no traits; records-of-functions instead
 - [iterator.md](design/iterator.md) — Iterator design
@@ -26,11 +26,11 @@ Language design notes, rationale, and open questions.
 Implementation details for compiler and runtime contributors.
 
 - [ir.md](internals/ir.md) — Core IR and ANF IR specification
-- [host-abi.md](internals/host-abi.md) — Wasm host ABI reference
-- [persistent-runtime.md](internals/persistent-runtime.md) — Runtime abstraction layer
-- [query-pipeline.md](internals/query-pipeline.md) — Pipeline architecture
-- [tooling.md](internals/tooling.md) — Formatter, linter, LSP internals
-- [test-plan.md](internals/test-plan.md) — Testing strategy
+- [host-abi.md](internals/host-abi.md) — Host import contract (what Wasmtime/browser/Node.js must provide)
+- [persistent-runtime.md](internals/persistent-runtime.md) — Backend-agnostic runtime surface for immutable data operations
+- [query-pipeline.md](internals/query-pipeline.md) — Refactoring the pipeline into pure per-stage functions (for LSP, testing, self-hosting)
+- [tooling.md](internals/tooling.md) — Design for formatter, linter, and LSP (`twk fmt`, `twk lint`, etc.)
+- [test-plan.md](internals/test-plan.md) — Testing methodology across all compiler stages and runtimes
 
 ## Plans
 
