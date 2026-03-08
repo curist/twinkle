@@ -3,14 +3,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::codegen::prelude::{PreludeEntry, PreludeMap};
 use crate::ir::FuncId;
 use crate::ir::LocalId;
+use crate::ir::VariantId;
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
 use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    CELL_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId,
-    UNFOLD_STEP_TYPE_ID,
+    CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
+    TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
@@ -21,10 +22,47 @@ pub struct FuncSigInfo {
     pub result_mono: Option<MonoType>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UserFuncAbi {
+    pub params: Vec<ValType>,
+    pub results: Vec<ValType>,
+    pub semantic_result_mono: Option<MonoType>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IteratorStateInfo {
     pub yield_ty: MonoType,
     pub seed_ty: MonoType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueRepr {
+    TypedClosure {
+        params: Vec<MonoType>,
+        ret: MonoType,
+    },
+    TypedCell {
+        elem_ty: MonoType,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LocalBackendInfo {
+    pub repr: Option<ValueRepr>,
+    pub iterator_state: Option<IteratorStateInfo>,
+    pub iterator_next_state: Option<IteratorStateInfo>,
+    pub iter_item_state: Option<IteratorStateInfo>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SpecializedTypeRegistry {
+    pub iterator_helpers: BTreeMap<String, IteratorStateInfo>,
+    pub typed_iterator_states: BTreeMap<String, IteratorStateInfo>,
+    pub typed_iter_items: BTreeMap<String, IteratorStateInfo>,
+    pub typed_iter_options: BTreeMap<String, IteratorStateInfo>,
+    pub typed_unfold_steps: BTreeMap<String, (MonoType, MonoType)>,
+    pub typed_closures: BTreeMap<String, (Vec<MonoType>, MonoType)>,
+    pub typed_cells: BTreeMap<String, MonoType>,
 }
 
 pub struct EmitCtx<'a> {
@@ -36,9 +74,8 @@ pub struct EmitCtx<'a> {
     /// Tracks local bindings created from `AMakeClosure` so direct user calls
     /// can materialize typed closures only at concrete higher-order boundaries.
     pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
-    /// Tracks iterator locals that are known to come from a concrete
-    /// `Iterator.unfold(seed, step)` instantiation.
-    pub local_iterator_states: HashMap<LocalId, IteratorStateInfo>,
+    /// Unified backend flow metadata for iterator-related local specialization.
+    pub local_backend: HashMap<LocalId, LocalBackendInfo>,
     assigned_locals: HashSet<LocalId>,
     rebound_locals: HashSet<LocalId>,
     in_init_func: bool,
@@ -58,7 +95,7 @@ pub struct EmitCtx<'a> {
     /// iterator-unfold state. This lets callers specialize `Iterator.next`
     /// even though the surface type is only `Iterator<T>`.
     pub user_func_iterator_states: HashMap<FuncId, IteratorStateInfo>,
-    requested_iterator_helpers: BTreeMap<String, IteratorStateInfo>,
+    specialized_types: SpecializedTypeRegistry,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -72,7 +109,7 @@ impl<'a> EmitCtx<'a> {
             local_mono: HashMap::new(),
             capture_mono_by_func: HashMap::new(),
             closure_locals: HashMap::new(),
-            local_iterator_states: HashMap::new(),
+            local_backend: HashMap::new(),
             assigned_locals: HashSet::new(),
             rebound_locals: HashSet::new(),
             in_init_func: false,
@@ -87,7 +124,7 @@ impl<'a> EmitCtx<'a> {
             user_funcs,
             concrete_func_sigs: HashMap::new(),
             user_func_iterator_states: HashMap::new(),
-            requested_iterator_helpers: BTreeMap::new(),
+            specialized_types: SpecializedTypeRegistry::default(),
         }
     }
 
@@ -113,11 +150,85 @@ impl<'a> EmitCtx<'a> {
     }
 
     pub fn request_iterator_helper(&mut self, sym: String, info: IteratorStateInfo) {
-        self.requested_iterator_helpers.entry(sym).or_insert(info);
+        self.specialized_types
+            .iterator_helpers
+            .entry(sym)
+            .or_insert(info);
     }
 
     pub fn requested_iterator_helpers(&self) -> &BTreeMap<String, IteratorStateInfo> {
-        &self.requested_iterator_helpers
+        &self.specialized_types.iterator_helpers
+    }
+
+    pub fn request_typed_iterator_state(&mut self, sym: String, info: IteratorStateInfo) {
+        self.specialized_types
+            .typed_iterator_states
+            .entry(sym)
+            .or_insert(info);
+    }
+
+    pub fn requested_typed_iterator_states(&self) -> &BTreeMap<String, IteratorStateInfo> {
+        &self.specialized_types.typed_iterator_states
+    }
+
+    pub fn request_typed_iter_item(&mut self, sym: String, info: IteratorStateInfo) {
+        self.specialized_types
+            .typed_iter_items
+            .entry(sym)
+            .or_insert(info);
+    }
+
+    pub fn requested_typed_iter_items(&self) -> &BTreeMap<String, IteratorStateInfo> {
+        &self.specialized_types.typed_iter_items
+    }
+
+    pub fn request_typed_iter_option(&mut self, sym: String, info: IteratorStateInfo) {
+        self.specialized_types
+            .typed_iter_options
+            .entry(sym)
+            .or_insert(info);
+    }
+
+    pub fn requested_typed_iter_options(&self) -> &BTreeMap<String, IteratorStateInfo> {
+        &self.specialized_types.typed_iter_options
+    }
+
+    pub fn request_typed_unfold_step(
+        &mut self,
+        sym: String,
+        yield_ty: MonoType,
+        seed_ty: MonoType,
+    ) {
+        self.specialized_types
+            .typed_unfold_steps
+            .entry(sym)
+            .or_insert((yield_ty, seed_ty));
+    }
+
+    pub fn requested_typed_unfold_steps(&self) -> &BTreeMap<String, (MonoType, MonoType)> {
+        &self.specialized_types.typed_unfold_steps
+    }
+
+    pub fn request_typed_closure(&mut self, sym: String, params: Vec<MonoType>, ret: MonoType) {
+        self.specialized_types
+            .typed_closures
+            .entry(sym)
+            .or_insert((params, ret));
+    }
+
+    pub fn requested_typed_closures(&self) -> &BTreeMap<String, (Vec<MonoType>, MonoType)> {
+        &self.specialized_types.typed_closures
+    }
+
+    pub fn request_typed_cell(&mut self, sym: String, elem_ty: MonoType) {
+        self.specialized_types
+            .typed_cells
+            .entry(sym)
+            .or_insert(elem_ty);
+    }
+
+    pub fn requested_typed_cells(&self) -> &BTreeMap<String, MonoType> {
+        &self.specialized_types.typed_cells
     }
 
     pub fn setup_locals(&mut self, func: &AnfFunctionDef) -> Vec<ValType> {
@@ -132,7 +243,7 @@ impl<'a> EmitCtx<'a> {
         self.local_map.clear();
         self.local_mono.clear();
         self.closure_locals.clear();
-        self.local_iterator_states.clear();
+        self.local_backend.clear();
         self.assigned_locals.clear();
         self.rebound_locals.clear();
         self.label_stack.clear();
@@ -156,11 +267,17 @@ impl<'a> EmitCtx<'a> {
                 || self.rebound_locals.contains(local_id))
                 && should_erase_assigned_local(&mono_ty);
             let erase_init_cell = self.in_init_func && is_cell_mono(&mono_ty);
+            let local_repr = if erased_assignment || erase_init_cell {
+                None
+            } else {
+                value_repr_from_mono(&mono_ty, &self.concrete_func_sigs)
+            };
             if !erased_assignment {
                 if !erase_init_cell {
                     self.local_mono.insert(*local_id, mono_ty.clone());
                 }
             }
+            self.set_local_value_repr(*local_id, local_repr);
             let ty = if erased_assignment || erase_init_cell {
                 ValType::Anyref
             } else {
@@ -173,9 +290,13 @@ impl<'a> EmitCtx<'a> {
             self.local_map.insert(*local_id, (next_idx, ty.clone()));
             next_idx += 1;
         }
-        if let Some(capture_mono) = self.capture_mono_by_func.get(&func.func_id) {
+        if let Some(capture_mono) = self.capture_mono_by_func.get(&func.func_id).cloned() {
             for (local_id, mono) in capture_mono {
-                self.local_mono.insert(*local_id, mono.clone());
+                self.local_mono.insert(local_id, mono.clone());
+                self.set_local_value_repr(
+                    local_id,
+                    value_repr_from_mono(&mono, &self.concrete_func_sigs),
+                );
             }
         }
 
@@ -237,12 +358,193 @@ impl<'a> EmitCtx<'a> {
         self.module_globals.get(&local_id)
     }
 
+    pub fn local_iterator_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.iterator_state.clone())
+    }
+
+    pub fn local_value_repr(&self, local_id: LocalId) -> Option<ValueRepr> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.repr.clone())
+    }
+
+    pub fn local_typed_closure_sig(&self, local_id: LocalId) -> Option<(Vec<MonoType>, MonoType)> {
+        match self.local_value_repr(local_id)? {
+            ValueRepr::TypedClosure { params, ret } => Some((params, ret)),
+            _ => None,
+        }
+    }
+
+    pub fn local_typed_cell_elem(&self, local_id: LocalId) -> Option<MonoType> {
+        match self.local_value_repr(local_id)? {
+            ValueRepr::TypedCell { elem_ty } => Some(elem_ty),
+            _ => None,
+        }
+    }
+
+    pub fn local_iterator_next_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.iterator_next_state.clone())
+    }
+
+    pub fn local_iter_item_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.iter_item_state.clone())
+    }
+
+    pub(crate) fn set_local_iterator_state(
+        &mut self,
+        local_id: LocalId,
+        info: Option<IteratorStateInfo>,
+    ) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.iterator_state = info;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    pub(crate) fn set_local_iterator_next_state(
+        &mut self,
+        local_id: LocalId,
+        info: Option<IteratorStateInfo>,
+    ) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.iterator_next_state = info;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    pub(crate) fn set_local_iter_item_state(
+        &mut self,
+        local_id: LocalId,
+        info: Option<IteratorStateInfo>,
+    ) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.iter_item_state = info;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    pub(crate) fn set_local_value_repr(&mut self, local_id: LocalId, repr: Option<ValueRepr>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.repr = repr;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_local_typed_closure_sig(
+        &mut self,
+        local_id: LocalId,
+        sig: Option<(Vec<MonoType>, MonoType)>,
+    ) {
+        let repr = sig.map(|(params, ret)| ValueRepr::TypedClosure { params, ret });
+        self.set_local_value_repr(local_id, repr);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_local_typed_cell_elem(&mut self, local_id: LocalId, elem: Option<MonoType>) {
+        let repr = elem.map(|elem_ty| ValueRepr::TypedCell { elem_ty });
+        self.set_local_value_repr(local_id, repr);
+    }
+
     pub fn user_func_sig(&self, func_id: FuncId) -> Option<&FuncSigInfo> {
         self.user_funcs.get(&func_id)
     }
 
+    pub fn user_func_abi(&self, func_id: FuncId) -> Option<UserFuncAbi> {
+        let sig = self.user_funcs.get(&func_id)?;
+        Some(UserFuncAbi {
+            params: sig.params.clone(),
+            results: sig.result.iter().cloned().collect(),
+            semantic_result_mono: sig.result_mono.clone(),
+        })
+    }
+
     pub fn infer_op_mono_for_emit(&self, op: &AnfOp) -> Option<MonoType> {
         self.infer_op_mono(op)
+    }
+
+    pub fn infer_atom_mono_for_emit(&self, atom: &Atom) -> Option<MonoType> {
+        self.infer_atom_mono(atom)
+    }
+
+    fn push_flow_mono_binding(
+        &mut self,
+        local: LocalId,
+        mono: Option<MonoType>,
+        restores: &mut Vec<(LocalId, Option<MonoType>)>,
+    ) {
+        let prev = match mono {
+            Some(mono) => self.local_mono.insert(local, mono),
+            None => self.local_mono.remove(&local),
+        };
+        restores.push((local, prev));
+    }
+
+    fn restore_flow_mono_binding(&mut self, local: LocalId, prev: Option<MonoType>) {
+        if let Some(prev) = prev {
+            self.local_mono.insert(local, prev);
+        } else {
+            self.local_mono.remove(&local);
+        }
+    }
+
+    fn push_flow_value_repr_binding(
+        &mut self,
+        local: LocalId,
+        repr: Option<ValueRepr>,
+        restores: &mut Vec<(LocalId, Option<ValueRepr>)>,
+    ) {
+        let prev = self.local_value_repr(local);
+        self.set_local_value_repr(local, repr);
+        restores.push((local, prev));
+    }
+
+    fn restore_flow_value_repr_binding(&mut self, local: LocalId, prev: Option<ValueRepr>) {
+        self.set_local_value_repr(local, prev);
+    }
+
+    fn push_flow_iterator_binding(
+        &mut self,
+        local: LocalId,
+        info: Option<IteratorStateInfo>,
+        restores: &mut Vec<(LocalId, Option<IteratorStateInfo>)>,
+    ) {
+        let prev = self.local_iterator_state(local);
+        self.set_local_iterator_state(local, info);
+        restores.push((local, prev));
+    }
+
+    fn restore_flow_iterator_binding(&mut self, local: LocalId, prev: Option<IteratorStateInfo>) {
+        self.set_local_iterator_state(local, prev);
+    }
+
+    fn push_flow_iterator_next_binding(
+        &mut self,
+        local: LocalId,
+        info: Option<IteratorStateInfo>,
+        restores: &mut Vec<(LocalId, Option<IteratorStateInfo>)>,
+    ) {
+        let prev = self.local_iterator_next_state(local);
+        self.set_local_iterator_next_state(local, info);
+        restores.push((local, prev));
+    }
+
+    fn restore_flow_iterator_next_binding(
+        &mut self,
+        local: LocalId,
+        prev: Option<IteratorStateInfo>,
+    ) {
+        self.set_local_iterator_next_state(local, prev);
     }
 
     fn assign_expr_locals(
@@ -263,6 +565,8 @@ impl<'a> EmitCtx<'a> {
                     } else {
                         self.infer_op_mono(op)
                     };
+                    let iterator_state = iterator_state_from_setup_op(op, self);
+                    let iterator_next_state = iterator_next_result_state_from_op(op, self);
                     let erase_assignment = (self.assigned_locals.contains(local)
                         || self.rebound_locals.contains(local))
                         && inferred_mono
@@ -272,23 +576,41 @@ impl<'a> EmitCtx<'a> {
                         self.in_init_func && inferred_mono.as_ref().is_some_and(is_cell_mono);
                     let local_ty = if erase_assignment || erase_init_cell {
                         ValType::Anyref
+                    } else if let Some(info) = iterator_state.as_ref() {
+                        ref_named(true, &typed_iterator_state_sym(info))
+                    } else if let Some(info) = iterator_next_state.as_ref() {
+                        ref_named(true, &typed_iter_option_sym(info))
                     } else {
-                        inferred_mono
-                            .as_ref()
-                            .map(|mono| {
-                                mono_to_valtype_specialized(
-                                    mono,
-                                    self.type_env,
-                                    &self.concrete_func_sigs,
-                                )
+                        self.infer_op_valtype(op)
+                            .or_else(|| {
+                                inferred_mono.as_ref().map(|mono| {
+                                    mono_to_valtype_specialized(
+                                        mono,
+                                        self.type_env,
+                                        &self.concrete_func_sigs,
+                                    )
+                                })
                             })
-                            .or_else(|| self.infer_op_valtype(op))
                             .unwrap_or(ValType::Anyref)
                     };
-                    if let Some(mono) =
-                        inferred_mono.filter(|_| !(erase_assignment || erase_init_cell))
-                    {
+                    let preserved_mono = inferred_mono
+                        .as_ref()
+                        .filter(|_| !(erase_assignment || erase_init_cell))
+                        .cloned();
+                    if let Some(mono) = preserved_mono.clone() {
                         self.local_mono.insert(*local, mono);
+                    }
+                    self.set_local_value_repr(
+                        *local,
+                        preserved_mono
+                            .as_ref()
+                            .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
+                    );
+                    if let Some(info) = iterator_state {
+                        self.set_local_iterator_state(*local, Some(info));
+                    }
+                    if let Some(info) = iterator_next_state {
+                        self.set_local_iterator_next_state(*local, Some(info));
                     }
                     if let AnfOp::AMakeClosure { func_id, free_vars } = op.as_ref() {
                         self.closure_locals
@@ -299,7 +621,67 @@ impl<'a> EmitCtx<'a> {
                     *next_idx += 1;
                 }
 
+                let mut mono_restores = Vec::new();
+                let mut repr_restores = Vec::new();
+                let mut iterator_restores = Vec::new();
+                let mut iterator_next_restores = Vec::new();
+                let local_mono = self.infer_op_mono(op);
+                self.push_flow_mono_binding(*local, local_mono.clone(), &mut mono_restores);
+                self.push_flow_value_repr_binding(
+                    *local,
+                    local_mono
+                        .as_ref()
+                        .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
+                    &mut repr_restores,
+                );
+                self.push_flow_iterator_binding(
+                    *local,
+                    iterator_state_from_setup_op(op, self),
+                    &mut iterator_restores,
+                );
+                self.push_flow_iterator_next_binding(
+                    *local,
+                    iterator_next_result_state_from_op(op, self),
+                    &mut iterator_next_restores,
+                );
+                if let AnfOp::AAssign {
+                    local: target,
+                    value,
+                } = op.as_ref()
+                {
+                    let value_mono = self.infer_atom_mono(value);
+                    self.push_flow_mono_binding(*target, value_mono.clone(), &mut mono_restores);
+                    self.push_flow_value_repr_binding(
+                        *target,
+                        value_mono
+                            .as_ref()
+                            .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
+                        &mut repr_restores,
+                    );
+                    self.push_flow_iterator_binding(
+                        *target,
+                        atom_iterator_state(value, self),
+                        &mut iterator_restores,
+                    );
+                    self.push_flow_iterator_next_binding(
+                        *target,
+                        iterator_next_result_state_from_atom(value, self),
+                        &mut iterator_next_restores,
+                    );
+                }
                 self.assign_expr_locals(body, next_idx, wasm_locals);
+                while let Some((local_id, prev)) = iterator_next_restores.pop() {
+                    self.restore_flow_iterator_next_binding(local_id, prev);
+                }
+                while let Some((local_id, prev)) = iterator_restores.pop() {
+                    self.restore_flow_iterator_binding(local_id, prev);
+                }
+                while let Some((local_id, prev)) = repr_restores.pop() {
+                    self.restore_flow_value_repr_binding(local_id, prev);
+                }
+                while let Some((local_id, prev)) = mono_restores.pop() {
+                    self.restore_flow_mono_binding(local_id, prev);
+                }
             }
             AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) | AnfExpr::Atom(atom) => {
                 self.infer_atom_valtype(atom);
@@ -321,33 +703,55 @@ impl<'a> EmitCtx<'a> {
             AnfOp::AMatch { scrutinee, arms } => {
                 // Pre-compute pattern binding types across all arms before visiting
                 // arm bodies so local type inference can use concrete binding types.
-                let scrutinee_ty = self.infer_atom_valtype(scrutinee);
-                let mut pat_types: HashMap<LocalId, ValType> = HashMap::new();
+                let scrutinee_mono = self.infer_atom_mono(scrutinee);
+                let option_iter_item_state = iterator_next_result_state_from_atom(scrutinee, self);
+                let mut pat_types: HashMap<
+                    LocalId,
+                    (ValType, Option<MonoType>, Option<IteratorStateInfo>),
+                > = HashMap::new();
                 for AnfMatchArm { pattern, .. } in arms {
                     let mut typed = Vec::new();
                     collect_pattern_locals_typed(
                         pattern,
-                        scrutinee_ty.as_ref(),
+                        scrutinee_mono.as_ref(),
+                        option_iter_item_state.as_ref(),
                         self.type_env,
+                        &self.concrete_func_sigs,
                         &mut typed,
                     );
-                    for (local_id, inferred_ty) in typed {
+                    for (local_id, inferred_ty, inferred_mono, inferred_iter_item_state) in typed {
                         pat_types
                             .entry(local_id)
-                            .and_modify(|existing| {
-                                if *existing != inferred_ty {
-                                    *existing = ValType::Anyref;
+                            .and_modify(|(existing_ty, existing_mono, existing_iter_item_state)| {
+                                if *existing_ty != inferred_ty {
+                                    *existing_ty = ValType::Anyref;
+                                    *existing_mono = None;
+                                    *existing_iter_item_state = None;
+                                } else if *existing_mono != inferred_mono {
+                                    *existing_mono = None;
+                                } else if *existing_iter_item_state != inferred_iter_item_state {
+                                    *existing_iter_item_state = None;
                                 }
                             })
-                            .or_insert(inferred_ty);
+                            .or_insert((inferred_ty, inferred_mono, inferred_iter_item_state));
                     }
                 }
                 let mut pat_locals = pat_types.into_iter().collect::<Vec<_>>();
                 pat_locals.sort_by_key(|(local_id, _)| local_id.0);
-                for (local_id, local_ty) in pat_locals {
+                for (local_id, (local_ty, local_mono, local_iter_item_state)) in pat_locals {
                     if !self.local_map.contains_key(&local_id) {
                         self.local_map
                             .insert(local_id, (*next_idx, local_ty.clone()));
+                        if let Some(mono) = local_mono {
+                            let repr = value_repr_from_mono(&mono, &self.concrete_func_sigs);
+                            self.local_mono.insert(local_id, mono);
+                            self.set_local_value_repr(local_id, repr);
+                        } else {
+                            self.set_local_value_repr(local_id, None);
+                        }
+                        if let Some(info) = local_iter_item_state {
+                            self.set_local_iter_item_state(local_id, Some(info));
+                        }
                         wasm_locals.push(local_ty);
                         *next_idx += 1;
                     }
@@ -416,19 +820,47 @@ impl<'a> EmitCtx<'a> {
             AnfOp::ARecord { type_id, .. } | AnfOp::ARecordUpdate { type_id, .. } => {
                 Some(ref_named(true, &user_record_type_sym(*type_id)))
             }
+            AnfOp::AVariant {
+                type_id,
+                variant,
+                args,
+            } if !self.concrete_func_sigs.is_empty() && *type_id == UNFOLD_STEP_TYPE_ID => {
+                if let Some((yield_ty, seed_ty)) = resolve_unfold_step_types(*variant, args, self) {
+                    let sym = typed_unfold_step_sym(&yield_ty, &seed_ty);
+                    Some(ref_named(true, &sym))
+                } else {
+                    Some(ref_named(true, T_VARIANT))
+                }
+            }
             AnfOp::AVariant { .. } => Some(ref_named(true, T_VARIANT)),
             AnfOp::AArrayLit(_) => Some(ref_named(true, T_ARRAY)),
             AnfOp::AInit { value } => self.infer_atom_valtype(value),
             AnfOp::AAssign { .. } | AnfOp::ADefer(_) => Some(ValType::I32),
             AnfOp::ALoop { body } => self.infer_loop_result_valtype(body),
-            AnfOp::ARecordGet { field, type_id, .. } => {
-                self.infer_record_field_valtype(*type_id, *field)
-            }
+            AnfOp::ARecordGet {
+                target,
+                field,
+                type_id,
+            } => self.infer_record_field_valtype(
+                *type_id,
+                *field,
+                self.infer_atom_mono(target).as_ref(),
+                iter_item_state_from_atom(target, self).as_ref(),
+            ),
             AnfOp::AIndex { result_ty, .. } => Some(mono_to_valtype(result_ty, self.type_env)),
         }
     }
 
     fn infer_atom_valtype(&self, atom: &Atom) -> Option<ValType> {
+        if let Some(info) = iter_item_state_from_atom(atom, self) {
+            return Some(ref_named(true, &typed_iter_item_sym(&info)));
+        }
+        if let Some(info) = iterator_next_result_state_from_atom(atom, self) {
+            return Some(ref_named(true, &typed_iter_option_sym(&info)));
+        }
+        if let Some(info) = atom_iterator_state(atom, self) {
+            return Some(ref_named(true, &typed_iterator_state_sym(&info)));
+        }
         self.infer_atom_mono(atom)
             .map(|mono| mono_to_valtype_specialized(&mono, self.type_env, &self.concrete_func_sigs))
             .or_else(|| match atom {
@@ -461,8 +893,24 @@ impl<'a> EmitCtx<'a> {
     }
 
     fn infer_call_result_valtype(&self, callee: &Atom, args: &[Atom]) -> Option<ValType> {
+        if let Atom::AGlobalFunc(func_id) = callee {
+            use crate::ir::lower::prelude as ids;
+
+            if *func_id == ids::ITERATOR_UNFOLD {
+                if let Some(info) =
+                    iterator_state_from_unfold_args(args.first()?, args.get(1)?, self)
+                {
+                    return Some(ref_named(true, &typed_iterator_state_sym(&info)));
+                }
+            }
+            if *func_id == ids::ITERATOR_NEXT {
+                if let Some(info) = atom_iterator_state(args.first()?, self) {
+                    return Some(ref_named(true, &typed_iter_option_sym(&info)));
+                }
+            }
+        }
         if let Some(mono) = self.infer_call_result_mono(callee, args) {
-            return Some(mono_to_valtype_specialized(
+            return Some(mono_to_valtype_for_call_result_abi(
                 &mono,
                 self.type_env,
                 &self.concrete_func_sigs,
@@ -482,10 +930,10 @@ impl<'a> EmitCtx<'a> {
                     .and_then(|sig| sig.result.clone())
             }
             Atom::ALocal(local_id) => {
-                if let Some(MonoType::Function { ret, .. }) = self.local_mono.get(local_id) {
-                    if is_concrete_mono_type(ret) {
+                if let Some((_params, ret)) = self.local_typed_closure_sig(*local_id) {
+                    if is_concrete_mono_type(&ret) {
                         return Some(mono_to_valtype_specialized(
-                            ret,
+                            &ret,
                             self.type_env,
                             &self.concrete_func_sigs,
                         ));
@@ -531,10 +979,23 @@ impl<'a> EmitCtx<'a> {
         &self,
         type_id: TypeId,
         field: crate::ir::FieldId,
+        target_mono: Option<&MonoType>,
+        target_iter_item_state: Option<&IteratorStateInfo>,
     ) -> Option<ValType> {
-        let field_ty = record_field_mono(self.type_env, type_id, field.0)?;
+        if let Some(info) = target_iter_item_state.filter(|_| type_id == ITER_ITEM_TYPE_ID) {
+            return Some(match field.0 {
+                0 => mono_to_valtype_specialized(
+                    &info.yield_ty,
+                    self.type_env,
+                    &self.concrete_func_sigs,
+                ),
+                1 => ref_named(true, &typed_iterator_state_sym(info)),
+                _ => return None,
+            });
+        }
+        let field_ty = record_field_mono(self.type_env, type_id, field.0, target_mono)?;
         Some(mono_to_valtype_specialized(
-            field_ty,
+            &field_ty,
             self.type_env,
             &self.concrete_func_sigs,
         ))
@@ -607,10 +1068,33 @@ impl<'a> EmitCtx<'a> {
             AnfOp::ARecord { type_id, .. } | AnfOp::ARecordUpdate { type_id, .. } => {
                 Some(MonoType::named(*type_id))
             }
-            AnfOp::ARecordGet { type_id, field, .. } => {
-                record_field_mono(self.type_env, *type_id, field.0).cloned()
+            AnfOp::ARecordGet {
+                target,
+                type_id,
+                field,
+            } => record_field_mono(
+                self.type_env,
+                *type_id,
+                field.0,
+                self.infer_atom_mono(target).as_ref(),
+            ),
+            AnfOp::AVariant {
+                type_id,
+                variant,
+                args,
+            } => {
+                if !self.concrete_func_sigs.is_empty() && *type_id == UNFOLD_STEP_TYPE_ID {
+                    if let Some((yield_ty, seed_ty)) =
+                        resolve_unfold_step_types(*variant, args, self)
+                    {
+                        return Some(MonoType::Named {
+                            type_id: UNFOLD_STEP_TYPE_ID,
+                            args: vec![yield_ty, seed_ty],
+                        });
+                    }
+                }
+                Some(MonoType::named(*type_id))
             }
-            AnfOp::AVariant { type_id, .. } => Some(MonoType::named(*type_id)),
             AnfOp::AArrayLit(elems) => {
                 let first = elems.first()?;
                 let elem_ty = self.infer_atom_mono(first)?;
@@ -642,6 +1126,28 @@ impl<'a> EmitCtx<'a> {
                             args: vec![inner],
                         })
                     }
+                    id if id == ids::ITERATOR_UNFOLD => {
+                        let seed_ty = self.infer_atom_mono(args.first()?)?;
+                        let MonoType::Function { params, ret } =
+                            self.infer_atom_mono(args.get(1)?)?
+                        else {
+                            return None;
+                        };
+                        if params.len() != 1 || params[0] != seed_ty {
+                            return None;
+                        }
+                        let MonoType::Named { type_id, args } = ret.as_ref() else {
+                            return None;
+                        };
+                        if *type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 || args[1] != seed_ty
+                        {
+                            return None;
+                        }
+                        Some(MonoType::Named {
+                            type_id: ITERATOR_TYPE_ID,
+                            args: vec![args[0].clone()],
+                        })
+                    }
                     id if id == ids::CELL_GET => match self.infer_atom_mono(args.first()?)? {
                         MonoType::Named { type_id, args } if type_id == CELL_TYPE_ID => {
                             args.into_iter().next()
@@ -649,6 +1155,11 @@ impl<'a> EmitCtx<'a> {
                         _ => None,
                     },
                     id if id == ids::CELL_SET || id == ids::CELL_UPDATE => Some(MonoType::Void),
+                    id if id == ids::ITERATOR_NEXT => infer_iterator_item_mono(args.first()?, self)
+                        .map(|item_ty| MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![item_ty],
+                        }),
                     _ => self
                         .user_funcs
                         .get(func_id)
@@ -656,11 +1167,10 @@ impl<'a> EmitCtx<'a> {
                 }
             }
             Atom::ALocal(local_id) => {
-                if let Some(MonoType::Function { ret, .. }) = self.local_mono.get(local_id) {
-                    Some((**ret).clone())
-                } else {
-                    None
+                if let Some((_, ret)) = self.local_typed_closure_sig(*local_id) {
+                    return Some(ret);
                 }
+                None
             }
             _ => None,
         }
@@ -677,15 +1187,36 @@ impl<'a> EmitCtx<'a> {
     }
 }
 
-fn record_field_mono<'a>(
-    type_env: &'a TypeEnv,
+fn record_field_mono(
+    type_env: &TypeEnv,
     type_id: TypeId,
     field_idx: usize,
-) -> Option<&'a MonoType> {
+    target_mono: Option<&MonoType>,
+) -> Option<MonoType> {
+    if type_id == ITER_ITEM_TYPE_ID {
+        if let Some(MonoType::Named {
+            type_id: mono_type_id,
+            args,
+        }) = target_mono
+        {
+            if *mono_type_id == ITER_ITEM_TYPE_ID && args.len() == 1 {
+                return match field_idx {
+                    0 => args.first().cloned(),
+                    1 => Some(MonoType::Named {
+                        type_id: ITERATOR_TYPE_ID,
+                        args: vec![args[0].clone()],
+                    }),
+                    _ => None,
+                };
+            }
+        }
+    }
     match type_env.get_def(type_id)? {
-        TypeDef::Record { fields, .. } => fields.get(field_idx).map(|f| &f.ty),
+        TypeDef::Record { fields, .. } => fields.get(field_idx).map(|f| f.ty.clone()),
         TypeDef::Alias { target, .. } => match target {
-            MonoType::Named { type_id, .. } => record_field_mono(type_env, *type_id, field_idx),
+            MonoType::Named { type_id, .. } => {
+                record_field_mono(type_env, *type_id, field_idx, target_mono)
+            }
             _ => None,
         },
         TypeDef::Sum { .. } => None,
@@ -701,19 +1232,52 @@ fn expr_always_diverges(expr: &AnfExpr) -> bool {
 }
 
 fn should_erase_assigned_local(mono: &MonoType) -> bool {
-    !matches!(
-        mono,
+    match mono {
         MonoType::Int
-            | MonoType::Float
-            | MonoType::Bool
-            | MonoType::String
-            | MonoType::Void
-            | MonoType::Never
-    )
+        | MonoType::Float
+        | MonoType::Bool
+        | MonoType::String
+        | MonoType::Void
+        | MonoType::Never => false,
+        _ => true,
+    }
 }
 
 fn is_cell_mono(mono: &MonoType) -> bool {
     matches!(mono, MonoType::Named { type_id, .. } if *type_id == CELL_TYPE_ID)
+}
+
+fn local_backend_entry_empty(info: &LocalBackendInfo) -> bool {
+    info.repr.is_none()
+        && info.iterator_state.is_none()
+        && info.iterator_next_state.is_none()
+        && info.iter_item_state.is_none()
+}
+
+pub(crate) fn value_repr_from_mono(
+    mono: &MonoType,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> Option<ValueRepr> {
+    if concrete_func_sigs.is_empty() {
+        return None;
+    }
+
+    match mono {
+        MonoType::Function { params, ret } if is_concrete_mono_type(mono) => {
+            Some(ValueRepr::TypedClosure {
+                params: params.clone(),
+                ret: ret.as_ref().clone(),
+            })
+        }
+        MonoType::Named { type_id, args }
+            if *type_id == CELL_TYPE_ID && args.len() == 1 && is_concrete_mono_type(&args[0]) =>
+        {
+            Some(ValueRepr::TypedCell {
+                elem_ty: args[0].clone(),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn collect_assigned_locals_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
@@ -891,6 +1455,107 @@ fn runtime_result_valtype(func_id: FuncId, entry: &PreludeEntry) -> Option<ValTy
     }
 }
 
+fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iterator_state(*local_id),
+        _ => None,
+    }
+}
+
+fn iterator_state_from_unfold_args(
+    seed: &Atom,
+    step: &Atom,
+    ctx: &EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    let seed_ty = ctx.infer_atom_mono(seed)?;
+    let MonoType::Function { params, ret } = ctx.infer_atom_mono(step)? else {
+        return None;
+    };
+    if params.len() != 1 || params[0] != seed_ty {
+        return None;
+    }
+    let MonoType::Named { type_id, args } = ret.as_ref() else {
+        return None;
+    };
+    if *type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 || args[1] != seed_ty {
+        return None;
+    }
+    Some(IteratorStateInfo {
+        yield_ty: args[0].clone(),
+        seed_ty,
+    })
+}
+
+fn iterator_next_result_state_from_atom(
+    atom: &Atom,
+    ctx: &EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id),
+        _ => None,
+    }
+}
+
+fn iter_item_state_from_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iter_item_state(*local_id),
+        _ => None,
+    }
+}
+
+fn iterator_state_from_setup_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id)
+                if *func_id == crate::ir::lower::prelude::ITERATOR_UNFOLD =>
+            {
+                iterator_state_from_unfold_args(args.first()?, args.get(1)?, ctx)
+            }
+            _ => None,
+        },
+        AnfOp::ARecordGet {
+            target,
+            type_id,
+            field,
+        } if *type_id == ITER_ITEM_TYPE_ID && field.0 == 1 => {
+            iter_item_state_from_atom(target, ctx)
+        }
+        AnfOp::AInit { value } => atom_iterator_state(value, ctx),
+        _ => None,
+    }
+}
+
+fn iterator_next_result_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id) if *func_id == crate::ir::lower::prelude::ITERATOR_NEXT => {
+                atom_iterator_state(args.first()?, ctx)
+            }
+            _ => None,
+        },
+        AnfOp::AInit { value } => iterator_next_result_state_from_atom(value, ctx),
+        _ => None,
+    }
+}
+
+fn infer_iterator_item_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    if let Some(info) = atom_iterator_state(atom, ctx) {
+        return Some(MonoType::Named {
+            type_id: ITER_ITEM_TYPE_ID,
+            args: vec![info.yield_ty],
+        });
+    }
+    match ctx.infer_atom_mono(atom)? {
+        MonoType::Named { type_id, args } if type_id == ITERATOR_TYPE_ID && args.len() == 1 => {
+            Some(MonoType::Named {
+                type_id: ITER_ITEM_TYPE_ID,
+                args: vec![args[0].clone()],
+            })
+        }
+        _ => None,
+    }
+}
+
 pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
     match ty {
         MonoType::Int => ValType::I64,
@@ -919,6 +1584,15 @@ pub fn mono_to_valtype_specialized(
         }
         MonoType::Named { type_id, args }
             if !concrete_func_sigs.is_empty()
+                && *type_id == UNFOLD_STEP_TYPE_ID
+                && args.len() == 2
+                && is_concrete_mono_type(&args[0])
+                && is_concrete_mono_type(&args[1]) =>
+        {
+            ref_named(true, &typed_unfold_step_sym(&args[0], &args[1]))
+        }
+        MonoType::Named { type_id, args }
+            if !concrete_func_sigs.is_empty()
                 && *type_id == CELL_TYPE_ID
                 && args.len() == 1
                 && is_concrete_mono_type(&args[0]) =>
@@ -926,6 +1600,24 @@ pub fn mono_to_valtype_specialized(
             ref_named(true, &typed_cell_struct_sym(&args[0]))
         }
         _ => mono_to_valtype(ty, type_env),
+    }
+}
+
+fn mono_to_valtype_for_call_result_abi(
+    ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> ValType {
+    match ty {
+        MonoType::Named { type_id, .. }
+            if *type_id == ITERATOR_TYPE_ID
+                || *type_id == UNFOLD_STEP_TYPE_ID
+                || *type_id == ITER_ITEM_TYPE_ID
+                || *type_id == OPTION_TYPE_ID =>
+        {
+            mono_to_valtype(ty, type_env)
+        }
+        _ => mono_to_valtype_specialized(ty, type_env, concrete_func_sigs),
     }
 }
 
@@ -1058,19 +1750,96 @@ pub fn typed_cell_struct_sym(elem: &MonoType) -> String {
     format!("cell_{}", mono_to_symbol_key(elem))
 }
 
+/// Resolve concrete `(yield_ty, seed_ty)` for an UnfoldStep variant literal.
+///
+/// For `Yield(value, next_seed)`: infers types from the atom arguments.
+/// For `Done` (no args): falls back to the current function's return type.
+pub fn resolve_unfold_step_types(
+    variant: VariantId,
+    args: &[Atom],
+    ctx: &EmitCtx<'_>,
+) -> Option<(MonoType, MonoType)> {
+    // Yield: try to infer types from the args
+    if variant.0 == 1 && args.len() == 2 {
+        let yield_ty = ctx.infer_atom_mono(&args[0])?;
+        let seed_ty = ctx.infer_atom_mono(&args[1])?;
+        if is_concrete_mono_type(&yield_ty) && is_concrete_mono_type(&seed_ty) {
+            return Some((yield_ty, seed_ty));
+        }
+    }
+    // Done or fallback: use current function's return type
+    let func_id = ctx.current_func_id?;
+    let sig = ctx.user_func_sig(func_id)?;
+    let result_mono = sig.result_mono.as_ref()?;
+    if let MonoType::Named { type_id, args } = result_mono {
+        if *type_id == UNFOLD_STEP_TYPE_ID
+            && args.len() == 2
+            && is_concrete_mono_type(&args[0])
+            && is_concrete_mono_type(&args[1])
+        {
+            return Some((args[0].clone(), args[1].clone()));
+        }
+    }
+    None
+}
+
+/// Symbol for a typed UnfoldStep struct for concrete `(yield_ty, seed_ty)`.
+/// e.g. `(Int, Int)` → `"unfold_step__Int__Int"`.
+pub fn typed_unfold_step_sym(yield_ty: &MonoType, seed_ty: &MonoType) -> String {
+    format!(
+        "unfold_step__{}__{}",
+        mono_to_symbol_key(yield_ty),
+        mono_to_symbol_key(seed_ty),
+    )
+}
+
+/// Symbol for a typed iterator-state struct for concrete `(yield_ty, seed_ty)`.
+/// e.g. `(Int, Int)` → `"iter_state__Int__Int"`.
+pub fn typed_iterator_state_sym(info: &IteratorStateInfo) -> String {
+    format!(
+        "iter_state__{}__{}",
+        mono_to_symbol_key(&info.yield_ty),
+        mono_to_symbol_key(&info.seed_ty),
+    )
+}
+
+/// Symbol for a typed IterItem struct for a concrete iterator-state shape.
+/// e.g. `(yield=Int, seed=Int)` → `"iter_item__Int__Int"`.
+pub fn typed_iter_item_sym(info: &IteratorStateInfo) -> String {
+    format!(
+        "iter_item__{}__{}",
+        mono_to_symbol_key(&info.yield_ty),
+        mono_to_symbol_key(&info.seed_ty),
+    )
+}
+
+/// Symbol for a typed iterator-next Option struct for a concrete iterator-state shape.
+/// e.g. `(yield=Int, seed=Int)` → `"option__iter_item__Int__Int"`.
+pub fn typed_iter_option_sym(info: &IteratorStateInfo) -> String {
+    format!(
+        "option__iter_item__{}__{}",
+        mono_to_symbol_key(&info.yield_ty),
+        mono_to_symbol_key(&info.seed_ty),
+    )
+}
+
 /// Symbol for a typed closure func type with the given signature.
 /// e.g. `[Int, Int] -> Int` → `"closurefunc_i64_i64_i64"`.
 /// Zero-param functions use the prefix `"closurefunc_nil__<ret>"`.
 pub fn typed_closurefunc_sym(params: &[MonoType], ret: &MonoType) -> String {
     if params.is_empty() {
-        format!("closurefunc_nil__{}", mono_to_type_tag(ret))
+        format!("closurefunc_nil__{}", mono_to_closure_sig_tag(ret))
     } else {
         let param_tags = params
             .iter()
-            .map(mono_to_type_tag)
+            .map(mono_to_closure_sig_tag)
             .collect::<Vec<_>>()
             .join("_");
-        format!("closurefunc_{}_{}", param_tags, mono_to_type_tag(ret))
+        format!(
+            "closurefunc_{}_{}",
+            param_tags,
+            mono_to_closure_sig_tag(ret)
+        )
     }
 }
 
@@ -1078,14 +1847,26 @@ pub fn typed_closurefunc_sym(params: &[MonoType], ret: &MonoType) -> String {
 /// e.g. `[Int, Int] -> Int` → `"closure_i64_i64_i64"`.
 pub fn typed_closure_struct_sym(params: &[MonoType], ret: &MonoType) -> String {
     if params.is_empty() {
-        format!("closure_nil__{}", mono_to_type_tag(ret))
+        format!("closure_nil__{}", mono_to_closure_sig_tag(ret))
     } else {
         let param_tags = params
             .iter()
-            .map(mono_to_type_tag)
+            .map(mono_to_closure_sig_tag)
             .collect::<Vec<_>>()
             .join("_");
-        format!("closure_{}_{}", param_tags, mono_to_type_tag(ret))
+        format!("closure_{}_{}", param_tags, mono_to_closure_sig_tag(ret))
+    }
+}
+
+fn mono_to_closure_sig_tag(ty: &MonoType) -> String {
+    match ty {
+        MonoType::Int
+        | MonoType::Float
+        | MonoType::Bool
+        | MonoType::String
+        | MonoType::Void
+        | MonoType::Never => mono_to_type_tag(ty),
+        _ => mono_to_symbol_key(ty),
     }
 }
 
@@ -1105,24 +1886,63 @@ pub fn mono_to_valtype_for_param(
 
 fn collect_pattern_locals_typed(
     pattern: &CorePattern,
-    expected: Option<&ValType>,
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
     type_env: &TypeEnv,
-    out: &mut Vec<(LocalId, ValType)>,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+    out: &mut Vec<(
+        LocalId,
+        ValType,
+        Option<MonoType>,
+        Option<IteratorStateInfo>,
+    )>,
 ) {
     match pattern {
         CorePattern::Var(local_id) => {
-            let ty = expected.cloned().unwrap_or(ValType::Anyref);
-            out.push((*local_id, ty));
+            let (ty, mono, iter_item_state) = match expected_mono {
+                Some(MonoType::Void) | None => (ValType::Anyref, None, None),
+                Some(MonoType::Named { type_id, args })
+                    if *type_id == ITER_ITEM_TYPE_ID
+                        && args.len() == 1
+                        && option_iter_item_state.is_some() =>
+                {
+                    let info = option_iter_item_state.cloned().unwrap();
+                    (
+                        ref_named(true, &typed_iter_item_sym(&info)),
+                        Some(MonoType::Named {
+                            type_id: ITER_ITEM_TYPE_ID,
+                            args: vec![args[0].clone()],
+                        }),
+                        Some(info),
+                    )
+                }
+                Some(mono) => (
+                    mono_to_valtype_specialized(mono, type_env, concrete_func_sigs),
+                    Some(mono.clone()),
+                    None,
+                ),
+            };
+            out.push((*local_id, ty, mono, iter_item_state));
         }
         CorePattern::Variant {
             type_id,
             variant,
             fields,
         } => {
-            let field_tys = sum_variant_field_valtypes(type_env, *type_id, variant.0);
+            let field_tys = sum_variant_field_monos(type_env, *type_id, variant.0, expected_mono);
             for (idx, field_pat) in fields.iter().enumerate() {
                 let field_expected = field_tys.get(idx);
-                collect_pattern_locals_typed(field_pat, field_expected, type_env, out);
+                let field_iter_item_state = (*type_id == OPTION_TYPE_ID && variant.0 == 1)
+                    .then_some(option_iter_item_state)
+                    .flatten();
+                collect_pattern_locals_typed(
+                    field_pat,
+                    field_expected,
+                    field_iter_item_state,
+                    type_env,
+                    concrete_func_sigs,
+                    out,
+                );
             }
         }
         CorePattern::Wildcard
@@ -1132,11 +1952,12 @@ fn collect_pattern_locals_typed(
     }
 }
 
-fn sum_variant_field_valtypes(
+fn sum_variant_field_monos(
     type_env: &TypeEnv,
     type_id: TypeId,
     variant_idx: usize,
-) -> Vec<ValType> {
+    expected_mono: Option<&MonoType>,
+) -> Vec<MonoType> {
     let (fields, source_type_id, has_type_params): (Vec<MonoType>, TypeId, bool) =
         match type_env.get_def(type_id) {
             Some(TypeDef::Sum {
@@ -1174,19 +1995,59 @@ fn sum_variant_field_valtypes(
     let builtin_placeholder_sum = source_type_id == OPTION_TYPE_ID
         || source_type_id == RESULT_TYPE_ID
         || source_type_id == UNFOLD_STEP_TYPE_ID;
+
+    if let Some(concrete) =
+        concrete_builtin_sum_field_monos(source_type_id, variant_idx, expected_mono)
+    {
+        return concrete;
+    }
+
     fields
-        .iter()
+        .into_iter()
         .map(|mono| {
             // Generic sum placeholders (e.g. built-in Option/Result definitions) store
             // `Void` in the field list; concrete call-site instantiations are erased to
             // `anyref` at codegen time.
             if (has_type_params || builtin_placeholder_sum) && matches!(mono, MonoType::Void) {
-                ValType::Anyref
+                MonoType::Void
             } else {
-                mono_to_valtype(mono, type_env)
+                mono
             }
         })
         .collect()
+}
+
+fn concrete_builtin_sum_field_monos(
+    source_type_id: TypeId,
+    variant_idx: usize,
+    expected_mono: Option<&MonoType>,
+) -> Option<Vec<MonoType>> {
+    let MonoType::Named {
+        type_id: mono_type_id,
+        args,
+    } = expected_mono?
+    else {
+        return None;
+    };
+    if *mono_type_id != source_type_id {
+        return None;
+    }
+    match source_type_id {
+        OPTION_TYPE_ID if args.len() == 1 => Some(match variant_idx {
+            1 => vec![args[0].clone()],
+            _ => Vec::new(),
+        }),
+        RESULT_TYPE_ID if args.len() == 2 => Some(match variant_idx {
+            0 => vec![args[0].clone()],
+            1 => vec![args[1].clone()],
+            _ => Vec::new(),
+        }),
+        UNFOLD_STEP_TYPE_ID if args.len() == 2 => Some(match variant_idx {
+            1 => vec![args[0].clone(), args[1].clone()],
+            _ => Vec::new(),
+        }),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1195,7 +2056,7 @@ mod tests {
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::lower::prelude as prelude_ids;
     use crate::ir::{FieldId, VariantId};
-    use crate::types::ty::{RESULT_TYPE_ID, Variant};
+    use crate::types::ty::{CELL_TYPE_ID, RESULT_TYPE_ID, Variant};
 
     #[test]
     fn local_type_if_with_continue_branch_prefers_value_type() {
@@ -1497,7 +2358,7 @@ mod tests {
     }
 
     #[test]
-    fn local_type_match_result_payload_prefers_anyref_placeholder() {
+    fn local_type_match_result_payload_uses_concrete_type() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
@@ -1542,7 +2403,111 @@ mod tests {
         let _locals = ctx.setup_locals(&func);
         let (_, ty_ok) = ctx.local(LocalId(2)).expect("missing Ok payload local");
         let (_, ty_err) = ctx.local(LocalId(3)).expect("missing Err payload local");
-        assert_eq!(*ty_ok, ValType::Anyref);
-        assert_eq!(*ty_err, ValType::Anyref);
+        assert_eq!(
+            *ty_ok,
+            ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named("rt_types__String".to_string()),
+            }
+        );
+        assert_eq!(
+            *ty_err,
+            ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named("rt_types__String".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn local_backend_repr_tracks_typed_closure_and_cell_locals() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(42),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+
+        let func = AnfFunctionDef {
+            func_id: FuncId(1001),
+            name: "backend_repr_locals".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AMakeClosure {
+                    func_id: FuncId(42),
+                    free_vars: vec![],
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(2),
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(prelude_ids::CELL_NEW),
+                        args: vec![Atom::ALitInt(1)],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+                }),
+            },
+            return_ty: MonoType::Named {
+                type_id: CELL_TYPE_ID,
+                args: vec![MonoType::Int],
+            },
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        assert_eq!(
+            ctx.local_value_repr(LocalId(1)),
+            Some(ValueRepr::TypedClosure {
+                params: vec![MonoType::Int],
+                ret: MonoType::Int
+            })
+        );
+        assert_eq!(
+            ctx.local_typed_closure_sig(LocalId(1)),
+            Some((vec![MonoType::Int], MonoType::Int))
+        );
+        assert_eq!(ctx.local_typed_cell_elem(LocalId(2)), Some(MonoType::Int));
+    }
+
+    #[test]
+    fn local_call_result_inference_requires_backend_closure_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(77),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.local_mono.insert(
+            LocalId(1),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+
+        assert_eq!(
+            ctx.infer_call_result_valtype(&Atom::ALocal(LocalId(1)), &[Atom::ALitInt(1)]),
+            Some(ValType::Anyref)
+        );
+        assert_eq!(
+            ctx.infer_call_result_mono(&Atom::ALocal(LocalId(1)), &[Atom::ALitInt(1)]),
+            None
+        );
+
+        ctx.set_local_typed_closure_sig(LocalId(1), Some((vec![MonoType::Int], MonoType::Int)));
+        assert_eq!(
+            ctx.infer_call_result_valtype(&Atom::ALocal(LocalId(1)), &[Atom::ALitInt(1)]),
+            Some(ValType::I64)
+        );
+        assert_eq!(
+            ctx.infer_call_result_mono(&Atom::ALocal(LocalId(1)), &[Atom::ALitInt(1)]),
+            Some(MonoType::Int)
+        );
     }
 }

@@ -202,3 +202,58 @@ fn test_link_missing_export_error() {
             if module == "rt.arr" && name == "array_new"
     ));
 }
+
+#[test]
+fn test_link_rewrites_if_block_loop_result_ref_types() {
+    let mut m = ModuleIR::new("user");
+    m.types.push(TypeDef::Struct {
+        name: "Foo".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![FieldDef::named("v", ValType::I64)],
+    });
+
+    let foo_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named("Foo".into()),
+    };
+
+    m.funcs.push(FuncDef {
+        name: "shape".into(),
+        params: vec![],
+        results: vec![],
+        locals: vec![],
+        body: vec![
+            Instr::I32Const(1),
+            Instr::If {
+                result: Some(foo_ref.clone()),
+                then_body: vec![Instr::I64Const(1), Instr::StructNew("Foo".into())],
+                else_body: vec![Instr::I64Const(2), Instr::StructNew("Foo".into())],
+            },
+            Instr::Drop,
+            Instr::Block {
+                label: "b".into(),
+                result: Some(foo_ref.clone()),
+                body: vec![Instr::I64Const(3), Instr::StructNew("Foo".into())],
+            },
+            Instr::Drop,
+            Instr::Loop {
+                label: "l".into(),
+                result: Some(foo_ref),
+                body: vec![Instr::I64Const(4), Instr::StructNew("Foo".into())],
+            },
+            Instr::Drop,
+        ],
+    });
+
+    let linked = link_one(m);
+    let wat = emit_wat(&linked);
+    assert!(
+        wat.contains("result (ref null $user__Foo)"),
+        "expected rewritten control-flow result refs in linked WAT:\n{wat}"
+    );
+    assert!(
+        !wat.contains("result (ref null $Foo)"),
+        "unqualified control-flow result ref should be rewritten:\n{wat}"
+    );
+}

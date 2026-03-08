@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, IteratorStateInfo, is_concrete_mono_type, mono_to_symbol_key,
-    mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized, typed_cell_struct_sym,
-    typed_closure_struct_sym, typed_closurefunc_sym, user_record_type_sym,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, ValueRepr, is_concrete_mono_type, mono_to_symbol_key,
+    mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
+    resolve_unfold_step_types, typed_cell_struct_sym, typed_closure_struct_sym,
+    typed_closurefunc_sym, typed_iter_item_sym, typed_iter_option_sym, typed_iterator_state_sym,
+    typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
@@ -17,7 +19,7 @@ use crate::runtime::types::{
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, MonoType, OPTION_TYPE_ID, TypeDef as LangTypeDef, TypeId,
+    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, TypeDef as LangTypeDef, TypeId,
     UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{
@@ -131,24 +133,35 @@ pub fn emit_user_module_typed(
         collect_user_func_iterator_states(anf, &closure_capture_layouts, &mut ctx);
     ctx.set_user_func_iterator_states(user_func_iterator_states);
 
+    // Register typed closures and cells in the unified registry.
+    for (_func_id, (params, ret)) in &concrete_func_sigs {
+        let sym = typed_closurefunc_sym(params, ret);
+        ctx.request_typed_closure(sym, params.clone(), ret.clone());
+    }
+    for (sym, elem) in
+        collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).into_iter()
+    {
+        ctx.request_typed_cell(sym, elem);
+    }
+
     let mut module = ModuleIR::new("user");
 
-    // Emit typed ClosureFunc and Closure struct types for each unique concrete
-    // closure signature.  Use a BTreeMap to deduplicate and get stable order.
-    let mut seen_sigs: std::collections::BTreeMap<
-        String,
-        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
-    > = std::collections::BTreeMap::new();
-    for (params, ret) in concrete_func_sigs.values() {
-        let sym = typed_closurefunc_sym(params, ret);
-        seen_sigs
-            .entry(sym)
-            .or_insert_with(|| (params.clone(), ret.clone()));
-    }
-    for (params, ret) in seen_sigs.values() {
+    // Emit typed ClosureFunc and Closure struct types from the unified registry.
+    for (params, ret) in ctx.requested_typed_closures().values() {
+        // Find any func_id with this signature to get ABI results
+        let func_id = concrete_func_sigs
+            .iter()
+            .find(|(_, (p, r))| p == params && r == ret)
+            .map(|(fid, _)| *fid)
+            .expect("typed closure registered but no matching func_id");
+        let abi_results = ctx
+            .user_func_abi(func_id)
+            .map(|abi| abi.results)
+            .unwrap_or_else(|| panic!("missing ABI for closure func FuncId({})", func_id.0));
         module.types.push(emit_typed_closurefunc_def(
             params,
             ret,
+            &abi_results,
             type_env,
             &concrete_func_sigs,
         ));
@@ -156,13 +169,16 @@ pub fn emit_user_module_typed(
             .types
             .push(emit_typed_closure_struct_def(params, ret));
     }
-    for elem in collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).values() {
+    for elem in ctx.requested_typed_cells().values() {
         module.types.push(emit_typed_cell_struct_def(
             elem,
             type_env,
             &concrete_func_sigs,
         ));
     }
+    // Iterator-adjacent types are registered during function body emission
+    // (request_typed_iterator_state, etc.) and emitted after function bodies
+    // with dedup guards — see the post-emission loops below.
     module.types.extend(emit_user_record_type_defs(
         type_env,
         &ctx.concrete_func_sigs,
@@ -203,8 +219,7 @@ pub fn emit_user_module_typed(
                 capture_count,
                 params,
                 ret,
-                type_env,
-                &concrete_func_sigs,
+                &ctx,
             ));
         }
     }
@@ -219,6 +234,52 @@ pub fn emit_user_module_typed(
             ));
         }
     }
+
+    // Emit typed UnfoldStep struct definitions (registered during function emission)
+    for (yield_ty, seed_ty) in ctx.requested_typed_unfold_steps().values() {
+        module.types.push(emit_typed_unfold_step_struct_def(
+            yield_ty,
+            seed_ty,
+            type_env,
+            &concrete_func_sigs,
+        ));
+    }
+    for info in ctx.requested_typed_iterator_states().values() {
+        if !module
+            .types
+            .iter()
+            .any(|ty| ty.name() == typed_iterator_state_sym(info))
+        {
+            module.types.push(emit_typed_iterator_state_struct_def(
+                info,
+                type_env,
+                &concrete_func_sigs,
+            ));
+        }
+    }
+    for info in ctx.requested_typed_iter_items().values() {
+        if !module
+            .types
+            .iter()
+            .any(|ty| ty.name() == typed_iter_item_sym(info))
+        {
+            module.types.push(emit_typed_iter_item_struct_def(
+                info,
+                type_env,
+                &concrete_func_sigs,
+            ));
+        }
+    }
+    for info in ctx.requested_typed_iter_options().values() {
+        if !module
+            .types
+            .iter()
+            .any(|ty| ty.name() == typed_iter_option_sym(info))
+        {
+            module.types.push(emit_typed_iter_option_struct_def(info));
+        }
+    }
+    prioritize_specialized_iterator_types(&mut module);
 
     // Always emit parse helpers — they're small and may be referenced by intrinsics
     module.funcs.push(emit_int_from_string_helper());
@@ -332,20 +393,15 @@ fn emit_func_stub(
         .map(|local_id| (local_id, ValType::Anyref))
         .collect::<Vec<_>>();
     let locals = ctx.setup_locals_with_extra(func, &extra_params);
-    let mut params = func
-        .param_tys
-        .iter()
-        .map(|ty| mono_to_valtype_for_param(ty, ctx.type_env, &ctx.concrete_func_sigs))
-        .collect::<Vec<_>>();
-    params.extend(vec![ValType::Anyref; capture_locals.len()]);
-    let results =
-        mono_result_types_specialized(&func.return_ty, ctx.type_env, &ctx.concrete_func_sigs);
-    let body = emit_expr(&func.body, results.first(), ctx);
+    let abi = ctx
+        .user_func_abi(func.func_id)
+        .unwrap_or_else(|| panic!("missing ABI for function FuncId({})", func.func_id.0));
+    let body = emit_expr(&func.body, abi.results.first(), ctx);
 
     FuncDef {
         name: user_func_sym(func.func_id),
-        params,
-        results,
+        params: abi.params,
+        results: abi.results,
         locals,
         body,
     }
@@ -714,18 +770,32 @@ fn collect_free_locals_atom(
     }
 }
 
-fn mono_result_types_specialized(
+fn mono_to_valtype_for_user_abi_result(
     ty: &MonoType,
     type_env: &TypeEnv,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
-) -> Vec<crate::wasm::ir::ValType> {
+) -> ValType {
     match ty {
-        MonoType::Void | MonoType::Never => Vec::new(),
-        _ => vec![mono_to_valtype_specialized(
-            ty,
-            type_env,
-            concrete_func_sigs,
-        )],
+        MonoType::Named { type_id, .. }
+            if *type_id == ITERATOR_TYPE_ID
+                || *type_id == UNFOLD_STEP_TYPE_ID
+                || *type_id == ITER_ITEM_TYPE_ID
+                || *type_id == OPTION_TYPE_ID =>
+        {
+            mono_to_valtype(ty, type_env)
+        }
+        _ => mono_to_valtype_specialized(ty, type_env, concrete_func_sigs),
+    }
+}
+
+fn mono_to_valtype_for_user_abi_param(
+    ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> ValType {
+    match ty {
+        MonoType::Function { .. } => mono_to_valtype_for_param(ty, type_env, concrete_func_sigs),
+        _ => mono_to_valtype_for_user_abi_result(ty, type_env, concrete_func_sigs),
     }
 }
 
@@ -776,8 +846,18 @@ fn emit_let_expr(
     emit_body: impl FnOnce(&mut EmitCtx<'_>, &AnfExpr) -> Vec<Instr>,
 ) -> Vec<Instr> {
     let mut restores = Vec::new();
+    let mut repr_restores = Vec::new();
     let mut iterator_restores = Vec::new();
-    push_flow_mono_binding(local, ctx.infer_op_mono_for_emit(op), &mut restores, ctx);
+    let local_mono = ctx.infer_op_mono_for_emit(op);
+    push_flow_mono_binding(local, local_mono.clone(), &mut restores, ctx);
+    push_flow_value_repr_binding(
+        local,
+        local_mono
+            .as_ref()
+            .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs)),
+        &mut repr_restores,
+        ctx,
+    );
     push_flow_iterator_binding(
         local,
         iterator_state_from_op(op, ctx),
@@ -789,7 +869,16 @@ fn emit_let_expr(
         value,
     } = op
     {
-        push_flow_mono_binding(*target, atom_mono(value, ctx), &mut restores, ctx);
+        let value_mono = atom_mono(value, ctx);
+        push_flow_mono_binding(*target, value_mono.clone(), &mut restores, ctx);
+        push_flow_value_repr_binding(
+            *target,
+            value_mono
+                .as_ref()
+                .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs)),
+            &mut repr_restores,
+            ctx,
+        );
         push_flow_iterator_binding(
             *target,
             atom_iterator_state(value, ctx),
@@ -801,11 +890,14 @@ fn emit_let_expr(
     let mut instrs = emit_let_binding(local, op, fn_return_ty, ctx);
     instrs.extend(emit_body(ctx, body));
 
-    while let Some((local_id, prev)) = restores.pop() {
-        restore_flow_mono_binding(local_id, prev, ctx);
-    }
     while let Some((local_id, prev)) = iterator_restores.pop() {
         restore_flow_iterator_binding(local_id, prev, ctx);
+    }
+    while let Some((local_id, prev)) = repr_restores.pop() {
+        restore_flow_value_repr_binding(local_id, prev, ctx);
+    }
+    while let Some((local_id, prev)) = restores.pop() {
+        restore_flow_mono_binding(local_id, prev, ctx);
     }
 
     instrs
@@ -836,16 +928,33 @@ fn restore_flow_mono_binding(
     }
 }
 
+fn push_flow_value_repr_binding(
+    local: crate::ir::LocalId,
+    repr: Option<ValueRepr>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<ValueRepr>)>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    let prev = ctx.local_value_repr(local);
+    ctx.set_local_value_repr(local, repr);
+    restores.push((local, prev));
+}
+
+fn restore_flow_value_repr_binding(
+    local: crate::ir::LocalId,
+    prev: Option<ValueRepr>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    ctx.set_local_value_repr(local, prev);
+}
+
 fn push_flow_iterator_binding(
     local: crate::ir::LocalId,
     info: Option<IteratorStateInfo>,
     restores: &mut Vec<(crate::ir::LocalId, Option<IteratorStateInfo>)>,
     ctx: &mut EmitCtx<'_>,
 ) {
-    let prev = match info {
-        Some(info) => ctx.local_iterator_states.insert(local, info),
-        None => ctx.local_iterator_states.remove(&local),
-    };
+    let prev = ctx.local_iterator_state(local);
+    ctx.set_local_iterator_state(local, info);
     restores.push((local, prev));
 }
 
@@ -854,11 +963,7 @@ fn restore_flow_iterator_binding(
     prev: Option<IteratorStateInfo>,
     ctx: &mut EmitCtx<'_>,
 ) {
-    if let Some(prev) = prev {
-        ctx.local_iterator_states.insert(local, prev);
-    } else {
-        ctx.local_iterator_states.remove(&local);
-    }
+    ctx.set_local_iterator_state(local, prev);
 }
 
 fn emit_let_binding(
@@ -878,7 +983,7 @@ fn emit_let_binding(
             let mut instrs = emit_atom(value, Some(&bind_ty), ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             if let Some(global_sym) = global_sym {
-                instrs.extend(emit_coerce_local(bind_idx, &bind_ty, &ValType::Anyref));
+                instrs.extend(emit_coerce_local(bind_idx, &bind_ty, &ValType::Anyref, ctx));
                 instrs.push(Instr::GlobalSet(global_sym));
             }
             instrs
@@ -894,7 +999,12 @@ fn emit_let_binding(
                 instrs.extend(emit_atom(value, Some(&target_ty), ctx));
                 instrs.push(Instr::LocalSet(target_idx));
                 if let Some(global_sym) = target_global_sym.clone() {
-                    instrs.extend(emit_coerce_local(target_idx, &target_ty, &ValType::Anyref));
+                    instrs.extend(emit_coerce_local(
+                        target_idx,
+                        &target_ty,
+                        &ValType::Anyref,
+                        ctx,
+                    ));
                     instrs.push(Instr::GlobalSet(global_sym));
                 }
             } else if let Some(global_sym) = target_global_sym {
@@ -1046,11 +1156,26 @@ fn emit_match_op(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     let scrutinee_anyref = emit_atom(scrutinee, Some(&ValType::Anyref), ctx);
-    emit_match_arm_chain(&scrutinee_anyref, arms, bind_ty, fn_return_ty, ctx)
+    let scrutinee_mono = ctx.infer_atom_mono_for_emit(scrutinee);
+    let scrutinee_iter_option = atom_iterator_next_state(scrutinee, ctx);
+    let scrutinee_unfold_step = atom_typed_unfold_step(scrutinee, ctx);
+    emit_match_arm_chain(
+        &scrutinee_anyref,
+        scrutinee_mono.as_ref(),
+        scrutinee_iter_option.as_ref(),
+        scrutinee_unfold_step.as_ref(),
+        arms,
+        bind_ty,
+        fn_return_ty,
+        ctx,
+    )
 }
 
 fn emit_match_arm_chain(
     scrutinee_anyref: &[Instr],
+    scrutinee_mono: Option<&MonoType>,
+    scrutinee_iter_option: Option<&IteratorStateInfo>,
+    scrutinee_unfold_step: Option<&(MonoType, MonoType)>,
     arms: &[AnfMatchArm],
     bind_ty: &ValType,
     fn_return_ty: Option<&ValType>,
@@ -1061,12 +1186,34 @@ fn emit_match_arm_chain(
     }
 
     let head = &arms[0];
-    let mut instrs = emit_pattern_condition(&head.pattern, scrutinee_anyref, ctx);
-    let mut then_body = emit_pattern_bindings(&head.pattern, scrutinee_anyref, ctx);
+    let mut instrs = emit_pattern_condition(
+        &head.pattern,
+        scrutinee_anyref,
+        scrutinee_mono,
+        scrutinee_iter_option,
+        scrutinee_unfold_step,
+        ctx,
+    );
+    let mut then_body = emit_pattern_bindings(
+        &head.pattern,
+        scrutinee_anyref,
+        scrutinee_mono,
+        scrutinee_iter_option,
+        scrutinee_unfold_step,
+        ctx,
+    );
     then_body.extend(emit_expr_value(&head.body, bind_ty, fn_return_ty, ctx));
     let tail_diverges = match_chain_always_diverges(&arms[1..]);
-    let mut else_body =
-        emit_match_arm_chain(scrutinee_anyref, &arms[1..], bind_ty, fn_return_ty, ctx);
+    let mut else_body = emit_match_arm_chain(
+        scrutinee_anyref,
+        scrutinee_mono,
+        scrutinee_iter_option,
+        scrutinee_unfold_step,
+        &arms[1..],
+        bind_ty,
+        fn_return_ty,
+        ctx,
+    );
     if tail_diverges {
         else_body.push(Instr::Unreachable);
     }
@@ -1130,6 +1277,9 @@ fn match_chain_always_diverges(arms: &[AnfMatchArm]) -> bool {
 fn emit_pattern_condition(
     pattern: &CorePattern,
     value_anyref_instrs: &[Instr],
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
+    typed_unfold_step_state: Option<&(MonoType, MonoType)>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     match pattern {
@@ -1161,6 +1311,155 @@ fn emit_pattern_condition(
             variant,
             fields,
         } => {
+            if let Some((option_sym, field_monos)) =
+                typed_iter_option_pattern_info(*type_id, expected_mono, option_iter_item_state, ctx)
+            {
+                let typed_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                };
+                let mut outer_checks = Vec::new();
+
+                let mut type_check = value_anyref_instrs.to_vec();
+                type_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                });
+                outer_checks.push(type_check);
+
+                let mut variant_then = value_anyref_instrs.to_vec();
+                variant_then.extend(emit_unbox_on_stack(&typed_ref));
+                variant_then.push(Instr::StructGet(option_sym.clone(), 0));
+                variant_then.push(Instr::I32Const(variant.0 as i32));
+                variant_then.push(Instr::I32Eq);
+
+                let mut variant_check = value_anyref_instrs.to_vec();
+                variant_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                });
+                variant_check.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: variant_then,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                outer_checks.push(variant_check);
+
+                let mut inner_checks = Vec::new();
+                for (idx, field_pat) in fields.iter().enumerate() {
+                    if pattern_is_trivially_true(field_pat) {
+                        continue;
+                    }
+                    let field_anyref = emit_variant_field_anyref(
+                        value_anyref_instrs,
+                        expected_mono,
+                        option_iter_item_state,
+                        typed_unfold_step_state,
+                        field_monos.get(idx),
+                        idx as i32,
+                        ctx,
+                    );
+                    inner_checks.push(emit_pattern_condition(
+                        field_pat,
+                        &field_anyref,
+                        field_monos.get(idx),
+                        option_iter_item_state,
+                        None,
+                        ctx,
+                    ));
+                }
+
+                if inner_checks.is_empty() {
+                    return combine_i32_ands(outer_checks);
+                }
+
+                let outer_cond = combine_i32_ands(outer_checks);
+                let inner_cond = combine_i32_ands(inner_checks);
+                let mut instrs = outer_cond;
+                instrs.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: inner_cond,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                return instrs;
+            }
+            if let Some((unfold_sym, field_monos)) = typed_unfold_step_pattern_info(
+                *type_id,
+                expected_mono,
+                typed_unfold_step_state,
+                ctx,
+            ) {
+                let typed_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(unfold_sym.clone()),
+                };
+
+                let mut outer_checks = Vec::new();
+
+                let mut type_check = value_anyref_instrs.to_vec();
+                type_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(unfold_sym.clone()),
+                });
+                outer_checks.push(type_check);
+
+                let mut variant_then = value_anyref_instrs.to_vec();
+                variant_then.extend(emit_unbox_on_stack(&typed_ref));
+                variant_then.push(Instr::StructGet(unfold_sym.clone(), 0));
+                variant_then.push(Instr::I32Const(variant.0 as i32));
+                variant_then.push(Instr::I32Eq);
+
+                let mut variant_check = value_anyref_instrs.to_vec();
+                variant_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(unfold_sym.clone()),
+                });
+                variant_check.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: variant_then,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                outer_checks.push(variant_check);
+
+                let mut inner_checks = Vec::new();
+                for (idx, field_pat) in fields.iter().enumerate() {
+                    if pattern_is_trivially_true(field_pat) {
+                        continue;
+                    }
+                    let field_anyref = emit_variant_field_anyref(
+                        value_anyref_instrs,
+                        expected_mono,
+                        option_iter_item_state,
+                        typed_unfold_step_state,
+                        field_monos.get(idx),
+                        idx as i32,
+                        ctx,
+                    );
+                    inner_checks.push(emit_pattern_condition(
+                        field_pat,
+                        &field_anyref,
+                        field_monos.get(idx),
+                        option_iter_item_state,
+                        None,
+                        ctx,
+                    ));
+                }
+
+                if inner_checks.is_empty() {
+                    return combine_i32_ands(outer_checks);
+                }
+
+                let outer_cond = combine_i32_ands(outer_checks);
+                let inner_cond = combine_i32_ands(inner_checks);
+                let mut instrs = outer_cond;
+                instrs.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: inner_cond,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                return instrs;
+            }
+
             // Outer checks: type_id and variant_idx (safe to evaluate eagerly)
             let mut outer_checks = Vec::new();
 
@@ -1184,8 +1483,16 @@ fn emit_pattern_condition(
                 if pattern_is_trivially_true(field_pat) {
                     continue;
                 }
-                let field_anyref = emit_variant_field_anyref(value_anyref_instrs, idx as i32);
-                inner_checks.push(emit_pattern_condition(field_pat, &field_anyref, ctx));
+                let field_anyref =
+                    emit_variant_field_anyref_universal(value_anyref_instrs, idx as i32);
+                inner_checks.push(emit_pattern_condition(
+                    field_pat,
+                    &field_anyref,
+                    None,
+                    None,
+                    None,
+                    ctx,
+                ));
             }
 
             if inner_checks.is_empty() {
@@ -1210,6 +1517,9 @@ fn emit_pattern_condition(
 fn emit_pattern_bindings(
     pattern: &CorePattern,
     value_anyref_instrs: &[Instr],
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
+    typed_unfold_step_state: Option<&(MonoType, MonoType)>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     match pattern {
@@ -1230,21 +1540,185 @@ fn emit_pattern_bindings(
         CorePattern::Variant { fields, .. } => {
             let mut instrs = Vec::new();
             for (idx, field_pat) in fields.iter().enumerate() {
-                let field_anyref = emit_variant_field_anyref(value_anyref_instrs, idx as i32);
-                instrs.extend(emit_pattern_bindings(field_pat, &field_anyref, ctx));
+                let field_expected = expected_mono.and_then(|mono| variant_field_mono(mono, idx));
+                let field_anyref = emit_variant_field_anyref(
+                    value_anyref_instrs,
+                    expected_mono,
+                    option_iter_item_state,
+                    typed_unfold_step_state,
+                    field_expected,
+                    idx as i32,
+                    ctx,
+                );
+                instrs.extend(emit_pattern_bindings(
+                    field_pat,
+                    &field_anyref,
+                    field_expected,
+                    option_iter_item_state,
+                    None,
+                    ctx,
+                ));
             }
             instrs
         }
     }
 }
 
-fn emit_variant_field_anyref(value_anyref_instrs: &[Instr], field_idx: i32) -> Vec<Instr> {
+fn emit_variant_field_anyref_universal(
+    value_anyref_instrs: &[Instr],
+    field_idx: i32,
+) -> Vec<Instr> {
     let mut instrs = value_anyref_instrs.to_vec();
     instrs.extend(emit_unbox_on_stack(&ref_variant_null()));
     instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2));
     instrs.push(Instr::I32Const(field_idx));
     instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
     instrs
+}
+
+fn emit_variant_field_anyref(
+    value_anyref_instrs: &[Instr],
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
+    typed_unfold_step_state: Option<&(MonoType, MonoType)>,
+    field_mono: Option<&MonoType>,
+    field_idx: i32,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    if let Some((option_sym, _)) =
+        typed_iter_option_pattern_info(OPTION_TYPE_ID, expected_mono, option_iter_item_state, ctx)
+    {
+        let field_ty = field_mono
+            .and_then(|mono| {
+                option_iter_item_state
+                    .filter(|_| matches!(mono, MonoType::Named { type_id, .. } if *type_id == ITER_ITEM_TYPE_ID))
+                    .map(|info| ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Named(typed_iter_item_sym(info)),
+                    })
+                    .or_else(|| {
+                        Some(mono_to_valtype_specialized(
+                            mono,
+                            ctx.type_env,
+                            &ctx.concrete_func_sigs,
+                        ))
+                    })
+            })
+            .unwrap_or(ValType::Anyref);
+        let mut instrs = value_anyref_instrs.to_vec();
+        instrs.push(Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(option_sym.clone()),
+        });
+        instrs.push(Instr::StructGet(option_sym, (field_idx + 1) as u32));
+        instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
+        return instrs;
+    }
+    if let Some((unfold_sym, _)) = typed_unfold_step_pattern_info(
+        UNFOLD_STEP_TYPE_ID,
+        expected_mono,
+        typed_unfold_step_state,
+        ctx,
+    ) {
+        let field_ty = field_mono
+            .map(|mono| mono_to_valtype_specialized(mono, ctx.type_env, &ctx.concrete_func_sigs))
+            .unwrap_or(ValType::Anyref);
+        let mut instrs = value_anyref_instrs.to_vec();
+        instrs.push(Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(unfold_sym.clone()),
+        });
+        instrs.push(Instr::StructGet(unfold_sym, (field_idx + 1) as u32));
+        instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
+        return instrs;
+    }
+
+    let mut instrs = value_anyref_instrs.to_vec();
+    instrs.extend(emit_unbox_on_stack(&ref_variant_null()));
+    instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2));
+    instrs.push(Instr::I32Const(field_idx));
+    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    instrs
+}
+
+fn typed_iter_option_pattern_info(
+    type_id: TypeId,
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
+    ctx: &EmitCtx<'_>,
+) -> Option<(String, Vec<MonoType>)> {
+    if ctx.concrete_func_sigs.is_empty() || type_id != OPTION_TYPE_ID {
+        return None;
+    }
+    let info = option_iter_item_state?;
+    let MonoType::Named {
+        type_id: mono_type_id,
+        args,
+    } = expected_mono?
+    else {
+        return None;
+    };
+    if *mono_type_id != OPTION_TYPE_ID || args.len() != 1 {
+        return None;
+    }
+    let MonoType::Named {
+        type_id: payload_type_id,
+        args: payload_args,
+    } = &args[0]
+    else {
+        return None;
+    };
+    if *payload_type_id != ITER_ITEM_TYPE_ID || payload_args.len() != 1 {
+        return None;
+    }
+    Some((typed_iter_option_sym(info), vec![args[0].clone()]))
+}
+
+fn typed_unfold_step_pattern_info(
+    type_id: TypeId,
+    expected_mono: Option<&MonoType>,
+    typed_unfold_step_state: Option<&(MonoType, MonoType)>,
+    ctx: &EmitCtx<'_>,
+) -> Option<(String, Vec<MonoType>)> {
+    if ctx.concrete_func_sigs.is_empty() || type_id != UNFOLD_STEP_TYPE_ID {
+        return None;
+    }
+    let MonoType::Named {
+        type_id: mono_type_id,
+        args,
+    } = expected_mono?
+    else {
+        return None;
+    };
+    if *mono_type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 {
+        return None;
+    }
+    let (typed_yield, typed_seed) = typed_unfold_step_state?;
+    if args[0] != *typed_yield || args[1] != *typed_seed {
+        return None;
+    }
+    Some((
+        typed_unfold_step_sym(&args[0], &args[1]),
+        vec![args[0].clone(), args[1].clone()],
+    ))
+}
+
+fn variant_field_mono(expected_mono: &MonoType, field_idx: usize) -> Option<&MonoType> {
+    let MonoType::Named { type_id, args } = expected_mono else {
+        return None;
+    };
+    match *type_id {
+        OPTION_TYPE_ID => match field_idx {
+            0 => args.first(),
+            _ => None,
+        },
+        UNFOLD_STEP_TYPE_ID => match field_idx {
+            0 => args.first(),
+            1 => args.get(1),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn pattern_is_trivially_true(pattern: &CorePattern) -> bool {
@@ -1516,24 +1990,23 @@ fn emit_tail_direct_user_call(
     return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Option<Vec<Instr>> {
-    let sig = ctx
-        .user_func_sig(func_id)
-        .cloned()
-        .unwrap_or_else(|| panic!("missing signature for function FuncId({})", func_id.0));
-    if !tail_user_result_compatible(sig.result.as_ref(), return_ty) {
+    let abi = ctx
+        .user_func_abi(func_id)
+        .unwrap_or_else(|| panic!("missing ABI for function FuncId({})", func_id.0));
+    if !tail_user_result_compatible(abi.results.first(), return_ty) {
         return None;
     }
-    if sig.params.len() != args.len() {
+    if abi.params.len() != args.len() {
         panic!(
             "arity mismatch for direct call to FuncId({}): expected {}, got {}",
             func_id.0,
-            sig.params.len(),
+            abi.params.len(),
             args.len()
         );
     }
 
     let mut instrs = Vec::new();
-    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+    for (arg, param_ty) in args.iter().zip(abi.params.iter()) {
         if let Some(specialized) = emit_specialized_closure_arg(arg, param_ty, ctx) {
             instrs.extend(specialized);
         } else {
@@ -1607,7 +2080,7 @@ fn emit_local_atom(
         return match expected_ty {
             None => vec![Instr::LocalGet(idx)],
             Some(expected) if expected == &local_ty => vec![Instr::LocalGet(idx)],
-            Some(expected) => emit_coerce_local(idx, &local_ty, expected),
+            Some(expected) => emit_coerce_local(idx, &local_ty, expected, ctx),
         };
     }
 
@@ -1703,7 +2176,41 @@ fn emit_void_value(expected_ty: Option<&ValType>) -> Vec<Instr> {
     }
 }
 
-fn emit_coerce_local(idx: u32, local_ty: &ValType, expected: &ValType) -> Vec<Instr> {
+fn emit_coerce_local(
+    idx: u32,
+    local_ty: &ValType,
+    expected: &ValType,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    if is_universal_iter_state_ref(expected) {
+        if let Some(info) = typed_iterator_state_info_for_valtype(local_ty, ctx) {
+            return emit_box_typed_iterator_state_local(idx, &info, ctx);
+        }
+    }
+    if let Some(info) = typed_iterator_state_info_for_valtype(expected, ctx) {
+        if is_universal_iter_state_ref(local_ty) {
+            return emit_unbox_erased_iterator_state_local(idx, &info, ctx);
+        }
+    }
+    if is_variant_ref(expected) {
+        if let Some((yield_ty, seed_ty)) = typed_unfold_step_info_for_valtype(local_ty, ctx) {
+            return emit_box_typed_unfold_step_local(idx, &yield_ty, &seed_ty, ctx);
+        }
+        if let Some(info) = typed_iter_option_info_for_valtype(local_ty, ctx) {
+            return emit_box_typed_iter_option_local(idx, &info, ctx);
+        }
+    }
+    if let Some((yield_ty, seed_ty)) = typed_unfold_step_info_for_valtype(expected, ctx) {
+        if is_variant_ref(local_ty) {
+            return emit_unbox_erased_unfold_step_local(idx, &yield_ty, &seed_ty, ctx);
+        }
+    }
+    if let Some(info) = typed_iter_option_info_for_valtype(expected, ctx) {
+        if is_variant_ref(local_ty) {
+            return emit_unbox_erased_iter_option_local(idx, &info, ctx);
+        }
+    }
+
     match (local_ty, expected) {
         (_, ValType::Anyref) => {
             let mut instrs = vec![Instr::LocalGet(idx)];
@@ -1718,6 +2225,26 @@ fn emit_coerce_local(idx: u32, local_ty: &ValType, expected: &ValType) -> Vec<In
         // Numeric widening/narrowing
         (ValType::I32, ValType::I64) => vec![Instr::LocalGet(idx), Instr::I64ExtendI32S],
         (ValType::I64, ValType::I32) => vec![Instr::LocalGet(idx), Instr::I32WrapI64],
+        (
+            ValType::Ref {
+                nullable: false,
+                heap: from_heap,
+            },
+            ValType::Ref {
+                nullable: true,
+                heap: to_heap,
+            },
+        ) if from_heap == to_heap => vec![Instr::LocalGet(idx)],
+        (
+            ValType::Ref {
+                nullable: true,
+                heap: from_heap,
+            },
+            ValType::Ref {
+                nullable: false,
+                heap: to_heap,
+            },
+        ) if from_heap == to_heap => vec![Instr::LocalGet(idx), Instr::RefAsNonNull],
         (
             ValType::Ref {
                 nullable: _,
@@ -1749,6 +2276,389 @@ fn emit_box_on_stack(local_ty: &ValType) -> Vec<Instr> {
             local_ty
         ),
     }
+}
+
+fn is_universal_iter_state_ref(ty: &ValType) -> bool {
+    matches!(
+        ty,
+        ValType::Ref {
+            heap: HeapType::Named(sym),
+            ..
+        } if sym == T_ITER_STATE
+    )
+}
+
+fn is_variant_ref(ty: &ValType) -> bool {
+    matches!(
+        ty,
+        ValType::Ref {
+            heap: HeapType::Named(sym),
+            ..
+        } if sym == T_VARIANT
+    )
+}
+
+fn typed_iterator_state_info_for_valtype(
+    ty: &ValType,
+    ctx: &EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    let ValType::Ref {
+        heap: HeapType::Named(sym),
+        ..
+    } = ty
+    else {
+        return None;
+    };
+    ctx.requested_typed_iterator_states().get(sym).cloned()
+}
+
+fn typed_iter_option_info_for_valtype(
+    ty: &ValType,
+    ctx: &EmitCtx<'_>,
+) -> Option<IteratorStateInfo> {
+    let ValType::Ref {
+        heap: HeapType::Named(sym),
+        ..
+    } = ty
+    else {
+        return None;
+    };
+    ctx.requested_typed_iter_options().get(sym).cloned()
+}
+
+fn typed_unfold_step_info_for_valtype(
+    ty: &ValType,
+    ctx: &EmitCtx<'_>,
+) -> Option<(MonoType, MonoType)> {
+    let ValType::Ref {
+        heap: HeapType::Named(sym),
+        ..
+    } = ty
+    else {
+        return None;
+    };
+    ctx.requested_typed_unfold_steps().get(sym).cloned()
+}
+
+fn emit_box_typed_iterator_state_local(
+    idx: u32,
+    info: &IteratorStateInfo,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let state_sym = typed_iterator_state_sym(info);
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let step_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let step_ty = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(step_sym),
+    };
+
+    let mut instrs = vec![Instr::LocalGet(idx), Instr::StructGet(state_sym.clone(), 0)];
+    instrs.extend(emit_coerce_stack(&seed_ty, &ValType::Anyref));
+    instrs.push(Instr::LocalGet(idx));
+    instrs.push(Instr::StructGet(state_sym, 1));
+    instrs.extend(emit_coerce_stack(&step_ty, &ValType::Anyref));
+    instrs.push(Instr::StructNew(T_ITER_STATE.to_string()));
+    instrs
+}
+
+fn emit_unbox_erased_iterator_state_local(
+    idx: u32,
+    info: &IteratorStateInfo,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let state_sym = typed_iterator_state_sym(info);
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let step_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let step_ty = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(step_sym),
+    };
+
+    let mut instrs = vec![
+        Instr::LocalGet(idx),
+        Instr::StructGet(T_ITER_STATE.to_string(), 0),
+    ];
+    instrs.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
+    instrs.push(Instr::LocalGet(idx));
+    instrs.push(Instr::StructGet(T_ITER_STATE.to_string(), 1));
+    instrs.extend(emit_coerce_stack(&ValType::Anyref, &step_ty));
+    instrs.push(Instr::StructNew(state_sym));
+    instrs
+}
+
+fn concrete_unfold_step_types(mono: &MonoType) -> Option<(MonoType, MonoType)> {
+    let MonoType::Named { type_id, args } = mono else {
+        return None;
+    };
+    if *type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 {
+        return None;
+    }
+    Some((args[0].clone(), args[1].clone()))
+}
+
+fn emit_box_typed_unfold_step_local(
+    idx: u32,
+    yield_ty: &MonoType,
+    seed_ty: &MonoType,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let step_sym = typed_unfold_step_sym(yield_ty, seed_ty);
+    let yield_valtype =
+        mono_to_valtype_specialized(yield_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let seed_valtype = mono_to_valtype_specialized(seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+
+    let done_variant = vec![
+        Instr::I32Const(UNFOLD_STEP_TYPE_ID.0 as i32),
+        Instr::I32Const(0),
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+
+    let mut yield_variant = vec![
+        Instr::I32Const(UNFOLD_STEP_TYPE_ID.0 as i32),
+        Instr::I32Const(1),
+        Instr::LocalGet(idx),
+        Instr::StructGet(step_sym.clone(), 1),
+    ];
+    yield_variant.extend(emit_coerce_stack(&yield_valtype, &ValType::Anyref));
+    yield_variant.push(Instr::LocalGet(idx));
+    yield_variant.push(Instr::StructGet(step_sym, 2));
+    yield_variant.extend(emit_coerce_stack(&seed_valtype, &ValType::Anyref));
+    yield_variant.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 2));
+    yield_variant.push(Instr::StructNew(T_VARIANT.to_string()));
+
+    vec![
+        Instr::LocalGet(idx),
+        Instr::StructGet(typed_unfold_step_sym(yield_ty, seed_ty), 0),
+        Instr::I32Eqz,
+        Instr::If {
+            result: Some(ref_variant_null()),
+            then_body: done_variant,
+            else_body: yield_variant,
+        },
+    ]
+}
+
+fn emit_default_value_instrs(ty: &ValType) -> Vec<Instr> {
+    match ty {
+        ValType::I32 => vec![Instr::I32Const(0)],
+        ValType::I64 => vec![Instr::I64Const(0)],
+        ValType::F64 => vec![Instr::F64Const(0.0)],
+        ValType::Anyref => vec![Instr::RefNull(HeapType::None)],
+        ValType::Ref { heap, .. } => vec![Instr::RefNull(heap.clone())],
+        ValType::I31ref => vec![Instr::I32Const(0), Instr::RefI31],
+        ValType::Funcref => vec![Instr::RefNull(HeapType::Func)],
+        other => panic!("no default value for {:?}", other),
+    }
+}
+
+fn emit_unbox_erased_unfold_step_local(
+    idx: u32,
+    yield_ty: &MonoType,
+    seed_ty: &MonoType,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let unfold_sym = typed_unfold_step_sym(yield_ty, seed_ty);
+    let yield_valtype =
+        mono_to_valtype_specialized(yield_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let seed_valtype = mono_to_valtype_specialized(seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+
+    let mut done_value = vec![Instr::I32Const(0)];
+    done_value.extend(emit_default_value_instrs(&yield_valtype));
+    done_value.extend(emit_default_value_instrs(&seed_valtype));
+    done_value.push(Instr::StructNew(unfold_sym.clone()));
+
+    let mut yield_value = vec![
+        Instr::I32Const(1),
+        Instr::LocalGet(idx),
+        Instr::StructGet(T_VARIANT.to_string(), 2),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.to_string()),
+        },
+        Instr::I32Const(0),
+        Instr::ArrayGet(T_ARRAY.to_string()),
+    ];
+    yield_value.extend(emit_coerce_stack(&ValType::Anyref, &yield_valtype));
+    yield_value.push(Instr::LocalGet(idx));
+    yield_value.push(Instr::StructGet(T_VARIANT.to_string(), 2));
+    yield_value.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    });
+    yield_value.push(Instr::I32Const(1));
+    yield_value.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    yield_value.extend(emit_coerce_stack(&ValType::Anyref, &seed_valtype));
+    yield_value.push(Instr::StructNew(unfold_sym));
+
+    vec![
+        Instr::LocalGet(idx),
+        Instr::StructGet(T_VARIANT.to_string(), 1),
+        Instr::I32Eqz,
+        Instr::If {
+            result: Some(ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(typed_unfold_step_sym(yield_ty, seed_ty)),
+            }),
+            then_body: done_value,
+            else_body: yield_value,
+        },
+    ]
+}
+
+fn emit_box_typed_iter_option_local(
+    idx: u32,
+    info: &IteratorStateInfo,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let option_sym = typed_iter_option_sym(info);
+    let item_sym = typed_iter_item_sym(info);
+    let state_sym = typed_iterator_state_sym(info);
+    let yield_ty =
+        mono_to_valtype_specialized(&info.yield_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let step_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let step_ty = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(step_sym),
+    };
+    let iter_item_record = user_record_type_sym(ITER_ITEM_TYPE_ID);
+
+    let done_variant = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(0),
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+
+    let mut some_variant = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(1),
+        Instr::LocalGet(idx),
+        Instr::StructGet(option_sym.clone(), 1),
+        Instr::StructGet(item_sym.clone(), 0),
+    ];
+    some_variant.extend(emit_coerce_stack(&yield_ty, &ValType::Anyref));
+    some_variant.push(Instr::LocalGet(idx));
+    some_variant.push(Instr::StructGet(option_sym.clone(), 1));
+    some_variant.push(Instr::StructGet(item_sym.clone(), 1));
+    some_variant.push(Instr::StructGet(state_sym.clone(), 0));
+    some_variant.extend(emit_coerce_stack(&seed_ty, &ValType::Anyref));
+    some_variant.push(Instr::LocalGet(idx));
+    some_variant.push(Instr::StructGet(option_sym, 1));
+    some_variant.push(Instr::StructGet(item_sym, 1));
+    some_variant.push(Instr::StructGet(state_sym, 1));
+    some_variant.extend(emit_coerce_stack(&step_ty, &ValType::Anyref));
+    some_variant.push(Instr::StructNew(T_ITER_STATE.to_string()));
+    some_variant.push(Instr::StructNew(iter_item_record));
+    some_variant.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    some_variant.push(Instr::StructNew(T_VARIANT.to_string()));
+
+    vec![
+        Instr::LocalGet(idx),
+        Instr::StructGet(typed_iter_option_sym(info), 0),
+        Instr::I32Eqz,
+        Instr::If {
+            result: Some(ref_variant_null()),
+            then_body: done_variant,
+            else_body: some_variant,
+        },
+    ]
+}
+
+fn emit_unbox_erased_iter_option_local(
+    idx: u32,
+    info: &IteratorStateInfo,
+    ctx: &EmitCtx<'_>,
+) -> Vec<Instr> {
+    let option_sym = typed_iter_option_sym(info);
+    let item_sym = typed_iter_item_sym(info);
+    let state_sym = typed_iterator_state_sym(info);
+    let yield_ty =
+        mono_to_valtype_specialized(&info.yield_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let step_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let step_ty = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(step_sym),
+    };
+    let iter_item_record = user_record_type_sym(ITER_ITEM_TYPE_ID);
+
+    let done_value = vec![
+        Instr::I32Const(0),
+        Instr::RefNull(HeapType::Named(item_sym.clone())),
+        Instr::StructNew(option_sym.clone()),
+    ];
+
+    let mut some_value = vec![
+        Instr::I32Const(1),
+        Instr::LocalGet(idx),
+        Instr::StructGet(T_VARIANT.to_string(), 2),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.to_string()),
+        },
+        Instr::I32Const(0),
+        Instr::ArrayGet(T_ARRAY.to_string()),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(iter_item_record.clone()),
+        },
+        Instr::StructGet(iter_item_record.clone(), 0),
+    ];
+    some_value.extend(emit_coerce_stack(&ValType::Anyref, &yield_ty));
+    some_value.push(Instr::LocalGet(idx));
+    some_value.push(Instr::StructGet(T_VARIANT.to_string(), 2));
+    some_value.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    });
+    some_value.push(Instr::I32Const(0));
+    some_value.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    some_value.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(iter_item_record.clone()),
+    });
+    some_value.push(Instr::StructGet(iter_item_record.clone(), 1));
+    some_value.push(Instr::StructGet(T_ITER_STATE.to_string(), 0));
+    some_value.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
+    some_value.push(Instr::LocalGet(idx));
+    some_value.push(Instr::StructGet(T_VARIANT.to_string(), 2));
+    some_value.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    });
+    some_value.push(Instr::I32Const(0));
+    some_value.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    some_value.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(iter_item_record.clone()),
+    });
+    some_value.push(Instr::StructGet(iter_item_record, 1));
+    some_value.push(Instr::StructGet(T_ITER_STATE.to_string(), 1));
+    some_value.extend(emit_coerce_stack(&ValType::Anyref, &step_ty));
+    some_value.push(Instr::StructNew(state_sym));
+    some_value.push(Instr::StructNew(item_sym));
+    some_value.push(Instr::StructNew(option_sym.clone()));
+
+    vec![
+        Instr::LocalGet(idx),
+        Instr::StructGet(T_VARIANT.to_string(), 1),
+        Instr::I32Eqz,
+        Instr::If {
+            result: Some(ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(option_sym),
+            }),
+            then_body: done_value,
+            else_body: some_value,
+        },
+    ]
 }
 
 fn emit_unbox_on_stack(expected: &ValType) -> Vec<Instr> {
@@ -1795,6 +2705,26 @@ fn emit_coerce_stack(from: &ValType, to: &ValType) -> Vec<Instr> {
         (ValType::Anyref, _) => emit_unbox_on_stack(to),
         (ValType::I32, ValType::I64) => vec![Instr::I64ExtendI32S],
         (ValType::I64, ValType::I32) => vec![Instr::I32WrapI64],
+        (
+            ValType::Ref {
+                nullable: false,
+                heap: from_heap,
+            },
+            ValType::Ref {
+                nullable: true,
+                heap: to_heap,
+            },
+        ) if from_heap == to_heap => Vec::new(),
+        (
+            ValType::Ref {
+                nullable: true,
+                heap: from_heap,
+            },
+            ValType::Ref {
+                nullable: false,
+                heap: to_heap,
+            },
+        ) if from_heap == to_heap => vec![Instr::RefAsNonNull],
         (ValType::Ref { .. }, ValType::Ref { nullable, heap }) => vec![Instr::RefCast {
             nullable: *nullable,
             heap: heap.clone(),
@@ -1930,7 +2860,7 @@ fn emit_record_literal(
 
     let mut instrs = Vec::new();
     for (idx, atom) in ordered.into_iter().flatten().enumerate() {
-        let field_ty = record_field_valtype(type_id, idx, ctx);
+        let field_ty = record_field_valtype(type_id, idx, None, None, ctx);
         instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
     }
     instrs.push(Instr::StructNew(user_record_type_sym(type_id)));
@@ -1945,9 +2875,29 @@ fn emit_record_get(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let record_sym = user_record_type_sym(type_id);
-    let field_ty = record_field_valtype(type_id, field.0, ctx);
-    let mut instrs = emit_atom(target, Some(&ref_user_record_null(type_id)), ctx);
+    let target_mono = atom_mono(target, ctx);
+    let target_iter_item_state = atom_iter_item_state(target, ctx);
+    let record_sym = record_struct_sym(
+        type_id,
+        target_mono.as_ref(),
+        target_iter_item_state.as_ref(),
+    );
+    let field_ty = record_field_valtype(
+        type_id,
+        field.0,
+        target_mono.as_ref(),
+        target_iter_item_state.as_ref(),
+        ctx,
+    );
+    let mut instrs = emit_atom(
+        target,
+        Some(&ref_record_null(
+            type_id,
+            target_mono.as_ref(),
+            target_iter_item_state.as_ref(),
+        )),
+        ctx,
+    );
     instrs.push(Instr::StructGet(record_sym, field.0 as u32));
     instrs.extend(emit_coerce_stack(&field_ty, bind_ty));
     instrs
@@ -1962,35 +2912,84 @@ fn emit_record_update(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let record_sym = user_record_type_sym(type_id);
+    let base_mono = atom_mono(base, ctx);
+    let base_iter_item_state = atom_iter_item_state(base, ctx);
+    let record_sym = record_struct_sym(type_id, base_mono.as_ref(), base_iter_item_state.as_ref());
     let mut instrs = Vec::new();
 
     if can_reuse_in_place {
-        instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
-        instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
-        let field_ty = record_field_valtype(type_id, field.0, ctx);
+        instrs.extend(emit_atom(
+            base,
+            Some(&ref_record_null(
+                type_id,
+                base_mono.as_ref(),
+                base_iter_item_state.as_ref(),
+            )),
+            ctx,
+        ));
+        instrs.extend(emit_atom(
+            base,
+            Some(&ref_record_null(
+                type_id,
+                base_mono.as_ref(),
+                base_iter_item_state.as_ref(),
+            )),
+            ctx,
+        ));
+        let field_ty = record_field_valtype(
+            type_id,
+            field.0,
+            base_mono.as_ref(),
+            base_iter_item_state.as_ref(),
+            ctx,
+        );
         instrs.extend(emit_atom(value, Some(&field_ty), ctx));
-        instrs.push(Instr::StructSet(record_sym, field.0 as u32));
-        instrs.extend(emit_coerce_stack(&ref_user_record_null(type_id), bind_ty));
+        instrs.push(Instr::StructSet(record_sym.clone(), field.0 as u32));
+        instrs.extend(emit_coerce_stack(
+            &ref_record_null(type_id, base_mono.as_ref(), base_iter_item_state.as_ref()),
+            bind_ty,
+        ));
         return instrs;
     }
 
     let field_count = record_field_count(type_id, ctx);
     for idx in 0..field_count {
         if idx == field.0 {
-            let field_ty = record_field_valtype(type_id, idx, ctx);
+            let field_ty = record_field_valtype(
+                type_id,
+                idx,
+                base_mono.as_ref(),
+                base_iter_item_state.as_ref(),
+                ctx,
+            );
             instrs.extend(emit_atom(value, Some(&field_ty), ctx));
         } else {
-            instrs.extend(emit_atom(base, Some(&ref_user_record_null(type_id)), ctx));
-            instrs.push(Instr::StructGet(user_record_type_sym(type_id), idx as u32));
+            instrs.extend(emit_atom(
+                base,
+                Some(&ref_record_null(
+                    type_id,
+                    base_mono.as_ref(),
+                    base_iter_item_state.as_ref(),
+                )),
+                ctx,
+            ));
+            instrs.push(Instr::StructGet(record_sym.clone(), idx as u32));
         }
     }
-    instrs.push(Instr::StructNew(user_record_type_sym(type_id)));
-    instrs.extend(emit_coerce_stack(&ref_user_record(type_id), bind_ty));
+    instrs.push(Instr::StructNew(record_sym));
+    instrs.extend(emit_coerce_stack(
+        &ref_record(type_id, base_mono.as_ref(), base_iter_item_state.as_ref()),
+        bind_ty,
+    ));
     instrs
 }
 
-fn record_field_mono(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> MonoType {
+fn record_field_mono(
+    type_id: TypeId,
+    field_idx: usize,
+    target_mono: Option<&MonoType>,
+    ctx: &EmitCtx<'_>,
+) -> MonoType {
     match ctx.type_env.get_def(type_id) {
         Some(LangTypeDef::Record { fields, .. }) => fields
             .get(field_idx)
@@ -2002,7 +3001,9 @@ fn record_field_mono(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> Mo
                 )
             }),
         Some(LangTypeDef::Alias { target, .. }) => match target {
-            MonoType::Named { type_id, .. } => record_field_mono(*type_id, field_idx, ctx),
+            MonoType::Named { type_id, .. } => {
+                record_field_mono(*type_id, field_idx, target_mono, ctx)
+            }
             other => panic!(
                 "record alias Type#{} points to non-record type {other:?}",
                 type_id.0
@@ -2013,9 +3014,69 @@ fn record_field_mono(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> Mo
     }
 }
 
-fn record_field_valtype(type_id: TypeId, field_idx: usize, ctx: &EmitCtx<'_>) -> ValType {
-    let mono = record_field_mono(type_id, field_idx, ctx);
+fn record_field_valtype(
+    type_id: TypeId,
+    field_idx: usize,
+    target_mono: Option<&MonoType>,
+    target_iter_item_state: Option<&IteratorStateInfo>,
+    ctx: &EmitCtx<'_>,
+) -> ValType {
+    if let Some(info) = target_iter_item_state.filter(|_| type_id == ITER_ITEM_TYPE_ID) {
+        return match field_idx {
+            0 => mono_to_valtype_specialized(&info.yield_ty, ctx.type_env, &ctx.concrete_func_sigs),
+            1 => ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(typed_iterator_state_sym(info)),
+            },
+            _ => panic!(
+                "record field index {field_idx} out of bounds for type {}",
+                type_id.0
+            ),
+        };
+    }
+    let mono = record_field_mono(type_id, field_idx, target_mono, ctx);
     mono_to_valtype_specialized(&mono, ctx.type_env, &ctx.concrete_func_sigs)
+}
+
+fn record_struct_sym(
+    type_id: TypeId,
+    _target_mono: Option<&MonoType>,
+    target_iter_item_state: Option<&IteratorStateInfo>,
+) -> String {
+    if let Some(info) = target_iter_item_state.filter(|_| type_id == ITER_ITEM_TYPE_ID) {
+        return typed_iter_item_sym(info);
+    }
+    user_record_type_sym(type_id)
+}
+
+fn ref_record(
+    type_id: TypeId,
+    target_mono: Option<&MonoType>,
+    target_iter_item_state: Option<&IteratorStateInfo>,
+) -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(record_struct_sym(
+            type_id,
+            target_mono,
+            target_iter_item_state,
+        )),
+    }
+}
+
+fn ref_record_null(
+    type_id: TypeId,
+    target_mono: Option<&MonoType>,
+    target_iter_item_state: Option<&IteratorStateInfo>,
+) -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(record_struct_sym(
+            type_id,
+            target_mono,
+            target_iter_item_state,
+        )),
+    }
 }
 
 fn emit_variant_literal(
@@ -2025,6 +3086,15 @@ fn emit_variant_literal(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    // Typed UnfoldStep path: emit a typed struct instead of universal $Variant
+    if !ctx.concrete_func_sigs.is_empty() && type_id == UNFOLD_STEP_TYPE_ID {
+        if let Some((yield_ty, seed_ty)) = resolve_unfold_step_types(variant, args, ctx) {
+            return emit_typed_unfold_step_literal(
+                variant, args, &yield_ty, &seed_ty, bind_ty, ctx,
+            );
+        }
+    }
+
     let mut instrs = vec![
         Instr::I32Const(type_id.0 as i32),
         Instr::I32Const(variant.0 as i32),
@@ -2036,6 +3106,56 @@ fn emit_variant_literal(
     instrs.push(Instr::StructNew(T_VARIANT.to_string()));
     instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
     instrs
+}
+
+fn emit_typed_unfold_step_literal(
+    variant: crate::ir::VariantId,
+    args: &[Atom],
+    yield_ty: &MonoType,
+    seed_ty: &MonoType,
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let sym = typed_unfold_step_sym(yield_ty, seed_ty);
+    let yield_valtype =
+        mono_to_valtype_specialized(yield_ty, ctx.type_env, &ctx.concrete_func_sigs);
+    let seed_valtype = mono_to_valtype_specialized(seed_ty, ctx.type_env, &ctx.concrete_func_sigs);
+
+    ctx.request_typed_unfold_step(sym.clone(), yield_ty.clone(), seed_ty.clone());
+
+    let mut instrs = vec![Instr::I32Const(variant.0 as i32)];
+
+    if variant.0 == 1 && args.len() == 2 {
+        // Yield(value, next_seed): push concrete fields
+        instrs.extend(emit_atom(&args[0], Some(&yield_valtype), ctx));
+        instrs.extend(emit_atom(&args[1], Some(&seed_valtype), ctx));
+    } else {
+        // Done: push default values for unused fields
+        instrs.extend(emit_default_value(&yield_valtype));
+        instrs.extend(emit_default_value(&seed_valtype));
+    }
+
+    instrs.push(Instr::StructNew(sym.clone()));
+    let result_ty = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(sym),
+    };
+    instrs.extend(emit_coerce_stack(&result_ty, bind_ty));
+    instrs
+}
+
+/// Emit a default/zero value for a given Wasm type (used for unused fields in typed structs).
+fn emit_default_value(ty: &ValType) -> Vec<Instr> {
+    match ty {
+        ValType::I32 => vec![Instr::I32Const(0)],
+        ValType::I64 => vec![Instr::I64Const(0)],
+        ValType::F64 => vec![Instr::F64Const(0.0)],
+        ValType::Anyref | ValType::Ref { .. } | ValType::I31ref | ValType::Funcref => {
+            vec![Instr::RefNull(HeapType::None)]
+        }
+        ValType::F32 => vec![Instr::F64Const(0.0)], // unlikely but safe
+        ValType::I8 => vec![Instr::I32Const(0)],
+    }
 }
 
 fn emit_array_literal(elems: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
@@ -2119,54 +3239,47 @@ fn emit_closure_call(
     // We cast to the typed struct to access field 2 (typed funcref).
     if !ctx.concrete_func_sigs.is_empty() {
         if let Atom::ALocal(local_id) = callee {
-            if let Some(crate::types::ty::MonoType::Function { params, ret }) =
-                ctx.local_mono.get(local_id).cloned()
-            {
-                if is_concrete_mono_type(&crate::types::ty::MonoType::Function {
-                    params: params.clone(),
-                    ret: ret.clone(),
-                }) {
-                    let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
-                    let closure_sym = typed_closure_struct_sym(&params, &ret);
-                    // Cast callee to the typed closure struct subtype.
-                    // The callee might be stored as (ref null $Closure) for a
-                    // function param, but the actual runtime value is always the
-                    // typed subtype struct.
-                    let typed_ref = ValType::Ref {
-                        nullable: true,
-                        heap: HeapType::Named(closure_sym.clone()),
-                    };
-                    // Push env (field 1, inherited from $Closure).
-                    let mut instrs = emit_atom(callee, Some(&typed_ref), ctx);
-                    instrs.push(Instr::StructGet(closure_sym.clone(), 1));
-                    // Push concrete args.
-                    for (arg, param_ty) in args.iter().zip(params.iter()) {
-                        let wasm_ty = mono_to_valtype_specialized(
-                            param_ty,
+            if let Some((params, ret)) = ctx.local_typed_closure_sig(*local_id) {
+                let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+                let closure_sym = typed_closure_struct_sym(&params, &ret);
+                // Cast callee to the typed closure struct subtype.
+                // The callee might be stored as (ref null $Closure) for a
+                // function param, but the actual runtime value is always the
+                // typed subtype struct.
+                let typed_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(closure_sym.clone()),
+                };
+                // Push env (field 1, inherited from $Closure).
+                let mut instrs = emit_atom(callee, Some(&typed_ref), ctx);
+                instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+                // Push concrete args.
+                for (arg, param_ty) in args.iter().zip(params.iter()) {
+                    let wasm_ty = mono_to_valtype_specialized(
+                        param_ty,
+                        ctx.type_env,
+                        &ctx.concrete_func_sigs,
+                    );
+                    instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
+                }
+                // Push typed funcref (field 2) last for call_ref.
+                instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
+                instrs.push(Instr::StructGet(closure_sym, 2));
+                instrs.push(Instr::CallRef(closurefunc_sym));
+                match ret {
+                    MonoType::Void | MonoType::Never => {
+                        instrs.extend(emit_void_value(Some(bind_ty)));
+                    }
+                    _ => {
+                        let ret_ty = mono_to_valtype_for_user_abi_result(
+                            &ret,
                             ctx.type_env,
                             &ctx.concrete_func_sigs,
                         );
-                        instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
+                        instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
                     }
-                    // Push typed funcref (field 2) last for call_ref.
-                    instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
-                    instrs.push(Instr::StructGet(closure_sym, 2));
-                    instrs.push(Instr::CallRef(closurefunc_sym));
-                    match ret.as_ref() {
-                        MonoType::Void | MonoType::Never => {
-                            instrs.extend(emit_void_value(Some(bind_ty)));
-                        }
-                        _ => {
-                            let ret_ty = mono_to_valtype_specialized(
-                                &ret,
-                                ctx.type_env,
-                                &ctx.concrete_func_sigs,
-                            );
-                            instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
-                        }
-                    }
-                    return instrs;
                 }
+                return instrs;
             }
         }
     } // end if !concrete_func_sigs.is_empty()
@@ -2197,22 +3310,21 @@ fn emit_direct_user_call(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let sig = ctx
-        .user_func_sig(func_id)
-        .cloned()
-        .unwrap_or_else(|| panic!("missing signature for function FuncId({})", func_id.0));
+    let abi = ctx
+        .user_func_abi(func_id)
+        .unwrap_or_else(|| panic!("missing ABI for function FuncId({})", func_id.0));
 
-    if sig.params.len() != args.len() {
+    if abi.params.len() != args.len() {
         panic!(
             "arity mismatch for direct call to FuncId({}): expected {}, got {}",
             func_id.0,
-            sig.params.len(),
+            abi.params.len(),
             args.len()
         );
     }
 
     let mut instrs = Vec::new();
-    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+    for (arg, param_ty) in args.iter().zip(abi.params.iter()) {
         if let Some(specialized) = emit_specialized_closure_arg(arg, param_ty, ctx) {
             instrs.extend(specialized);
         } else {
@@ -2221,7 +3333,7 @@ fn emit_direct_user_call(
     }
     instrs.push(Instr::Call(user_func_sym(func_id)));
 
-    match sig.result {
+    match abi.results.first() {
         Some(result_ty) => instrs.extend(emit_coerce_stack(&result_ty, bind_ty)),
         None => {
             instrs.extend(emit_void_value(Some(bind_ty)));
@@ -2249,6 +3361,10 @@ fn emit_make_closure(
     // sites use fields 0+1 (universal funcref + env) via the $Closure supertype.
     if let Some((params, ret)) = ctx.concrete_func_sigs.get(&func_id).cloned() {
         let closure_sym = typed_closure_struct_sym(&params, &ret);
+        let typed_closure_ref = ValType::Ref {
+            nullable: false,
+            heap: HeapType::Named(closure_sym.clone()),
+        };
         // field 0: universal funcref (for compatibility with $Closure dispatch)
         let mut instrs = vec![Instr::RefFunc(global_func_trampoline_sym(func_id))];
         // field 1: env
@@ -2266,7 +3382,7 @@ fn emit_make_closure(
         // field 2: typed funcref
         instrs.push(Instr::RefFunc(typed_closure_trampoline_sym(func_id)));
         instrs.push(Instr::StructNew(closure_sym));
-        instrs.extend(emit_coerce_stack(&ref_closure(), bind_ty));
+        instrs.extend(emit_coerce_stack(&typed_closure_ref, bind_ty));
         return instrs;
     }
 
@@ -2294,11 +3410,11 @@ fn emit_user_closure_trampoline(
     ctx: &EmitCtx<'_>,
 ) -> FuncDef {
     let func_id = func.func_id;
-    let sig = ctx
-        .user_func_sig(func_id)
-        .unwrap_or_else(|| panic!("missing signature for trampoline FuncId({})", func_id.0));
+    let abi = ctx
+        .user_func_abi(func_id)
+        .unwrap_or_else(|| panic!("missing ABI for trampoline FuncId({})", func_id.0));
     let mut body = Vec::new();
-    for (idx, param_ty) in sig.params.iter().take(func.param_tys.len()).enumerate() {
+    for (idx, param_ty) in abi.params.iter().take(func.param_tys.len()).enumerate() {
         body.push(Instr::LocalGet(1));
         body.push(Instr::RefCast {
             nullable: true,
@@ -2318,16 +3434,43 @@ fn emit_user_closure_trampoline(
         body.push(Instr::ArrayGet(T_CLOSURE_ENV.to_string()));
     }
     body.push(Instr::Call(user_func_sym(func_id)));
-    match &sig.result {
-        Some(result_ty) => body.extend(emit_coerce_stack(result_ty, &ValType::Anyref)),
-        None => body.extend(emit_void_value(Some(&ValType::Anyref))),
+    let mut locals = Vec::new();
+    let typed_unfold_step_result = abi
+        .semantic_result_mono
+        .as_ref()
+        .and_then(concrete_unfold_step_types)
+        .filter(|(yield_ty, seed_ty)| {
+            matches!(
+                abi.results.first(),
+                Some(ValType::Ref {
+                    heap: HeapType::Named(sym),
+                    ..
+                }) if sym == &typed_unfold_step_sym(yield_ty, seed_ty)
+            )
+        });
+    match typed_unfold_step_result {
+        Some((yield_ty, seed_ty)) => {
+            let temp_idx = 2;
+            locals.push(ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(typed_unfold_step_sym(&yield_ty, &seed_ty)),
+            });
+            body.push(Instr::LocalSet(temp_idx));
+            body.extend(emit_box_typed_unfold_step_local(
+                temp_idx, &yield_ty, &seed_ty, ctx,
+            ));
+        }
+        None => match abi.results.first() {
+            Some(result_ty) => body.extend(emit_coerce_stack(&result_ty, &ValType::Anyref)),
+            None => body.extend(emit_void_value(Some(&ValType::Anyref))),
+        },
     }
 
     FuncDef {
         name: global_func_trampoline_sym(func_id),
         params: vec![ValType::Anyref, ValType::Anyref],
         results: vec![ValType::Anyref],
-        locals: Vec::new(),
+        locals,
         body,
     }
 }
@@ -2593,7 +3736,7 @@ fn emit_range_intrinsic(fields: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_
     let range_sym = user_record_type_sym(RANGE_TYPE_ID);
     let mut instrs = Vec::new();
     for (idx, atom) in fields.iter().enumerate() {
-        let field_ty = record_field_valtype(RANGE_TYPE_ID, idx, ctx);
+        let field_ty = record_field_valtype(RANGE_TYPE_ID, idx, None, None, ctx);
         instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
     }
     instrs.push(Instr::StructNew(range_sym.clone()));
@@ -2617,7 +3760,30 @@ fn unfold_step_type(item_ty: MonoType, seed_ty: MonoType) -> MonoType {
 
 fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
     match atom {
-        Atom::ALocal(local_id) => ctx.local_iterator_states.get(local_id).cloned(),
+        Atom::ALocal(local_id) => ctx.local_iterator_state(*local_id),
+        _ => None,
+    }
+}
+
+fn atom_iter_item_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iter_item_state(*local_id),
+        _ => None,
+    }
+}
+
+fn atom_iterator_next_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id),
+        _ => None,
+    }
+}
+
+fn atom_typed_unfold_step(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<(MonoType, MonoType)> {
+    match atom {
+        Atom::ALocal(local_id) => ctx
+            .local(*local_id)
+            .and_then(|(_, ty)| typed_unfold_step_info_for_valtype(ty, ctx)),
         _ => None,
     }
 }
@@ -2652,7 +3818,6 @@ fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorState
             Atom::AGlobalFunc(func_id) if *func_id == prelude_ids::ITERATOR_UNFOLD => {
                 iterator_state_from_unfold_args(args.first()?, args.get(1)?, ctx)
             }
-            Atom::AGlobalFunc(func_id) => ctx.user_func_iterator_state(*func_id).cloned(),
             Atom::ALocal(_) => None,
             _ => None,
         },
@@ -2683,6 +3848,14 @@ fn atom_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     }
 }
 
+fn atom_typed_closure_sig(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<(Vec<MonoType>, MonoType)> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_typed_closure_sig(*local_id),
+        Atom::AGlobalFunc(func_id) => ctx.concrete_func_sig(*func_id).cloned(),
+        _ => None,
+    }
+}
+
 fn typed_cell_info_from_inner_mono(
     inner: &MonoType,
     ctx: &EmitCtx<'_>,
@@ -2701,6 +3874,11 @@ fn typed_cell_info_from_atom(
     atom: &Atom,
     ctx: &EmitCtx<'_>,
 ) -> Option<(String, ValType, MonoType)> {
+    if let Atom::ALocal(local_id) = atom {
+        return ctx
+            .local_typed_cell_elem(*local_id)
+            .and_then(|elem_ty| typed_cell_info_from_inner_mono(&elem_ty, ctx));
+    }
     let MonoType::Named { type_id, args } = atom_mono(atom, ctx)? else {
         return None;
     };
@@ -2777,8 +3955,8 @@ fn emit_cell_update_intrinsic(
     assert_eq!(args.len(), 2, "Cell.update expects 2 args");
 
     if let Some((cell_sym, payload_ty, inner_mono)) = typed_cell_info_from_atom(&args[0], ctx) {
-        if let Some(MonoType::Function { params, ret }) = atom_mono(&args[1], ctx) {
-            if params.len() == 1 && params[0] == inner_mono && *ret == inner_mono {
+        if let Some((params, ret)) = atom_typed_closure_sig(&args[1], ctx) {
+            if params.len() == 1 && params[0] == inner_mono && ret == inner_mono {
                 let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
                 let closure_sym = typed_closure_struct_sym(&params, &ret);
                 let closure_ref = ValType::Ref {
@@ -2841,6 +4019,41 @@ fn emit_iterator_unfold_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    if let Some(info) =
+        iterator_state_from_unfold_args(args.first().unwrap(), args.get(1).unwrap(), ctx).filter(
+            |info| is_concrete_mono_type(&info.yield_ty) && is_concrete_mono_type(&info.seed_ty),
+        )
+    {
+        let state_sym = typed_iterator_state_sym(&info);
+        let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+        let step_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+        let state_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(state_sym.clone()),
+        };
+        ctx.request_typed_iterator_state(state_sym.clone(), info.clone());
+        let mut instrs = emit_atom(
+            &args[0],
+            Some(&mono_to_valtype_specialized(
+                &info.seed_ty,
+                ctx.type_env,
+                &ctx.concrete_func_sigs,
+            )),
+            ctx,
+        );
+        instrs.extend(emit_atom(
+            &args[1],
+            Some(&ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(step_sym),
+            }),
+            ctx,
+        ));
+        instrs.push(Instr::StructNew(state_sym));
+        instrs.extend(emit_coerce_stack(&state_ref, bind_ty));
+        return instrs;
+    }
+
     // Iterator.unfold(seed, step) -> IterState struct { seed: anyref, step: anyref }
     let mut instrs = emit_atom(&args[0], Some(&ValType::Anyref), ctx);
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
@@ -2855,14 +4068,41 @@ fn emit_iterator_next_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let mut instrs = emit_atom(&args[0], Some(&ref_iter_state_null()), ctx);
+    let mut instrs = if let Some(info) = atom_iterator_state(&args[0], ctx).filter(|info| {
+        is_concrete_mono_type(&info.yield_ty) && is_concrete_mono_type(&info.seed_ty)
+    }) {
+        let state_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(typed_iterator_state_sym(&info)),
+        };
+        emit_atom(&args[0], Some(&state_ref), ctx)
+    } else {
+        emit_atom(&args[0], Some(&ref_iter_state_null()), ctx)
+    };
     if !ctx.concrete_func_sigs.is_empty() {
         if let Some(info) = atom_iterator_state(&args[0], ctx).filter(|info| {
             is_concrete_mono_type(&info.yield_ty) && is_concrete_mono_type(&info.seed_ty)
         }) {
             let helper_sym = typed_iterator_next_helper_sym(&info);
+            // Register both the iterator helper and the typed UnfoldStep struct it needs
+            let unfold_sym = typed_unfold_step_sym(&info.yield_ty, &info.seed_ty);
+            let state_sym = typed_iterator_state_sym(&info);
+            let iter_item_sym = typed_iter_item_sym(&info);
+            let iter_option_sym = typed_iter_option_sym(&info);
+            ctx.request_typed_iterator_state(state_sym, info.clone());
+            ctx.request_typed_iter_item(iter_item_sym, info.clone());
+            ctx.request_typed_iter_option(iter_option_sym.clone(), info.clone());
+            ctx.request_typed_unfold_step(unfold_sym, info.yield_ty.clone(), info.seed_ty.clone());
             ctx.request_iterator_helper(helper_sym.clone(), info);
             instrs.push(Instr::Call(helper_sym));
+            instrs.extend(emit_coerce_stack(
+                &ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(iter_option_sym),
+                },
+                bind_ty,
+            ));
+            return instrs;
         } else {
             instrs.push(Instr::Call(ITERATOR_NEXT_HELPER.to_string()));
         }
@@ -2963,7 +4203,7 @@ fn emit_iterator_next_helper() -> FuncDef {
     body.push(Instr::I32Eqz); // variant_id == 0?
 
     body.push(Instr::If {
-        result: Some(ValType::Anyref),
+        result: Some(ref_variant_null()),
         then_body: {
             // Done -> return Option.None = Variant(OPTION_TYPE_ID, 0, [])
             vec![
@@ -3026,8 +4266,8 @@ fn emit_iterator_next_helper() -> FuncDef {
 
     FuncDef {
         name: ITERATOR_NEXT_HELPER.to_string(),
-        params: vec![ValType::Anyref],  // IterState ref
-        results: vec![ValType::Anyref], // Option variant ref
+        params: vec![ValType::Anyref],     // IterState ref
+        results: vec![ref_variant_null()], // Option variant ref
         locals: vec![
             ref_variant_null(),    // local 1: step_result variant
             ValType::I32,          // local 2: variant_id
@@ -3043,24 +4283,41 @@ fn emit_typed_iterator_next_helper(
     type_env: &TypeEnv,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> FuncDef {
-    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, type_env, concrete_func_sigs);
     let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let iter_state_sym = typed_iterator_state_sym(info);
     let closure_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
     let closurefunc_sym = typed_closurefunc_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    let unfold_sym = typed_unfold_step_sym(&info.yield_ty, &info.seed_ty);
+    let iter_item_sym = typed_iter_item_sym(info);
+    let iter_option_sym = typed_iter_option_sym(info);
+    let yield_ty = mono_to_valtype_specialized(&info.yield_ty, type_env, concrete_func_sigs);
+    let seed_ty = mono_to_valtype_specialized(&info.seed_ty, type_env, concrete_func_sigs);
+    let iter_state_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(iter_state_sym.clone()),
+    };
+    let iter_item_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(iter_item_sym.clone()),
+    };
+    let iter_option_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(iter_option_sym.clone()),
+    };
+    let unfold_step_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(unfold_sym.clone()),
+    };
 
     let mut body = Vec::new();
 
     // Cast param 0 to IterState, store in local 4
     body.push(Instr::LocalGet(0));
-    body.push(Instr::RefCast {
-        nullable: true,
-        heap: HeapType::Named(T_ITER_STATE.to_string()),
-    });
     body.push(Instr::LocalSet(4));
 
     // Push closure env from step (IterState field 1)
     body.push(Instr::LocalGet(4));
-    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
+    body.push(Instr::StructGet(iter_state_sym.clone(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(closure_sym.clone()),
@@ -3069,69 +4326,96 @@ fn emit_typed_iterator_next_helper(
 
     // Push seed (IterState field 0), coerce to concrete type
     body.push(Instr::LocalGet(4));
-    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 0)); // seed
-    body.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
+    body.push(Instr::StructGet(iter_state_sym.clone(), 0)); // seed
 
     // Push typed funcref from step closure (IterState field 1)
     body.push(Instr::LocalGet(4));
-    body.push(Instr::StructGet(T_ITER_STATE.to_string(), 1)); // step
+    body.push(Instr::StructGet(iter_state_sym.clone(), 1)); // step
     body.push(Instr::RefCast {
         nullable: false,
         heap: HeapType::Named(closure_sym.clone()),
     });
     body.push(Instr::StructGet(closure_sym, 2)); // typed funcref
     body.push(Instr::CallRef(closurefunc_sym));
+
+    // Boundary conversion: erased Variant -> typed UnfoldStep
+    body.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_VARIANT.to_string()),
+    });
+    body.push(Instr::LocalSet(5));
+
+    let mut done_step = vec![Instr::I32Const(0)];
+    done_step.extend(emit_default_value_instrs(&yield_ty));
+    done_step.extend(emit_default_value_instrs(&seed_ty));
+    done_step.push(Instr::StructNew(unfold_sym.clone()));
+
+    let mut yield_step = vec![
+        Instr::I32Const(1),
+        Instr::LocalGet(5),
+        Instr::StructGet(T_VARIANT.to_string(), 2),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.to_string()),
+        },
+        Instr::I32Const(0),
+        Instr::ArrayGet(T_ARRAY.to_string()),
+    ];
+    yield_step.extend(emit_coerce_stack(&ValType::Anyref, &yield_ty));
+    yield_step.push(Instr::LocalGet(5));
+    yield_step.push(Instr::StructGet(T_VARIANT.to_string(), 2));
+    yield_step.push(Instr::RefCast {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    });
+    yield_step.push(Instr::I32Const(1));
+    yield_step.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    yield_step.extend(emit_coerce_stack(&ValType::Anyref, &seed_ty));
+    yield_step.push(Instr::StructNew(unfold_sym.clone()));
+
+    body.push(Instr::LocalGet(5));
+    body.push(Instr::StructGet(T_VARIANT.to_string(), 1));
+    body.push(Instr::I32Eqz);
+    body.push(Instr::If {
+        result: Some(unfold_step_ref.clone()),
+        then_body: done_step,
+        else_body: yield_step,
+    });
     body.push(Instr::LocalSet(1));
 
+    // Read variant_id from typed struct field 0
     body.push(Instr::LocalGet(1));
-    body.push(Instr::StructGet(T_VARIANT.to_string(), 1));
+    body.push(Instr::StructGet(unfold_sym.clone(), 0));
     body.push(Instr::LocalSet(2));
 
     body.push(Instr::LocalGet(2));
     body.push(Instr::I32Eqz);
     body.push(Instr::If {
-        result: Some(ValType::Anyref),
+        result: Some(iter_option_ref.clone()),
         then_body: vec![
-            Instr::I32Const(OPTION_TYPE_ID.0 as i32),
             Instr::I32Const(0),
-            Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
-            Instr::StructNew(T_VARIANT.to_string()),
+            Instr::RefNull(HeapType::Named(iter_item_sym.clone())),
+            Instr::StructNew(iter_option_sym.clone()),
         ],
         else_body: {
-            let iter_item_sym = user_record_type_sym(ITER_ITEM_TYPE_ID);
-            let else_instrs = vec![
-                // Extract UnfoldStep payload
+            let mut else_instrs = vec![
+                // IterItem field 0: value = typed struct field 1 (yield value)
                 Instr::LocalGet(1),
-                Instr::StructGet(T_VARIANT.to_string(), 2),
-                Instr::LocalSet(3),
-                // IterItem field 0: value = payload[0]
-                Instr::LocalGet(3),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named(T_ARRAY.to_string()),
-                },
-                Instr::I32Const(0),
-                Instr::ArrayGet(T_ARRAY.to_string()),
-                // IterItem field 1: rest = IterState { next_seed, step }
-                Instr::LocalGet(3),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named(T_ARRAY.to_string()),
-                },
-                Instr::I32Const(1),
-                Instr::ArrayGet(T_ARRAY.to_string()),
-                // step = original IterState field 1
-                Instr::LocalGet(4),
-                Instr::StructGet(T_ITER_STATE.to_string(), 1),
-                Instr::StructNew(T_ITER_STATE.to_string()),
-                Instr::StructNew(iter_item_sym),
-                Instr::LocalSet(3),
-                Instr::I32Const(OPTION_TYPE_ID.0 as i32),
-                Instr::I32Const(1),
-                Instr::LocalGet(3),
-                Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
-                Instr::StructNew(T_VARIANT.to_string()),
+                Instr::StructGet(unfold_sym.clone(), 1),
             ];
+            // IterItem field 1: rest = IterState { next_seed, step }
+            // next_seed = typed struct field 2
+            else_instrs.push(Instr::LocalGet(1));
+            else_instrs.push(Instr::StructGet(unfold_sym, 2));
+            // step = original IterState field 1
+            else_instrs.push(Instr::LocalGet(4));
+            else_instrs.push(Instr::StructGet(iter_state_sym.clone(), 1));
+            else_instrs.push(Instr::StructNew(iter_state_sym.clone()));
+            else_instrs.push(Instr::StructNew(iter_item_sym));
+            else_instrs.push(Instr::LocalSet(3));
+            else_instrs.push(Instr::I32Const(1));
+            else_instrs.push(Instr::LocalGet(3));
+            else_instrs.push(Instr::StructNew(iter_option_sym.clone()));
             else_instrs
         },
     });
@@ -3139,13 +4423,14 @@ fn emit_typed_iterator_next_helper(
 
     FuncDef {
         name: typed_iterator_next_helper_sym(info),
-        params: vec![ValType::Anyref],
-        results: vec![ValType::Anyref],
+        params: vec![iter_state_ref.clone()],
+        results: vec![iter_option_ref.clone()],
         locals: vec![
-            ref_variant_null(),
-            ValType::I32,
-            ValType::Anyref,
-            ref_iter_state_null(),
+            unfold_step_ref,    // local 1: typed step_result
+            ValType::I32,       // local 2: variant_id
+            iter_item_ref,      // local 3: temp item
+            iter_state_ref,     // local 4: it_state
+            ref_variant_null(), // local 5: erased step_result
         ],
         body,
     }
@@ -3692,6 +4977,7 @@ fn ref_user_record(type_id: TypeId) -> ValType {
     }
 }
 
+#[allow(dead_code)]
 fn ref_user_record_null(type_id: TypeId) -> ValType {
     ValType::Ref {
         nullable: true,
@@ -3959,6 +5245,7 @@ fn collect_concrete_sigs_op(
 fn emit_typed_closurefunc_def(
     params: &[crate::types::ty::MonoType],
     ret: &crate::types::ty::MonoType,
+    abi_results: &[ValType],
     type_env: &TypeEnv,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> crate::wasm::ir::TypeDef {
@@ -3970,13 +5257,12 @@ fn emit_typed_closurefunc_def(
     wasm_params.extend(
         params
             .iter()
-            .map(|p| mono_to_valtype_specialized(p, type_env, concrete_func_sigs)),
+            .map(|p| mono_to_valtype_for_user_abi_param(p, type_env, concrete_func_sigs)),
     );
-    let results = mono_result_types_specialized(ret, type_env, concrete_func_sigs);
     crate::wasm::ir::TypeDef::FuncType {
         name: sym,
         params: wasm_params,
-        results,
+        results: abi_results.to_vec(),
     }
 }
 
@@ -4049,6 +5335,146 @@ fn emit_typed_cell_struct_def(
     }
 }
 
+fn emit_typed_unfold_step_struct_def(
+    yield_ty: &MonoType,
+    seed_ty: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> WasmTypeDef {
+    WasmTypeDef::Struct {
+        name: typed_unfold_step_sym(yield_ty, seed_ty),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            WasmFieldDef {
+                name: Some("variant_id".to_string()),
+                mutable: false,
+                ty: ValType::I32,
+            },
+            WasmFieldDef {
+                name: Some("f0".to_string()),
+                mutable: false,
+                ty: mono_to_valtype_specialized(yield_ty, type_env, concrete_func_sigs),
+            },
+            WasmFieldDef {
+                name: Some("f1".to_string()),
+                mutable: false,
+                ty: mono_to_valtype_specialized(seed_ty, type_env, concrete_func_sigs),
+            },
+        ],
+    }
+}
+
+fn emit_typed_iterator_state_struct_def(
+    info: &IteratorStateInfo,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> WasmTypeDef {
+    let step_ret = unfold_step_type(info.yield_ty.clone(), info.seed_ty.clone());
+    let closure_sym = typed_closure_struct_sym(std::slice::from_ref(&info.seed_ty), &step_ret);
+    WasmTypeDef::Struct {
+        name: typed_iterator_state_sym(info),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            WasmFieldDef {
+                name: Some("seed".to_string()),
+                mutable: false,
+                ty: mono_to_valtype_specialized(&info.seed_ty, type_env, concrete_func_sigs),
+            },
+            WasmFieldDef {
+                name: Some("step".to_string()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(closure_sym),
+                },
+            },
+        ],
+    }
+}
+
+fn emit_typed_iter_item_struct_def(
+    info: &IteratorStateInfo,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> WasmTypeDef {
+    WasmTypeDef::Struct {
+        name: typed_iter_item_sym(info),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            WasmFieldDef {
+                name: Some("value".to_string()),
+                mutable: true,
+                ty: mono_to_valtype_specialized(&info.yield_ty, type_env, concrete_func_sigs),
+            },
+            WasmFieldDef {
+                name: Some("rest".to_string()),
+                mutable: true,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(typed_iterator_state_sym(info)),
+                },
+            },
+        ],
+    }
+}
+
+fn emit_typed_iter_option_struct_def(info: &IteratorStateInfo) -> WasmTypeDef {
+    WasmTypeDef::Struct {
+        name: typed_iter_option_sym(info),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            WasmFieldDef {
+                name: Some("variant_id".to_string()),
+                mutable: false,
+                ty: ValType::I32,
+            },
+            WasmFieldDef {
+                name: Some("payload".to_string()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(typed_iter_item_sym(info)),
+                },
+            },
+        ],
+    }
+}
+
+fn prioritize_specialized_iterator_types(module: &mut ModuleIR) {
+    let mut unfold_steps = Vec::new();
+    let mut closures = Vec::new();
+    let mut iter_states = Vec::new();
+    let mut iter_items = Vec::new();
+    let mut iter_options = Vec::new();
+    let mut rest = Vec::new();
+    for ty in module.types.drain(..) {
+        let name = ty.name();
+        if name.starts_with("unfold_step__") {
+            unfold_steps.push(ty);
+        } else if name.starts_with("closurefunc_") || name.starts_with("closure_") {
+            closures.push(ty);
+        } else if name.starts_with("iter_state__") {
+            iter_states.push(ty);
+        } else if name.starts_with("iter_item__") {
+            iter_items.push(ty);
+        } else if name.starts_with("option__iter_item__") {
+            iter_options.push(ty);
+        } else {
+            rest.push(ty);
+        }
+    }
+    unfold_steps.extend(closures);
+    unfold_steps.extend(iter_states);
+    unfold_steps.extend(iter_items);
+    unfold_steps.extend(iter_options);
+    unfold_steps.extend(rest);
+    module.types = unfold_steps;
+}
+
 /// Emit a typed closure trampoline for `func`.
 ///
 /// The trampoline signature is:
@@ -4061,11 +5487,7 @@ fn emit_typed_closure_trampoline(
     capture_count: usize,
     params: &[crate::types::ty::MonoType],
     ret: &crate::types::ty::MonoType,
-    type_env: &TypeEnv,
-    concrete_func_sigs: &HashMap<
-        FuncId,
-        (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
-    >,
+    ctx: &EmitCtx<'_>,
 ) -> FuncDef {
     let mut trampoline_params = vec![ValType::Ref {
         nullable: true,
@@ -4074,7 +5496,7 @@ fn emit_typed_closure_trampoline(
     trampoline_params.extend(
         params
             .iter()
-            .map(|p| mono_to_valtype_for_param(p, type_env, concrete_func_sigs)),
+            .map(|p| mono_to_valtype_for_user_abi_param(p, ctx.type_env, &ctx.concrete_func_sigs)),
     );
 
     let mut body = Vec::new();
@@ -4106,7 +5528,15 @@ fn emit_typed_closure_trampoline(
         // still returns nothing, handled by `mono_result_types`).
     }
 
-    let results = mono_result_types_specialized(ret, type_env, concrete_func_sigs);
+    let results = ctx
+        .user_func_abi(func.func_id)
+        .map(|abi| abi.results)
+        .unwrap_or_else(|| {
+            panic!(
+                "missing ABI for typed trampoline FuncId({})",
+                func.func_id.0
+            )
+        });
 
     FuncDef {
         name: typed_closure_trampoline_sym(func.func_id),
@@ -4138,12 +5568,12 @@ fn build_user_sig_map_typed(
             let mut params = func
                 .param_tys
                 .iter()
-                .map(|ty| mono_to_valtype_for_param(ty, type_env, concrete_func_sigs))
+                .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
                 .collect::<Vec<_>>();
             params.extend(vec![ValType::Anyref; capture_locals.len()]);
             let result = match &func.return_ty {
                 crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
-                other => Some(mono_to_valtype_specialized(
+                other => Some(mono_to_valtype_for_user_abi_result(
                     other,
                     type_env,
                     concrete_func_sigs,
@@ -4480,10 +5910,6 @@ mod tests {
             vec![
                 Instr::I64Const(42),
                 Instr::Call("rt_str__from_i64".to_string()),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named(T_STRING.to_string()),
-                }
             ]
         );
 
@@ -4521,10 +5947,6 @@ mod tests {
                 Instr::StructNew(T_BOXED_INT.to_string()),
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
                 Instr::Call("rt_arr__concat".to_string()),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named("rt_types__Array".to_string()),
-                },
             ]
         );
 
@@ -4666,10 +6088,6 @@ mod tests {
                 Instr::StructNew(T_BOXED_INT.to_string()),
                 Instr::ArrayNewFixed(T_CLOSURE_ENV.to_string(), 1),
                 Instr::StructNew(T_CLOSURE.to_string()),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named(T_CLOSURE.to_string()),
-                },
                 Instr::LocalSet(0),
             ]
         );
@@ -4741,6 +6159,148 @@ mod tests {
                 },
                 Instr::StructGet(T_BOXED_INT.to_string(), 0),
             ]
+        );
+    }
+
+    #[test]
+    fn emit_closure_call_uses_local_backend_typed_closure_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(88),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+        ctx.local_map.insert(LocalId(1), (0, ref_closure_null()));
+        ctx.local_map.insert(LocalId(2), (1, ValType::I64));
+        ctx.set_local_typed_closure_sig(LocalId(1), Some((vec![MonoType::Int], MonoType::Int)));
+
+        let instrs = emit_call(
+            &Atom::ALocal(LocalId(1)),
+            &[Atom::ALocal(LocalId(2))],
+            &ValType::I64,
+            &mut ctx,
+        );
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instr::CallRef(sym) if sym == "closurefunc_i64_i64"))
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instr::CallRef(sym) if sym == T_CLOSURE_FUNC))
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instr::ArrayNewFixed(sym, 1) if sym == T_ARRAY))
+        );
+    }
+
+    #[test]
+    fn emit_closure_call_does_not_use_local_mono_fallback_without_backend_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(91),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+        ctx.local_map.insert(LocalId(1), (0, ref_closure_null()));
+        ctx.local_map.insert(LocalId(2), (1, ValType::I64));
+        ctx.local_mono.insert(
+            LocalId(1),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+
+        let instrs = emit_call(
+            &Atom::ALocal(LocalId(1)),
+            &[Atom::ALocal(LocalId(2))],
+            &ValType::I64,
+            &mut ctx,
+        );
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instr::CallRef(sym) if sym == T_CLOSURE_FUNC))
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instr::ArrayNewFixed(sym, 1) if sym == T_ARRAY))
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instr::CallRef(sym) if sym == "closurefunc_i64_i64"))
+        );
+    }
+
+    #[test]
+    fn emit_cell_get_uses_local_backend_typed_cell_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(89),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.set_local_typed_cell_elem(LocalId(1), Some(MonoType::Int));
+
+        let instrs = emit_cell_get_intrinsic(&[Atom::ALocal(LocalId(1))], &ValType::I64, &mut ctx);
+        let cell_sym = typed_cell_struct_sym(&MonoType::Int);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instr::StructGet(sym, 0) if sym == &cell_sym))
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instr::ArrayGet(sym) if sym == T_ARRAY))
+        );
+    }
+
+    #[test]
+    fn emit_cell_get_does_not_use_local_mono_fallback_without_backend_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(90),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.local_mono.insert(
+            LocalId(1),
+            MonoType::Named {
+                type_id: crate::types::ty::CELL_TYPE_ID,
+                args: vec![MonoType::Int],
+            },
+        );
+
+        let instrs = emit_cell_get_intrinsic(&[Atom::ALocal(LocalId(1))], &ValType::I64, &mut ctx);
+        let cell_sym = typed_cell_struct_sym(&MonoType::Int);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instr::ArrayGet(sym) if sym == T_ARRAY))
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instr::StructGet(sym, 0) if sym == &cell_sym))
         );
     }
 
@@ -5139,10 +6699,6 @@ mod tests {
                 Instr::LocalGet(1),
                 Instr::StructGet("UserRecord_3".to_string(), 2),
                 Instr::StructNew("UserRecord_3".to_string()),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named("UserRecord_3".to_string()),
-                },
                 Instr::LocalSet(0),
             ]
         );
@@ -5221,10 +6777,6 @@ mod tests {
                 Instr::I32Const(1),
                 Instr::RefI31,
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 2),
-                Instr::RefCast {
-                    nullable: true,
-                    heap: HeapType::Named(T_ARRAY.to_string()),
-                },
                 Instr::LocalSet(0),
             ]
         );

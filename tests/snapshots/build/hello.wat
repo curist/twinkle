@@ -42,7 +42,7 @@
   (type $functype_25 (func (param anyref anyref) (result i32)))
   (type $functype_26 (func))
   (type $functype_27 (func (param anyref anyref) (result anyref)))
-  (type $functype_28 (func (param anyref) (result anyref)))
+  (type $functype_28 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_29 (func (param (ref null $rt_types__String)) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
@@ -1395,7 +1395,7 @@
   )
   (func $user__user____iterator_next (type $functype_28)
     (param $p0 anyref)
-    (result anyref)
+    (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
     (local $p2 i32)
     (local $p3 anyref)
@@ -1422,7 +1422,7 @@
     local.set $p2
     local.get $p2
     i32.eqz
-    (if (result anyref)
+    (if (result (ref null $rt_types__Variant))
       (then
         i32.const 0
         i32.const 0

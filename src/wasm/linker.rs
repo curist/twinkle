@@ -135,14 +135,20 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
                 }
             }
             Instr::If {
+                result,
                 then_body,
                 else_body,
-                ..
             } => {
+                if let Some(result) = result {
+                    rewrite_val_type(result, renames);
+                }
                 rewrite_type_refs(then_body, renames);
                 rewrite_type_refs(else_body, renames);
             }
-            Instr::Block { body, .. } | Instr::Loop { body, .. } => {
+            Instr::Block { result, body, .. } | Instr::Loop { result, body, .. } => {
+                if let Some(result) = result {
+                    rewrite_val_type(result, renames);
+                }
                 rewrite_type_refs(body, renames);
             }
             _ => {}

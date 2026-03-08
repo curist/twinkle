@@ -1,0 +1,20 @@
+// Expected output:
+//   6
+
+fn mk(n: Int) Iterator<Int> {
+  Iterator.unfold(n, fn(i: Int) {
+    if i > 0 { UnfoldStep.Yield(i, i - 1) }
+    else     { UnfoldStep.Done }
+  })
+}
+
+fn apply(f: fn(Int) Iterator<Int>) Int {
+  it := f(3)
+  acc := 0
+  for x in it {
+    acc = acc + x
+  }
+  acc
+}
+
+println("${apply(mk)}")

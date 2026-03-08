@@ -43,7 +43,7 @@
   (type $functype_26 (func (param i64 i64) (result i64)))
   (type $functype_27 (func))
   (type $functype_28 (func (param anyref anyref) (result anyref)))
-  (type $functype_29 (func (param anyref) (result anyref)))
+  (type $functype_29 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_30 (func (param (ref null $rt_types__String)) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
@@ -1424,11 +1424,9 @@
     local.set $p1
     array.new_fixed $rt_types__String 0
     local.get $p1
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p2
     local.get $p2
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p3
@@ -1441,11 +1439,9 @@
     local.set $p5
     array.new_fixed $rt_types__String 0
     local.get $p5
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p6
     local.get $p6
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p7
@@ -1458,11 +1454,9 @@
     local.set $p9
     array.new_fixed $rt_types__String 0
     local.get $p9
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p10
     local.get $p10
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p11
@@ -1471,11 +1465,9 @@
     local.set $p12
     array.new_fixed $rt_types__String 0
     local.get $p12
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p13
     local.get $p13
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p14
@@ -1484,11 +1476,9 @@
     local.set $p15
     array.new_fixed $rt_types__String 0
     local.get $p15
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p16
     local.get $p16
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p17
@@ -1497,11 +1487,9 @@
     local.set $p18
     array.new_fixed $rt_types__String 0
     local.get $p18
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p19
     local.get $p19
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p20
@@ -1510,11 +1498,9 @@
     local.set $p21
     array.new_fixed $rt_types__String 0
     local.get $p21
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p22
     local.get $p22
-    ref.cast (ref null $rt_types__String)
     return_call $rt_core__println
   )
   (func $user__func_41__closure (type $functype_28)
@@ -1565,7 +1551,7 @@
   )
   (func $user__user____iterator_next (type $functype_29)
     (param $p0 anyref)
-    (result anyref)
+    (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
     (local $p2 i32)
     (local $p3 anyref)
@@ -1592,7 +1578,7 @@
     local.set $p2
     local.get $p2
     i32.eqz
-    (if (result anyref)
+    (if (result (ref null $rt_types__Variant))
       (then
         i32.const 0
         i32.const 0

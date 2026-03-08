@@ -1,0 +1,20 @@
+// Expected output:
+//   1
+
+fn main() {
+  it := Iterator.unfold(0, fn(i: Int) {
+    if i < 1 { UnfoldStep.Yield(i, i + 1) }
+    else     { UnfoldStep.Done }
+  })
+
+  it = Iterator.unfold(true, fn(b: Bool) {
+    if b { UnfoldStep.Yield(1, false) }
+    else { UnfoldStep.Done }
+  })
+
+  for x in it {
+    println("${x}")
+  }
+}
+
+main()

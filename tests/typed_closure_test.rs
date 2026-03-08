@@ -277,9 +277,273 @@ fn build_wat_specializes_iterator_next_helper_for_concrete_unfold() {
     let helper = find_named_func_block(&wat, "$user__user____iterator_next__Int__Int")
         .expect("expected specialized iterator-next helper in build_wat output");
     assert!(
-        helper.contains("struct.get $user__closure_i64_ref 2")
-            && helper.contains("call_ref $user__closurefunc_i64_ref")
-            && !helper.contains("call_ref $rt_types__ClosureFunc"),
+        helper.contains("struct.get $user__closure_i64_")
+            && helper.contains("call_ref $user__closurefunc_i64_")
+            && helper.contains("struct.new $user__option__iter_item__Int__Int")
+            && !helper.contains("call_ref $rt_types__ClosureFunc")
+            && !helper.contains("struct.new $rt_types__Variant")
+            && !helper.contains("array.new_fixed $rt_types__Array"),
         "Expected concrete iterator-next helper to use typed closure dispatch.\n{helper}"
+    );
+}
+
+#[test]
+fn build_wat_erases_unfold_step_at_function_boundary() {
+    let path = fixture("unfold_step_match.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let producer = find_func_block_containing(&wat, "(func $user__func_41")
+        .expect("expected UnfoldStep producer in build_wat output");
+    assert!(
+        producer.contains("(result (ref null $rt_types__Variant))")
+            && producer.contains("struct.new $user__unfold_step__Int__Int")
+            && producer.contains("struct.new $rt_types__Variant"),
+        "Expected producer to keep typed local construction but erase at the function boundary.\n{producer}"
+    );
+
+    let matcher = find_func_block_containing(&wat, "call $user__func_41")
+        .expect("expected UnfoldStep consumer in build_wat output");
+    assert!(
+        matcher.contains("struct.get $rt_types__Variant 2")
+            && !matcher.contains("ref.test (ref null $user__unfold_step__Int__Int)"),
+        "Expected match lowering to consume erased Variant payloads at the boundary.\n{matcher}"
+    );
+}
+
+#[test]
+fn build_wat_specializes_iter_item_for_loop_consumption() {
+    let path = fixture("iterator_for_loop.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let loop_func = find_func_block_containing(&wat, "call $user__user____iterator_next__Int__Int")
+        .expect("expected for-loop consumer in build_wat output");
+    assert!(
+        loop_func.contains("ref.test (ref null $user__option__iter_item__Int__Int)")
+            && loop_func.contains("struct.get $user__option__iter_item__Int__Int 0")
+            && loop_func.contains("struct.get $user__option__iter_item__Int__Int 1")
+            && loop_func.contains("ref.cast (ref null $user__iter_item__Int__Int)")
+            && loop_func.contains("struct.get $user__iter_item__Int__Int 0")
+            && loop_func.contains("struct.get $user__iter_item__Int__Int 1")
+            && loop_func.contains("struct.new $user__iter_state__Int__Int")
+            && !loop_func.contains("struct.get $user__UserRecord_5")
+            && !loop_func.contains("struct.get $rt_types__Variant"),
+        "Expected for-loop lowering to consume typed Option/IterItem fields directly.\n{loop_func}"
+    );
+}
+
+#[test]
+fn build_wat_keeps_universal_iterator_next_for_erased_iterator_param() {
+    let path = fixture("iterator_advanced.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let fallback_consumer = find_func_block_containing(&wat, "call $user__user____iterator_next")
+        .expect("expected erased iterator consumer to call the universal iterator-next helper");
+    assert!(
+        fallback_consumer.contains("struct.get $rt_types__Variant 2")
+            && fallback_consumer.contains("array.get $rt_types__Array")
+            && fallback_consumer.contains("struct.get $user__UserRecord_5 0"),
+        "Expected erased iterator parameter path to keep the universal Variant/UserRecord fallback.\n{fallback_consumer}"
+    );
+
+    let erased_boundary = find_func_block_containing(&wat, "call $user__func_42")
+        .expect("expected mixed typed-to-erased iterator boundary in build_wat output");
+    assert!(
+        erased_boundary.contains("struct.new $rt_types__IterState")
+            && !erased_boundary
+                .contains("ref.cast (ref null $rt_types__IterState)\n    call $user__func_42"),
+        "Expected concrete iterator state to be wrapped into a universal IterState at the erased call boundary.\n{erased_boundary}"
+    );
+}
+
+#[test]
+fn build_wat_typed_closure_trampoline_uses_erased_iterator_return() {
+    let path = fixture("iterator_first_class_return.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let typed_trampoline = find_func_block_containing(&wat, "__typed_closure")
+        .expect("expected typed closure trampoline in build_wat output");
+    assert!(
+        typed_trampoline.contains("(result (ref null $rt_types__IterState))")
+            && !typed_trampoline.contains("(result (ref null $user__iter_state__Int__Int))"),
+        "Expected typed closure trampoline to use erased iterator ABI at function boundaries.\n{typed_trampoline}"
+    );
+}
+
+// ─── Phase 6 regressions: closure/cell local fast path vs erased ABI ─────────
+
+/// The monomorphized fold function should use the typed closure struct as its param
+/// (the specialization is explicit via monomorphization) and use typed dispatch internally.
+/// The typed closure param and typed call_ref must agree — no mixed erased/typed boundary.
+#[test]
+fn typed_closure_param_and_dispatch_agree() {
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let fold_func = find_func_block_containing(&wat, "call_ref $user__closurefunc_i64_i64_i64")
+        .expect("expected fold function using typed closure dispatch in build_wat output");
+
+    // The specialized fold function takes a typed closure param
+    assert!(
+        fold_func.contains("(ref null $user__closure_i64_i64_i64))"),
+        "Expected monomorphized fold to accept typed closure param.\n{fold_func}"
+    );
+
+    // And uses typed dispatch — both sides agree
+    assert!(
+        fold_func.contains("struct.get $user__closure_i64_i64_i64")
+            && fold_func.contains("call_ref $user__closurefunc_i64_i64_i64")
+            && !fold_func.contains("call_ref $rt_types__ClosureFunc"),
+        "Expected fold function param type and internal dispatch to agree on typed closure.\n{fold_func}"
+    );
+}
+
+/// Universal closure trampolines bridge typed function bodies back to the erased
+/// calling convention. Their result type should be `anyref` (the universal return),
+/// not a typed closure struct.
+#[test]
+fn closure_returning_function_abi_result_is_consistent() {
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    // Find the universal closure trampoline — its name ends in `__closure` but
+    // does NOT contain `__typed_closure`.
+    let lines = wat.lines().collect::<Vec<_>>();
+    let mut found_trampoline = false;
+    for (start, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("(func")
+            && trimmed.contains("__closure")
+            && !trimmed.contains("__typed_closure")
+            && trimmed.contains("$user__func_")
+        {
+            // Collect the full function block
+            let mut depth: i32 = 0;
+            let mut block = Vec::new();
+            for l in &lines[start..] {
+                block.push(*l);
+                for ch in l.trim().chars() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if depth == 0 {
+                    break;
+                }
+            }
+            let trampoline = block.join("\n");
+            // Universal trampolines return anyref, not a typed closure struct
+            assert!(
+                !trampoline.contains("(result (ref null $user__closure_i64"),
+                "Universal trampoline should not return a typed closure struct.\n{trampoline}"
+            );
+            found_trampoline = true;
+        }
+    }
+    assert!(
+        found_trampoline,
+        "Expected at least one universal closure trampoline in fold_small.tw WAT"
+    );
+}
+
+/// After linking, all specialized type references emitted by the user module
+/// should be properly qualified. No unqualified `$closure_`, `$cell_`, or
+/// `$iter_state__` should survive linking.
+#[test]
+fn specialization_types_properly_qualified_after_linking() {
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    for line in wat.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("(type ") {
+            continue;
+        }
+        assert!(
+            !trimmed.contains("$closure_i64") || trimmed.contains("$user__closure_i64"),
+            "Found unqualified specialized closure type reference: {trimmed}"
+        );
+        assert!(
+            !trimmed.contains("$closurefunc_i64") || trimmed.contains("$user__closurefunc_i64"),
+            "Found unqualified specialized closurefunc type reference: {trimmed}"
+        );
+    }
+}
+
+/// Typed closure and cell type registration should go through the unified
+/// `SpecializedTypeRegistry` — the same pipeline used by iterator types.
+/// This test verifies that `emit_user_module_typed` populates the registry
+/// for closures and cells, ensuring a single source of truth.
+#[test]
+fn closure_and_cell_types_registered_through_unified_registry() {
+    // fold_small.tw has a closure (fn(Int,Int) Int) — should register a typed closure
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    // The WAT should contain both the closurefunc type and the closure struct
+    assert!(
+        wat.contains("$user__closurefunc_i64_i64_i64"),
+        "Expected typed closurefunc type from registry.\n"
+    );
+    assert!(
+        wat.contains("$user__closure_i64_i64_i64"),
+        "Expected typed closure struct from registry.\n"
+    );
+
+    // cell_update.tw has Cell<Int> — should register a typed cell
+    let path = fixture("cell_update.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    assert!(
+        wat.contains("$user__cell_Int"),
+        "Expected typed cell struct from registry.\n"
+    );
+}
+
+/// Verify the ABI boundary policy: iterator-adjacent types use erased representation
+/// at function boundaries, while closures and cells use typed representation.
+/// This test documents the current policy explicitly so changes are surfaced.
+#[test]
+fn abi_boundary_policy_iterator_erased_closure_cell_typed() {
+    // iterator_first_class_return.tw: function returns Iterator<Int>
+    // The ABI should use erased IterState, not typed iter_state__Int__Int
+    let path = fixture("iterator_first_class_return.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    // The mk function returns Iterator<Int> — should use erased IterState at boundary
+    let mk_func = find_func_block_containing(&wat, "unfold")
+        .expect("expected mk function in build_wat output");
+    assert!(
+        mk_func.contains("(result (ref null $rt_types__IterState))"),
+        "Expected iterator-returning function to use erased IterState at ABI boundary.\n{mk_func}"
+    );
+    assert!(
+        !mk_func.contains("(result (ref null $user__iter_state__"),
+        "Iterator-returning function should NOT use typed iter_state at ABI boundary.\n{mk_func}"
+    );
+
+    // fold_small.tw: function takes fn(Int,Int) Int — should use typed closure at boundary
+    let path = fixture("fold_small.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    let fold_func = find_func_block_containing(&wat, "call_ref $user__closurefunc_i64_i64_i64")
+        .expect("expected fold function in build_wat output");
+    assert!(
+        fold_func.contains("(ref null $user__closure_i64_i64_i64)"),
+        "Expected closure param to use typed closure struct at ABI boundary.\n{fold_func}"
+    );
+
+    // cell_update.tw: function takes Cell<Int> — should use typed cell at boundary
+    let path = fixture("cell_update.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    // The apply_update function takes Cell<Int> — find it by searching for the
+    // typed cell reference in a user function's parameter list
+    let cell_func = find_func_block_containing(&wat, "(ref null $user__cell_Int)")
+        .expect("expected a user function with typed cell param in build_wat output");
+    assert!(
+        cell_func.contains("(ref null $user__cell_Int)"),
+        "Expected Cell param to use typed cell struct at ABI boundary.\n{cell_func}"
     );
 }

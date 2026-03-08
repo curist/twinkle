@@ -45,7 +45,7 @@
   (type $functype_27 (func (param (ref null $user__UserRecord_7) i64 i64) (result (ref null $user__UserRecord_7))))
   (type $functype_28 (func))
   (type $functype_29 (func (param anyref anyref) (result anyref)))
-  (type $functype_30 (func (param anyref) (result anyref)))
+  (type $functype_30 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_31 (func (param (ref null $rt_types__String)) (result anyref)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
@@ -1432,7 +1432,6 @@
     local.get $p4
     local.get $p6
     struct.new $user__UserRecord_7
-    ref.cast (ref null $user__UserRecord_7)
     local.set $p7
     local.get $p7
     return
@@ -1471,7 +1470,6 @@
     i64.const 3
     i64.const 4
     struct.new $user__UserRecord_7
-    ref.cast (ref null $user__UserRecord_7)
     local.set $p0
     local.get $p0
     local.set $p1
@@ -1484,11 +1482,9 @@
     local.set $p3
     array.new_fixed $rt_types__String 0
     local.get $p3
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p4
     local.get $p4
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p5
@@ -1501,11 +1497,9 @@
     local.set $p7
     array.new_fixed $rt_types__String 0
     local.get $p7
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p8
     local.get $p8
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p9
@@ -1518,11 +1512,9 @@
     local.set $p11
     array.new_fixed $rt_types__String 0
     local.get $p11
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p12
     local.get $p12
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p13
@@ -1531,7 +1523,6 @@
     ref.cast (ref null $user__UserRecord_7)
     struct.get $user__UserRecord_7 1
     struct.new $user__UserRecord_7
-    ref.cast (ref null $user__UserRecord_7)
     local.set $p14
     local.get $p14
     local.set $p1
@@ -1546,11 +1537,9 @@
     local.set $p17
     array.new_fixed $rt_types__String 0
     local.get $p17
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p18
     local.get $p18
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p19
@@ -1570,11 +1559,9 @@
     local.set $p23
     array.new_fixed $rt_types__String 0
     local.get $p23
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p24
     local.get $p24
-    ref.cast (ref null $rt_types__String)
     call $rt_core__println
     i32.const 0
     local.set $p25
@@ -1586,11 +1573,9 @@
     local.set $p27
     array.new_fixed $rt_types__String 0
     local.get $p27
-    ref.cast (ref null $rt_types__String)
     call $rt_str__concat
     local.set $p28
     local.get $p28
-    ref.cast (ref null $rt_types__String)
     return_call $rt_core__println
   )
   (func $user__func_41__closure (type $functype_29)
@@ -1638,7 +1623,7 @@
   )
   (func $user__user____iterator_next (type $functype_30)
     (param $p0 anyref)
-    (result anyref)
+    (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
     (local $p2 i32)
     (local $p3 anyref)
@@ -1665,7 +1650,7 @@
     local.set $p2
     local.get $p2
     i32.eqz
-    (if (result anyref)
+    (if (result (ref null $rt_types__Variant))
       (then
         i32.const 0
         i32.const 0

@@ -1,0 +1,13 @@
+// Expected output:
+//   0
+//   10
+//   20
+
+it := Iterator.unfold(0, fn(i: Int) {
+  if i < 3 { UnfoldStep.Yield(i * 10, i + 1) }
+  else     { UnfoldStep.Done }
+})
+
+for x in it {
+  println("${x}")
+}

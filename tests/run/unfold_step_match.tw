@@ -1,0 +1,18 @@
+// Expected output:
+//   value=20 next=3
+//   done
+
+step := fn(i: Int) {
+  if i < 3 { UnfoldStep.Yield(i * 10, i + 1) }
+  else     { UnfoldStep.Done }
+}
+
+case step(2) {
+  .Yield(value, next) => println("value=${value} next=${next}"),
+  .Done => println("done?"),
+}
+
+case step(3) {
+  .Yield(value, next) => println("value=${value} next=${next}"),
+  .Done => println("done"),
+}

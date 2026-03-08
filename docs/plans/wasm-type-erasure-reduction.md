@@ -58,8 +58,8 @@ Done so far:
 
 Still open:
 
-* fully typed iterator state representation instead of the current erased array payload
-* targeted reduction of `Anyref` payload layouts in hot helper/variant paths
+* targeted reduction of `Anyref` payload layouts in hot helper/variant paths outside the
+  iterator-specific pipeline
 
 These remaining items now build on top of the completed
 [backend-pipeline-alignment.md](backend-pipeline-alignment.md) work: backend-facing ANF is
@@ -147,49 +147,38 @@ Follow-up:
 * keep regression coverage for scalar and capability-style records
 * preserve `Anyref` only for genuinely erased or polymorphic record fields
 
-### 4. Iterator representation still erases seed and payload layout
+### 4. Iterator representation and payload layout
 
-Status: partially done.
-
-Today `Iterator.unfold(seed, step)` still stores state as:
-
-```text
-[seed_anyref, step_closure_anyref]
-```
+Status: done for the concrete iterator path; universal fallback retained for erased cases.
 
 What changed:
 
-* when the compiler can still prove the concrete unfold state, `Iterator.next` now routes
-  through a typed helper that:
-  * casts the stored step closure back to its typed subtype
-  * calls the step function via concrete `call_ref`
-  * avoids the universal `$ClosureFunc` dispatch path
-* this currently works for direct unfold-backed locals and for user functions whose return
-  value is provably a concrete unfold state
+* concrete `Iterator.unfold(seed, step)` now emits a typed iterator-state struct instead of
+  routing seed/step through the universal runtime container
+* concrete `Iterator.next` now routes through a typed helper that:
+  * calls the step function via concrete typed-closure `call_ref`
+  * reads typed `UnfoldStep<T, S>` fields directly
+  * builds typed `IterItem<T>` records directly
+  * returns a typed iterator-adjacent `Option<IterItem<T>>` struct instead of a universal
+    `Variant`
+* match / `for` lowering on that concrete path now reads the typed `Option` / `IterItem`
+  fields directly
 
-What is still missing:
+What remains intentionally unchanged:
 
-* the iterator state container itself is still an erased array
-* seeds and `UnfoldStep` payloads still move through `Anyref`
-* generic `Iterator<T>` parameters still use the fallback helper path
+* genuinely erased `Iterator<T>` values, such as iterator parameters with no provable
+  hidden state shape, still use the universal `__iterator_next` helper and the
+  `Variant`/payload-array fallback path
 
-Target:
+### 5. Variant / helper payloads outside iterators
 
-* replace the erased array-backed iterator representation with a typed state record or
-  typed runtime struct after monomorphization
-* preserve the typed helper dispatch as the fast path on top of that concrete state layout
-* move toward a monomorphized `Iterator.next__T__S`-style helper family for concrete cases
-
-### 5. Variant / helper payloads remain array-of-anyref based
-
-Option/Result/iterator-step payloads still travel through generic payload arrays in many
-places. This is not always wrong, but it means concrete payload types are often erased
-even after monomorphization.
+Iterator-adjacent hot paths now have typed payload layouts, but general `Option`/`Result`
+and other helper payloads still often travel through universal payload arrays.
 
 Target:
 
-* audit which variants are hot enough to justify typed payload structs or monomorphized
-  helper families
+* audit which non-iterator variant paths are hot enough to justify typed payload structs
+  or monomorphized helper families
 * avoid broad refactors where the payoff is too small
 
 ## Proposed Work Items
@@ -319,10 +308,10 @@ What it does require is making the concrete iterator path fully typed end-to-end
 ## Suggested Ordering
 
 1. ~~Finish [backend-pipeline-alignment.md](backend-pipeline-alignment.md).~~ Done.
-2. B1: typed iterator state struct (eliminates erased array container)
-3. B2: typed UnfoldStep payload (eliminates erased variant payload for step results)
-4. B3: typed IterItem record fields (eliminates anyref fields in IterItem)
-5. B4: typed Option wrapping (eliminates erased Option variant for iterator next results)
+2. ~~B1: typed iterator state struct (eliminates erased array container).~~ Done.
+3. ~~B2: typed UnfoldStep payload (eliminates erased variant payload for step results).~~ Done.
+4. ~~B3: typed IterItem record fields (eliminates anyref fields in IterItem).~~ Done.
+5. ~~B4: typed Option wrapping (eliminates erased Option variant for iterator next results).~~ Done.
 6. C: evaluate general variant payload specialization
 
 ---
@@ -340,13 +329,18 @@ Previously completed:
 * iterator step closures no longer require universal closure dispatch in the common
   monomorphized case
 
-Remaining (B1–B4):
+Completed (B1–B4):
 
 * monomorphized iterator state uses a typed struct instead of an erased array container
 * concrete `UnfoldStep.Yield` payloads stay at their Wasm types instead of boxing to anyref
 * `IterItem` record fields preserve concrete value/rest types
-* `Option<IterItem>` wrapping in iterator next return uses typed struct instead of
+* `Option<IterItem>` wrapping in iterator next return uses a typed struct instead of
   universal Variant
 * the universal fallback path still works for genuinely erased iterator parameters
 * WAT audit of `tests/run/iterator*.tw` shows no unnecessary `Anyref` boxing or
   `ArrayGet` casts in the concrete iterator path
+
+Remaining:
+
+* C: evaluate whether general hot variant paths (`Option<Int>`, `Result<T, E>`, etc.)
+  justify the same specialization pattern
