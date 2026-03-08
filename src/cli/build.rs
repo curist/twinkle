@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::codegen::emit::emit_user_module_typed;
+use crate::codegen::emit::emit_user_module;
 use crate::runtime;
 use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link};
@@ -38,7 +38,7 @@ pub fn build_wat(file_path: &str) -> Result<String> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
 
     let func_table = HashMap::new();
-    let user_module = emit_user_module_typed(
+    let user_module = emit_user_module(
         &pipeline.optimized_anf_module,
         &pipeline.core_module.type_env,
         &func_table,

@@ -1,9 +1,4 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
-
-use twinkle::codegen::emit::emit_user_module;
-use twinkle::runtime;
-use twinkle::wasm::{emit::emit_wat, linker::link};
 
 fn fixture(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,17 +9,7 @@ fn fixture(name: &str) -> String {
 }
 
 fn build_wat(file_path: &str) -> String {
-    let pipeline = twinkle::backend_pipeline::compile_backend_opt(file_path)
-        .expect("backend pipeline compile failed");
-    let user_module = emit_user_module(
-        &pipeline.optimized_anf_module,
-        &pipeline.core_module.type_env,
-        &HashMap::new(),
-    );
-    let mut modules = runtime::all_modules();
-    modules.push(user_module);
-    let linked = link(modules, None).expect("link failed");
-    emit_wat(&linked)
+    twinkle::cli::build::build_wat(file_path).expect("build_wat failed")
 }
 
 fn count_substring_in_user_funcs(wat: &str, needle: &str) -> usize {

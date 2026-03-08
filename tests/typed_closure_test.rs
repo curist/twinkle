@@ -6,15 +6,7 @@
 //!
 //! Run: `cargo test --test typed_closure_test -- --nocapture`
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-
-use twinkle::codegen::emit::{emit_user_module, emit_user_module_typed};
-use twinkle::ir::lower_anf::lower_module;
-use twinkle::ir::monomorphize::monomorphize;
-use twinkle::opt::optimize_module;
-use twinkle::runtime;
-use twinkle::wasm::{emit::emit_wat, linker::link};
 
 fn fixture(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -24,31 +16,8 @@ fn fixture(name: &str) -> String {
         .to_string()
 }
 
-/// Build WAT with monomorphization but WITHOUT typed closure specialization
-/// (universal anyref boxing — Stage 9.5 baseline).
-fn build_wat_with_mono(file_path: &str) -> String {
-    let (core_module, _) = twinkle::module::compile_entry(file_path).expect("compile failed");
-    let core_module = monomorphize(core_module);
-    let anf = lower_module(&core_module);
-    let optimized = optimize_module(anf);
-    let user_module = emit_user_module(&optimized, &core_module.type_env, &HashMap::new());
-    let mut modules = runtime::all_modules();
-    modules.push(user_module);
-    let linked = link(modules, None).expect("link failed");
-    emit_wat(&linked)
-}
-
-/// Build WAT with monomorphization AND typed closure specialization (Stage 9.6).
-fn build_wat_with_typed_closure(file_path: &str) -> String {
-    let (core_module, _) = twinkle::module::compile_entry(file_path).expect("compile failed");
-    let core_module = monomorphize(core_module);
-    let anf = lower_module(&core_module);
-    let optimized = optimize_module(anf);
-    let user_module = emit_user_module_typed(&optimized, &core_module.type_env, &HashMap::new());
-    let mut modules = runtime::all_modules();
-    modules.push(user_module);
-    let linked = link(modules, None).expect("link failed");
-    emit_wat(&linked)
+fn build_wat(file_path: &str) -> String {
+    twinkle::cli::build::build_wat(file_path).expect("build_wat failed")
 }
 
 /// Count occurrences of `array.new_fixed` inside user function bodies.
@@ -157,30 +126,14 @@ fn find_named_func_block(wat: &str, func_name: &str) -> Option<String> {
     None
 }
 
-// ─── Baseline sanity checks (should pass both before and after Stage 9.6) ────
+// ─── Typed closure assertions ───────────────────────────────────────────────
 
-/// The universal-closure (mono-only) baseline DOES box args into an anyref
-/// array for each closure call — this confirms the benchmark is exercising
-/// the right path.
-#[test]
-fn baseline_mono_closure_uses_arg_boxing() {
-    let path = fixture("fold_small.tw");
-    let wat = build_wat_with_mono(&path);
-    let count = count_array_new_fixed_in_user_funcs(&wat);
-    assert!(
-        count > 0,
-        "Expected universal closure to use array.new_fixed for arg boxing in user funcs, got 0"
-    );
-}
-
-// ─── Stage 9.6 assertions ──────────────────────────────────────────────────────
-
-/// After typed closure specialization the WAT must contain at least one typed
-/// closure func-type definition (e.g. `closurefunc_i64_i64_i64`).
+/// The WAT must contain at least one typed closure func-type definition
+/// (e.g. `closurefunc_i64_i64_i64`).
 #[test]
 fn typed_closure_emit_produces_typed_closurefunc_types() {
     let path = fixture("fold_small.tw");
-    let wat = build_wat_with_typed_closure(&path);
+    let wat = build_wat(&path);
     assert!(
         wat.contains("closurefunc_"),
         "Expected typed closure func type (e.g. 'closurefunc_i64_i64_i64') in WAT."
@@ -193,7 +146,7 @@ fn typed_closure_emit_produces_typed_closurefunc_types() {
 #[test]
 fn typed_closure_call_eliminates_arg_boxing() {
     let path = fixture("fold_small.tw");
-    let wat = build_wat_with_typed_closure(&path);
+    let wat = build_wat(&path);
     let fold_block = find_func_block_containing(&wat, "(ref null $user__closure_i64_i64_i64)")
         .expect("expected specialized fold function in WAT");
 
@@ -219,7 +172,7 @@ fn typed_closure_execution_produces_correct_output() {
     use wasmtime::Module;
 
     let path = fixture("fold_small.tw");
-    let wat = build_wat_with_typed_closure(&path);
+    let wat = build_wat(&path);
     let wasm = wat::parse_str(&wat).expect("WAT parse failed");
 
     let engine = build_engine().expect("engine");
@@ -481,7 +434,7 @@ fn specialization_types_properly_qualified_after_linking() {
 
 /// Typed closure and cell type registration should go through the unified
 /// `SpecializedTypeRegistry` — the same pipeline used by iterator types.
-/// This test verifies that `emit_user_module_typed` populates the registry
+/// This test verifies that `emit_user_module` populates the registry
 /// for closures and cells, ensuring a single source of truth.
 #[test]
 fn closure_and_cell_types_registered_through_unified_registry() {

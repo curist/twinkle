@@ -28,87 +28,13 @@ use crate::wasm::ir::{
     TypeDef as WasmTypeDef, ValType,
 };
 
-/// Stage 8c scaffold entrypoint for ANF -> ModuleIR emission.
-///
-/// This currently establishes the emission context, stable function naming,
-/// local allocation setup, and import plumbing so subsequent 8c steps can
-/// focus on expression-level instruction lowering.
-pub fn emit_user_module(
-    anf: &AnfModule,
-    type_env: &TypeEnv,
-    _func_table: &HashMap<String, FuncId>,
-) -> ModuleIR {
-    let prelude = build_prelude_map();
-    let closure_capture_layouts = collect_closure_capture_layouts(anf);
-    let user_sigs = build_user_sig_map(anf, type_env, &closure_capture_layouts);
-    let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
-    let module_global_ids = collect_module_global_locals(anf);
-    let module_global_map = module_global_ids
-        .iter()
-        .copied()
-        .map(|id| (id, module_global_sym(id)))
-        .collect::<HashMap<_, _>>();
-    ctx.set_module_globals(module_global_map.clone());
-    let mut module = ModuleIR::new("user");
-    module.types.extend(emit_user_record_type_defs(
-        type_env,
-        &ctx.concrete_func_sigs,
-    ));
-    module
-        .globals
-        .extend(module_global_ids.iter().map(|id| GlobalDef {
-            name: module_global_sym(*id),
-            mutable: true,
-            ty: ValType::Anyref,
-            init: vec![Instr::RefNull(HeapType::None)],
-        }));
-
-    for func in &anf.functions {
-        let capture_locals = closure_capture_layouts
-            .get(&func.func_id)
-            .cloned()
-            .unwrap_or_default();
-        module
-            .funcs
-            .push(emit_func_stub(func, &capture_locals, &mut ctx));
-    }
-    for func in &anf.functions {
-        module.funcs.push(emit_user_closure_trampoline(
-            func,
-            closure_capture_layouts
-                .get(&func.func_id)
-                .map_or(0, std::vec::Vec::len),
-            &ctx,
-        ));
-    }
-    // Emit __iterator_next helper if any function references Iterator.next
-    if needs_iterator_next_helper(&ctx) {
-        module.funcs.push(emit_iterator_next_helper());
-    }
-
-    // Emit parse helpers if needed
-    // Always emit parse helpers — they're small and may be referenced by intrinsics
-    module.funcs.push(emit_int_from_string_helper());
-    if ctx.imports().iter().any(|i| i.as_sym == "host_parse_float") {
-        module.funcs.push(emit_float_from_string_helper());
-    }
-
-    if let Some(init) = emit_user_init_func(anf) {
-        module.start = Some(init.name.clone());
-        module.funcs.push(init);
-    }
-
-    module.imports.extend(ctx.imports());
-    module
-}
-
-/// Typed-closure variant of [`emit_user_module`].
+/// ANF -> ModuleIR emission with typed closure specialization.
 ///
 /// Emits specialized `ClosureFunc` / `Closure` struct types and typed
 /// trampolines for each distinct concrete closure signature found in the
 /// module.  At typed call sites a concrete `call_ref` is used — no anyref
 /// arg-boxing.  Dispatch through universal closures is unchanged.
-pub fn emit_user_module_typed(
+pub fn emit_user_module(
     anf: &AnfModule,
     type_env: &TypeEnv,
     _func_table: &HashMap<String, FuncId>,
@@ -354,43 +280,6 @@ fn emit_user_record_type_defs(
         next_type_id += 1;
     }
     defs
-}
-
-fn build_user_sig_map(
-    anf: &AnfModule,
-    type_env: &TypeEnv,
-    closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
-) -> HashMap<FuncId, FuncSigInfo> {
-    anf.functions
-        .iter()
-        .map(|func| {
-            let capture_locals = closure_capture_layouts
-                .get(&func.func_id)
-                .cloned()
-                .unwrap_or_default();
-            let mut params = func
-                .param_tys
-                .iter()
-                .map(|ty| mono_to_valtype(ty, type_env))
-                .collect::<Vec<_>>();
-            params.extend(vec![ValType::Anyref; capture_locals.len()]);
-            let result = match &func.return_ty {
-                MonoType::Void | MonoType::Never => None,
-                other => Some(mono_to_valtype(other, type_env)),
-            };
-            (
-                func.func_id,
-                FuncSigInfo {
-                    params,
-                    result,
-                    result_mono: match &func.return_ty {
-                        MonoType::Void | MonoType::Never => None,
-                        other => Some(other.clone()),
-                    },
-                },
-            )
-        })
-        .collect()
 }
 
 fn emit_func_stub(
@@ -5927,7 +5816,7 @@ fn emit_typed_closure_trampoline(
     }
 }
 
-/// Like [`build_user_sig_map`] but maps concrete `MonoType::Function` params
+/// Builds user function signature map, mapping concrete `MonoType::Function` params
 /// to typed closure struct ValTypes instead of the universal `$Closure`.
 fn build_user_sig_map_typed(
     anf: &AnfModule,
@@ -7085,7 +6974,7 @@ mod tests {
     }
 
     #[test]
-    fn emit_user_module_typed_preserves_function_record_field_types() {
+    fn emit_user_module_preserves_function_record_field_types() {
         use std::path::PathBuf;
 
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
