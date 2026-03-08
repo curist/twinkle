@@ -186,7 +186,7 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 | 9 | Host Integration & Validation | Done | [host-validation.md](host-validation.md) |
 | 9.5 | Monomorphization | Done | [../internals/monomorphization.md](../internals/monomorphization.md) |
 | 9.6 | Typed Closure Specialization | Done | [typed-closure-specialization.md](typed-closure-specialization.md) |
-| 9.7 | Standard Library & API Gaps | Planned | [stdlib-api-gaps.md](stdlib-api-gaps.md) |
+| 9.7 | Standard Library & API Gaps | Done | [stdlib-api-gaps.md](stdlib-api-gaps.md) |
 | 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
 
