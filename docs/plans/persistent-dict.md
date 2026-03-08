@@ -7,7 +7,7 @@ Replace the current linear assoc-list dictionary implementation with a persisten
 ## Current State
 
 - Runtime dict is an unsorted association list over array entries.
-- `get/has/set/remove` are linear scans in `/Users/curist/playground/rust/twinkle/src/runtime/dict.rs`.
+- `get/has/set/remove` are linear scans in `src/runtime/dict.rs`.
 - Key comparison uses structural equality (`rt.core.eq`).
 - Type checker restricts keys to `Int | String`.
 
@@ -45,13 +45,13 @@ Adopt a persistent hash array mapped trie (HAMT):
 
 ### Task A: Runtime Types for HAMT Nodes
 
-- Update `/Users/curist/playground/rust/twinkle/src/runtime/types.rs`:
+- Update `src/runtime/types.rs`:
   - Add dict node structs/variants needed for HAMT.
   - Keep external `Dict` ref helper stable (or migrate with coordinated codegen changes).
 
 ### Task B: Reimplement `rt.dict`
 
-- Rewrite `/Users/curist/playground/rust/twinkle/src/runtime/dict.rs`:
+- Rewrite `src/runtime/dict.rs`:
   - `make`: empty root, size 0
   - `get/has`: trie walk by hash fragments
   - `set`: path-copy insert/replace, size delta tracking
@@ -67,7 +67,7 @@ Adopt a persistent hash array mapped trie (HAMT):
 
 ### Task D: In-Place Rewrite Compatibility
 
-- Keep optimizer contract in `/Users/curist/playground/rust/twinkle/src/opt/uniqueness.rs`:
+- Keep optimizer contract in `src/opt/uniqueness.rs`:
   - `DICT_SET` -> `DICT_SET_IN_PLACE`
   - `DICT_REMOVE` -> `DICT_REMOVE_IN_PLACE`
 - Redefine in-place helpers in HAMT runtime as safe destructive path mutation only when uniqueness guarantees hold.
@@ -80,9 +80,9 @@ Adopt a persistent hash array mapped trie (HAMT):
 ## Validation
 
 - Existing dict behavior tests pass:
-  - `/Users/curist/playground/rust/twinkle/tests/run/dicts.tw`
-  - `/Users/curist/playground/rust/twinkle/tests/run/dict_methods.tw`
-  - `/Users/curist/playground/rust/twinkle/tests/opt/*dict*`
+  - `tests/run/dicts.tw`
+  - `tests/run/dict_methods.tw`
+  - `tests/opt/*dict*`
 - Add HAMT-specific tests:
   - Hash collision scenarios
   - Deep trie path updates/removes

@@ -58,7 +58,7 @@ Expected impact:
 
 ### Task A: Literal Pool in Codegen
 
-- Update `/Users/curist/playground/rust/twinkle/src/codegen/emit.rs`:
+- Update `src/codegen/emit.rs`:
   - Introduce a module-level string-literal pool.
   - Replace `emit_string_literal_atom` direct emission at use sites with pooled reference materialization.
   - Ensure deterministic symbol naming/order for snapshot stability.
@@ -68,15 +68,15 @@ Expected impact:
 
 - Verify linker and emitter handle added literal helper globals/functions deterministically.
 - Update snapshots in:
-  - `/Users/curist/playground/rust/twinkle/tests/snapshots/build/*.wat`
-  - `/Users/curist/playground/rust/twinkle/tests/snapshots/runtime_dump_test__*.snap`
+  - `tests/snapshots/build/*.wat`
+  - `tests/snapshots/runtime_dump_test__*.snap`
 
 ### Task C: Runtime Interning API (Follow-Up)
 
 - Add intern-table representation in runtime (likely in `rt.str`, or shared with a small hash map helper).
 - Add `intern` entry to:
-  - `/Users/curist/playground/rust/twinkle/src/runtime/str.rs`
-  - `/Users/curist/playground/rust/twinkle/src/codegen/prelude.rs` (if surfaced to codegen)
+  - `src/runtime/str.rs`
+  - `src/codegen/prelude.rs` (if surfaced to codegen)
 - Decide whether to intern all dynamic strings or only selected producers.
 
 ## Validation

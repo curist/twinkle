@@ -9,7 +9,7 @@ Replace the current flat copy-on-write vector backing with a persistent vector d
 - `Vector<T>` is backed by `rt.arr` using a flat Wasm GC array (`rt_types__Array`).
 - `set`, `concat`, and `slice` allocate and copy.
 - `push` is currently lowered via builder intrinsics to avoid worst-case O(N^2) patterns, but core representation is still flat.
-- Runtime implementation lives in `/Users/curist/playground/rust/twinkle/src/runtime/arr.rs`.
+- Runtime implementation lives in `src/runtime/arr.rs`.
 
 ## Target State
 
@@ -38,14 +38,14 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 
 ### Task A: Runtime Type Additions
 
-- Update `/Users/curist/playground/rust/twinkle/src/runtime/types.rs`:
+- Update `src/runtime/types.rs`:
   - Add `Vector` and node-related type definitions.
   - Add `ref_vector()` helpers.
 - Keep existing `Array` type for non-vector uses.
 
 ### Task B: Rewrite `rt.arr` Operations for Tree Representation
 
-- Update `/Users/curist/playground/rust/twinkle/src/runtime/arr.rs`:
+- Update `src/runtime/arr.rs`:
   - `make`, `get`, `set`, `concat`, `slice`, `len` to operate on persistent vector structure.
   - Preserve exported names (`rt_arr__*`) initially to avoid broad call-site churn.
   - Implement path-copy update for `set`.
@@ -60,21 +60,21 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 ### Task D: Codegen Type Plumbing
 
 - Update vector valtype mapping in:
-  - `/Users/curist/playground/rust/twinkle/src/codegen/ctx.rs`
-  - `/Users/curist/playground/rust/twinkle/src/codegen/prelude.rs`
-  - `/Users/curist/playground/rust/twinkle/src/codegen/emit.rs`
+  - `src/codegen/ctx.rs`
+  - `src/codegen/prelude.rs`
+  - `src/codegen/emit.rs`
 - Ensure runtime imports for vector ops use `ref_vector` once representation changes.
 
 ### Task E: Optimizer Compatibility
 
-- Verify `/Users/curist/playground/rust/twinkle/src/opt/uniqueness.rs` rewrite assumptions still hold.
+- Verify `src/opt/uniqueness.rs` rewrite assumptions still hold.
 - Keep in-place rewrite legality tied to uniqueness proofs, but adjust runtime implementation of in-place helpers as needed.
 
 ## Validation
 
 - Existing vector tests continue to pass:
-  - `/Users/curist/playground/rust/twinkle/tests/run/vectors.tw`
-  - `/Users/curist/playground/rust/twinkle/tests/opt/*vector*`
+  - `tests/run/vectors.tw`
+  - `tests/opt/*vector*`
 - Add performance-focused correctness tests:
   - Deep append chains
   - Repeated branching versions (structural sharing safety)
