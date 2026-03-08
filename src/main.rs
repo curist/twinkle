@@ -39,15 +39,13 @@ enum Commands {
         #[arg(long)]
         show_original: bool,
     },
-    /// Run a Twinkle program using the interpreter
+    /// Run a Twinkle program (defaults to Wasm; use --interpreter for Core interpreter)
     Run {
         /// Path to the .tw file
         file: String,
-    },
-    /// Compile and run a Twinkle/Wasm program using Wasmtime + host bindings
-    RunWasm {
-        /// Path to a .tw, .wat, or .wasm file
-        file: String,
+        /// Run through the Core IR interpreter instead of Wasmtime
+        #[arg(short = 'i', long = "interpreter")]
+        interpreter: bool,
     },
     /// Compile a Twinkle program to WAT/Wasm
     Build {
@@ -88,11 +86,12 @@ fn main() -> Result<()> {
             let path = std::path::Path::new(&file);
             twinkle::cli::opt::cmd_opt(path, show_original)?;
         }
-        Commands::Run { file } => {
-            twinkle::cli::run::run_file(&file)?;
-        }
-        Commands::RunWasm { file } => {
-            twinkle::cli::run_wasm::run_wasm_file(&file)?;
+        Commands::Run { file, interpreter } => {
+            if interpreter {
+                twinkle::cli::run::run_file(&file)?;
+            } else {
+                twinkle::cli::run_wasm::run_wasm_file(&file)?;
+            }
         }
         Commands::Build {
             file,
@@ -107,4 +106,50 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_subcommand_defaults_to_wasm_mode() {
+        let cli = Cli::try_parse_from(["twk", "run", "tests/run/hello.tw"]).expect("parse args");
+        match cli.command {
+            Commands::Run { file, interpreter } => {
+                assert_eq!(file, "tests/run/hello.tw");
+                assert!(!interpreter, "run should default to wasm mode");
+            }
+            _ => panic!("expected run subcommand"),
+        }
+    }
+
+    #[test]
+    fn run_subcommand_accepts_interpreter_flag() {
+        let cli =
+            Cli::try_parse_from(["twk", "run", "-i", "tests/run/hello.tw"]).expect("parse args");
+        match cli.command {
+            Commands::Run { file, interpreter } => {
+                assert_eq!(file, "tests/run/hello.tw");
+                assert!(interpreter, "--interpreter flag should switch runtime mode");
+            }
+            _ => panic!("expected run subcommand"),
+        }
+    }
+
+    #[test]
+    fn unknown_runtime_subcommand_is_rejected() {
+        let parsed = Cli::try_parse_from(["twk", "runwasm", "tests/run/hello.tw"]);
+        match parsed {
+            Ok(_) => panic!("unknown subcommand should be rejected"),
+            Err(err) => {
+                let rendered = err.to_string();
+                assert!(
+                    rendered.contains("unrecognized subcommand")
+                        || rendered.contains("unknown subcommand"),
+                    "unexpected clap error: {rendered}"
+                );
+            }
+        }
+    }
 }

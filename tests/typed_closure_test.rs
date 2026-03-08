@@ -548,7 +548,7 @@ fn typed_option_local_uses_specialized_struct() {
 fn typed_option_boundary_call_preserves_behavior() {
     let path = fixture("option_boundary_call.tw");
     let (stdout, _stderr) =
-        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("run-wasm should succeed");
+        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("wasm run should succeed");
     assert_eq!(
         stdout.trim(),
         "got 42\nnone",

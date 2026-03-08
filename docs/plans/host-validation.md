@@ -31,7 +31,7 @@ Implemented:
   * File I/O: `read_file`, `write_file`, `write_bytes`, `mkdirp`, `list_dir`, `exists`
   * Process: `args`, `env`, `cwd`, `exit`
 * End-to-end CLI flow:
-  * `twk run-wasm file.tw` (compile + link + run via Wasmtime)
+  * `twk run file.tw` (compile + link + run via Wasmtime by default)
   * `twk build file.tw -o output.wasm` (compile + link only)
 * Differential parity:
   * `tests/differential_test.rs` now has an empty wasm skip list.
@@ -49,8 +49,8 @@ Implemented:
 CLI:
 
 ```bash
-twk run file.tw                  # interpreter backend (unchanged)
-twk run-wasm file.tw             # compile → link → run via Wasmtime
+twk run file.tw                  # compile → link → run via Wasmtime (default)
+twk run -i file.tw               # interpreter backend
 twk build file.tw -o output.wasm # compile + link only
 ```
 

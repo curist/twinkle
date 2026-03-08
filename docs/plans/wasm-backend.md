@@ -488,7 +488,7 @@ Implemented fixes:
 1. `is_pure` now marks integer `Div/Mod` as impure.
 2. Closure capture layout/signatures/trampoline arity now use module-level
    `AMakeClosure.free_vars` as source of truth.
-3. `run-wasm` UTF-8 decoding is now strict (`String::from_utf8` + context-rich error).
+3. Wasm runner UTF-8 decoding is now strict (`String::from_utf8` + context-rich error).
 4. `AIf` and match-arm `if` now omit result type when both branches are
    known-diverging; diverging `AIf` bindings also skip dead `local.set`.
 5. `lower_anf` `Let` lowering now uses an isolated value accumulator and only
@@ -554,10 +554,10 @@ Status update (2026-03-03):
 * `twk build ... --emit-wat` now emits a sibling `.wat` when output is `.wasm` while still
   assembling `.wasm` in-process via the Rust `wat` crate.
 * `twk runtime-dump` emits linked runtime WAT (always-on, no flag needed).
-* Wasmtime host bindings in `run-wasm` now accept `@std.fs` host imports:
+* Wasmtime host bindings in default `twk run` (Wasm mode) now accept `@std.fs` host imports:
   `host.read_file`, `host.write_file`, `host.write_bytes`, `host.mkdirp`, `host.list_dir`,
   `host.exists`.
-* Wasmtime host bindings in `run-wasm` now accept stderr + process imports:
+* Wasmtime host bindings in default `twk run` (Wasm mode) now accept stderr + process imports:
   `host.eprint`, `host.eprintln`, `host.args`, `host.env`, `host.cwd`, `host.exit`.
 * Build WAT golden snapshots were added for `hello.tw`, `arithmetic.tw`, `records.tw`
   (`tests/snapshots/build/*.wat`).

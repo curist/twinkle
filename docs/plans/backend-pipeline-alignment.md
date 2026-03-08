@@ -49,7 +49,7 @@ Completed on March 7, 2026.
 Aligned with the intended backend pipeline:
 
 * `twk build`
-* `twk run-wasm`
+* `twk run` (default Wasm mode)
 * `twk lower-anf`
 * `twk opt`
 * backend-facing ANF/opt tests and snapshots
@@ -57,7 +57,7 @@ Aligned with the intended backend pipeline:
 
 Intentional exception:
 
-* `twk run` (interpreter) remains on linked Core IR rather than the backend ANF pipeline
+* `twk run -i` (interpreter mode) remains on linked Core IR rather than the backend ANF pipeline
 
 The earlier mismatch was that some CLI/debug surfaces showed ANF lowered directly from linked
 Core IR rather than from monomorphized Core IR. That mismatch is now removed from the
@@ -70,7 +70,7 @@ backend-oriented paths.
 After this plan:
 
 * backend-facing ANF is always lowered from monomorphized Core IR
-* `lower-anf` and `opt` reflect the same pipeline contract as `build` / `run-wasm`
+* `lower-anf` and `opt` reflect the same pipeline contract as `build` / `run`
 * tests and snapshots that inspect ANF or optimized ANF do so against the canonical
   monomorphized input
 * it is clear which paths are backend-oriented and which paths intentionally remain
@@ -159,7 +159,7 @@ Downstream backend plans may now assume monomorphized ANF as the canonical input
 
 This plan is done when:
 
-* `twk build` and `twk run-wasm` still use the monomorphized backend pipeline
+* `twk build` and default `twk run` still use the monomorphized backend pipeline
 * `twk lower-anf` lowers from monomorphized Core IR
 * `twk opt` optimizes monomorphized ANF
 * backend-facing ANF/opt tests and snapshots are updated to match
