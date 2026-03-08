@@ -199,3 +199,6 @@ These are not tied to a specific stage:
 | [vector-type.md](vector-type.md) | Replace `Array<T>` with `Vector<T>` |
 | [to-string-method-unification.md](to-string-method-unification.md) | Unify string conversion via `.to_string()` |
 | [uniqueness-optimization.md](uniqueness-optimization.md) | Uniqueness-based in-place update optimization |
+| [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
+| [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
+| [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
