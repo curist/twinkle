@@ -103,22 +103,26 @@ pub fn parse_file(file_path: &Path) -> Result<ParsedModule> {
     let canonical_path = file_path
         .canonicalize()
         .unwrap_or_else(|_| file_path.to_path_buf());
-
     let source = fs::read_to_string(file_path)
         .map_err(|e| anyhow!("Cannot read '{}': {}", file_path.display(), e))?;
+    parse_source_module(&source, &canonical_path)
+}
 
-    let (ast, file_registry) = crate::syntax::parse_source(&source, &file_path.to_string_lossy())?;
-
+/// Parse an in-memory source string into a module artifact.
+///
+/// This is the pure parsing entrypoint used by source-map based compilation.
+pub fn parse_source_module(source: &str, canonical_path: &Path) -> Result<ParsedModule> {
+    let (ast, file_registry) =
+        crate::syntax::parse_source(source, &canonical_path.to_string_lossy())?;
     let alias = canonical_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("main")
         .to_string();
-
     Ok(ParsedModule {
         ast,
         file_registry,
-        canonical_path,
+        canonical_path: canonical_path.to_path_buf(),
         alias,
     })
 }

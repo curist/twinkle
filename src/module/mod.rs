@@ -4,7 +4,7 @@ pub mod loader;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
@@ -13,18 +13,141 @@ use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
-    lower_stage, parse_file, preassign_module_function_ids, resolve_stage, typecheck_stage,
+    lower_stage, parse_source_module, preassign_module_function_ids, resolve_stage, typecheck_stage,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
-use crate::syntax::ast::{Item, Pattern, Stmt};
+use crate::syntax::ast::{ImportDecl, Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};
-pub use loader::{find_project_root, resolve_module_path, resolve_stdlib_module_path};
+pub use loader::{
+    find_project_root, resolve_module_path, resolve_stdlib_module_path,
+    resolve_stdlib_module_path_from_root,
+};
+
+trait ModuleSourceAdapter {
+    fn canonicalize(&self, path: &Path) -> PathBuf;
+    fn read_source(&self, path: &Path) -> Result<String>;
+    fn exists(&self, path: &Path) -> bool;
+    fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf;
+}
+
+struct FsModuleSourceAdapter;
+
+impl ModuleSourceAdapter for FsModuleSourceAdapter {
+    fn canonicalize(&self, path: &Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn read_source(&self, path: &Path) -> Result<String> {
+        fs::read_to_string(path).map_err(|e| anyhow!("Cannot read '{}': {}", path.display(), e))
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf {
+        if import.is_stdlib {
+            resolve_stdlib_module_path(&import.module_path)
+        } else {
+            let root = find_project_root(importing_file.parent().unwrap_or(Path::new(".")));
+            resolve_module_path(&root, &import.module_path)
+        }
+    }
+}
+
+struct SourceMapModuleAdapter {
+    project_root: PathBuf,
+    stdlib_root: PathBuf,
+    sources: HashMap<PathBuf, String>,
+}
+
+impl SourceMapModuleAdapter {
+    fn new(
+        project_root: &Path,
+        stdlib_root: &Path,
+        sources: &HashMap<PathBuf, String>,
+    ) -> SourceMapModuleAdapter {
+        let project_root = normalize_path_lexical(project_root);
+        let stdlib_root = normalize_path_lexical(stdlib_root);
+        let sources = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    normalize_source_map_path(path.as_path(), project_root.as_path()),
+                    source.clone(),
+                )
+            })
+            .collect();
+        SourceMapModuleAdapter {
+            project_root,
+            stdlib_root,
+            sources,
+        }
+    }
+}
+
+impl ModuleSourceAdapter for SourceMapModuleAdapter {
+    fn canonicalize(&self, path: &Path) -> PathBuf {
+        normalize_source_map_path(path, self.project_root.as_path())
+    }
+
+    fn read_source(&self, path: &Path) -> Result<String> {
+        let canonical = self.canonicalize(path);
+        self.sources.get(&canonical).cloned().ok_or_else(|| {
+            anyhow!(
+                "Cannot read '{}': source not found in module map",
+                canonical.display()
+            )
+        })
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        let canonical = self.canonicalize(path);
+        self.sources.contains_key(&canonical)
+    }
+
+    fn resolve_import_path(&self, _importing_file: &Path, import: &ImportDecl) -> PathBuf {
+        if import.is_stdlib {
+            resolve_stdlib_module_path_from_root(&self.stdlib_root, &import.module_path)
+        } else {
+            resolve_module_path(&self.project_root, &import.module_path)
+        }
+    }
+}
+
+fn normalize_source_map_path(path: &Path, project_root: &Path) -> PathBuf {
+    if path.is_absolute() {
+        normalize_path_lexical(path)
+    } else {
+        normalize_path_lexical(&project_root.join(path))
+    }
+}
+
+fn normalize_path_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
+}
 
 /// Compile a single module (file) and all its transitive dependencies.
 ///
@@ -40,10 +163,28 @@ pub fn compile_module(
     state: &mut CompileState,
     do_lower: bool,
 ) -> Result<(ModuleExports, FileRegistry)> {
+    compile_module_with_adapter(
+        file_path,
+        alias,
+        ctx,
+        importing_stack,
+        state,
+        do_lower,
+        &FsModuleSourceAdapter,
+    )
+}
+
+fn compile_module_with_adapter<A: ModuleSourceAdapter>(
+    file_path: &Path,
+    alias: &str,
+    ctx: &mut CompilationContext,
+    importing_stack: &mut Vec<PathBuf>,
+    state: &mut CompileState,
+    do_lower: bool,
+    adapter: &A,
+) -> Result<(ModuleExports, FileRegistry)> {
     // Canonicalize for deduplication / cycle detection
-    let canonical = file_path
-        .canonicalize()
-        .unwrap_or_else(|_| file_path.to_path_buf());
+    let canonical = adapter.canonicalize(file_path);
 
     // Already compiled? Return cached exports.
     if let Some(exports) = ctx.module_cache.get(&canonical) {
@@ -59,8 +200,7 @@ pub fn compile_module(
     }
 
     // Parse
-    let source = fs::read_to_string(file_path)
-        .map_err(|e| anyhow!("Cannot read '{}': {}", file_path.display(), e))?;
+    let source = adapter.read_source(&canonical)?;
     let source_hash = query_keys::hash_text(&source);
     let parse_key = query_keys::parse_key(&canonical, source_hash);
     let (cached_parsed, had_parse_entry) = with_global_cache(|cache| {
@@ -74,7 +214,7 @@ pub fn compile_module(
         if had_parse_entry {
             with_global_cache(|cache| cache.invalidate_changed_module(&canonical));
         }
-        let parsed = parse_file(file_path)?;
+        let parsed = parse_source_module(&source, &canonical)?;
         with_global_cache(|cache| cache.put_parsed(&canonical, parse_key, parsed.clone()));
         parsed
     };
@@ -83,17 +223,13 @@ pub fn compile_module(
 
     // Compile dependencies first (in source order)
     importing_stack.push(canonical.clone());
-    let root = find_project_root(file_path.parent().unwrap_or(Path::new(".")));
     let mut dep_canonical_paths = Vec::new();
 
     for item in &ast.items {
         if let Item::Import(import) = item {
-            let dep_path = if import.is_stdlib {
-                resolve_stdlib_module_path(&import.module_path)
-            } else {
-                resolve_module_path(&root, &import.module_path)
-            };
-            if !dep_path.exists() {
+            let dep_path = adapter.resolve_import_path(file_path, import);
+            let dep_canonical = adapter.canonicalize(&dep_path);
+            if !adapter.exists(&dep_canonical) {
                 importing_stack.pop();
                 return Err(anyhow!(
                     "Cannot resolve module '{}': expected file '{}'",
@@ -105,11 +241,17 @@ pub fn compile_module(
                     dep_path.display()
                 ));
             }
-            let dep_canonical = dep_path.canonicalize().unwrap_or_else(|_| dep_path.clone());
-            dep_canonical_paths.push(dep_canonical);
+            dep_canonical_paths.push(dep_canonical.clone());
             let dep_alias = import.module_name().to_string();
-            let result =
-                compile_module(&dep_path, &dep_alias, ctx, importing_stack, state, do_lower);
+            let result = compile_module_with_adapter(
+                &dep_canonical,
+                &dep_alias,
+                ctx,
+                importing_stack,
+                state,
+                do_lower,
+                adapter,
+            );
             match result {
                 Ok((dep_exports, _)) => state.register_module_exports(&dep_alias, &dep_exports),
                 Err(e) => {
@@ -886,5 +1028,45 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
     let mut state = CompileState::initial();
     state.entry_module_path = Some(path.clone());
     let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, true)?;
+    Ok((link(state), registry))
+}
+
+/// Full pipeline (parse + resolve + typecheck + lower) from an in-memory module map.
+///
+/// `sources` is keyed by absolute or project-root-relative paths to `.tw` files.
+/// Imports are resolved logically from `project_root` for user modules and
+/// `stdlib_root` for `@std.*` modules.
+pub fn compile_entry_from_source_map(
+    entry_path: &Path,
+    sources: &HashMap<PathBuf, String>,
+    project_root: &Path,
+    stdlib_root: &Path,
+) -> Result<(CoreModule, FileRegistry)> {
+    let adapter = SourceMapModuleAdapter::new(project_root, stdlib_root, sources);
+    let entry = adapter.canonicalize(entry_path);
+    if !adapter.exists(&entry) {
+        return Err(anyhow!(
+            "Cannot read '{}': source not found in module map",
+            entry.display()
+        ));
+    }
+
+    let alias = entry
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    let mut ctx = CompilationContext::new();
+    let mut state = CompileState::initial();
+    state.entry_module_path = Some(entry.clone());
+    let (_, registry) = compile_module_with_adapter(
+        &entry,
+        &alias,
+        &mut ctx,
+        &mut vec![],
+        &mut state,
+        true,
+        &adapter,
+    )?;
     Ok((link(state), registry))
 }

@@ -2,8 +2,6 @@ use crate::syntax::ast::{BinOp, UnOp};
 use crate::syntax::span::Span;
 use crate::types::env::TypeEnv;
 use crate::types::ty::{MonoType, TypeId};
-// TODO: Add serde dependency when implementing JSON serialization
-// use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a local variable within a function
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

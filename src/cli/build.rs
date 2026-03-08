@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -37,11 +36,9 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Resu
 pub fn build_wat(file_path: &str) -> Result<String> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
 
-    let func_table = HashMap::new();
     let user_module = emit_user_module(
         &pipeline.optimized_anf_module,
         &pipeline.core_module.type_env,
-        &func_table,
     );
     let mut modules = runtime::all_modules();
     modules.push(user_module);

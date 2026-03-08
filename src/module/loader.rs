@@ -43,21 +43,25 @@ fn resolve_stdlib_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib")
 }
 
-/// Resolve `@...` stdlib imports to `stdlib/*.tw` files.
-/// e.g. `@std.path` => `<stdlib_root>/path.tw`
-pub fn resolve_stdlib_module_path(module_path: &[String]) -> PathBuf {
+pub fn resolve_stdlib_module_path_from_root(stdlib_root: &Path, module_path: &[String]) -> PathBuf {
     let rel = if module_path.first().is_some_and(|s| s == "std") {
         &module_path[1..]
     } else {
         module_path
     };
 
-    let mut path = resolve_stdlib_root();
+    let mut path = stdlib_root.to_path_buf();
     for segment in rel {
         path.push(segment);
     }
     path.set_extension("tw");
     path
+}
+
+/// Resolve `@...` stdlib imports to `stdlib/*.tw` files.
+/// e.g. `@std.path` => `<stdlib_root>/path.tw`
+pub fn resolve_stdlib_module_path(module_path: &[String]) -> PathBuf {
+    resolve_stdlib_module_path_from_root(&resolve_stdlib_root(), module_path)
 }
 
 #[cfg(test)]

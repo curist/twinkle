@@ -1,58 +1,117 @@
-//! Differential trap test: verifies both the interpreter and Wasm backend
-//! report errors for known trap fixtures.
+mod common;
 
-use std::fs;
+use std::path::Path;
 
-/// Run through interpreter.
-fn run_interp(path: &str) -> anyhow::Result<String> {
-    let (core_module, _registry) =
-        twinkle::module::compile_entry(path).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run()?;
-    let bytes = interp.into_output();
-    Ok(String::from_utf8(bytes).expect("interpreter output is valid UTF-8"))
+use common::FixtureExpectation;
+
+fn is_behavior_fixture(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    !(name.starts_with("bench_") || name == "fib_perf.tw")
 }
 
-/// Run through Wasm backend.
-fn run_wasm(path: &str) -> anyhow::Result<String> {
-    let (stdout, _stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)?;
-    Ok(stdout)
-}
-
-/// Parse expected trap message.
-fn parse_expected_trap(source: &str) -> Option<String> {
-    source.lines().find_map(|l| {
-        l.trim()
-            .strip_prefix("// Expected trap: ")
-            .map(|s| s.to_string())
-    })
-}
-
-/// Trap tests: verify both interpreter and Wasm produce errors (not success).
-/// Note: Wasm trap messages are generic ("wasm trap: ...") and don't match
-/// the interpreter's detailed messages, so we only check that both error.
 #[test]
-fn differential_traps() {
-    let trap_files = [
-        "tests/run/traps/array_oob.tw",
-        "tests/run/traps/div_zero.tw",
-        "tests/run/traps/error_call.tw",
-    ];
-
-    for path in &trap_files {
-        let source = fs::read_to_string(path).unwrap();
-        let expected_msg = parse_expected_trap(&source)
-            .unwrap_or_else(|| panic!("No '// Expected trap:' in {path}"));
-
-        // Interpreter must trap with expected message
-        let interp_err = run_interp(path).expect_err(&format!("{path}: interpreter should trap"));
+fn differential_trap_fixtures() {
+    let fixtures = common::discover_run_fixtures(Path::new("tests/run"));
+    for fixture in fixtures
+        .into_iter()
+        .filter(|fixture| is_behavior_fixture(&fixture.path))
+    {
+        let FixtureExpectation::Trap { message } = fixture.expectation else {
+            continue;
+        };
+        let interp_err = common::run_interp_capture(&fixture.path).expect_err(&format!(
+            "{}: interpreter should trap",
+            fixture.path.display()
+        ));
         assert!(
-            interp_err.to_string().contains(&expected_msg),
-            "{path}: interp trap mismatch: {}",
+            interp_err.to_string().contains(&message),
+            "{}: interpreter trap mismatch\nExpected to contain: {}\nActual: {}",
+            fixture.path.display(),
+            message,
             interp_err
         );
+        common::run_wasm_capture(&fixture.path)
+            .expect_err(&format!("{}: wasm should trap", fixture.path.display()));
+    }
+}
 
-        // Wasm must also trap (message may differ)
-        run_wasm(path).expect_err(&format!("{path}: wasm should trap"));
+#[test]
+fn differential_interp_vs_wasm_all_run_fixtures() {
+    let fixtures = common::discover_run_fixtures(Path::new("tests/run"));
+    let fixtures: Vec<_> = fixtures
+        .into_iter()
+        .filter(|fixture| is_behavior_fixture(&fixture.path))
+        .collect();
+    assert!(
+        !fixtures.is_empty(),
+        "no runnable fixtures discovered under tests/run"
+    );
+
+    for fixture in fixtures {
+        match fixture.expectation {
+            FixtureExpectation::Output { stdout, stderr } => {
+                let interp_stdout = common::run_interp_capture(&fixture.path).unwrap_or_else(|e| {
+                    panic!("interpreter run failed for {}: {e}", fixture.path.display())
+                });
+                let (wasm_stdout, wasm_stderr) = common::run_wasm_capture(&fixture.path)
+                    .unwrap_or_else(|e| {
+                        panic!("wasm run failed for {}: {e}", fixture.path.display())
+                    });
+
+                let interp_lines: Vec<&str> = interp_stdout.lines().collect();
+                let wasm_lines: Vec<&str> = wasm_stdout.lines().collect();
+                let wasm_stderr_lines: Vec<&str> = wasm_stderr.lines().collect();
+
+                assert_eq!(
+                    interp_lines,
+                    stdout,
+                    "{}: interpreter stdout mismatch\nExpected:\n{}\nActual:\n{}",
+                    fixture.path.display(),
+                    stdout.join("\n"),
+                    interp_stdout
+                );
+                assert_eq!(
+                    wasm_lines,
+                    stdout,
+                    "{}: wasm stdout mismatch\nExpected:\n{}\nActual:\n{}",
+                    fixture.path.display(),
+                    stdout.join("\n"),
+                    wasm_stdout
+                );
+                assert_eq!(
+                    wasm_lines,
+                    interp_lines,
+                    "{}: interpreter/wasm stdout diverged\nInterpreter:\n{}\nWasm:\n{}",
+                    fixture.path.display(),
+                    interp_stdout,
+                    wasm_stdout
+                );
+                assert_eq!(
+                    wasm_stderr_lines,
+                    stderr,
+                    "{}: wasm stderr mismatch\nExpected:\n{}\nActual:\n{}",
+                    fixture.path.display(),
+                    stderr.join("\n"),
+                    wasm_stderr
+                );
+            }
+            FixtureExpectation::Trap { message } => {
+                let interp_err = common::run_interp_capture(&fixture.path).expect_err(&format!(
+                    "{}: interpreter should trap",
+                    fixture.path.display()
+                ));
+                assert!(
+                    interp_err.to_string().contains(&message),
+                    "{}: interpreter trap mismatch\nExpected to contain: {}\nActual: {}",
+                    fixture.path.display(),
+                    message,
+                    interp_err
+                );
+                common::run_wasm_capture(&fixture.path)
+                    .expect_err(&format!("{}: wasm should trap", fixture.path.display()));
+            }
+        }
     }
 }

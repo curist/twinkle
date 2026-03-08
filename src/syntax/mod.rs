@@ -130,10 +130,3 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
         anyhow::anyhow!("Parse error at {:?}: {:?}", error.span, error.kind)
     }
 }
-
-/// Legacy stub for Stage 0 compatibility
-/// TODO: Remove once integration tests are updated
-pub fn parse(source: &str) -> Result<()> {
-    let (_ast, _registry) = parse_source(source, "test.tw")?;
-    Ok(())
-}

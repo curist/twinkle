@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
     EmitCtx, FuncSigInfo, IteratorStateInfo, ValueRepr, is_concrete_mono_type,
@@ -34,11 +34,7 @@ use crate::wasm::ir::{
 /// trampolines for each distinct concrete closure signature found in the
 /// module.  At typed call sites a concrete `call_ref` is used — no anyref
 /// arg-boxing.  Dispatch through universal closures is unchanged.
-pub fn emit_user_module(
-    anf: &AnfModule,
-    type_env: &TypeEnv,
-    _func_table: &HashMap<String, FuncId>,
-) -> ModuleIR {
+pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
     let prelude = build_prelude_map();
     let concrete_func_sigs = collect_concrete_func_signatures(anf);
     let closure_capture_layouts = collect_closure_capture_layouts(anf);
@@ -151,7 +147,7 @@ pub fn emit_user_module(
         }
     }
 
-    if needs_iterator_next_helper(&ctx) {
+    {
         module.funcs.push(emit_iterator_next_helper());
         for info in ctx.requested_iterator_helpers().values() {
             module.funcs.push(emit_typed_iterator_next_helper(
@@ -217,6 +213,7 @@ pub fn emit_user_module(
         }
     }
     prioritize_specialized_iterator_types(&mut module);
+    topologically_order_local_type_defs(&mut module);
 
     // Always emit parse helpers — they're small and may be referenced by intrinsics
     module.funcs.push(emit_int_from_string_helper());
@@ -915,7 +912,14 @@ fn emit_let_binding(
     match op {
         AnfOp::AInit { value } => {
             let global_sym = ctx.module_global_sym(local).cloned();
-            let mut instrs = emit_atom(value, Some(&bind_ty), ctx);
+            let preserve_typed_option = ctx.local_typed_option(local).is_some()
+                && atom_typed_general_option(value, ctx).is_some();
+            let expected = if preserve_typed_option {
+                None
+            } else {
+                Some(&bind_ty)
+            };
+            let mut instrs = emit_atom(value, expected, ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             if let Some(global_sym) = global_sym {
                 instrs.extend(emit_coerce_local(bind_idx, &bind_ty, &ValType::Anyref, ctx));
@@ -931,7 +935,14 @@ fn emit_let_binding(
             let target_global_sym = ctx.module_global_sym(*target).cloned();
 
             if let Some((target_idx, target_ty)) = ctx.local(*target).cloned() {
-                instrs.extend(emit_atom(value, Some(&target_ty), ctx));
+                let preserve_typed_option = ctx.local_typed_option(*target).is_some()
+                    && atom_typed_general_option(value, ctx).is_some();
+                let expected = if preserve_typed_option {
+                    None
+                } else {
+                    Some(&target_ty)
+                };
+                instrs.extend(emit_atom(value, expected, ctx));
                 instrs.push(Instr::LocalSet(target_idx));
                 if let Some(global_sym) = target_global_sym.clone() {
                     instrs.extend(emit_coerce_local(
@@ -1078,10 +1089,7 @@ fn emit_let_binding(
             instrs.push(Instr::LocalSet(bind_idx));
             instrs
         }
-        _ => panic!(
-            "let-op emission not implemented yet in current Stage 8c emitter: {:?}",
-            op
-        ),
+        _ => panic!("let-op emission not implemented: {:?}", op),
     }
 }
 
@@ -4357,18 +4365,6 @@ fn typed_iterator_next_helper_sym(info: &IteratorStateInfo) -> String {
     )
 }
 
-fn needs_iterator_next_helper(ctx: &EmitCtx<'_>) -> bool {
-    // Check if any imports reference the iterator next helper
-    ctx.imports().iter().any(|_| false) || {
-        // Simpler: always emit it if the prelude has ITERATOR_NEXT
-        // We check if the helper was referenced by checking if ITERATOR_NEXT is in the prelude
-        // Actually, just check if any function called Iterator.next by checking
-        // if the helper function name appears in any emitted instruction.
-        // For simplicity, always emit when the type env has Iterator type.
-        true // Always emit for now; it's a small helper
-    }
-}
-
 /// Emit the `__iterator_next` Wasm helper function.
 /// Takes an iterator (IterState struct { seed, step }) and returns Option<IterItem> variant.
 fn emit_iterator_next_helper() -> FuncDef {
@@ -5211,14 +5207,6 @@ fn ref_user_record(type_id: TypeId) -> ValType {
     }
 }
 
-#[allow(dead_code)]
-fn ref_user_record_null(type_id: TypeId) -> ValType {
-    ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(user_record_type_sym(type_id)),
-    }
-}
-
 fn ref_variant() -> ValType {
     ValType::Ref {
         nullable: false,
@@ -5345,16 +5333,18 @@ fn collect_concrete_func_signatures(
     anf: &AnfModule,
 ) -> std::collections::HashMap<FuncId, (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType)>
 {
+    let func_lookup: HashMap<FuncId, &AnfFunctionDef> =
+        anf.functions.iter().map(|f| (f.func_id, f)).collect();
     let mut sigs = std::collections::HashMap::new();
     for func in &anf.functions {
-        collect_concrete_sigs_expr(&func.body, anf, &mut sigs);
+        collect_concrete_sigs_expr(&func.body, &func_lookup, &mut sigs);
     }
     sigs
 }
 
 fn collect_concrete_sigs_expr(
     expr: &AnfExpr,
-    anf: &AnfModule,
+    func_lookup: &HashMap<FuncId, &AnfFunctionDef>,
     sigs: &mut std::collections::HashMap<
         FuncId,
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
@@ -5362,11 +5352,11 @@ fn collect_concrete_sigs_expr(
 ) {
     match expr {
         AnfExpr::Let { op, body, .. } => {
-            collect_concrete_sigs_op(op, anf, sigs);
-            collect_concrete_sigs_expr(body, anf, sigs);
+            collect_concrete_sigs_op(op, func_lookup, sigs);
+            collect_concrete_sigs_expr(body, func_lookup, sigs);
         }
         AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) | AnfExpr::Atom(atom) => {
-            collect_concrete_sigs_atom(atom, anf, sigs);
+            collect_concrete_sigs_atom(atom, func_lookup, sigs);
         }
         AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => {}
     }
@@ -5374,13 +5364,13 @@ fn collect_concrete_sigs_expr(
 
 fn maybe_insert_concrete_sig(
     func_id: FuncId,
-    anf: &AnfModule,
+    func_lookup: &HashMap<FuncId, &AnfFunctionDef>,
     sigs: &mut std::collections::HashMap<
         FuncId,
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
     >,
 ) {
-    if let Some(func) = anf.functions.iter().find(|f| f.func_id == func_id) {
+    if let Some(func) = func_lookup.get(&func_id) {
         if func.param_tys.iter().all(is_concrete_mono_type)
             && is_concrete_mono_type(&func.return_ty)
         {
@@ -5391,20 +5381,20 @@ fn maybe_insert_concrete_sig(
 
 fn collect_concrete_sigs_atom(
     atom: &Atom,
-    anf: &AnfModule,
+    func_lookup: &HashMap<FuncId, &AnfFunctionDef>,
     sigs: &mut std::collections::HashMap<
         FuncId,
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
     >,
 ) {
     if let Atom::AGlobalFunc(func_id) = atom {
-        maybe_insert_concrete_sig(*func_id, anf, sigs);
+        maybe_insert_concrete_sig(*func_id, func_lookup, sigs);
     }
 }
 
 fn collect_concrete_sigs_op(
     op: &AnfOp,
-    anf: &AnfModule,
+    func_lookup: &HashMap<FuncId, &AnfFunctionDef>,
     sigs: &mut std::collections::HashMap<
         FuncId,
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
@@ -5413,7 +5403,7 @@ fn collect_concrete_sigs_op(
     match op {
         AnfOp::ACall { args, .. } => {
             for arg in args {
-                collect_concrete_sigs_atom(arg, anf, sigs);
+                collect_concrete_sigs_atom(arg, func_lookup, sigs);
             }
         }
         AnfOp::AIf {
@@ -5421,55 +5411,55 @@ fn collect_concrete_sigs_op(
             then_branch,
             else_branch,
         } => {
-            collect_concrete_sigs_atom(cond, anf, sigs);
-            collect_concrete_sigs_expr(then_branch, anf, sigs);
-            collect_concrete_sigs_expr(else_branch, anf, sigs);
+            collect_concrete_sigs_atom(cond, func_lookup, sigs);
+            collect_concrete_sigs_expr(then_branch, func_lookup, sigs);
+            collect_concrete_sigs_expr(else_branch, func_lookup, sigs);
         }
         AnfOp::AMatch { scrutinee, arms } => {
-            collect_concrete_sigs_atom(scrutinee, anf, sigs);
+            collect_concrete_sigs_atom(scrutinee, func_lookup, sigs);
             for arm in arms {
-                collect_concrete_sigs_expr(&arm.body, anf, sigs);
+                collect_concrete_sigs_expr(&arm.body, func_lookup, sigs);
             }
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            collect_concrete_sigs_expr(body, anf, sigs);
+            collect_concrete_sigs_expr(body, func_lookup, sigs);
         }
         AnfOp::ABinOp { left, right, .. } => {
-            collect_concrete_sigs_atom(left, anf, sigs);
-            collect_concrete_sigs_atom(right, anf, sigs);
+            collect_concrete_sigs_atom(left, func_lookup, sigs);
+            collect_concrete_sigs_atom(right, func_lookup, sigs);
         }
         AnfOp::AUnOp { expr, .. } => {
-            collect_concrete_sigs_atom(expr, anf, sigs);
+            collect_concrete_sigs_atom(expr, func_lookup, sigs);
         }
         AnfOp::AMakeClosure { func_id, .. } => {
-            maybe_insert_concrete_sig(*func_id, anf, sigs);
+            maybe_insert_concrete_sig(*func_id, func_lookup, sigs);
         }
         AnfOp::ARecord { fields, .. } => {
             for (_, atom) in fields {
-                collect_concrete_sigs_atom(atom, anf, sigs);
+                collect_concrete_sigs_atom(atom, func_lookup, sigs);
             }
         }
         AnfOp::ARecordGet { target, .. } => {
-            collect_concrete_sigs_atom(target, anf, sigs);
+            collect_concrete_sigs_atom(target, func_lookup, sigs);
         }
         AnfOp::ARecordUpdate { base, value, .. } => {
-            collect_concrete_sigs_atom(base, anf, sigs);
-            collect_concrete_sigs_atom(value, anf, sigs);
+            collect_concrete_sigs_atom(base, func_lookup, sigs);
+            collect_concrete_sigs_atom(value, func_lookup, sigs);
         }
         AnfOp::AVariant { args, .. } | AnfOp::AArrayLit(args) => {
             for atom in args {
-                collect_concrete_sigs_atom(atom, anf, sigs);
+                collect_concrete_sigs_atom(atom, func_lookup, sigs);
             }
         }
         AnfOp::AIndex { base, index, .. } => {
-            collect_concrete_sigs_atom(base, anf, sigs);
-            collect_concrete_sigs_atom(index, anf, sigs);
+            collect_concrete_sigs_atom(base, func_lookup, sigs);
+            collect_concrete_sigs_atom(index, func_lookup, sigs);
         }
         AnfOp::AInit { value } => {
-            collect_concrete_sigs_atom(value, anf, sigs);
+            collect_concrete_sigs_atom(value, func_lookup, sigs);
         }
         AnfOp::AAssign { value, .. } => {
-            collect_concrete_sigs_atom(value, anf, sigs);
+            collect_concrete_sigs_atom(value, func_lookup, sigs);
         }
     }
 }
@@ -5744,6 +5734,111 @@ fn prioritize_specialized_iterator_types(module: &mut ModuleIR) {
     module.types = unfold_steps;
 }
 
+fn topologically_order_local_type_defs(module: &mut ModuleIR) {
+    let original = std::mem::take(&mut module.types);
+    let mut name_to_index = HashMap::new();
+    for (idx, ty) in original.iter().enumerate() {
+        name_to_index.insert(ty.name().to_string(), idx);
+    }
+
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); original.len()];
+    let mut indegree = vec![0_usize; original.len()];
+    for (idx, ty) in original.iter().enumerate() {
+        let mut local_deps = HashSet::new();
+        collect_local_type_deps(ty, &name_to_index, &mut local_deps);
+        local_deps.remove(&idx);
+        indegree[idx] = local_deps.len();
+        for dep_idx in local_deps {
+            dependents[dep_idx].push(idx);
+        }
+    }
+
+    let mut ready = VecDeque::new();
+    for (idx, degree) in indegree.iter().enumerate() {
+        if *degree == 0 {
+            ready.push_back(idx);
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(original.len());
+    while let Some(idx) = ready.pop_front() {
+        ordered.push(idx);
+        for dependent in &dependents[idx] {
+            indegree[*dependent] -= 1;
+            if indegree[*dependent] == 0 {
+                ready.push_back(*dependent);
+            }
+        }
+    }
+
+    if ordered.len() != original.len() {
+        let cycle = indegree
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, degree)| (*degree > 0).then(|| original[idx].name().to_string()))
+            .collect::<Vec<_>>();
+        panic!(
+            "cyclic local Wasm type dependencies are not supported yet: {}",
+            cycle.join(", ")
+        );
+    }
+
+    module.types = ordered
+        .into_iter()
+        .map(|idx| original[idx].clone())
+        .collect();
+}
+
+fn collect_local_type_deps(
+    ty: &WasmTypeDef,
+    name_to_index: &HashMap<String, usize>,
+    out: &mut HashSet<usize>,
+) {
+    match ty {
+        WasmTypeDef::Struct {
+            fields, supertype, ..
+        } => {
+            if let Some(parent) = supertype {
+                if let Some(dep_idx) = name_to_index.get(parent) {
+                    out.insert(*dep_idx);
+                }
+            }
+            for field in fields {
+                collect_local_valtype_deps(&field.ty, name_to_index, out);
+            }
+        }
+        WasmTypeDef::Array { elem, .. } => {
+            collect_local_valtype_deps(&elem.ty, name_to_index, out);
+        }
+        WasmTypeDef::FuncType {
+            params, results, ..
+        } => {
+            for param in params {
+                collect_local_valtype_deps(param, name_to_index, out);
+            }
+            for result in results {
+                collect_local_valtype_deps(result, name_to_index, out);
+            }
+        }
+    }
+}
+
+fn collect_local_valtype_deps(
+    ty: &ValType,
+    name_to_index: &HashMap<String, usize>,
+    out: &mut HashSet<usize>,
+) {
+    if let ValType::Ref {
+        heap: HeapType::Named(name),
+        ..
+    } = ty
+    {
+        if let Some(dep_idx) = name_to_index.get(name) {
+            out.insert(*dep_idx);
+        }
+    }
+}
+
 /// Emit a typed closure trampoline for `func`.
 ///
 /// The trampoline signature is:
@@ -5830,16 +5925,15 @@ fn build_user_sig_map_typed(
     anf.functions
         .iter()
         .map(|func| {
-            let capture_locals = closure_capture_layouts
+            let capture_count = closure_capture_layouts
                 .get(&func.func_id)
-                .cloned()
-                .unwrap_or_default();
+                .map_or(0, Vec::len);
             let mut params = func
                 .param_tys
                 .iter()
                 .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
                 .collect::<Vec<_>>();
-            params.extend(vec![ValType::Anyref; capture_locals.len()]);
+            params.extend(vec![ValType::Anyref; capture_count]);
             let result = match &func.return_ty {
                 crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
                 other => Some(mono_to_valtype_for_user_abi_result(
@@ -6053,6 +6147,13 @@ mod tests {
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::{FieldId, LocalId, VariantId};
     use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID};
+
+    fn ref_user_record_null(type_id: TypeId) -> ValType {
+        ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(user_record_type_sym(type_id)),
+        }
+    }
 
     fn instr_tree_any(instrs: &[Instr], pred: &impl Fn(&Instr) -> bool) -> bool {
         instrs.iter().any(|instr| {
@@ -6302,7 +6403,7 @@ mod tests {
             all_init_func_ids: Vec::new(),
         };
 
-        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let module = emit_user_module(&anf, &type_env);
         let func = module
             .funcs
             .iter()
@@ -6783,7 +6884,7 @@ mod tests {
             all_init_func_ids: Vec::new(),
         };
 
-        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let module = emit_user_module(&anf, &type_env);
         assert!(module.funcs.iter().any(|f| f.name == "func_1"));
         let trampoline = module
             .funcs
@@ -6854,7 +6955,7 @@ mod tests {
             all_init_func_ids: Vec::new(),
         };
 
-        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let module = emit_user_module(&anf, &type_env);
         let func_2 = module
             .funcs
             .iter()
@@ -6890,7 +6991,7 @@ mod tests {
             all_init_func_ids: Vec::new(),
         };
 
-        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let module = emit_user_module(&anf, &type_env);
         assert!(module.types.iter().any(|t| matches!(
             t,
             WasmTypeDef::Struct { name, .. } if name == "UserRecord_3"
@@ -7410,7 +7511,7 @@ mod tests {
             all_init_func_ids: vec![FuncId(1), FuncId(2)],
         };
 
-        let module = emit_user_module(&anf, &type_env, &HashMap::new());
+        let module = emit_user_module(&anf, &type_env);
         assert_eq!(module.start.as_deref(), Some("__user_init"));
         let init = module
             .funcs

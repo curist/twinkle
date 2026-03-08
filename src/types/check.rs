@@ -2747,8 +2747,8 @@ impl TypeChecker {
 
                     // Field not found - check if it's a method
                     if has_method {
-                        // TODO: This is a method call, but we're treating it as field access
-                        // For now, return an error. Full method support comes in Stage 3.
+                        // Method calls are handled earlier via synth_method_call;
+                        // reaching here means field access syntax on a method name.
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "inherent method calls",
                             span,
