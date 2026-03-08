@@ -67,6 +67,14 @@ pub struct SpecializedTypeRegistry {
     pub typed_cells: BTreeMap<String, MonoType>,
     /// Typed Option<T> / Result<T,E> struct types keyed by sym.
     pub typed_general_options: BTreeMap<String, MonoType>,
+    /// Pooled module-local string literals keyed by UTF-8 bytes.
+    pub string_literals: BTreeMap<Vec<u8>, StringLiteralPoolEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringLiteralPoolEntry {
+    pub global_sym: String,
+    pub getter_sym: String,
 }
 
 pub struct EmitCtx<'a> {
@@ -244,6 +252,26 @@ impl<'a> EmitCtx<'a> {
 
     pub fn requested_typed_general_options(&self) -> &BTreeMap<String, MonoType> {
         &self.specialized_types.typed_general_options
+    }
+
+    pub fn request_string_literal(&mut self, literal: &str) -> String {
+        let bytes = literal.as_bytes().to_vec();
+        let entry = self
+            .specialized_types
+            .string_literals
+            .entry(bytes.clone())
+            .or_insert_with(|| {
+                let suffix = string_literal_symbol_suffix(&bytes);
+                StringLiteralPoolEntry {
+                    global_sym: format!("__str_lit_global_{suffix}"),
+                    getter_sym: format!("__str_lit_get_{suffix}"),
+                }
+            });
+        entry.getter_sym.clone()
+    }
+
+    pub fn requested_string_literals(&self) -> &BTreeMap<Vec<u8>, StringLiteralPoolEntry> {
+        &self.specialized_types.string_literals
     }
 
     pub fn local_typed_option(&self, local_id: LocalId) -> Option<&MonoType> {
@@ -1225,6 +1253,23 @@ impl<'a> EmitCtx<'a> {
             AnfExpr::Continue => None,
         }
     }
+}
+
+fn string_literal_symbol_suffix(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "empty".to_string();
+    }
+    let mut suffix = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        suffix.push(hex_nibble((byte >> 4) & 0x0f));
+        suffix.push(hex_nibble(byte & 0x0f));
+    }
+    suffix
+}
+
+fn hex_nibble(nibble: u8) -> char {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    HEX[nibble as usize] as char
 }
 
 fn record_field_mono(

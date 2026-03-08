@@ -44,12 +44,14 @@
   (type $functype_27 (func (param anyref anyref) (result anyref)))
   (type $functype_28 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_29 (func (param (ref null $rt_types__String)) (result anyref)))
+  (type $functype_30 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
   (import "host" "error" (func $rt_core__host_error (type $functype_1)))
   (import "host" "eprint" (func $rt_core__host_eprint (type $functype_1)))
   (import "host" "eprintln" (func $rt_core__host_eprintln (type $functype_1)))
+  (global $user____str_lit_global_68656c6c6f2c205477696e6b6c6521 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (func $rt_arr__make (type $functype_2)
     (param $p0 i32)
     (param $p1 anyref)
@@ -1367,22 +1369,7 @@
   )
   (func $user__func_41 (type $functype_26)
     (local $p0 i32)
-    i32.const 104
-    i32.const 101
-    i32.const 108
-    i32.const 108
-    i32.const 111
-    i32.const 44
-    i32.const 32
-    i32.const 84
-    i32.const 119
-    i32.const 105
-    i32.const 110
-    i32.const 107
-    i32.const 108
-    i32.const 101
-    i32.const 33
-    array.new_fixed $rt_types__String 15
+    call $user____str_lit_get_68656c6c6f2c205477696e6b6c6521
     return_call $rt_core__println
   )
   (func $user__func_41__closure (type $functype_27)
@@ -1574,6 +1561,32 @@
   )
   (func $user____user_init (type $functype_26)
     call $user__func_41
+  )
+  (func $user____str_lit_get_68656c6c6f2c205477696e6b6c6521 (type $functype_30)
+    (result (ref $rt_types__String))
+    global.get $user____str_lit_global_68656c6c6f2c205477696e6b6c6521
+    ref.is_null
+    (if
+      (then
+        i32.const 104
+        i32.const 101
+        i32.const 108
+        i32.const 108
+        i32.const 111
+        i32.const 44
+        i32.const 32
+        i32.const 84
+        i32.const 119
+        i32.const 105
+        i32.const 110
+        i32.const 107
+        i32.const 108
+        i32.const 101
+        i32.const 33
+        array.new_fixed $rt_types__String 15
+        global.set $user____str_lit_global_68656c6c6f2c205477696e6b6c6521))
+    global.get $user____str_lit_global_68656c6c6f2c205477696e6b6c6521
+    ref.as_non_null
   )
   (func $__linked_init (type $functype_26)
     call $user____user_init

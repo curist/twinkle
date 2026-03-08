@@ -45,12 +45,14 @@
   (type $functype_28 (func (param anyref anyref) (result anyref)))
   (type $functype_29 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_30 (func (param (ref null $rt_types__String)) (result anyref)))
+  (type $functype_31 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
   (import "host" "error" (func $rt_core__host_error (type $functype_1)))
   (import "host" "eprint" (func $rt_core__host_eprint (type $functype_1)))
   (import "host" "eprintln" (func $rt_core__host_eprintln (type $functype_1)))
+  (global $user____str_lit_global_empty (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (func $rt_arr__make (type $functype_2)
     (param $p0 i32)
     (param $p1 anyref)
@@ -1422,7 +1424,7 @@
     local.get $p0
     call $rt_str__from_i64
     local.set $p1
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p1
     call $rt_str__concat
     local.set $p2
@@ -1437,7 +1439,7 @@
     local.get $p4
     call $rt_str__from_i64
     local.set $p5
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p5
     call $rt_str__concat
     local.set $p6
@@ -1452,7 +1454,7 @@
     local.get $p8
     call $rt_str__from_i64
     local.set $p9
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p9
     call $rt_str__concat
     local.set $p10
@@ -1463,7 +1465,7 @@
     i64.const 2
     call $rt_str__from_i64
     local.set $p12
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p12
     call $rt_str__concat
     local.set $p13
@@ -1474,7 +1476,7 @@
     i32.const 1
     call $rt_str__from_bool
     local.set $p15
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p15
     call $rt_str__concat
     local.set $p16
@@ -1485,7 +1487,7 @@
     i32.const 0
     call $rt_str__from_bool
     local.set $p18
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p18
     call $rt_str__concat
     local.set $p19
@@ -1496,7 +1498,7 @@
     f64.const 3.5
     call $rt_str__from_f64
     local.set $p21
-    array.new_fixed $rt_types__String 0
+    call $user____str_lit_get_empty
     local.get $p21
     call $rt_str__concat
     local.set $p22
@@ -1730,6 +1732,17 @@
   )
   (func $user____user_init (type $functype_27)
     call $user__func_43
+  )
+  (func $user____str_lit_get_empty (type $functype_31)
+    (result (ref $rt_types__String))
+    global.get $user____str_lit_global_empty
+    ref.is_null
+    (if
+      (then
+        array.new_fixed $rt_types__String 0
+        global.set $user____str_lit_global_empty))
+    global.get $user____str_lit_global_empty
+    ref.as_non_null
   )
   (func $__linked_init (type $functype_27)
     call $user____user_init

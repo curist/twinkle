@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, IteratorStateInfo, ValueRepr, is_concrete_mono_type,
-    is_typed_general_option_candidate, mono_to_symbol_key, mono_to_valtype,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, ValueRepr,
+    is_concrete_mono_type, is_typed_general_option_candidate, mono_to_symbol_key, mono_to_valtype,
     mono_to_valtype_for_param, mono_to_valtype_specialized, resolve_unfold_step_types,
     typed_cell_struct_sym, typed_closure_struct_sym, typed_closurefunc_sym,
     typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym, typed_iterator_state_sym,
@@ -225,6 +225,14 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
         module.start = Some(init.name.clone());
         module.funcs.push(init);
     }
+
+    let string_literals = ctx.requested_string_literals().clone();
+    module
+        .globals
+        .extend(emit_string_literal_pool_globals(&string_literals));
+    module
+        .funcs
+        .extend(emit_string_literal_pool_getters(&string_literals));
 
     module.imports.extend(ctx.imports());
     module
@@ -1261,7 +1269,7 @@ fn emit_pattern_condition(
             ensure_rt_str_eq_import(ctx);
             let mut instrs = value_anyref_instrs.to_vec();
             instrs.extend(emit_unbox_on_stack(&ref_string_null()));
-            instrs.extend(emit_string_literal_atom(s));
+            instrs.extend(emit_pooled_string_literal_atom(s, ctx));
             instrs.push(Instr::Call("rt_str__eq".to_string()));
             instrs
         }
@@ -1834,7 +1842,7 @@ fn combine_i32_ands(mut checks: Vec<Vec<Instr>>) -> Vec<Instr> {
 
 fn emit_non_exhaustive_match_fallback(ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     ensure_rt_core_trap_import(ctx);
-    let mut instrs = emit_string_literal_atom("non-exhaustive match");
+    let mut instrs = emit_pooled_string_literal_atom("non-exhaustive match", ctx);
     instrs.push(Instr::Call("rt_core__trap".to_string()));
     instrs.push(Instr::Unreachable);
     instrs
@@ -2161,7 +2169,7 @@ fn emit_atom(atom: &Atom, expected_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>) 
         Atom::ALitInt(n) => emit_int_literal(*n, expected_ty),
         Atom::ALitFloat(v) => emit_float_literal(*v, expected_ty),
         Atom::ALitBool(b) => emit_bool_literal(*b, expected_ty),
-        Atom::ALitStr(s) => emit_string_literal(s, expected_ty),
+        Atom::ALitStr(s) => emit_string_literal(s, expected_ty, ctx),
         Atom::ALitVoid => emit_void_value(expected_ty),
     }
 }
@@ -2301,6 +2309,59 @@ fn emit_string_literal_atom(s: &str) -> Vec<Instr> {
     instrs
 }
 
+fn emit_pooled_string_literal_atom(s: &str, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    let getter_sym = ctx.request_string_literal(s);
+    vec![Instr::Call(getter_sym)]
+}
+
+fn emit_string_literal_pool_globals(
+    literals: &BTreeMap<Vec<u8>, StringLiteralPoolEntry>,
+) -> Vec<GlobalDef> {
+    literals
+        .values()
+        .map(|entry| GlobalDef {
+            name: entry.global_sym.clone(),
+            mutable: true,
+            ty: ref_string_null(),
+            init: vec![Instr::RefNull(HeapType::Named(T_STRING.to_string()))],
+        })
+        .collect()
+}
+
+fn emit_string_literal_pool_getters(
+    literals: &BTreeMap<Vec<u8>, StringLiteralPoolEntry>,
+) -> Vec<FuncDef> {
+    literals
+        .iter()
+        .map(|(bytes, entry)| emit_string_literal_pool_getter(bytes, entry))
+        .collect()
+}
+
+fn emit_string_literal_pool_getter(bytes: &[u8], entry: &StringLiteralPoolEntry) -> FuncDef {
+    let literal = std::str::from_utf8(bytes)
+        .expect("string literal pool must contain valid UTF-8 bytes from Twinkle source");
+    let mut init_then = emit_string_literal_atom(literal);
+    init_then.push(Instr::GlobalSet(entry.global_sym.clone()));
+
+    FuncDef {
+        name: entry.getter_sym.clone(),
+        params: Vec::new(),
+        results: vec![ref_string()],
+        locals: Vec::new(),
+        body: vec![
+            Instr::GlobalGet(entry.global_sym.clone()),
+            Instr::RefIsNull,
+            Instr::If {
+                result: None,
+                then_body: init_then,
+                else_body: Vec::new(),
+            },
+            Instr::GlobalGet(entry.global_sym.clone()),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
 fn emit_int_literal(n: i64, expected_ty: Option<&ValType>) -> Vec<Instr> {
     match expected_ty {
         None | Some(ValType::I64) => vec![Instr::I64Const(n)],
@@ -2335,9 +2396,20 @@ fn emit_bool_literal(b: bool, expected_ty: Option<&ValType>) -> Vec<Instr> {
     }
 }
 
-fn emit_string_literal(s: &str, expected_ty: Option<&ValType>) -> Vec<Instr> {
+fn emit_string_literal(
+    s: &str,
+    expected_ty: Option<&ValType>,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
     match expected_ty {
-        None | Some(ValType::Anyref) | Some(ValType::Ref { .. }) => emit_string_literal_atom(s),
+        None => emit_pooled_string_literal_atom(s, ctx),
+        Some(ValType::Anyref) | Some(ValType::Ref { .. }) => {
+            let mut instrs = emit_pooled_string_literal_atom(s, ctx);
+            if let Some(expected) = expected_ty {
+                instrs.extend(emit_coerce_stack(&ref_string(), expected));
+            }
+            instrs
+        }
         Some(other) => panic!("cannot emit String literal as {:?}", other),
     }
 }
@@ -5098,10 +5170,13 @@ fn emit_unimplemented_intrinsic_prelude_call(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     ensure_rt_core_trap_import(ctx);
-    let mut instrs = emit_string_literal_atom(&format!(
-        "unimplemented intrinsic prelude call: {}",
-        entry.twinkle_name
-    ));
+    let mut instrs = emit_pooled_string_literal_atom(
+        &format!(
+            "unimplemented intrinsic prelude call: {}",
+            entry.twinkle_name
+        ),
+        ctx,
+    );
     instrs.push(Instr::Call("rt_core__trap".to_string()));
     instrs.push(Instr::Unreachable);
     instrs
@@ -6183,6 +6258,58 @@ mod tests {
                 Instr::I32Const(169),
                 Instr::ArrayNewFixed(T_STRING.to_string(), 3),
             ]
+        );
+    }
+
+    #[test]
+    fn emit_string_literals_use_pooled_getter_and_dedup_by_bytes() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let instrs_a = emit_atom(&Atom::ALitStr("same".to_string()), None, &mut ctx);
+        let instrs_b = emit_atom(&Atom::ALitStr("same".to_string()), None, &mut ctx);
+
+        assert_eq!(ctx.requested_string_literals().len(), 1);
+        let getter = ctx
+            .requested_string_literals()
+            .values()
+            .next()
+            .expect("pooled literal missing")
+            .getter_sym
+            .clone();
+        assert_eq!(instrs_a, vec![Instr::Call(getter.clone())]);
+        assert_eq!(instrs_b, vec![Instr::Call(getter)]);
+    }
+
+    #[test]
+    fn emit_string_literal_pool_getter_lazy_initializes_global() {
+        let mut literals = BTreeMap::new();
+        literals.insert(
+            b"ok".to_vec(),
+            StringLiteralPoolEntry {
+                global_sym: "__str_lit_global_6f6b".to_string(),
+                getter_sym: "__str_lit_get_6f6b".to_string(),
+            },
+        );
+        let getter = emit_string_literal_pool_getters(&literals)
+            .pop()
+            .expect("missing pooled getter");
+        assert_eq!(getter.results, vec![ref_string()]);
+        assert_eq!(
+            getter.body.first(),
+            Some(&Instr::GlobalGet("__str_lit_global_6f6b".to_string()))
+        );
+        assert_eq!(getter.body.get(1), Some(&Instr::RefIsNull));
+        let Instr::If { then_body, .. } = getter.body.get(2).expect("missing lazy-init branch")
+        else {
+            panic!("expected lazy-init branch in pooled getter");
+        };
+        assert!(
+            then_body
+                .iter()
+                .any(|instr| instr == &Instr::GlobalSet("__str_lit_global_6f6b".to_string()))
         );
     }
 
