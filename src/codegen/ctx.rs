@@ -392,6 +392,10 @@ impl<'a> EmitCtx<'a> {
         self.imports.values().cloned().collect()
     }
 
+    pub fn has_import(&self, as_sym: &str) -> bool {
+        self.imports.contains_key(as_sym)
+    }
+
     pub fn local(&self, local_id: LocalId) -> Option<&(u32, ValType)> {
         self.local_map.get(&local_id)
     }
@@ -526,11 +530,7 @@ impl<'a> EmitCtx<'a> {
         self.infer_op_mono(op)
     }
 
-    pub fn infer_atom_mono_for_emit(&self, atom: &Atom) -> Option<MonoType> {
-        self.infer_atom_mono(atom)
-    }
-
-    fn push_flow_mono_binding(
+    pub fn push_flow_mono_binding(
         &mut self,
         local: LocalId,
         mono: Option<MonoType>,
@@ -543,7 +543,7 @@ impl<'a> EmitCtx<'a> {
         restores.push((local, prev));
     }
 
-    fn restore_flow_mono_binding(&mut self, local: LocalId, prev: Option<MonoType>) {
+    pub fn restore_flow_mono_binding(&mut self, local: LocalId, prev: Option<MonoType>) {
         if let Some(prev) = prev {
             self.local_mono.insert(local, prev);
         } else {
@@ -551,7 +551,7 @@ impl<'a> EmitCtx<'a> {
         }
     }
 
-    fn push_flow_value_repr_binding(
+    pub fn push_flow_value_repr_binding(
         &mut self,
         local: LocalId,
         repr: Option<ValueRepr>,
@@ -562,11 +562,11 @@ impl<'a> EmitCtx<'a> {
         restores.push((local, prev));
     }
 
-    fn restore_flow_value_repr_binding(&mut self, local: LocalId, prev: Option<ValueRepr>) {
+    pub fn restore_flow_value_repr_binding(&mut self, local: LocalId, prev: Option<ValueRepr>) {
         self.set_local_value_repr(local, prev);
     }
 
-    fn push_flow_iterator_binding(
+    pub fn push_flow_iterator_binding(
         &mut self,
         local: LocalId,
         info: Option<IteratorStateInfo>,
@@ -577,7 +577,11 @@ impl<'a> EmitCtx<'a> {
         restores.push((local, prev));
     }
 
-    fn restore_flow_iterator_binding(&mut self, local: LocalId, prev: Option<IteratorStateInfo>) {
+    pub fn restore_flow_iterator_binding(
+        &mut self,
+        local: LocalId,
+        prev: Option<IteratorStateInfo>,
+    ) {
         self.set_local_iterator_state(local, prev);
     }
 
@@ -929,7 +933,7 @@ impl<'a> EmitCtx<'a> {
             })
     }
 
-    fn infer_atom_mono(&self, atom: &Atom) -> Option<MonoType> {
+    pub fn infer_atom_mono(&self, atom: &Atom) -> Option<MonoType> {
         match atom {
             Atom::ALocal(local_id) => self.local_mono.get(local_id).cloned().or_else(|| {
                 self.current_func_id
@@ -1540,14 +1544,14 @@ fn runtime_result_valtype(func_id: FuncId, entry: &PreludeEntry) -> Option<ValTy
     }
 }
 
-fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
+pub fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
     match atom {
         Atom::ALocal(local_id) => ctx.local_iterator_state(*local_id),
         _ => None,
     }
 }
 
-fn iterator_state_from_unfold_args(
+pub fn iterator_state_from_unfold_args(
     seed: &Atom,
     step: &Atom,
     ctx: &EmitCtx<'_>,

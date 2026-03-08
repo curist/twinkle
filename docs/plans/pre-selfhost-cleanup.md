@@ -11,7 +11,7 @@ Refactoring and cleanup tasks to address before Stage 10 (self-hosting).
   `emit_user_module` in `emit.rs` and all call sites (`cli/build.rs`, unit tests).
   Always passed as empty `HashMap`.
 
-- [ ] **Deduplicate helpers between emit.rs and ctx.rs**
+- [x] **Deduplicate helpers between emit.rs and ctx.rs**
   Remove duplicate functions that exist in both files:
   - `atom_iterator_state` — identical in both
   - `iterator_state_from_unfold_args` — identical in both
@@ -49,7 +49,7 @@ Refactoring and cleanup tasks to address before Stage 10 (self-hosting).
   variation is which struct symbol is used and how `field_monos` are extracted.
   Extract a shared helper.
 
-- [ ] **Avoid cloning in `ctx.imports()` call**
+- [x] **Avoid cloning in `ctx.imports()` call**
   `ctx.imports()` returns `.values().cloned().collect()`, allocating a new `Vec`.
   One call site at `emit.rs` just checks `.any(...)` — can check the map
   directly. The main call could use `.values().cloned()` directly without the
@@ -68,7 +68,7 @@ Refactoring and cleanup tasks to address before Stage 10 (self-hosting).
   structural recursion (~100 lines duplicated). Extract a shared traversal
   helper.
 
-- [ ] **Simplify `prioritize_specialized_iterator_types`**
+- [x] **Simplify `prioritize_specialized_iterator_types`**
   Currently empties `module.types` into 7 temp `Vec`s then concatenates in
   order. A single `sort_by_key` with integer priority per type-name prefix
   would be cleaner.

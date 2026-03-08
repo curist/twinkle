@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, ValueRepr,
-    is_concrete_mono_type, is_typed_general_option_candidate, mono_to_symbol_key, mono_to_valtype,
-    mono_to_valtype_for_param, mono_to_valtype_specialized, resolve_unfold_step_types,
-    typed_cell_struct_sym, typed_closure_struct_sym, typed_closurefunc_sym,
-    typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym, typed_iterator_state_sym,
-    typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, atom_iterator_state,
+    is_concrete_mono_type, is_typed_general_option_candidate, iterator_state_from_unfold_args,
+    mono_to_symbol_key, mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
+    resolve_unfold_step_types, typed_cell_struct_sym, typed_closure_struct_sym,
+    typed_closurefunc_sym, typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym,
+    typed_iterator_state_sym, typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
@@ -217,7 +217,7 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
 
     // Always emit parse helpers — they're small and may be referenced by intrinsics
     module.funcs.push(emit_int_from_string_helper());
-    if ctx.imports().iter().any(|i| i.as_sym == "host_parse_float") {
+    if ctx.has_import("host_parse_float") {
         module.funcs.push(emit_float_from_string_helper());
     }
 
@@ -755,136 +755,49 @@ fn emit_let_expr(
     let mut iterator_restores = Vec::new();
     let mut typed_option_restores = Vec::new();
     let local_mono = ctx.infer_op_mono_for_emit(op);
-    push_flow_mono_binding(local, local_mono.clone(), &mut restores, ctx);
-    push_flow_value_repr_binding(
-        local,
-        local_mono
-            .as_ref()
-            .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs)),
-        &mut repr_restores,
-        ctx,
-    );
-    push_flow_iterator_binding(
-        local,
-        iterator_state_from_op(op, ctx),
-        &mut iterator_restores,
-        ctx,
-    );
-    push_flow_typed_option_binding(
-        local,
-        typed_general_option_from_op(op, ctx),
-        &mut typed_option_restores,
-        ctx,
-    );
+    let local_repr = local_mono
+        .as_ref()
+        .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
+    let local_iter = iterator_state_from_op(op, ctx);
+    let local_opt = typed_general_option_from_op(op, ctx);
+    ctx.push_flow_mono_binding(local, local_mono.clone(), &mut restores);
+    ctx.push_flow_value_repr_binding(local, local_repr, &mut repr_restores);
+    ctx.push_flow_iterator_binding(local, local_iter, &mut iterator_restores);
+    push_flow_typed_option_binding(local, local_opt, &mut typed_option_restores, ctx);
     if let AnfOp::AAssign {
         local: target,
         value,
     } = op
     {
-        let value_mono = atom_mono(value, ctx);
-        push_flow_mono_binding(*target, value_mono.clone(), &mut restores, ctx);
-        push_flow_value_repr_binding(
-            *target,
-            value_mono
-                .as_ref()
-                .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs)),
-            &mut repr_restores,
-            ctx,
-        );
-        push_flow_iterator_binding(
-            *target,
-            atom_iterator_state(value, ctx),
-            &mut iterator_restores,
-            ctx,
-        );
-        push_flow_typed_option_binding(
-            *target,
-            atom_typed_general_option(value, ctx),
-            &mut typed_option_restores,
-            ctx,
-        );
+        let value_mono = ctx.infer_atom_mono(value);
+        let value_repr = value_mono
+            .as_ref()
+            .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
+        let value_iter = atom_iterator_state(value, ctx);
+        let value_opt = atom_typed_general_option(value, ctx);
+        ctx.push_flow_mono_binding(*target, value_mono.clone(), &mut restores);
+        ctx.push_flow_value_repr_binding(*target, value_repr, &mut repr_restores);
+        ctx.push_flow_iterator_binding(*target, value_iter, &mut iterator_restores);
+        push_flow_typed_option_binding(*target, value_opt, &mut typed_option_restores, ctx);
     }
 
     let mut instrs = emit_let_binding(local, op, fn_return_ty, ctx);
     instrs.extend(emit_body(ctx, body));
 
     while let Some((local_id, prev)) = iterator_restores.pop() {
-        restore_flow_iterator_binding(local_id, prev, ctx);
+        ctx.restore_flow_iterator_binding(local_id, prev);
     }
     while let Some((local_id, prev)) = typed_option_restores.pop() {
         restore_flow_typed_option_binding(local_id, prev, ctx);
     }
     while let Some((local_id, prev)) = repr_restores.pop() {
-        restore_flow_value_repr_binding(local_id, prev, ctx);
+        ctx.restore_flow_value_repr_binding(local_id, prev);
     }
     while let Some((local_id, prev)) = restores.pop() {
-        restore_flow_mono_binding(local_id, prev, ctx);
+        ctx.restore_flow_mono_binding(local_id, prev);
     }
 
     instrs
-}
-
-fn push_flow_mono_binding(
-    local: crate::ir::LocalId,
-    mono: Option<MonoType>,
-    restores: &mut Vec<(crate::ir::LocalId, Option<MonoType>)>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    let prev = match mono {
-        Some(mono) => ctx.local_mono.insert(local, mono),
-        None => ctx.local_mono.remove(&local),
-    };
-    restores.push((local, prev));
-}
-
-fn restore_flow_mono_binding(
-    local: crate::ir::LocalId,
-    prev: Option<MonoType>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    if let Some(prev) = prev {
-        ctx.local_mono.insert(local, prev);
-    } else {
-        ctx.local_mono.remove(&local);
-    }
-}
-
-fn push_flow_value_repr_binding(
-    local: crate::ir::LocalId,
-    repr: Option<ValueRepr>,
-    restores: &mut Vec<(crate::ir::LocalId, Option<ValueRepr>)>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    let prev = ctx.local_value_repr(local);
-    ctx.set_local_value_repr(local, repr);
-    restores.push((local, prev));
-}
-
-fn restore_flow_value_repr_binding(
-    local: crate::ir::LocalId,
-    prev: Option<ValueRepr>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    ctx.set_local_value_repr(local, prev);
-}
-
-fn push_flow_iterator_binding(
-    local: crate::ir::LocalId,
-    info: Option<IteratorStateInfo>,
-    restores: &mut Vec<(crate::ir::LocalId, Option<IteratorStateInfo>)>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    let prev = ctx.local_iterator_state(local);
-    ctx.set_local_iterator_state(local, info);
-    restores.push((local, prev));
-}
-
-fn restore_flow_iterator_binding(
-    local: crate::ir::LocalId,
-    prev: Option<IteratorStateInfo>,
-    ctx: &mut EmitCtx<'_>,
-) {
-    ctx.set_local_iterator_state(local, prev);
 }
 
 fn push_flow_typed_option_binding(
@@ -1117,7 +1030,7 @@ fn emit_match_op(
         Some(ValType::Anyref)
     };
     let scrutinee_anyref = emit_atom(scrutinee, scrutinee_expected.as_ref(), ctx);
-    let scrutinee_mono = ctx.infer_atom_mono_for_emit(scrutinee);
+    let scrutinee_mono = ctx.infer_atom_mono(scrutinee);
     let scrutinee_iter_option = atom_iterator_next_state(scrutinee, ctx);
     let scrutinee_unfold_step = atom_typed_unfold_step(scrutinee, ctx);
     emit_match_arm_chain(
@@ -3122,7 +3035,7 @@ fn emit_record_get(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let target_mono = atom_mono(target, ctx);
+    let target_mono = ctx.infer_atom_mono(target);
     let target_iter_item_state = atom_iter_item_state(target, ctx);
     let record_sym = record_struct_sym(
         type_id,
@@ -3159,7 +3072,7 @@ fn emit_record_update(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let base_mono = atom_mono(base, ctx);
+    let base_mono = ctx.infer_atom_mono(base);
     let base_iter_item_state = atom_iter_item_state(base, ctx);
     let record_sym = record_struct_sym(type_id, base_mono.as_ref(), base_iter_item_state.as_ref());
     let mut instrs = Vec::new();
@@ -4054,13 +3967,6 @@ fn unfold_step_type(item_ty: MonoType, seed_ty: MonoType) -> MonoType {
     }
 }
 
-fn atom_iterator_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
-    match atom {
-        Atom::ALocal(local_id) => ctx.local_iterator_state(*local_id),
-        _ => None,
-    }
-}
-
 fn atom_iter_item_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
     match atom {
         Atom::ALocal(local_id) => ctx.local_iter_item_state(*local_id),
@@ -4091,30 +3997,6 @@ fn atom_typed_general_option(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType>
     }
 }
 
-fn iterator_state_from_unfold_args(
-    seed: &Atom,
-    step: &Atom,
-    ctx: &EmitCtx<'_>,
-) -> Option<IteratorStateInfo> {
-    let seed_ty = atom_mono(seed, ctx)?;
-    let MonoType::Function { params, ret } = atom_mono(step, ctx)? else {
-        return None;
-    };
-    if params.len() != 1 || params[0] != seed_ty {
-        return None;
-    }
-    let MonoType::Named { type_id, args } = ret.as_ref() else {
-        return None;
-    };
-    if *type_id != UNFOLD_STEP_TYPE_ID || args.len() != 2 || args[1] != seed_ty {
-        return None;
-    }
-    Some(IteratorStateInfo {
-        yield_ty: args[0].clone(),
-        seed_ty,
-    })
-}
-
 fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
     match op {
         AnfOp::ACall { callee, args } => match callee {
@@ -4137,28 +4019,6 @@ fn typed_general_option_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<MonoTyp
         AnfOp::AInit { value } => atom_typed_general_option(value, ctx),
         AnfOp::AAssign { value, .. } => atom_typed_general_option(value, ctx),
         _ => None,
-    }
-}
-
-fn atom_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
-    match atom {
-        Atom::ALocal(local_id) => ctx.local_mono.get(local_id).cloned().or_else(|| {
-            ctx.current_func_id
-                .and_then(|func_id| ctx.capture_mono_by_func.get(&func_id))
-                .and_then(|m| m.get(local_id).cloned())
-        }),
-        Atom::AGlobalFunc(func_id) => {
-            ctx.concrete_func_sig(*func_id)
-                .map(|(params, ret)| MonoType::Function {
-                    params: params.clone(),
-                    ret: Box::new(ret.clone()),
-                })
-        }
-        Atom::ALitInt(_) => Some(MonoType::Int),
-        Atom::ALitFloat(_) => Some(MonoType::Float),
-        Atom::ALitBool(_) => Some(MonoType::Bool),
-        Atom::ALitStr(_) => Some(MonoType::String),
-        Atom::ALitVoid => Some(MonoType::Void),
     }
 }
 
@@ -4193,7 +4053,7 @@ fn typed_cell_info_from_atom(
             .local_typed_cell_elem(*local_id)
             .and_then(|elem_ty| typed_cell_info_from_inner_mono(&elem_ty, ctx));
     }
-    let MonoType::Named { type_id, args } = atom_mono(atom, ctx)? else {
+    let MonoType::Named { type_id, args } = ctx.infer_atom_mono(atom)? else {
         return None;
     };
     if type_id != crate::types::ty::CELL_TYPE_ID || args.len() != 1 {
@@ -4203,7 +4063,7 @@ fn typed_cell_info_from_atom(
 }
 
 fn emit_cell_new_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
-    if let Some(inner_mono) = atom_mono(&args[0], ctx) {
+    if let Some(inner_mono) = ctx.infer_atom_mono(&args[0]) {
         if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_inner_mono(&inner_mono, ctx) {
             let mut instrs = emit_atom(&args[0], Some(&payload_ty), ctx);
             instrs.push(Instr::StructNew(cell_sym.clone()));
@@ -5779,34 +5639,22 @@ fn emit_typed_iter_option_struct_def(info: &IteratorStateInfo) -> WasmTypeDef {
 }
 
 fn prioritize_specialized_iterator_types(module: &mut ModuleIR) {
-    let mut unfold_steps = Vec::new();
-    let mut closures = Vec::new();
-    let mut iter_states = Vec::new();
-    let mut iter_items = Vec::new();
-    let mut iter_options = Vec::new();
-    let mut rest = Vec::new();
-    for ty in module.types.drain(..) {
-        let name = ty.name();
+    fn type_priority(name: &str) -> u8 {
         if name.starts_with("unfold_step__") {
-            unfold_steps.push(ty);
+            0
         } else if name.starts_with("closurefunc_") || name.starts_with("closure_") {
-            closures.push(ty);
+            1
         } else if name.starts_with("iter_state__") {
-            iter_states.push(ty);
+            2
         } else if name.starts_with("iter_item__") {
-            iter_items.push(ty);
+            3
         } else if name.starts_with("option__iter_item__") {
-            iter_options.push(ty);
+            4
         } else {
-            rest.push(ty);
+            5
         }
     }
-    unfold_steps.extend(closures);
-    unfold_steps.extend(iter_states);
-    unfold_steps.extend(iter_items);
-    unfold_steps.extend(iter_options);
-    unfold_steps.extend(rest);
-    module.types = unfold_steps;
+    module.types.sort_by_key(|ty| type_priority(ty.name()));
 }
 
 fn topologically_order_local_type_defs(module: &mut ModuleIR) {
@@ -6134,27 +5982,19 @@ fn infer_expr_iterator_state(expr: &AnfExpr, ctx: &mut EmitCtx<'_>) -> Option<It
     match expr {
         AnfExpr::Let { local, op, body } => {
             let mut restores = Vec::new();
-            push_flow_iterator_binding(
-                *local,
-                iterator_state_from_inference_op(op, ctx),
-                &mut restores,
-                ctx,
-            );
+            let iter_info = iterator_state_from_inference_op(op, ctx);
+            ctx.push_flow_iterator_binding(*local, iter_info, &mut restores);
             if let AnfOp::AAssign {
                 local: target,
                 value,
             } = op.as_ref()
             {
-                push_flow_iterator_binding(
-                    *target,
-                    atom_iterator_state(value, ctx),
-                    &mut restores,
-                    ctx,
-                );
+                let assign_iter = atom_iterator_state(value, ctx);
+                ctx.push_flow_iterator_binding(*target, assign_iter, &mut restores);
             }
             let result = infer_expr_iterator_state(body, ctx);
             while let Some((local_id, prev)) = restores.pop() {
-                restore_flow_iterator_binding(local_id, prev, ctx);
+                ctx.restore_flow_iterator_binding(local_id, prev);
             }
             result
         }
@@ -7343,8 +7183,7 @@ mod tests {
             instrs,
             vec![
                 Instr::LocalGet(1),
-                Instr::I32Const(107),
-                Instr::ArrayNewFixed(T_STRING.to_string(), 1),
+                Instr::Call("__str_lit_get_6b".to_string()),
                 Instr::Call("rt_dict__get_option".to_string()),
                 Instr::LocalSet(0),
             ]
