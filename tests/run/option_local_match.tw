@@ -1,0 +1,28 @@
+// Expected output:
+//   found 42
+//   none
+//   got ok
+
+fn main() {
+  // Option<Int> created and matched locally — no function boundary
+  x: Option<Int> = .Some(42)
+  case x {
+    .Some(n) => println("found ${n}"),
+    .None => println("none"),
+  }
+
+  y: Option<Int> = .None
+  case y {
+    .Some(n) => println("found ${n}"),
+    .None => println("none"),
+  }
+
+  // Result<String, Int> created and matched locally
+  r: Result<String, Int> = .Ok("got ok")
+  case r {
+    .Ok(s) => println(s),
+    .Err(n) => println("err ${n}"),
+  }
+}
+
+main()

@@ -55,11 +55,13 @@ Done so far:
   refs in capability-style records and raw scalar fields in plain data records
 * concrete `Iterator.unfold` producers can now route `Iterator.next` through typed helper
   dispatch when the compiler can still prove the hidden seed/step state
+* concrete `Option<T>` values created and matched locally use typed structs with unboxed
+  payloads, with automatic erased conversion at function boundaries
 
 Still open:
 
-* targeted reduction of `Anyref` payload layouts in hot helper/variant paths outside the
-  iterator-specific pipeline
+* `Result<T, E>` typed specialization (infrastructure ready, not yet wired)
+* typed option from `AMatch` results (safe fallback today, optimization gap)
 
 These remaining items now build on top of the completed
 [backend-pipeline-alignment.md](backend-pipeline-alignment.md) work: backend-facing ANF is
@@ -272,13 +274,36 @@ What changes:
 * this is scoped to the iterator-adjacent Option path; general Option specialization
   is out of scope for now
 
-### C. General variant payload specialization (future)
+### C. General variant payload specialization
 
-After the iterator pipeline is fully typed, evaluate whether other hot variant paths
-(`Option<Int>`, `Result<T, E>`, etc.) justify the same treatment.
+Status: in progress — `Option<T>` local specialization is implemented.
 
-* Prefer targeted hot-path wins over global complexity.
-* The iterator work in B1–B4 establishes the pattern; C applies it more broadly.
+Concrete `Option<T>` values created and consumed within a function body now use a typed
+struct (e.g. `$option__Int` with fields `(variant_id: i32, payload: i64)`) instead of the
+universal `$Variant + payload array + BoxedInt` path.
+
+What changed:
+
+* `emit_variant_literal` intercepts `OPTION_TYPE_ID` with a concrete inner type and
+  emits a typed option struct via `emit_typed_general_option_literal`
+* `emit_pattern_condition` and `emit_variant_field_anyref` recognize typed option locals
+  and use direct `struct.get` instead of payload array indirection
+* `emit_local_atom` converts typed option locals back to erased `$rt_types__Variant`
+  when consumed outside of match contexts (e.g. returned from a function, passed to a
+  call expecting universal Variant)
+* match scrutinee reads use `expected_ty = None` to bypass the conversion and access
+  the raw typed struct for direct field access
+* flow metadata (`LocalBackendInfo::typed_option`) tracks which locals hold typed option
+  values, with proper save/restore across branches
+* `is_typed_general_option_candidate` (shared between ctx.rs and emit.rs) excludes
+  `Option<IterItem<T>>` which has its own dedicated iterator-adjacent path
+
+What remains:
+
+* `Result<T, E>` specialization — infrastructure is in place (`typed_general_option_sym`
+  handles Result, struct emission supports it) but not yet wired up
+* `AMatch` results that produce `Option<T>` don't yet get typed option metadata — values
+  flow through the universal erased path safely, but miss the optimization
 
 ## Non-Goals
 
@@ -312,7 +337,7 @@ What it does require is making the concrete iterator path fully typed end-to-end
 3. ~~B2: typed UnfoldStep payload (eliminates erased variant payload for step results).~~ Done.
 4. ~~B3: typed IterItem record fields (eliminates anyref fields in IterItem).~~ Done.
 5. ~~B4: typed Option wrapping (eliminates erased Option variant for iterator next results).~~ Done.
-6. C: evaluate general variant payload specialization
+6. ~~C: typed `Option<T>` local specialization.~~ Done (Option<T>); Result<T,E> follow-up.
 
 ---
 
@@ -340,7 +365,16 @@ Completed (B1–B4):
 * WAT audit of `tests/run/iterator*.tw` shows no unnecessary `Anyref` boxing or
   `ArrayGet` casts in the concrete iterator path
 
+Completed (C — Option<T>):
+
+* concrete `Option<T>` locals use typed structs with unboxed payloads instead of universal
+  Variant + payload array
+* typed option values are automatically converted back to erased Variant when crossing
+  function boundaries or consumed outside match contexts
+* the `twinkle_typechecker.tw` self-hosted test exercises this boundary heavily (recursive
+  dict-lookup functions returning `Option<Record>`)
+
 Remaining:
 
-* C: evaluate whether general hot variant paths (`Option<Int>`, `Result<T, E>`, etc.)
-  justify the same specialization pattern
+* `Result<T, E>` specialization (infrastructure ready, not yet wired)
+* typed option from `AMatch`-produced locals (safe fallback, optimization gap)

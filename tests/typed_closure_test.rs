@@ -119,6 +119,14 @@ fn find_func_block_containing<'a>(wat: &'a str, needle: &str) -> Option<String> 
     None
 }
 
+fn window_around_line(haystack: &str, needle: &str, radius: usize) -> Option<String> {
+    let lines = haystack.lines().collect::<Vec<_>>();
+    let center = lines.iter().position(|line| line.contains(needle))?;
+    let start = center.saturating_sub(radius);
+    let end = (center + radius + 1).min(lines.len());
+    Some(lines[start..end].join("\n"))
+}
+
 fn find_named_func_block(wat: &str, func_name: &str) -> Option<String> {
     let lines = wat.lines().collect::<Vec<_>>();
     for (start, line) in lines.iter().enumerate() {
@@ -545,5 +553,52 @@ fn abi_boundary_policy_iterator_erased_closure_cell_typed() {
     assert!(
         cell_func.contains("(ref null $user__cell_Int)"),
         "Expected Cell param to use typed cell struct at ABI boundary.\n{cell_func}"
+    );
+}
+
+// ─── Section C: General variant payload specialization ───────────────────────
+
+/// When `Option<Int>` is created and matched locally (no function boundary),
+/// the backend should use a typed option struct with an unboxed i64 field
+/// instead of the universal Variant + payload array + BoxedInt path.
+#[test]
+fn typed_option_local_uses_specialized_struct() {
+    let path = fixture("option_local_match.tw");
+    let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
+
+    // There should be a typed option struct for Option<Int>
+    assert!(
+        wat.contains("option__Int"),
+        "Expected typed Option<Int> struct definition in WAT.\n"
+    );
+
+    // The main function should use typed struct creation and field access
+    let main_func = find_func_block_containing(&wat, "struct.new $user__option__Int")
+        .expect("expected typed Option<Int> literal in build_wat output");
+
+    // Typed match should use struct.get on the typed option, not array.get on payload
+    assert!(
+        main_func.contains("struct.get $user__option__Int"),
+        "Expected typed Option<Int> match to use direct struct field access.\n{main_func}"
+    );
+    let typed_window = window_around_line(&main_func, "struct.get $user__option__Int 1", 28)
+        .expect("expected typed Option<Int> payload access in function body");
+    assert!(
+        !typed_window.contains("array.get $rt_types__Array"),
+        "Expected typed Option<Int> match to avoid payload array indirection.\n{main_func}"
+    );
+}
+
+/// Typed local option specialization must preserve behaviour when values cross
+/// a function boundary that still expects universal Option layout.
+#[test]
+fn typed_option_boundary_call_preserves_behavior() {
+    let path = fixture("option_boundary_call.tw");
+    let (stdout, _stderr) =
+        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("run-wasm should succeed");
+    assert_eq!(
+        stdout.trim(),
+        "got 42\nnone",
+        "option boundary call output mismatch"
     );
 }

@@ -9,8 +9,8 @@ fn apply_update(c: Cell<Int>, f: fn(Int) Int) Void {
 }
 
 counter := Cell.new(0)
-Cell.update(counter, fn(n: Int) Int { n + 1 })
-println("${Cell.get(counter)}")
+counter.update(fn(n) { n + 1 })
+println("${counter.get()}")
 
 apply_update(counter, add4)
-println("${Cell.get(counter)}")
+println("${counter.get()}")

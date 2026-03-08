@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, IteratorStateInfo, ValueRepr, is_concrete_mono_type, mono_to_symbol_key,
-    mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
-    resolve_unfold_step_types, typed_cell_struct_sym, typed_closure_struct_sym,
-    typed_closurefunc_sym, typed_iter_item_sym, typed_iter_option_sym, typed_iterator_state_sym,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, ValueRepr, is_concrete_mono_type,
+    is_typed_general_option_candidate, mono_to_symbol_key, mono_to_valtype,
+    mono_to_valtype_for_param, mono_to_valtype_specialized, resolve_unfold_step_types,
+    typed_cell_struct_sym, typed_closure_struct_sym, typed_closurefunc_sym,
+    typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym, typed_iterator_state_sym,
     typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
 };
 use crate::codegen::prelude::build_prelude_map;
@@ -277,6 +278,16 @@ pub fn emit_user_module_typed(
             .any(|ty| ty.name() == typed_iter_option_sym(info))
         {
             module.types.push(emit_typed_iter_option_struct_def(info));
+        }
+    }
+    // Emit typed general option structs registered during body emission.
+    for (sym, mono) in ctx.requested_typed_general_options().clone() {
+        if !module.types.iter().any(|ty| ty.name() == sym) {
+            module.types.push(emit_typed_general_option_struct_def(
+                &mono,
+                type_env,
+                &concrete_func_sigs,
+            ));
         }
     }
     prioritize_specialized_iterator_types(&mut module);
@@ -848,6 +859,7 @@ fn emit_let_expr(
     let mut restores = Vec::new();
     let mut repr_restores = Vec::new();
     let mut iterator_restores = Vec::new();
+    let mut typed_option_restores = Vec::new();
     let local_mono = ctx.infer_op_mono_for_emit(op);
     push_flow_mono_binding(local, local_mono.clone(), &mut restores, ctx);
     push_flow_value_repr_binding(
@@ -862,6 +874,12 @@ fn emit_let_expr(
         local,
         iterator_state_from_op(op, ctx),
         &mut iterator_restores,
+        ctx,
+    );
+    push_flow_typed_option_binding(
+        local,
+        typed_general_option_from_op(op, ctx),
+        &mut typed_option_restores,
         ctx,
     );
     if let AnfOp::AAssign {
@@ -885,6 +903,12 @@ fn emit_let_expr(
             &mut iterator_restores,
             ctx,
         );
+        push_flow_typed_option_binding(
+            *target,
+            atom_typed_general_option(value, ctx),
+            &mut typed_option_restores,
+            ctx,
+        );
     }
 
     let mut instrs = emit_let_binding(local, op, fn_return_ty, ctx);
@@ -892,6 +916,9 @@ fn emit_let_expr(
 
     while let Some((local_id, prev)) = iterator_restores.pop() {
         restore_flow_iterator_binding(local_id, prev, ctx);
+    }
+    while let Some((local_id, prev)) = typed_option_restores.pop() {
+        restore_flow_typed_option_binding(local_id, prev, ctx);
     }
     while let Some((local_id, prev)) = repr_restores.pop() {
         restore_flow_value_repr_binding(local_id, prev, ctx);
@@ -964,6 +991,25 @@ fn restore_flow_iterator_binding(
     ctx: &mut EmitCtx<'_>,
 ) {
     ctx.set_local_iterator_state(local, prev);
+}
+
+fn push_flow_typed_option_binding(
+    local: crate::ir::LocalId,
+    mono: Option<MonoType>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<MonoType>)>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    let prev = ctx.local_typed_option(local).cloned();
+    ctx.set_local_typed_option(local, mono);
+    restores.push((local, prev));
+}
+
+fn restore_flow_typed_option_binding(
+    local: crate::ir::LocalId,
+    prev: Option<MonoType>,
+    ctx: &mut EmitCtx<'_>,
+) {
+    ctx.set_local_typed_option(local, prev);
 }
 
 fn emit_let_binding(
@@ -1117,7 +1163,9 @@ fn emit_let_binding(
             variant,
             args,
         } => {
-            let mut instrs = emit_variant_literal(*type_id, *variant, args, &bind_ty, ctx);
+            let local_mono = ctx.local_mono.get(&local).cloned();
+            let mut instrs =
+                emit_variant_literal(*type_id, *variant, args, &bind_ty, local_mono.as_ref(), ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             instrs
         }
@@ -1155,7 +1203,15 @@ fn emit_match_op(
     fn_return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let scrutinee_anyref = emit_atom(scrutinee, Some(&ValType::Anyref), ctx);
+    let scrutinee_typed_option = atom_typed_general_option(scrutinee, ctx);
+    // Use None expected_ty for typed option scrutinees so we get the raw typed
+    // struct value (not converted to erased Variant). Other scrutinees use Anyref.
+    let scrutinee_expected = if scrutinee_typed_option.is_some() {
+        None
+    } else {
+        Some(ValType::Anyref)
+    };
+    let scrutinee_anyref = emit_atom(scrutinee, scrutinee_expected.as_ref(), ctx);
     let scrutinee_mono = ctx.infer_atom_mono_for_emit(scrutinee);
     let scrutinee_iter_option = atom_iterator_next_state(scrutinee, ctx);
     let scrutinee_unfold_step = atom_typed_unfold_step(scrutinee, ctx);
@@ -1164,6 +1220,7 @@ fn emit_match_op(
         scrutinee_mono.as_ref(),
         scrutinee_iter_option.as_ref(),
         scrutinee_unfold_step.as_ref(),
+        scrutinee_typed_option.as_ref(),
         arms,
         bind_ty,
         fn_return_ty,
@@ -1176,6 +1233,7 @@ fn emit_match_arm_chain(
     scrutinee_mono: Option<&MonoType>,
     scrutinee_iter_option: Option<&IteratorStateInfo>,
     scrutinee_unfold_step: Option<&(MonoType, MonoType)>,
+    scrutinee_typed_option: Option<&MonoType>,
     arms: &[AnfMatchArm],
     bind_ty: &ValType,
     fn_return_ty: Option<&ValType>,
@@ -1192,6 +1250,7 @@ fn emit_match_arm_chain(
         scrutinee_mono,
         scrutinee_iter_option,
         scrutinee_unfold_step,
+        scrutinee_typed_option,
         ctx,
     );
     let mut then_body = emit_pattern_bindings(
@@ -1200,6 +1259,7 @@ fn emit_match_arm_chain(
         scrutinee_mono,
         scrutinee_iter_option,
         scrutinee_unfold_step,
+        scrutinee_typed_option,
         ctx,
     );
     then_body.extend(emit_expr_value(&head.body, bind_ty, fn_return_ty, ctx));
@@ -1209,6 +1269,7 @@ fn emit_match_arm_chain(
         scrutinee_mono,
         scrutinee_iter_option,
         scrutinee_unfold_step,
+        scrutinee_typed_option,
         &arms[1..],
         bind_ty,
         fn_return_ty,
@@ -1280,6 +1341,7 @@ fn emit_pattern_condition(
     expected_mono: Option<&MonoType>,
     option_iter_item_state: Option<&IteratorStateInfo>,
     typed_unfold_step_state: Option<&(MonoType, MonoType)>,
+    typed_general_option: Option<&MonoType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     match pattern {
@@ -1355,6 +1417,7 @@ fn emit_pattern_condition(
                         expected_mono,
                         option_iter_item_state,
                         typed_unfold_step_state,
+                        None,
                         field_monos.get(idx),
                         idx as i32,
                         ctx,
@@ -1364,6 +1427,7 @@ fn emit_pattern_condition(
                         &field_anyref,
                         field_monos.get(idx),
                         option_iter_item_state,
+                        None,
                         None,
                         ctx,
                     ));
@@ -1431,6 +1495,7 @@ fn emit_pattern_condition(
                         expected_mono,
                         option_iter_item_state,
                         typed_unfold_step_state,
+                        None,
                         field_monos.get(idx),
                         idx as i32,
                         ctx,
@@ -1440,6 +1505,7 @@ fn emit_pattern_condition(
                         &field_anyref,
                         field_monos.get(idx),
                         option_iter_item_state,
+                        None,
                         None,
                         ctx,
                     ));
@@ -1458,6 +1524,90 @@ fn emit_pattern_condition(
                     else_body: vec![Instr::I32Const(0)],
                 });
                 return instrs;
+            }
+
+            // Typed general Option<T> path: direct struct field access.
+            // Guarded by flow metadata to avoid assuming typed layout for erased/ABI values.
+            if let Some(mono) = typed_general_option {
+                if let Some(option_sym) =
+                    typed_general_option_pattern_sym(*type_id, expected_mono, Some(mono))
+                {
+                    let typed_ref = ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Named(option_sym.clone()),
+                    };
+                    let inner_mono = match mono {
+                        MonoType::Named { args, .. } => args.get(0),
+                        _ => None,
+                    };
+
+                    let mut outer_checks = Vec::new();
+
+                    let mut type_check = value_anyref_instrs.to_vec();
+                    type_check.push(Instr::RefTest {
+                        nullable: true,
+                        heap: HeapType::Named(option_sym.clone()),
+                    });
+                    outer_checks.push(type_check);
+
+                    let mut variant_then = value_anyref_instrs.to_vec();
+                    variant_then.extend(emit_unbox_on_stack(&typed_ref));
+                    variant_then.push(Instr::StructGet(option_sym.clone(), 0));
+                    variant_then.push(Instr::I32Const(variant.0 as i32));
+                    variant_then.push(Instr::I32Eq);
+
+                    let mut variant_check = value_anyref_instrs.to_vec();
+                    variant_check.push(Instr::RefTest {
+                        nullable: true,
+                        heap: HeapType::Named(option_sym.clone()),
+                    });
+                    variant_check.push(Instr::If {
+                        result: Some(ValType::I32),
+                        then_body: variant_then,
+                        else_body: vec![Instr::I32Const(0)],
+                    });
+                    outer_checks.push(variant_check);
+
+                    let mut inner_checks = Vec::new();
+                    for (idx, field_pat) in fields.iter().enumerate() {
+                        if pattern_is_trivially_true(field_pat) {
+                            continue;
+                        }
+                        // Extract payload from typed struct field 1 (payload)
+                        let payload_ty = mono_to_valtype_specialized(
+                            inner_mono.unwrap_or(&MonoType::Void),
+                            ctx.type_env,
+                            &ctx.concrete_func_sigs,
+                        );
+                        let mut field_instrs = value_anyref_instrs.to_vec();
+                        field_instrs.extend(emit_unbox_on_stack(&typed_ref));
+                        field_instrs.push(Instr::StructGet(option_sym.clone(), 1 + idx as u32));
+                        field_instrs.extend(emit_coerce_stack(&payload_ty, &ValType::Anyref));
+                        inner_checks.push(emit_pattern_condition(
+                            field_pat,
+                            &field_instrs,
+                            inner_mono,
+                            None,
+                            None,
+                            None,
+                            ctx,
+                        ));
+                    }
+
+                    if inner_checks.is_empty() {
+                        return combine_i32_ands(outer_checks);
+                    }
+
+                    let outer_cond = combine_i32_ands(outer_checks);
+                    let inner_cond = combine_i32_ands(inner_checks);
+                    let mut instrs = outer_cond;
+                    instrs.push(Instr::If {
+                        result: Some(ValType::I32),
+                        then_body: inner_cond,
+                        else_body: vec![Instr::I32Const(0)],
+                    });
+                    return instrs;
+                }
             }
 
             // Outer checks: type_id and variant_idx (safe to evaluate eagerly)
@@ -1491,6 +1641,7 @@ fn emit_pattern_condition(
                     None,
                     None,
                     None,
+                    None,
                     ctx,
                 ));
             }
@@ -1520,6 +1671,7 @@ fn emit_pattern_bindings(
     expected_mono: Option<&MonoType>,
     option_iter_item_state: Option<&IteratorStateInfo>,
     typed_unfold_step_state: Option<&(MonoType, MonoType)>,
+    typed_general_option: Option<&MonoType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     match pattern {
@@ -1546,6 +1698,7 @@ fn emit_pattern_bindings(
                     expected_mono,
                     option_iter_item_state,
                     typed_unfold_step_state,
+                    typed_general_option,
                     field_expected,
                     idx as i32,
                     ctx,
@@ -1555,6 +1708,7 @@ fn emit_pattern_bindings(
                     &field_anyref,
                     field_expected,
                     option_iter_item_state,
+                    None,
                     None,
                     ctx,
                 ));
@@ -1581,6 +1735,7 @@ fn emit_variant_field_anyref(
     expected_mono: Option<&MonoType>,
     option_iter_item_state: Option<&IteratorStateInfo>,
     typed_unfold_step_state: Option<&(MonoType, MonoType)>,
+    typed_general_option: Option<&MonoType>,
     field_mono: Option<&MonoType>,
     field_idx: i32,
     ctx: &EmitCtx<'_>,
@@ -1633,6 +1788,29 @@ fn emit_variant_field_anyref(
         return instrs;
     }
 
+    // Typed general Option<T> path.
+    if let Some(mono) = typed_general_option {
+        if let Some(option_sym) =
+            typed_general_option_pattern_sym(OPTION_TYPE_ID, expected_mono, Some(mono))
+        {
+            let inner_mono = match mono {
+                MonoType::Named { args, .. } => args.get(0),
+                _ => None,
+            };
+            let field_ty = inner_mono
+                .map(|m| mono_to_valtype_specialized(m, ctx.type_env, &ctx.concrete_func_sigs))
+                .unwrap_or(ValType::Anyref);
+            let mut instrs = value_anyref_instrs.to_vec();
+            instrs.push(Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(option_sym.clone()),
+            });
+            instrs.push(Instr::StructGet(option_sym, (field_idx + 1) as u32));
+            instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
+            return instrs;
+        }
+    }
+
     let mut instrs = value_anyref_instrs.to_vec();
     instrs.extend(emit_unbox_on_stack(&ref_variant_null()));
     instrs.push(Instr::StructGet(T_VARIANT.to_string(), 2));
@@ -1672,6 +1850,26 @@ fn typed_iter_option_pattern_info(
         return None;
     }
     Some((typed_iter_option_sym(info), vec![args[0].clone()]))
+}
+
+fn typed_general_option_pattern_sym(
+    type_id: TypeId,
+    expected_mono: Option<&MonoType>,
+    typed_general_option: Option<&MonoType>,
+) -> Option<String> {
+    if type_id != OPTION_TYPE_ID {
+        return None;
+    }
+    let mono = typed_general_option?;
+    if !is_typed_general_option_candidate(mono) {
+        return None;
+    }
+    if let Some(expected) = expected_mono {
+        if expected != mono {
+            return None;
+        }
+    }
+    Some(typed_general_option_sym(mono))
 }
 
 fn typed_unfold_step_pattern_info(
@@ -2077,6 +2275,24 @@ fn emit_local_atom(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     if let Some((idx, local_ty)) = ctx.local(local_id).cloned() {
+        // Typed option locals need conversion to erased Variant when consumed
+        // outside of a match context (expected_ty is Anyref or Variant ref).
+        // This check must happen before the local_ty == expected short-circuit,
+        // since typed option locals are stored as anyref.
+        if let Some(expected) = expected_ty {
+            if is_variant_ref_type(expected) || *expected == ValType::Anyref {
+                if let Some(mono) = ctx.local_typed_option(local_id).cloned() {
+                    if is_typed_general_option_candidate(&mono) {
+                        let target = if *expected == ValType::Anyref {
+                            &ref_variant_null()
+                        } else {
+                            expected
+                        };
+                        return emit_typed_general_option_local_to_variant(idx, &mono, target, ctx);
+                    }
+                }
+            }
+        }
         return match expected_ty {
             None => vec![Instr::LocalGet(idx)],
             Some(expected) if expected == &local_ty => vec![Instr::LocalGet(idx)],
@@ -2093,6 +2309,68 @@ fn emit_local_atom(
     }
 
     panic!("missing local mapping for L{}", local_id.0);
+}
+
+fn is_variant_ref_type(ty: &ValType) -> bool {
+    matches!(
+        ty,
+        ValType::Ref {
+            heap: HeapType::Named(name),
+            ..
+        } if name == T_VARIANT
+    )
+}
+
+fn emit_typed_general_option_local_to_variant(
+    local_idx: u32,
+    mono: &MonoType,
+    expected_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let option_sym = typed_general_option_sym(mono);
+    let typed_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(option_sym.clone()),
+    };
+    let inner = match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            &args[0]
+        }
+        _ => panic!(
+            "emit_typed_general_option_local_to_variant expects Option<T>, got {:?}",
+            mono
+        ),
+    };
+    let payload_ty = mono_to_valtype_specialized(inner, ctx.type_env, &ctx.concrete_func_sigs);
+
+    let mut instrs = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32)];
+
+    // variant_id field
+    instrs.push(Instr::LocalGet(local_idx));
+    instrs.extend(emit_unbox_on_stack(&typed_ref));
+    instrs.push(Instr::StructGet(option_sym.clone(), 0));
+
+    // payload array: Some -> [payload], None -> []
+    instrs.push(Instr::LocalGet(local_idx));
+    instrs.extend(emit_unbox_on_stack(&typed_ref));
+    instrs.push(Instr::StructGet(option_sym.clone(), 0));
+    instrs.push(Instr::I32Const(1));
+    instrs.push(Instr::I32Eq);
+    let mut then_body = vec![Instr::LocalGet(local_idx)];
+    then_body.extend(emit_unbox_on_stack(&typed_ref));
+    then_body.push(Instr::StructGet(option_sym, 1));
+    then_body.extend(emit_coerce_stack(&payload_ty, &ValType::Anyref));
+    then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    let else_body = vec![Instr::ArrayNewFixed(T_ARRAY.to_string(), 0)];
+    instrs.push(Instr::If {
+        result: Some(ref_array()),
+        then_body,
+        else_body,
+    });
+
+    instrs.push(Instr::StructNew(T_VARIANT.to_string()));
+    instrs.extend(emit_coerce_stack(&ref_variant(), expected_ty));
+    instrs
 }
 
 fn emit_global_func_atom(func_id: FuncId, expected_ty: Option<&ValType>) -> Vec<Instr> {
@@ -3084,6 +3362,7 @@ fn emit_variant_literal(
     variant: crate::ir::VariantId,
     args: &[Atom],
     bind_ty: &ValType,
+    expected_mono: Option<&MonoType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     // Typed UnfoldStep path: emit a typed struct instead of universal $Variant
@@ -3092,6 +3371,15 @@ fn emit_variant_literal(
             return emit_typed_unfold_step_literal(
                 variant, args, &yield_ty, &seed_ty, bind_ty, ctx,
             );
+        }
+    }
+
+    // Typed general Option<T> path: emit a typed struct for concrete Option<T>.
+    if type_id == OPTION_TYPE_ID {
+        if let Some(mono) = expected_mono {
+            if is_typed_general_option_candidate(mono) {
+                return emit_typed_general_option_literal(variant, args, mono, bind_ty, ctx);
+            }
         }
     }
 
@@ -3105,6 +3393,45 @@ fn emit_variant_literal(
     instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), args.len() as u32));
     instrs.push(Instr::StructNew(T_VARIANT.to_string()));
     instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
+}
+
+/// Emit a typed general Option literal.
+/// None: (variant_id=0, payload=default_value)
+/// Some(x): (variant_id=1, payload=x)
+fn emit_typed_general_option_literal(
+    variant: crate::ir::VariantId,
+    args: &[Atom],
+    mono: &MonoType,
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let inner = match mono {
+        MonoType::Named {
+            type_id,
+            args: type_args,
+        } if *type_id == OPTION_TYPE_ID && type_args.len() == 1 => &type_args[0],
+        _ => panic!("emit_typed_general_option_literal: expected Option<T>"),
+    };
+    let sym = typed_general_option_sym(mono);
+    let payload_ty = mono_to_valtype_specialized(inner, ctx.type_env, &ctx.concrete_func_sigs);
+
+    // Register the typed struct
+    ctx.request_typed_general_option(sym.clone(), mono.clone());
+
+    let mut instrs = Vec::new();
+    instrs.push(Instr::I32Const(variant.0 as i32));
+
+    if variant.0 == 1 && args.len() == 1 {
+        // Some(value) — push the concrete payload
+        instrs.extend(emit_atom(&args[0], Some(&payload_ty), ctx));
+    } else {
+        // None — push a default value for the payload field
+        instrs.extend(emit_default_value_instrs(&payload_ty));
+    }
+
+    instrs.push(Instr::StructNew(sym));
+    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
     instrs
 }
 
@@ -3788,6 +4115,13 @@ fn atom_typed_unfold_step(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<(MonoType, M
     }
 }
 
+fn atom_typed_general_option(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_typed_option(*local_id).cloned(),
+        _ => None,
+    }
+}
+
 fn iterator_state_from_unfold_args(
     seed: &Atom,
     step: &Atom,
@@ -3822,6 +4156,17 @@ fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorState
             _ => None,
         },
         AnfOp::AInit { value } => atom_iterator_state(value, ctx),
+        _ => None,
+    }
+}
+
+fn typed_general_option_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match op {
+        AnfOp::AVariant { type_id, .. } if *type_id == OPTION_TYPE_ID => ctx
+            .infer_op_mono_for_emit(op)
+            .filter(is_typed_general_option_candidate),
+        AnfOp::AInit { value } => atom_typed_general_option(value, ctx),
+        AnfOp::AAssign { value, .. } => atom_typed_general_option(value, ctx),
         _ => None,
     }
 }
@@ -5416,6 +5761,41 @@ fn emit_typed_iter_item_struct_def(
                     nullable: true,
                     heap: HeapType::Named(typed_iterator_state_sym(info)),
                 },
+            },
+        ],
+    }
+}
+
+/// Emit a typed struct definition for a general `Option<T>` where T is concrete.
+/// Layout: (variant_id: i32, payload: T_wasm)
+fn emit_typed_general_option_struct_def(
+    mono: &MonoType,
+    type_env: &TypeEnv,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) -> WasmTypeDef {
+    let inner = match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            &args[0]
+        }
+        _ => panic!(
+            "emit_typed_general_option_struct_def: expected Option<T>, got {:?}",
+            mono
+        ),
+    };
+    WasmTypeDef::Struct {
+        name: typed_general_option_sym(mono),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            WasmFieldDef {
+                name: Some("variant_id".to_string()),
+                mutable: false,
+                ty: ValType::I32,
+            },
+            WasmFieldDef {
+                name: Some("payload".to_string()),
+                mutable: false,
+                ty: mono_to_valtype_specialized(inner, type_env, concrete_func_sigs),
             },
         ],
     }

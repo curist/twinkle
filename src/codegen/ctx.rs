@@ -52,6 +52,8 @@ pub struct LocalBackendInfo {
     pub iterator_state: Option<IteratorStateInfo>,
     pub iterator_next_state: Option<IteratorStateInfo>,
     pub iter_item_state: Option<IteratorStateInfo>,
+    /// Tracks locals that hold a typed Option<T> or Result<T, E> value.
+    pub typed_option: Option<MonoType>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +65,8 @@ pub struct SpecializedTypeRegistry {
     pub typed_unfold_steps: BTreeMap<String, (MonoType, MonoType)>,
     pub typed_closures: BTreeMap<String, (Vec<MonoType>, MonoType)>,
     pub typed_cells: BTreeMap<String, MonoType>,
+    /// Typed Option<T> / Result<T,E> struct types keyed by sym.
+    pub typed_general_options: BTreeMap<String, MonoType>,
 }
 
 pub struct EmitCtx<'a> {
@@ -229,6 +233,27 @@ impl<'a> EmitCtx<'a> {
 
     pub fn requested_typed_cells(&self) -> &BTreeMap<String, MonoType> {
         &self.specialized_types.typed_cells
+    }
+
+    pub fn request_typed_general_option(&mut self, sym: String, mono: MonoType) {
+        self.specialized_types
+            .typed_general_options
+            .entry(sym)
+            .or_insert(mono);
+    }
+
+    pub fn requested_typed_general_options(&self) -> &BTreeMap<String, MonoType> {
+        &self.specialized_types.typed_general_options
+    }
+
+    pub fn local_typed_option(&self, local_id: LocalId) -> Option<&MonoType> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.typed_option.as_ref())
+    }
+
+    pub fn set_local_typed_option(&mut self, local_id: LocalId, mono: Option<MonoType>) {
+        self.local_backend.entry(local_id).or_default().typed_option = mono;
     }
 
     pub fn setup_locals(&mut self, func: &AnfFunctionDef) -> Vec<ValType> {
@@ -580,6 +605,13 @@ impl<'a> EmitCtx<'a> {
                         ref_named(true, &typed_iterator_state_sym(info))
                     } else if let Some(info) = iterator_next_state.as_ref() {
                         ref_named(true, &typed_iter_option_sym(info))
+                    } else if inferred_mono
+                        .as_ref()
+                        .is_some_and(is_typed_general_option_candidate)
+                    {
+                        // Keep specialized general Option<T> locals at anyref to avoid
+                        // forcing an invalid cast into universal Variant layout.
+                        ValType::Anyref
                     } else {
                         self.infer_op_valtype(op)
                             .or_else(|| {
@@ -1090,6 +1122,14 @@ impl<'a> EmitCtx<'a> {
                         return Some(MonoType::Named {
                             type_id: UNFOLD_STEP_TYPE_ID,
                             args: vec![yield_ty, seed_ty],
+                        });
+                    }
+                }
+                if *type_id == OPTION_TYPE_ID && variant.0 == 1 && args.len() == 1 {
+                    if let Some(inner) = self.infer_atom_mono(&args[0]) {
+                        return Some(MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![inner],
                         });
                     }
                 }
@@ -1694,6 +1734,23 @@ pub fn is_concrete_mono_type(ty: &MonoType) -> bool {
     }
 }
 
+pub fn is_typed_general_option_candidate(mono: &MonoType) -> bool {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            if let MonoType::Named {
+                type_id: inner_id, ..
+            } = &args[0]
+            {
+                if *inner_id == ITER_ITEM_TYPE_ID {
+                    return false;
+                }
+            }
+            is_concrete_mono_type(&args[0])
+        }
+        _ => false,
+    }
+}
+
 /// Map a `MonoType` to a short tag string for use in mangled type symbols.
 /// e.g. `Int` → `"i64"`, `String` → `"str"`, `Vector<Int>` → `"arr"`.
 pub fn mono_to_type_tag(ty: &MonoType) -> String {
@@ -1815,6 +1872,24 @@ pub fn typed_iter_item_sym(info: &IteratorStateInfo) -> String {
 
 /// Symbol for a typed iterator-next Option struct for a concrete iterator-state shape.
 /// e.g. `(yield=Int, seed=Int)` → `"option__iter_item__Int__Int"`.
+/// Symbol for a typed general Option<T> or Result<T,E> struct.
+/// e.g. `Option<Int>` → `"option__Int"`, `Result<String, Int>` → `"result__String__Int"`.
+pub fn typed_general_option_sym(mono: &MonoType) -> String {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            format!("option__{}", mono_to_symbol_key(&args[0]))
+        }
+        MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
+            format!(
+                "result__{}__{}",
+                mono_to_symbol_key(&args[0]),
+                mono_to_symbol_key(&args[1])
+            )
+        }
+        _ => format!("typed_variant__{}", mono_to_symbol_key(mono)),
+    }
+}
+
 pub fn typed_iter_option_sym(info: &IteratorStateInfo) -> String {
     format!(
         "option__iter_item__{}__{}",

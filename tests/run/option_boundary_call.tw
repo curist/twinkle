@@ -1,0 +1,17 @@
+// Expected output:
+//   got 42
+//   none
+
+fn show(o: Option<Int>) {
+  case o {
+    .Some(n) => println("got ${n}"),
+    .None => println("none"),
+  }
+}
+
+fn main() {
+  show(.Some(42))
+  show(.None)
+}
+
+main()
