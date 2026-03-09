@@ -1,0 +1,65 @@
+// Expected output:
+//   65
+//   0
+//   255
+//   got byte
+//   none
+//   none
+//   97
+//   42
+//   100
+
+// Byte.from_int round-trip
+case Byte.from_int(65) {
+  .Some(b) => println("${Byte.to_int(b)}"),
+  .None => println("none"),
+}
+
+// Boundary: 0
+case Byte.from_int(0) {
+  .Some(b) => println("${Byte.to_int(b)}"),
+  .None => println("none"),
+}
+
+// Boundary: 255
+case Byte.from_int(255) {
+  .Some(b) => println("${Byte.to_int(b)}"),
+  .None => println("none"),
+}
+
+// Type annotation works
+b: Byte? = Byte.from_int(42)
+case b {
+  .Some(_) => println("got byte"),
+  .None => println("none"),
+}
+
+// Out of range: negative
+case Byte.from_int(-1) {
+  .Some(b) => println("${Byte.to_int(b)}"),
+  .None => println("none"),
+}
+
+// Out of range: > 255
+case Byte.from_int(256) {
+  .Some(b) => println("${Byte.to_int(b)}"),
+  .None => println("none"),
+}
+
+// Dot syntax: b.to_int()
+case Byte.from_int(97) {
+  .Some(b) => println("${b.to_int()}"),
+  .None => println("none"),
+}
+
+// Byte.to_string
+case Byte.from_int(42) {
+  .Some(b) => println(Byte.to_string(b)),
+  .None => println("none"),
+}
+
+// Dot syntax: b.to_string()
+case Byte.from_int(100) {
+  .Some(b) => println(b.to_string()),
+  .None => println("none"),
+}

@@ -95,6 +95,10 @@ pub mod prelude {
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int
     pub const FROM_CHAR_CODE: FuncId = FuncId(1018); // String.from_char_code(n) -> Option<String>
+    pub const BYTE_TO_INT: FuncId = FuncId(1022); // Byte.to_int(b: Byte) -> Int
+    pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>
+    pub const BYTE_TO_STRING: FuncId = FuncId(1024); // Byte.to_string(b: Byte) -> String
+
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>
 
@@ -218,6 +222,9 @@ impl Lowerer {
         func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
         func_table.insert("String.char_code_at".to_string(), prelude::CHAR_CODE_AT);
         func_table.insert("String.from_char_code".to_string(), prelude::FROM_CHAR_CODE);
+        func_table.insert("Byte.to_int".to_string(), prelude::BYTE_TO_INT);
+        func_table.insert("Byte.from_int".to_string(), prelude::BYTE_FROM_INT);
+        func_table.insert("Byte.to_string".to_string(), prelude::BYTE_TO_STRING);
         func_table.insert("Int.from_string".to_string(), prelude::INT_FROM_STRING);
         func_table.insert("Float.from_string".to_string(), prelude::FLOAT_FROM_STRING);
         func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
@@ -242,6 +249,7 @@ impl Lowerer {
         module_aliases.insert("Int".to_string()); // built-in module alias
         module_aliases.insert("Float".to_string()); // built-in module alias
         module_aliases.insert("Bool".to_string()); // built-in module alias
+        module_aliases.insert("Byte".to_string()); // built-in module alias
 
         Self {
             type_map,
@@ -2646,6 +2654,8 @@ impl Lowerer {
             (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
+            (MonoType::Byte, "to_int") => prelude::BYTE_TO_INT,
+            (MonoType::Byte, "to_string") => prelude::BYTE_TO_STRING,
             (MonoType::String, "to_string") => prelude::STRING_TO_STRING,
             (MonoType::Dict(_, _), "keys") => prelude::DICT_KEYS,
             (MonoType::Named { type_id, .. }, "get")

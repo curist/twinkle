@@ -20,6 +20,7 @@ fn has_type_vars(ty: &MonoType) -> bool {
         MonoType::Int
         | MonoType::Float
         | MonoType::Bool
+        | MonoType::Byte
         | MonoType::String
         | MonoType::Void
         | MonoType::Never => false,

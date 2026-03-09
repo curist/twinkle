@@ -1091,6 +1091,9 @@ impl TypeChecker {
         if alias == "String" {
             return self.synth_string_call(func_name, args, span);
         }
+        if alias == "Byte" {
+            return self.synth_byte_call(func_name, args, span);
+        }
 
         self.synth_qualified_call(alias, func_name, args, span)
     }
@@ -1709,6 +1712,57 @@ impl TypeChecker {
         }
     }
 
+    /// Handle Byte.method(...) module-qualified calls.
+    fn synth_byte_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<MonoType, ()> {
+        match func_name {
+            "to_int" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::Byte)?;
+                Ok(MonoType::Int)
+            }
+            "from_int" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::Int)?;
+                Ok(MonoType::Named {
+                    type_id: crate::types::ty::OPTION_TYPE_ID,
+                    args: vec![MonoType::Byte],
+                })
+            }
+            "to_string" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::Byte)?;
+                Ok(MonoType::String)
+            }
+            other => self.synth_qualified_call("Byte", other, args, span),
+        }
+    }
+
     fn check_interpolation_expr(&mut self, expr: &Expr) -> Result<(), ()> {
         let expr_ty = self.synth_expr(expr)?;
         let expr_ty = self.zonk(&expr_ty);
@@ -2247,6 +2301,43 @@ impl TypeChecker {
                         feature: "unknown dict method",
                         span,
                         note: format!("Dict has no method '{}'", method),
+                    });
+                    Err(())
+                }
+            },
+            MonoType::Byte => match method {
+                "to_int" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
+                        return Err(());
+                    }
+                    Ok(MonoType::Int)
+                }
+                "to_string" => {
+                    if !args.is_empty() {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 0,
+                            actual: args.len(),
+                            span,
+                        });
+                        return Err(());
+                    }
+                    Ok(MonoType::String)
+                }
+                _ => {
+                    if let Some(ret_ty) =
+                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                    {
+                        return Ok(ret_ty);
+                    }
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "method on Byte type",
+                        span,
+                        note: format!("Byte has no method '{}'", method),
                     });
                     Err(())
                 }

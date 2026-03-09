@@ -122,6 +122,9 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
     func_table.insert("Int.to_string".to_string(), prelude::INT_TO_STRING);
     func_table.insert("Float.to_string".to_string(), prelude::FLOAT_TO_STRING);
     func_table.insert("Bool.to_string".to_string(), prelude::BOOL_TO_STRING);
+    func_table.insert("Byte.to_int".to_string(), prelude::BYTE_TO_INT);
+    func_table.insert("Byte.from_int".to_string(), prelude::BYTE_FROM_INT);
+    func_table.insert("Byte.to_string".to_string(), prelude::BYTE_TO_STRING);
     func_table.insert("String.to_string".to_string(), prelude::STRING_TO_STRING);
     func_table.insert("Dict.len".to_string(), prelude::DICT_LEN);
     func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
@@ -157,6 +160,7 @@ pub fn default_module_aliases() -> HashSet<String> {
     module_aliases.insert("Int".to_string());
     module_aliases.insert("Float".to_string());
     module_aliases.insert("Bool".to_string());
+    module_aliases.insert("Byte".to_string());
     module_aliases
 }
 

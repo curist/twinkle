@@ -432,6 +432,18 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
+        prelude_ids::BYTE_TO_INT,
+        PreludeEntry::intrinsic("Byte.to_int"),
+    );
+    map.insert(
+        prelude_ids::BYTE_FROM_INT,
+        PreludeEntry::intrinsic("Byte.from_int"),
+    );
+    map.insert(
+        prelude_ids::BYTE_TO_STRING,
+        PreludeEntry::intrinsic("Byte.to_string"),
+    );
+    map.insert(
         prelude_ids::CHAR_CODE_AT,
         PreludeEntry::intrinsic("String.char_code_at"),
     );

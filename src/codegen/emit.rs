@@ -3789,6 +3789,9 @@ fn emit_prelude_call(
         id if id == prelude_ids::FLOAT_FROM_STRING => {
             emit_float_from_string_intrinsic(args, bind_ty, ctx)
         }
+        id if id == prelude_ids::BYTE_TO_INT => emit_byte_to_int_intrinsic(args, ctx),
+        id if id == prelude_ids::BYTE_FROM_INT => emit_byte_from_int_intrinsic(args, ctx),
+        id if id == prelude_ids::BYTE_TO_STRING => emit_byte_to_string_intrinsic(args, ctx),
         _ => emit_unimplemented_intrinsic_prelude_call(entry, ctx),
     }
 }
@@ -5087,6 +5090,75 @@ fn emit_float_from_string_helper() -> FuncDef {
     }
 }
 
+fn emit_byte_to_int_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Byte.to_int(b: Byte) -> Int
+    // Byte is i32, Int is i64 — zero-extend
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+    instrs.push(Instr::I64ExtendI32U);
+    instrs
+}
+
+fn emit_byte_from_int_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Byte.from_int(n: Int) -> Option<Byte>
+    // If 0 <= n <= 255, return Some(n as i32); else None.
+    // Check: n >= 0
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS);
+    // Check: n <= 255
+    instrs.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I64Const(256));
+    instrs.push(Instr::I64LtS);
+    // AND both conditions
+    instrs.push(Instr::I32And);
+    instrs.push(Instr::If {
+        result: Some(ValType::Anyref),
+        then_body: {
+            // Some(byte_val)
+            let mut v = vec![
+                Instr::I32Const(0), // type_id (Option)
+                Instr::I32Const(1), // variant_id (Some)
+            ];
+            v.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+            v.push(Instr::I32WrapI64);
+            // Box i32 as anyref (ref.i31)
+            v.push(Instr::RefI31);
+            v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+            v.push(Instr::StructNew(T_VARIANT.to_string()));
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+        else_body: {
+            // None
+            let mut v = vec![
+                Instr::I32Const(0), // type_id
+                Instr::I32Const(0), // variant_id (None)
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                Instr::StructNew(T_VARIANT.to_string()),
+            ];
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+    });
+    instrs
+}
+
+fn emit_byte_to_string_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Byte.to_string(b: Byte) -> String
+    // Reuse int_to_string runtime: extend i32 to i64, call rt_str__from_i64
+    ctx.add_import(ImportDef {
+        module: "rt.str".to_string(),
+        name: "from_i64".to_string(),
+        as_sym: "rt_str__from_i64".to_string(),
+        params: vec![ValType::I64],
+        results: vec![ref_string_null()],
+    });
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+    instrs.push(Instr::I64ExtendI32U);
+    instrs.push(Instr::Call("rt_str__from_i64".to_string()));
+    instrs
+}
+
 fn emit_unimplemented_intrinsic_prelude_call(
     entry: &crate::codegen::prelude::PreludeEntry,
     ctx: &mut EmitCtx<'_>,
@@ -6106,6 +6178,7 @@ fn collect_cell_payloads_from_mono(
         MonoType::Int
         | MonoType::Float
         | MonoType::Bool
+        | MonoType::Byte
         | MonoType::String
         | MonoType::Void
         | MonoType::Never

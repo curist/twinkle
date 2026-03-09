@@ -346,6 +346,18 @@ impl TypeEnv {
                         }
                         Ok(MonoType::Bool)
                     }
+                    "Byte" => {
+                        if !args.is_empty() {
+                            errors.push(TypeError::GenericNotSupported {
+                                name: "Byte".to_string(),
+                                span: *span,
+                                note: "Byte is a primitive type and takes no type arguments"
+                                    .to_string(),
+                            });
+                            return Err(());
+                        }
+                        Ok(MonoType::Byte)
+                    }
                     "String" => {
                         if !args.is_empty() {
                             errors.push(TypeError::GenericNotSupported {

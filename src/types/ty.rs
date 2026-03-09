@@ -32,6 +32,7 @@ pub const BUILTIN_DICT_TYPE_ID: TypeId = TypeId(u32::MAX - 3);
 pub const BUILTIN_INT_TYPE_ID: TypeId = TypeId(u32::MAX - 2);
 pub const BUILTIN_FLOAT_TYPE_ID: TypeId = TypeId(u32::MAX - 1);
 pub const BUILTIN_BOOL_TYPE_ID: TypeId = TypeId(u32::MAX);
+pub const BUILTIN_BYTE_TYPE_ID: TypeId = TypeId(u32::MAX - 6);
 
 /// Return the method-lookup TypeId for a receiver type.
 /// Named types map to their real TypeId; builtin receiver types map to
@@ -45,6 +46,7 @@ pub fn method_receiver_type_id(ty: &MonoType) -> Option<TypeId> {
         MonoType::Int => Some(BUILTIN_INT_TYPE_ID),
         MonoType::Float => Some(BUILTIN_FLOAT_TYPE_ID),
         MonoType::Bool => Some(BUILTIN_BOOL_TYPE_ID),
+        MonoType::Byte => Some(BUILTIN_BYTE_TYPE_ID),
         _ => None,
     }
 }
@@ -59,6 +61,7 @@ pub fn builtin_method_alias(type_id: TypeId) -> Option<&'static str> {
         BUILTIN_INT_TYPE_ID => Some("Int"),
         BUILTIN_FLOAT_TYPE_ID => Some("Float"),
         BUILTIN_BOOL_TYPE_ID => Some("Bool"),
+        BUILTIN_BYTE_TYPE_ID => Some("Byte"),
         _ => None,
     }
 }
@@ -75,6 +78,8 @@ pub enum MonoType {
     Float,
     /// Boolean type
     Bool,
+    /// Byte type (unsigned 8-bit value, 0..255)
+    Byte,
     /// String type (immutable, GC-managed)
     String,
     /// Void/unit type
@@ -150,6 +155,7 @@ impl MonoType {
             MonoType::Int => "Int".to_string(),
             MonoType::Float => "Float".to_string(),
             MonoType::Bool => "Bool".to_string(),
+            MonoType::Byte => "Byte".to_string(),
             MonoType::String => "String".to_string(),
             MonoType::Void => "Void".to_string(),
             MonoType::Never => "Never".to_string(),
@@ -204,6 +210,7 @@ impl fmt::Display for MonoType {
             MonoType::Int => write!(f, "Int"),
             MonoType::Float => write!(f, "Float"),
             MonoType::Bool => write!(f, "Bool"),
+            MonoType::Byte => write!(f, "Byte"),
             MonoType::String => write!(f, "String"),
             MonoType::Void => write!(f, "Void"),
             MonoType::Never => write!(f, "Never"),

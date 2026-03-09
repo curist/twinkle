@@ -590,6 +590,38 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("string_to_string: expected String"),
                 }
             }
+            prelude_ids::BYTE_TO_INT => {
+                // Byte.to_int(b: Byte) -> Int
+                match &args[0] {
+                    Value::Byte(b) => Ok(Value::Int(*b as i64)),
+                    _ => panic!("Byte.to_int: expected Byte"),
+                }
+            }
+            prelude_ids::BYTE_FROM_INT => {
+                // Byte.from_int(n: Int) -> Option<Byte>
+                match &args[0] {
+                    Value::Int(n) => {
+                        let n = *n;
+                        if n >= 0 && n <= 255 {
+                            Ok(Value::Variant(
+                                OPTION_TYPE_ID,
+                                1,
+                                vec![Value::Byte(n as u8)],
+                            ))
+                        } else {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        }
+                    }
+                    _ => panic!("Byte.from_int: expected Int"),
+                }
+            }
+            prelude_ids::BYTE_TO_STRING => {
+                // Byte.to_string(b: Byte) -> String
+                match &args[0] {
+                    Value::Byte(b) => Ok(Value::Str(b.to_string())),
+                    _ => panic!("Byte.to_string: expected Byte"),
+                }
+            }
             prelude_ids::CHAR_CODE_AT => {
                 // String.char_code_at(s: String, i: Int) -> Int
                 match (&args[0], &args[1]) {

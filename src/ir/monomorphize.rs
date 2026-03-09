@@ -150,6 +150,7 @@ fn type_key(ty: &MonoType) -> String {
         MonoType::Int => "Int".to_string(),
         MonoType::Float => "Float".to_string(),
         MonoType::Bool => "Bool".to_string(),
+        MonoType::Byte => "Byte".to_string(),
         MonoType::String => "String".to_string(),
         MonoType::Void => "Void".to_string(),
         MonoType::Never => "Never".to_string(),

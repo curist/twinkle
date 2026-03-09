@@ -1227,6 +1227,12 @@ impl<'a> EmitCtx<'a> {
                         _ => None,
                     },
                     id if id == ids::CELL_SET || id == ids::CELL_UPDATE => Some(MonoType::Void),
+                    id if id == ids::BYTE_TO_INT => Some(MonoType::Int),
+                    id if id == ids::BYTE_FROM_INT => Some(MonoType::Named {
+                        type_id: OPTION_TYPE_ID,
+                        args: vec![MonoType::Byte],
+                    }),
+                    id if id == ids::BYTE_TO_STRING => Some(MonoType::String),
                     id if id == ids::ITERATOR_NEXT => infer_iterator_item_mono(args.first()?, self)
                         .map(|item_ty| MonoType::Named {
                             type_id: OPTION_TYPE_ID,
@@ -1325,6 +1331,7 @@ fn should_erase_assigned_local(mono: &MonoType) -> bool {
         MonoType::Int
         | MonoType::Float
         | MonoType::Bool
+        | MonoType::Byte
         | MonoType::String
         | MonoType::Void
         | MonoType::Never => false,
@@ -1524,6 +1531,9 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
             Some(ValType::Anyref)
         }
         id if id == ids::CHAR_CODE_AT => Some(ValType::I64),
+        id if id == ids::BYTE_TO_INT => Some(ValType::I64),
+        id if id == ids::BYTE_FROM_INT => Some(ValType::Anyref),
+        id if id == ids::BYTE_TO_STRING => Some(named_ref(T_STRING)),
         _ => None,
     }
 }
@@ -1649,7 +1659,7 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
     match ty {
         MonoType::Int => ValType::I64,
         MonoType::Float => ValType::F64,
-        MonoType::Bool => ValType::I32,
+        MonoType::Bool | MonoType::Byte => ValType::I32,
         MonoType::String => ref_named(true, T_STRING),
         MonoType::Void | MonoType::Never => ValType::I32,
         MonoType::Vector(_) => ref_named(true, T_ARRAY),
@@ -1770,6 +1780,7 @@ pub fn is_concrete_mono_type(ty: &MonoType) -> bool {
         MonoType::Int
         | MonoType::Float
         | MonoType::Bool
+        | MonoType::Byte
         | MonoType::String
         | MonoType::Void
         | MonoType::Never => true,
@@ -1806,7 +1817,7 @@ pub fn mono_to_type_tag(ty: &MonoType) -> String {
     match ty {
         MonoType::Int => "i64".to_string(),
         MonoType::Float => "f64".to_string(),
-        MonoType::Bool => "i32".to_string(),
+        MonoType::Bool | MonoType::Byte => "i32".to_string(),
         MonoType::String => "str".to_string(),
         MonoType::Void | MonoType::Never => "void".to_string(),
         MonoType::Vector(_) => "arr".to_string(),
@@ -1822,6 +1833,7 @@ pub fn mono_to_symbol_key(ty: &MonoType) -> String {
         MonoType::Int => "Int".to_string(),
         MonoType::Float => "Float".to_string(),
         MonoType::Bool => "Bool".to_string(),
+        MonoType::Byte => "Byte".to_string(),
         MonoType::String => "String".to_string(),
         MonoType::Void => "Void".to_string(),
         MonoType::Never => "Never".to_string(),
@@ -1987,6 +1999,7 @@ fn mono_to_closure_sig_tag(ty: &MonoType) -> String {
         MonoType::Int
         | MonoType::Float
         | MonoType::Bool
+        | MonoType::Byte
         | MonoType::String
         | MonoType::Void
         | MonoType::Never => mono_to_type_tag(ty),

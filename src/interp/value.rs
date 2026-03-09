@@ -17,6 +17,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Byte(u8),
     Str(String),
     Vec(std::vec::Vec<Value>),
     /// Linear-scan dict; key equality via PartialEq
@@ -48,6 +49,7 @@ impl std::fmt::Display for Value {
                 }
             }
             Value::Bool(b) => write!(f, "{}", b),
+            Value::Byte(b) => write!(f, "{}", b),
             Value::Str(s) => write!(f, "{}", s),
             Value::Void => write!(f, "()"),
             Value::Vec(elems) => {
