@@ -1,4 +1,5 @@
 // Expected output:
+//   98
 //   97
 //   48
 //   true
@@ -6,28 +7,29 @@
 //   a
 //   none
 
-// char_code_at returns the byte value
-println("${char_code_at("abc", 0)}")
-println("${char_code_at("0", 0)}")
+// String.char_code_at returns the byte value
+println("${"abc".char_code_at(1)}")
+println("${String.char_code_at("abc", 0)}")
+println("${"0".char_code_at(0)}")
 
 // Digit check via code points
-c := char_code_at("x5y", 1)
+c := "x5y".char_code_at(1)
 r1 := c >= 48 and c <= 57
 println("${r1}")
 
 // Letter check
-c2 := char_code_at("Hello", 0)
+c2 := "Hello".char_code_at(0)
 r2 := c2 >= 65 and c2 <= 90
 println("${r2}")
 
-// from_char_code round-trip
-case from_char_code(97) {
+// String.from_char_code round-trip
+case String.from_char_code(97) {
   .Some(s) => println(s),
   .None => println("none"),
 }
 
 // Invalid code point
-case from_char_code(200) {
+case String.from_char_code(200) {
   .Some(s) => println(s),
   .None => println("none"),
 }

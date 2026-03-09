@@ -1,0 +1,24 @@
+fn dot_char_code() Int {
+    "abc".char_code_at(2)
+}
+
+fn qualified_char_code() Int {
+    String.char_code_at("xyz", 1)
+}
+
+fn qualified_from_char_code() String {
+    case String.from_char_code(65) {
+        .Some(s) => s,
+        .None => "",
+    }
+}
+
+fn first_class_refs() String {
+    code_of: fn(String, Int) Int = String.char_code_at
+    from_code: fn(Int) String? = String.from_char_code
+    code := code_of("A", 0)
+    case from_code(code) {
+        .Some(s) => s,
+        .None => "",
+    }
+}

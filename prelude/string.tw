@@ -92,7 +92,7 @@ pub fn trim(s: String) String {
   }
 
   start := 0
-  for start < n and is_ascii_space(char_code_at(s, start)) {
+  for start < n and is_ascii_space(s.char_code_at(start)) {
     start = start + 1
   }
   if start == n {
@@ -100,7 +100,7 @@ pub fn trim(s: String) String {
   }
 
   end := n - 1
-  for end >= start and is_ascii_space(char_code_at(s, end)) {
+  for end >= start and is_ascii_space(s.char_code_at(end)) {
     end = end - 1
   }
 

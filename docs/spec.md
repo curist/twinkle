@@ -755,13 +755,13 @@ These comparisons use byte-level lexicographic ordering (UTF-8).
 
 #### Character utilities
 
-* `char_code_at(s: String, i: Int) Int` — returns the byte value at index `i` (0-based)
-* `from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-character string; returns `None` for values outside that range
+* `String.char_code_at(s: String, i: Int) Int` — returns the byte value at index `i` (0-based)
+* `String.from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-character string; returns `None` for values outside that range
 
 ```tw
-char_code_at("abc", 0)  // 97 (ASCII 'a')
+String.char_code_at("abc", 0)  // 97 (ASCII 'a')
 
-case from_char_code(97) {
+case String.from_char_code(97) {
   .Some(s) => println(s),  // prints "a"
   .None => println("invalid"),
 }

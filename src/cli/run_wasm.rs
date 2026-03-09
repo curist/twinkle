@@ -187,10 +187,6 @@ impl HostImportTypes {
                     );
                     out.parse_float = Some(func_ty);
                 }
-                "from_char_code" => {
-                    // Accepted but no-op: from_char_code is handled inline in codegen
-                    // for ASCII range. Future: full Unicode support via host.
-                }
                 other => bail!("unsupported host import: host.{other}"),
             }
         }

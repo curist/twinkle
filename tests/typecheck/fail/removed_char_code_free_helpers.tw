@@ -1,0 +1,7 @@
+fn char_code_free_alias_removed() Int {
+    char_code_at("a", 0)
+}
+
+fn from_char_code_free_alias_removed() String? {
+    from_char_code(97)
+}

@@ -433,11 +433,11 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::CHAR_CODE_AT,
-        PreludeEntry::intrinsic("char_code_at"),
+        PreludeEntry::intrinsic("String.char_code_at"),
     );
     map.insert(
         prelude_ids::FROM_CHAR_CODE,
-        PreludeEntry::intrinsic("from_char_code"),
+        PreludeEntry::intrinsic("String.from_char_code"),
     );
     map.insert(
         prelude_ids::INT_FROM_STRING,

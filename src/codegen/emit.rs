@@ -4738,7 +4738,7 @@ fn emit_char_code_at_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // char_code_at(s: String, i: Int) -> Int
+    // String.char_code_at(s: String, i: Int) -> Int
     // Read byte from string array, zero-extend to i64
     let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
     instrs.push(Instr::RefAsNonNull);
@@ -4755,7 +4755,7 @@ fn emit_from_char_code_intrinsic(
     _bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // from_char_code(n: Int) -> Option<String>
+    // String.from_char_code(n: Int) -> Option<String>
     // For single-byte values (0-127 ASCII), create a 1-byte string.
     // Values outside 0-127 → None (full Unicode support via host in future).
     let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);

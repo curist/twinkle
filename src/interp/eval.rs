@@ -591,24 +591,24 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             prelude_ids::CHAR_CODE_AT => {
-                // char_code_at(s: String, i: Int) -> Int
+                // String.char_code_at(s: String, i: Int) -> Int
                 match (&args[0], &args[1]) {
                     (Value::Str(s), Value::Int(i)) => {
                         let idx = *i as usize;
                         match s.chars().nth(idx) {
                             Some(c) => Ok(Value::Int(c as i64)),
                             None => Err(Signal::Trap(TrapError::UserError(format!(
-                                "char_code_at: index {} out of bounds for string of length {}",
+                                "String.char_code_at: index {} out of bounds for string of length {}",
                                 idx,
                                 s.chars().count()
                             )))),
                         }
                     }
-                    _ => panic!("char_code_at: expected (String, Int)"),
+                    _ => panic!("String.char_code_at: expected (String, Int)"),
                 }
             }
             prelude_ids::FROM_CHAR_CODE => {
-                // from_char_code(n: Int) -> Option<String>
+                // String.from_char_code(n: Int) -> Option<String>
                 match &args[0] {
                     Value::Int(n) => {
                         let n = *n;
@@ -623,7 +623,7 @@ impl<W: Write> Interpreter<W> {
                             Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
                         }
                     }
-                    _ => panic!("from_char_code: expected Int"),
+                    _ => panic!("String.from_char_code: expected Int"),
                 }
             }
             prelude_ids::INT_FROM_STRING => {

@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use super::error::TypeError;
 use super::ty::{
-    CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+    BUILTIN_STRING_TYPE_ID, CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID,
+    MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId,
+    UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::syntax::ast::Type as AstType;
 
@@ -161,6 +162,14 @@ impl TypeEnv {
                 ],
             }),
             UNFOLD_STEP_TYPE_ID,
+        );
+
+        // Builtin String method aliases for intrinsics that are not defined in
+        // prelude/string.tw.
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "char_code_at".to_string(),
+            "String.char_code_at".to_string(),
         );
 
         env
@@ -720,25 +729,6 @@ impl ValueEnv {
             },
         );
 
-        // char_code_at(s: String, i: Int) -> Int
-        env.builtins.insert(
-            "char_code_at".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::String, MonoType::Int],
-                ret: Box::new(MonoType::Int),
-            },
-        );
-        // from_char_code(n: Int) -> Option<String>
-        env.builtins.insert(
-            "from_char_code".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::Int],
-                ret: Box::new(MonoType::Named {
-                    type_id: OPTION_TYPE_ID,
-                    args: vec![MonoType::String],
-                }),
-            },
-        );
         env.add_function(FunctionSignature {
             name: "Int.to_string".to_string(),
             type_params: vec![],
@@ -779,6 +769,21 @@ impl ValueEnv {
             ret: Some(MonoType::Named {
                 type_id: OPTION_TYPE_ID,
                 args: vec![MonoType::Float],
+            }),
+        });
+        env.add_function(FunctionSignature {
+            name: "String.char_code_at".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::String, MonoType::Int],
+            ret: Some(MonoType::Int),
+        });
+        env.add_function(FunctionSignature {
+            name: "String.from_char_code".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::String],
             }),
         });
 

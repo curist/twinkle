@@ -80,10 +80,9 @@ type UnfoldStep<T, S> = { Done, Yield(T, S) }
 | `Float.from_string` | `fn(s: String) Option<Float>` | Parse string to `Float` |
 | `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
 | `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
-| `char_code_at` | `fn(s: String, i: Int) Int` | Byte value at index `i` |
-| `from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value |
+| `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value |
 
-Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly. The free functions `int_to_string`, `float_to_string`, `bool_to_string`, and `string_to_string` exist as aliases.
+Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly.
 
 ## String
 
@@ -98,6 +97,7 @@ Strings are immutable and GC-managed. String interpolation: `"hello ${name}"`.
 | `.contains(needle)` | `fn(s: String, needle: String) Bool` | Whether `s` contains `needle` |
 | `.starts_with(prefix)` | `fn(s: String, prefix: String) Bool` | Prefix check |
 | `.ends_with(suffix)` | `fn(s: String, suffix: String) Bool` | Suffix check |
+| `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at index `i` |
 | `.split(sep)` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
 | `.trim()` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
 
