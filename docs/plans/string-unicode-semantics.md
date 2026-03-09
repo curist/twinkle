@@ -1,18 +1,18 @@
-# String Unicode Semantics Plan
+# Byte-First String Semantics Plan
 
-**Status:** Proposed  
+**Status:** Proposed
 **Last updated:** 2026-03-09
 
 ## Goal
 
-Make `String` behavior consistent and predictable across interpreter and Wasm by
-defining and implementing a single language-level model:
+Define a coherent byte-first string model for Twinkle:
 
-- Twinkle strings are valid UTF-8.
-- String indexing/iteration operate on Unicode scalar values, not raw bytes.
-- Byte-level operations are explicit APIs, not implicit language behavior.
+- `String` remains always-valid UTF-8
+- Core `String` operations are byte-based (len, index, slice, iteration)
+- Unicode/code-point traversal is explicit via `chars()`
+- `Byte` is a dedicated primitive type used by byte-oriented APIs
 
-This plan is focused on language ergonomics and backend parity for self-hosting work.
+This keeps the language explicit and predictable while preserving safe text invariants.
 
 ---
 
@@ -25,190 +25,272 @@ Today there is a semantic mismatch between interpreter and Wasm for non-ASCII st
 - `for c in s` and `s[i]` therefore disagree across backends for non-ASCII input.
 - In Wasm, slicing/indexing can split UTF-8 sequences and later fail when host decodes runtime strings.
 
-This mismatch is now user-visible and will become more painful as Twinkle codebases grow.
+The byte-first direction resolves this by making the Wasm behavior the canonical model
+and adding boundary checks to prevent invalid UTF-8 production.
 
 ---
 
 ## Language Direction (Normative)
 
-### 1. Core string model
+### 1. `Byte` primitive type
 
-- `String` is a sequence of Unicode scalar values encoded as UTF-8.
-- All observable string APIs must preserve valid UTF-8 invariants.
+`Byte` is a primitive value type representing an unsigned 8-bit value (range `0..255`).
+It is distinct from `Int`.
 
-### 2. Iteration and indexing semantics
+**Purpose:** byte-oriented APIs including string byte indexing, UTF-8 conversion,
+file/network data, and compiler internals. It is not the start of a larger integer
+tower — it is a focused primitive for raw 8-bit data.
 
-- `for c in s` iterates scalar values.
-- `c` has type `String` and represents one scalar value.
-- `s[i]` indexes by scalar index and traps on OOB.
-- `String.get(s, i)` indexes by scalar index and returns `Option<String>`.
-- `String.substring(s, start, end)` uses scalar indices `[start, end)`.
-- `String.len()` returns scalar count.
+**Conversions:**
 
-### 3. Explicit byte APIs
+```tw
+Byte.to_int(b: Byte) Int       // always succeeds
+Byte.from_int(n: Int) Byte?    // None if n outside 0..255
+```
 
-If byte-level behavior is needed (lexer/parser/compiler internals), it must be explicit:
+**Arithmetic:** operations on `Byte` promote to `Int`. This avoids wraparound
+surprises and keeps `Byte` primarily a data-unit type.
 
-- Proposed additions:
-  - `String.utf8_bytes(s) Vector<Int>`
-  - `String.from_utf8(bytes: Vector<Int>) Option<String>`
-  - `String.byte_len(s) Int`
-- These APIs are intentionally separate from scalar indexing/iteration.
+```tw
+b1 + b2    // Int
+b + 1      // Int
+```
 
-### 4. Non-goals
+**Examples:**
 
-- Grapheme-cluster semantics (user-perceived characters) are out of scope.
-- Unicode normalization/case-folding/collation are out of scope.
+```tw
+b := Byte.from_int(0xFF)?   // Byte
+i := Byte.to_int(b)         // 255
+b + 1                        // Int
+```
+
+### 2. Core string model
+
+- `String` is an immutable sequence of bytes that is always valid UTF-8.
+- The primary observable sequence unit of `String` is the **byte**.
+- `len`, `get`, `[]`, `for in`, and slicing are defined in terms of byte offsets.
+- Unicode scalar traversal is provided through explicit APIs (`chars()`).
+
+**UTF-8 validity invariant:** The following operations always produce valid UTF-8:
+string literals, concatenation, `slice` (with boundary check), `from_code_point`,
+`chars()` reconstruction. The only fallible entry point from raw bytes is `from_utf8`,
+which returns `Option<String>`. The runtime must never construct invalid UTF-8
+through any string operation.
+
+### 3. Non-goals
+
+- Grapheme-cluster semantics (user-perceived characters).
+- Unicode normalization, case-folding, locale-aware collation.
+- Arbitrary invalid UTF-8 string values.
 
 ---
 
-## Why This Direction
+## API Surface
 
-- Matches user expectations for high-level language string loops/indexing.
-- Removes interpreter vs Wasm backend behavior drift.
-- Keeps low-level byte access available for compiler-style code.
-- Prevents invalid UTF-8 strings from being created through ordinary string operations.
+### Core byte-based APIs
+
+**Length:**
+
+```tw
+String.len(s: String) Int     // UTF-8 byte length, O(1)
+s.len() Int
+```
+
+Examples: `"abc".len() == 3`, `"é".len() == 2`, `"你".len() == 3`, `"👍".len() == 4`.
+
+**Indexing:**
+
+```tw
+s[i] Byte                         // byte offset, traps on OOB
+String.get(s: String, i: Int) Byte?   // byte offset, None on OOB
+s.get(i) Byte?
+```
+
+Examples: `"é"[0] == 0xC3`, `"é"[1] == 0xA9`.
+
+**Iteration:**
+
+```tw
+for b in s { ... }    // b: Byte, iterates UTF-8 bytes
+```
+
+When the iterable expression has type `String`, the compiler lowers iteration to
+a byte-by-byte walk over the string's UTF-8 storage. This is a normative lowering
+rule — `for b in s` must not implicitly call `chars()`.
+
+**Slicing:**
+
+```tw
+String.slice(s: String, start: Int, end: Int) String
+s.slice(start, end) String
+```
+
+- `start` and `end` are byte offsets, range is `[start, end)`.
+- Traps if indices are out of bounds.
+- Traps if `start` or `end` is not on a valid UTF-8 scalar boundary.
+- Returns a new `String` containing the specified byte range (always a copy, not a view).
+
+**UTF-8 scalar boundary definition:** A byte offset is a scalar boundary if it is 0,
+equal to the byte length of the string, or points to a byte that is not a UTF-8
+continuation byte (`10xxxxxx`). Equivalently, it is the start of a UTF-8 encoded
+scalar value or one past the end.
+
+Examples: `"é".slice(0, 2)` succeeds; `"é".slice(0, 1)` traps (invalid boundary).
+
+### Explicit Unicode APIs
+
+**Scalar iteration:**
+
+```tw
+String.chars(s: String) Iterator<String>
+s.chars() Iterator<String>
+```
+
+Iterates Unicode scalar values in decode order. Each yielded element is a one-scalar
+`String` value. Implementations may allocate new string values for each element.
+
+```tw
+for ch in "aé你👍".chars() {
+  // yields "a", "é", "你", "👍"
+}
+```
+
+The iterator maintains an internal byte offset, advancing by the UTF-8 byte length
+of each decoded scalar. This ensures each `.next()` is O(1) amortized.
+
+**Optional scalar helpers:**
+
+```tw
+String.char_len(s: String) Int              // Unicode scalar count, O(n)
+String.code_point_at(s: String, i: Int) Int?  // scalar index (not byte index), O(n)
+String.from_code_point(n: Int) String?      // None for invalid scalar values
+```
+
+Note: `code_point_at` uses a **scalar index**, not a byte index. Docs must clearly
+distinguish byte-index APIs from scalar-index APIs.
+
+### UTF-8 conversion boundary
+
+```tw
+String.utf8_bytes(s: String) Vector<Byte>
+String.from_utf8(bytes: Vector<Byte>) String?
+```
+
+`utf8_bytes` returns a copy of the UTF-8 byte sequence (not a view into the string's
+internal storage). `from_utf8` is the explicit checked entry point from raw bytes to
+`String`.
+
+### Compatibility and deprecation
+
+- Keep `char_code_at` and `from_char_code` temporarily as aliases.
+- Mark both as deprecated once new names land.
+- Remove in a later cleanup milestone after compiler/stdlib migration.
 
 ---
 
-## API Naming Decision Draft
+## Complexity Model
 
-This section proposes concrete names so implementation can proceed without
-repeated naming debates.
+### Byte-oriented (predictable, fast)
 
-### Canonical scalar APIs (recommended)
+| API | Complexity |
+|-----|-----------|
+| `len` | O(1) |
+| `s[i]` / `get` | O(1) |
+| `for b in s` | O(n) over byte length |
+| `slice` | O(k) copy of sliced bytes (k = end - start) |
 
-- `String.len(s) Int` and `s.len()`  
-  Scalar count.
-- `String.get(s, i) String?` and `s.get(i)`  
-  Safe scalar indexing.
-- `s[i] String`  
-  Trap-on-OOB scalar indexing.
-- `String.substring(s, start, end) String` and `s.substring(start, end)`  
-  Scalar range slicing.
-- `String.iter(s) Iterator<String>` and `s.iter()`  
-  Scalar iterator for `for`/`collect` lowering.
-- `String.code_point_at(s, i) Int?` and `s.code_point_at(i)`  
-  Safe scalar code-point lookup.
-- `String.from_code_point(n: Int) String?`  
-  Unicode scalar to one-scalar string.
+### Unicode-oriented (explicit, may decode)
 
-### Canonical byte APIs (recommended)
+| API | Complexity |
+|-----|-----------|
+| `chars()` | O(n) over byte length |
+| `char_len` | O(n) |
+| `code_point_at` | O(n) unless optimized |
 
-- `String.byte_len(s) Int`
-- `String.utf8_bytes(s) Vector<Int>`
-- `String.from_utf8(bytes: Vector<Int>) String?`
-- `String.byte_at(s, i) Int?`
-
-These names make byte intent explicit and avoid overloading scalar APIs.
-
-### Compatibility and deprecation policy (recommended)
-
-- Keep `char_code_at` and `from_char_code` temporarily as compatibility aliases.
-- Alias mapping:
-  - `char_code_at(s, i)` -> trap-on-OOB wrapper over `String.code_point_at`
-  - `from_char_code(n)` -> alias to `String.from_code_point(n)`
-- Mark both as deprecated in docs once new names land.
-- Remove aliases in a later cleanup milestone after compiler/stdlib migration.
-
-### Rationale for naming choices
-
-- `code_point` is unambiguous; `char_code` is historically ambiguous.
-- `utf8_bytes` and `from_utf8` are explicit about encoding boundary.
-- Keeping `get`/`[]` aligned with scalar semantics preserves ergonomic surface.
+This split is intentional: Unicode-aware costs are visible in the API surface.
 
 ---
 
 ## Implementation Plan
 
-## Phase 0: Semantics Lock and Spec Updates
+### Phase 0: Semantics Lock and Spec Updates
 
-### Work
+**Work:**
 
-- Update spec and API docs to declare scalar semantics and UTF-8 invariants.
-- Document byte APIs as explicit low-level operations.
-- Add a short compatibility note: previous byte-like behavior for some Wasm paths was unintended.
+- Update `docs/spec.md` and `docs/API.md` to declare byte-first semantics and UTF-8 invariants.
+- Document `Byte` type in the spec.
+- Add compatibility note: previous scalar-based behavior in the interpreter was the
+  unintended side; byte-based Wasm behavior is now canonical.
 
-### Exit criteria
-
-- `docs/spec.md` and `docs/API.md` agree on `len/get/index/substring/for-in` semantics.
-
----
-
-## Phase 1: Runtime UTF-8 Decode Primitives (Wasm)
-
-### Work
-
-- Add internal runtime helpers to advance by codepoint boundaries over UTF-8 bytes.
-- Add helper(s) for scalar count and scalar-range slicing.
-- Keep runtime representation as UTF-8 byte array (`array<i8>`), but stop treating byte index as scalar index.
-
-### Exit criteria
-
-- Runtime can:
-  - count scalars,
-  - slice by scalar range,
-  - extract scalar at index,
-  without producing invalid UTF-8.
+**Exit criteria:** spec and API docs agree on byte-based `len/get/index/slice/for-in` semantics.
 
 ---
 
-## Phase 2: String Iterator Surface
+### Phase 1: `Byte` Primitive Type
 
-### Work
+**Work:**
 
-- Introduce `String.iter(s) -> Iterator<String>`.
-- Implement in Wasm and interpreter with identical scalar semantics.
-- Add tests for ASCII + non-ASCII (`é`, `你`, `👍`) and mixed strings.
+- Add `Byte` to the type system (`MonoType::Byte`).
+- Wasm representation: `i32` (same as `Bool`).
+- Interpreter representation: `Value::Byte(u8)`.
+- Implement `Byte.to_int`, `Byte.from_int`.
+- Implement arithmetic promotion: `Byte + Byte -> Int`, `Byte + Int -> Int`, etc.
 
-### Exit criteria
-
-- `String.iter` parity tests pass on both backends.
-
----
-
-## Phase 3: Lower `for c in s` Through Iterator
-
-### Work
-
-- Change lowering of string `for`/`collect` to iterator path instead of `len + index`.
-- Keep source syntax unchanged (`for c in s` remains ergonomic).
-
-### Exit criteria
-
-- `for c in s` produces identical output in interpreter and Wasm for Unicode fixtures.
+**Exit criteria:** `Byte` type works end-to-end in both backends with conversion and arithmetic.
 
 ---
 
-## Phase 4: Align String Core APIs
+### Phase 2: Byte-Based String Core APIs
 
-### Work
+**Work:**
 
-- Move `String.len`, `String.substring`, `String.get`, and `s[i]` to scalar semantics in Wasm.
-- Ensure interpreter matches exactly (including edge cases and traps).
-- Introduce canonical scalar naming:
-  - `String.code_point_at` and `String.from_code_point`
-- Keep `char_code_at`/`from_char_code` as temporary deprecated aliases to the
-  new scalar APIs.
+- Change `String.len` to return byte length (interpreter currently returns scalar count).
+- Change `s[i]` and `String.get` to return `Byte` at byte offset.
+- Introduce `String.slice` with UTF-8 boundary validation (traps on invalid boundary).
+- Update `for b in s` to iterate bytes (`b: Byte`).
 
-### Exit criteria
+**Exit criteria:**
 
-- No backend divergence on string core API behavior.
-- All string fixtures pass in both interpreters with same expected output/trap class.
+- `len`, `get`, `[]`, `slice`, `for-in` are byte-based in both backends.
+- `slice` traps on non-boundary indices.
+- Dual-backend fixture matrix passes.
 
 ---
 
-## Phase 5: Add Explicit Byte APIs
+### Phase 3: `String.chars()` Unicode Iterator
 
-### Work
+**Work:**
 
-- Add `utf8_bytes`, `from_utf8`, `byte_len` (or equivalent final naming).
+- Implement `String.chars(s) -> Iterator<String>` in both backends.
+- Iterator state is a byte offset; each `.next()` decodes one scalar and advances.
+- Add `String.char_len` as scalar count helper.
+- Add tests for ASCII, multi-byte (`é`, `你`, `👍`), mixed strings.
+
+**Exit criteria:** `chars()` parity tests pass on both backends.
+
+---
+
+### Phase 4: Scalar Helper APIs
+
+**Work:**
+
+- Add `String.code_point_at(s, i)` (scalar index, not byte index) and `String.from_code_point(n)`.
+- Migrate `char_code_at` / `from_char_code` as deprecated aliases.
+- Ensure docs clearly distinguish byte-index vs scalar-index APIs.
+
+**Exit criteria:** scalar helpers work correctly; deprecated aliases mapped.
+
+---
+
+### Phase 5: UTF-8 Conversion APIs
+
+**Work:**
+
+- Add `String.utf8_bytes(s) -> Vector<Byte>`.
+- Add `String.from_utf8(bytes: Vector<Byte>) -> String?`.
 - Ensure compiler/stdlib use byte APIs where byte-precise behavior is intended.
 
-### Exit criteria
-
-- No user-facing features depend on implicit byte indexing of `String`.
-- Byte operations are explicit and tested.
+**Exit criteria:** explicit byte-to-string boundary tested in both backends.
 
 ---
 
@@ -216,15 +298,15 @@ These names make byte intent explicit and avoid overloading scalar APIs.
 
 ### Fixture matrix
 
-For each relevant API (`for-in`, `collect`, `len`, `get`, `index`, `substring`):
+For each relevant API (`for-in`, `len`, `get`, `[]`, `slice`, `chars`, `char_len`):
 
-- ASCII-only fixtures.
-- Single multibyte scalar fixtures.
-- Mixed ASCII + multibyte fixtures.
-- Emoji / 4-byte scalar fixtures.
-- Boundary/OOB fixtures.
+- ASCII-only (`"abc"`).
+- Single multi-byte scalar (`"é"`, `"你"`, `"👍"`).
+- Mixed ASCII + multi-byte (`"aé你👍"`).
+- Boundary/OOB cases.
+- `slice` boundary validation (valid and invalid split points).
 
-Run each fixture in:
+Run each fixture in both backends:
 
 - Core interpreter (`twk run -i`)
 - Wasm runtime (`twk run`)
@@ -232,7 +314,8 @@ Run each fixture in:
 ### Invariant tests
 
 - String operations never produce invalid UTF-8.
-- Host decode path never fails for valid Twinkle programs that avoid explicit byte APIs.
+- `slice` traps on non-boundary indices, never silently produces invalid UTF-8.
+- Host decode path never fails for valid Twinkle programs.
 
 ### Regression tests
 
@@ -244,33 +327,24 @@ Run each fixture in:
 
 ## Risks and Mitigations
 
-- **Performance risk**: scalar indexing over UTF-8 is O(n).  
-  Mitigation: document complexity; optimize later with optional indexing caches if needed.
+- **Breaking change:** `len` and `for-in` semantics change for existing code.
+  Mitigation: this is pre-1.0; document the change; existing codebase is small.
 
-- **Compatibility risk**: existing code assuming byte indexing semantics may change behavior.  
-  Mitigation: provide explicit byte APIs and migration notes.
+- **`slice` boundary traps:** users may find it surprising that `s.slice(0, 1)` traps
+  for multi-byte strings. Mitigation: clear docs and error messages; `chars()` is the
+  obvious alternative for character-level work.
 
-- **Implementation drift risk**: interpreter and Wasm diverge again.  
+- **Implementation drift risk:** interpreter and Wasm diverge again.
   Mitigation: dual-backend fixture matrix as required CI path for string tests.
 
 ---
 
 ## Success Criteria
 
-This plan is successful when all are true:
+This plan is successful when:
 
-- `for c in s` and `s[i]` have identical behavior in interpreter and Wasm.
-- Non-ASCII strings work without runtime UTF-8 decode failures in normal string operations.
-- String semantics are clearly documented as scalar-based.
-- Byte-level operations are explicit and intentionally named.
-
----
-
-## Suggested Execution Order
-
-1. Phase 0 (docs/spec lock)
-2. Phase 1 (runtime decode primitives)
-3. Phase 2 (String.iter)
-4. Phase 3 (`for c in s` lowering to iterator)
-5. Phase 4 (core API alignment)
-6. Phase 5 (explicit byte APIs and migration cleanup)
+- `String` core operations (`len`, `[]`, `get`, `slice`, `for-in`) are byte-based in both backends.
+- `chars()` provides explicit Unicode scalar iteration with identical behavior across backends.
+- `Byte` is a working primitive type.
+- No ordinary string operation can produce invalid UTF-8.
+- String semantics are clearly documented as byte-first with explicit Unicode APIs.
