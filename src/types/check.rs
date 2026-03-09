@@ -508,14 +508,22 @@ impl TypeChecker {
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.module_aliases.contains(alias.as_str()) {
                         let qualified = format!("{}.{}", alias, field);
-                        // If it's a plain pub value (not a function), synthesize it directly
                         if let Some(ty) = self.value_env.lookup(&qualified) {
+                            // Plain pub value or monomorphic function: synthesize directly
                             if !matches!(ty, MonoType::Function { .. }) {
                                 self.type_map.set_expr_type(expr.id, ty.clone());
                                 return Ok(ty);
                             }
+                            // Monomorphic function: can infer without annotation
+                            if let Some(sig) = self.value_env.get_function(&qualified) {
+                                if sig.type_params.is_empty() {
+                                    let fn_ty = ty.clone();
+                                    self.type_map.set_expr_type(expr.id, fn_ty.clone());
+                                    return Ok(fn_ty);
+                                }
+                            }
                         }
-                        // Otherwise it's a function ref: require a type annotation
+                        // Polymorphic function ref: require a type annotation
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "module method reference without type annotation",
                             span: expr.span,

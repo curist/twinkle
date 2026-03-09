@@ -306,3 +306,8 @@ fn char_code_at() {
 fn numeric_parsing() {
     check("tests/run/numeric_parsing.tw");
 }
+
+#[test]
+fn type_to_string_ref() {
+    check("tests/run/type_to_string_ref.tw");
+}

@@ -147,6 +147,18 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
         }
     }
 
+    // Emit trampolines for prelude functions used as first-class values.
+    {
+        let prelude_refs = collect_prelude_func_refs(anf);
+        for func_id in prelude_refs {
+            if let Some(entry) = prelude.get(&func_id) {
+                module
+                    .funcs
+                    .push(emit_prelude_closure_trampoline(func_id, entry));
+            }
+        }
+    }
+
     {
         module.funcs.push(emit_iterator_next_helper());
         for info in ctx.requested_iterator_helpers().values() {
@@ -5256,6 +5268,125 @@ fn global_func_trampoline_sym(func_id: FuncId) -> String {
 
 fn typed_closure_trampoline_sym(func_id: FuncId) -> String {
     format!("{}__typed_closure", user_func_sym(func_id))
+}
+
+// ─── Prelude closure trampolines ──────────────────────────────────────────────
+
+/// Collect prelude FuncIds that appear as first-class values (not just call
+/// targets) anywhere in the ANF module.
+fn collect_prelude_func_refs(anf: &AnfModule) -> Vec<FuncId> {
+    let user_func_ids: HashSet<FuncId> = anf.functions.iter().map(|f| f.func_id).collect();
+    let mut prelude_refs = HashSet::new();
+    for func in &anf.functions {
+        collect_prelude_refs_expr(&func.body, &user_func_ids, &mut prelude_refs);
+    }
+    let mut sorted: Vec<FuncId> = prelude_refs.into_iter().collect();
+    sorted.sort_by_key(|f| f.0);
+    sorted
+}
+
+fn collect_prelude_refs_expr(
+    expr: &AnfExpr,
+    user_funcs: &HashSet<FuncId>,
+    out: &mut HashSet<FuncId>,
+) {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            collect_prelude_refs_op(op, user_funcs, out);
+            collect_prelude_refs_expr(body, user_funcs, out);
+        }
+        AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) | AnfExpr::Atom(atom) => {
+            collect_prelude_refs_atom(atom, user_funcs, out);
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => {}
+    }
+}
+
+fn collect_prelude_refs_atom(atom: &Atom, user_funcs: &HashSet<FuncId>, out: &mut HashSet<FuncId>) {
+    if let Atom::AGlobalFunc(func_id) = atom {
+        if !user_funcs.contains(func_id) {
+            out.insert(*func_id);
+        }
+    }
+}
+
+fn collect_prelude_refs_op(op: &AnfOp, user_funcs: &HashSet<FuncId>, out: &mut HashSet<FuncId>) {
+    match op {
+        AnfOp::ACall { args, .. } => {
+            for arg in args {
+                collect_prelude_refs_atom(arg, user_funcs, out);
+            }
+        }
+        AnfOp::AIf {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_prelude_refs_atom(cond, user_funcs, out);
+            collect_prelude_refs_expr(then_branch, user_funcs, out);
+            collect_prelude_refs_expr(else_branch, user_funcs, out);
+        }
+        AnfOp::AMatch { scrutinee, arms } => {
+            collect_prelude_refs_atom(scrutinee, user_funcs, out);
+            for arm in arms {
+                collect_prelude_refs_expr(&arm.body, user_funcs, out);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_prelude_refs_expr(body, user_funcs, out);
+        }
+        AnfOp::AMakeClosure { .. } => {}
+        AnfOp::AInit { value } | AnfOp::AAssign { value, .. } => {
+            collect_prelude_refs_atom(value, user_funcs, out);
+        }
+        _ => {}
+    }
+}
+
+/// Emit a universal closure trampoline for a prelude (runtime) function.
+/// The trampoline signature is `(anyref, anyref) -> anyref` — matching the
+/// universal `$ClosureFunc` type.  It unpacks args from the anyref array,
+/// calls the runtime function, and boxes the result back to anyref.
+fn emit_prelude_closure_trampoline(
+    func_id: FuncId,
+    entry: &crate::codegen::prelude::PreludeEntry,
+) -> FuncDef {
+    let mut body = Vec::new();
+
+    // Unbox each parameter from the anyref arg-array (local 1).
+    for (idx, param_ty) in entry.runtime_params.iter().enumerate() {
+        body.push(Instr::LocalGet(1)); // arg array (anyref)
+        body.push(Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.to_string()),
+        });
+        body.push(Instr::I32Const(idx as i32));
+        body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+        body.extend(emit_unbox_on_stack(param_ty));
+    }
+
+    // Call the runtime function.
+    if let Some(ref sym) = entry.runtime_sym {
+        body.push(Instr::Call(sym.clone()));
+    } else {
+        // Intrinsic with no runtime sym (e.g. string_to_string = identity).
+        // The single arg is already on the stack after unboxing; just coerce.
+        // For intrinsics that are identity functions, the arg is already there.
+    }
+
+    // Box the result to anyref.
+    match entry.runtime_results.first() {
+        Some(result_ty) => body.extend(emit_coerce_stack(result_ty, &ValType::Anyref)),
+        None => body.extend(emit_void_value(Some(&ValType::Anyref))),
+    }
+
+    FuncDef {
+        name: global_func_trampoline_sym(func_id),
+        params: vec![ValType::Anyref, ValType::Anyref],
+        results: vec![ValType::Anyref],
+        locals: vec![],
+        body,
+    }
 }
 
 // ─── Stage 9.6: Typed Closure Specialization ─────────────────────────────────

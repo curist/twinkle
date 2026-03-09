@@ -1,0 +1,27 @@
+// Expected output:
+//   42
+//   3.14
+//   true
+//   hello
+//   42,99,7
+
+// Int.to_string as a first-class function reference
+f_int := Int.to_string
+println(f_int(42))
+
+// Float.to_string as a first-class function reference
+f_float := Float.to_string
+println(f_float(3.14))
+
+// Bool.to_string as a first-class function reference
+f_bool := Bool.to_string
+println(f_bool(true))
+
+// String.to_string as a first-class function reference
+f_str := String.to_string
+println(f_str("hello"))
+
+// Use as higher-order function argument
+use @std.vector
+nums := [42, 99, 7]
+println(nums.map(Int.to_string).join(","))

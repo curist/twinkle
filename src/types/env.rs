@@ -711,6 +711,30 @@ impl ValueEnv {
             },
         );
         env.add_function(FunctionSignature {
+            name: "Int.to_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: Some(MonoType::String),
+        });
+        env.add_function(FunctionSignature {
+            name: "Float.to_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Float],
+            ret: Some(MonoType::String),
+        });
+        env.add_function(FunctionSignature {
+            name: "Bool.to_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Bool],
+            ret: Some(MonoType::String),
+        });
+        env.add_function(FunctionSignature {
+            name: "String.to_string".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::String),
+        });
+        env.add_function(FunctionSignature {
             name: "Int.from_string".to_string(),
             type_params: vec![],
             params: vec![MonoType::String],
