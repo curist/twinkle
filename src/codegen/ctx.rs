@@ -2650,4 +2650,100 @@ mod tests {
             Some(MonoType::Int)
         );
     }
+
+    #[test]
+    fn resolve_unfold_step_types_yield_falls_back_when_arg_inference_fails() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let func_id = FuncId(5000);
+        let unfold_step_string_int = MonoType::Named {
+            type_id: UNFOLD_STEP_TYPE_ID,
+            args: vec![MonoType::String, MonoType::Int],
+        };
+        let user_funcs = HashMap::from([(
+            func_id,
+            FuncSigInfo {
+                params: vec![],
+                result: None,
+                result_mono: Some(unfold_step_string_int),
+            },
+        )]);
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id,
+            name: "unfold_step_fallback".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Atom(Atom::ALitVoid),
+            return_ty: MonoType::Void,
+        };
+        let _locals = ctx.setup_locals(&func);
+
+        // `ALocal` has no mono binding here, so direct Yield arg inference returns None.
+        let resolved = resolve_unfold_step_types(
+            VariantId(1),
+            &[Atom::ALocal(LocalId(10)), Atom::ALocal(LocalId(11))],
+            &ctx,
+        );
+        assert_eq!(resolved, Some((MonoType::String, MonoType::Int)));
+    }
+
+    #[test]
+    fn infer_variant_unfold_step_uses_return_type_fallback_for_non_inferable_yield_payload() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let func_id = FuncId(5001);
+        let unfold_step_string_int = MonoType::Named {
+            type_id: UNFOLD_STEP_TYPE_ID,
+            args: vec![MonoType::String, MonoType::Int],
+        };
+        let user_funcs = HashMap::from([(
+            func_id,
+            FuncSigInfo {
+                params: vec![],
+                result: None,
+                result_mono: Some(unfold_step_string_int),
+            },
+        )]);
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.set_concrete_func_sigs(HashMap::from([(
+            FuncId(42),
+            (vec![MonoType::Int], MonoType::Int),
+        )]));
+
+        let func = AnfFunctionDef {
+            func_id,
+            name: "unfold_step_variant_fallback".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(prelude_ids::STRING_SLICE),
+                    args: vec![
+                        Atom::ALitStr("abc".to_string()),
+                        Atom::ALitInt(0),
+                        Atom::ALitInt(1),
+                    ],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            },
+            return_ty: MonoType::Void,
+        };
+        let _locals = ctx.setup_locals(&func);
+        assert_eq!(ctx.infer_atom_mono(&Atom::ALocal(LocalId(1))), None);
+
+        let op = AnfOp::AVariant {
+            type_id: UNFOLD_STEP_TYPE_ID,
+            variant: VariantId(1),
+            args: vec![Atom::ALocal(LocalId(1)), Atom::ALitInt(1)],
+        };
+        assert_eq!(
+            ctx.infer_op_mono_for_emit(&op),
+            Some(MonoType::Named {
+                type_id: UNFOLD_STEP_TYPE_ID,
+                args: vec![MonoType::String, MonoType::Int],
+            })
+        );
+    }
 }
