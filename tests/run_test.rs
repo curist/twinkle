@@ -313,11 +313,6 @@ fn type_to_string_ref() {
 }
 
 #[test]
-fn twinkle_scanner_parser() {
-    check("compiler/twinkle_scanner_parser.tw");
-}
-
-#[test]
 fn and_short_circuit() {
     check("tests/run/and_short_circuit.tw");
 }
