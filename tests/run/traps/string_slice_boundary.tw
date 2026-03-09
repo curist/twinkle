@@ -1,0 +1,6 @@
+// Expected trap: UTF-8 scalar boundary
+
+// "é" is 2 bytes: 0xC3, 0xA9
+// Slicing at byte 1 splits the é character
+s := "é"
+println(s.slice(0, 1))

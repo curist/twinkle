@@ -55,7 +55,7 @@ case Int.from_string("0") {
 
 // Float.from_string
 case Float.from_string("3.14") {
-  .Some(f) => println("${f.to_string().substring(0, 1)}"),
+  .Some(f) => println("${f.to_string().slice(0, 1)}"),
   .None => println("none"),
 }
 

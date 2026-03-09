@@ -24,9 +24,9 @@ println("${r5}")
 r6 := "b" > "a"
 println("${r6}")
 
-// Character classification via substring
+// Character classification via slice
 s := "hello5world"
-c := s.substring(5, 6)
+c := s.slice(5, 6)
 is_digit := c >= "0" and c <= "9"
 println("${is_digit}")
 

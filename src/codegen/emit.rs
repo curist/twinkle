@@ -3417,6 +3417,16 @@ fn emit_index_op(
             instrs.push(Instr::Call("rt_dict__get_option".to_string()));
             instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
         }
+        crate::ir::anf::IndexKind::String => {
+            // String indexing: read byte at byte offset, return as i32 (Byte)
+            // ArrayGetU on $String (array<i8>) returns i32, traps on OOB
+            instrs.extend(emit_atom(base, Some(&ref_string_null()), ctx));
+            instrs.push(Instr::RefAsNonNull);
+            instrs.extend(emit_index_as_i32(index, ctx));
+            instrs.push(Instr::ArrayGetU(T_STRING.to_string()));
+            // ArrayGetU gives i32, which is the Byte representation
+            instrs.extend(emit_coerce_stack(&ValType::I32, bind_ty));
+        }
     }
     instrs
 }
@@ -3779,6 +3789,7 @@ fn emit_prelude_call(
             emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
         }
         id if id == prelude_ids::STRING_GET => emit_string_get_intrinsic(args, bind_ty, ctx),
+        id if id == prelude_ids::STRING_SLICE => emit_string_slice_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::CHAR_CODE_AT => emit_char_code_at_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::FROM_CHAR_CODE => {
             emit_from_char_code_intrinsic(args, bind_ty, ctx)
@@ -4695,8 +4706,6 @@ fn emit_string_get_intrinsic(
     use crate::types::ty::OPTION_TYPE_ID;
     assert_eq!(args.len(), 2, "String.get expects 2 args");
 
-    ensure_rt_str_substring_import(ctx);
-
     let mut instrs = Vec::new();
 
     // condition: i_i32 < len(s)
@@ -4706,17 +4715,17 @@ fn emit_string_get_intrinsic(
     instrs.push(Instr::ArrayLen);
     instrs.push(Instr::I32LtU);
 
-    // then: Some(String.substring(s, i, i + 1))
+    // then: Some(byte) — read byte at offset, box as ref.i31
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
+    // Read the byte via ArrayGetU
     then_body.extend(emit_atom(&args[0], Some(&ref_string_null()), ctx));
+    then_body.push(Instr::RefAsNonNull);
     then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
-    then_body.push(Instr::I32WrapI64); // start
-    then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
-    then_body.push(Instr::I64Const(1));
-    then_body.push(Instr::I64Add);
-    then_body.push(Instr::I32WrapI64); // end
-    then_body.push(Instr::Call("rt_str__substring".to_string()));
-    then_body.extend(emit_coerce_stack(&ref_string(), &ValType::Anyref));
+    then_body.push(Instr::I32WrapI64);
+    then_body.push(Instr::ArrayGetU(T_STRING.to_string()));
+    // Box i32 byte value as ref.i31 → anyref for the variant payload
+    then_body.push(Instr::RefI31);
+    then_body.extend(emit_coerce_stack(&ValType::I31ref, &ValType::Anyref));
     then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     then_body.push(Instr::StructNew(T_VARIANT.to_string()));
 
@@ -4733,6 +4742,123 @@ fn emit_string_get_intrinsic(
         else_body,
     });
     instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
+}
+
+fn emit_string_slice_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // String.slice(s: String, start: Int, end: Int) -> String
+    // Byte-offset slice with UTF-8 boundary validation.
+    // Traps if: OOB, start > end, or start/end not on scalar boundary.
+    //
+    // Implementation: validate in Wasm, then delegate to rt_str__substring.
+    // A UTF-8 continuation byte has bits 10xxxxxx, i.e. (byte & 0xC0) == 0x80.
+    // A scalar boundary is: offset == 0 || offset == len || (byte & 0xC0) != 0x80.
+    //
+    // Atoms are re-emitted freely (they're just local.get or const — cheap).
+    ensure_rt_str_substring_import(ctx);
+
+    // Helper closures to emit start/end as i32
+    let emit_start_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+        let mut v = emit_atom(&args[1], Some(&ValType::I64), ctx);
+        v.push(Instr::I32WrapI64);
+        v
+    };
+    let emit_end_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+        let mut v = emit_atom(&args[2], Some(&ValType::I64), ctx);
+        v.push(Instr::I32WrapI64);
+        v
+    };
+    let emit_str = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+        emit_atom(&args[0], Some(&ref_string_null()), ctx)
+    };
+
+    let mut instrs = Vec::new();
+
+    // Bounds check: start_u32 <= end_u32 && end_u32 <= len
+    // (i64→i32 wrap makes negative values large unsigned → fails LeU check)
+    instrs.extend(emit_start_i32(ctx));
+    instrs.extend(emit_end_i32(ctx));
+    instrs.push(Instr::I32LeU);
+    instrs.extend(emit_end_i32(ctx));
+    instrs.extend(emit_str(ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I32LeU);
+    instrs.push(Instr::I32And);
+    instrs.push(Instr::If {
+        result: None,
+        then_body: vec![],
+        else_body: vec![Instr::Unreachable],
+    });
+
+    // UTF-8 boundary check for start:
+    // if start > 0 && start < len: check (s[start] & 0xC0) != 0x80
+    // (start == len is a valid boundary — one-past-end)
+    instrs.extend(emit_start_i32(ctx));
+    instrs.push(Instr::I32Const(0));
+    instrs.push(Instr::I32GtU);
+    instrs.extend(emit_start_i32(ctx));
+    instrs.extend(emit_str(ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I32LtU);
+    instrs.push(Instr::I32And);
+    instrs.push(Instr::If {
+        result: None,
+        then_body: {
+            let mut body = emit_str(ctx);
+            body.push(Instr::RefAsNonNull);
+            body.extend(emit_start_i32(ctx));
+            body.push(Instr::ArrayGetU(T_STRING.to_string()));
+            body.push(Instr::I32Const(0xC0));
+            body.push(Instr::I32And);
+            body.push(Instr::I32Const(0x80));
+            body.push(Instr::I32Eq);
+            body.push(Instr::If {
+                result: None,
+                then_body: vec![Instr::Unreachable],
+                else_body: vec![],
+            });
+            body
+        },
+        else_body: vec![],
+    });
+
+    // UTF-8 boundary check for end:
+    // if end < len: check (s[end] & 0xC0) != 0x80
+    instrs.extend(emit_end_i32(ctx));
+    instrs.extend(emit_str(ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I32LtU);
+    instrs.push(Instr::If {
+        result: None,
+        then_body: {
+            let mut body = emit_str(ctx);
+            body.push(Instr::RefAsNonNull);
+            body.extend(emit_end_i32(ctx));
+            body.push(Instr::ArrayGetU(T_STRING.to_string()));
+            body.push(Instr::I32Const(0xC0));
+            body.push(Instr::I32And);
+            body.push(Instr::I32Const(0x80));
+            body.push(Instr::I32Eq);
+            body.push(Instr::If {
+                result: None,
+                then_body: vec![Instr::Unreachable],
+                else_body: vec![],
+            });
+            body
+        },
+        else_body: vec![],
+    });
+
+    // All checks passed — call rt_str__substring(s, start, end)
+    instrs.extend(emit_str(ctx));
+    instrs.extend(emit_start_i32(ctx));
+    instrs.extend(emit_end_i32(ctx));
+    instrs.push(Instr::Call("rt_str__substring".to_string()));
+    instrs.extend(emit_coerce_stack(&ref_string(), bind_ty));
     instrs
 }
 

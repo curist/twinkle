@@ -1,7 +1,7 @@
 fn normalize_integral_float_text(s: String) String {
   n := s.len()
-  if n >= 2 and s.substring(n - 2, n) == ".0" {
-    s.substring(0, n - 2)
+  if n >= 2 and s.slice(n - 2, n) == ".0" {
+    s.slice(0, n - 2)
   } else {
     s
   }

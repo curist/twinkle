@@ -98,6 +98,7 @@ pub mod prelude {
     pub const BYTE_TO_INT: FuncId = FuncId(1022); // Byte.to_int(b: Byte) -> Int
     pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>
     pub const BYTE_TO_STRING: FuncId = FuncId(1024); // Byte.to_string(b: Byte) -> String
+    pub const STRING_SLICE: FuncId = FuncId(1025); // String.slice(s, start, end) -> String (UTF-8 boundary validated)
 
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>
@@ -210,7 +211,6 @@ impl Lowerer {
         func_table.insert("Vector.make".to_string(), prelude::VECTOR_MAKE);
         func_table.insert("String.len".to_string(), prelude::STRING_LEN);
         func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
-        func_table.insert("String.substring".to_string(), prelude::STRING_SUBSTR);
         func_table.insert("String.get".to_string(), prelude::STRING_GET);
         func_table.insert("Int.to_string".to_string(), prelude::INT_TO_STRING);
         func_table.insert("Float.to_string".to_string(), prelude::FLOAT_TO_STRING);
@@ -220,6 +220,7 @@ impl Lowerer {
         func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
         func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
         func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
+        func_table.insert("String.slice".to_string(), prelude::STRING_SLICE);
         func_table.insert("String.char_code_at".to_string(), prelude::CHAR_CODE_AT);
         func_table.insert("String.from_char_code".to_string(), prelude::FROM_CHAR_CODE);
         func_table.insert("Byte.to_int".to_string(), prelude::BYTE_TO_INT);
@@ -905,7 +906,7 @@ impl Lowerer {
 
                 let (len_func_id, elem_ty) = match &iter_expr.ty {
                     MonoType::Vector(inner) => (prelude::VECTOR_LEN, *inner.clone()),
-                    MonoType::String => (prelude::STRING_LEN, MonoType::String),
+                    MonoType::String => (prelude::STRING_LEN, MonoType::Byte),
                     _ => (prelude::VECTOR_LEN, MonoType::Void),
                 };
 
@@ -1969,58 +1970,13 @@ impl Lowerer {
         span: Span,
     ) -> CoreExpr {
         if matches!(base_expr.ty, MonoType::String) {
-            let check_call = CoreExpr {
-                kind: CoreExprKind::Call {
-                    callee: Box::new(CoreExpr {
-                        kind: CoreExprKind::GlobalFunc(prelude::CHAR_CODE_AT),
-                        ty: MonoType::Function {
-                            params: vec![MonoType::String, MonoType::Int],
-                            ret: Box::new(MonoType::Int),
-                        },
-                        span,
-                    }),
-                    args: vec![base_expr.clone(), index_expr.clone()],
-                },
-                ty: MonoType::Int,
-                span,
-            };
-            let one = CoreExpr {
-                kind: CoreExprKind::LitInt(1),
-                ty: MonoType::Int,
-                span,
-            };
-            let end_expr = CoreExpr {
-                kind: CoreExprKind::BinOp {
-                    op: BinOp::Add,
-                    left: Box::new(index_expr.clone()),
-                    right: Box::new(one),
-                },
-                ty: MonoType::Int,
-                span,
-            };
-            let callee = CoreExpr {
-                kind: CoreExprKind::GlobalFunc(prelude::STRING_SUBSTR),
-                ty: MonoType::Function {
-                    params: vec![MonoType::String, MonoType::Int, MonoType::Int],
-                    ret: Box::new(MonoType::String),
-                },
-                span,
-            };
-            let slice_expr = CoreExpr {
-                kind: CoreExprKind::Call {
-                    callee: Box::new(callee),
-                    args: vec![base_expr, index_expr, end_expr],
-                },
-                ty: MonoType::String,
-                span,
-            };
+            // String indexing returns Byte at byte offset (traps on OOB)
             CoreExpr {
-                kind: CoreExprKind::Let {
-                    local: self.local_allocator.alloc(),
-                    value: Box::new(check_call),
-                    body: Box::new(slice_expr),
+                kind: CoreExprKind::Index {
+                    base: Box::new(base_expr),
+                    index: Box::new(index_expr),
                 },
-                ty: MonoType::String,
+                ty: MonoType::Byte,
                 span,
             }
         } else {
@@ -2649,7 +2605,7 @@ impl Lowerer {
             (MonoType::Dict(_, _), "remove") => prelude::DICT_REMOVE,
             (MonoType::String, "len") => prelude::STRING_LEN,
             (MonoType::String, "concat") => prelude::STRING_CONCAT,
-            (MonoType::String, "substring") => prelude::STRING_SUBSTR,
+            (MonoType::String, "slice") => prelude::STRING_SLICE,
             (MonoType::String, "get") => prelude::STRING_GET,
             (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,

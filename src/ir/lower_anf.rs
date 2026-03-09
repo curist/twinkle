@@ -38,7 +38,11 @@ fn index_kind_from(ty: &MonoType) -> IndexKind {
     match ty {
         MonoType::Vector(_) => IndexKind::Array,
         MonoType::Dict(_, _) => IndexKind::Dict,
-        other => panic!("index_kind_from: expected Vector/Dict, got {:?}", other),
+        MonoType::String => IndexKind::String,
+        other => panic!(
+            "index_kind_from: expected Vector/Dict/String, got {:?}",
+            other
+        ),
     }
 }
 

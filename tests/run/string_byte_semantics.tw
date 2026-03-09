@@ -1,0 +1,53 @@
+// Expected output:
+//   3
+//   2
+//   3
+//   4
+//   97
+//   195
+//   104
+//   105
+//   none
+//   0:104 1:101 2:108 3:108 4:111
+//   hello
+
+// String.len returns byte length
+s_ascii := "abc"
+s_2byte := "é"
+s_3byte := "你"
+s_4byte := "👍"
+println("${s_ascii.len()}")
+println("${s_2byte.len()}")
+println("${s_3byte.len()}")
+println("${s_4byte.len()}")
+
+// s[i] returns Byte at byte offset
+println("${s_ascii[0]}")     // 'a' = 97
+println("${s_2byte[0]}")     // first byte of é (U+00E9) = 0xC3 = 195
+
+// String.get returns Option<Byte>
+case "hi".get(0) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+case "hi".get(1) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+case "hi".get(99) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+
+// for-in iterates bytes
+s := "hello"
+for b, i in s {
+  print("${i}:${b}")
+  if i < s.len() - 1 {
+    print(" ")
+  }
+}
+println("")
+
+// slice works (byte offsets with UTF-8 validation)
+println(s.slice(0, 5))

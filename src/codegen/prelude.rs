@@ -174,19 +174,12 @@ pub fn build_prelude_map() -> PreludeMap {
         ),
     );
     map.insert(
-        prelude_ids::STRING_SUBSTR,
-        PreludeEntry::runtime(
-            "String.substring",
-            "rt.str",
-            "substring",
-            "rt_str__substring",
-            vec![ref_string_null(), ValType::I32, ValType::I32],
-            vec![ref_string()],
-        ),
-    );
-    map.insert(
         prelude_ids::STRING_GET,
         PreludeEntry::intrinsic("String.get"),
+    );
+    map.insert(
+        prelude_ids::STRING_SLICE,
+        PreludeEntry::intrinsic("String.slice"),
     );
 
     map.insert(
@@ -581,7 +574,12 @@ mod tests {
     #[test]
     fn prelude_map_covers_all_fixed_ids() {
         let map = build_prelude_map();
+        // FuncId(30) was STRING_SUBSTR (removed; String.slice replaced it)
+        let skip: std::collections::HashSet<u32> = [30].into();
         for id in 1..=prelude_ids::VECTOR_BUILDER_FREEZE.0 {
+            if skip.contains(&id) {
+                continue;
+            }
             assert!(
                 map.contains_key(&FuncId(id)),
                 "missing prelude FuncId({id})"

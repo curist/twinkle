@@ -1,19 +1,19 @@
 // Expected output:
-//   h
-//   0:h
-//   1:e
-//   2:y
-//   h
-//   e
-//   y
+//   104
+//   0:104
+//   1:101
+//   2:121
+//   104
+//   101
+//   121
 
 s := "hey"
-println(s[0])
+println("${s[0]}")
 
-for c, i in s {
-  println("${i}:${c}")
+for b, i in s {
+  println("${i}:${b}")
 }
 
-for c in s {
-  println(c)
+for b in s {
+  println("${b}")
 }

@@ -8,8 +8,8 @@
 
 // String method chaining
 s := "hello world"
-println("${s.substring(0, 5).len()}")        // 5: "hello"
-println("${s.substring(3, 8).len()}")        // 5: "lo wo"
+println("${s.slice(0, 5).len()}")        // 5: "hello"
+println("${s.slice(3, 8).len()}")        // 5: "lo wo"
 
 // Vector method chaining
 a := [1, 2, 3]
@@ -21,4 +21,4 @@ println("${a.concat(b).slice(2, 6).len()}")  // 4
 words: Vector<String> = ["hello", " ", "world"]
 joined := words[0].concat(words[1]).concat(words[2])
 println(joined)                               // hello world
-println("${joined.substring(0, 5).len()}")   // 5
+println("${joined.slice(0, 5).len()}")   // 5

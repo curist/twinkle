@@ -1,0 +1,25 @@
+// Expected output:
+//   hel
+//   lo
+//   hello
+//
+//   é
+//   你
+
+s := "hello"
+
+// Basic slicing
+println(s.slice(0, 3))
+println(s.slice(3, 5))
+println(s.slice(0, 5))
+
+// Empty slice
+println(s.slice(2, 2))
+
+// Multi-byte: "é" is 2 bytes (0xC3, 0xA9)
+s2 := "é"
+println(s2.slice(0, 2))
+
+// Multi-byte: "你" is 3 bytes
+s3 := "你"
+println(s3.slice(0, 3))

@@ -1,5 +1,5 @@
 pub fn is_absolute(path: String) Bool {
-  String.len(path) > 0 and String.substring(path, 0, 1) == "/"
+  String.len(path) > 0 and String.slice(path, 0, 1) == "/"
 }
 
 pub fn join(base: String, part: String) String {
@@ -8,11 +8,11 @@ pub fn join(base: String, part: String) String {
 
   base_len := String.len(base)
   part_len := String.len(part)
-  base_slash := String.substring(base, base_len - 1, base_len) == "/"
-  part_slash := String.substring(part, 0, 1) == "/"
+  base_slash := String.slice(base, base_len - 1, base_len) == "/"
+  part_slash := String.slice(part, 0, 1) == "/"
 
   if base_slash and part_slash {
-    "${base}${String.substring(part, 1, part_len)}"
+    "${base}${String.slice(part, 1, part_len)}"
   } else if !base_slash and !part_slash {
     "${base}/${part}"
   } else {
@@ -38,9 +38,9 @@ pub fn dirname(path: String) String {
 
   i := n - 1
   for i >= 0 {
-    if String.substring(path, i, i + 1) == "/" {
+    if String.slice(path, i, i + 1) == "/" {
       if i == 0 { return "/" }
-      return String.substring(path, 0, i)
+      return String.slice(path, 0, i)
     }
     i = i - 1
   }
@@ -53,8 +53,8 @@ pub fn basename(path: String) String {
 
   i := n - 1
   for i >= 0 {
-    if String.substring(path, i, i + 1) == "/" {
-      return String.substring(path, i + 1, n)
+    if String.slice(path, i, i + 1) == "/" {
+      return String.slice(path, i + 1, n)
     }
     i = i - 1
   }
@@ -67,8 +67,8 @@ pub fn stem(path: String) String {
 
   i := n - 1
   for i > 0 {
-    if String.substring(name, i, i + 1) == "." {
-      return String.substring(name, 0, i)
+    if String.slice(name, i, i + 1) == "." {
+      return String.slice(name, 0, i)
     }
     i = i - 1
   }
@@ -81,8 +81,8 @@ pub fn extension(path: String) String {
 
   i := n - 1
   for i > 0 {
-    if String.substring(name, i, i + 1) == "." {
-      return String.substring(name, i, n)
+    if String.slice(name, i, i + 1) == "." {
+      return String.slice(name, i, n)
     }
     i = i - 1
   }
@@ -101,11 +101,11 @@ pub fn normalize(path: String) String {
     at_end := i == n
     at_sep := false
     if !at_end {
-      at_sep = String.substring(path, i, i + 1) == "/"
+      at_sep = String.slice(path, i, i + 1) == "/"
     }
 
     if at_end or at_sep {
-      seg := String.substring(path, start, i)
+      seg := String.slice(path, start, i)
       if seg == "" or seg == "." {
       } else if seg == ".." {
         if segs.len() > 0 {

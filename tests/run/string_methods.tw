@@ -8,14 +8,14 @@
 //   hello
 
 s := "hello world"
-println(s.substring(0, 5))    // hello
-println(s.substring(6, 11))   // world
-println(s.substring(3, 8))    // lo wo
+println(s.slice(0, 5))    // hello
+println(s.slice(6, 11))   // world
+println(s.slice(3, 8))    // lo wo
 
-// Out-of-bounds clamps to length
-println(s.substring(11, 20))  // "" (empty)
+// Empty slice at end of string
+println(s.slice(11, 11))  // "" (empty)
 
-// Qualified calls: String.len, String.concat, String.substring
+// Qualified calls: String.len, String.concat, String.slice
 println("${String.len(s)}")
 println(String.concat(s, "!"))
-println(String.substring(s, 0, 5))
+println(String.slice(s, 0, 5))

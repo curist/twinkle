@@ -16,7 +16,7 @@ pub fn index_of(s: String, needle: String) Int? {
   i := 0
   last := n - m
   for i <= last {
-    if s.substring(i, i + m) == needle {
+    if s.slice(i, i + m) == needle {
       return .Some(i)
     }
     i = i + 1
@@ -37,7 +37,7 @@ pub fn starts_with(s: String, prefix: String) Bool {
   if m > n {
     return false
   }
-  s.substring(0, m) == prefix
+  s.slice(0, m) == prefix
 }
 
 pub fn ends_with(s: String, suffix: String) Bool {
@@ -46,19 +46,7 @@ pub fn ends_with(s: String, suffix: String) Bool {
   if m > n {
     return false
   }
-  s.substring(n - m, n) == suffix
-}
-
-pub fn get(s: String, i: Int) String? {
-  if i < 0 {
-    return .None
-  }
-
-  if i >= s.len() {
-    return .None
-  }
-
-  .Some(s.substring(i, i + 1))
+  s.slice(n - m, n) == suffix
 }
 
 pub fn split(s: String, sep: String) Vector<String> {
@@ -73,8 +61,8 @@ pub fn split(s: String, sep: String) Vector<String> {
   i := 0
 
   for i <= n - m {
-    if s.substring(i, i + m) == sep {
-      parts = parts.push(s.substring(start, i))
+    if s.slice(i, i + m) == sep {
+      parts = parts.push(s.slice(start, i))
       i = i + m
       start = i
     } else {
@@ -82,7 +70,7 @@ pub fn split(s: String, sep: String) Vector<String> {
     }
   }
 
-  parts.push(s.substring(start, n))
+  parts.push(s.slice(start, n))
 }
 
 pub fn trim(s: String) String {
@@ -104,5 +92,5 @@ pub fn trim(s: String) String {
     end = end - 1
   }
 
-  s.substring(start, end + 1)
+  s.slice(start, end + 1)
 }

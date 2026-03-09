@@ -681,7 +681,7 @@ fn contains(haystack: String, needle: String) Bool {
 fn contains_from(haystack: String, needle: String, i: Int) Bool {
     if i + needle.len() > haystack.len() {
         false
-    } else if haystack.substring(i, i + needle.len()) == needle {
+    } else if haystack.slice(i, i + needle.len()) == needle {
         true
     } else {
         contains_from(haystack, needle, i + 1)

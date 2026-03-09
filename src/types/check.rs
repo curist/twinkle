@@ -1666,7 +1666,7 @@ impl TypeChecker {
                 self.check_expr(&args[1], &MonoType::String)?;
                 Ok(MonoType::String)
             }
-            "substring" => {
+            "slice" => {
                 if args.len() != 3 {
                     self.errors.push(TypeError::WrongArity {
                         expected: 3,
@@ -1693,7 +1693,7 @@ impl TypeChecker {
                 self.check_expr(&args[1], &MonoType::Int)?;
                 Ok(MonoType::Named {
                     type_id: crate::types::ty::OPTION_TYPE_ID,
-                    args: vec![MonoType::String],
+                    args: vec![MonoType::Byte],
                 })
             }
             "to_string" => {
@@ -1775,7 +1775,11 @@ impl TypeChecker {
         expr_ty: &MonoType,
     ) -> Result<(), ()> {
         match expr_ty {
-            MonoType::Int | MonoType::Float | MonoType::Bool | MonoType::String => Ok(()),
+            MonoType::Int
+            | MonoType::Float
+            | MonoType::Bool
+            | MonoType::String
+            | MonoType::Byte => Ok(()),
             MonoType::Named { type_id, .. } => {
                 if let Some(func_name) = self
                     .type_env
@@ -2202,7 +2206,7 @@ impl TypeChecker {
                     }
                     Ok(MonoType::String)
                 }
-                "substring" => {
+                "slice" => {
                     if args.len() != 2 {
                         self.errors.push(TypeError::WrongArity {
                             expected: 2,
@@ -2227,7 +2231,7 @@ impl TypeChecker {
                     self.check_expr(&args[0], &MonoType::Int)?;
                     Ok(MonoType::Named {
                         type_id: crate::types::ty::OPTION_TYPE_ID,
-                        args: vec![MonoType::String],
+                        args: vec![MonoType::Byte],
                     })
                 }
                 _ => {
@@ -2971,7 +2975,7 @@ impl TypeChecker {
             }
             MonoType::String => {
                 self.check_expr(index, &MonoType::Int)?;
-                Ok(MonoType::String) // String indexing returns a single-char String
+                Ok(MonoType::Byte) // String indexing returns a byte at byte offset
             }
             MonoType::Dict(k_ty, v_ty) => {
                 self.check_expr(index, &k_ty)?;
@@ -3734,7 +3738,7 @@ impl TypeChecker {
             }
             MonoType::String => {
                 match pattern {
-                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::String),
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Byte),
                     Pattern::Wildcard(_) => {}
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
@@ -3870,7 +3874,7 @@ impl TypeChecker {
             }
             MonoType::String => {
                 match pattern {
-                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::String),
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Byte),
                     Pattern::Wildcard(_) => {}
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {

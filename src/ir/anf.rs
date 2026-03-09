@@ -31,6 +31,7 @@ pub enum OpKind {
 pub enum IndexKind {
     Array,
     Dict,
+    String,
 }
 
 /// An atom — a trivially available value that requires no computation.

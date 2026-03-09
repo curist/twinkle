@@ -442,6 +442,16 @@ impl<W: Write> Interpreter<W> {
                         }
                         Ok(elems[i].clone())
                     }
+                    (Value::Str(s), Value::Int(i)) => {
+                        let i = i as usize;
+                        if i >= s.len() {
+                            return Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
+                                index: i,
+                                len: s.len(),
+                            }));
+                        }
+                        Ok(Value::Byte(s.as_bytes()[i]))
+                    }
                     (Value::Dict(_), _) => {
                         unreachable!("dict[key] should be rewritten to DICT_GET by the lowerer")
                     }
@@ -623,16 +633,16 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             prelude_ids::CHAR_CODE_AT => {
-                // String.char_code_at(s: String, i: Int) -> Int
+                // String.char_code_at(s: String, i: Int) -> Int — byte at byte offset
                 match (&args[0], &args[1]) {
                     (Value::Str(s), Value::Int(i)) => {
                         let idx = *i as usize;
-                        match s.chars().nth(idx) {
-                            Some(c) => Ok(Value::Int(c as i64)),
+                        match s.as_bytes().get(idx) {
+                            Some(&b) => Ok(Value::Int(b as i64)),
                             None => Err(Signal::Trap(TrapError::UserError(format!(
-                                "String.char_code_at: index {} out of bounds for string of length {}",
+                                "String.char_code_at: index {} out of bounds for string of byte length {}",
                                 idx,
-                                s.chars().count()
+                                s.len()
                             )))),
                         }
                     }
@@ -679,9 +689,9 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             prelude_ids::STRING_LEN => {
-                // string_len(s: String) Int
+                // string_len(s: String) Int — byte length
                 match &args[0] {
-                    Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
+                    Value::Str(s) => Ok(Value::Int(s.len() as i64)),
                     _ => panic!("string_len: expected String"),
                 }
             }
@@ -909,29 +919,52 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("dict_remove: expected Dict"),
                 }
             }
-            prelude_ids::STRING_SUBSTR => {
-                // String.substring(s, start, end) -> String
+            prelude_ids::STRING_SLICE => {
+                // String.slice(s, start, end) -> String — byte offsets with UTF-8 boundary validation
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Str(s), Value::Int(start), Value::Int(end)) => {
-                        let chars: Vec<char> = s.chars().collect();
-                        let s = (*start as usize).min(chars.len());
-                        let e = (*end as usize).min(chars.len()).max(s);
-                        Ok(Value::Str(chars[s..e].iter().collect()))
+                        let bytes = s.as_bytes();
+                        let len = bytes.len() as i64;
+                        let start = *start;
+                        let end = *end;
+                        if start < 0 || start > len || end < 0 || end > len || start > end {
+                            return Err(Signal::Trap(TrapError::UserError(format!(
+                                "String.slice: indices [{}, {}) out of bounds for string of byte length {}",
+                                start, end, len
+                            ))));
+                        }
+                        let s_off = start as usize;
+                        let e_off = end as usize;
+                        // Check UTF-8 scalar boundaries
+                        if s_off < bytes.len() && (bytes[s_off] & 0xC0) == 0x80 {
+                            return Err(Signal::Trap(TrapError::UserError(format!(
+                                "String.slice: start index {} is not on a UTF-8 scalar boundary",
+                                start
+                            ))));
+                        }
+                        if e_off < bytes.len() && (bytes[e_off] & 0xC0) == 0x80 {
+                            return Err(Signal::Trap(TrapError::UserError(format!(
+                                "String.slice: end index {} is not on a UTF-8 scalar boundary",
+                                end
+                            ))));
+                        }
+                        let result = std::str::from_utf8(&bytes[s_off..e_off])
+                            .expect("String.slice: result is not valid UTF-8")
+                            .to_string();
+                        Ok(Value::Str(result))
                     }
-                    _ => panic!("string_substring: expected String and two Ints"),
+                    _ => panic!("String.slice: expected String and two Ints"),
                 }
             }
             prelude_ids::STRING_GET => {
-                // String.get(s, i) -> Option<String>
+                // String.get(s, i) -> Option<Byte> — byte at byte offset
                 match (&args[0], &args[1]) {
                     (Value::Str(s), Value::Int(i)) => {
-                        let chars: Vec<char> = s.chars().collect();
-                        if *i < 0 || (*i as usize) >= chars.len() {
+                        if *i < 0 || (*i as usize) >= s.len() {
                             Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
                         } else {
-                            let idx = *i as usize;
-                            let ch = chars[idx].to_string();
-                            Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Str(ch)]))
+                            let b = s.as_bytes()[*i as usize];
+                            Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Byte(b)]))
                         }
                     }
                     _ => panic!("string_get: expected String and Int"),
