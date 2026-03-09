@@ -3,7 +3,7 @@ pub mod context;
 pub mod dce;
 pub mod loader;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -21,7 +21,7 @@ use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
 use crate::syntax::ast::{ImportDecl, Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
-use crate::types::env::{TypeEnv, ValueEnv};
+use crate::types::env::{TypeEnv, TypeEnvBindingSnapshot, ValueEnv, ValueEnvBindingSnapshot};
 use crate::types::ty::{FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
@@ -194,6 +194,39 @@ fn normalize_path_lexical(path: &Path) -> PathBuf {
     }
 }
 
+#[derive(Clone)]
+struct CompileEnvSnapshot {
+    type_env: TypeEnvBindingSnapshot,
+    value_env: ValueEnvBindingSnapshot,
+    func_table: HashMap<String, FuncId>,
+    module_aliases: HashSet<String>,
+    qualified_value_globals: HashMap<String, LocalId>,
+    qualified_func_targets: HashMap<String, ExternalFuncRef>,
+    module_registry: HashMap<String, ModuleExports>,
+}
+
+fn snapshot_compile_env(state: &CompileState) -> CompileEnvSnapshot {
+    CompileEnvSnapshot {
+        type_env: state.type_env.snapshot_bindings(),
+        value_env: state.value_env.snapshot_bindings(),
+        func_table: state.func_table.clone(),
+        module_aliases: state.module_aliases.clone(),
+        qualified_value_globals: state.qualified_value_globals.clone(),
+        qualified_func_targets: state.qualified_func_targets.clone(),
+        module_registry: state.module_registry.clone(),
+    }
+}
+
+fn restore_compile_env(state: &mut CompileState, snapshot: CompileEnvSnapshot) {
+    state.type_env.restore_bindings(snapshot.type_env);
+    state.value_env.restore_bindings(snapshot.value_env);
+    state.func_table = snapshot.func_table;
+    state.module_aliases = snapshot.module_aliases;
+    state.qualified_value_globals = snapshot.qualified_value_globals;
+    state.qualified_func_targets = snapshot.qualified_func_targets;
+    state.module_registry = snapshot.module_registry;
+}
+
 /// Compile a single module (file) and all its transitive dependencies.
 ///
 /// When `do_lower` is true, lowers the module to Core IR and accumulates
@@ -288,6 +321,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             }
             dep_canonical_paths.push(dep_canonical.clone());
             let dep_alias = import.module_name().to_string();
+            let env_snapshot = snapshot_compile_env(state);
             let result = compile_module_with_adapter(
                 &dep_canonical,
                 &dep_alias,
@@ -297,6 +331,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
                 do_lower,
                 adapter,
             );
+            restore_compile_env(state, env_snapshot);
             match result {
                 Ok((dep_exports, _)) => state.register_module_exports(&dep_alias, &dep_exports),
                 Err(e) => {
@@ -333,6 +368,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
                     .unwrap_or("unknown")
             );
             dep_canonical_paths.push(prelude_canonical.clone());
+            let env_snapshot = snapshot_compile_env(state);
             let result = compile_module_with_adapter(
                 &prelude_canonical,
                 &prelude_alias,
@@ -342,9 +378,10 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
                 do_lower,
                 adapter,
             );
+            restore_compile_env(state, env_snapshot);
             match result {
                 Ok((dep_exports, _)) => {
-                    state.register_module_exports(&prelude_alias, &dep_exports);
+                    state.register_prelude_exports(&dep_exports);
                 }
                 Err(e) => {
                     importing_stack.pop();

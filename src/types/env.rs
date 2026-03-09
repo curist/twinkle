@@ -21,6 +21,12 @@ pub struct TypeEnv {
     methods: HashMap<(TypeId, String), String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TypeEnvBindingSnapshot {
+    type_names: HashMap<String, TypeId>,
+    methods: HashMap<(TypeId, String), String>,
+}
+
 impl TypeEnv {
     pub fn new() -> Self {
         let mut env = Self {
@@ -234,6 +240,23 @@ impl TypeEnv {
     /// ("module.TypeName") registered via `register_type_alias`.
     pub fn remove_bare_type_name(&mut self, name: &str) {
         self.type_names.remove(name);
+    }
+
+    /// Snapshot type-name and method bindings for scoped compilation.
+    ///
+    /// This intentionally does not snapshot `types`, `record_fields`, or
+    /// `sum_variants` so newly-defined type metadata remains available.
+    pub fn snapshot_bindings(&self) -> TypeEnvBindingSnapshot {
+        TypeEnvBindingSnapshot {
+            type_names: self.type_names.clone(),
+            methods: self.methods.clone(),
+        }
+    }
+
+    /// Restore type-name and method bindings from a prior snapshot.
+    pub fn restore_bindings(&mut self, snapshot: TypeEnvBindingSnapshot) {
+        self.type_names = snapshot.type_names;
+        self.methods = snapshot.methods;
     }
 
     /// Get a type definition by ID
@@ -609,6 +632,12 @@ pub struct ValueEnv {
     builtins: HashMap<String, MonoType>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValueEnvBindingSnapshot {
+    functions: HashMap<String, FunctionSignature>,
+    values: HashMap<String, MonoType>,
+}
+
 impl ValueEnv {
     pub fn new() -> Self {
         let mut env = Self {
@@ -895,6 +924,22 @@ impl ValueEnv {
     /// Get a function signature if it exists
     pub fn get_function(&self, name: &str) -> Option<&FunctionSignature> {
         self.functions.get(name)
+    }
+
+    /// Snapshot function/value bindings for scoped compilation.
+    ///
+    /// Builtins are immutable and intentionally excluded.
+    pub fn snapshot_bindings(&self) -> ValueEnvBindingSnapshot {
+        ValueEnvBindingSnapshot {
+            functions: self.functions.clone(),
+            values: self.values.clone(),
+        }
+    }
+
+    /// Restore function/value bindings from a prior snapshot.
+    pub fn restore_bindings(&mut self, snapshot: ValueEnvBindingSnapshot) {
+        self.functions = snapshot.functions;
+        self.values = snapshot.values;
     }
 }
 

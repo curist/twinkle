@@ -257,4 +257,49 @@ impl CompileState {
         self.module_registry
             .insert(alias.to_string(), exports.clone());
     }
+
+    /// Register prelude exports without exposing internal prelude aliases.
+    ///
+    /// Prelude modules provide:
+    /// - inherent methods for dot syntax (`xs.map(...)`)
+    /// - canonical builtin-qualified calls (`Vector.map(...)`)
+    ///
+    /// They intentionally do not add user-visible module aliases like
+    /// `__prelude_vector`.
+    pub fn register_prelude_exports(&mut self, exports: &ModuleExports) {
+        for (func_name, sig) in &exports.public_functions {
+            let Some(receiver_ty) = sig.params.first() else {
+                continue;
+            };
+            let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) else {
+                continue;
+            };
+            let Some(alias_name) = builtin_method_alias(receiver_type_id) else {
+                continue;
+            };
+
+            let builtin_name = format!("{}.{}", alias_name, func_name);
+            let builtin_sig = FunctionSignature {
+                name: builtin_name.clone(),
+                type_params: sig.type_params.clone(),
+                params: sig.params.clone(),
+                ret: sig.ret.clone(),
+            };
+            self.value_env.add_function(builtin_sig);
+
+            if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                self.func_table.insert(builtin_name.clone(), func_id);
+                self.qualified_func_targets.insert(
+                    builtin_name.clone(),
+                    ExternalFuncRef {
+                        module_path: exports.canonical_path.clone(),
+                        local_func_id: func_id,
+                    },
+                );
+            }
+
+            self.type_env
+                .add_method(receiver_type_id, func_name.clone(), builtin_name);
+        }
+    }
 }

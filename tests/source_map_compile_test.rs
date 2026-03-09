@@ -155,3 +155,127 @@ println(__host_cwd())
         msg
     );
 }
+
+#[test]
+fn compile_entry_from_source_map_hides_internal_prelude_aliases() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/prelude_alias_visibility");
+    let stdlib_root = project_root.join("stdlib");
+    let prelude_root = project_root.join("prelude");
+    let entry = project_root.join("main.tw");
+    let prelude_vector = prelude_root.join("vector.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        entry.clone(),
+        r#"
+xs := [1, 2]
+ys := __prelude_vector.map(xs, fn(x: Int) Int { x * 2 })
+println("${ys.len()}")
+"#
+        .to_string(),
+    );
+    sources.insert(
+        prelude_vector,
+        r#"
+pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
+  collect x in xs { f(x) }
+}
+"#
+        .to_string(),
+    );
+
+    let err = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect_err("internal prelude aliases must not be user-visible");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Undefined variable: __prelude_vector"),
+        "unexpected error:\n{}",
+        msg
+    );
+}
+
+#[test]
+fn compile_entry_from_source_map_does_not_leak_prelude_into_stdlib_by_import_order() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/prelude_isolation");
+    let stdlib_root = project_root.join("stdlib");
+    let prelude_root = project_root.join("prelude");
+    let user = project_root.join("user.tw");
+    let stdlib_foo = stdlib_root.join("foo.tw");
+    let prelude_vector = prelude_root.join("vector.tw");
+    let entry = project_root.join("main.tw");
+
+    let mut shared_sources = HashMap::new();
+    shared_sources.insert(
+        user,
+        r#"
+pub fn ok() Int {
+  xs := [1, 2]
+  ys := xs.map(fn(x: Int) Int { x + 1 })
+  ys.len()
+}
+"#
+        .to_string(),
+    );
+    shared_sources.insert(
+        stdlib_foo,
+        r#"
+pub fn broken() Int {
+  xs := [1, 2]
+  ys := xs.map(fn(x: Int) Int { x + 1 })
+  ys.len()
+}
+"#
+        .to_string(),
+    );
+    shared_sources.insert(
+        prelude_vector,
+        r#"
+pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
+  collect x in xs { f(x) }
+}
+"#
+        .to_string(),
+    );
+
+    for main_src in [
+        r#"
+use user
+use @std.foo
+
+println("${foo.broken()}")
+"#,
+        r#"
+use @std.foo
+use user
+
+println("${foo.broken()}")
+"#,
+    ] {
+        let mut sources = shared_sources.clone();
+        sources.insert(entry.clone(), main_src.to_string());
+
+        let err = twinkle::module::compile_entry_from_source_map(
+            &entry,
+            &sources,
+            &project_root,
+            &stdlib_root,
+        )
+        .expect_err("stdlib module should not see auto-prelude methods");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Vector has no method 'map'"),
+            "unexpected error:\n{}",
+            msg
+        );
+    }
+}
