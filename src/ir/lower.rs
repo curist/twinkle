@@ -2013,6 +2013,37 @@ impl Lowerer {
                     return None;
                 }
 
+                // Preserve short-circuit semantics by lowering logical operators
+                // to explicit conditionals instead of eager binary operations.
+                if matches!(op, BinOp::And) {
+                    let cond = self.lower_expr(left)?;
+                    let then_expr = self.lower_expr(right)?;
+                    let else_expr = CoreExpr {
+                        kind: CoreExprKind::LitBool(false),
+                        ty: MonoType::Bool,
+                        span,
+                    };
+                    return Some(CoreExprKind::If {
+                        cond: Box::new(cond),
+                        then_branch: Box::new(then_expr),
+                        else_branch: Box::new(else_expr),
+                    });
+                }
+                if matches!(op, BinOp::Or) {
+                    let cond = self.lower_expr(left)?;
+                    let then_expr = CoreExpr {
+                        kind: CoreExprKind::LitBool(true),
+                        ty: MonoType::Bool,
+                        span,
+                    };
+                    let else_expr = self.lower_expr(right)?;
+                    return Some(CoreExprKind::If {
+                        cond: Box::new(cond),
+                        then_branch: Box::new(then_expr),
+                        else_branch: Box::new(else_expr),
+                    });
+                }
+
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
                 Some(CoreExprKind::BinOp {

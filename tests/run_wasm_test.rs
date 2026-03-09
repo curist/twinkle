@@ -130,3 +130,8 @@ fn run_wasm_stdlib_proc() {
 fn run_wasm_stderr_prelude() {
     check("tests/run/stderr_prelude.tw");
 }
+
+#[test]
+fn run_wasm_and_short_circuit() {
+    check("tests/run/and_short_circuit.tw");
+}

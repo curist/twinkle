@@ -1,0 +1,8 @@
+// Expected output:
+//   ok
+
+if false and char_code_at("", 0) == 0 {
+  println("bad")
+} else {
+  println("ok")
+}
