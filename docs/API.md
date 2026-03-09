@@ -78,10 +78,12 @@ type UnfoldStep<T, S> = { Done, Yield(T, S) }
 | `String.to_string` | `fn(s: String) String` | Identity (returns input) |
 | `Int.from_string` | `fn(s: String) Option<Int>` | Parse string to `Int` |
 | `Float.from_string` | `fn(s: String) Option<Float>` | Parse string to `Float` |
+| `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
+| `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
 | `char_code_at` | `fn(s: String, i: Int) Int` | Byte value at index `i` |
 | `from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value |
 
-All four can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly. The free functions `int_to_string`, `float_to_string`, `bool_to_string`, and `string_to_string` exist as aliases.
+Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly. The free functions `int_to_string`, `float_to_string`, `bool_to_string`, and `string_to_string` exist as aliases.
 
 ## String
 
@@ -92,8 +94,14 @@ Strings are immutable and GC-managed. String interpolation: `"hello ${name}"`.
 | `.len()` | `fn(s: String) Int` | Length in bytes |
 | `.concat(other)` | `fn(s: String, other: String) String` | Concatenate two strings |
 | `.substring(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring `[start, end)`, clamps to bounds |
+| `.index_of(needle)` | `fn(s: String, needle: String) Option<Int>` | First occurrence of `needle` |
+| `.contains(needle)` | `fn(s: String, needle: String) Bool` | Whether `s` contains `needle` |
+| `.starts_with(prefix)` | `fn(s: String, prefix: String) Bool` | Prefix check |
+| `.ends_with(suffix)` | `fn(s: String, suffix: String) Bool` | Suffix check |
+| `.split(sep)` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
+| `.trim()` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
 
-Qualified forms (`String.len`, `String.concat`, `String.substring`) also work.
+Qualified forms (`String.len`, `String.trim`, etc.) also work.
 
 ## Vector\<T\>
 
@@ -107,6 +115,15 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index |
 | `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors |
 | `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)` |
+| `.map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) B) Vector<B>` | Transform each element |
+| `.filter(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Keep elements where `f` returns true |
+| `.fold(init, f)` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |
+| `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
+| `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
+| `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
+| `.contains(elem)` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
+| `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
+| `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
 
 **Indexing syntax:** `v[i]` — unsafe, traps on out-of-bounds.
@@ -114,6 +131,7 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 **Index assignment:** `v[i] = x` — sets element at index `i`.
 
 Vectors are iterable: `for x in v { ... }` and `for x, i in v { ... }`.
+Qualified forms (`Vector.map`, `Vector.filter`, etc.) also work.
 
 ## Dict\<K, V\>
 
@@ -125,6 +143,7 @@ Persistent hash map. Keys must be `Int` or `String`.
 | `.len()` | `fn<K,V>(d: Dict<K,V>) Int` | Number of entries |
 | `.has(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Bool` | Check if key exists |
 | `.keys()` | `fn<K,V>(d: Dict<K,V>) Vector<K>` | All keys as a vector |
+| `.values()` | `fn<K,V>(d: Dict<K,V>) Vector<V>` | All values as a vector |
 | `.remove(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Dict<K,V>` | Remove key, return new dict |
 
 **Lookup syntax:** `d[key]` — returns `Option<V>`.
@@ -134,6 +153,7 @@ Persistent hash map. Keys must be `Int` or `String`.
 The free functions `dict_get(d, key)` and `dict_get_unsafe(d, key)` also exist.
 
 Dicts are iterable: `for k, v in d { ... }`.
+Qualified forms (`Dict.values`, etc.) also work.
 
 ## Operators
 
@@ -157,53 +177,7 @@ Division by zero traps.
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-The modules below require an explicit import: `use @std.module_name`.
-
-### `@std.vector`
-
-Higher-order operations on vectors.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `map` | `fn<A,B>(xs: Vector<A>, f: fn(A) B) Vector<B>` | Transform each element |
-| `filter` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Keep elements where `f` returns true |
-| `fold` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |
-| `find` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
-| `any` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
-| `all` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
-| `contains` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
-| `reverse` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
-| `join` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
-
-### `@std.string_ext`
-
-Extended string operations.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `index_of` | `fn(s: String, needle: String) Option<Int>` | First occurrence of `needle` |
-| `contains` | `fn(s: String, needle: String) Bool` | Whether `s` contains `needle` |
-| `starts_with` | `fn(s: String, prefix: String) Bool` | Prefix check |
-| `ends_with` | `fn(s: String, suffix: String) Bool` | Suffix check |
-| `split` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
-| `trim` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
-
-### `@std.numeric`
-
-Numeric conversions.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
-| `to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
-
-### `@std.dict_ext`
-
-Extended dict operations.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `values` | `fn<K,V>(d: Dict<K,V>) Vector<V>` | Extract all values |
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`.
 
 ### `@std.path`
 

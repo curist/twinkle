@@ -8,6 +8,28 @@ The reference implementation lives in `src/cli/run_wasm.rs`.
 
 ---
 
+## Compiler Internal `__host_*` Intrinsics
+
+`__host_*` names are Twinkle internal builtins used by stdlib modules (`@std.fs`, `@std.proc`).
+They map 1:1 to host imports:
+
+| Internal Intrinsic | Host Import | Twinkle Type |
+|---|---|---|
+| `__host_read_file` | `host.read_file` | `fn(String) String` |
+| `__host_write_file` | `host.write_file` | `fn(String, String) Void` |
+| `__host_write_bytes` | `host.write_bytes` | `fn(String, Vector<Int>) Void` |
+| `__host_mkdirp` | `host.mkdirp` | `fn(String) Void` |
+| `__host_list_dir` | `host.list_dir` | `fn(String) Vector<String>` |
+| `__host_exists` | `host.exists` | `fn(String) Bool` |
+| `__host_args` | `host.args` | `fn() Vector<String>` |
+| `__host_env` | `host.env` | `fn(String) Vector<String>` |
+| `__host_cwd` | `host.cwd` | `fn() String` |
+| `__host_exit` | `host.exit` | `fn(Int) Never` |
+
+Note: this list is only the stdlib bridge layer. The full host import surface also includes runtime imports such as `host.print` and `host.f64_to_string`.
+
+---
+
 ## Type Conventions
 
 All string arguments and return values use the runtime string type
@@ -94,6 +116,10 @@ Source: `src/codegen/prelude.rs`
   only needs to provide functions that the specific module actually imports.
   Console I/O and `f64_to_string` are always present (from the runtime modules).
   File I/O and process imports are only present when used.
+
+- **`host.parse_int` is currently accepted by the reference host linker but is
+  not emitted by the current compiler pipeline.** You generally do not need to
+  provide it unless you are running hand-written/legacy Wasm modules.
 
 - **`host.error` must not return.** It should trap/abort the Wasm instance.
 
