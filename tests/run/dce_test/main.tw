@@ -1,0 +1,6 @@
+// Expected output:
+//   6
+
+use helpers
+
+println("${helpers.used_fn(5)}")

@@ -1,0 +1,17 @@
+// Expected output:
+//   10
+//   20
+//   hello
+//   42
+
+// Qualified prelude calls — no import needed
+
+xs := [1, 2]
+mapped := Vector.map(xs, fn(x: Int) Int { x * 10 })
+for x in mapped {
+  println("${x}")
+}
+
+println(String.trim("  hello  "))
+
+println("${Int.to_float(42).to_int()}")

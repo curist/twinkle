@@ -7,16 +7,6 @@ fn normalize_integral_float_text(s: String) String {
   }
 }
 
-pub fn to_float(n: Int) Float {
-  case Float.from_string(n.to_string()) {
-    .Some(v) => v,
-    .None => {
-      error("Int.to_float: internal conversion failure")
-      0.0
-    },
-  }
-}
-
 pub fn to_int(f: Float) Int {
   s := normalize_integral_float_text(f.to_string())
   case Int.from_string(s) {

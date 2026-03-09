@@ -1,0 +1,9 @@
+pub fn to_float(n: Int) Float {
+  case Float.from_string(n.to_string()) {
+    .Some(v) => v,
+    .None => {
+      error("Int.to_float: internal conversion failure")
+      0.0
+    },
+  }
+}

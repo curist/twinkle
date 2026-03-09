@@ -8,8 +8,6 @@
 //   3
 //   6
 
-use @std.numeric
-use @std.dict_ext
 
 println("${42.to_float().to_int()}")
 println("${(-7).to_float().to_int()}")

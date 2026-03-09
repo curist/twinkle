@@ -1,5 +1,6 @@
 pub mod artifacts;
 pub mod context;
+pub mod dce;
 pub mod loader;
 
 use std::collections::{BTreeSet, HashMap};
@@ -25,8 +26,8 @@ use crate::types::ty::{FunctionSignature, TypeId, builtin_method_alias, method_r
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};
 pub use loader::{
-    find_project_root, resolve_module_path, resolve_stdlib_module_path,
-    resolve_stdlib_module_path_from_root,
+    find_project_root, list_prelude_modules_default, resolve_module_path,
+    resolve_stdlib_module_path, resolve_stdlib_module_path_from_root,
 };
 
 trait ModuleSourceAdapter {
@@ -34,6 +35,12 @@ trait ModuleSourceAdapter {
     fn read_source(&self, path: &Path) -> Result<String>;
     fn exists(&self, path: &Path) -> bool;
     fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf;
+    /// Return prelude module paths in deterministic (sorted) order.
+    fn list_prelude_modules(&self) -> Vec<PathBuf>;
+    /// Return the stdlib root path (for detecting stdlib/prelude-internal modules).
+    fn stdlib_root(&self) -> PathBuf;
+    /// Return the prelude root path.
+    fn prelude_root(&self) -> PathBuf;
 }
 
 struct FsModuleSourceAdapter;
@@ -58,6 +65,18 @@ impl ModuleSourceAdapter for FsModuleSourceAdapter {
             let root = find_project_root(importing_file.parent().unwrap_or(Path::new(".")));
             resolve_module_path(&root, &import.module_path)
         }
+    }
+
+    fn list_prelude_modules(&self) -> Vec<PathBuf> {
+        list_prelude_modules_default()
+    }
+
+    fn stdlib_root(&self) -> PathBuf {
+        loader::resolve_stdlib_root_default()
+    }
+
+    fn prelude_root(&self) -> PathBuf {
+        loader::resolve_prelude_root_default()
     }
 }
 
@@ -118,6 +137,31 @@ impl ModuleSourceAdapter for SourceMapModuleAdapter {
         } else {
             resolve_module_path(&self.project_root, &import.module_path)
         }
+    }
+
+    fn list_prelude_modules(&self) -> Vec<PathBuf> {
+        // List prelude modules from the source map — prelude/ is a sibling of stdlib/
+        let prelude_root = self.prelude_root();
+        let mut paths: Vec<PathBuf> = self
+            .sources
+            .keys()
+            .filter(|p| p.starts_with(&prelude_root) && p.extension().is_some_and(|e| e == "tw"))
+            .cloned()
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    fn stdlib_root(&self) -> PathBuf {
+        self.stdlib_root.clone()
+    }
+
+    fn prelude_root(&self) -> PathBuf {
+        // prelude/ is a sibling of stdlib/
+        self.stdlib_root
+            .parent()
+            .map(|p| p.join("prelude"))
+            .unwrap_or_else(|| self.stdlib_root.join("../prelude"))
     }
 }
 
@@ -261,6 +305,54 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             }
         }
     }
+
+    // Prelude auto-import: inject stdlib/prelude/*.tw modules unless:
+    //  - This module is inside stdlib or prelude itself (avoid cycles)
+    //  - The prelude module is already an explicit dependency (canonical-path dedupe)
+    let stdlib_root_canonical = adapter.canonicalize(&adapter.stdlib_root());
+    let prelude_root_canonical = adapter.canonicalize(&adapter.prelude_root());
+    let is_internal = canonical.starts_with(&stdlib_root_canonical)
+        || canonical.starts_with(&prelude_root_canonical);
+    if !is_internal {
+        let prelude_modules = adapter.list_prelude_modules();
+        for prelude_path in &prelude_modules {
+            let prelude_canonical = adapter.canonicalize(prelude_path);
+            // Skip if already explicitly imported (canonical-path dedupe)
+            if dep_canonical_paths.contains(&prelude_canonical) {
+                continue;
+            }
+            if !adapter.exists(&prelude_canonical) {
+                continue;
+            }
+            let prelude_alias = format!(
+                "__prelude_{}",
+                prelude_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+            );
+            dep_canonical_paths.push(prelude_canonical.clone());
+            let result = compile_module_with_adapter(
+                &prelude_canonical,
+                &prelude_alias,
+                ctx,
+                importing_stack,
+                state,
+                do_lower,
+                adapter,
+            );
+            match result {
+                Ok((dep_exports, _)) => {
+                    state.register_module_exports(&prelude_alias, &dep_exports);
+                }
+                Err(e) => {
+                    importing_stack.pop();
+                    return Err(e);
+                }
+            }
+        }
+    }
+
     with_global_cache(|cache| cache.set_dependencies(&canonical, &dep_canonical_paths));
     let dep_hash_entries: Vec<(String, u64)> = dep_canonical_paths
         .iter()
@@ -1028,7 +1120,7 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
     let mut state = CompileState::initial();
     state.entry_module_path = Some(path.clone());
     let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, true)?;
-    Ok((link(state), registry))
+    Ok((dce::eliminate_dead_code(link(state)), registry))
 }
 
 /// Full pipeline (parse + resolve + typecheck + lower) from an in-memory module map.
@@ -1068,5 +1160,5 @@ pub fn compile_entry_from_source_map(
         true,
         &adapter,
     )?;
-    Ok((link(state), registry))
+    Ok((dce::eliminate_dead_code(link(state)), registry))
 }

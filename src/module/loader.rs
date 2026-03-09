@@ -33,7 +33,7 @@ pub fn resolve_module_path(root: &Path, module_path: &[String]) -> PathBuf {
     path
 }
 
-fn resolve_stdlib_root() -> PathBuf {
+pub fn resolve_stdlib_root_default() -> PathBuf {
     if let Ok(root) = env::var("TWINKLE_STDLIB_ROOT") {
         return PathBuf::from(root);
     }
@@ -41,6 +41,13 @@ fn resolve_stdlib_root() -> PathBuf {
         return PathBuf::from(root).join("stdlib");
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib")
+}
+
+pub fn resolve_prelude_root_default() -> PathBuf {
+    if let Ok(root) = env::var("TWINKLE_ROOT") {
+        return PathBuf::from(root).join("prelude");
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prelude")
 }
 
 pub fn resolve_stdlib_module_path_from_root(stdlib_root: &Path, module_path: &[String]) -> PathBuf {
@@ -58,10 +65,31 @@ pub fn resolve_stdlib_module_path_from_root(stdlib_root: &Path, module_path: &[S
     path
 }
 
+/// List all prelude module paths from the given prelude root.
+/// Returns paths to `prelude/*.tw` files in sorted order.
+pub fn list_prelude_modules(prelude_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(prelude_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().is_some_and(|e| e == "tw") {
+                paths.push(p);
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
+/// List all prelude module paths, using the default prelude root.
+pub fn list_prelude_modules_default() -> Vec<PathBuf> {
+    list_prelude_modules(&resolve_prelude_root_default())
+}
+
 /// Resolve `@...` stdlib imports to `stdlib/*.tw` files.
 /// e.g. `@std.path` => `<stdlib_root>/path.tw`
 pub fn resolve_stdlib_module_path(module_path: &[String]) -> PathBuf {
-    resolve_stdlib_module_path_from_root(&resolve_stdlib_root(), module_path)
+    resolve_stdlib_module_path_from_root(&resolve_stdlib_root_default(), module_path)
 }
 
 #[cfg(test)]

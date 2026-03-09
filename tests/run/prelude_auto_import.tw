@@ -1,0 +1,22 @@
+// Expected output:
+//   2
+//   4
+//   6
+//   hello world
+//   42
+
+// No imports needed — prelude modules are auto-imported
+
+// Vector.map via dot syntax
+xs := [1, 2, 3]
+doubled := xs.map(fn(x: Int) Int { x * 2 })
+for x in doubled {
+  println("${x}")
+}
+
+// String.trim via dot syntax
+s := "  hello world  "
+println(s.trim())
+
+// Int.to_float round-trip
+println("${42.to_float().to_int()}")

@@ -27,8 +27,6 @@
 //   1
 //   abc
 
-use @std.vector
-use @std.string_ext
 
 nums := [1, 2, 3, 4]
 doubled := nums.map(fn(n: Int) Int { n * 2 })
