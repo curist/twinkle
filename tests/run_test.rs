@@ -336,3 +336,8 @@ fn trap_string_index_oob() {
 fn byte_type() {
     check("tests/run/byte_type.tw");
 }
+
+#[test]
+fn string_chars() {
+    check("tests/run/string_chars.tw");
+}

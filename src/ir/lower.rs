@@ -4868,12 +4868,10 @@ fn collect_local_refs_inner(
                 result.push(*id);
             }
         }
-        Let {
-            local: _,
-            value,
-            body,
-        } => {
+        Let { local, value, body } => {
             collect_local_refs_inner(value, exclude, seen, result);
+            // The let-bound local is defined here, not free
+            seen.insert(*local);
             collect_local_refs_inner(body, exclude, seen, result);
         }
         Assign { local: _, value } => {

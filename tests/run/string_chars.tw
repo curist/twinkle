@@ -1,0 +1,47 @@
+// Expected output:
+//   ascii: a b c
+//   ascii_len=3
+//   multi: é 你 👍
+//   mixed: a é 你 👍
+//   mixed_char_len=4
+//   empty_char_len=0
+//   collect: [a, é, 你, 👍]
+
+// ASCII chars iteration
+print("ascii:")
+for ch in "abc".chars() {
+  print(" ${ch}")
+}
+println("")
+
+// char_len on ASCII
+println("ascii_len=${"abc".char_len()}")
+
+// Multi-byte scalars
+print("multi:")
+for ch in "é你👍".chars() {
+  print(" ${ch}")
+}
+println("")
+
+// Mixed ASCII + multi-byte
+print("mixed:")
+for ch in "aé你👍".chars() {
+  print(" ${ch}")
+}
+println("")
+
+// char_len counts Unicode scalars, not bytes
+println("mixed_char_len=${"aé你👍".char_len()}")
+
+// Empty string
+println("empty_char_len=${"".char_len()}")
+
+// collect chars into a vector
+chars := collect ch in "aé你👍".chars() { ch }
+print("collect: [")
+for ch, i in chars {
+  if i > 0 { print(", ") }
+  print(ch)
+}
+println("]")

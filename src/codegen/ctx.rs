@@ -1879,11 +1879,14 @@ pub fn resolve_unfold_step_types(
 ) -> Option<(MonoType, MonoType)> {
     // Yield: try to infer types from the args
     if variant.0 == 1 && args.len() == 2 {
-        let yield_ty = ctx.infer_atom_mono(&args[0])?;
-        let seed_ty = ctx.infer_atom_mono(&args[1])?;
-        if is_concrete_mono_type(&yield_ty) && is_concrete_mono_type(&seed_ty) {
-            return Some((yield_ty, seed_ty));
+        if let (Some(yield_ty), Some(seed_ty)) =
+            (ctx.infer_atom_mono(&args[0]), ctx.infer_atom_mono(&args[1]))
+        {
+            if is_concrete_mono_type(&yield_ty) && is_concrete_mono_type(&seed_ty) {
+                return Some((yield_ty, seed_ty));
+            }
         }
+        // Fall through to function return type if direct inference fails
     }
     // Done or fallback: use current function's return type
     let func_id = ctx.current_func_id?;
