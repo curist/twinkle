@@ -39,6 +39,9 @@ pub struct TypeChecker {
     // Unification engine: MetaVar counter and solved assignments
     next_meta: u32,
     meta_subst: HashMap<u32, MonoType>,
+
+    // Internal host intrinsics are only callable from stdlib/prelude modules.
+    allow_internal_host_builtins: bool,
 }
 
 impl TypeChecker {
@@ -53,6 +56,17 @@ impl TypeChecker {
         value_env: ValueEnv,
         module_aliases: HashSet<String>,
     ) -> Result<TypedModule, Vec<TypeError>> {
+        Self::check_module_with_options(ast, type_env, value_env, module_aliases, false)
+    }
+
+    /// Type-check a module with internal host builtin access control.
+    pub fn check_module_with_options(
+        ast: &SourceFile,
+        type_env: TypeEnv,
+        value_env: ValueEnv,
+        module_aliases: HashSet<String>,
+        allow_internal_host_builtins: bool,
+    ) -> Result<TypedModule, Vec<TypeError>> {
         let mut checker = TypeChecker {
             type_env,
             value_env,
@@ -65,6 +79,7 @@ impl TypeChecker {
             at_module_scope: true,
             next_meta: 0,
             meta_subst: HashMap::new(),
+            allow_internal_host_builtins,
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -478,6 +493,15 @@ impl TypeChecker {
                     // Don't record instantiation here — MetaVars aren't solved yet.
                     // They'll be recorded at the call site after unification.
                     return Ok(inst_ty);
+                }
+                if !self.allow_internal_host_builtins
+                    && self.value_env.is_visible_internal_host_builtin(name)
+                {
+                    self.errors.push(TypeError::UndefinedVariable {
+                        name: name.clone(),
+                        span: expr.span,
+                    });
+                    return Err(());
                 }
                 // Non-function values (top-level lets, builtins)
                 if let Some(ty) = self.value_env.lookup(name) {

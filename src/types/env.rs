@@ -878,6 +878,15 @@ impl ValueEnv {
         self.builtins.get(name).cloned()
     }
 
+    /// True when name resolves to an internal host builtin through normal lookup
+    /// precedence (i.e. not shadowed by user function/value bindings).
+    pub fn is_visible_internal_host_builtin(&self, name: &str) -> bool {
+        name.starts_with("__host_")
+            && !self.functions.contains_key(name)
+            && !self.values.contains_key(name)
+            && self.builtins.contains_key(name)
+    }
+
     /// Update a function signature (used after inferring return type)
     pub fn update_function(&mut self, sig: FunctionSignature) {
         self.functions.insert(sig.name.clone(), sig);

@@ -14,7 +14,8 @@ use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
-    lower_stage, parse_source_module, preassign_module_function_ids, resolve_stage, typecheck_stage,
+    lower_stage, parse_source_module, preassign_module_function_ids, resolve_stage,
+    typecheck_stage_with_options,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
@@ -408,7 +409,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
 
     // Typecheck — pure function; takes explicit envs and returns updated envs + TypeMap
     let typecheck_key = query_keys::with_context(
-        query_keys::typecheck_key(&canonical, source_hash, deps_hash),
+        query_keys::typecheck_key(&canonical, source_hash, deps_hash, is_internal),
         context_hash,
     );
     let typed = if let Some(cached) =
@@ -417,7 +418,12 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
         cached
     } else {
         let type_env_for_errs = resolved.type_env.clone();
-        let typed = match typecheck_stage(&ast, resolved.clone(), state.module_aliases.clone()) {
+        let typed = match typecheck_stage_with_options(
+            &ast,
+            resolved.clone(),
+            state.module_aliases.clone(),
+            is_internal,
+        ) {
             Ok(t) => t,
             Err(errors) => {
                 let msgs: Vec<String> = errors
