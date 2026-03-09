@@ -49,6 +49,18 @@ pub fn ends_with(s: String, suffix: String) Bool {
   s.substring(n - m, n) == suffix
 }
 
+pub fn get(s: String, i: Int) String? {
+  if i < 0 {
+    return .None
+  }
+
+  if i >= s.len() {
+    return .None
+  }
+
+  .Some(s.substring(i, i + 1))
+}
+
 pub fn split(s: String, sep: String) Vector<String> {
   if sep == "" {
     return [s]

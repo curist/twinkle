@@ -1057,6 +1057,7 @@ for x,i in coll { body }
 The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
 
 * `Vector<T>` — lowered to an indexed loop over the array length.
+* `String` — lowered to an indexed loop over character slices (`str[i]`).
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
 * `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
@@ -1067,7 +1068,7 @@ Any value used in `for x in coll` whose type is not one of the above is a **comp
 
 * `i: Int` starts from 0 and increments each iteration.
 * Break/continue as usual.
-* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
+* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
 
 **User Extensions:**
 
@@ -1176,12 +1177,12 @@ zs := collect n < 10 { n }
 Rules:
 
 * Produces `Vector<T>`.
-* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
+* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
 * Also supports conditional form `collect cond { body }`:
   * `cond` must be `Bool`.
   * Evaluates like a `while` loop and collects values produced by `body`.
-* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `Range`, and `Dict<K,V>`:
-  * For `Vector<T>` and `Range`, `i: Int` is the iteration index.
+* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`:
+  * For `Vector<T>`, `String`, and `Range`, `i: Int` is the iteration index.
   * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
   * `Iterator<T>` does not support the two-binder form.
 * `continue` skips emission.
@@ -1262,6 +1263,7 @@ String operations via module functions (all return new strings):
 
 * `String.concat(s1, s2) String`
 * `String.substring(s, start, end) String`
+* `String.get(s, i) String?` (safe index; returns `None` if out-of-bounds)
 * `String.to_string(s) String` (identity helper; `s.to_string()` is preferred)
 * etc.
 

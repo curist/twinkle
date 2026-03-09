@@ -1,0 +1,4 @@
+// Expected trap: out of bounds
+
+s := "hi"
+println(s[99])

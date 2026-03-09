@@ -889,6 +889,22 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("string_substring: expected String and two Ints"),
                 }
             }
+            prelude_ids::STRING_GET => {
+                // String.get(s, i) -> Option<String>
+                match (&args[0], &args[1]) {
+                    (Value::Str(s), Value::Int(i)) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        if *i < 0 || (*i as usize) >= chars.len() {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        } else {
+                            let idx = *i as usize;
+                            let ch = chars[idx].to_string();
+                            Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Str(ch)]))
+                        }
+                    }
+                    _ => panic!("string_get: expected String and Int"),
+                }
+            }
             prelude_ids::ITERATOR_NEXT => {
                 // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
                 let iter_state = match &args[0] {

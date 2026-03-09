@@ -1,0 +1,27 @@
+// Expected output:
+//   h
+//   none
+//   i
+//   none
+
+s := "hi"
+
+case s.get(0) {
+  .Some(ch) => println(ch),
+  .None => println("none"),
+}
+
+case s.get(99) {
+  .Some(ch) => println(ch),
+  .None => println("none"),
+}
+
+case String.get(s, 1) {
+  .Some(ch) => println(ch),
+  .None => println("none"),
+}
+
+case String.get(s, -1) {
+  .Some(ch) => println(ch),
+  .None => println("none"),
+}

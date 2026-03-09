@@ -311,3 +311,28 @@ fn numeric_parsing() {
 fn type_to_string_ref() {
     check("tests/run/type_to_string_ref.tw");
 }
+
+#[test]
+fn twinkle_scanner_parser() {
+    check("compiler/twinkle_scanner_parser.tw");
+}
+
+#[test]
+fn and_short_circuit() {
+    check("tests/run/and_short_circuit.tw");
+}
+
+#[test]
+fn string_iteration_index() {
+    check("tests/run/string_iteration_index.tw");
+}
+
+#[test]
+fn string_get() {
+    check("tests/run/string_get.tw");
+}
+
+#[test]
+fn trap_string_index_oob() {
+    check_trap("tests/run/traps/string_index_oob.tw");
+}

@@ -135,3 +135,18 @@ fn run_wasm_stderr_prelude() {
 fn run_wasm_and_short_circuit() {
     check("tests/run/and_short_circuit.tw");
 }
+
+#[test]
+fn run_wasm_string_iteration_index() {
+    check("tests/run/string_iteration_index.tw");
+}
+
+#[test]
+fn run_wasm_string_get() {
+    check("tests/run/string_get.tw");
+}
+
+#[test]
+fn run_wasm_trap_string_index_oob() {
+    check("tests/run/traps/string_index_oob.tw");
+}

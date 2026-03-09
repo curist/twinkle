@@ -3778,6 +3778,7 @@ fn emit_prelude_call(
         id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
             emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
         }
+        id if id == prelude_ids::STRING_GET => emit_string_get_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::CHAR_CODE_AT => emit_char_code_at_intrinsic(args, bind_ty, ctx),
         id if id == prelude_ids::FROM_CHAR_CODE => {
             emit_from_char_code_intrinsic(args, bind_ty, ctx)
@@ -4683,6 +4684,55 @@ fn emit_array_builder_freeze_intrinsic(
     instrs
 }
 
+fn emit_string_get_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    use crate::types::ty::OPTION_TYPE_ID;
+    assert_eq!(args.len(), 2, "String.get expects 2 args");
+
+    ensure_rt_str_substring_import(ctx);
+
+    let mut instrs = Vec::new();
+
+    // condition: i_i32 < len(s)
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I32WrapI64);
+    instrs.extend(emit_atom(&args[0], Some(&ref_string_null()), ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I32LtU);
+
+    // then: Some(String.substring(s, i, i + 1))
+    let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
+    then_body.extend(emit_atom(&args[0], Some(&ref_string_null()), ctx));
+    then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    then_body.push(Instr::I32WrapI64); // start
+    then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    then_body.push(Instr::I64Const(1));
+    then_body.push(Instr::I64Add);
+    then_body.push(Instr::I32WrapI64); // end
+    then_body.push(Instr::Call("rt_str__substring".to_string()));
+    then_body.extend(emit_coerce_stack(&ref_string(), &ValType::Anyref));
+    then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    then_body.push(Instr::StructNew(T_VARIANT.to_string()));
+
+    let else_body = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(0), // None
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+
+    instrs.push(Instr::If {
+        result: Some(ref_variant()),
+        then_body,
+        else_body,
+    });
+    instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
+}
+
 fn emit_char_code_at_intrinsic(
     args: &[Atom],
     bind_ty: &ValType,
@@ -5194,6 +5244,16 @@ fn ensure_rt_str_concat_import(ctx: &mut EmitCtx<'_>) {
         name: "concat".to_string(),
         as_sym: "rt_str__concat".to_string(),
         params: vec![ref_string_null(), ref_string_null()],
+        results: vec![ref_string()],
+    });
+}
+
+fn ensure_rt_str_substring_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.str".to_string(),
+        name: "substring".to_string(),
+        as_sym: "rt_str__substring".to_string(),
+        params: vec![ref_string_null(), ValType::I32, ValType::I32],
         results: vec![ref_string()],
     });
 }

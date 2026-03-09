@@ -1,0 +1,19 @@
+// Expected output:
+//   h
+//   0:h
+//   1:e
+//   2:y
+//   h
+//   e
+//   y
+
+s := "hey"
+println(s[0])
+
+for c, i in s {
+  println("${i}:${c}")
+}
+
+for c in s {
+  println(c)
+}

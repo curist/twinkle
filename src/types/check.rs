@@ -1677,6 +1677,22 @@ impl TypeChecker {
                 self.check_expr(&args[2], &MonoType::Int)?;
                 Ok(MonoType::String)
             }
+            "get" => {
+                if args.len() != 2 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 2,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                self.check_expr(&args[1], &MonoType::Int)?;
+                Ok(MonoType::Named {
+                    type_id: crate::types::ty::OPTION_TYPE_ID,
+                    args: vec![MonoType::String],
+                })
+            }
             "to_string" => {
                 if args.len() != 1 {
                     self.errors.push(TypeError::WrongArity {
@@ -1852,6 +1868,13 @@ impl TypeChecker {
                         ("len", 1) => matches!(ret, MonoType::Int),
                         ("concat", 2) => matches!(ret, MonoType::String),
                         ("substring", 3) => matches!(ret, MonoType::String),
+                        ("get", 2) => matches!(
+                            ret,
+                            MonoType::Named { type_id, args }
+                                if *type_id == crate::types::ty::OPTION_TYPE_ID
+                                    && args.len() == 1
+                                    && args[0] == MonoType::String
+                        ),
                         ("to_string", 1) => matches!(ret, MonoType::String),
                         _ => false,
                     }
@@ -2137,6 +2160,21 @@ impl TypeChecker {
                     self.check_expr(&args[0], &MonoType::Int)?;
                     self.check_expr(&args[1], &MonoType::Int)?;
                     Ok(MonoType::String)
+                }
+                "get" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: 1,
+                            actual: args.len(),
+                            span,
+                        });
+                        return Err(());
+                    }
+                    self.check_expr(&args[0], &MonoType::Int)?;
+                    Ok(MonoType::Named {
+                        type_id: crate::types::ty::OPTION_TYPE_ID,
+                        args: vec![MonoType::String],
+                    })
                 }
                 _ => {
                     if let Some(ret_ty) =
@@ -3603,6 +3641,26 @@ impl TypeChecker {
                     }
                 }
             }
+            MonoType::String => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::String),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns"
+                                .to_string(),
+                        });
+                    }
+                }
+                // index_pattern binds Int index
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
             MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Int),
@@ -3702,6 +3760,26 @@ impl TypeChecker {
             MonoType::Vector(elem) => {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in collect",
+                            span,
+                            note: "Only simple identifiers are supported in collect patterns"
+                                .to_string(),
+                        });
+                        had_error = true;
+                    }
+                }
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
+                }
+            }
+            MonoType::String => {
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::String),
                     Pattern::Wildcard(_) => {}
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {

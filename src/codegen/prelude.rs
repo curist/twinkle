@@ -184,6 +184,10 @@ pub fn build_prelude_map() -> PreludeMap {
             vec![ref_string()],
         ),
     );
+    map.insert(
+        prelude_ids::STRING_GET,
+        PreludeEntry::intrinsic("String.get"),
+    );
 
     map.insert(
         prelude_ids::VECTOR_LEN,

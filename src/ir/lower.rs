@@ -68,6 +68,7 @@ pub mod prelude {
     pub const DICT_HAS: FuncId = FuncId(28); // Dict.has(m, k) -> Bool
     pub const DICT_REMOVE: FuncId = FuncId(29); // Dict.remove(m, k) -> Dict<K,V>
     pub const STRING_SUBSTR: FuncId = FuncId(30); // String.substring(s, start, end) -> String
+    pub const STRING_GET: FuncId = FuncId(1021); // String.get(s, i) -> Option<String>
 
     pub const ITERATOR_NEXT: FuncId = FuncId(31); // Iterator.next<T>(it: Iterator<T>) Option<IterItem<T>>
     pub const ITERATOR_UNFOLD: FuncId = FuncId(32); // Iterator.unfold<T,S>(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
@@ -206,6 +207,7 @@ impl Lowerer {
         func_table.insert("String.len".to_string(), prelude::STRING_LEN);
         func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
         func_table.insert("String.substring".to_string(), prelude::STRING_SUBSTR);
+        func_table.insert("String.get".to_string(), prelude::STRING_GET);
         func_table.insert("Int.to_string".to_string(), prelude::INT_TO_STRING);
         func_table.insert("Float.to_string".to_string(), prelude::FLOAT_TO_STRING);
         func_table.insert("Bool.to_string".to_string(), prelude::BOOL_TO_STRING);
@@ -893,11 +895,17 @@ impl Lowerer {
                 let len_tmp = self.local_allocator.alloc_and_bind("__len".to_string());
                 let idx_tmp = self.local_allocator.alloc_and_bind("__idx".to_string());
 
-                // array_len call
+                let (len_func_id, elem_ty) = match &iter_expr.ty {
+                    MonoType::Vector(inner) => (prelude::VECTOR_LEN, *inner.clone()),
+                    MonoType::String => (prelude::STRING_LEN, MonoType::String),
+                    _ => (prelude::VECTOR_LEN, MonoType::Void),
+                };
+
+                // length call
                 let arr_len_func = CoreExpr {
-                    kind: CoreExprKind::GlobalFunc(prelude::VECTOR_LEN),
+                    kind: CoreExprKind::GlobalFunc(len_func_id),
                     ty: MonoType::Function {
-                        params: vec![MonoType::Vector(Box::new(MonoType::Int))],
+                        params: vec![iter_expr.ty.clone()],
                         ret: Box::new(MonoType::Int),
                     },
                     span: iter_span,
@@ -920,11 +928,6 @@ impl Lowerer {
                 self.local_allocator.push_scope();
 
                 // Bind element variable
-                let elem_ty = match &iter_expr.ty {
-                    MonoType::Vector(inner) => *inner.clone(),
-                    _ => MonoType::Void,
-                };
-
                 let elem_local = match pattern {
                     Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
                     _ => self.local_allocator.alloc(),
@@ -945,14 +948,12 @@ impl Lowerer {
                     ty: MonoType::Int,
                     span: iter_span,
                 };
-                let elem_value = CoreExpr {
-                    kind: CoreExprKind::Index {
-                        base: Box::new(arr_local_expr),
-                        index: Box::new(idx_local_expr.clone()),
-                    },
-                    ty: elem_ty.clone(),
-                    span: iter_span,
-                };
+                let elem_value = self.lower_index_core_expr(
+                    arr_local_expr,
+                    idx_local_expr.clone(),
+                    elem_ty.clone(),
+                    iter_span,
+                );
 
                 let body_expr = self.lower_block(body)?;
                 self.local_allocator.pop_scope();
@@ -1952,6 +1953,80 @@ impl Lowerer {
         })
     }
 
+    fn lower_index_core_expr(
+        &mut self,
+        base_expr: CoreExpr,
+        index_expr: CoreExpr,
+        result_ty: MonoType,
+        span: Span,
+    ) -> CoreExpr {
+        if matches!(base_expr.ty, MonoType::String) {
+            let check_call = CoreExpr {
+                kind: CoreExprKind::Call {
+                    callee: Box::new(CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(prelude::CHAR_CODE_AT),
+                        ty: MonoType::Function {
+                            params: vec![MonoType::String, MonoType::Int],
+                            ret: Box::new(MonoType::Int),
+                        },
+                        span,
+                    }),
+                    args: vec![base_expr.clone(), index_expr.clone()],
+                },
+                ty: MonoType::Int,
+                span,
+            };
+            let one = CoreExpr {
+                kind: CoreExprKind::LitInt(1),
+                ty: MonoType::Int,
+                span,
+            };
+            let end_expr = CoreExpr {
+                kind: CoreExprKind::BinOp {
+                    op: BinOp::Add,
+                    left: Box::new(index_expr.clone()),
+                    right: Box::new(one),
+                },
+                ty: MonoType::Int,
+                span,
+            };
+            let callee = CoreExpr {
+                kind: CoreExprKind::GlobalFunc(prelude::STRING_SUBSTR),
+                ty: MonoType::Function {
+                    params: vec![MonoType::String, MonoType::Int, MonoType::Int],
+                    ret: Box::new(MonoType::String),
+                },
+                span,
+            };
+            let slice_expr = CoreExpr {
+                kind: CoreExprKind::Call {
+                    callee: Box::new(callee),
+                    args: vec![base_expr, index_expr, end_expr],
+                },
+                ty: MonoType::String,
+                span,
+            };
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: self.local_allocator.alloc(),
+                    value: Box::new(check_call),
+                    body: Box::new(slice_expr),
+                },
+                ty: MonoType::String,
+                span,
+            }
+        } else {
+            CoreExpr {
+                kind: CoreExprKind::Index {
+                    base: Box::new(base_expr),
+                    index: Box::new(index_expr),
+                },
+                ty: result_ty,
+                span,
+            }
+        }
+    }
+
     fn lower_expr_kind(
         &mut self,
         kind: &ExprKind,
@@ -2158,10 +2233,15 @@ impl Lowerer {
                         args: vec![base_expr, index_expr],
                     })
                 } else {
-                    Some(CoreExprKind::Index {
-                        base: Box::new(base_expr),
-                        index: Box::new(index_expr),
-                    })
+                    let result_ty = match base_ty {
+                        Some(MonoType::Vector(inner)) => *inner,
+                        Some(MonoType::String) => MonoType::String,
+                        _ => MonoType::Void,
+                    };
+                    Some(
+                        self.lower_index_core_expr(base_expr, index_expr, result_ty, span)
+                            .kind,
+                    )
                 }
             }
 
@@ -2562,6 +2642,7 @@ impl Lowerer {
             (MonoType::String, "len") => prelude::STRING_LEN,
             (MonoType::String, "concat") => prelude::STRING_CONCAT,
             (MonoType::String, "substring") => prelude::STRING_SUBSTR,
+            (MonoType::String, "get") => prelude::STRING_GET,
             (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
@@ -4329,6 +4410,7 @@ impl Lowerer {
 
         let elem_ty = match iter_ty {
             Some(MonoType::Vector(inner)) => *inner,
+            Some(MonoType::String) => MonoType::String,
             _ => MonoType::Void,
         };
 
@@ -4348,9 +4430,14 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // len = array_len(arr_tmp)
+        let len_func_id = match &iter_expr.ty {
+            MonoType::String => prelude::STRING_LEN,
+            _ => prelude::VECTOR_LEN,
+        };
+
+        // len = length(arr_tmp)
         let len_func = CoreExpr {
-            kind: CoreExprKind::GlobalFunc(prelude::VECTOR_LEN),
+            kind: CoreExprKind::GlobalFunc(len_func_id),
             ty: MonoType::Function {
                 params: vec![iter_expr.ty.clone()],
                 ret: Box::new(MonoType::Int),
@@ -4388,14 +4475,8 @@ impl Lowerer {
             _ => None,
         });
 
-        let elem_value = CoreExpr {
-            kind: CoreExprKind::Index {
-                base: Box::new(arr_local_expr),
-                index: Box::new(idx_expr.clone()),
-            },
-            ty: elem_ty,
-            span: iter_span,
-        };
+        let elem_value =
+            self.lower_index_core_expr(arr_local_expr, idx_expr.clone(), elem_ty, iter_span);
 
         let body_val_local = self.local_allocator.alloc_and_bind("__c_val".to_string());
         let body_expr = self.lower_expr(body)?;
