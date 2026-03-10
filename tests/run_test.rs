@@ -333,6 +333,11 @@ fn trap_string_index_oob() {
 }
 
 #[test]
+fn trap_string_slice_large_index() {
+    check_trap("tests/run/traps/string_slice_large_index.tw");
+}
+
+#[test]
 fn byte_type() {
     check("tests/run/byte_type.tw");
 }
@@ -345,6 +350,11 @@ fn string_chars() {
 #[test]
 fn string_code_point() {
     check("tests/run/string_code_point.tw");
+}
+
+#[test]
+fn string_from_code_point_large_int() {
+    check("tests/run/string_from_code_point_large_int.tw");
 }
 
 #[test]

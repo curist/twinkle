@@ -1,0 +1,20 @@
+// Expected output:
+//   None
+//   None
+//   Some(A)
+
+fn show_opt(o: String?) String {
+  case o {
+    .Some(s) => "Some(${s})",
+    .None => "None",
+  }
+}
+
+// Regression: values above i32/u32 range must not wrap into a valid code point.
+println(show_opt(String.from_code_point(4294967361)))
+
+// Still invalid by Unicode range.
+println(show_opt(String.from_code_point(1114112)))
+
+// Valid baseline.
+println(show_opt(String.from_code_point(65)))

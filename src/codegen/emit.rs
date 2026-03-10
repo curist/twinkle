@@ -4773,14 +4773,18 @@ fn emit_string_slice_intrinsic(
     // Atoms are re-emitted freely (they're just local.get or const — cheap).
     ensure_rt_str_substring_import(ctx);
 
-    // Helper closures to emit start/end as i32
+    // Helper closures to emit start/end as i64/i32.
+    let emit_start_i64 =
+        |ctx: &mut EmitCtx<'_>| -> Vec<Instr> { emit_atom(&args[1], Some(&ValType::I64), ctx) };
+    let emit_end_i64 =
+        |ctx: &mut EmitCtx<'_>| -> Vec<Instr> { emit_atom(&args[2], Some(&ValType::I64), ctx) };
     let emit_start_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
-        let mut v = emit_atom(&args[1], Some(&ValType::I64), ctx);
+        let mut v = emit_start_i64(ctx);
         v.push(Instr::I32WrapI64);
         v
     };
     let emit_end_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
-        let mut v = emit_atom(&args[2], Some(&ValType::I64), ctx);
+        let mut v = emit_end_i64(ctx);
         v.push(Instr::I32WrapI64);
         v
     };
@@ -4790,15 +4794,25 @@ fn emit_string_slice_intrinsic(
 
     let mut instrs = Vec::new();
 
-    // Bounds check: start_u32 <= end_u32 && end_u32 <= len
-    // (i64→i32 wrap makes negative values large unsigned → fails LeU check)
-    instrs.extend(emit_start_i32(ctx));
-    instrs.extend(emit_end_i32(ctx));
-    instrs.push(Instr::I32LeU);
-    instrs.extend(emit_end_i32(ctx));
+    // Bounds check in full Int (i64) domain:
+    // start >= 0 && end >= 0 && start <= end && end <= len.
+    // This avoids i64->i32 wraparound accepting large invalid indices.
+    instrs.extend(emit_start_i64(ctx));
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS);
+    instrs.extend(emit_end_i64(ctx));
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS);
+    instrs.push(Instr::I32And);
+    instrs.extend(emit_start_i64(ctx));
+    instrs.extend(emit_end_i64(ctx));
+    instrs.push(Instr::I64LeS);
+    instrs.push(Instr::I32And);
+    instrs.extend(emit_end_i64(ctx));
     instrs.extend(emit_str(ctx));
     instrs.push(Instr::ArrayLen);
-    instrs.push(Instr::I32LeU);
+    instrs.push(Instr::I64ExtendI32U);
+    instrs.push(Instr::I64LeS);
     instrs.push(Instr::I32And);
     instrs.push(Instr::If {
         result: None,
@@ -4940,6 +4954,8 @@ fn emit_from_code_point_intrinsic(
     _bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    use crate::types::ty::OPTION_TYPE_ID;
+
     // String.from_code_point(n: Int) -> Option<String>
     // Validates the code point and encodes as UTF-8 (1-4 bytes).
     // Returns None for surrogates (0xD800..0xDFFF) and values > 0x10FFFF.
@@ -4947,9 +4963,34 @@ fn emit_from_code_point_intrinsic(
     // Strategy: use a helper function emitted into the module to keep
     // the inline code manageable. The helper takes an i32 code point
     // and returns (ref null $Variant).
+    // Guard the full Int range before narrowing to i32 so values outside
+    // the Unicode range cannot wrap into valid code points.
     let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
-    instrs.push(Instr::I32WrapI64);
-    instrs.push(Instr::Call("$from_code_point_helper".to_string()));
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS);
+    instrs.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I64Const(0x10FFFF));
+    instrs.push(Instr::I64LeS);
+    instrs.push(Instr::I32And);
+    instrs.push(Instr::If {
+        result: Some(ValType::Anyref),
+        then_body: {
+            let mut body = emit_atom(&args[0], Some(&ValType::I64), ctx);
+            body.push(Instr::I32WrapI64);
+            body.push(Instr::Call("$from_code_point_helper".to_string()));
+            body
+        },
+        else_body: {
+            let mut body = vec![
+                Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                Instr::I32Const(0),
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                Instr::StructNew(T_VARIANT.to_string()),
+            ];
+            body.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            body
+        },
+    });
     instrs
 }
 

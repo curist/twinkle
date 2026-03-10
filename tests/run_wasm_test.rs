@@ -150,3 +150,13 @@ fn run_wasm_string_get() {
 fn run_wasm_trap_string_index_oob() {
     check("tests/run/traps/string_index_oob.tw");
 }
+
+#[test]
+fn run_wasm_trap_string_slice_large_index() {
+    check("tests/run/traps/string_slice_large_index.tw");
+}
+
+#[test]
+fn run_wasm_string_from_code_point_large_int() {
+    check("tests/run/string_from_code_point_large_int.tw");
+}

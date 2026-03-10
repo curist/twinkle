@@ -1,0 +1,3 @@
+// Expected trap: String.slice: indices [4294967297, 4294967298) out of bounds
+
+println("abc".slice(4294967297, 4294967298))
