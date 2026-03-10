@@ -129,6 +129,12 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
         };
         func_table.insert(name.to_string(), *func_id);
     }
+    debug_assert!(
+        !func_table
+            .values()
+            .any(|id| prelude::is_retired_prelude_id(*id)),
+        "default func_table must not contain retired prelude IDs"
+    );
 
     func_table
 }
@@ -290,6 +296,38 @@ impl CompileState {
 
             self.type_env
                 .add_method(receiver_type_id, func_name.clone(), builtin_name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_func_table_excludes_retired_prelude_policy_entries() {
+        let func_table = default_func_table();
+
+        for retired in prelude::RETIRED_PRELUDE_IDS {
+            assert!(
+                !func_table
+                    .values()
+                    .any(|func_id| *func_id == retired.func_id),
+                "retired prelude FuncId({}) leaked into default table",
+                retired.func_id.0
+            );
+            assert!(
+                !func_table.contains_key(retired.former_twinkle_name),
+                "retired prelude name '{}' leaked into default table",
+                retired.former_twinkle_name
+            );
+            if let Some(replacement) = retired.replacement {
+                assert!(
+                    func_table.values().any(|func_id| *func_id == replacement),
+                    "replacement FuncId({}) missing from default table",
+                    replacement.0
+                );
+            }
         }
     }
 }

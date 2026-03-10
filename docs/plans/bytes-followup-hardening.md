@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** In progress (Phase 1-4 complete, Phase 5 pending)  
+**Status:** In progress (Phase 1-5 complete)  
 **Last updated:** 2026-03-10
 
 ## Goal
@@ -270,6 +270,23 @@ rollout needs intermediate checkpoints to keep backend behavior stable.
   * alias windows
   * removal procedure
 * Encode policy in prelude map tests to avoid ad hoc skips.
+
+**Progress notes (2026-03-10)**
+
+* Added explicit prelude ID lifecycle policy helpers in `lower::prelude`:
+  fixed low-ID window bounds, retired-ID registry, and helper queries.
+* Documented retired ID `FuncId(30)` (`String.substring`) with replacement
+  `FuncId(1025)` (`String.slice`) as a reserved non-reusable tombstone.
+* Removed ad hoc skip logic from prelude map coverage tests and replaced it
+  with policy-driven assertions.
+* Added compile-state guard/tests to ensure retired IDs and retired Twinkle
+  names do not leak back into default prelude function tables.
+
+**Phase 5 completion note**
+
+Phase 5 exit criteria are now satisfied in this branch: retired IDs are handled
+through explicit policy metadata and prelude coverage tests consume that policy
+instead of hard-coded one-off skips.
 
 **Exit criteria**
 

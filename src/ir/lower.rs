@@ -29,6 +29,13 @@ use super::local_allocator::LocalAllocator;
 pub mod prelude {
     use super::FuncId;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct RetiredPreludeId {
+        pub func_id: FuncId,
+        pub former_twinkle_name: &'static str,
+        pub replacement: Option<FuncId>,
+    }
+
     pub const PRINT: FuncId = FuncId(1);
     pub const PRINTLN: FuncId = FuncId(2);
     pub const ERROR: FuncId = FuncId(3);
@@ -127,6 +134,33 @@ pub mod prelude {
 
     // User functions start here
     pub const USER_FUNC_START: u32 = 41;
+
+    /// Fixed low prelude ID window reserved for long-lived compatibility.
+    pub const FIXED_PRELUDE_ID_START: u32 = PRINT.0;
+    pub const FIXED_PRELUDE_ID_END: u32 = VECTOR_BUILDER_FREEZE.0;
+
+    /// Retired low-window IDs are intentionally never reused.
+    /// Migration policy: keep the old ID reserved forever and document
+    /// the replacement intrinsic ID used by new code.
+    pub const RETIRED_PRELUDE_IDS: &[RetiredPreludeId] = &[RetiredPreludeId {
+        func_id: STRING_SUBSTR,
+        former_twinkle_name: "String.substring",
+        replacement: Some(STRING_SLICE),
+    }];
+
+    pub fn fixed_prelude_id_range() -> std::ops::RangeInclusive<u32> {
+        FIXED_PRELUDE_ID_START..=FIXED_PRELUDE_ID_END
+    }
+
+    pub fn retired_prelude_id(func_id: FuncId) -> Option<&'static RetiredPreludeId> {
+        RETIRED_PRELUDE_IDS
+            .iter()
+            .find(|entry| entry.func_id == func_id)
+    }
+
+    pub fn is_retired_prelude_id(func_id: FuncId) -> bool {
+        retired_prelude_id(func_id).is_some()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +260,12 @@ impl Lowerer {
             };
             func_table.insert(name.to_string(), *func_id);
         }
+        debug_assert!(
+            !func_table
+                .values()
+                .any(|id| prelude::is_retired_prelude_id(*id)),
+            "lowerer func_table must not contain retired prelude IDs"
+        );
 
         // len is polymorphic and handled specially in lower_expr_call
 

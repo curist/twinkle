@@ -639,10 +639,8 @@ mod tests {
     #[test]
     fn prelude_map_covers_all_fixed_ids() {
         let map = build_prelude_map();
-        // FuncId(30) was STRING_SUBSTR (removed; String.slice replaced it)
-        let skip: std::collections::HashSet<u32> = [30].into();
-        for id in 1..=prelude_ids::VECTOR_BUILDER_FREEZE.0 {
-            if skip.contains(&id) {
+        for id in prelude_ids::fixed_prelude_id_range() {
+            if prelude_ids::is_retired_prelude_id(FuncId(id)) {
                 continue;
             }
             assert!(
@@ -677,6 +675,22 @@ mod tests {
                 map.contains_key(&FuncId(id)),
                 "missing host prelude FuncId({id})"
             );
+        }
+
+        for retired in prelude_ids::RETIRED_PRELUDE_IDS {
+            assert!(
+                !map.contains_key(&retired.func_id),
+                "retired prelude FuncId({}) should not exist in prelude map",
+                retired.func_id.0
+            );
+            if let Some(replacement) = retired.replacement {
+                assert!(
+                    map.contains_key(&replacement),
+                    "replacement FuncId({}) for retired FuncId({}) missing",
+                    replacement.0,
+                    retired.func_id.0
+                );
+            }
         }
     }
 
