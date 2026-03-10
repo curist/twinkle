@@ -43,6 +43,12 @@
   ">"
   ">="
   "!"
+  "&"
+  "|"
+  "^"
+  "~"
+  "<<"
+  ">>"
 ] @operator
 
 [ "and" "or" ] @keyword.operator

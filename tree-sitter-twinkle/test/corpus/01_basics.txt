@@ -13,12 +13,16 @@ x := 1
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Comment only
@@ -46,12 +50,16 @@ x := 42
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Let binding with explicit type
@@ -70,12 +78,16 @@ x: Int = 42
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 ASI - newline acts as semicolon
@@ -93,24 +105,32 @@ y := 2
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal)))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal)))))))))))))))
   (top_level_let_binding
     (let_binding
       name: (identifier)
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Explicit semicolon
@@ -128,24 +148,32 @@ y := 2;
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal)))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal)))))))))))))))
   (top_level_let_binding
     (let_binding
       name: (identifier)
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Use declaration — simple
@@ -234,12 +262,16 @@ pub PI: Float = 3.14159
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (float_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (float_literal))))))))))))))))
 
 ================================================================================
 Method chain — same line
@@ -253,16 +285,20 @@ s.len()
   (assignment_expression
     (logical_or_expression
       (logical_and_expression
-        (equality_expression
-          (comparison_expression
-            (additive_expression
-              (multiplicative_expression
-                (unary_expression
-                  (call_expression
-                    function: (field_access
-                      object: (identifier)
-                      field: (identifier))
-                    arguments: (argument_list)))))))))))
+        (bitwise_or_expression
+          (bitwise_xor_expression
+            (bitwise_and_expression
+              (equality_expression
+                (comparison_expression
+                  (shift_expression
+                    (additive_expression
+                      (multiplicative_expression
+                        (unary_expression
+                          (call_expression
+                            function: (field_access
+                              object: (identifier)
+                              field: (identifier))
+                            arguments: (argument_list)))))))))))))))
 
 ================================================================================
 Method chain — across newlines
@@ -277,16 +313,20 @@ s
   (assignment_expression
     (logical_or_expression
       (logical_and_expression
-        (equality_expression
-          (comparison_expression
-            (additive_expression
-              (multiplicative_expression
-                (unary_expression
-                  (call_expression
-                    function: (field_access
-                      object: (identifier)
-                      field: (identifier))
-                    arguments: (argument_list)))))))))))
+        (bitwise_or_expression
+          (bitwise_xor_expression
+            (bitwise_and_expression
+              (equality_expression
+                (comparison_expression
+                  (shift_expression
+                    (additive_expression
+                      (multiplicative_expression
+                        (unary_expression
+                          (call_expression
+                            function: (field_access
+                              object: (identifier)
+                              field: (identifier))
+                            arguments: (argument_list)))))))))))))))
 
 ================================================================================
 Method chain — multi-step across newlines
@@ -302,39 +342,52 @@ s
   (assignment_expression
     (logical_or_expression
       (logical_and_expression
-        (equality_expression
-          (comparison_expression
-            (additive_expression
-              (multiplicative_expression
-                (unary_expression
-                  (call_expression
-                    function: (field_access
-                      object: (call_expression
-                        function: (field_access
-                          object: (identifier)
-                          field: (identifier))
-                        arguments: (argument_list
-                          (arguments
-                            (assignment_expression
-                              (logical_or_expression
-                                (logical_and_expression
-                                  (equality_expression
-                                    (comparison_expression
-                                      (additive_expression
-                                        (multiplicative_expression
-                                          (unary_expression
-                                            (int_literal)))))))))
-                            (assignment_expression
-                              (logical_or_expression
-                                (logical_and_expression
-                                  (equality_expression
-                                    (comparison_expression
-                                      (additive_expression
-                                        (multiplicative_expression
-                                          (unary_expression
-                                            (int_literal))))))))))))
-                      field: (identifier))
-                    arguments: (argument_list)))))))))))
+        (bitwise_or_expression
+          (bitwise_xor_expression
+            (bitwise_and_expression
+              (equality_expression
+                (comparison_expression
+                  (shift_expression
+                    (additive_expression
+                      (multiplicative_expression
+                        (unary_expression
+                          (call_expression
+                            function: (field_access
+                              object: (call_expression
+                                function: (field_access
+                                  object: (identifier)
+                                  field: (identifier))
+                                arguments: (argument_list
+                                  (arguments
+                                    (assignment_expression
+                                      (logical_or_expression
+                                        (logical_and_expression
+                                          (bitwise_or_expression
+                                            (bitwise_xor_expression
+                                              (bitwise_and_expression
+                                                (equality_expression
+                                                  (comparison_expression
+                                                    (shift_expression
+                                                      (additive_expression
+                                                        (multiplicative_expression
+                                                          (unary_expression
+                                                            (int_literal)))))))))))))
+                                    (assignment_expression
+                                      (logical_or_expression
+                                        (logical_and_expression
+                                          (bitwise_or_expression
+                                            (bitwise_xor_expression
+                                              (bitwise_and_expression
+                                                (equality_expression
+                                                  (comparison_expression
+                                                    (shift_expression
+                                                      (additive_expression
+                                                        (multiplicative_expression
+                                                          (unary_expression
+                                                            (int_literal))))))))))))))))
+                              field: (identifier))
+                            arguments: (argument_list)))))))))))))))
+
 ================================================================================
 Hex literal — simple
 ================================================================================
@@ -350,12 +403,16 @@ x := 0xFF
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Hex literal — in arithmetic
@@ -372,16 +429,20 @@ x := 0xFF + 1
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  left: (additive_expression
-                    (multiplicative_expression
-                      (unary_expression
-                        (int_literal))))
-                  right: (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          left: (additive_expression
+                            (multiplicative_expression
+                              (unary_expression
+                                (int_literal))))
+                          right: (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Hex literal — lowercase digits
@@ -398,12 +459,16 @@ x := 0xdeadbeef
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Hex literal — zero
@@ -420,12 +485,16 @@ x := 0x0
       value: (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (int_literal))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (int_literal))))))))))))))))
 
 ================================================================================
 Defer — simple call expression
@@ -448,14 +517,18 @@ fn foo() Void {
         expression: (assignment_expression
           (logical_or_expression
             (logical_and_expression
-              (equality_expression
-                (comparison_expression
-                  (additive_expression
-                    (multiplicative_expression
-                      (unary_expression
-                        (call_expression
-                          function: (identifier)
-                          arguments: (argument_list))))))))))))))
+              (bitwise_or_expression
+                (bitwise_xor_expression
+                  (bitwise_and_expression
+                    (equality_expression
+                      (comparison_expression
+                        (shift_expression
+                          (additive_expression
+                            (multiplicative_expression
+                              (unary_expression
+                                (call_expression
+                                  function: (identifier)
+                                  arguments: (argument_list))))))))))))))))))
 
 ================================================================================
 Defer — block expression
@@ -478,23 +551,31 @@ fn foo() Void {
         expression: (assignment_expression
           (logical_or_expression
             (logical_and_expression
-              (equality_expression
-                (comparison_expression
-                  (additive_expression
-                    (multiplicative_expression
-                      (unary_expression
-                        (block
-                          (assignment_expression
-                            (logical_or_expression
-                              (logical_and_expression
-                                (equality_expression
-                                  (comparison_expression
-                                    (additive_expression
-                                      (multiplicative_expression
-                                        (unary_expression
-                                          (call_expression
-                                            function: (identifier)
-                                            arguments: (argument_list)))))))))))))))))))))))
+              (bitwise_or_expression
+                (bitwise_xor_expression
+                  (bitwise_and_expression
+                    (equality_expression
+                      (comparison_expression
+                        (shift_expression
+                          (additive_expression
+                            (multiplicative_expression
+                              (unary_expression
+                                (block
+                                  (assignment_expression
+                                    (logical_or_expression
+                                      (logical_and_expression
+                                        (bitwise_or_expression
+                                          (bitwise_xor_expression
+                                            (bitwise_and_expression
+                                              (equality_expression
+                                                (comparison_expression
+                                                  (shift_expression
+                                                    (additive_expression
+                                                      (multiplicative_expression
+                                                        (unary_expression
+                                                          (call_expression
+                                                            function: (identifier)
+                                                            arguments: (argument_list)))))))))))))))))))))))))))))))
 
 ================================================================================
 Defer — multiple defers in same block (LIFO)
@@ -519,34 +600,46 @@ fn foo() Void {
         expression: (assignment_expression
           (logical_or_expression
             (logical_and_expression
-              (equality_expression
-                (comparison_expression
-                  (additive_expression
-                    (multiplicative_expression
-                      (unary_expression
-                        (call_expression
-                          function: (identifier)
-                          arguments: (argument_list)))))))))))
+              (bitwise_or_expression
+                (bitwise_xor_expression
+                  (bitwise_and_expression
+                    (equality_expression
+                      (comparison_expression
+                        (shift_expression
+                          (additive_expression
+                            (multiplicative_expression
+                              (unary_expression
+                                (call_expression
+                                  function: (identifier)
+                                  arguments: (argument_list)))))))))))))))
       (defer_statement
         expression: (assignment_expression
           (logical_or_expression
             (logical_and_expression
-              (equality_expression
-                (comparison_expression
-                  (additive_expression
-                    (multiplicative_expression
-                      (unary_expression
-                        (call_expression
-                          function: (identifier)
-                          arguments: (argument_list)))))))))))
+              (bitwise_or_expression
+                (bitwise_xor_expression
+                  (bitwise_and_expression
+                    (equality_expression
+                      (comparison_expression
+                        (shift_expression
+                          (additive_expression
+                            (multiplicative_expression
+                              (unary_expression
+                                (call_expression
+                                  function: (identifier)
+                                  arguments: (argument_list)))))))))))))))
       (assignment_expression
         (logical_or_expression
           (logical_and_expression
-            (equality_expression
-              (comparison_expression
-                (additive_expression
-                  (multiplicative_expression
-                    (unary_expression
-                      (call_expression
-                        function: (identifier)
-                        arguments: (argument_list)))))))))))))
+            (bitwise_or_expression
+              (bitwise_xor_expression
+                (bitwise_and_expression
+                  (equality_expression
+                    (comparison_expression
+                      (shift_expression
+                        (additive_expression
+                          (multiplicative_expression
+                            (unary_expression
+                              (call_expression
+                                function: (identifier)
+                                arguments: (argument_list)))))))))))))))))

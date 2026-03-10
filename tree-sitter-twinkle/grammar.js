@@ -194,6 +194,33 @@ module.exports = grammar({
       prec.left('and', seq(
         field('left', $.logical_and_expression),
         'and',
+        field('right', $.bitwise_or_expression),
+      )),
+      $.bitwise_or_expression,
+    ),
+
+    bitwise_or_expression: $ => choice(
+      prec.left('bitwise_or', seq(
+        field('left', $.bitwise_or_expression),
+        field('operator', '|'),
+        field('right', $.bitwise_xor_expression),
+      )),
+      $.bitwise_xor_expression,
+    ),
+
+    bitwise_xor_expression: $ => choice(
+      prec.left('bitwise_xor', seq(
+        field('left', $.bitwise_xor_expression),
+        field('operator', '^'),
+        field('right', $.bitwise_and_expression),
+      )),
+      $.bitwise_and_expression,
+    ),
+
+    bitwise_and_expression: $ => choice(
+      prec.left('bitwise_and', seq(
+        field('left', $.bitwise_and_expression),
+        field('operator', '&'),
         field('right', $.equality_expression),
       )),
       $.equality_expression,
@@ -212,6 +239,15 @@ module.exports = grammar({
       prec.left('comparison', seq(
         field('left', $.comparison_expression),
         field('operator', choice('<', '<=', '>', '>=')),
+        field('right', $.shift_expression),
+      )),
+      $.shift_expression,
+    ),
+
+    shift_expression: $ => choice(
+      prec.left('shift', seq(
+        field('left', $.shift_expression),
+        field('operator', choice('<<', '>>')),
         field('right', $.additive_expression),
       )),
       $.additive_expression,
@@ -237,7 +273,7 @@ module.exports = grammar({
 
     unary_expression: $ => choice(
       prec('unary', seq(
-        field('operator', choice('-', '!', 'try')),
+        field('operator', choice('-', '!', '~', 'try')),
         field('operand', $.unary_expression),
       )),
       $._postfix_expression,
@@ -629,8 +665,12 @@ module.exports = grammar({
       'assign',
       'or',
       'and',
+      'bitwise_or',
+      'bitwise_xor',
+      'bitwise_and',
       'equality',
       'comparison',
+      'shift',
       'additive',
       'multiplicative',
       'unary',
@@ -645,7 +685,7 @@ module.exports = grammar({
     [$.type_name],
     [$.type],
     // Binary precedence edge cases
-    [$.comparison_expression, $.additive_expression],
+    [$.shift_expression, $.additive_expression],
     // Postfix vs unary (e.g. -x.y, -f(), -a[0])
     [$.unary_expression, $.field_access],
     [$.unary_expression, $.call_expression],

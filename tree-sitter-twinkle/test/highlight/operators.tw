@@ -47,6 +47,25 @@ h := true or false
 i := !true
 //   ^ operator
 
+// Bitwise operators
+j := x & y
+//     ^ operator
+
+k := x | y
+//     ^ operator
+
+l := x ^ y
+//     ^ operator
+
+n := ~x
+//   ^ operator
+
+o := x << 2
+//     ^^ operator
+
+p := x >> 1
+//     ^^ operator
+
 // Optional type operator
 type Maybe = Int?
 //               ^ operator
