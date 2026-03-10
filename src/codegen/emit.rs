@@ -230,6 +230,8 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
     // Always emit parse helpers — they're small and may be referenced by intrinsics
     module.funcs.push(emit_int_from_string_helper());
     module.funcs.push(emit_from_code_point_helper());
+    module.funcs.push(emit_string_utf8_bytes_helper());
+    module.funcs.push(emit_string_from_utf8_helper());
     if ctx.has_import("host_parse_float") {
         module.funcs.push(emit_float_from_string_helper());
     }
@@ -3798,6 +3800,12 @@ fn emit_prelude_call(
         id if id == prelude_ids::FROM_CODE_POINT => {
             emit_from_code_point_intrinsic(args, bind_ty, ctx)
         }
+        id if id == prelude_ids::STRING_UTF8_BYTES => {
+            emit_string_utf8_bytes_intrinsic(args, bind_ty, ctx)
+        }
+        id if id == prelude_ids::STRING_FROM_UTF8 => {
+            emit_string_from_utf8_intrinsic(args, bind_ty, ctx)
+        }
         id if id == prelude_ids::INT_FROM_STRING => {
             emit_int_from_string_intrinsic(args, bind_ty, ctx)
         }
@@ -4945,6 +4953,30 @@ fn emit_from_code_point_intrinsic(
     instrs
 }
 
+fn emit_string_utf8_bytes_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // String.utf8_bytes(s: String) -> Vector<Byte>
+    // Delegates to helper that iterates string bytes and boxes them into $Array.
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.push(Instr::Call("$string_utf8_bytes_helper".to_string()));
+    instrs
+}
+
+fn emit_string_from_utf8_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
+    // Delegates to helper that validates UTF-8 and copies bytes into $String.
+    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    instrs.push(Instr::Call("$string_from_utf8_helper".to_string()));
+    instrs
+}
+
 fn emit_int_from_string_intrinsic(
     args: &[Atom],
     _bind_ty: &ValType,
@@ -5379,6 +5411,545 @@ fn emit_from_code_point_helper() -> FuncDef {
         locals: vec![],
         body,
     }
+}
+
+/// Generate helper function: $string_utf8_bytes_helper
+/// Takes (ref null $String) → (ref $Array)
+/// Copies each byte of the string into a $Array (Vector<Byte>) with i31-boxed values.
+fn emit_string_utf8_bytes_helper() -> FuncDef {
+    use crate::runtime::types::{T_ARRAY, T_STRING};
+
+    // param 0: (ref null $String) — the input string
+    // local 1: i32 — len
+    // local 2: i32 — idx (loop counter)
+    // local 3: (ref $Array) — result array
+
+    let body = vec![
+        // local 1 = array.len(param 0)
+        Instr::LocalGet(0),
+        Instr::ArrayLen,
+        Instr::LocalSet(1),
+        // local 3 = array.new_default $Array (len)
+        Instr::LocalGet(1),
+        Instr::ArrayNewDefault(T_ARRAY.to_string()),
+        Instr::LocalSet(3),
+        // local 2 = 0
+        Instr::I32Const(0),
+        Instr::LocalSet(2),
+        // loop: copy each byte
+        Instr::Block {
+            label: "$break".to_string(),
+            result: None,
+            body: vec![Instr::Loop {
+                label: "$continue".to_string(),
+                result: None,
+                body: vec![
+                    // if idx >= len, break
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(1),
+                    Instr::I32GeU,
+                    Instr::BrIf("$break".to_string()),
+                    // result[idx] = ref.i31(array.get_u $String (str, idx))
+                    Instr::LocalGet(3),
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(0),
+                    Instr::LocalGet(2),
+                    Instr::ArrayGetU(T_STRING.to_string()),
+                    Instr::RefI31,
+                    Instr::ArraySet(T_ARRAY.to_string()),
+                    // idx += 1
+                    Instr::LocalGet(2),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::LocalSet(2),
+                    Instr::Br("$continue".to_string()),
+                ],
+            }],
+        },
+        // return the result array
+        Instr::LocalGet(3),
+    ];
+
+    FuncDef {
+        name: "$string_utf8_bytes_helper".to_string(),
+        params: vec![ref_string_null()],
+        results: vec![ref_array()],
+        locals: vec![ValType::I32, ValType::I32, ref_array()],
+        body,
+    }
+}
+
+/// Generate helper function: $string_from_utf8_helper
+/// Takes (ref null $Array) → anyref (Option<String> variant)
+/// Validates UTF-8 and copies bytes into a $String array.
+fn emit_string_from_utf8_helper() -> FuncDef {
+    use crate::runtime::types::{T_ARRAY, T_STRING, T_VARIANT};
+
+    // param 0: (ref null $Array) — input Vector<Byte>
+    // local 1: i32 — len
+    // local 2: i32 — idx (validation + copy loop counter)
+    // local 3: (ref null $String) — result string (allocated after validation)
+    // local 4: i32 — current byte value
+
+    let mk_none = || -> Vec<Instr> {
+        let mut v = vec![
+            Instr::I32Const(0), // type_id (Option)
+            Instr::I32Const(0), // variant_id (None)
+            Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+            Instr::StructNew(T_VARIANT.to_string()),
+        ];
+        v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+        v
+    };
+
+    // UTF-8 validation: walk through bytes checking lead byte patterns.
+    // For each lead byte, verify the correct number of continuation bytes follow.
+    // A continuation byte is 0x80..0xBF (top 2 bits = 10).
+
+    // Strategy:
+    // 1. Validation loop: walk the bytes checking UTF-8 structure
+    // 2. If valid, copy all bytes into a new $String and return Some
+    // 3. If invalid, return None
+    //
+    // We use a two-pass approach:
+    //   Pass 1: validate UTF-8 (sets a flag if invalid)
+    //   Pass 2: copy bytes into $String (only if valid)
+    //
+    // Actually, to keep it simpler, we do a single validation pass.
+    // If it passes, we do a copy pass. This is O(2n) but straightforward.
+
+    // local 5: i32 — valid flag (1 = valid so far)
+    // local 6: i32 — expected continuation bytes remaining
+
+    let body = vec![
+        // len = array.len(param 0)
+        Instr::LocalGet(0),
+        Instr::ArrayLen,
+        Instr::LocalSet(1),
+        // valid = 1
+        Instr::I32Const(1),
+        Instr::LocalSet(5),
+        // idx = 0
+        Instr::I32Const(0),
+        Instr::LocalSet(2),
+        // Validation loop
+        Instr::Block {
+            label: "$vbreak".to_string(),
+            result: None,
+            body: vec![Instr::Loop {
+                label: "$vcont".to_string(),
+                result: None,
+                body: vec![
+                    // if idx >= len, break
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(1),
+                    Instr::I32GeU,
+                    Instr::BrIf("$vbreak".to_string()),
+                    // byte = i31.get_u(ref.cast (ref i31) (array.get $Array (bytes, idx)))
+                    Instr::LocalGet(0),
+                    Instr::LocalGet(2),
+                    Instr::ArrayGet(T_ARRAY.to_string()),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: crate::wasm::ir::HeapType::I31,
+                    },
+                    Instr::I31GetU,
+                    Instr::LocalSet(4),
+                    // Determine expected byte length from lead byte
+                    Instr::LocalGet(4),
+                    Instr::I32Const(0x80),
+                    Instr::I32LtU,
+                    Instr::If {
+                        result: None,
+                        // ASCII: 0x00..0x7F — single byte, advance by 1
+                        then_body: vec![
+                            Instr::LocalGet(2),
+                            Instr::I32Const(1),
+                            Instr::I32Add,
+                            Instr::LocalSet(2),
+                        ],
+                        else_body: vec![
+                            // Check 2-byte lead: 0xC0..0xDF
+                            Instr::LocalGet(4),
+                            Instr::I32Const(0xC0),
+                            Instr::I32GeU,
+                            Instr::LocalGet(4),
+                            Instr::I32Const(0xDF),
+                            Instr::I32LeU,
+                            Instr::I32And,
+                            Instr::If {
+                                result: None,
+                                then_body: vec![
+                                    // Need 1 continuation byte; also reject overlong (< 0xC2)
+                                    Instr::LocalGet(4),
+                                    Instr::I32Const(0xC2),
+                                    Instr::I32LtU,
+                                    Instr::If {
+                                        result: None,
+                                        then_body: vec![
+                                            Instr::I32Const(0),
+                                            Instr::LocalSet(5),
+                                            Instr::Br("$vbreak".to_string()),
+                                        ],
+                                        else_body: vec![],
+                                    },
+                                    // Check idx+1 < len
+                                    Instr::LocalGet(2),
+                                    Instr::I32Const(1),
+                                    Instr::I32Add,
+                                    Instr::LocalGet(1),
+                                    Instr::I32GeU,
+                                    Instr::If {
+                                        result: None,
+                                        then_body: vec![
+                                            Instr::I32Const(0),
+                                            Instr::LocalSet(5),
+                                            Instr::Br("$vbreak".to_string()),
+                                        ],
+                                        else_body: vec![],
+                                    },
+                                    // Check continuation byte at idx+1
+                                    Instr::LocalGet(0),
+                                    Instr::LocalGet(2),
+                                    Instr::I32Const(1),
+                                    Instr::I32Add,
+                                    Instr::ArrayGet(T_ARRAY.to_string()),
+                                    Instr::RefCast {
+                                        nullable: false,
+                                        heap: crate::wasm::ir::HeapType::I31,
+                                    },
+                                    Instr::I31GetU,
+                                    Instr::LocalSet(6),
+                                    // continuation = (byte & 0xC0) == 0x80
+                                    Instr::LocalGet(6),
+                                    Instr::I32Const(0xC0),
+                                    Instr::I32And,
+                                    Instr::I32Const(0x80),
+                                    Instr::I32Ne,
+                                    Instr::If {
+                                        result: None,
+                                        then_body: vec![
+                                            Instr::I32Const(0),
+                                            Instr::LocalSet(5),
+                                            Instr::Br("$vbreak".to_string()),
+                                        ],
+                                        else_body: vec![],
+                                    },
+                                    // advance by 2
+                                    Instr::LocalGet(2),
+                                    Instr::I32Const(2),
+                                    Instr::I32Add,
+                                    Instr::LocalSet(2),
+                                ],
+                                else_body: vec![
+                                    // Check 3-byte lead: 0xE0..0xEF
+                                    Instr::LocalGet(4),
+                                    Instr::I32Const(0xE0),
+                                    Instr::I32GeU,
+                                    Instr::LocalGet(4),
+                                    Instr::I32Const(0xEF),
+                                    Instr::I32LeU,
+                                    Instr::I32And,
+                                    Instr::If {
+                                        result: None,
+                                        then_body: emit_utf8_validate_multibyte(3),
+                                        else_body: vec![
+                                            // Check 4-byte lead: 0xF0..0xF4
+                                            Instr::LocalGet(4),
+                                            Instr::I32Const(0xF0),
+                                            Instr::I32GeU,
+                                            Instr::LocalGet(4),
+                                            Instr::I32Const(0xF4),
+                                            Instr::I32LeU,
+                                            Instr::I32And,
+                                            Instr::If {
+                                                result: None,
+                                                then_body: emit_utf8_validate_multibyte(4),
+                                                // Not a valid lead byte
+                                                else_body: vec![
+                                                    Instr::I32Const(0),
+                                                    Instr::LocalSet(5),
+                                                    Instr::Br("$vbreak".to_string()),
+                                                ],
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    Instr::Br("$vcont".to_string()),
+                ],
+            }],
+        },
+        // After validation: if !valid, return None
+        Instr::LocalGet(5),
+        Instr::I32Eqz,
+        Instr::If {
+            result: Some(ValType::Anyref),
+            then_body: mk_none(),
+            else_body: {
+                // Valid! Copy bytes into a new $String
+                let mut some_body = vec![
+                    // Allocate string: array.new_default $String (len)
+                    Instr::LocalGet(1),
+                    Instr::ArrayNewDefault(T_STRING.to_string()),
+                    Instr::LocalSet(3),
+                    // idx = 0
+                    Instr::I32Const(0),
+                    Instr::LocalSet(2),
+                    // Copy loop
+                    Instr::Block {
+                        label: "$cbreak".to_string(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "$ccont".to_string(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(2),
+                                Instr::LocalGet(1),
+                                Instr::I32GeU,
+                                Instr::BrIf("$cbreak".to_string()),
+                                // string[idx] = i31.get_u(array[idx])
+                                Instr::LocalGet(3),
+                                Instr::LocalGet(2),
+                                Instr::LocalGet(0),
+                                Instr::LocalGet(2),
+                                Instr::ArrayGet(T_ARRAY.to_string()),
+                                Instr::RefCast {
+                                    nullable: false,
+                                    heap: crate::wasm::ir::HeapType::I31,
+                                },
+                                Instr::I31GetU,
+                                Instr::ArraySet(T_STRING.to_string()),
+                                // idx += 1
+                                Instr::LocalGet(2),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(2),
+                                Instr::Br("$ccont".to_string()),
+                            ],
+                        }],
+                    },
+                    // Build Some(string) variant
+                    Instr::I32Const(0), // type_id (Option)
+                    Instr::I32Const(1), // variant_id (Some)
+                    Instr::LocalGet(3),
+                ];
+                some_body.extend(emit_coerce_stack(&ref_string_null(), &ValType::Anyref));
+                some_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+                some_body.push(Instr::StructNew(T_VARIANT.to_string()));
+                some_body.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+                some_body
+            },
+        },
+    ];
+
+    FuncDef {
+        name: "$string_from_utf8_helper".to_string(),
+        params: vec![ref_array_null()],
+        results: vec![ValType::Anyref],
+        locals: vec![
+            ValType::I32,      // local 1: len
+            ValType::I32,      // local 2: idx
+            ref_string_null(), // local 3: result string
+            ValType::I32,      // local 4: current byte
+            ValType::I32,      // local 5: valid flag
+            ValType::I32,      // local 6: temp for continuation byte check
+        ],
+        body,
+    }
+}
+
+/// Emit validation for a 3-byte or 4-byte UTF-8 sequence.
+/// Checks that the required number of continuation bytes (n-1) follow the lead byte.
+/// Uses locals: 0=bytes, 1=len, 2=idx, 4=lead_byte, 5=valid, 6=temp.
+fn emit_utf8_validate_multibyte(n: u32) -> Vec<Instr> {
+    use crate::runtime::types::T_ARRAY;
+    let mut instrs = Vec::new();
+
+    // Check that idx + n - 1 < len (enough bytes remaining)
+    instrs.push(Instr::LocalGet(2));
+    instrs.push(Instr::I32Const(n as i32 - 1));
+    instrs.push(Instr::I32Add);
+    instrs.push(Instr::LocalGet(1));
+    instrs.push(Instr::I32GeU);
+    instrs.push(Instr::If {
+        result: None,
+        then_body: vec![
+            Instr::I32Const(0),
+            Instr::LocalSet(5),
+            Instr::Br("$vbreak".to_string()),
+        ],
+        else_body: vec![],
+    });
+
+    // Check each continuation byte
+    for offset in 1..n {
+        instrs.push(Instr::LocalGet(0));
+        instrs.push(Instr::LocalGet(2));
+        instrs.push(Instr::I32Const(offset as i32));
+        instrs.push(Instr::I32Add);
+        instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
+        instrs.push(Instr::RefCast {
+            nullable: false,
+            heap: crate::wasm::ir::HeapType::I31,
+        });
+        instrs.push(Instr::I31GetU);
+        instrs.push(Instr::I32Const(0xC0));
+        instrs.push(Instr::I32And);
+        instrs.push(Instr::I32Const(0x80));
+        instrs.push(Instr::I32Ne);
+        instrs.push(Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::I32Const(0),
+                Instr::LocalSet(5),
+                Instr::Br("$vbreak".to_string()),
+            ],
+            else_body: vec![],
+        });
+    }
+
+    // Additional checks for 3-byte sequences: reject surrogates and overlongs
+    if n == 3 {
+        // If lead byte == 0xE0, second byte must be >= 0xA0 (reject overlong)
+        instrs.push(Instr::LocalGet(4));
+        instrs.push(Instr::I32Const(0xE0));
+        instrs.push(Instr::I32Eq);
+        instrs.push(Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(2),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::RefCast {
+                    nullable: false,
+                    heap: crate::wasm::ir::HeapType::I31,
+                },
+                Instr::I31GetU,
+                Instr::I32Const(0xA0),
+                Instr::I32LtU,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::I32Const(0),
+                        Instr::LocalSet(5),
+                        Instr::Br("$vbreak".to_string()),
+                    ],
+                    else_body: vec![],
+                },
+            ],
+            else_body: vec![],
+        });
+        // If lead byte == 0xED, second byte must be < 0xA0 (reject surrogates)
+        instrs.push(Instr::LocalGet(4));
+        instrs.push(Instr::I32Const(0xED));
+        instrs.push(Instr::I32Eq);
+        instrs.push(Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(2),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::RefCast {
+                    nullable: false,
+                    heap: crate::wasm::ir::HeapType::I31,
+                },
+                Instr::I31GetU,
+                Instr::I32Const(0xA0),
+                Instr::I32GeU,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::I32Const(0),
+                        Instr::LocalSet(5),
+                        Instr::Br("$vbreak".to_string()),
+                    ],
+                    else_body: vec![],
+                },
+            ],
+            else_body: vec![],
+        });
+    }
+
+    // Additional checks for 4-byte sequences
+    if n == 4 {
+        // If lead byte == 0xF0, second byte must be >= 0x90 (reject overlong)
+        instrs.push(Instr::LocalGet(4));
+        instrs.push(Instr::I32Const(0xF0));
+        instrs.push(Instr::I32Eq);
+        instrs.push(Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(2),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::RefCast {
+                    nullable: false,
+                    heap: crate::wasm::ir::HeapType::I31,
+                },
+                Instr::I31GetU,
+                Instr::I32Const(0x90),
+                Instr::I32LtU,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::I32Const(0),
+                        Instr::LocalSet(5),
+                        Instr::Br("$vbreak".to_string()),
+                    ],
+                    else_body: vec![],
+                },
+            ],
+            else_body: vec![],
+        });
+        // If lead byte == 0xF4, second byte must be < 0x90 (reject > U+10FFFF)
+        instrs.push(Instr::LocalGet(4));
+        instrs.push(Instr::I32Const(0xF4));
+        instrs.push(Instr::I32Eq);
+        instrs.push(Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(2),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::ArrayGet(T_ARRAY.to_string()),
+                Instr::RefCast {
+                    nullable: false,
+                    heap: crate::wasm::ir::HeapType::I31,
+                },
+                Instr::I31GetU,
+                Instr::I32Const(0x90),
+                Instr::I32GeU,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::I32Const(0),
+                        Instr::LocalSet(5),
+                        Instr::Br("$vbreak".to_string()),
+                    ],
+                    else_body: vec![],
+                },
+            ],
+            else_body: vec![],
+        });
+    }
+
+    // advance by n
+    instrs.push(Instr::LocalGet(2));
+    instrs.push(Instr::I32Const(n as i32));
+    instrs.push(Instr::I32Add);
+    instrs.push(Instr::LocalSet(2));
+
+    instrs
 }
 
 /// Generate helper function: $float_from_string_helper

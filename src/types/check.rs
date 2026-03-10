@@ -1708,6 +1708,33 @@ impl TypeChecker {
                 self.check_expr(&args[0], &MonoType::String)?;
                 Ok(MonoType::String)
             }
+            "utf8_bytes" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::String)?;
+                Ok(MonoType::Vector(Box::new(MonoType::Byte)))
+            }
+            "from_utf8" => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: 1,
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                self.check_expr(&args[0], &MonoType::Vector(Box::new(MonoType::Byte)))?;
+                Ok(MonoType::Named {
+                    type_id: crate::types::ty::OPTION_TYPE_ID,
+                    args: vec![MonoType::String],
+                })
+            }
             other => self.synth_qualified_call("String", other, args, span),
         }
     }

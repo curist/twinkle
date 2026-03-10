@@ -690,6 +690,36 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("String.from_code_point: expected Int"),
                 }
             }
+            prelude_ids::STRING_UTF8_BYTES => {
+                // String.utf8_bytes(s: String) -> Vector<Byte>
+                match &args[0] {
+                    Value::Str(s) => {
+                        let bytes: Vec<Value> =
+                            s.as_bytes().iter().map(|&b| Value::Byte(b)).collect();
+                        Ok(Value::Vec(bytes))
+                    }
+                    _ => panic!("String.utf8_bytes: expected String"),
+                }
+            }
+            prelude_ids::STRING_FROM_UTF8 => {
+                // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
+                match &args[0] {
+                    Value::Vec(bytes) => {
+                        let raw: Vec<u8> = bytes
+                            .iter()
+                            .map(|v| match v {
+                                Value::Byte(b) => *b,
+                                _ => panic!("String.from_utf8: expected Vector<Byte>"),
+                            })
+                            .collect();
+                        match String::from_utf8(raw) {
+                            Ok(s) => Ok(Value::Variant(OPTION_TYPE_ID, 1, vec![Value::Str(s)])),
+                            Err(_) => Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![])),
+                        }
+                    }
+                    _ => panic!("String.from_utf8: expected Vector<Byte>"),
+                }
+            }
             prelude_ids::INT_FROM_STRING => {
                 // Int.from_string(s: String) -> Option<Int>
                 match &args[0] {

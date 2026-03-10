@@ -172,6 +172,7 @@ pub enum Instr {
     RefEq,
     RefI31,
     I31GetS,
+    I31GetU,
     RefCast {
         nullable: bool,
         heap: HeapType,
@@ -189,6 +190,7 @@ pub enum Instr {
 
     // Array ops
     ArrayNew(TypeSym),
+    ArrayNewDefault(TypeSym),
     ArrayNewFixed(TypeSym, u32),
     ArrayNewData(TypeSym, u32),
     ArrayGet(TypeSym),

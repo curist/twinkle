@@ -46,7 +46,9 @@
   (type $functype_29 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_30 (func (param (ref null $rt_types__String)) (result anyref)))
   (type $functype_31 (func (param i32) (result anyref)))
-  (type $functype_32 (func (result (ref $rt_types__String))))
+  (type $functype_32 (func (param (ref null $rt_types__String)) (result (ref $rt_types__Array))))
+  (type $functype_33 (func (param (ref null $rt_types__Array)) (result anyref)))
+  (type $functype_34 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -1859,10 +1861,379 @@
                             array.new_fixed $rt_types__Array 0
                             struct.new $rt_types__Variant))))))))))))
   )
+  (func $user__$string_utf8_bytes_helper (type $functype_32)
+    (param $p0 (ref null $rt_types__String))
+    (result (ref $rt_types__Array))
+    (local $p1 i32)
+    (local $p2 i32)
+    (local $p3 (ref $rt_types__Array))
+    local.get $p0
+    array.len
+    local.set $p1
+    local.get $p1
+    array.new_default $rt_types__Array
+    local.set $p3
+    i32.const 0
+    local.set $p2
+    (block $$break
+      (loop $$continue
+        local.get $p2
+        local.get $p1
+        i32.ge_u
+        br_if $$break
+        local.get $p3
+        local.get $p2
+        local.get $p0
+        local.get $p2
+        array.get_u $rt_types__String
+        ref.i31
+        array.set $rt_types__Array
+        local.get $p2
+        i32.const 1
+        i32.add
+        local.set $p2
+        br $$continue))
+    local.get $p3
+  )
+  (func $user__$string_from_utf8_helper (type $functype_33)
+    (param $p0 (ref null $rt_types__Array))
+    (result anyref)
+    (local $p1 i32)
+    (local $p2 i32)
+    (local $p3 (ref null $rt_types__String))
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 i32)
+    local.get $p0
+    array.len
+    local.set $p1
+    i32.const 1
+    local.set $p5
+    i32.const 0
+    local.set $p2
+    (block $$vbreak
+      (loop $$vcont
+        local.get $p2
+        local.get $p1
+        i32.ge_u
+        br_if $$vbreak
+        local.get $p0
+        local.get $p2
+        array.get $rt_types__Array
+        ref.cast (ref i31)
+        i31.get_u
+        local.set $p4
+        local.get $p4
+        i32.const 128
+        i32.lt_u
+        (if
+          (then
+            local.get $p2
+            i32.const 1
+            i32.add
+            local.set $p2)
+          (else
+            local.get $p4
+            i32.const 192
+            i32.ge_u
+            local.get $p4
+            i32.const 223
+            i32.le_u
+            i32.and
+            (if
+              (then
+                local.get $p4
+                i32.const 194
+                i32.lt_u
+                (if
+                  (then
+                    i32.const 0
+                    local.set $p5
+                    br $$vbreak))
+                local.get $p2
+                i32.const 1
+                i32.add
+                local.get $p1
+                i32.ge_u
+                (if
+                  (then
+                    i32.const 0
+                    local.set $p5
+                    br $$vbreak))
+                local.get $p0
+                local.get $p2
+                i32.const 1
+                i32.add
+                array.get $rt_types__Array
+                ref.cast (ref i31)
+                i31.get_u
+                local.set $p6
+                local.get $p6
+                i32.const 192
+                i32.and
+                i32.const 128
+                i32.ne
+                (if
+                  (then
+                    i32.const 0
+                    local.set $p5
+                    br $$vbreak))
+                local.get $p2
+                i32.const 2
+                i32.add
+                local.set $p2)
+              (else
+                local.get $p4
+                i32.const 224
+                i32.ge_u
+                local.get $p4
+                i32.const 239
+                i32.le_u
+                i32.and
+                (if
+                  (then
+                    local.get $p2
+                    i32.const 2
+                    i32.add
+                    local.get $p1
+                    i32.ge_u
+                    (if
+                      (then
+                        i32.const 0
+                        local.set $p5
+                        br $$vbreak))
+                    local.get $p0
+                    local.get $p2
+                    i32.const 1
+                    i32.add
+                    array.get $rt_types__Array
+                    ref.cast (ref i31)
+                    i31.get_u
+                    i32.const 192
+                    i32.and
+                    i32.const 128
+                    i32.ne
+                    (if
+                      (then
+                        i32.const 0
+                        local.set $p5
+                        br $$vbreak))
+                    local.get $p0
+                    local.get $p2
+                    i32.const 2
+                    i32.add
+                    array.get $rt_types__Array
+                    ref.cast (ref i31)
+                    i31.get_u
+                    i32.const 192
+                    i32.and
+                    i32.const 128
+                    i32.ne
+                    (if
+                      (then
+                        i32.const 0
+                        local.set $p5
+                        br $$vbreak))
+                    local.get $p4
+                    i32.const 224
+                    i32.eq
+                    (if
+                      (then
+                        local.get $p0
+                        local.get $p2
+                        i32.const 1
+                        i32.add
+                        array.get $rt_types__Array
+                        ref.cast (ref i31)
+                        i31.get_u
+                        i32.const 160
+                        i32.lt_u
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))))
+                    local.get $p4
+                    i32.const 237
+                    i32.eq
+                    (if
+                      (then
+                        local.get $p0
+                        local.get $p2
+                        i32.const 1
+                        i32.add
+                        array.get $rt_types__Array
+                        ref.cast (ref i31)
+                        i31.get_u
+                        i32.const 160
+                        i32.ge_u
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))))
+                    local.get $p2
+                    i32.const 3
+                    i32.add
+                    local.set $p2)
+                  (else
+                    local.get $p4
+                    i32.const 240
+                    i32.ge_u
+                    local.get $p4
+                    i32.const 244
+                    i32.le_u
+                    i32.and
+                    (if
+                      (then
+                        local.get $p2
+                        i32.const 3
+                        i32.add
+                        local.get $p1
+                        i32.ge_u
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))
+                        local.get $p0
+                        local.get $p2
+                        i32.const 1
+                        i32.add
+                        array.get $rt_types__Array
+                        ref.cast (ref i31)
+                        i31.get_u
+                        i32.const 192
+                        i32.and
+                        i32.const 128
+                        i32.ne
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))
+                        local.get $p0
+                        local.get $p2
+                        i32.const 2
+                        i32.add
+                        array.get $rt_types__Array
+                        ref.cast (ref i31)
+                        i31.get_u
+                        i32.const 192
+                        i32.and
+                        i32.const 128
+                        i32.ne
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))
+                        local.get $p0
+                        local.get $p2
+                        i32.const 3
+                        i32.add
+                        array.get $rt_types__Array
+                        ref.cast (ref i31)
+                        i31.get_u
+                        i32.const 192
+                        i32.and
+                        i32.const 128
+                        i32.ne
+                        (if
+                          (then
+                            i32.const 0
+                            local.set $p5
+                            br $$vbreak))
+                        local.get $p4
+                        i32.const 240
+                        i32.eq
+                        (if
+                          (then
+                            local.get $p0
+                            local.get $p2
+                            i32.const 1
+                            i32.add
+                            array.get $rt_types__Array
+                            ref.cast (ref i31)
+                            i31.get_u
+                            i32.const 144
+                            i32.lt_u
+                            (if
+                              (then
+                                i32.const 0
+                                local.set $p5
+                                br $$vbreak))))
+                        local.get $p4
+                        i32.const 244
+                        i32.eq
+                        (if
+                          (then
+                            local.get $p0
+                            local.get $p2
+                            i32.const 1
+                            i32.add
+                            array.get $rt_types__Array
+                            ref.cast (ref i31)
+                            i31.get_u
+                            i32.const 144
+                            i32.ge_u
+                            (if
+                              (then
+                                i32.const 0
+                                local.set $p5
+                                br $$vbreak))))
+                        local.get $p2
+                        i32.const 4
+                        i32.add
+                        local.set $p2)
+                      (else
+                        i32.const 0
+                        local.set $p5
+                        br $$vbreak))))))))
+        br $$vcont))
+    local.get $p5
+    i32.eqz
+    (if (result anyref)
+      (then
+        i32.const 0
+        i32.const 0
+        array.new_fixed $rt_types__Array 0
+        struct.new $rt_types__Variant)
+      (else
+        local.get $p1
+        array.new_default $rt_types__String
+        local.set $p3
+        i32.const 0
+        local.set $p2
+        (block $$cbreak
+          (loop $$ccont
+            local.get $p2
+            local.get $p1
+            i32.ge_u
+            br_if $$cbreak
+            local.get $p3
+            local.get $p2
+            local.get $p0
+            local.get $p2
+            array.get $rt_types__Array
+            ref.cast (ref i31)
+            i31.get_u
+            array.set $rt_types__String
+            local.get $p2
+            i32.const 1
+            i32.add
+            local.set $p2
+            br $$ccont))
+        i32.const 0
+        i32.const 1
+        local.get $p3
+        array.new_fixed $rt_types__Array 1
+        struct.new $rt_types__Variant))
+  )
   (func $user____user_init (type $functype_27)
     call $user__func_43
   )
-  (func $user____str_lit_get_empty (type $functype_32)
+  (func $user____str_lit_get_empty (type $functype_34)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_empty
     ref.is_null

@@ -198,8 +198,14 @@ These are not tied to a specific stage:
 |------|-------------|
 | [vector-type.md](vector-type.md) | Replace `Array<T>` with `Vector<T>` |
 | [to-string-method-unification.md](to-string-method-unification.md) | Unify string conversion via `.to_string()` |
-| [string-unicode-semantics.md](string-unicode-semantics.md) | Align string semantics to Unicode scalar behavior with backend parity |
+| [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |
 | [uniqueness-optimization.md](uniqueness-optimization.md) | Uniqueness-based in-place update optimization |
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
+| [backend-pipeline-alignment.md](backend-pipeline-alignment.md) | Align backend pipeline to operate on monomorphized Core IR |
+| [hex-literals.md](hex-literals.md) | Hexadecimal integer literal syntax |
+| [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
+| [prelude-stdlib.md](prelude-stdlib.md) | Auto-available prelude inherent methods |
+| [wasm-iterator-representation-boundaries.md](wasm-iterator-representation-boundaries.md) | Stabilize iterator specialization boundaries in Wasm backend |
+| [wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md) | Reduce type erasure in Wasm backend with monomorphized layouts |

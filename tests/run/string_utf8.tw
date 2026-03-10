@@ -1,0 +1,106 @@
+// Expected output:
+//   5
+//   104
+//   101
+//   108
+//   108
+//   111
+//   Some(hello)
+//   2
+//   195
+//   169
+//   Some(é)
+//   4
+//   240
+//   159
+//   145
+//   141
+//   Some(👍)
+//   0
+//   Some()
+//   None
+//   None
+//   None
+//   Some(abc)
+//   round-trip: hello
+//   round-trip: 你好世界
+
+fn show_opt(o: String?) String {
+  case o {
+    .Some(s) => "Some(${s})",
+    .None => "None",
+  }
+}
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => {
+      println("bad byte")
+      "x"[0]
+    },
+  }
+}
+
+// utf8_bytes: ASCII
+s := "hello"
+bytes := s.utf8_bytes()
+println(bytes.len().to_string())
+for b,i in bytes {
+  println(b.to_int().to_string())
+}
+
+// round-trip ASCII
+println(show_opt(String.from_utf8(bytes)))
+
+// utf8_bytes: 2-byte UTF-8 (é = 195 169)
+s2 := "é"
+b2 := s2.utf8_bytes()
+println(b2.len().to_string())
+for b,i in b2 {
+  println(b.to_int().to_string())
+}
+println(show_opt(String.from_utf8(b2)))
+
+// utf8_bytes: 4-byte UTF-8 (👍 = 240 159 145 141)
+s3 := "👍"
+b3 := s3.utf8_bytes()
+println(b3.len().to_string())
+for b,i in b3 {
+  println(b.to_int().to_string())
+}
+println(show_opt(String.from_utf8(b3)))
+
+// empty string
+empty := "".utf8_bytes()
+println(empty.len().to_string())
+println(show_opt(String.from_utf8(empty)))
+
+// from_utf8: invalid - lone continuation byte (128 = 0x80)
+bad1: Vector<Byte> = [byte(128)]
+println(show_opt(String.from_utf8(bad1)))
+
+// from_utf8: invalid - overlong 2-byte (192 128 = 0xC0 0x80)
+bad2: Vector<Byte> = [byte(192), byte(128)]
+println(show_opt(String.from_utf8(bad2)))
+
+// from_utf8: invalid - truncated 3-byte lead (224 = 0xE0)
+bad3: Vector<Byte> = [byte(224)]
+println(show_opt(String.from_utf8(bad3)))
+
+// from_utf8: valid ASCII bytes
+abc: Vector<Byte> = [byte(97), byte(98), byte(99)]
+println(show_opt(String.from_utf8(abc)))
+
+// round-trip preservation
+msg := "hello"
+case String.from_utf8(msg.utf8_bytes()) {
+  .Some(t) => println("round-trip: ${t}"),
+  .None => println("FAIL"),
+}
+
+msg2 := "你好世界"
+case String.from_utf8(msg2.utf8_bytes()) {
+  .Some(t) => println("round-trip: ${t}"),
+  .None => println("FAIL"),
+}

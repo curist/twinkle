@@ -171,6 +171,11 @@ impl TypeEnv {
             "char_code_at".to_string(),
             "String.char_code_at".to_string(),
         );
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "utf8_bytes".to_string(),
+            "String.utf8_bytes".to_string(),
+        );
 
         env
     }
@@ -803,6 +808,22 @@ impl ValueEnv {
             name: "String.from_code_point".to_string(),
             type_params: vec![],
             params: vec![MonoType::Int],
+            ret: Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::String],
+            }),
+        });
+
+        env.add_function(FunctionSignature {
+            name: "String.utf8_bytes".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Vector(Box::new(MonoType::Byte))),
+        });
+        env.add_function(FunctionSignature {
+            name: "String.from_utf8".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Vector(Box::new(MonoType::Byte))],
             ret: Some(MonoType::Named {
                 type_id: OPTION_TYPE_ID,
                 args: vec![MonoType::String],

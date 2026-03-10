@@ -1,7 +1,7 @@
 # Byte-First String Semantics Plan
 
-**Status:** Proposed
-**Last updated:** 2026-03-09
+**Status:** Complete
+**Last updated:** 2026-03-10
 
 ## Goal
 

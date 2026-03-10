@@ -449,6 +449,14 @@ pub fn build_prelude_map() -> PreludeMap {
         PreludeEntry::intrinsic("String.from_code_point"),
     );
     map.insert(
+        prelude_ids::STRING_UTF8_BYTES,
+        PreludeEntry::intrinsic("String.utf8_bytes"),
+    );
+    map.insert(
+        prelude_ids::STRING_FROM_UTF8,
+        PreludeEntry::intrinsic("String.from_utf8"),
+    );
+    map.insert(
         prelude_ids::INT_FROM_STRING,
         PreludeEntry::intrinsic("Int.from_string"),
     );
@@ -607,6 +615,8 @@ mod tests {
             prelude_ids::HOST_EXIT.0,
             prelude_ids::CHAR_CODE_AT.0,
             prelude_ids::FROM_CHAR_CODE.0,
+            prelude_ids::STRING_UTF8_BYTES.0,
+            prelude_ids::STRING_FROM_UTF8.0,
             prelude_ids::INT_FROM_STRING.0,
             prelude_ids::FLOAT_FROM_STRING.0,
         ] {

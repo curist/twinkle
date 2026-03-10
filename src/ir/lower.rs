@@ -100,6 +100,8 @@ pub mod prelude {
     pub const BYTE_TO_STRING: FuncId = FuncId(1024); // Byte.to_string(b: Byte) -> String
     pub const STRING_SLICE: FuncId = FuncId(1025); // String.slice(s, start, end) -> String (UTF-8 boundary validated)
     pub const FROM_CODE_POINT: FuncId = FuncId(1026); // String.from_code_point(n: Int) -> Option<String>
+    pub const STRING_UTF8_BYTES: FuncId = FuncId(1027); // String.utf8_bytes(s: String) -> Vector<Byte>
+    pub const STRING_FROM_UTF8: FuncId = FuncId(1028); // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
 
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>
@@ -227,6 +229,8 @@ impl Lowerer {
         func_table.insert("Byte.to_int".to_string(), prelude::BYTE_TO_INT);
         func_table.insert("Byte.from_int".to_string(), prelude::BYTE_FROM_INT);
         func_table.insert("Byte.to_string".to_string(), prelude::BYTE_TO_STRING);
+        func_table.insert("String.utf8_bytes".to_string(), prelude::STRING_UTF8_BYTES);
+        func_table.insert("String.from_utf8".to_string(), prelude::STRING_FROM_UTF8);
         func_table.insert("Int.from_string".to_string(), prelude::INT_FROM_STRING);
         func_table.insert("Float.from_string".to_string(), prelude::FLOAT_FROM_STRING);
         func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
@@ -2608,6 +2612,7 @@ impl Lowerer {
             (MonoType::String, "concat") => prelude::STRING_CONCAT,
             (MonoType::String, "slice") => prelude::STRING_SLICE,
             (MonoType::String, "get") => prelude::STRING_GET,
+            (MonoType::String, "utf8_bytes") => prelude::STRING_UTF8_BYTES,
             (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
             (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
             (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,

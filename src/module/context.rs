@@ -136,6 +136,8 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
         "String.from_code_point".to_string(),
         prelude::FROM_CODE_POINT,
     );
+    func_table.insert("String.utf8_bytes".to_string(), prelude::STRING_UTF8_BYTES);
+    func_table.insert("String.from_utf8".to_string(), prelude::STRING_FROM_UTF8);
     func_table.insert("Int.from_string".to_string(), prelude::INT_FROM_STRING);
     func_table.insert("Float.from_string".to_string(), prelude::FLOAT_FROM_STRING);
     func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);

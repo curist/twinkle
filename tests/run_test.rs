@@ -346,3 +346,8 @@ fn string_chars() {
 fn string_code_point() {
     check("tests/run/string_code_point.tw");
 }
+
+#[test]
+fn string_utf8() {
+    check("tests/run/string_utf8.tw");
+}

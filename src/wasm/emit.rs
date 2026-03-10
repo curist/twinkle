@@ -427,6 +427,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::RefEq => format!("{pad}ref.eq"),
         Instr::RefI31 => format!("{pad}ref.i31"),
         Instr::I31GetS => format!("{pad}i31.get_s"),
+        Instr::I31GetU => format!("{pad}i31.get_u"),
         Instr::RefCast { nullable, heap } => {
             let ht = emit_heap_type(heap);
             if *nullable {
@@ -450,6 +451,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::StructSet(ty, idx) => format!("{pad}struct.set ${ty} {idx}"),
 
         Instr::ArrayNew(ty) => format!("{pad}array.new ${ty}"),
+        Instr::ArrayNewDefault(ty) => format!("{pad}array.new_default ${ty}"),
         Instr::ArrayNewFixed(ty, n) => format!("{pad}array.new_fixed ${ty} {n}"),
         Instr::ArrayNewData(ty, idx) => format!("{pad}array.new_data ${ty} {idx}"),
         Instr::ArrayGet(ty) => format!("{pad}array.get ${ty}"),
