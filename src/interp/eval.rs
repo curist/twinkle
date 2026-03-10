@@ -668,6 +668,28 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("String.from_char_code: expected Int"),
                 }
             }
+            prelude_ids::FROM_CODE_POINT => {
+                // String.from_code_point(n: Int) -> Option<String>
+                match &args[0] {
+                    Value::Int(n) => {
+                        let n = *n;
+                        if n >= 0 && n <= 0x10FFFF && !(0xD800..=0xDFFF).contains(&n) {
+                            if let Some(c) = char::from_u32(n as u32) {
+                                Ok(Value::Variant(
+                                    OPTION_TYPE_ID,
+                                    1,
+                                    vec![Value::Str(c.to_string())],
+                                ))
+                            } else {
+                                Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                            }
+                        } else {
+                            Ok(Value::Variant(OPTION_TYPE_ID, 0, vec![]))
+                        }
+                    }
+                    _ => panic!("String.from_code_point: expected Int"),
+                }
+            }
             prelude_ids::INT_FROM_STRING => {
                 // Int.from_string(s: String) -> Option<Int>
                 match &args[0] {

@@ -799,6 +799,16 @@ impl ValueEnv {
             }),
         });
 
+        env.add_function(FunctionSignature {
+            name: "String.from_code_point".to_string(),
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::String],
+            }),
+        });
+
         env.builtins.insert(
             "__host_read_file".to_string(),
             MonoType::Function {

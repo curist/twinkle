@@ -341,3 +341,8 @@ fn byte_type() {
 fn string_chars() {
     check("tests/run/string_chars.tw");
 }
+
+#[test]
+fn string_code_point() {
+    check("tests/run/string_code_point.tw");
+}

@@ -44,7 +44,8 @@
   (type $functype_27 (func (param anyref anyref) (result anyref)))
   (type $functype_28 (func (param anyref) (result (ref null $rt_types__Variant))))
   (type $functype_29 (func (param (ref null $rt_types__String)) (result anyref)))
-  (type $functype_30 (func (result (ref $rt_types__String))))
+  (type $functype_30 (func (param i32) (result anyref)))
+  (type $functype_31 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -1559,10 +1560,138 @@
         array.new_fixed $rt_types__Array 0
         struct.new $rt_types__Variant))
   )
+  (func $user__$from_code_point_helper (type $functype_30)
+    (param $p0 i32)
+    (result anyref)
+    local.get $p0
+    i32.const 0
+    i32.lt_s
+    (if (result anyref)
+      (then
+        i32.const 0
+        i32.const 0
+        array.new_fixed $rt_types__Array 0
+        struct.new $rt_types__Variant)
+      (else
+        local.get $p0
+        i32.const 128
+        i32.lt_u
+        (if (result anyref)
+          (then
+            i32.const 0
+            i32.const 1
+            local.get $p0
+            array.new_fixed $rt_types__String 1
+            array.new_fixed $rt_types__Array 1
+            struct.new $rt_types__Variant)
+          (else
+            local.get $p0
+            i32.const 2048
+            i32.lt_u
+            (if (result anyref)
+              (then
+                i32.const 0
+                i32.const 1
+                local.get $p0
+                i32.const 6
+                i32.shr_u
+                i32.const 192
+                i32.or
+                local.get $p0
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                array.new_fixed $rt_types__String 2
+                array.new_fixed $rt_types__Array 1
+                struct.new $rt_types__Variant)
+              (else
+                local.get $p0
+                i32.const 55296
+                i32.ge_u
+                local.get $p0
+                i32.const 57343
+                i32.le_u
+                i32.and
+                (if (result anyref)
+                  (then
+                    i32.const 0
+                    i32.const 0
+                    array.new_fixed $rt_types__Array 0
+                    struct.new $rt_types__Variant)
+                  (else
+                    local.get $p0
+                    i32.const 65535
+                    i32.le_u
+                    (if (result anyref)
+                      (then
+                        i32.const 0
+                        i32.const 1
+                        local.get $p0
+                        i32.const 12
+                        i32.shr_u
+                        i32.const 224
+                        i32.or
+                        local.get $p0
+                        i32.const 6
+                        i32.shr_u
+                        i32.const 63
+                        i32.and
+                        i32.const 128
+                        i32.or
+                        local.get $p0
+                        i32.const 63
+                        i32.and
+                        i32.const 128
+                        i32.or
+                        array.new_fixed $rt_types__String 3
+                        array.new_fixed $rt_types__Array 1
+                        struct.new $rt_types__Variant)
+                      (else
+                        local.get $p0
+                        i32.const 1114111
+                        i32.le_u
+                        (if (result anyref)
+                          (then
+                            i32.const 0
+                            i32.const 1
+                            local.get $p0
+                            i32.const 18
+                            i32.shr_u
+                            i32.const 240
+                            i32.or
+                            local.get $p0
+                            i32.const 12
+                            i32.shr_u
+                            i32.const 63
+                            i32.and
+                            i32.const 128
+                            i32.or
+                            local.get $p0
+                            i32.const 6
+                            i32.shr_u
+                            i32.const 63
+                            i32.and
+                            i32.const 128
+                            i32.or
+                            local.get $p0
+                            i32.const 63
+                            i32.and
+                            i32.const 128
+                            i32.or
+                            array.new_fixed $rt_types__String 4
+                            array.new_fixed $rt_types__Array 1
+                            struct.new $rt_types__Variant)
+                          (else
+                            i32.const 0
+                            i32.const 0
+                            array.new_fixed $rt_types__Array 0
+                            struct.new $rt_types__Variant))))))))))))
+  )
   (func $user____user_init (type $functype_26)
     call $user__func_41
   )
-  (func $user____str_lit_get_68656c6c6f2c205477696e6b6c6521 (type $functype_30)
+  (func $user____str_lit_get_68656c6c6f2c205477696e6b6c6521 (type $functype_31)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_68656c6c6f2c205477696e6b6c6521
     ref.is_null

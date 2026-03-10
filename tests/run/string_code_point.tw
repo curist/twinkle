@@ -1,0 +1,111 @@
+// Expected output:
+//   Some(97)
+//   Some(98)
+//   Some(99)
+//   None
+//   Some(233)
+//   Some(20320)
+//   Some(128077)
+//   Some(97)
+//   Some(233)
+//   Some(20320)
+//   Some(128077)
+//   None
+//   None
+//   Some(a)
+//   Some(A)
+//   Some(é)
+//   Some(你)
+//   Some(👍)
+//   None
+//   None
+//   None
+//   None
+//   你
+//   Some(128077)
+
+fn show_opt_int(o: Int?) String {
+  case o {
+    .Some(n) => "Some(${n})",
+    .None => "None",
+  }
+}
+
+fn show_opt_str(o: String?) String {
+  case o {
+    .Some(s) => "Some(${s})",
+    .None => "None",
+  }
+}
+
+// --- code_point_at ---
+
+// ASCII
+s := "abc"
+println(show_opt_int(s.code_point_at(0)))
+println(show_opt_int(s.code_point_at(1)))
+println(show_opt_int(s.code_point_at(2)))
+println(show_opt_int(s.code_point_at(3)))
+
+// Multi-byte: "é" = U+00E9 = 233
+println(show_opt_int("é".code_point_at(0)))
+
+// 3-byte: "你" = U+4F60 = 20320
+println(show_opt_int("你".code_point_at(0)))
+
+// 4-byte: "👍" = U+1F44D = 128077
+println(show_opt_int("👍".code_point_at(0)))
+
+// Mixed string: "aé你👍"
+mixed := "aé你👍"
+println(show_opt_int(mixed.code_point_at(0)))
+println(show_opt_int(mixed.code_point_at(1)))
+println(show_opt_int(mixed.code_point_at(2)))
+println(show_opt_int(mixed.code_point_at(3)))
+println(show_opt_int(mixed.code_point_at(4)))
+
+// Negative index
+println(show_opt_int(s.code_point_at(-1)))
+
+// --- from_code_point ---
+
+// ASCII
+println(show_opt_str(String.from_code_point(97)))
+println(show_opt_str(String.from_code_point(65)))
+
+// 2-byte: é = U+00E9
+println(show_opt_str(String.from_code_point(233)))
+
+// 3-byte: 你 = U+4F60
+println(show_opt_str(String.from_code_point(20320)))
+
+// 4-byte: 👍 = U+1F44D
+println(show_opt_str(String.from_code_point(128077)))
+
+// Invalid: surrogate (0xD800 = 55296, 0xDFFF = 57343)
+println(show_opt_str(String.from_code_point(55296)))
+println(show_opt_str(String.from_code_point(57343)))
+
+// Invalid: too large (0x110000 = 1114112)
+println(show_opt_str(String.from_code_point(1114112)))
+
+// Invalid: negative
+println(show_opt_str(String.from_code_point(-1)))
+
+// Round-trip: code_point_at → from_code_point
+cp := "你".code_point_at(0)
+case cp {
+  .Some(n) => {
+    case String.from_code_point(n) {
+      .Some(ch) => println(ch),
+      .None => println("FAIL"),
+    }
+  },
+  .None => println("FAIL"),
+}
+
+// Round-trip: from_code_point → code_point_at
+case String.from_code_point(128077) {
+  .Some(emoji) => println(show_opt_int(emoji.code_point_at(0))),
+  .None => println("FAIL"),
+}

@@ -229,6 +229,7 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
 
     // Always emit parse helpers — they're small and may be referenced by intrinsics
     module.funcs.push(emit_int_from_string_helper());
+    module.funcs.push(emit_from_code_point_helper());
     if ctx.has_import("host_parse_float") {
         module.funcs.push(emit_float_from_string_helper());
     }
@@ -3794,6 +3795,9 @@ fn emit_prelude_call(
         id if id == prelude_ids::FROM_CHAR_CODE => {
             emit_from_char_code_intrinsic(args, bind_ty, ctx)
         }
+        id if id == prelude_ids::FROM_CODE_POINT => {
+            emit_from_code_point_intrinsic(args, bind_ty, ctx)
+        }
         id if id == prelude_ids::INT_FROM_STRING => {
             emit_int_from_string_intrinsic(args, bind_ty, ctx)
         }
@@ -4923,6 +4927,24 @@ fn emit_from_char_code_intrinsic(
     instrs
 }
 
+fn emit_from_code_point_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // String.from_code_point(n: Int) -> Option<String>
+    // Validates the code point and encodes as UTF-8 (1-4 bytes).
+    // Returns None for surrogates (0xD800..0xDFFF) and values > 0x10FFFF.
+    //
+    // Strategy: use a helper function emitted into the module to keep
+    // the inline code manageable. The helper takes an i32 code point
+    // and returns (ref null $Variant).
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::I32WrapI64);
+    instrs.push(Instr::Call("$from_code_point_helper".to_string()));
+    instrs
+}
+
 fn emit_int_from_string_intrinsic(
     args: &[Atom],
     _bind_ty: &ValType,
@@ -5159,6 +5181,202 @@ fn emit_int_from_string_helper() -> FuncDef {
             ValType::I32, // 5: byte
             ValType::I32, // 6: ok flag
         ],
+        body,
+    }
+}
+
+/// Generate helper function: $from_code_point_helper
+/// Takes i32 (code point) → anyref (Option<String> variant)
+/// Validates the code point and encodes as 1-4 byte UTF-8 string.
+/// Returns None for surrogates (0xD800..0xDFFF) and values > 0x10FFFF.
+fn emit_from_code_point_helper() -> FuncDef {
+    // param 0: i32 (code point)
+    //
+    // Helper to build None variant
+    let mk_none = || -> Vec<Instr> {
+        let mut v = vec![
+            Instr::I32Const(0), // type_id (Option)
+            Instr::I32Const(0), // variant_id (None)
+            Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+            Instr::StructNew(T_VARIANT.to_string()),
+        ];
+        v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+        v
+    };
+
+    // Each mk_Nbyte sequence pushes: type_id(0), variant_id(1), then the string ref.
+    // wrap_some() finishes it: cast string→anyref, wrap in fields array, StructNew, cast.
+
+    // Build body that produces a 1-byte string (ASCII: 0..0x7F)
+    let mk_1byte = vec![
+        Instr::I32Const(0),
+        Instr::I32Const(1),
+        Instr::LocalGet(0), // code point (already fits in i8)
+        Instr::ArrayNewFixed(T_STRING.to_string(), 1),
+    ];
+
+    // Build body that produces a 2-byte string (0x80..0x7FF)
+    let mk_2byte = vec![
+        Instr::I32Const(0),
+        Instr::I32Const(1),
+        // byte 0: (cp >> 6) | 0xC0
+        Instr::LocalGet(0),
+        Instr::I32Const(6),
+        Instr::I32ShrU,
+        Instr::I32Const(0xC0),
+        Instr::I32Or,
+        // byte 1: (cp & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        Instr::ArrayNewFixed(T_STRING.to_string(), 2),
+    ];
+
+    // Build body that produces a 3-byte string (0x800..0xFFFF, excluding surrogates)
+    let mk_3byte = vec![
+        Instr::I32Const(0),
+        Instr::I32Const(1),
+        // byte 0: (cp >> 12) | 0xE0
+        Instr::LocalGet(0),
+        Instr::I32Const(12),
+        Instr::I32ShrU,
+        Instr::I32Const(0xE0),
+        Instr::I32Or,
+        // byte 1: ((cp >> 6) & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(6),
+        Instr::I32ShrU,
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        // byte 2: (cp & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        Instr::ArrayNewFixed(T_STRING.to_string(), 3),
+    ];
+
+    // Build body that produces a 4-byte string (0x10000..0x10FFFF)
+    let mk_4byte = vec![
+        Instr::I32Const(0),
+        Instr::I32Const(1),
+        // byte 0: (cp >> 18) | 0xF0
+        Instr::LocalGet(0),
+        Instr::I32Const(18),
+        Instr::I32ShrU,
+        Instr::I32Const(0xF0),
+        Instr::I32Or,
+        // byte 1: ((cp >> 12) & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(12),
+        Instr::I32ShrU,
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        // byte 2: ((cp >> 6) & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(6),
+        Instr::I32ShrU,
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        // byte 3: (cp & 0x3F) | 0x80
+        Instr::LocalGet(0),
+        Instr::I32Const(0x3F),
+        Instr::I32And,
+        Instr::I32Const(0x80),
+        Instr::I32Or,
+        Instr::ArrayNewFixed(T_STRING.to_string(), 4),
+    ];
+
+    // After ArrayNewFixed, the string ref is on stack. We need to:
+    // cast to anyref, wrap in fields array, StructNew, cast to anyref
+    let wrap_some = |mut prefix: Vec<Instr>| -> Vec<Instr> {
+        prefix.extend(emit_coerce_stack(&ref_string(), &ValType::Anyref));
+        prefix.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+        prefix.push(Instr::StructNew(T_VARIANT.to_string()));
+        prefix.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+        prefix
+    };
+
+    let body = vec![
+        // Validate: cp < 0 → None
+        Instr::LocalGet(0),
+        Instr::I32Const(0),
+        Instr::I32LtS,
+        Instr::If {
+            result: Some(ValType::Anyref),
+            then_body: mk_none(),
+            else_body: vec![
+                // cp < 0x80 → 1-byte
+                Instr::LocalGet(0),
+                Instr::I32Const(0x80),
+                Instr::I32LtU,
+                Instr::If {
+                    result: Some(ValType::Anyref),
+                    then_body: wrap_some(mk_1byte),
+                    else_body: vec![
+                        // cp < 0x800 → 2-byte
+                        Instr::LocalGet(0),
+                        Instr::I32Const(0x800),
+                        Instr::I32LtU,
+                        Instr::If {
+                            result: Some(ValType::Anyref),
+                            then_body: wrap_some(mk_2byte),
+                            else_body: vec![
+                                // Check surrogates: 0xD800 <= cp <= 0xDFFF → None
+                                Instr::LocalGet(0),
+                                Instr::I32Const(0xD800_u32 as i32),
+                                Instr::I32GeU,
+                                Instr::LocalGet(0),
+                                Instr::I32Const(0xDFFF_u32 as i32),
+                                Instr::I32LeU,
+                                Instr::I32And,
+                                Instr::If {
+                                    result: Some(ValType::Anyref),
+                                    then_body: mk_none(),
+                                    else_body: vec![
+                                        // cp <= 0xFFFF → 3-byte
+                                        Instr::LocalGet(0),
+                                        Instr::I32Const(0xFFFF_u32 as i32),
+                                        Instr::I32LeU,
+                                        Instr::If {
+                                            result: Some(ValType::Anyref),
+                                            then_body: wrap_some(mk_3byte),
+                                            else_body: vec![
+                                                // cp <= 0x10FFFF → 4-byte
+                                                Instr::LocalGet(0),
+                                                Instr::I32Const(0x10FFFF),
+                                                Instr::I32LeU,
+                                                Instr::If {
+                                                    result: Some(ValType::Anyref),
+                                                    then_body: wrap_some(mk_4byte),
+                                                    else_body: mk_none(),
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    ];
+
+    FuncDef {
+        name: "$from_code_point_helper".to_string(),
+        params: vec![ValType::I32],
+        results: vec![ValType::Anyref],
+        locals: vec![],
         body,
     }
 }

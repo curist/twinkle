@@ -445,6 +445,10 @@ pub fn build_prelude_map() -> PreludeMap {
         PreludeEntry::intrinsic("String.from_char_code"),
     );
     map.insert(
+        prelude_ids::FROM_CODE_POINT,
+        PreludeEntry::intrinsic("String.from_code_point"),
+    );
+    map.insert(
         prelude_ids::INT_FROM_STRING,
         PreludeEntry::intrinsic("Int.from_string"),
     );

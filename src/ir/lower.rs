@@ -99,6 +99,7 @@ pub mod prelude {
     pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>
     pub const BYTE_TO_STRING: FuncId = FuncId(1024); // Byte.to_string(b: Byte) -> String
     pub const STRING_SLICE: FuncId = FuncId(1025); // String.slice(s, start, end) -> String (UTF-8 boundary validated)
+    pub const FROM_CODE_POINT: FuncId = FuncId(1026); // String.from_code_point(n: Int) -> Option<String>
 
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>
