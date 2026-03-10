@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use super::error::TypeError;
 use super::ty::{
-    BUILTIN_STRING_TYPE_ID, CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID,
-    MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId,
-    UNFOLD_STEP_TYPE_ID, Variant,
+    BUILTIN_BYTE_TYPE_ID, BUILTIN_STRING_TYPE_ID, CELL_TYPE_ID, FunctionSignature,
+    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID,
+    RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::intrinsics::contracts;
 use crate::syntax::ast::Type as AstType;
@@ -169,6 +169,21 @@ impl TypeEnv {
         // prelude/string.tw.
         env.add_method(
             BUILTIN_STRING_TYPE_ID,
+            "slice".to_string(),
+            "String.slice".to_string(),
+        );
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "get".to_string(),
+            "String.get".to_string(),
+        );
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "to_string".to_string(),
+            "String.to_string".to_string(),
+        );
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
             "char_code_at".to_string(),
             "String.char_code_at".to_string(),
         );
@@ -176,6 +191,16 @@ impl TypeEnv {
             BUILTIN_STRING_TYPE_ID,
             "utf8_bytes".to_string(),
             "String.utf8_bytes".to_string(),
+        );
+        env.add_method(
+            BUILTIN_BYTE_TYPE_ID,
+            "to_int".to_string(),
+            "Byte.to_int".to_string(),
+        );
+        env.add_method(
+            BUILTIN_BYTE_TYPE_ID,
+            "to_string".to_string(),
+            "Byte.to_string".to_string(),
         );
 
         env

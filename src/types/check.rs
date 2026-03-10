@@ -2132,45 +2132,6 @@ impl TypeChecker {
                     self.check_expr(&args[0], &MonoType::String)?;
                     Ok(MonoType::String)
                 }
-                "to_string" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::String)
-                }
-                "slice" => {
-                    if args.len() != 2 {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 2,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    self.check_expr(&args[0], &MonoType::Int)?;
-                    self.check_expr(&args[1], &MonoType::Int)?;
-                    Ok(MonoType::String)
-                }
-                "get" => {
-                    if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 1,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    self.check_expr(&args[0], &MonoType::Int)?;
-                    Ok(MonoType::Named {
-                        type_id: crate::types::ty::OPTION_TYPE_ID,
-                        args: vec![MonoType::Byte],
-                    })
-                }
                 _ => {
                     if let Some(ret_ty) =
                         self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
@@ -2246,43 +2207,19 @@ impl TypeChecker {
                     Err(())
                 }
             },
-            MonoType::Byte => match method {
-                "to_int" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::Int)
+            MonoType::Byte => {
+                if let Some(ret_ty) =
+                    self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+                {
+                    return Ok(ret_ty);
                 }
-                "to_string" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::String)
-                }
-                _ => {
-                    if let Some(ret_ty) =
-                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                    {
-                        return Ok(ret_ty);
-                    }
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "method on Byte type",
-                        span,
-                        note: format!("Byte has no method '{}'", method),
-                    });
-                    Err(())
-                }
-            },
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "method on Byte type",
+                    span,
+                    note: format!("Byte has no method '{}'", method),
+                });
+                Err(())
+            }
             MonoType::Int | MonoType::Float | MonoType::Bool => {
                 if method == "to_string" {
                     if !args.is_empty() {
