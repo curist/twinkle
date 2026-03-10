@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::intrinsics::contracts;
 use crate::syntax::ast::{
     BinOp, Block, CaseArm, Expr, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
     StringPart,
@@ -214,25 +215,10 @@ impl Lowerer {
         func_table.insert("Vector.make".to_string(), prelude::VECTOR_MAKE);
         func_table.insert("String.len".to_string(), prelude::STRING_LEN);
         func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
-        func_table.insert("String.get".to_string(), prelude::STRING_GET);
-        func_table.insert("Int.to_string".to_string(), prelude::INT_TO_STRING);
-        func_table.insert("Float.to_string".to_string(), prelude::FLOAT_TO_STRING);
-        func_table.insert("Bool.to_string".to_string(), prelude::BOOL_TO_STRING);
-        func_table.insert("String.to_string".to_string(), prelude::STRING_TO_STRING);
         func_table.insert("Dict.len".to_string(), prelude::DICT_LEN);
         func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
         func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
         func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-        func_table.insert("String.slice".to_string(), prelude::STRING_SLICE);
-        func_table.insert("String.char_code_at".to_string(), prelude::CHAR_CODE_AT);
-        func_table.insert("String.from_char_code".to_string(), prelude::FROM_CHAR_CODE);
-        func_table.insert("Byte.to_int".to_string(), prelude::BYTE_TO_INT);
-        func_table.insert("Byte.from_int".to_string(), prelude::BYTE_FROM_INT);
-        func_table.insert("Byte.to_string".to_string(), prelude::BYTE_TO_STRING);
-        func_table.insert("String.utf8_bytes".to_string(), prelude::STRING_UTF8_BYTES);
-        func_table.insert("String.from_utf8".to_string(), prelude::STRING_FROM_UTF8);
-        func_table.insert("Int.from_string".to_string(), prelude::INT_FROM_STRING);
-        func_table.insert("Float.from_string".to_string(), prelude::FLOAT_FROM_STRING);
         func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
         func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
         func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);
@@ -243,6 +229,13 @@ impl Lowerer {
         func_table.insert("__host_env".to_string(), prelude::HOST_ENV);
         func_table.insert("__host_cwd".to_string(), prelude::HOST_CWD);
         func_table.insert("__host_exit".to_string(), prelude::HOST_EXIT);
+
+        for func_id in contracts::prelude_signature_ids() {
+            let Some(name) = contracts::twinkle_name(*func_id) else {
+                continue;
+            };
+            func_table.insert(name.to_string(), *func_id);
+        }
 
         // len is polymorphic and handled specially in lower_expr_call
 
