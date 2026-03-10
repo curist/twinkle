@@ -3422,7 +3422,11 @@ fn emit_index_op(
         }
         crate::ir::anf::IndexKind::String => {
             // String indexing: read byte at byte offset, return as i32 (Byte)
-            // ArrayGetU on $String (array<i8>) returns i32, traps on OOB
+            // ArrayGetU on $String (array<i8>) returns i32, traps on OOB.
+            // Guard in i64 domain first so large Int values cannot wrap via i32.
+            instrs.extend(emit_trap_unless(emit_string_index_in_bounds(
+                base, index, ctx,
+            )));
             instrs.extend(emit_atom(base, Some(&ref_string_null()), ctx));
             instrs.push(Instr::RefAsNonNull);
             instrs.extend(emit_index_as_i32(index, ctx));
@@ -3438,6 +3442,32 @@ fn emit_index_as_i32(index: &Atom, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     let mut instrs = emit_atom(index, Some(&ValType::I64), ctx);
     instrs.push(Instr::I32WrapI64);
     instrs
+}
+
+fn emit_string_index_in_bounds(string: &Atom, index: &Atom, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Produces i32 condition:
+    //   (index >= 0) && (index < len(string))
+    // in full i64 domain before any i32 narrowing.
+    let mut instrs = Vec::new();
+    instrs.extend(emit_atom(index, Some(&ValType::I64), ctx));
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS);
+    instrs.extend(emit_atom(index, Some(&ValType::I64), ctx));
+    instrs.extend(emit_atom(string, Some(&ref_string_null()), ctx));
+    instrs.push(Instr::ArrayLen);
+    instrs.push(Instr::I64ExtendI32U);
+    instrs.push(Instr::I64LtS);
+    instrs.push(Instr::I32And);
+    instrs
+}
+
+fn emit_trap_unless(mut cond_instrs: Vec<Instr>) -> Vec<Instr> {
+    cond_instrs.push(Instr::If {
+        result: None,
+        then_body: vec![],
+        else_body: vec![Instr::Unreachable],
+    });
+    cond_instrs
 }
 
 fn record_field_count(type_id: TypeId, ctx: &EmitCtx<'_>) -> usize {
@@ -4720,12 +4750,8 @@ fn emit_string_get_intrinsic(
 
     let mut instrs = Vec::new();
 
-    // condition: i_i32 < len(s)
-    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
-    instrs.push(Instr::I32WrapI64);
-    instrs.extend(emit_atom(&args[0], Some(&ref_string_null()), ctx));
-    instrs.push(Instr::ArrayLen);
-    instrs.push(Instr::I32LtU);
+    // condition: 0 <= i < len(s) in full Int domain.
+    instrs.extend(emit_string_index_in_bounds(&args[0], &args[1], ctx));
 
     // then: Some(byte) — read byte at offset, box as ref.i31
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
@@ -4895,7 +4921,8 @@ fn emit_char_code_at_intrinsic(
 ) -> Vec<Instr> {
     // String.char_code_at(s: String, i: Int) -> Int
     // Read byte from string array, zero-extend to i64
-    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    let mut instrs = emit_trap_unless(emit_string_index_in_bounds(&args[0], &args[1], ctx));
+    instrs.extend(emit_atom(&args[0], Some(&ref_string_null()), ctx));
     instrs.push(Instr::RefAsNonNull);
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64);

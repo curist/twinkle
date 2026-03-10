@@ -3,6 +3,7 @@
 //   none
 //   105
 //   none
+//   none
 
 s := "hi"
 
@@ -22,6 +23,11 @@ case String.get(s, 1) {
 }
 
 case String.get(s, -1) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+
+case String.get(s, 4294967297) {
   .Some(b) => println("${b}"),
   .None => println("none"),
 }

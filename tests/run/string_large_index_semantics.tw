@@ -1,0 +1,21 @@
+// Expected output:
+//   none
+//   none
+//   98
+
+s := "ab"
+
+case String.get(s, 4294967297) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+
+case s.get(4294967297) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}
+
+case s.get(1) {
+  .Some(b) => println("${b}"),
+  .None => println("none"),
+}

@@ -147,8 +147,18 @@ fn run_wasm_string_get() {
 }
 
 #[test]
+fn run_wasm_string_large_index_semantics() {
+    check("tests/run/string_large_index_semantics.tw");
+}
+
+#[test]
 fn run_wasm_trap_string_index_oob() {
     check("tests/run/traps/string_index_oob.tw");
+}
+
+#[test]
+fn run_wasm_trap_string_large_index_traps() {
+    check("tests/run/traps/string_large_index_traps.tw");
 }
 
 #[test]

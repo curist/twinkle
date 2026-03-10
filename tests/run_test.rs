@@ -328,8 +328,18 @@ fn string_get() {
 }
 
 #[test]
+fn string_large_index_semantics() {
+    check("tests/run/string_large_index_semantics.tw");
+}
+
+#[test]
 fn trap_string_index_oob() {
     check_trap("tests/run/traps/string_index_oob.tw");
+}
+
+#[test]
+fn trap_string_large_index_traps() {
+    check_trap("tests/run/traps/string_large_index_traps.tw");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 // Expected trap: out of bounds
 
 s := "hi"
-b := s[99]
+b := s[4294967297]
 println("${b.to_int()}")

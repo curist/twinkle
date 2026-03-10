@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** Planned  
+**Status:** In progress (Phase 1 kickoff)  
 **Last updated:** 2026-03-10
 
 ## Goal
