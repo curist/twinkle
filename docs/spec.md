@@ -8,7 +8,7 @@ Design goals:
 
 * Concise, low-ceremony syntax.
 * Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking.
-* Unboxed primitives (`Int = i64`, `Float = f64`, `Bool`).
+* Unboxed primitives (`Int = i64`, `Float = f64`, `Bool = i32`, `Byte = i32 (0..255)`).
 * GC-managed references for strings, arrays, records, dicts, and cells.
 * Small runtime; rely on `struct`, `array`, reference types.
 * Inherent methods only via module functions.
@@ -35,6 +35,7 @@ Source files end with `.tw`.
 * `Int` → wasm `i64`
 * `Float` → wasm `f64`
 * `Bool` →  wasm `i32`, 0/1
+* `Byte` → wasm `i32`, range `0..255`
 * `Void` → effect-only (no value).
 
 ### References (GC)
@@ -715,13 +716,16 @@ Defined for:
 * `Int.to_string() String`
 * `Float.to_string() String`
 * `Bool.to_string() String`
+* `Byte.to_string() String`
 * `String.to_string() String` (identity)
 
 Additional numeric conversion helpers are available via stdlib extension
-methods (import `@std.numeric`):
+and built-in modules:
 
 * `Int.to_float() Float` / `Int.to_float(n) Float`
 * `Float.to_int() Int` / `Float.to_int(f) Int`
+* `Byte.to_int() Int` / `Byte.to_int(b) Int`
+* `Byte.from_int(n: Int) Option<Byte>`
 
 #### Parsing
 
@@ -755,8 +759,8 @@ These comparisons use byte-level lexicographic ordering (UTF-8).
 
 #### Character utilities
 
-* `String.char_code_at(s: String, i: Int) Int` — returns the byte value at index `i` (0-based)
-* `String.from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-character string; returns `None` for values outside that range
+* `String.char_code_at(s: String, i: Int) Int` — returns the byte value at byte offset `i` (0-based); compatibility alias for `Byte.to_int(s[i])`
+* `String.from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-byte/single-character string; returns `None` for values outside that range
 
 ```tw
 String.char_code_at("abc", 0)  // 97 (ASCII 'a')
@@ -861,6 +865,11 @@ print_all(users, ShowUser)
 ## **10.3 No Implicit Conversions**
 
 Twinkle does **not** perform implicit conversions to satisfy capability records.
+This also means ordinary function calls never apply silent argument coercions.
+
+Built-in numeric operators do define explicit typing/promotion rules (for example,
+`Byte` arithmetic yields `Int`), but those rules are part of operator semantics,
+not general implicit conversions.
 
 Given a parameter of type `Show<T>`:
 
@@ -1057,7 +1066,7 @@ for x,i in coll { body }
 The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
 
 * `Vector<T>` — lowered to an indexed loop over the array length.
-* `String` — lowered to an indexed loop over character slices (`str[i]`).
+* `String` — lowered to an indexed loop over UTF-8 bytes (`str[i]`).
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
 * `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
@@ -1183,6 +1192,7 @@ Rules:
   * Evaluates like a `while` loop and collects values produced by `body`.
 * Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`:
   * For `Vector<T>`, `String`, and `Range`, `i: Int` is the iteration index.
+  * For `String`, `x: Byte` (byte iteration).
   * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
   * `Iterator<T>` does not support the two-binder form.
 * `continue` skips emission.
@@ -1250,20 +1260,20 @@ If context can't determine element type => compiler error.
 
 ## 15. Strings
 
-Strings are **immutable**.
+Strings are **immutable** and always valid UTF-8.
 
-`str.len()` returns the length of the string.
+`str.len()` returns UTF-8 byte length.
 
-`str[i]` returns a single-character `String` at position `i` (0-based). Out-of-bounds
-access traps.
+`str[i]` returns a `Byte` at byte offset `i` (0-based). Out-of-bounds access traps.
 
 String interpolation is recommended for string assembly (see Section 11).
 
 String operations via module functions (all return new strings):
 
 * `String.concat(s1, s2) String`
-* `String.substring(s, start, end) String`
-* `String.get(s, i) String?` (safe index; returns `None` if out-of-bounds)
+* `String.slice(s, start, end) String` (byte range `[start, end)`; traps if indices are out of bounds or not UTF-8 scalar boundaries)
+* `String.get(s, i) Byte?` (safe byte index; returns `None` if out-of-bounds)
+* `String.char_code_at(s, i) Int` (compatibility alias for byte-at-offset as `Int`)
 * `String.to_string(s) String` (identity helper; `s.to_string()` is preferred)
 * etc.
 
@@ -1387,12 +1397,13 @@ Implicitly imported.
 Includes:
 
 * primitive functions: `print`, `println`, `error`
-* types: `Int`, `Float`, `String`, `Bool`, `Void`, `Vector<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
+* types: `Int`, `Float`, `Byte`, `String`, `Bool`, `Void`, `Vector<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
 * range functions: `range`, `range_from`, `range_step`
 * vector module: `Vector.make`, `Vector.len`, `Vector.concat`, `Vector.slice`, `Vector.get`, `Vector.set`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
-* string module: `String.concat`, `String.substring`, `String.to_string`, etc.
+* string module: `String.concat`, `String.slice`, `String.get`, `String.char_code_at`, `String.from_char_code`, `String.to_string`, etc.
+* byte module: `Byte.to_int`, `Byte.from_int`, `Byte.to_string`
 * iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md))
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
 
@@ -1504,11 +1515,30 @@ Capabilities are ordinary values (records of functions), so they participate in 
 String interpolation is type-checked by resolving a zero-arg inherent `to_string() String`
 on the interpolated expression type.
 
+### Numeric Operators and Promotion
+
+Arithmetic operators (`+`, `-`, `*`, `/`, `%`) are defined for:
+
+* `Int × Int -> Int`
+* `Byte × Byte -> Int`
+* `Int × Byte -> Int`
+* `Byte × Int -> Int`
+* `Float × Float -> Float`
+
+No implicit narrowing conversion exists from `Int` to `Byte`; use `Byte.from_int`.
+There is no implicit mixing between `Byte` and `Float`.
+
+Comparison operators require both operands to have the same type; result is `Bool`.
+
 ---
 
 ## 22. Compilation to WebAssembly GC
 
-* Primitives → unboxed `i64/f64`
+* Primitives:
+  * `Int` → unboxed `i64`
+  * `Float` → unboxed `f64`
+  * `Bool` → unboxed `i32`
+  * `Byte` → unboxed `i32` (logical range `0..255`)
 * Records → immutable `struct` (new values created via structural sharing where possible)
 * Vectors → immutable `array` (new values created via structural sharing where possible)
 * Dicts → immutable hash map structures (structural sharing where possible)
