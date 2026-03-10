@@ -1,0 +1,103 @@
+use arg
+use command
+use app
+
+fn run_demo(my_app: app.App, argv: Vector<String>) Void {
+  println("--- argv: ${argv.join(" ")} ---")
+  case app.parse(my_app, argv) {
+    .Ok(result) => {
+      case result.command {
+        .Some(cmd) => println("  command: ${cmd}"),
+        .None => println("  command: (none)"),
+      }
+      if result.positional.len() > 0 {
+        println("  positional: ${result.positional.join(", ")}")
+      }
+      for key, val in result.options {
+        println("  option: ${key} = ${val}")
+      }
+      for key, val in result.flags {
+        if val {
+          println("  flag: ${key}")
+        }
+      }
+    },
+    .Err(e) => {
+      case e {
+        .HelpRequested(msg) => print(msg),
+        _ => eprintln(app.error_message(e)),
+      }
+    },
+  }
+  println("")
+}
+
+fn main() {
+  my_app := app.App.{
+    name: "twk",
+    help: "The Twinkle compiler",
+    commands: [
+      command.Command.{
+        name: "run",
+        help: "Run a Twinkle program",
+        args: [
+          arg.positional("file", "Path to .tw file").required(),
+          arg.flag("interpreter", "Use Core IR interpreter").short("i"),
+          arg.flag("verbose", "Verbose output").short("v"),
+        ],
+      },
+      command.Command.{
+        name: "build",
+        help: "Compile to Wasm",
+        args: [
+          arg.positional("file", "Path to .tw file").required(),
+          arg.option("output", "Output file path").short("o"),
+          arg.flag("emit-wat", "Also emit .wat file"),
+        ],
+      },
+      command.Command.{
+        name: "check",
+        help: "Type-check a Twinkle file",
+        args: [
+          arg.positional("file", "Path to .tw file").required(),
+        ],
+      },
+    ],
+    args: [],
+  }
+
+  println("=== Basic subcommand ===")
+  run_demo(my_app, ["twk", "run", "hello.tw"])
+
+  println("=== Flags (long and short) ===")
+  run_demo(my_app, ["twk", "run", "-i", "--verbose", "test.tw"])
+
+  println("=== Option with value ===")
+  run_demo(my_app, ["twk", "build", "-o", "out.wasm", "hello.tw"])
+
+  println("=== Option with = syntax ===")
+  run_demo(my_app, ["twk", "build", "--output=my_app.wasm", "main.tw"])
+
+  println("=== --emit-wat flag ===")
+  run_demo(my_app, ["twk", "build", "-o", "out.wasm", "--emit-wat", "hello.tw"])
+
+  println("=== Top-level --help ===")
+  run_demo(my_app, ["twk", "--help"])
+
+  println("=== Subcommand --help ===")
+  run_demo(my_app, ["twk", "build", "--help"])
+
+  println("=== Error: unknown command ===")
+  run_demo(my_app, ["twk", "deploy"])
+
+  println("=== Error: unknown flag ===")
+  run_demo(my_app, ["twk", "run", "--debug", "test.tw"])
+
+  println("=== Error: missing required arg ===")
+  run_demo(my_app, ["twk", "run"])
+
+  println("=== -- stops flag parsing ===")
+  run_demo(my_app, ["twk", "run", "--", "--not-a-flag", "file.tw"])
+}
+
+main()
