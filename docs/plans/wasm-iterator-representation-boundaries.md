@@ -10,6 +10,9 @@ backend design problem: iterator representation policy is currently spread acros
 local-slot allocation, helper generation, function ABI emission, closure func types, and
 closure trampolines.
 
+For the near-term execution checklist (including `resolve_unfold_step_types` fallback removal),
+see [bytes-followup-hardening.md](./bytes-followup-hardening.md).
+
 The result is a recurring bug pattern:
 
 * one subsystem switches to a typed iterator-adjacent representation
