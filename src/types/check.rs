@@ -1684,75 +1684,8 @@ impl TypeChecker {
                 self.check_expr(&args[1], &MonoType::String)?;
                 Ok(MonoType::String)
             }
-            "slice" => {
-                if args.len() != 3 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 3,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                self.check_expr(&args[1], &MonoType::Int)?;
-                self.check_expr(&args[2], &MonoType::Int)?;
-                Ok(MonoType::String)
-            }
-            "get" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                self.check_expr(&args[1], &MonoType::Int)?;
-                Ok(MonoType::Named {
-                    type_id: crate::types::ty::OPTION_TYPE_ID,
-                    args: vec![MonoType::Byte],
-                })
-            }
-            "to_string" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                Ok(MonoType::String)
-            }
-            "utf8_bytes" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                Ok(MonoType::Vector(Box::new(MonoType::Byte)))
-            }
-            "from_utf8" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::Vector(Box::new(MonoType::Byte)))?;
-                Ok(MonoType::Named {
-                    type_id: crate::types::ty::OPTION_TYPE_ID,
-                    args: vec![MonoType::String],
-                })
-            }
+            // Remaining String module calls are resolved through registered
+            // qualified signatures (intrinsic contracts + stdlib/prelude funcs).
             other => self.synth_qualified_call("String", other, args, span),
         }
     }
@@ -1764,48 +1697,7 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> Result<MonoType, ()> {
-        match func_name {
-            "to_int" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::Byte)?;
-                Ok(MonoType::Int)
-            }
-            "from_int" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::Int)?;
-                Ok(MonoType::Named {
-                    type_id: crate::types::ty::OPTION_TYPE_ID,
-                    args: vec![MonoType::Byte],
-                })
-            }
-            "to_string" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::Byte)?;
-                Ok(MonoType::String)
-            }
-            other => self.synth_qualified_call("Byte", other, args, span),
-        }
+        self.synth_qualified_call("Byte", func_name, args, span)
     }
 
     fn check_interpolation_expr(&mut self, expr: &Expr) -> Result<(), ()> {

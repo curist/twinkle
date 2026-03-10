@@ -10,6 +10,11 @@
 //   true
 //   false
 //   true
+//   195
+//   169
+//   364
+//   295
+//   true
 
 a: Byte = "AB"[0] // 65
 b: Byte = "AB"[1] // 66
@@ -28,3 +33,14 @@ println("${a + b + 2}")
 println("${a < b}")
 println("${a == b}")
 println("${a == a}")
+
+// Non-ASCII UTF-8 byte values (>= 128) should promote consistently.
+c: Byte = "é"[0] // 195
+d: Byte = "é"[1] // 169
+non_ascii_sum: Int = c + d
+mixed_non_ascii: Int = 100 + c
+println("${c + 0}")
+println("${d + 0}")
+println("${non_ascii_sum}")
+println("${mixed_non_ascii}")
+println("${c > d}")
