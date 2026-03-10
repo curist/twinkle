@@ -92,6 +92,21 @@ fn run_wasm_iterator_rebind_shape_change() {
 }
 
 #[test]
+fn run_wasm_iterator_unfold_callback_typing() {
+    check("tests/run/iterator_unfold_callback_typing.tw");
+}
+
+#[test]
+fn run_wasm_iterator_unfold_rebind_callback_typing() {
+    check("tests/run/iterator_unfold_rebind_callback_typing.tw");
+}
+
+#[test]
+fn run_wasm_iterator_unfold_nested_match_typing() {
+    check("tests/run/iterator_unfold_nested_match_typing.tw");
+}
+
+#[test]
 fn run_wasm_unfold_step_match() {
     check("tests/run/unfold_step_match.tw");
 }

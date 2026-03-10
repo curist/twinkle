@@ -1,0 +1,97 @@
+// Expected output:
+//   flat: 1 2 3 4 5 6
+//   opt: 10 0 30 0 50
+//   desc: small medium large
+
+// Callbacks with conditional branching and helper function calls
+// that produce different Yield values per branch.
+// Exercises metadata-driven typing with multiple Yield paths.
+//
+// NOTE: `case` pattern matching inside unfold closures triggers a known
+// codegen bug (see bytes-followup-hardening.md § F). These tests use
+// if/else and helper functions as workarounds until that is fixed.
+
+// 1. Flatten nested vectors via packed index state
+fn flatten(outer: Vector<Vector<Int>>) Iterator<Int> {
+  n := outer.len()
+  // state = (outer_idx, inner_idx) packed as outer_idx * 10000 + inner_idx
+  Iterator.unfold(0, fn(packed: Int) {
+    oi := packed / 10000
+    ii := packed % 10000
+    if oi >= n {
+      UnfoldStep.Done
+    } else {
+      inner := outer[oi]
+      if ii < inner.len() {
+        UnfoldStep.Yield(inner[ii], oi * 10000 + (ii + 1))
+      } else {
+        // advance to next outer, reset inner
+        next_oi := oi + 1
+        if next_oi >= n {
+          UnfoldStep.Done
+        } else {
+          next_inner := outer[next_oi]
+          if next_inner.len() > 0 {
+            UnfoldStep.Yield(next_inner[0], next_oi * 10000 + 1)
+          } else {
+            UnfoldStep.Done
+          }
+        }
+      }
+    }
+  })
+}
+
+print("flat:")
+for x in flatten([[1, 2, 3], [4, 5], [6]]) {
+  print(" ${x}")
+}
+println("")
+
+// 2. Conditional Yield via helper function returning Int
+//    (workaround: unwrap Option outside closure to avoid case-in-closure bug)
+fn lookup(i: Int) Int {
+  if i == 0 { 10 }
+  else if i == 2 { 30 }
+  else if i == 4 { 50 }
+  else { 0 }
+}
+
+fn option_iter(count: Int) Iterator<Int> {
+  Iterator.unfold(0, fn(i: Int) {
+    if i >= count {
+      UnfoldStep.Done
+    } else {
+      val := lookup(i)
+      UnfoldStep.Yield(val, i + 1)
+    }
+  })
+}
+
+print("opt:")
+for x in option_iter(5) {
+  print(" ${x}")
+}
+println("")
+
+// 3. Multi-branch conditional producing String labels from Int ranges
+fn describe(items: Vector<Int>) Iterator<String> {
+  n := items.len()
+  Iterator.unfold(0, fn(i: Int) {
+    if i >= n {
+      UnfoldStep.Done
+    } else {
+      v := items[i]
+      label := if v < 10 { "small" }
+               else if v < 100 { "medium" }
+               else { "large" }
+      UnfoldStep.Yield(label, i + 1)
+    }
+  })
+}
+
+print("desc:")
+for d in describe([5, 50, 500]) {
+  print(" ${d}")
+}
+println("")

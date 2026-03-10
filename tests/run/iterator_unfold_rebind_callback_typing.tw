@@ -1,0 +1,71 @@
+// Expected output:
+//   fib: 1 1 2 3 5 8
+//   scan: 10 30 60
+//   stepped: 0 3 6 9
+
+// Callbacks that rebind variables and derive next-state from let-bound results.
+// Exercises metadata-driven typing with rebinding inside the step closure.
+
+// 1. Fibonacci via pair-state: callback rebinds to compute next pair
+fn fibs(n: Int) Iterator<Int> {
+  // state packs (a, b, count) as a * 1000000 + b * 1000 + count
+  Iterator.unfold(1000000 + 1000, fn(packed: Int) {
+    a := packed / 1000000
+    b := (packed / 1000) % 1000
+    count := packed % 1000
+    if count >= n {
+      UnfoldStep.Done
+    } else {
+      next_a := b
+      next_b := a + b
+      next_packed := next_a * 1000000 + next_b * 1000 + (count + 1)
+      UnfoldStep.Yield(a, next_packed)
+    }
+  })
+}
+
+print("fib:")
+for f in fibs(6) {
+  print(" ${f}")
+}
+println("")
+
+// 2. Scan (running fold): each step rebinds accumulator from array element
+fn scan(items: Vector<Int>) Iterator<Int> {
+  n := items.len()
+  // state packs (index, accumulator) as index * 100000 + acc
+  Iterator.unfold(0, fn(packed: Int) {
+    idx := packed / 100000
+    acc := packed % 100000
+    if idx >= n {
+      UnfoldStep.Done
+    } else {
+      new_acc := acc + items[idx]
+      UnfoldStep.Yield(new_acc, (idx + 1) * 100000 + new_acc)
+    }
+  })
+}
+
+print("scan:")
+for s in scan([10, 20, 30]) {
+  print(" ${s}")
+}
+println("")
+
+// 3. Step-based range: callback derives next state through multiple rebinds
+fn stepped_range(start: Int, stop: Int, step: Int) Iterator<Int> {
+  Iterator.unfold(start, fn(pos: Int) {
+    if pos >= stop {
+      UnfoldStep.Done
+    } else {
+      next_pos := pos + step
+      UnfoldStep.Yield(pos, next_pos)
+    }
+  })
+}
+
+print("stepped:")
+for x in stepped_range(0, 10, 3) {
+  print(" ${x}")
+}
+println("")

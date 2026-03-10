@@ -314,6 +314,63 @@ And ensure coverage in:
 
 ---
 
+## Known bugs discovered during hardening
+
+### F. `case` inside unfold callback panics in Wasm codegen
+
+**Discovered:** 2026-03-10, while creating `iterator_unfold_nested_match_typing.tw` fixture.
+
+**Symptom:** `panic!("missing local mapping for L{}")` in `src/codegen/emit.rs:2212`
+during `emit_make_closure`. The pattern-bound locals from `case` arms inside an
+`Iterator.unfold` callback closure are not mapped in the closure's Wasm local table.
+
+**Interpreter:** Handles the same code correctly — produces expected output.
+
+**Minimal repro:**
+
+```tw
+fn lookup(i: Int) Int? {
+  if i == 0 { .Some(10) }
+  else { .None }
+}
+
+it := Iterator.unfold(0, fn(i: Int) {
+  if i >= 2 {
+    UnfoldStep.Done
+  } else {
+    case lookup(i) {
+      .Some(val) => UnfoldStep.Yield(val, i + 1),
+      .None => UnfoldStep.Yield(0, i + 1),
+    }
+  }
+})
+
+for x in it {
+  println("${x}")
+}
+```
+
+**Likely cause:** The closure free-variable analysis (`collect_local_refs` in
+`src/ir/lower.rs`) or the Wasm local allocation in `emit_make_closure`
+(`src/codegen/emit.rs`) does not account for locals introduced by `case` pattern
+bindings (e.g. `val` in `.Some(val) =>`) when those bindings appear inside a
+closure body. The local IDs for pattern-bound variables exist in the ANF but are
+never added to the closure's Wasm local map, so `emit_local_atom` panics when it
+tries to look them up.
+
+**Note:** `case` outside closures works fine. `case` outside unfold callbacks
+(e.g. in top-level code or regular functions) also works fine. The issue is
+specifically pattern bindings inside closure bodies emitted as Wasm closures.
+
+**Workaround:** Restructure callbacks to use `if`/`else` chains instead of `case`,
+or move the `case` to a helper function called from the closure.
+
+**Impact on test fixtures:** `iterator_unfold_nested_match_typing.tw` works around
+this by avoiding `case` inside the unfold callback. Once this bug is fixed, the
+fixture should be updated to include `case`-based variants.
+
+---
+
 ## Out of scope
 
 * Grapheme cluster semantics.
