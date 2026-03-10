@@ -412,7 +412,15 @@ Literal =
     | BoolLiteral ;
 
 IntLiteral =
-    Digit { Digit } ;
+      HexLiteral
+    | Digit { Digit } ;
+
+HexLiteral =
+    "0x" HexDigit { HexDigit } ;
+
+HexDigit =
+    Digit | "a" | "b" | "c" | "d" | "e" | "f"
+         | "A" | "B" | "C" | "D" | "E" | "F" ;
 
 FloatLiteral =
     Digit { Digit } "." Digit { Digit } ;

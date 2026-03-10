@@ -602,21 +602,37 @@ impl Parser {
 
     fn parse_int_literal(&mut self) -> ParseResult<Expr> {
         let token = self.expect(TokenKind::IntLit)?;
-        let value = token.text.parse::<i64>().map_err(|_| {
-            ParseError::new(
-                ParseErrorKind::UnexpectedToken {
-                    expected: vec!["valid integer literal".to_string()],
-                    found: format!("invalid integer: {}", token.text),
-                },
-                token.span,
-            )
-        })?;
+        let value = Self::parse_int_value(&token)?;
 
         Ok(Expr::new(
             self.alloc_expr_id(),
             ExprKind::Literal(Literal::Int(value)),
             token.span,
         ))
+    }
+
+    fn parse_int_value(token: &Token) -> ParseResult<i64> {
+        if let Some(hex) = token.text.strip_prefix("0x") {
+            i64::from_str_radix(hex, 16).map_err(|_| {
+                ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: vec!["valid hexadecimal literal".to_string()],
+                        found: format!("hexadecimal literal out of range for Int: {}", token.text),
+                    },
+                    token.span,
+                )
+            })
+        } else {
+            token.text.parse::<i64>().map_err(|_| {
+                ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: vec!["valid integer literal".to_string()],
+                        found: format!("invalid integer: {}", token.text),
+                    },
+                    token.span,
+                )
+            })
+        }
     }
 
     fn parse_float_literal(&mut self) -> ParseResult<Expr> {
@@ -1212,15 +1228,7 @@ impl Parser {
             }
             Some(TokenKind::IntLit) => {
                 let token = self.advance().unwrap();
-                let value = token.text.parse::<i64>().map_err(|_| {
-                    ParseError::new(
-                        ParseErrorKind::UnexpectedToken {
-                            expected: vec!["valid integer".to_string()],
-                            found: token.text.clone(),
-                        },
-                        token.span,
-                    )
-                })?;
+                let value = Self::parse_int_value(&token)?;
                 Ok(Pattern::Literal(Literal::Int(value), token.span))
             }
             Some(TokenKind::True) => {
@@ -1707,6 +1715,58 @@ mod tests {
     fn test_parse_int_literal() {
         let expr = parse_expr("42").unwrap();
         assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(42))));
+    }
+
+    #[test]
+    fn test_parse_hex_literal() {
+        let expr = parse_expr("0xFF").unwrap();
+        assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(255))));
+
+        let expr = parse_expr("0x10").unwrap();
+        assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(16))));
+
+        let expr = parse_expr("0x0").unwrap();
+        assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(0))));
+
+        let expr = parse_expr("0x7FFFFFFFFFFFFFFF").unwrap();
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Literal(Literal::Int(i64::MAX))
+        ));
+    }
+
+    #[test]
+    fn test_parse_hex_overflow() {
+        let result = parse_expr("0x8000000000000000");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_hex_in_binary_expr() {
+        let expr = parse_expr("0xFF + 1").unwrap();
+        match expr.kind {
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => {
+                assert!(matches!(left.kind, ExprKind::Literal(Literal::Int(255))));
+                assert!(matches!(right.kind, ExprKind::Literal(Literal::Int(1))));
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_negated_hex() {
+        let expr = parse_expr("-0x1").unwrap();
+        match expr.kind {
+            ExprKind::Unary { op, expr, .. } => {
+                assert_eq!(op, UnOp::Neg);
+                assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(1))));
+            }
+            _ => panic!("Expected unary expression"),
+        }
     }
 
     #[test]

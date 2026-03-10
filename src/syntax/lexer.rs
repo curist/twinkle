@@ -14,6 +14,7 @@ pub enum LexErrorKind {
     UnterminatedString,
     InvalidEscape(char),
     InvalidNumber,
+    InvalidHexLiteral,
     UnexpectedChar(char),
     InvalidUtf8,
 }
@@ -199,6 +200,27 @@ impl Lexer {
 
     fn lex_number(&mut self) -> LexResult<Token> {
         let start = self.pos;
+
+        // Check for hex literal: 0x...
+        if self.peek() == '0' && self.peek_ahead(1) == 'x' {
+            self.advance(); // consume '0'
+            self.advance(); // consume 'x'
+
+            // Must have at least one hex digit
+            if self.is_eof() || !self.peek().is_ascii_hexdigit() {
+                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                return Err(LexError::new(LexErrorKind::InvalidHexLiteral, span));
+            }
+
+            while !self.is_eof() && self.peek().is_ascii_hexdigit() {
+                self.advance();
+            }
+
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let text: String = self.source[start..self.pos].iter().collect();
+            return Ok(Token::new(TokenKind::IntLit, span, text));
+        }
+
         let mut is_float = false;
 
         // Read digits
@@ -511,5 +533,32 @@ mod tests {
         assert_eq!(tokens[1].kind, TokenKind::Ident);
         assert_eq!(tokens[1].text, "add");
         assert_eq!(tokens[2].kind, TokenKind::LParen);
+    }
+
+    #[test]
+    fn test_lex_hex_literals() {
+        let tokens = lex_simple("0xFF 0x0 0xdeadbeef 0x10");
+        assert_eq!(tokens[0].kind, TokenKind::IntLit);
+        assert_eq!(tokens[0].text, "0xFF");
+        assert_eq!(tokens[1].kind, TokenKind::IntLit);
+        assert_eq!(tokens[1].text, "0x0");
+        assert_eq!(tokens[2].kind, TokenKind::IntLit);
+        assert_eq!(tokens[2].text, "0xdeadbeef");
+        assert_eq!(tokens[3].kind, TokenKind::IntLit);
+        assert_eq!(tokens[3].text, "0x10");
+    }
+
+    #[test]
+    fn test_lex_hex_no_digits() {
+        let result = Lexer::lex("0x", FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexLiteral);
+    }
+
+    #[test]
+    fn test_lex_hex_invalid_digit() {
+        // 0xG should lex as 0x (error) — G is not a hex digit
+        let result = Lexer::lex("0xG", FileId(0));
+        assert!(result.is_err());
     }
 }

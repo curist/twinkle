@@ -493,7 +493,10 @@ module.exports = grammar({
       token.immediate('}'),
     ),
 
-    int_literal: $ => /\d+/,
+    int_literal: $ => choice(
+      /0x[0-9a-fA-F]+/,
+      /\d+/,
+    ),
 
     float_literal: $ => /\d+\.\d+/,
 

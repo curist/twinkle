@@ -1033,6 +1033,11 @@
     }
   },
   {
+    "type": "int_literal",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "interpolation",
     "named": true,
     "fields": {},
@@ -2229,10 +2234,6 @@
   {
     "type": "in",
     "named": false
-  },
-  {
-    "type": "int_literal",
-    "named": true
   },
   {
     "type": "or",

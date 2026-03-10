@@ -336,6 +336,98 @@ s
                       field: (identifier))
                     arguments: (argument_list)))))))))))
 ================================================================================
+Hex literal — simple
+================================================================================
+
+x := 0xFF
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
+
+================================================================================
+Hex literal — in arithmetic
+================================================================================
+
+x := 0xFF + 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  left: (additive_expression
+                    (multiplicative_expression
+                      (unary_expression
+                        (int_literal))))
+                  right: (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
+
+================================================================================
+Hex literal — lowercase digits
+================================================================================
+
+x := 0xdeadbeef
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
+
+================================================================================
+Hex literal — zero
+================================================================================
+
+x := 0x0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (top_level_let_binding
+    (let_binding
+      name: (identifier)
+      value: (assignment_expression
+        (logical_or_expression
+          (logical_and_expression
+            (equality_expression
+              (comparison_expression
+                (additive_expression
+                  (multiplicative_expression
+                    (unary_expression
+                      (int_literal))))))))))))
+
+================================================================================
 Defer — simple call expression
 ================================================================================
 

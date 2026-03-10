@@ -8,6 +8,16 @@ y := 3.14
 z := 0
 //   ^ number
 
+// Hex numbers
+h := 0xFF
+//   ^^^^ number
+
+h2 := 0xdeadbeef
+//    ^^^^^^^^^^ number
+
+h3 := 0x0
+//    ^^^ number
+
 // Booleans
 a := true
 //   ^^^^ boolean

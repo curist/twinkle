@@ -361,3 +361,8 @@ fn string_from_code_point_large_int() {
 fn string_utf8() {
     check("tests/run/string_utf8.tw");
 }
+
+#[test]
+fn hex_literals() {
+    check("tests/run/hex_literals.tw");
+}

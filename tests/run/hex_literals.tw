@@ -1,0 +1,39 @@
+// Expected output:
+//   255
+//   16
+//   0
+//   10
+//   256
+//   true
+//   255
+//   -1
+//   matched 255
+
+// Hex literal basics
+println("${0xFF}")
+println("${0x10}")
+println("${0x0}")
+println("${0xA}")
+
+// Hex in arithmetic
+println("${0xFF + 1}")
+
+// Hex comparison with decimal
+println("${0xC3 == 195}")
+
+// Hex with Byte.from_int
+b := Byte.from_int(0xFF)
+case b {
+  .Some(v) => println("${Byte.to_int(v)}"),
+  .None => println("none"),
+}
+
+// Negative hex (unary minus)
+println("${-0x1}")
+
+// Hex in pattern matching
+x := 0xFF
+case x {
+  0xFF => println("matched 255"),
+  _ => println("no match"),
+}
