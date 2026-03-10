@@ -270,6 +270,11 @@ impl<W: Write> Interpreter<W> {
                         Value::Bool(b) => Value::Bool(!b),
                         _ => panic!("type error: not on non-bool"),
                     },
+                    AstUnOp::BitNot => match v {
+                        Value::Int(n) => Value::Int(!n),
+                        Value::Byte(b) => Value::Int(!(b as i64)),
+                        _ => panic!("type error: bitwise not on non-integer"),
+                    },
                 })
             }
 
@@ -501,6 +506,23 @@ impl<W: Write> Interpreter<W> {
                 _ => None,
             }
         };
+        // Bitwise operators: widen Byte to Int, apply operation
+        if matches!(
+            op,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
+        ) {
+            if let (Some(a), Some(b)) = (int_like(&lv), int_like(&rv)) {
+                return Ok(Value::Int(match op {
+                    BinOp::BitAnd => a & b,
+                    BinOp::BitOr => a | b,
+                    BinOp::BitXor => a ^ b,
+                    BinOp::Shl => a << (b & 63) as u32,
+                    BinOp::Shr => a >> (b & 63) as u32,
+                    _ => unreachable!(),
+                }));
+            }
+        }
+
         if matches!(
             op,
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod

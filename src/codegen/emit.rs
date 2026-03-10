@@ -3003,6 +3003,19 @@ fn emit_binop(
         (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::Le) => instrs.push(Instr::I64LeS),
         (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::Gt) => instrs.push(Instr::I64GtS),
         (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::Ge) => instrs.push(Instr::I64GeS),
+        (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::BitAnd) => {
+            instrs.push(Instr::I64And)
+        }
+        (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::BitOr) => {
+            instrs.push(Instr::I64Or)
+        }
+        (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::BitXor) => {
+            instrs.push(Instr::I64Xor)
+        }
+        (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::Shl) => instrs.push(Instr::I64Shl),
+        (crate::ir::anf::OpKind::Int, crate::syntax::ast::BinOp::Shr) => {
+            instrs.push(Instr::I64ShrS)
+        }
 
         (crate::ir::anf::OpKind::Float, crate::syntax::ast::BinOp::Add) => {
             instrs.push(Instr::F64Add)
@@ -6311,6 +6324,13 @@ fn emit_unop(
         crate::syntax::ast::UnOp::Not => {
             let mut instrs = emit_atom(expr, Some(&ValType::I32), ctx);
             instrs.push(Instr::I32Eqz);
+            instrs
+        }
+        crate::syntax::ast::UnOp::BitNot => {
+            // ~x  ⟹  i64.xor(x, -1)  (i.e. all-ones mask)
+            let mut instrs = emit_atom(expr, Some(&ValType::I64), ctx);
+            instrs.push(Instr::I64Const(-1));
+            instrs.push(Instr::I64Xor);
             instrs
         }
     }

@@ -90,6 +90,19 @@ impl Parser {
         self.peek().map(|t| t.kind)
     }
 
+    /// Returns true when the current token and the next token form an adjacent
+    /// pair of the same kind (`<`+`<` or `>`+`>`), meaning no whitespace
+    /// separates them (first token's end == second token's start).
+    fn is_adjacent_shift(&self, expected: TokenKind) -> bool {
+        if let (Some(first), Some(second)) =
+            (self.tokens.get(self.pos), self.tokens.get(self.pos + 1))
+        {
+            second.kind == expected && first.span.end == second.span.start
+        } else {
+            false
+        }
+    }
+
     fn advance(&mut self) -> Option<Token> {
         let token = self.tokens.get(self.pos).cloned();
         if token.is_some() {
@@ -466,6 +479,37 @@ impl Parser {
                 None => break,
             };
 
+            // Check for shift operators: adjacent `<`+`<` or `>`+`>` with no
+            // intervening whitespace form `<<` and `>>`.  Type parsing never
+            // calls this path, so `Vector<Vector<Int>>` is unaffected.
+            if (op_kind == TokenKind::Lt || op_kind == TokenKind::Gt)
+                && self.is_adjacent_shift(op_kind)
+            {
+                let (l_bp, r_bp) = shift_binding_power();
+                if l_bp < min_bp {
+                    break;
+                }
+                let shift_op = if op_kind == TokenKind::Lt {
+                    BinOp::Shl
+                } else {
+                    BinOp::Shr
+                };
+                self.advance(); // consume first < or >
+                self.advance(); // consume second < or >
+                let rhs = self.parse_expr_bp(r_bp)?;
+                let span = lhs.span.merge(&rhs.span);
+                lhs = Expr::new(
+                    self.alloc_expr_id(),
+                    ExprKind::Binary {
+                        op: shift_op,
+                        left: Box::new(lhs),
+                        right: Box::new(rhs),
+                    },
+                    span,
+                );
+                continue;
+            }
+
             // Check for infix operators
             if let Some((l_bp, r_bp)) = infix_binding_power(op_kind) {
                 if l_bp < min_bp {
@@ -564,7 +608,7 @@ impl Parser {
             }
 
             // Unary operators
-            TokenKind::Minus | TokenKind::Bang => self.parse_unary(),
+            TokenKind::Minus | TokenKind::Bang | TokenKind::Tilde => self.parse_unary(),
 
             // Grouping
             TokenKind::LParen => self.parse_grouped(),
@@ -763,6 +807,7 @@ impl Parser {
         let op = match op_token.kind {
             TokenKind::Minus => UnOp::Neg,
             TokenKind::Bang => UnOp::Not,
+            TokenKind::Tilde => UnOp::BitNot,
             _ => unreachable!(),
         };
 
@@ -1640,28 +1685,42 @@ fn infix_binding_power(op: TokenKind) -> Option<(u8, u8)> {
         Or => (3, 4),
         // Logical AND
         And => (5, 6),
+        // Bitwise OR
+        Pipe => (7, 8),
+        // Bitwise XOR
+        Caret => (9, 10),
+        // Bitwise AND
+        Amp => (11, 12),
         // Equality
-        EqEq | BangEq => (7, 8),
+        EqEq | BangEq => (13, 14),
         // Comparison
-        Lt | LtEq | Gt | GtEq => (9, 10),
+        Lt | LtEq | Gt | GtEq => (15, 16),
+        // Shift (handled specially via adjacent-token combining, but
+        // the binding power is looked up with a synthetic token kind)
         // Additive
-        Plus | Minus => (11, 12),
+        Plus | Minus => (19, 20),
         // Multiplicative
-        Star | Slash | Percent => (13, 14),
+        Star | Slash | Percent => (21, 22),
         _ => return None,
     })
+}
+
+/// Binding power for shift operators (`<<`, `>>`).
+/// Called when the parser detects adjacent `<`+`<` or `>`+`>`.
+fn shift_binding_power() -> (u8, u8) {
+    (17, 18)
 }
 
 fn postfix_binding_power(op: TokenKind) -> Option<u8> {
     use TokenKind::*;
     Some(match op {
-        LParen | Dot | LBracket => 15,
+        LParen | Dot | LBracket => 23,
         _ => return None,
     })
 }
 
 fn prefix_binding_power() -> u8 {
-    14 // Same as multiplicative, higher than additive
+    22 // Same as multiplicative, higher than additive
 }
 
 /// Extract a dotted type name from an expression for use in named record literals.
@@ -1692,6 +1751,9 @@ fn token_to_binop(kind: TokenKind) -> BinOp {
         LtEq => BinOp::Le,
         Gt => BinOp::Gt,
         GtEq => BinOp::Ge,
+        Amp => BinOp::BitAnd,
+        Pipe => BinOp::BitOr,
+        Caret => BinOp::BitXor,
         And => BinOp::And,
         Or => BinOp::Or,
         Eq => BinOp::Assign,

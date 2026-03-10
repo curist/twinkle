@@ -200,3 +200,8 @@ fn run_wasm_string_from_code_point_large_int() {
 fn run_wasm_byte_arithmetic_promotion() {
     check("tests/run/byte_arithmetic_promotion.tw");
 }
+
+#[test]
+fn run_wasm_bitwise_ops() {
+    check("tests/run/bitwise_ops.tw");
+}

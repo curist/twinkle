@@ -401,3 +401,8 @@ fn string_utf8() {
 fn hex_literals() {
     check("tests/run/hex_literals.tw");
 }
+
+#[test]
+fn bitwise_ops() {
+    check("tests/run/bitwise_ops.tw");
+}

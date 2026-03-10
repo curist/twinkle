@@ -126,6 +126,11 @@ impl Lexer {
                 TokenKind::Error,
             ),
 
+            '&' => self.lex_single(TokenKind::Amp),
+            '|' => self.lex_single(TokenKind::Pipe),
+            '^' => self.lex_single(TokenKind::Caret),
+            '~' => self.lex_single(TokenKind::Tilde),
+
             '(' => self.lex_single(TokenKind::LParen),
             ')' => self.lex_single(TokenKind::RParen),
             '{' => self.lex_single(TokenKind::LBrace),

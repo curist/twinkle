@@ -224,6 +224,13 @@ pub enum BinOp {
     Gt,
     Ge,
 
+    // Bitwise
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+
     // Logical
     And,
     Or,
@@ -235,8 +242,9 @@ pub enum BinOp {
 /// Unary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOp {
-    Neg, // -
-    Not, // !
+    Neg,    // -
+    Not,    // !
+    BitNot, // ~
 }
 
 /// Case arm

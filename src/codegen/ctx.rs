@@ -1178,6 +1178,9 @@ impl<'a> EmitCtx<'a> {
                 BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                     MonoType::Bool
                 }
+                BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                    MonoType::Int
+                }
                 BinOp::And | BinOp::Or => MonoType::Bool,
                 BinOp::Assign => MonoType::Void,
             }),
@@ -1189,6 +1192,7 @@ impl<'a> EmitCtx<'a> {
                     OpKind::String => MonoType::String,
                 },
                 UnOp::Not => MonoType::Bool,
+                UnOp::BitNot => MonoType::Int,
             }),
             AnfOp::AMakeClosure { func_id, .. } => {
                 self.concrete_func_sigs
@@ -1823,6 +1827,7 @@ fn binop_result_ty(op: BinOp, operand_ty: OpKind) -> ValType {
             OpKind::String => ref_named(true, T_STRING),
         },
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => ValType::I32,
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => ValType::I64,
         BinOp::And | BinOp::Or => ValType::I32,
         BinOp::Assign => ValType::I32,
     }
@@ -1837,6 +1842,7 @@ fn unop_result_ty(op: UnOp, operand_ty: OpKind) -> ValType {
             OpKind::String => ref_named(true, T_STRING),
         },
         UnOp::Not => ValType::I32,
+        UnOp::BitNot => ValType::I64,
     }
 }
 

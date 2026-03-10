@@ -1,6 +1,6 @@
 # Bitwise Operations Support
 
-**Status:** Proposed
+**Status:** Phases 1-2 complete (Frontend + Execution parity)
 **Last updated:** 2026-03-10
 
 ## Goal

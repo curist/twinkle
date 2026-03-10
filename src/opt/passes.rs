@@ -432,6 +432,11 @@ fn fold_binop(op: BinOp, left: &Atom, right: &Atom) -> Option<Atom> {
                 BinOp::Div => *a / *b,
                 BinOp::Mod if *b == 0 => return None,
                 BinOp::Mod => *a % *b,
+                BinOp::BitAnd => *a & *b,
+                BinOp::BitOr => *a | *b,
+                BinOp::BitXor => *a ^ *b,
+                BinOp::Shl => *a << ((*b & 63) as u32),
+                BinOp::Shr => *a >> ((*b & 63) as u32),
                 BinOp::Eq => return Some(Atom::ALitBool(*a == *b)),
                 BinOp::Ne => return Some(Atom::ALitBool(*a != *b)),
                 BinOp::Lt => return Some(Atom::ALitBool(*a < *b)),
@@ -478,6 +483,10 @@ fn fold_unop(op: UnOp, expr: &Atom) -> Option<Atom> {
         },
         UnOp::Not => match expr {
             Atom::ALitBool(b) => Some(Atom::ALitBool(!*b)),
+            _ => None,
+        },
+        UnOp::BitNot => match expr {
+            Atom::ALitInt(n) => Some(Atom::ALitInt(!*n)),
             _ => None,
         },
     }

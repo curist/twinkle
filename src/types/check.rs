@@ -891,6 +891,41 @@ impl TypeChecker {
                 }
             }
 
+            // Bitwise: Int/Byte only → Int
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                let left_raw = self.synth_expr(left)?;
+                let right_raw = self.synth_expr(right)?;
+                let left_ty = self.zonk(&left_raw);
+                let right_ty = self.zonk(&right_raw);
+
+                match (&left_ty, &right_ty) {
+                    (MonoType::Int, MonoType::Int)
+                    | (MonoType::Byte, MonoType::Byte)
+                    | (MonoType::Int, MonoType::Byte)
+                    | (MonoType::Byte, MonoType::Int) => Ok(MonoType::Int),
+                    (MonoType::MetaVar(id), MonoType::Int)
+                    | (MonoType::MetaVar(id), MonoType::Byte) => {
+                        self.solve_meta(*id, MonoType::Int, left.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    (MonoType::Int, MonoType::MetaVar(id))
+                    | (MonoType::Byte, MonoType::MetaVar(id)) => {
+                        self.solve_meta(*id, MonoType::Int, right.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    _ => {
+                        let left_bad = !matches!(left_ty, MonoType::Int | MonoType::Byte);
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Int,
+                            actual: if left_bad { left_ty } else { right_ty },
+                            span: if left_bad { left.span } else { right.span },
+                            note: Some("bitwise operators require Int or Byte operands".into()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+
             // Comparison: T × T → Bool (for primitive types)
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let left_ty = self.synth_expr(left)?;
@@ -937,6 +972,27 @@ impl TypeChecker {
             UnOp::Not => {
                 self.check_expr(expr, &MonoType::Bool)?;
                 Ok(MonoType::Bool)
+            }
+            UnOp::BitNot => {
+                let ty = self.synth_expr(expr)?;
+                let ty = self.zonk(&ty);
+                match &ty {
+                    MonoType::Int => Ok(MonoType::Int),
+                    MonoType::Byte => Ok(MonoType::Int),
+                    MonoType::MetaVar(id) => {
+                        self.solve_meta(*id, MonoType::Int, expr.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    _ => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Int,
+                            actual: ty,
+                            span: expr.span,
+                            note: Some("bitwise not requires Int or Byte operand".into()),
+                        });
+                        Err(())
+                    }
+                }
             }
         }
     }

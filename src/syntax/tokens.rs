@@ -52,6 +52,12 @@ pub enum TokenKind {
     Gt,     // >
     GtEq,   // >=
 
+    // Operators - Bitwise
+    Amp,   // &
+    Pipe,  // |
+    Caret, // ^
+    Tilde, // ~
+
     // Operators - Logical
     Bang, // !
 
@@ -192,6 +198,10 @@ impl TokenKind {
             TokenKind::LtEq => "<=",
             TokenKind::Gt => ">",
             TokenKind::GtEq => ">=",
+            TokenKind::Amp => "&",
+            TokenKind::Pipe => "|",
+            TokenKind::Caret => "^",
+            TokenKind::Tilde => "~",
             TokenKind::Bang => "!",
             TokenKind::Eq => "=",
             TokenKind::ColonEq => ":=",

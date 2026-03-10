@@ -1,0 +1,87 @@
+// Expected output:
+//   15
+//   255
+//   240
+//   16
+//   16
+//   -4
+//   -1
+//   -256
+//   1
+//   2
+//   1
+//   -66
+//   255
+//   16
+//   -9223372036854775808
+//   171
+
+fn main() {
+    // Basic AND
+    x := 0xFF & 0x0F
+    println("${x}")
+
+    // Basic OR
+    x = 0x0F | 0xF0
+    println("${x}")
+
+    // Basic XOR
+    x = 0xFF ^ 0x0F
+    println("${x}")
+
+    // Left shift
+    x = 1 << 4
+    println("${x}")
+
+    // Right shift (arithmetic, sign-preserving)
+    x = 64 >> 2
+    println("${x}")
+
+    // Negative right shift is arithmetic (sign-extending)
+    x = -8 >> 1
+    println("${x}")
+
+    // Bitwise NOT
+    x = ~0
+    println("${x}")
+
+    x = ~255
+    println("${x}")
+
+    // Shift count masking: n << 64 wraps to n << 0
+    x = 1 << 64
+    println("${x}")
+
+    // Shift count masking with 129 => 129 & 63 = 1
+    x = 1 << 129
+    println("${x}")
+
+    // Mixed Byte/Int bitwise ops
+    b: Byte = "A"[0]
+    x = b & 0x0F
+    println("${x}")
+
+    // Byte widening with NOT
+    x = ~b
+    println("${x}")
+
+    // Precedence: & binds tighter than |
+    x = 0x0F & 0xFF | 0xF0 & 0xFF
+    println("${x}")
+
+    // Precedence: shift binds tighter than &
+    x = 1 << 4 & 0xFF
+    println("${x}")
+
+    // Negative shift counts: -1 & 63 = 63
+    x = 1 << -1
+    println("${x}")
+
+    // Compound expression
+    mask := 0xFF
+    val := 0xABCD
+    extracted := val >> 8 & mask
+    println("${extracted}")
+}
+
+main()
