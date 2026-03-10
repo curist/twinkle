@@ -201,6 +201,11 @@ fn iterator_unfold_nested_match_typing() {
 }
 
 #[test]
+fn case_closure_pattern_binding() {
+    check("tests/run/case_closure_pattern_binding.tw");
+}
+
+#[test]
 fn unfold_step_match() {
     check("tests/run/unfold_step_match.tw");
 }

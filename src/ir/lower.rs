@@ -4878,45 +4878,49 @@ fn stmt_span(stmt: &Stmt) -> Span {
 /// where `id` is NOT in the `exclude` set. Deduplicates while preserving
 /// first-occurrence order.
 fn collect_local_refs(expr: &CoreExpr, exclude: &HashSet<LocalId>) -> Vec<LocalId> {
-    let mut seen = HashSet::new();
+    let bound = exclude.clone();
+    let mut captured = HashSet::new();
     let mut result = Vec::new();
-    collect_local_refs_inner(expr, exclude, &mut seen, &mut result);
+    collect_local_refs_inner(expr, &bound, &mut captured, &mut result);
     result
 }
 
 fn collect_local_refs_inner(
     expr: &CoreExpr,
-    exclude: &HashSet<LocalId>,
-    seen: &mut HashSet<LocalId>,
+    bound: &HashSet<LocalId>,
+    captured: &mut HashSet<LocalId>,
     result: &mut Vec<LocalId>,
 ) {
     use CoreExprKind::*;
     match &expr.kind {
         Local(id) => {
-            if !exclude.contains(id) && seen.insert(*id) {
+            if !bound.contains(id) && captured.insert(*id) {
                 result.push(*id);
             }
         }
         Let { local, value, body } => {
-            collect_local_refs_inner(value, exclude, seen, result);
-            // The let-bound local is defined here, not free
-            seen.insert(*local);
-            collect_local_refs_inner(body, exclude, seen, result);
+            collect_local_refs_inner(value, bound, captured, result);
+            let mut body_bound = bound.clone();
+            body_bound.insert(*local);
+            collect_local_refs_inner(body, &body_bound, captured, result);
         }
-        Assign { local: _, value } => {
-            collect_local_refs_inner(value, exclude, seen, result);
+        Assign { local, value } => {
+            if !bound.contains(local) && captured.insert(*local) {
+                result.push(*local);
+            }
+            collect_local_refs_inner(value, bound, captured, result);
         }
         BinOp { left, right, .. } => {
-            collect_local_refs_inner(left, exclude, seen, result);
-            collect_local_refs_inner(right, exclude, seen, result);
+            collect_local_refs_inner(left, bound, captured, result);
+            collect_local_refs_inner(right, bound, captured, result);
         }
         UnOp { expr: inner, .. } => {
-            collect_local_refs_inner(inner, exclude, seen, result);
+            collect_local_refs_inner(inner, bound, captured, result);
         }
         Call { callee, args } => {
-            collect_local_refs_inner(callee, exclude, seen, result);
+            collect_local_refs_inner(callee, bound, captured, result);
             for a in args {
-                collect_local_refs_inner(a, exclude, seen, result);
+                collect_local_refs_inner(a, bound, captured, result);
             }
         }
         If {
@@ -4924,61 +4928,63 @@ fn collect_local_refs_inner(
             then_branch,
             else_branch,
         } => {
-            collect_local_refs_inner(cond, exclude, seen, result);
-            collect_local_refs_inner(then_branch, exclude, seen, result);
-            collect_local_refs_inner(else_branch, exclude, seen, result);
+            collect_local_refs_inner(cond, bound, captured, result);
+            collect_local_refs_inner(then_branch, bound, captured, result);
+            collect_local_refs_inner(else_branch, bound, captured, result);
         }
         Match { scrutinee, arms } => {
-            collect_local_refs_inner(scrutinee, exclude, seen, result);
+            collect_local_refs_inner(scrutinee, bound, captured, result);
             for arm in arms {
-                collect_local_refs_inner(&arm.body, exclude, seen, result);
+                let mut arm_bound = bound.clone();
+                collect_pattern_bound_locals(&arm.pattern, &mut arm_bound);
+                collect_local_refs_inner(&arm.body, &arm_bound, captured, result);
             }
         }
         Loop { body } => {
-            collect_local_refs_inner(body, exclude, seen, result);
+            collect_local_refs_inner(body, bound, captured, result);
         }
         Break { value: Some(v) } => {
-            collect_local_refs_inner(v, exclude, seen, result);
+            collect_local_refs_inner(v, bound, captured, result);
         }
         Return { value: Some(v) } => {
-            collect_local_refs_inner(v, exclude, seen, result);
+            collect_local_refs_inner(v, bound, captured, result);
         }
         Record { fields, .. } => {
             for (_, f) in fields {
-                collect_local_refs_inner(f, exclude, seen, result);
+                collect_local_refs_inner(f, bound, captured, result);
             }
         }
         RecordGet { target, .. } => {
-            collect_local_refs_inner(target, exclude, seen, result);
+            collect_local_refs_inner(target, bound, captured, result);
         }
         RecordUpdate { base, value, .. } => {
-            collect_local_refs_inner(base, exclude, seen, result);
-            collect_local_refs_inner(value, exclude, seen, result);
+            collect_local_refs_inner(base, bound, captured, result);
+            collect_local_refs_inner(value, bound, captured, result);
         }
         Variant { args, .. } => {
             for a in args {
-                collect_local_refs_inner(a, exclude, seen, result);
+                collect_local_refs_inner(a, bound, captured, result);
             }
         }
         ArrayLit { elements } => {
             for e in elements {
-                collect_local_refs_inner(e, exclude, seen, result);
+                collect_local_refs_inner(e, bound, captured, result);
             }
         }
         Index { base, index } => {
-            collect_local_refs_inner(base, exclude, seen, result);
-            collect_local_refs_inner(index, exclude, seen, result);
+            collect_local_refs_inner(base, bound, captured, result);
+            collect_local_refs_inner(index, bound, captured, result);
         }
         // MakeClosure's free_vars are LocalIds that must be visible to any wrapping lambda
         MakeClosure { free_vars, .. } => {
             for id in free_vars {
-                if !exclude.contains(id) && seen.insert(*id) {
+                if !bound.contains(id) && captured.insert(*id) {
                     result.push(*id);
                 }
             }
         }
         Defer(inner) => {
-            collect_local_refs_inner(inner, exclude, seen, result);
+            collect_local_refs_inner(inner, bound, captured, result);
         }
         // These don't contain Local refs (GlobalLocal is always reachable via globals)
         LitInt(_)
@@ -4991,5 +4997,20 @@ fn collect_local_refs_inner(
         | Break { value: None }
         | Return { value: None }
         | Continue => {}
+    }
+}
+
+fn collect_pattern_bound_locals(pattern: &CorePattern, bound: &mut HashSet<LocalId>) {
+    use CorePattern::*;
+    match pattern {
+        Var(local_id) => {
+            bound.insert(*local_id);
+        }
+        Variant { fields, .. } => {
+            for field in fields {
+                collect_pattern_bound_locals(field, bound);
+            }
+        }
+        Wildcard | LitInt(_) | LitBool(_) | LitStr(_) => {}
     }
 }

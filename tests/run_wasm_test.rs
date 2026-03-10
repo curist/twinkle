@@ -107,6 +107,11 @@ fn run_wasm_iterator_unfold_nested_match_typing() {
 }
 
 #[test]
+fn run_wasm_case_closure_pattern_binding() {
+    check("tests/run/case_closure_pattern_binding.tw");
+}
+
+#[test]
 fn run_wasm_unfold_step_match() {
     check("tests/run/unfold_step_match.tw");
 }

@@ -6,10 +6,6 @@
 // Callbacks with conditional branching and helper function calls
 // that produce different Yield values per branch.
 // Exercises metadata-driven typing with multiple Yield paths.
-//
-// NOTE: `case` pattern matching inside unfold closures triggers a known
-// codegen bug (see bytes-followup-hardening.md § F). These tests use
-// if/else and helper functions as workarounds until that is fixed.
 
 // 1. Flatten nested vectors via packed index state
 fn flatten(outer: Vector<Vector<Int>>) Iterator<Int> {
@@ -49,7 +45,6 @@ for x in flatten([[1, 2, 3], [4, 5], [6]]) {
 println("")
 
 // 2. Conditional Yield via helper function returning Int
-//    (workaround: unwrap Option outside closure to avoid case-in-closure bug)
 fn lookup(i: Int) Int {
   if i == 0 { 10 }
   else if i == 2 { 30 }

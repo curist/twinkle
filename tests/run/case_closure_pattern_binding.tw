@@ -1,0 +1,37 @@
+// Expected output:
+//   closure: 10 0
+//   unfold: 10 0
+
+fn lookup(i: Int) Int? {
+  if i == 0 { .Some(10) }
+  else { .None }
+}
+
+chooser := fn(i: Int) {
+  case lookup(i) {
+    .Some(val) => val,
+    .None => 0,
+  }
+}
+
+print("closure:")
+print(" ${chooser(0)}")
+print(" ${chooser(1)}")
+println("")
+
+it := Iterator.unfold(0, fn(i: Int) {
+  if i >= 2 {
+    UnfoldStep.Done
+  } else {
+    case lookup(i) {
+      .Some(val) => UnfoldStep.Yield(val, i + 1),
+      .None => UnfoldStep.Yield(0, i + 1),
+    }
+  }
+})
+
+print("unfold:")
+for x in it {
+  print(" ${x}")
+}
+println("")

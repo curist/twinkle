@@ -316,13 +316,14 @@ And ensure coverage in:
 
 ## Known bugs discovered during hardening
 
-### F. `case` inside unfold callback panics in Wasm codegen
+### F. `case` pattern bindings inside closures panicked in Wasm codegen (fixed)
 
 **Discovered:** 2026-03-10, while creating `iterator_unfold_nested_match_typing.tw` fixture.
 
+**Status:** Fixed on 2026-03-10.
+
 **Symptom:** `panic!("missing local mapping for L{}")` in `src/codegen/emit.rs:2212`
-during `emit_make_closure`. The pattern-bound locals from `case` arms inside an
-`Iterator.unfold` callback closure are not mapped in the closure's Wasm local table.
+during closure materialization in Wasm codegen.
 
 **Interpreter:** Handles the same code correctly — produces expected output.
 
@@ -350,24 +351,28 @@ for x in it {
 }
 ```
 
-**Likely cause:** The closure free-variable analysis (`collect_local_refs` in
-`src/ir/lower.rs`) or the Wasm local allocation in `emit_make_closure`
-(`src/codegen/emit.rs`) does not account for locals introduced by `case` pattern
-bindings (e.g. `val` in `.Some(val) =>`) when those bindings appear inside a
-closure body. The local IDs for pattern-bound variables exist in the ANF but are
-never added to the closure's Wasm local map, so `emit_local_atom` panics when it
-tries to look them up.
+**Root cause:** Closure free-variable analysis (`collect_local_refs` in
+`src/ir/lower.rs`) did not model `case` arm pattern bindings as arm-local bound
+variables. Pattern locals (e.g. `val` in `.Some(val) =>`) were incorrectly treated
+as closure free variables, so `MakeClosure.free_vars` could include arm locals that
+are not in scope at closure creation time. Wasm emission then panicked when resolving
+those bogus captures.
 
-**Note:** `case` outside closures works fine. `case` outside unfold callbacks
-(e.g. in top-level code or regular functions) also works fine. The issue is
-specifically pattern bindings inside closure bodies emitted as Wasm closures.
+**Scope:** Not specific to `Iterator.unfold`; any closure containing `case` with
+pattern bindings could trigger the same panic in Wasm.
 
-**Workaround:** Restructure callbacks to use `if`/`else` chains instead of `case`,
-or move the `case` to a helper function called from the closure.
+**Fix:** `collect_local_refs` now tracks lexical bound-local scope through `Match`
+arms (including nested pattern fields), so pattern-bound locals are excluded from
+closure captures. This preserves correct free-var capture behavior for closures with
+`case` bodies.
 
-**Impact on test fixtures:** `iterator_unfold_nested_match_typing.tw` works around
-this by avoiding `case` inside the unfold callback. Once this bug is fixed, the
-fixture should be updated to include `case`-based variants.
+**Regression coverage:**
+
+* Added `tests/run/case_closure_pattern_binding.tw` (covers both regular closure and
+  `Iterator.unfold` callback using `case` pattern bindings).
+* Wired fixture into run + wasm suites via:
+  * [tests/run_test.rs](../../tests/run_test.rs)
+  * [tests/run_wasm_test.rs](../../tests/run_wasm_test.rs)
 
 ---
 
