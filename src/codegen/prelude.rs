@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::intrinsics::contracts;
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
@@ -8,6 +9,10 @@ use crate::runtime::types::{
 use crate::wasm::ir::{FuncSym, ValType};
 
 pub type PreludeMap = HashMap<FuncId, PreludeEntry>;
+
+fn intrinsic_name(func_id: FuncId, fallback: &'static str) -> &'static str {
+    contracts::twinkle_name(func_id).unwrap_or(fallback)
+}
 
 #[derive(Debug, Clone)]
 pub struct PreludeEntry {
@@ -116,7 +121,7 @@ pub fn build_prelude_map() -> PreludeMap {
     map.insert(
         prelude_ids::INT_TO_STRING,
         PreludeEntry::runtime(
-            "int_to_string",
+            intrinsic_name(prelude_ids::INT_TO_STRING, "int_to_string"),
             "rt.str",
             "from_i64",
             "rt_str__from_i64",
@@ -127,7 +132,7 @@ pub fn build_prelude_map() -> PreludeMap {
     map.insert(
         prelude_ids::FLOAT_TO_STRING,
         PreludeEntry::runtime(
-            "float_to_string",
+            intrinsic_name(prelude_ids::FLOAT_TO_STRING, "float_to_string"),
             "rt.str",
             "from_f64",
             "rt_str__from_f64",
@@ -138,7 +143,7 @@ pub fn build_prelude_map() -> PreludeMap {
     map.insert(
         prelude_ids::BOOL_TO_STRING,
         PreludeEntry::runtime(
-            "bool_to_string",
+            intrinsic_name(prelude_ids::BOOL_TO_STRING, "bool_to_string"),
             "rt.str",
             "from_bool",
             "rt_str__from_bool",
@@ -148,7 +153,10 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::STRING_TO_STRING,
-        PreludeEntry::intrinsic("string_to_string"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::STRING_TO_STRING,
+            "string_to_string",
+        )),
     );
 
     map.insert(
@@ -175,11 +183,11 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::STRING_GET,
-        PreludeEntry::intrinsic("String.get"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::STRING_GET, "String.get")),
     );
     map.insert(
         prelude_ids::STRING_SLICE,
-        PreludeEntry::intrinsic("String.slice"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::STRING_SLICE, "String.slice")),
     );
 
     map.insert(
@@ -426,43 +434,67 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::BYTE_TO_INT,
-        PreludeEntry::intrinsic("Byte.to_int"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::BYTE_TO_INT, "Byte.to_int")),
     );
     map.insert(
         prelude_ids::BYTE_FROM_INT,
-        PreludeEntry::intrinsic("Byte.from_int"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::BYTE_FROM_INT, "Byte.from_int")),
     );
     map.insert(
         prelude_ids::BYTE_TO_STRING,
-        PreludeEntry::intrinsic("Byte.to_string"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::BYTE_TO_STRING,
+            "Byte.to_string",
+        )),
     );
     map.insert(
         prelude_ids::CHAR_CODE_AT,
-        PreludeEntry::intrinsic("String.char_code_at"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::CHAR_CODE_AT,
+            "String.char_code_at",
+        )),
     );
     map.insert(
         prelude_ids::FROM_CHAR_CODE,
-        PreludeEntry::intrinsic("String.from_char_code"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::FROM_CHAR_CODE,
+            "String.from_char_code",
+        )),
     );
     map.insert(
         prelude_ids::FROM_CODE_POINT,
-        PreludeEntry::intrinsic("String.from_code_point"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::FROM_CODE_POINT,
+            "String.from_code_point",
+        )),
     );
     map.insert(
         prelude_ids::STRING_UTF8_BYTES,
-        PreludeEntry::intrinsic("String.utf8_bytes"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::STRING_UTF8_BYTES,
+            "String.utf8_bytes",
+        )),
     );
     map.insert(
         prelude_ids::STRING_FROM_UTF8,
-        PreludeEntry::intrinsic("String.from_utf8"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::STRING_FROM_UTF8,
+            "String.from_utf8",
+        )),
     );
     map.insert(
         prelude_ids::INT_FROM_STRING,
-        PreludeEntry::intrinsic("Int.from_string"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::INT_FROM_STRING,
+            "Int.from_string",
+        )),
     );
     map.insert(
         prelude_ids::FLOAT_FROM_STRING,
-        PreludeEntry::intrinsic("Float.from_string"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::FLOAT_FROM_STRING,
+            "Float.from_string",
+        )),
     );
     map.insert(
         prelude_ids::HOST_READ_FILE,

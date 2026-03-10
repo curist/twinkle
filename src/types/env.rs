@@ -6,6 +6,7 @@ use super::ty::{
     MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId,
     UNFOLD_STEP_TYPE_ID, Variant,
 };
+use crate::intrinsics::contracts;
 use crate::syntax::ast::Type as AstType;
 
 /// Type environment - tracks user-defined type declarations
@@ -746,89 +747,9 @@ impl ValueEnv {
             },
         );
 
-        env.add_function(FunctionSignature {
-            name: "Int.to_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Int],
-            ret: Some(MonoType::String),
-        });
-        env.add_function(FunctionSignature {
-            name: "Float.to_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Float],
-            ret: Some(MonoType::String),
-        });
-        env.add_function(FunctionSignature {
-            name: "Bool.to_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Bool],
-            ret: Some(MonoType::String),
-        });
-        env.add_function(FunctionSignature {
-            name: "String.to_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::String],
-            ret: Some(MonoType::String),
-        });
-        env.add_function(FunctionSignature {
-            name: "Int.from_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::String],
-            ret: Some(MonoType::Named {
-                type_id: OPTION_TYPE_ID,
-                args: vec![MonoType::Int],
-            }),
-        });
-        env.add_function(FunctionSignature {
-            name: "Float.from_string".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::String],
-            ret: Some(MonoType::Named {
-                type_id: OPTION_TYPE_ID,
-                args: vec![MonoType::Float],
-            }),
-        });
-        env.add_function(FunctionSignature {
-            name: "String.char_code_at".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::String, MonoType::Int],
-            ret: Some(MonoType::Int),
-        });
-        env.add_function(FunctionSignature {
-            name: "String.from_char_code".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Int],
-            ret: Some(MonoType::Named {
-                type_id: OPTION_TYPE_ID,
-                args: vec![MonoType::String],
-            }),
-        });
-
-        env.add_function(FunctionSignature {
-            name: "String.from_code_point".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Int],
-            ret: Some(MonoType::Named {
-                type_id: OPTION_TYPE_ID,
-                args: vec![MonoType::String],
-            }),
-        });
-
-        env.add_function(FunctionSignature {
-            name: "String.utf8_bytes".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::String],
-            ret: Some(MonoType::Vector(Box::new(MonoType::Byte))),
-        });
-        env.add_function(FunctionSignature {
-            name: "String.from_utf8".to_string(),
-            type_params: vec![],
-            params: vec![MonoType::Vector(Box::new(MonoType::Byte))],
-            ret: Some(MonoType::Named {
-                type_id: OPTION_TYPE_ID,
-                args: vec![MonoType::String],
-            }),
-        });
+        for sig in contracts::function_signatures() {
+            env.add_function(sig);
+        }
 
         env.builtins.insert(
             "__host_read_file".to_string(),

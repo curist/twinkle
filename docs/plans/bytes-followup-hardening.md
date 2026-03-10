@@ -137,6 +137,13 @@ Target files:
   * runtime vs intrinsic backend dispatch
 * Migrate consumers incrementally (typecheck, lowering, codegen result inference).
 
+**Progress notes (2026-03-10)**
+
+* Kickoff landed: introduced a shared intrinsic contract module and began wiring
+  type-env builtin signatures and codegen intrinsic result typing to consume it.
+* Current migration scope covers byte/string conversion and indexing-related
+  intrinsic contracts; generic/container contracts still use compatibility paths.
+
 **Exit criteria**
 
 * No new intrinsic requires editing multiple disconnected signature sources.

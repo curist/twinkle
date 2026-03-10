@@ -2,6 +2,7 @@ pub mod backend_pipeline;
 pub mod cli;
 pub mod codegen;
 pub mod interp;
+pub mod intrinsics;
 pub mod ir;
 pub mod module;
 pub mod opt;

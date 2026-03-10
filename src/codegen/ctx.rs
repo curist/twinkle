@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::codegen::prelude::{PreludeEntry, PreludeMap};
+use crate::intrinsics::contracts::{self, IntrinsicAbiResult};
 use crate::ir::FuncId;
 use crate::ir::LocalId;
 use crate::ir::VariantId;
@@ -1496,19 +1497,22 @@ fn collect_break_types_op(op: &AnfOp, ctx: &EmitCtx<'_>, depth: usize, out: &mut
 }
 
 fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
-    use crate::ir::lower::prelude as ids;
-    use crate::runtime::types::{T_ARRAY, T_STRING};
+    if let Some(abi) = contracts::contract(func_id).and_then(|entry| entry.abi_result) {
+        return Some(match abi {
+            IntrinsicAbiResult::Anyref => ValType::Anyref,
+            IntrinsicAbiResult::I64 => ValType::I64,
+            IntrinsicAbiResult::RefStringNullable => ref_named(true, T_STRING),
+        });
+    }
 
-    let named_ref = |sym: &str| ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(sym.to_string()),
-    };
+    // Compatibility fallback for intrinsics not yet migrated into the central
+    // contract table.
+    use crate::ir::lower::prelude as ids;
 
     match func_id {
-        id if id == ids::STRING_TO_STRING => Some(named_ref(T_STRING)),
-        id if id == ids::VECTOR_PUSH => Some(named_ref(T_ARRAY)),
-        id if id == ids::VECTOR_SET_IN_PLACE => Some(named_ref(T_ARRAY)),
-        id if id == ids::VECTOR_BUILDER_FREEZE => Some(named_ref(T_ARRAY)),
+        id if id == ids::VECTOR_PUSH => Some(ref_named(true, T_ARRAY)),
+        id if id == ids::VECTOR_SET_IN_PLACE => Some(ref_named(true, T_ARRAY)),
+        id if id == ids::VECTOR_BUILDER_FREEZE => Some(ref_named(true, T_ARRAY)),
         id if id == ids::RANGE_FROM
             || id == ids::RANGE
             || id == ids::RANGE_STEP
@@ -1523,17 +1527,10 @@ fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
             || id == ids::VECTOR_BUILDER_PUSH
             || id == ids::VECTOR_GET
             || id == ids::VECTOR_SET
-            || id == ids::VECTOR_MAKE
-            || id == ids::FROM_CHAR_CODE
-            || id == ids::INT_FROM_STRING
-            || id == ids::FLOAT_FROM_STRING =>
+            || id == ids::VECTOR_MAKE =>
         {
             Some(ValType::Anyref)
         }
-        id if id == ids::CHAR_CODE_AT => Some(ValType::I64),
-        id if id == ids::BYTE_TO_INT => Some(ValType::I64),
-        id if id == ids::BYTE_FROM_INT => Some(ValType::Anyref),
-        id if id == ids::BYTE_TO_STRING => Some(named_ref(T_STRING)),
         _ => None,
     }
 }
