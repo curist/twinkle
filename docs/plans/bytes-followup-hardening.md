@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** In progress (Phase 1+2 complete, Phase 3 active)  
+**Status:** In progress (Phase 1-3 complete, Phase 4 pending)  
 **Last updated:** 2026-03-10
 
 ## Goal
@@ -169,6 +169,10 @@ Target files:
   across typechecker, ANF lowering, interpreter, and Wasm emit paths.
 * Added `tests/run/byte_arithmetic_promotion.tw` and wired explicit run/wasm tests;
   differential parity passes with the new fixture included.
+* Added explicit result-type assertions (`Int` annotations) and Byte comparison
+  coverage in the promotion fixture to validate end-to-end semantics.
+* Phase 3 exit criteria satisfied: promotion examples compile/run and are covered
+  by run, wasm, and differential test suites.
 
 **Exit criteria**
 
