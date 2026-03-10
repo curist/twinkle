@@ -80,6 +80,9 @@ pub struct StringLiteralPoolEntry {
 
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
+    /// Explicit ANF let-op result monotypes for the current function, keyed by
+    /// bound local. Populated from `AnfFunctionDef::op_result_mono`.
+    pub op_result_mono: HashMap<LocalId, MonoType>,
     /// Tracks concrete monomorphic types for locals when codegen can preserve a
     /// more specific Wasm representation than plain `Anyref`.
     pub local_mono: HashMap<LocalId, MonoType>,
@@ -119,6 +122,7 @@ impl<'a> EmitCtx<'a> {
     ) -> Self {
         Self {
             local_map: HashMap::new(),
+            op_result_mono: HashMap::new(),
             local_mono: HashMap::new(),
             capture_mono_by_func: HashMap::new(),
             closure_locals: HashMap::new(),
@@ -295,6 +299,7 @@ impl<'a> EmitCtx<'a> {
         extra_params: &[(LocalId, ValType)],
     ) -> Vec<ValType> {
         self.local_map.clear();
+        self.op_result_mono = func.op_result_mono.clone();
         self.local_mono.clear();
         self.closure_locals.clear();
         self.local_backend.clear();
@@ -531,6 +536,36 @@ impl<'a> EmitCtx<'a> {
         self.infer_op_mono(op)
     }
 
+    pub fn infer_let_op_mono_for_emit(&self, local: LocalId, op: &AnfOp) -> Option<MonoType> {
+        let metadata = self
+            .op_result_mono
+            .get(&local)
+            .cloned()
+            .filter(|mono| !should_ignore_void_metadata(op, mono));
+        let inferred = self.infer_op_mono(op);
+        if !self.concrete_func_sigs.is_empty() && is_unfold_step_variant_op(op) {
+            debug_assert!(
+                metadata
+                    .as_ref()
+                    .or(inferred.as_ref())
+                    .is_some_and(is_concrete_unfold_step_mono),
+                "missing concrete UnfoldStep op-result metadata for let-bound local L{}",
+                local.0
+            );
+        }
+        match (metadata, inferred) {
+            (Some(meta), Some(fresh)) if meta != fresh => {
+                if should_prefer_fresh_inference_over_metadata(op) {
+                    Some(fresh)
+                } else {
+                    Some(meta)
+                }
+            }
+            (Some(meta), _) => Some(meta),
+            (None, inferred) => inferred,
+        }
+    }
+
     pub fn push_flow_mono_binding(
         &mut self,
         local: LocalId,
@@ -621,7 +656,7 @@ impl<'a> EmitCtx<'a> {
                     let inferred_mono = if self.module_global_sym(*local).is_some() {
                         None
                     } else {
-                        self.infer_op_mono(op)
+                        self.infer_let_op_mono_for_emit(*local, op)
                     };
                     let iterator_state = iterator_state_from_setup_op(op, self);
                     let iterator_next_state = iterator_next_result_state_from_op(op, self);
@@ -645,18 +680,36 @@ impl<'a> EmitCtx<'a> {
                         // Keep specialized general Option<T> locals at anyref to avoid
                         // forcing an invalid cast into universal Variant layout.
                         ValType::Anyref
-                    } else {
-                        self.infer_op_valtype(op)
-                            .or_else(|| {
-                                inferred_mono.as_ref().map(|mono| {
-                                    mono_to_valtype_specialized(
-                                        mono,
-                                        self.type_env,
-                                        &self.concrete_func_sigs,
-                                    )
-                                })
+                    } else if is_unfold_step_variant_op(op)
+                        && inferred_mono
+                            .as_ref()
+                            .is_some_and(is_concrete_unfold_step_mono)
+                    {
+                        // UnfoldStep literals emitted as typed structs require
+                        // a matching typed local representation.
+                        mono_to_valtype_specialized(
+                            inferred_mono.as_ref().expect("checked is_some"),
+                            self.type_env,
+                            &self.concrete_func_sigs,
+                        )
+                    } else if let Some(mono) = inferred_mono.as_ref() {
+                        if matches!(op.as_ref(), AnfOp::ACall { .. }) {
+                            self.infer_op_valtype(op).unwrap_or_else(|| {
+                                mono_to_valtype_specialized(
+                                    mono,
+                                    self.type_env,
+                                    &self.concrete_func_sigs,
+                                )
                             })
-                            .unwrap_or(ValType::Anyref)
+                        } else {
+                            mono_to_valtype_specialized(
+                                mono,
+                                self.type_env,
+                                &self.concrete_func_sigs,
+                            )
+                        }
+                    } else {
+                        self.infer_op_valtype(op).unwrap_or(ValType::Anyref)
                     };
                     let preserved_mono = inferred_mono
                         .as_ref()
@@ -690,7 +743,7 @@ impl<'a> EmitCtx<'a> {
                 let mut repr_restores = Vec::new();
                 let mut iterator_restores = Vec::new();
                 let mut iterator_next_restores = Vec::new();
-                let local_mono = self.infer_op_mono(op);
+                let local_mono = self.infer_let_op_mono_for_emit(*local, op);
                 self.push_flow_mono_binding(*local, local_mono.clone(), &mut mono_restores);
                 self.push_flow_value_repr_binding(
                     *local,
@@ -926,20 +979,35 @@ impl<'a> EmitCtx<'a> {
         if let Some(info) = atom_iterator_state(atom, self) {
             return Some(ref_named(true, &typed_iterator_state_sym(&info)));
         }
+        if let Atom::ALocal(local_id) = atom {
+            if let Some((_, ty)) = self.local(*local_id) {
+                return Some(ty.clone());
+            }
+        }
         self.infer_atom_mono(atom)
             .map(|mono| mono_to_valtype_specialized(&mono, self.type_env, &self.concrete_func_sigs))
-            .or_else(|| match atom {
-                Atom::ALocal(local_id) => self.local(*local_id).map(|(_, ty)| ty.clone()),
-                _ => None,
-            })
     }
 
     pub fn infer_atom_mono(&self, atom: &Atom) -> Option<MonoType> {
         match atom {
             Atom::ALocal(local_id) => self.local_mono.get(local_id).cloned().or_else(|| {
-                self.current_func_id
-                    .and_then(|func_id| self.capture_mono_by_func.get(&func_id))
-                    .and_then(|m| m.get(local_id).cloned())
+                self.op_result_mono
+                    .get(local_id)
+                    .cloned()
+                    .filter(|mono| {
+                        if *mono != MonoType::Void {
+                            return true;
+                        }
+                        match self.local(*local_id) {
+                            Some((_, ty)) => *ty == ValType::I32,
+                            None => true,
+                        }
+                    })
+                    .or_else(|| {
+                        self.current_func_id
+                            .and_then(|func_id| self.capture_mono_by_func.get(&func_id))
+                            .and_then(|m| m.get(local_id).cloned())
+                    })
             }),
             Atom::AGlobalFunc(func_id) => {
                 self.concrete_func_sigs
@@ -1239,6 +1307,8 @@ impl<'a> EmitCtx<'a> {
                             type_id: OPTION_TYPE_ID,
                             args: vec![item_ty],
                         }),
+                    id if id == ids::VECTOR_BUILDER_PUSH => Some(MonoType::Void),
+                    id if id == ids::VECTOR_SET_IN_PLACE => self.infer_atom_mono(args.first()?),
                     _ => self
                         .user_funcs
                         .get(func_id)
@@ -1338,6 +1408,47 @@ fn should_erase_assigned_local(mono: &MonoType) -> bool {
         | MonoType::Never => false,
         _ => true,
     }
+}
+
+fn is_unfold_step_variant_op(op: &AnfOp) -> bool {
+    matches!(
+        op,
+        AnfOp::AVariant { type_id, .. } if *type_id == UNFOLD_STEP_TYPE_ID
+    )
+}
+
+fn should_ignore_void_metadata(op: &AnfOp, mono: &MonoType) -> bool {
+    if *mono != MonoType::Void {
+        return false;
+    }
+    match op {
+        AnfOp::AAssign { .. } | AnfOp::ADefer(_) => false,
+        AnfOp::AInit { value } => !matches!(value, Atom::ALitVoid),
+        _ => true,
+    }
+}
+
+fn should_prefer_fresh_inference_over_metadata(op: &AnfOp) -> bool {
+    use crate::ir::lower::prelude as ids;
+    match op {
+        AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            ..
+        } => *func_id == ids::VECTOR_BUILDER_PUSH,
+        AnfOp::AInit { .. } | AnfOp::AAssign { .. } => true,
+        _ => false,
+    }
+}
+
+fn is_concrete_unfold_step_mono(mono: &MonoType) -> bool {
+    matches!(
+        mono,
+        MonoType::Named { type_id, args }
+            if *type_id == UNFOLD_STEP_TYPE_ID
+                && args.len() == 2
+                && is_concrete_mono_type(&args[0])
+                && is_concrete_mono_type(&args[1])
+    )
 }
 
 fn is_cell_mono(mono: &MonoType) -> bool {
@@ -1838,38 +1949,25 @@ pub fn typed_cell_struct_sym(elem: &MonoType) -> String {
 
 /// Resolve concrete `(yield_ty, seed_ty)` for an UnfoldStep variant literal.
 ///
-/// For `Yield(value, next_seed)`: infers types from the atom arguments.
-/// For `Done` (no args): falls back to the current function's return type.
+/// This only uses variant payload atoms. Contextual fallback is intentionally
+/// disallowed so callers must provide explicit metadata where needed.
 pub fn resolve_unfold_step_types(
     variant: VariantId,
     args: &[Atom],
     ctx: &EmitCtx<'_>,
 ) -> Option<(MonoType, MonoType)> {
-    // Yield: try to infer types from the args
-    if variant.0 == 1 && args.len() == 2 {
-        if let (Some(yield_ty), Some(seed_ty)) =
-            (ctx.infer_atom_mono(&args[0]), ctx.infer_atom_mono(&args[1]))
-        {
-            if is_concrete_mono_type(&yield_ty) && is_concrete_mono_type(&seed_ty) {
-                return Some((yield_ty, seed_ty));
-            }
-        }
-        // Fall through to function return type if direct inference fails
+    if variant.0 != 1 || args.len() != 2 {
+        return None;
     }
-    // Done or fallback: use current function's return type
-    let func_id = ctx.current_func_id?;
-    let sig = ctx.user_func_sig(func_id)?;
-    let result_mono = sig.result_mono.as_ref()?;
-    if let MonoType::Named { type_id, args } = result_mono {
-        if *type_id == UNFOLD_STEP_TYPE_ID
-            && args.len() == 2
-            && is_concrete_mono_type(&args[0])
-            && is_concrete_mono_type(&args[1])
-        {
-            return Some((args[0].clone(), args[1].clone()));
-        }
+    let (yield_ty, seed_ty) = (
+        ctx.infer_atom_mono(&args[0])?,
+        ctx.infer_atom_mono(&args[1])?,
+    );
+    if is_concrete_mono_type(&yield_ty) && is_concrete_mono_type(&seed_ty) {
+        Some((yield_ty, seed_ty))
+    } else {
+        None
     }
-    None
 }
 
 /// Symbol for a typed UnfoldStep struct for concrete `(yield_ty, seed_ty)`.
@@ -2187,6 +2285,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2213,6 +2312,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2244,6 +2344,7 @@ mod tests {
                 }),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2277,6 +2378,7 @@ mod tests {
                 }),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2305,6 +2407,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2334,6 +2437,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2388,6 +2492,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2420,6 +2525,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2458,6 +2564,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2506,6 +2613,7 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
             },
             return_ty: result_string_string,
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2562,6 +2670,7 @@ mod tests {
                 type_id: CELL_TYPE_ID,
                 args: vec![MonoType::Int],
             },
+            op_result_mono: HashMap::new(),
         };
 
         let _locals = ctx.setup_locals(&func);
@@ -2620,34 +2729,26 @@ mod tests {
     }
 
     #[test]
-    fn resolve_unfold_step_types_yield_falls_back_when_arg_inference_fails() {
+    fn resolve_unfold_step_types_yield_uses_local_metadata() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
-        let func_id = FuncId(5000);
-        let unfold_step_string_int = MonoType::Named {
-            type_id: UNFOLD_STEP_TYPE_ID,
-            args: vec![MonoType::String, MonoType::Int],
-        };
-        let user_funcs = HashMap::from([(
-            func_id,
-            FuncSigInfo {
-                params: vec![],
-                result: None,
-                result_mono: Some(unfold_step_string_int),
-            },
-        )]);
+        let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func_id = FuncId(5000);
         let func = AnfFunctionDef {
             func_id,
-            name: "unfold_step_fallback".to_string(),
+            name: "unfold_step_metadata".to_string(),
             params: vec![],
             param_tys: vec![],
             body: AnfExpr::Atom(Atom::ALitVoid),
             return_ty: MonoType::Void,
+            op_result_mono: HashMap::from([
+                (LocalId(10), MonoType::String),
+                (LocalId(11), MonoType::Int),
+            ]),
         };
         let _locals = ctx.setup_locals(&func);
 
-        // `ALocal` has no mono binding here, so direct Yield arg inference returns None.
         let resolved = resolve_unfold_step_types(
             VariantId(1),
             &[Atom::ALocal(LocalId(10)), Atom::ALocal(LocalId(11))],
@@ -2657,22 +2758,11 @@ mod tests {
     }
 
     #[test]
-    fn infer_variant_unfold_step_uses_return_type_fallback_for_non_inferable_yield_payload() {
+    fn infer_variant_unfold_step_uses_op_result_metadata_for_yield_payload() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let func_id = FuncId(5001);
-        let unfold_step_string_int = MonoType::Named {
-            type_id: UNFOLD_STEP_TYPE_ID,
-            args: vec![MonoType::String, MonoType::Int],
-        };
-        let user_funcs = HashMap::from([(
-            func_id,
-            FuncSigInfo {
-                params: vec![],
-                result: None,
-                result_mono: Some(unfold_step_string_int),
-            },
-        )]);
+        let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
         ctx.set_concrete_func_sigs(HashMap::from([(
             FuncId(42),
@@ -2681,7 +2771,7 @@ mod tests {
 
         let func = AnfFunctionDef {
             func_id,
-            name: "unfold_step_variant_fallback".to_string(),
+            name: "unfold_step_variant_metadata".to_string(),
             params: vec![],
             param_tys: vec![],
             body: AnfExpr::Let {
@@ -2697,9 +2787,13 @@ mod tests {
                 body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
             },
             return_ty: MonoType::Void,
+            op_result_mono: HashMap::from([(LocalId(1), MonoType::String)]),
         };
         let _locals = ctx.setup_locals(&func);
-        assert_eq!(ctx.infer_atom_mono(&Atom::ALocal(LocalId(1))), None);
+        assert_eq!(
+            ctx.infer_atom_mono(&Atom::ALocal(LocalId(1))),
+            Some(MonoType::String)
+        );
 
         let op = AnfOp::AVariant {
             type_id: UNFOLD_STEP_TYPE_ID,
@@ -2712,6 +2806,41 @@ mod tests {
                 type_id: UNFOLD_STEP_TYPE_ID,
                 args: vec![MonoType::String, MonoType::Int],
             })
+        );
+    }
+
+    #[test]
+    fn infer_let_call_mono_uses_fresh_builder_push_type_when_metadata_is_stale() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let op = AnfOp::ACall {
+            callee: Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_PUSH),
+            args: vec![Atom::ALocal(LocalId(9)), Atom::ALitInt(1)],
+        };
+        let func = AnfFunctionDef {
+            func_id: FuncId(5002),
+            name: "stale_builder_push_metadata".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(op.clone()),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::from([(
+                LocalId(1),
+                MonoType::Vector(Box::new(MonoType::Int)),
+            )]),
+        };
+
+        let _ = ctx.setup_locals(&func);
+        assert_eq!(
+            ctx.infer_let_op_mono_for_emit(LocalId(1), &op),
+            Some(MonoType::Void)
         );
     }
 }

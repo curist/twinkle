@@ -8,6 +8,7 @@
 ///   Core IR → ANF IR → WAT/Wasm backend
 ///
 /// The interpreter continues to use Core IR directly; ANF is backend-only.
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ir::core::{CorePattern, FieldId, FuncId, LocalId, VariantId};
@@ -185,6 +186,11 @@ pub struct AnfFunctionDef {
     pub name: String,
     pub params: Vec<LocalId>,
     pub param_tys: Vec<MonoType>,
+    /// Explicit monomorphic result metadata for let-bound ANF ops in this
+    /// function: `let local = op` => `local -> op_result_mono`.
+    ///
+    /// Backends use this map as the primary source for emit-time typing.
+    pub op_result_mono: HashMap<LocalId, MonoType>,
     pub body: AnfExpr,
     pub return_ty: MonoType,
 }

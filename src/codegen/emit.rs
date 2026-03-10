@@ -37,6 +37,7 @@ use crate::wasm::ir::{
 pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
     let prelude = build_prelude_map();
     let concrete_func_sigs = collect_concrete_func_signatures(anf);
+    validate_unfold_step_typing_invariants(anf, &concrete_func_sigs);
     let closure_capture_layouts = collect_closure_capture_layouts(anf);
     let user_sigs =
         build_user_sig_map_typed(anf, type_env, &closure_capture_layouts, &concrete_func_sigs);
@@ -723,6 +724,64 @@ fn user_func_sym(func_id: FuncId) -> String {
     format!("func_{}", func_id.0)
 }
 
+fn validate_unfold_step_typing_invariants(
+    anf: &AnfModule,
+    concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
+) {
+    if concrete_func_sigs.is_empty() {
+        return;
+    }
+    for func in &anf.functions {
+        validate_unfold_step_typing_expr(&func.body, func);
+    }
+}
+
+fn validate_unfold_step_typing_expr(expr: &AnfExpr, func: &AnfFunctionDef) {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            validate_unfold_step_typing_op(*local, op, func);
+            validate_unfold_step_typing_expr(body, func);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn validate_unfold_step_typing_op(local: crate::ir::LocalId, op: &AnfOp, func: &AnfFunctionDef) {
+    match op {
+        AnfOp::AVariant { type_id, .. } if *type_id == UNFOLD_STEP_TYPE_ID => {
+            let result_mono = func.op_result_mono.get(&local).unwrap_or_else(|| {
+                panic!(
+                    "missing UnfoldStep result metadata for function {} (FuncId({})), local L{}",
+                    func.name, func.func_id.0, local.0
+                )
+            });
+            if concrete_unfold_step_types(result_mono).is_none() {
+                panic!(
+                    "invalid UnfoldStep result metadata for function {} (FuncId({})), local L{}: {:?}",
+                    func.name, func.func_id.0, local.0, result_mono
+                );
+            }
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            validate_unfold_step_typing_expr(then_branch, func);
+            validate_unfold_step_typing_expr(else_branch, func);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                validate_unfold_step_typing_expr(&arm.body, func);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            validate_unfold_step_typing_expr(body, func);
+        }
+        _ => {}
+    }
+}
+
 fn emit_expr(expr: &AnfExpr, return_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     match expr {
         AnfExpr::Let { local, op, body } => {
@@ -769,12 +828,21 @@ fn emit_let_expr(
     let mut repr_restores = Vec::new();
     let mut iterator_restores = Vec::new();
     let mut typed_option_restores = Vec::new();
-    let local_mono = ctx.infer_op_mono_for_emit(op);
+    let local_mono = ctx.infer_let_op_mono_for_emit(local, op);
     let local_repr = local_mono
         .as_ref()
         .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
     let local_iter = iterator_state_from_op(op, ctx);
-    let local_opt = typed_general_option_from_op(op, ctx);
+    let local_opt = match op {
+        AnfOp::AVariant { type_id, .. } if *type_id == OPTION_TYPE_ID => local_mono
+            .as_ref()
+            .filter(|mono| is_typed_general_option_candidate(mono))
+            .cloned(),
+        _ => typed_general_option_from_op(op, ctx),
+    };
+    if let Some(mono) = local_opt.as_ref() {
+        ctx.request_typed_general_option(typed_general_option_sym(mono), mono.clone());
+    }
     ctx.push_flow_mono_binding(local, local_mono.clone(), &mut restores);
     ctx.push_flow_value_repr_binding(local, local_repr, &mut repr_restores);
     ctx.push_flow_iterator_binding(local, local_iter, &mut iterator_restores);
@@ -2434,8 +2502,8 @@ fn emit_coerce_local(
             },
         ],
         _ => panic!(
-            "unsupported local coercion from {:?} to {:?} in Stage 8c Step 2",
-            local_ty, expected
+            "unsupported local coercion from {:?} to {:?} in Stage 8c Step 2 (FuncId {:?}, local idx {})",
+            local_ty, expected, ctx.current_func_id, idx
         ),
     }
 }
@@ -3264,11 +3332,19 @@ fn emit_variant_literal(
 ) -> Vec<Instr> {
     // Typed UnfoldStep path: emit a typed struct instead of universal $Variant
     if !ctx.concrete_func_sigs.is_empty() && type_id == UNFOLD_STEP_TYPE_ID {
-        if let Some((yield_ty, seed_ty)) = resolve_unfold_step_types(variant, args, ctx) {
+        let unfold_types = expected_mono
+            .and_then(concrete_unfold_step_types)
+            .or_else(|| resolve_unfold_step_types(variant, args, ctx));
+        if let Some((yield_ty, seed_ty)) = unfold_types {
             return emit_typed_unfold_step_literal(
                 variant, args, &yield_ty, &seed_ty, bind_ty, ctx,
             );
         }
+        panic!(
+            "missing concrete UnfoldStep typing metadata for variant {} with {} args",
+            variant.0,
+            args.len()
+        );
     }
 
     // Typed general Option<T> path: emit a typed struct for concrete Option<T>.
@@ -4051,10 +4127,18 @@ fn atom_iterator_next_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorSt
 }
 
 fn atom_typed_unfold_step(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<(MonoType, MonoType)> {
-    match atom {
-        Atom::ALocal(local_id) => ctx
-            .local(*local_id)
-            .and_then(|(_, ty)| typed_unfold_step_info_for_valtype(ty, ctx)),
+    let Atom::ALocal(local_id) = atom else {
+        return None;
+    };
+    let (_, local_ty) = ctx.local(*local_id)?;
+    let mono = ctx.infer_atom_mono(atom)?;
+    let (yield_ty, seed_ty) = concrete_unfold_step_types(&mono)?;
+    let expected_sym = typed_unfold_step_sym(&yield_ty, &seed_ty);
+    match local_ty {
+        ValType::Ref {
+            heap: HeapType::Named(sym),
+            ..
+        } if sym == &expected_sym => Some((yield_ty, seed_ty)),
         _ => None,
     }
 }
@@ -7613,6 +7697,7 @@ mod tests {
                 }),
             },
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
         let anf = AnfModule {
             functions: vec![fib_like],
@@ -8094,6 +8179,7 @@ mod tests {
             param_tys: vec![MonoType::Int],
             body: AnfExpr::Atom(Atom::ALocal(LocalId(1))),
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
         let anf = AnfModule {
             functions: vec![func],
@@ -8127,6 +8213,7 @@ mod tests {
             param_tys: vec![MonoType::Int],
             body: AnfExpr::Atom(Atom::ALocal(LocalId(42))),
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
 
         let captures = infer_capture_locals(&func);
@@ -8144,6 +8231,7 @@ mod tests {
             // Simulate a post-optimization body where the captured local is no longer read.
             body: AnfExpr::Atom(Atom::ALocal(LocalId(1))),
             return_ty: MonoType::Int,
+            op_result_mono: HashMap::new(),
         };
         let caller = AnfFunctionDef {
             func_id: FuncId(3),
@@ -8165,6 +8253,7 @@ mod tests {
                 }),
             },
             return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
         };
         let anf = AnfModule {
             functions: vec![callee, caller],
@@ -8713,6 +8802,7 @@ mod tests {
                     param_tys: vec![],
                     body: AnfExpr::Atom(Atom::ALitVoid),
                     return_ty: MonoType::Void,
+                    op_result_mono: HashMap::new(),
                 },
                 AnfFunctionDef {
                     func_id: FuncId(2),
@@ -8721,6 +8811,7 @@ mod tests {
                     param_tys: vec![],
                     body: AnfExpr::Atom(Atom::ALitVoid),
                     return_ty: MonoType::Void,
+                    op_result_mono: HashMap::new(),
                 },
             ],
             init_func_id: Some(FuncId(2)),

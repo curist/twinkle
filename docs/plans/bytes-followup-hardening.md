@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** In progress (Phase 1-3 complete, Phase 4 pending)  
+**Status:** In progress (Phase 1-4 complete, Phase 5 pending)  
 **Last updated:** 2026-03-10
 
 ## Goal
@@ -185,6 +185,24 @@ Target files:
 
 Eliminate fallback-based recovery in `resolve_unfold_step_types` and make typed unfold-step
 selection deterministic from explicit metadata.
+
+**Progress notes (2026-03-10)**
+
+* Landed explicit `AnfFunctionDef::op_result_mono` metadata and threaded metadata
+  population through Core→ANF lowering.
+* Updated emit context to prefer let-bound op-result metadata for local mono typing,
+  while retaining guarded compatibility fallbacks during migration.
+* Removed function-return fallback logic from `resolve_unfold_step_types`; unfold-step
+  resolution now depends on explicit arg/op metadata only.
+* Added pre-emit unfold-step typing invariant validation so missing/invalid metadata
+  fails fast with deterministic diagnostics.
+* Added/updated codegen and lowering tests to cover metadata-driven unfold-step typing,
+  plus run/wasm/differential verification after the transition.
+
+**Phase 4 completion note**
+
+Phase 4 exit criteria are now satisfied in this branch; fallback-based unfold typing has
+been removed by construction, and missing metadata no longer silently degrades behavior.
 
 **Why this is a major task**
 

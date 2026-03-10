@@ -11,6 +11,8 @@
 ///   - `build_lets(accum, tail_expr)` converts the accumulator into nested AnfExpr::Let.
 ///
 /// This avoids the nested-closure borrow problem completely and is equivalent to CPS.
+use std::collections::HashMap;
+
 use crate::ir::anf::{
     AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, IndexKind, OpKind,
 };
@@ -81,13 +83,15 @@ pub fn lower_module(module: &CoreModule) -> AnfModule {
 
 /// Lower a single `FunctionDef` into an `AnfFunctionDef`.
 pub fn lower_func(func: &FunctionDef, next_temp: &mut u32) -> AnfFunctionDef {
-    let body = lower_expr_top(&func.body, next_temp);
+    let mut op_result_mono = HashMap::new();
+    let body = lower_expr_top(&func.body, next_temp, &mut op_result_mono);
 
     AnfFunctionDef {
         func_id: func.func_id,
         name: func.name.clone(),
         params: func.params.clone(),
         param_tys: func.param_tys.clone(),
+        op_result_mono,
         body,
         return_ty: func.return_ty.clone(),
     }
@@ -113,13 +117,40 @@ fn build_lets(accum: LetAccum, tail: AnfExpr) -> AnfExpr {
         })
 }
 
+fn push_accum_op(
+    accum: &mut LetAccum,
+    op_result_mono: &mut HashMap<LocalId, MonoType>,
+    local: LocalId,
+    op: AnfOp,
+    result_ty: &MonoType,
+) {
+    accum.push((local, op));
+    op_result_mono.insert(local, result_ty.clone());
+}
+
+fn atom_result_mono(atom: &Atom, op_result_mono: &HashMap<LocalId, MonoType>) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local) => op_result_mono.get(local).cloned(),
+        Atom::ALitInt(_) => Some(MonoType::Int),
+        Atom::ALitFloat(_) => Some(MonoType::Float),
+        Atom::ALitBool(_) => Some(MonoType::Bool),
+        Atom::ALitStr(_) => Some(MonoType::String),
+        Atom::ALitVoid => Some(MonoType::Void),
+        Atom::AGlobalFunc(_) => None,
+    }
+}
+
 /// Lower a `CoreExpr` to a full `AnfExpr`.
 ///
 /// This is the top-level entry: it processes the expression, collecting intermediate
 /// let-bindings in an accumulator, then builds the final expression.
-fn lower_expr_top(expr: &CoreExpr, next_temp: &mut u32) -> AnfExpr {
+fn lower_expr_top(
+    expr: &CoreExpr,
+    next_temp: &mut u32,
+    op_result_mono: &mut HashMap<LocalId, MonoType>,
+) -> AnfExpr {
     let mut accum: LetAccum = Vec::new();
-    let result = lower_expr(expr, next_temp, &mut accum);
+    let result = lower_expr(expr, next_temp, &mut accum, op_result_mono);
     build_lets(accum, result)
 }
 
@@ -132,7 +163,12 @@ fn lower_expr_top(expr: &CoreExpr, next_temp: &mut u32) -> AnfExpr {
 /// - For structural forms (If, Match, Loop): a Let binding the result to a fresh temp.
 /// - For Let: processes value into accum at the original local, then processes body.
 /// - For Assign: processes value, adds AAssign to accum, returns Atom(ALitVoid).
-fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> AnfExpr {
+fn lower_expr(
+    expr: &CoreExpr,
+    next_temp: &mut u32,
+    accum: &mut LetAccum,
+    op_result_mono: &mut HashMap<LocalId, MonoType>,
+) -> AnfExpr {
     match &expr.kind {
         // ── Atoms: return directly ─────────────────────────────────────────────
         CoreExprKind::LitInt(n) => AnfExpr::Atom(Atom::ALitInt(*n)),
@@ -154,13 +190,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     free_vars: free_vars.clone(),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::BinOp { op, left, right } => {
             let operand_ty = op_kind_from(&left.ty);
-            let left_atom = atomize(left, next_temp, accum);
-            let right_atom = atomize(right, next_temp, accum);
+            let left_atom = atomize(left, next_temp, accum, op_result_mono);
+            let right_atom = atomize(right, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -171,12 +208,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     operand_ty,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::UnOp { op, expr: inner } => {
             let operand_ty = op_kind_from(&inner.ty);
-            let inner_atom = atomize(inner, next_temp, accum);
+            let inner_atom = atomize(inner, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -186,12 +224,16 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     operand_ty,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::Call { callee, args } => {
-            let callee_atom = atomize(callee, next_temp, accum);
-            let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
+            let callee_atom = atomize(callee, next_temp, accum, op_result_mono);
+            let arg_atoms: Vec<Atom> = args
+                .iter()
+                .map(|a| atomize(a, next_temp, accum, op_result_mono))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -200,6 +242,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     args: arg_atoms,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -207,7 +250,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             let type_id = *type_id;
             let anf_fields: Vec<_> = fields
                 .iter()
-                .map(|(fid, e)| (*fid, atomize(e, next_temp, accum)))
+                .map(|(fid, e)| (*fid, atomize(e, next_temp, accum, op_result_mono)))
                 .collect();
             let tmp = fresh(next_temp);
             accum.push((
@@ -217,12 +260,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     fields: anf_fields,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::RecordGet { target, field } => {
             let tid = type_id_from(&target.ty);
-            let target_atom = atomize(target, next_temp, accum);
+            let target_atom = atomize(target, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -232,13 +276,14 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     type_id: tid,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::RecordUpdate { base, field, value } => {
             let tid = type_id_from(&base.ty);
-            let base_atom = atomize(base, next_temp, accum);
-            let value_atom = atomize(value, next_temp, accum);
+            let base_atom = atomize(base, next_temp, accum, op_result_mono);
+            let value_atom = atomize(value, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -250,6 +295,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     type_id: tid,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -260,7 +306,10 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
         } => {
             let type_id = *type_id;
             let variant = *variant;
-            let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
+            let arg_atoms: Vec<Atom> = args
+                .iter()
+                .map(|a| atomize(a, next_temp, accum, op_result_mono))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -270,23 +319,25 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     args: arg_atoms,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::ArrayLit { elements } => {
             let atoms: Vec<Atom> = elements
                 .iter()
-                .map(|e| atomize(e, next_temp, accum))
+                .map(|e| atomize(e, next_temp, accum, op_result_mono))
                 .collect();
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::AArrayLit(atoms)));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         CoreExprKind::Index { base, index } => {
             let bty = index_kind_from(&base.ty);
-            let base_atom = atomize(base, next_temp, accum);
-            let index_atom = atomize(index, next_temp, accum);
+            let base_atom = atomize(base, next_temp, accum, op_result_mono);
+            let index_atom = atomize(index, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -297,20 +348,22 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     result_ty: expr.ty.clone(),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         // ── Defer: lower inner independently, push ADefer, return ALitVoid ─────
         CoreExprKind::Defer(inner) => {
-            let inner_anf = lower_expr_top(inner, next_temp);
+            let inner_anf = lower_expr_top(inner, next_temp, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::ADefer(Box::new(inner_anf))));
+            op_result_mono.insert(tmp, MonoType::Void);
             AnfExpr::Atom(Atom::ALitVoid)
         }
 
         // ── Assign: atomize value, push AAssign, return Atom(ALitVoid) ─────────
         CoreExprKind::Assign { local, value } => {
-            let val_atom = atomize(value, next_temp, accum);
+            let val_atom = atomize(value, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -319,6 +372,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     value: val_atom,
                 },
             ));
+            op_result_mono.insert(tmp, MonoType::Void);
             AnfExpr::Atom(Atom::ALitVoid)
         }
 
@@ -333,13 +387,16 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             // Lower value in an isolated accumulator so terminal value expressions
             // don't leak partial bindings into the caller's accumulator.
             let mut value_accum: LetAccum = Vec::new();
-            let value_result = lower_expr(value, next_temp, &mut value_accum);
+            let value_result = lower_expr(value, next_temp, &mut value_accum, op_result_mono);
             match value_result {
                 AnfExpr::Atom(atom) => {
                     accum.extend(value_accum);
                     // Value reduced to an atom — initialize orig_local with it.
                     // AInit marks this as a new binding (distinct from AAssign mutation).
+                    let init_ty =
+                        atom_result_mono(&atom, op_result_mono).unwrap_or_else(|| value.ty.clone());
                     accum.push((orig_local, AnfOp::AInit { value: atom }));
+                    op_result_mono.insert(orig_local, init_ty);
                 }
                 // Terminals: body is unreachable. Return a self-contained subtree
                 // for value side effects + terminal, without mutating outer accum.
@@ -348,7 +405,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                 }
             }
             // Lower body (continues with the same accum).
-            lower_expr(body, next_temp, accum)
+            lower_expr(body, next_temp, accum, op_result_mono)
         }
 
         // ── If: atomize cond, lower branches independently ────────────────────
@@ -357,9 +414,9 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
             then_branch,
             else_branch,
         } => {
-            let cond_atom = atomize(cond, next_temp, accum);
-            let then_anf = lower_expr_top(then_branch, next_temp);
-            let else_anf = lower_expr_top(else_branch, next_temp);
+            let cond_atom = atomize(cond, next_temp, accum, op_result_mono);
+            let then_anf = lower_expr_top(then_branch, next_temp, op_result_mono);
+            let else_anf = lower_expr_top(else_branch, next_temp, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -369,17 +426,18 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     else_branch: Box::new(else_anf),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         // ── Match: atomize scrutinee, lower each arm independently ─────────────
         CoreExprKind::Match { scrutinee, arms } => {
-            let scrut_atom = atomize(scrutinee, next_temp, accum);
+            let scrut_atom = atomize(scrutinee, next_temp, accum, op_result_mono);
             let anf_arms: Vec<AnfMatchArm> = arms
                 .iter()
                 .map(|MatchArm { pattern, body }| AnfMatchArm {
                     pattern: pattern.clone(),
-                    body: lower_expr_top(body, next_temp),
+                    body: lower_expr_top(body, next_temp, op_result_mono),
                 })
                 .collect();
             let tmp = fresh(next_temp);
@@ -390,12 +448,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     arms: anf_arms,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
         // ── Loop: lower body independently ────────────────────────────────────
         CoreExprKind::Loop { body } => {
-            let body_anf = lower_expr_top(body, next_temp);
+            let body_anf = lower_expr_top(body, next_temp, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -403,6 +462,7 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
                     body: Box::new(body_anf),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
 
@@ -410,13 +470,13 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
         // Flush accum before emitting terminal (accum will be wrapped around it by caller).
         CoreExprKind::Break { value: None } => AnfExpr::Break(None),
         CoreExprKind::Break { value: Some(val) } => {
-            let atom = atomize(val, next_temp, accum);
+            let atom = atomize(val, next_temp, accum, op_result_mono);
             AnfExpr::Break(Some(atom))
         }
         CoreExprKind::Continue => AnfExpr::Continue,
         CoreExprKind::Return { value: None } => AnfExpr::Return(None),
         CoreExprKind::Return { value: Some(val) } => {
-            let atom = atomize(val, next_temp, accum);
+            let atom = atomize(val, next_temp, accum, op_result_mono);
             AnfExpr::Return(Some(atom))
         }
     }
@@ -430,7 +490,12 @@ fn lower_expr(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Anf
 ///
 /// For structural forms (If, Match, Loop), this lowers them independently and
 /// binds the result to a fresh temp.
-fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
+fn atomize(
+    expr: &CoreExpr,
+    next_temp: &mut u32,
+    accum: &mut LetAccum,
+    op_result_mono: &mut HashMap<LocalId, MonoType>,
+) -> Atom {
     match &expr.kind {
         // Already atoms
         CoreExprKind::LitInt(n) => Atom::ALitInt(*n),
@@ -448,7 +513,7 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
         | CoreExprKind::Match { .. }
         | CoreExprKind::Loop { .. }
         | CoreExprKind::Let { .. } => {
-            let anf = lower_expr_top(expr, next_temp);
+            let anf = lower_expr_top(expr, next_temp, op_result_mono);
             // Wrap into an If/Match/Loop op bound to a temp.
             // But lower_expr_top returns a full AnfExpr, not an op.
             // We need to splat it as an AIf/AMatch/ALoop if possible, or
@@ -458,7 +523,7 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
             // We do this by extracting the Let bindings from the AnfExpr.
             let tmp = fresh(next_temp);
             let wrapped = splice_atom_bind(anf, tmp);
-            flatten_into_accum(wrapped, accum, tmp);
+            flatten_into_accum(wrapped, accum, tmp, op_result_mono, &expr.ty);
             Atom::ALocal(tmp)
         }
 
@@ -483,12 +548,13 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     free_vars: free_vars.clone(),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::BinOp { op, left, right } => {
             let operand_ty = op_kind_from(&left.ty);
-            let left_atom = atomize(left, next_temp, accum);
-            let right_atom = atomize(right, next_temp, accum);
+            let left_atom = atomize(left, next_temp, accum, op_result_mono);
+            let right_atom = atomize(right, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -499,11 +565,12 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     operand_ty,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::UnOp { op, expr: inner } => {
             let operand_ty = op_kind_from(&inner.ty);
-            let inner_atom = atomize(inner, next_temp, accum);
+            let inner_atom = atomize(inner, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -513,11 +580,15 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     operand_ty,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::Call { callee, args } => {
-            let callee_atom = atomize(callee, next_temp, accum);
-            let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
+            let callee_atom = atomize(callee, next_temp, accum, op_result_mono);
+            let arg_atoms: Vec<Atom> = args
+                .iter()
+                .map(|a| atomize(a, next_temp, accum, op_result_mono))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -526,13 +597,14 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     args: arg_atoms,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::Record { type_id, fields } => {
             let type_id = *type_id;
             let anf_fields: Vec<_> = fields
                 .iter()
-                .map(|(fid, e)| (*fid, atomize(e, next_temp, accum)))
+                .map(|(fid, e)| (*fid, atomize(e, next_temp, accum, op_result_mono)))
                 .collect();
             let tmp = fresh(next_temp);
             accum.push((
@@ -542,11 +614,12 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     fields: anf_fields,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::RecordGet { target, field } => {
             let tid = type_id_from(&target.ty);
-            let target_atom = atomize(target, next_temp, accum);
+            let target_atom = atomize(target, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -556,12 +629,13 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     type_id: tid,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::RecordUpdate { base, field, value } => {
             let tid = type_id_from(&base.ty);
-            let base_atom = atomize(base, next_temp, accum);
-            let value_atom = atomize(value, next_temp, accum);
+            let base_atom = atomize(base, next_temp, accum, op_result_mono);
+            let value_atom = atomize(value, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -573,6 +647,7 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     type_id: tid,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::Variant {
@@ -582,7 +657,10 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
         } => {
             let type_id = *type_id;
             let variant = *variant;
-            let arg_atoms: Vec<Atom> = args.iter().map(|a| atomize(a, next_temp, accum)).collect();
+            let arg_atoms: Vec<Atom> = args
+                .iter()
+                .map(|a| atomize(a, next_temp, accum, op_result_mono))
+                .collect();
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -592,21 +670,23 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     args: arg_atoms,
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::ArrayLit { elements } => {
             let atoms: Vec<Atom> = elements
                 .iter()
-                .map(|e| atomize(e, next_temp, accum))
+                .map(|e| atomize(e, next_temp, accum, op_result_mono))
                 .collect();
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::AArrayLit(atoms)));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::Index { base, index } => {
             let bty = index_kind_from(&base.ty);
-            let base_atom = atomize(base, next_temp, accum);
-            let index_atom = atomize(index, next_temp, accum);
+            let base_atom = atomize(base, next_temp, accum, op_result_mono);
+            let index_atom = atomize(index, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -617,10 +697,11 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     result_ty: expr.ty.clone(),
                 },
             ));
+            op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
         CoreExprKind::Assign { local, value } => {
-            let val_atom = atomize(value, next_temp, accum);
+            let val_atom = atomize(value, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((
                 tmp,
@@ -629,12 +710,14 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
                     value: val_atom,
                 },
             ));
+            op_result_mono.insert(tmp, MonoType::Void);
             Atom::ALitVoid
         }
         CoreExprKind::Defer(inner) => {
-            let inner_anf = lower_expr_top(inner, next_temp);
+            let inner_anf = lower_expr_top(inner, next_temp, op_result_mono);
             let tmp = fresh(next_temp);
             accum.push((tmp, AnfOp::ADefer(Box::new(inner_anf))));
+            op_result_mono.insert(tmp, MonoType::Void);
             Atom::ALitVoid
         }
     }
@@ -645,14 +728,26 @@ fn atomize(expr: &CoreExpr, next_temp: &mut u32, accum: &mut LetAccum) -> Atom {
 ///
 /// This is used when we need to "inline" a structural expression's result into
 /// the current let-accumulator context.
-fn flatten_into_accum(anf: AnfExpr, accum: &mut LetAccum, result_local: LocalId) {
+fn flatten_into_accum(
+    anf: AnfExpr,
+    accum: &mut LetAccum,
+    result_local: LocalId,
+    op_result_mono: &mut HashMap<LocalId, MonoType>,
+    result_ty: &MonoType,
+) {
     match anf {
         AnfExpr::Let { local, op, body } => {
             accum.push((local, *op));
-            flatten_into_accum(*body, accum, result_local);
+            flatten_into_accum(*body, accum, result_local, op_result_mono, result_ty);
         }
         AnfExpr::Atom(atom) => {
-            accum.push((result_local, AnfOp::AInit { value: atom }));
+            push_accum_op(
+                accum,
+                op_result_mono,
+                result_local,
+                AnfOp::AInit { value: atom },
+                result_ty,
+            );
         }
         // A terminal (Return/Break/Continue) in flattening position means the structural
         // sub-expression always diverges. This indicates the Core IR has a terminal as the
@@ -821,12 +916,13 @@ fn max_local_id_in_pattern(pattern: &CorePattern, max: &mut u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::lower_expr_top;
+    use super::{lower_expr_top, lower_func};
     use crate::ir::anf::{AnfExpr, AnfOp, Atom, OpKind};
-    use crate::ir::core::{CoreExpr, CoreExprKind, LocalId};
+    use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, FunctionDef, LocalId};
     use crate::syntax::ast::BinOp;
     use crate::syntax::span::{FileId, Span};
     use crate::types::ty::MonoType;
+    use std::collections::HashMap;
 
     fn sp() -> Span {
         Span::new(FileId(0), 0, 0)
@@ -885,7 +981,8 @@ mod tests {
         };
 
         let mut next_temp = 3;
-        let anf = lower_expr_top(&outer, &mut next_temp);
+        let mut op_result_mono = HashMap::new();
+        let anf = lower_expr_top(&outer, &mut next_temp, &mut op_result_mono);
 
         let (outer_op, outer_body) = match anf {
             AnfExpr::Let {
@@ -946,7 +1043,8 @@ mod tests {
         };
 
         let mut next_temp = 2;
-        let anf = lower_expr_top(&expr, &mut next_temp);
+        let mut op_result_mono = HashMap::new();
+        let anf = lower_expr_top(&expr, &mut next_temp, &mut op_result_mono);
 
         let (outer_op, outer_body) = match anf {
             AnfExpr::Let {
@@ -983,5 +1081,46 @@ mod tests {
             *inner_body,
             AnfExpr::Atom(Atom::ALocal(LocalId(1)))
         ));
+    }
+
+    #[test]
+    fn lower_func_records_op_result_mono_metadata_for_let_bound_ops() {
+        let value = CoreExpr {
+            kind: CoreExprKind::BinOp {
+                op: BinOp::Add,
+                left: Box::new(lit_int(1)),
+                right: Box::new(lit_int(2)),
+            },
+            ty: MonoType::Int,
+            span: sp(),
+        };
+        let body = CoreExpr {
+            kind: CoreExprKind::Let {
+                local: LocalId(1),
+                value: Box::new(value),
+                body: Box::new(local(1, MonoType::Int)),
+            },
+            ty: MonoType::Int,
+            span: sp(),
+        };
+        let func = FunctionDef {
+            func_id: FuncId(9000),
+            name: "meta".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body,
+            return_ty: MonoType::Int,
+        };
+
+        let mut next_temp = 2;
+        let lowered = lower_func(&func, &mut next_temp);
+        assert_eq!(
+            lowered.op_result_mono.get(&LocalId(2)),
+            Some(&MonoType::Int)
+        );
+        assert_eq!(
+            lowered.op_result_mono.get(&LocalId(1)),
+            Some(&MonoType::Int)
+        );
     }
 }
