@@ -212,3 +212,4 @@ These are not tied to a specific stage:
 | [prelude-stdlib.md](prelude-stdlib.md) | Auto-available prelude inherent methods |
 | [wasm-iterator-representation-boundaries.md](wasm-iterator-representation-boundaries.md) | Stabilize iterator specialization boundaries in Wasm backend |
 | [wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md) | Reduce type erasure in Wasm backend with monomorphized layouts |
+| [wasm-sum-representation-boundary-unification.md](wasm-sum-representation-boundary-unification.md) | Unify typed/erased Option/Result/Variant boundary handling to prevent cast-failure regressions |

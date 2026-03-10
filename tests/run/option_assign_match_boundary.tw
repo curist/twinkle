@@ -1,0 +1,28 @@
+// Expected output:
+//   help run
+//   help none
+
+fn format_help(selected: Option<String>) String {
+  case selected {
+    .Some(cmd) => "help ${cmd}",
+    .None => "help none",
+  }
+}
+
+fn choose(flag: Bool) Option<String> {
+  selected: Option<String> = .None
+  probe: Option<String> = if flag { .Some("run") } else { .None }
+
+  case probe {
+    .Some(cmd) => {
+      next: Option<String> = .Some(cmd)
+      selected = next
+    },
+    .None => {},
+  }
+
+  selected
+}
+
+println(format_help(choose(true)))
+println(format_help(choose(false)))

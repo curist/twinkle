@@ -1,0 +1,12 @@
+// Expected output:
+//   found: b
+
+use item
+
+items: Vector<item.Item> = [item.make("a"), item.make("b")]
+target := "b"
+result := items.find(fn(x: item.Item) Bool { x.name == target })
+case result {
+  .Some(f) => println("found: ${f.name}"),
+  .None => println("not found"),
+}

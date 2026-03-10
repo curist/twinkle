@@ -246,6 +246,16 @@ fn option_shorthand() {
 }
 
 #[test]
+fn option_assign_boundary() {
+    check("tests/run/option_assign_boundary.tw");
+}
+
+#[test]
+fn option_assign_match_boundary() {
+    check("tests/run/option_assign_match_boundary.tw");
+}
+
+#[test]
 fn result_shorthand() {
     check("tests/run/result_shorthand.tw");
 }
@@ -258,6 +268,11 @@ fn result_try() {
 #[test]
 fn generic_user_funcs() {
     check("tests/run/generic_user_funcs.tw");
+}
+
+#[test]
+fn closure_capture_cross_module() {
+    check("tests/run/closure_capture_cross_module/main.tw");
 }
 
 #[test]

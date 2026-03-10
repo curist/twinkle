@@ -833,13 +833,14 @@ fn emit_let_expr(
         .as_ref()
         .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
     let local_iter = iterator_state_from_op(op, ctx);
-    let local_opt = match op {
+    let local_opt_raw = match op {
         AnfOp::AVariant { type_id, .. } if *type_id == OPTION_TYPE_ID => local_mono
             .as_ref()
             .filter(|mono| is_typed_general_option_candidate(mono))
             .cloned(),
         _ => typed_general_option_from_op(op, ctx),
     };
+    let local_opt = local_opt_raw.filter(|mono| local_can_store_typed_option(local, mono, ctx));
     if let Some(mono) = local_opt.as_ref() {
         ctx.request_typed_general_option(typed_general_option_sym(mono), mono.clone());
     }
@@ -857,7 +858,8 @@ fn emit_let_expr(
             .as_ref()
             .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
         let value_iter = atom_iterator_state(value, ctx);
-        let value_opt = atom_typed_general_option(value, ctx);
+        let value_opt = atom_typed_general_option(value, ctx)
+            .filter(|mono| local_can_store_typed_option(*target, mono, ctx));
         ctx.push_flow_mono_binding(*target, value_mono.clone(), &mut restores);
         ctx.push_flow_value_repr_binding(*target, value_repr, &mut repr_restores);
         ctx.push_flow_iterator_binding(*target, value_iter, &mut iterator_restores);
@@ -902,6 +904,24 @@ fn restore_flow_typed_option_binding(
     ctx.set_local_typed_option(local, prev);
 }
 
+fn local_can_store_typed_option(
+    local: crate::ir::LocalId,
+    mono: &MonoType,
+    ctx: &EmitCtx<'_>,
+) -> bool {
+    let Some((_, local_ty)) = ctx.local(local) else {
+        return false;
+    };
+    match local_ty {
+        ValType::Anyref => true,
+        ValType::Ref {
+            heap: HeapType::Named(name),
+            ..
+        } => name == &typed_general_option_sym(mono),
+        _ => false,
+    }
+}
+
 fn emit_let_binding(
     local: crate::ir::LocalId,
     op: &AnfOp,
@@ -916,8 +936,11 @@ fn emit_let_binding(
     match op {
         AnfOp::AInit { value } => {
             let global_sym = ctx.module_global_sym(local).cloned();
-            let preserve_typed_option = ctx.local_typed_option(local).is_some()
-                && atom_typed_general_option(value, ctx).is_some();
+            let value_typed_option = atom_typed_general_option(value, ctx);
+            let preserve_typed_option = ctx
+                .local_typed_option(local)
+                .zip(value_typed_option.as_ref())
+                .is_some_and(|(dst, src)| dst == src);
             let expected = if preserve_typed_option {
                 None
             } else {
@@ -939,8 +962,11 @@ fn emit_let_binding(
             let target_global_sym = ctx.module_global_sym(*target).cloned();
 
             if let Some((target_idx, target_ty)) = ctx.local(*target).cloned() {
-                let preserve_typed_option = ctx.local_typed_option(*target).is_some()
-                    && atom_typed_general_option(value, ctx).is_some();
+                let value_typed_option = atom_typed_general_option(value, ctx);
+                let preserve_typed_option = ctx
+                    .local_typed_option(*target)
+                    .zip(value_typed_option.as_ref())
+                    .is_some_and(|(dst, src)| dst == src);
                 let expected = if preserve_typed_option {
                     None
                 } else {
@@ -2176,6 +2202,29 @@ fn emit_local_atom(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     if let Some((idx, local_ty)) = ctx.local(local_id).cloned() {
+        if let Some(expected) = expected_ty {
+            if (is_variant_ref_type(expected) || *expected == ValType::Anyref)
+                && local_ty == ValType::Anyref
+            {
+                if let Some(option_mono) = ctx
+                    .infer_atom_mono(&Atom::ALocal(local_id))
+                    .filter(is_typed_general_option_candidate)
+                {
+                    let target = if *expected == ValType::Anyref {
+                        &ref_variant_null()
+                    } else {
+                        expected
+                    };
+                    return emit_anyref_option_or_variant_local_to_variant(
+                        idx,
+                        &option_mono,
+                        target,
+                        ctx,
+                    );
+                }
+            }
+        }
+
         // Typed option locals need conversion to erased Variant when consumed
         // outside of a match context (expected_ty is Anyref or Variant ref).
         // This check must happen before the local_ty == expected short-circuit,
@@ -2210,6 +2259,39 @@ fn emit_local_atom(
     }
 
     panic!("missing local mapping for L{}", local_id.0);
+}
+
+fn emit_anyref_option_or_variant_local_to_variant(
+    local_idx: u32,
+    mono: &MonoType,
+    expected_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ctx.request_typed_general_option(typed_general_option_sym(mono), mono.clone());
+    let mut instrs = vec![
+        Instr::LocalGet(local_idx),
+        Instr::RefTest {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.to_string()),
+        },
+    ];
+
+    let then_body = vec![
+        Instr::LocalGet(local_idx),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.to_string()),
+        },
+    ];
+    let else_body =
+        emit_typed_general_option_local_to_variant(local_idx, mono, &ref_variant_null(), ctx);
+    instrs.push(Instr::If {
+        result: Some(ref_variant_null()),
+        then_body,
+        else_body,
+    });
+    instrs.extend(emit_coerce_stack(&ref_variant_null(), expected_ty));
+    instrs
 }
 
 fn is_variant_ref_type(ty: &ValType) -> bool {
@@ -3363,7 +3445,9 @@ fn emit_variant_literal(
     // Typed general Option<T> path: emit a typed struct for concrete Option<T>.
     if type_id == OPTION_TYPE_ID {
         if let Some(mono) = expected_mono {
-            if is_typed_general_option_candidate(mono) {
+            if is_typed_general_option_candidate(mono)
+                && typed_general_option_can_materialize_to(bind_ty, mono)
+            {
                 return emit_typed_general_option_literal(variant, args, mono, bind_ty, ctx);
             }
         }
@@ -3380,6 +3464,17 @@ fn emit_variant_literal(
     instrs.push(Instr::StructNew(T_VARIANT.to_string()));
     instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
     instrs
+}
+
+fn typed_general_option_can_materialize_to(bind_ty: &ValType, mono: &MonoType) -> bool {
+    match bind_ty {
+        ValType::Anyref => true,
+        ValType::Ref {
+            heap: HeapType::Named(name),
+            ..
+        } => name == &typed_general_option_sym(mono),
+        _ => false,
+    }
 }
 
 /// Emit a typed general Option literal.
@@ -4158,7 +4253,10 @@ fn atom_typed_unfold_step(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<(MonoType, M
 
 fn atom_typed_general_option(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     match atom {
-        Atom::ALocal(local_id) => ctx.local_typed_option(*local_id).cloned(),
+        Atom::ALocal(local_id) => {
+            let mono = ctx.local_typed_option(*local_id)?.clone();
+            local_can_store_typed_option(*local_id, &mono, ctx).then_some(mono)
+        }
         _ => None,
     }
 }

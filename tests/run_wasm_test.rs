@@ -42,6 +42,11 @@ fn run_wasm_closures() {
 }
 
 #[test]
+fn run_wasm_closure_capture_cross_module() {
+    check("tests/run/closure_capture_cross_module/main.tw");
+}
+
+#[test]
 fn run_wasm_cell_update() {
     check("tests/run/cell_update.tw");
 }
@@ -204,4 +209,14 @@ fn run_wasm_byte_arithmetic_promotion() {
 #[test]
 fn run_wasm_bitwise_ops() {
     check("tests/run/bitwise_ops.tw");
+}
+
+#[test]
+fn run_wasm_option_assign_boundary() {
+    check("tests/run/option_assign_boundary.tw");
+}
+
+#[test]
+fn run_wasm_option_assign_match_boundary() {
+    check("tests/run/option_assign_match_boundary.tw");
 }

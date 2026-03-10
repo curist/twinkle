@@ -1,0 +1,8 @@
+pub type Item = .{
+  name: String,
+  tag: String?,
+}
+
+pub fn make(name: String) Item {
+  Item.{ name: name, tag: .None }
+}
