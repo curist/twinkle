@@ -6,6 +6,7 @@
 //   true
 //   a
 //   none
+//   none
 
 // String.char_code_at returns the byte value
 println("${"abc".char_code_at(1)}")
@@ -30,6 +31,12 @@ case String.from_char_code(97) {
 
 // Invalid code point
 case String.from_char_code(200) {
+  .Some(s) => println(s),
+  .None => println("none"),
+}
+
+// Large Int must not wrap through i32
+case String.from_char_code(4294967393) {
   .Some(s) => println(s),
   .None => println("none"),
 }

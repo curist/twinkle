@@ -147,6 +147,11 @@ fn run_wasm_string_get() {
 }
 
 #[test]
+fn run_wasm_char_code_at() {
+    check("tests/run/char_code_at.tw");
+}
+
+#[test]
 fn run_wasm_string_large_index_semantics() {
     check("tests/run/string_large_index_semantics.tw");
 }

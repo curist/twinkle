@@ -203,7 +203,7 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::VECTOR_PUSH,
-        PreludeEntry::intrinsic("Vector.push"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_PUSH, "Vector.push")),
     );
     map.insert(
         prelude_ids::VECTOR_SET_UNSAFE,
@@ -346,31 +346,49 @@ pub fn build_prelude_map() -> PreludeMap {
 
     map.insert(
         prelude_ids::RANGE_FROM,
-        PreludeEntry::intrinsic("range_from"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE_FROM, "range_from")),
     );
-    map.insert(prelude_ids::RANGE, PreludeEntry::intrinsic("range"));
+    map.insert(
+        prelude_ids::RANGE,
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE, "range")),
+    );
     map.insert(
         prelude_ids::RANGE_STEP,
-        PreludeEntry::intrinsic("range_step"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE_STEP, "range_step")),
     );
-    map.insert(prelude_ids::CELL_NEW, PreludeEntry::intrinsic("Cell.new"));
-    map.insert(prelude_ids::CELL_GET, PreludeEntry::intrinsic("Cell.get"));
-    map.insert(prelude_ids::CELL_SET, PreludeEntry::intrinsic("Cell.set"));
+    map.insert(
+        prelude_ids::CELL_NEW,
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_NEW, "Cell.new")),
+    );
+    map.insert(
+        prelude_ids::CELL_GET,
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_GET, "Cell.get")),
+    );
+    map.insert(
+        prelude_ids::CELL_SET,
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_SET, "Cell.set")),
+    );
     map.insert(
         prelude_ids::CELL_UPDATE,
-        PreludeEntry::intrinsic("Cell.update"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_UPDATE, "Cell.update")),
     );
     map.insert(
         prelude_ids::DICT_GET_UNSAFE,
-        PreludeEntry::intrinsic("dict_get_unsafe"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::DICT_GET_UNSAFE,
+            "dict_get_unsafe",
+        )),
     );
     map.insert(
         prelude_ids::ITERATOR_NEXT,
-        PreludeEntry::intrinsic("Iterator.next"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::ITERATOR_NEXT, "Iterator.next")),
     );
     map.insert(
         prelude_ids::ITERATOR_UNFOLD,
-        PreludeEntry::intrinsic("Iterator.unfold"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::ITERATOR_UNFOLD,
+            "Iterator.unfold",
+        )),
     );
     map.insert(
         prelude_ids::VECTOR_BUILDER_NEW,
@@ -407,19 +425,22 @@ pub fn build_prelude_map() -> PreludeMap {
     );
     map.insert(
         prelude_ids::VECTOR_GET,
-        PreludeEntry::intrinsic("Vector.get"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_GET, "Vector.get")),
     );
     map.insert(
         prelude_ids::VECTOR_SET,
-        PreludeEntry::intrinsic("Vector.set"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_SET, "Vector.set")),
     );
     map.insert(
         prelude_ids::VECTOR_MAKE,
-        PreludeEntry::intrinsic("Vector.make"),
+        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_MAKE, "Vector.make")),
     );
     map.insert(
         prelude_ids::VECTOR_SET_IN_PLACE,
-        PreludeEntry::intrinsic("__vector_set_in_place"),
+        PreludeEntry::intrinsic(intrinsic_name(
+            prelude_ids::VECTOR_SET_IN_PLACE,
+            "__vector_set_in_place",
+        )),
     );
     map.insert(
         prelude_ids::VECTOR_BUILDER_FROM,

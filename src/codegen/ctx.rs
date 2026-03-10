@@ -1497,42 +1497,13 @@ fn collect_break_types_op(op: &AnfOp, ctx: &EmitCtx<'_>, depth: usize, out: &mut
 }
 
 fn intrinsic_result_valtype(func_id: FuncId) -> Option<ValType> {
-    if let Some(abi) = contracts::contract(func_id).and_then(|entry| entry.abi_result) {
-        return Some(match abi {
-            IntrinsicAbiResult::Anyref => ValType::Anyref,
-            IntrinsicAbiResult::I64 => ValType::I64,
-            IntrinsicAbiResult::RefStringNullable => ref_named(true, T_STRING),
-        });
-    }
-
-    // Compatibility fallback for intrinsics not yet migrated into the central
-    // contract table.
-    use crate::ir::lower::prelude as ids;
-
-    match func_id {
-        id if id == ids::VECTOR_PUSH => Some(ref_named(true, T_ARRAY)),
-        id if id == ids::VECTOR_SET_IN_PLACE => Some(ref_named(true, T_ARRAY)),
-        id if id == ids::VECTOR_BUILDER_FREEZE => Some(ref_named(true, T_ARRAY)),
-        id if id == ids::RANGE_FROM
-            || id == ids::RANGE
-            || id == ids::RANGE_STEP
-            || id == ids::CELL_NEW
-            || id == ids::CELL_GET
-            || id == ids::CELL_SET
-            || id == ids::CELL_UPDATE
-            || id == ids::DICT_GET_UNSAFE
-            || id == ids::ITERATOR_NEXT
-            || id == ids::ITERATOR_UNFOLD
-            || id == ids::VECTOR_BUILDER_NEW
-            || id == ids::VECTOR_BUILDER_PUSH
-            || id == ids::VECTOR_GET
-            || id == ids::VECTOR_SET
-            || id == ids::VECTOR_MAKE =>
-        {
-            Some(ValType::Anyref)
-        }
-        _ => None,
-    }
+    let abi = contracts::contract(func_id).and_then(|entry| entry.abi_result)?;
+    Some(match abi {
+        IntrinsicAbiResult::Anyref => ValType::Anyref,
+        IntrinsicAbiResult::I64 => ValType::I64,
+        IntrinsicAbiResult::RefStringNullable => ref_named(true, T_STRING),
+        IntrinsicAbiResult::RefArrayNullable => ref_named(true, T_ARRAY),
+    })
 }
 
 fn runtime_result_valtype(func_id: FuncId, entry: &PreludeEntry) -> Option<ValType> {

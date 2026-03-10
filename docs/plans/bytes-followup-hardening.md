@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** In progress (Phase 1 kickoff)  
+**Status:** In progress (Phase 1 complete, Phase 2 active)  
 **Last updated:** 2026-03-10
 
 ## Goal
@@ -139,10 +139,16 @@ Target files:
 
 **Progress notes (2026-03-10)**
 
+* Phase 1 completed: string indexing, `String.get`, `String.char_code_at`, and
+  `String.from_char_code` now guard in i64-domain before i32 narrowing; large-index
+  and large-int regressions are covered in run/wasm/differential fixtures.
 * Kickoff landed: introduced a shared intrinsic contract module and began wiring
   type-env builtin signatures and codegen intrinsic result typing to consume it.
-* Current migration scope covers byte/string conversion and indexing-related
-  intrinsic contracts; generic/container contracts still use compatibility paths.
+* Phase 2 expanded: generic/container intrinsic contracts are now represented in
+  the same registry; emit-time intrinsic result typing no longer needs a generic
+  compatibility fallback table.
+* Interpreter builtin dispatch now consumes the shared contract registry for
+  covered intrinsic arity checks.
 
 **Exit criteria**
 

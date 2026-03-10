@@ -4941,9 +4941,12 @@ fn emit_from_char_code_intrinsic(
     // For single-byte values (0-127 ASCII), create a 1-byte string.
     // Values outside 0-127 → None (full Unicode support via host in future).
     let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
-    instrs.push(Instr::I32WrapI64);
-    instrs.push(Instr::I32Const(128));
-    instrs.push(Instr::I32LtU); // code < 128
+    instrs.push(Instr::I64Const(0));
+    instrs.push(Instr::I64GeS); // code >= 0
+    instrs.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I64Const(128));
+    instrs.push(Instr::I64LtS); // code < 128
+    instrs.push(Instr::I32And);
     instrs.push(Instr::If {
         result: Some(ValType::Anyref),
         then_body: {

@@ -4,6 +4,7 @@ use std::io::Write;
 use std::rc::Rc;
 
 use super::value::IteratorState;
+use crate::intrinsics::contracts;
 use crate::ir::CoreModule;
 use crate::ir::core::{
     CoreExpr, CoreExprKind, CorePattern, FuncId, FunctionDef, LocalId, MatchArm,
@@ -542,6 +543,16 @@ impl<W: Write> Interpreter<W> {
     // -----------------------------------------------------------------------
 
     fn call_builtin(&mut self, func_id: FuncId, args: Vec<Value>) -> EvalResult {
+        if let Some(spec) = contracts::contract(func_id) {
+            assert_eq!(
+                args.len(),
+                spec.params.len(),
+                "{} expects {} args, got {}",
+                spec.twinkle_name,
+                spec.params.len(),
+                args.len()
+            );
+        }
         match func_id {
             prelude_ids::PRINT => {
                 // print(s: String)
