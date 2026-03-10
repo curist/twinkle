@@ -20,40 +20,6 @@ fn build_wat(file_path: &str) -> String {
     twinkle::cli::build::build_wat(file_path).expect("build_wat failed")
 }
 
-/// Count occurrences of `array.new_fixed` inside user function bodies.
-/// These represent argument-boxing operations for universal closure calls.
-fn count_array_new_fixed_in_user_funcs(wat: &str) -> usize {
-    let mut in_user = false;
-    let mut depth: i32 = 0;
-    let mut count = 0;
-    for line in wat.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("$user__func_") && trimmed.starts_with("(func") {
-            in_user = true;
-            depth = 0;
-        }
-        if in_user {
-            for ch in trimmed.chars() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            in_user = false;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if in_user && trimmed.contains("array.new_fixed") {
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
 fn find_func_block_containing<'a>(wat: &'a str, needle: &str) -> Option<String> {
     let lines = wat.lines().collect::<Vec<_>>();
     for (start, line) in lines.iter().enumerate() {

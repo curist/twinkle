@@ -1,0 +1,20 @@
+// Expected output:
+//   found by tag: b
+
+use item
+
+fn find_by_tag(items: Vector<item.Item>, t: String) item.Item? {
+  items.find(fn(x: item.Item) Bool {
+    case x.tag {
+      .Some(s) => s == t,
+      .None => false,
+    }
+  })
+}
+
+items: Vector<item.Item> = [item.make("a"), item.make_tagged("b", "hello")]
+result := find_by_tag(items, "hello")
+case result {
+  .Some(f) => println("found by tag: ${f.name}"),
+  .None => println("not found"),
+}

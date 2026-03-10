@@ -1,0 +1,12 @@
+pub type Item = .{
+  name: String,
+  tag: String?,
+}
+
+pub fn make(name: String) Item {
+  .{ name: name, tag: .None }
+}
+
+pub fn make_tagged(name: String, tag: String) Item {
+  .{ name: name, tag: .Some(tag) }
+}
