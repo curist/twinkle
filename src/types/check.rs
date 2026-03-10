@@ -834,7 +834,11 @@ impl TypeChecker {
         span: Span,
     ) -> Result<MonoType, ()> {
         match op {
-            // Arithmetic: Int × Int → Int, Float × Float → Float
+            // Arithmetic:
+            // - Int × Int → Int
+            // - Byte × Byte → Int
+            // - Int × Byte / Byte × Int → Int
+            // - Float × Float → Float
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                 let left_raw = self.synth_expr(left)?;
                 let right_raw = self.synth_expr(right)?;
@@ -843,6 +847,10 @@ impl TypeChecker {
 
                 match (&left_ty, &right_ty) {
                     (MonoType::Int, MonoType::Int) => Ok(MonoType::Int),
+                    (MonoType::Byte, MonoType::Byte) => Ok(MonoType::Int),
+                    (MonoType::Int, MonoType::Byte) | (MonoType::Byte, MonoType::Int) => {
+                        Ok(MonoType::Int)
+                    }
                     (MonoType::Float, MonoType::Float) => Ok(MonoType::Float),
                     // Allow numeric constraints to solve metas during inference
                     (MonoType::MetaVar(id), MonoType::Int) => {
@@ -860,6 +868,16 @@ impl TypeChecker {
                     (MonoType::Float, MonoType::MetaVar(id)) => {
                         self.solve_meta(*id, MonoType::Float, right.span)?;
                         Ok(MonoType::Float)
+                    }
+                    // Byte arithmetic promotes to Int; unresolved metas are
+                    // constrained to Int for deterministic lowering/codegen.
+                    (MonoType::MetaVar(id), MonoType::Byte) => {
+                        self.solve_meta(*id, MonoType::Int, left.span)?;
+                        Ok(MonoType::Int)
+                    }
+                    (MonoType::Byte, MonoType::MetaVar(id)) => {
+                        self.solve_meta(*id, MonoType::Int, right.span)?;
+                        Ok(MonoType::Int)
                     }
                     _ => {
                         self.errors.push(TypeError::TypeMismatch {

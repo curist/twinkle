@@ -493,6 +493,51 @@ impl<W: Write> Interpreter<W> {
 
         let lv = self.eval(left, frame)?;
         let rv = self.eval(right, frame)?;
+
+        let int_like = |v: &Value| -> Option<i64> {
+            match v {
+                Value::Int(n) => Some(*n),
+                Value::Byte(b) => Some(*b as i64),
+                _ => None,
+            }
+        };
+        if matches!(
+            op,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+        ) {
+            if let (Some(a), Some(b)) = (int_like(&lv), int_like(&rv)) {
+                return Ok(match op {
+                    BinOp::Add => Value::Int(a + b),
+                    BinOp::Sub => Value::Int(a - b),
+                    BinOp::Mul => Value::Int(a * b),
+                    BinOp::Div => {
+                        if b == 0 {
+                            return Err(Signal::Trap(TrapError::DivisionByZero));
+                        }
+                        Value::Int(a / b)
+                    }
+                    BinOp::Mod => {
+                        if b == 0 {
+                            return Err(Signal::Trap(TrapError::ModuloByZero));
+                        }
+                        Value::Int(a % b)
+                    }
+                    _ => unreachable!(),
+                });
+            }
+        }
+        if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+            if let (Some(a), Some(b)) = (int_like(&lv), int_like(&rv)) {
+                return Ok(Value::Bool(match op {
+                    BinOp::Lt => a < b,
+                    BinOp::Le => a <= b,
+                    BinOp::Gt => a > b,
+                    BinOp::Ge => a >= b,
+                    _ => unreachable!(),
+                }));
+            }
+        }
+
         Ok(match (op, lv, rv) {
             // Int arithmetic
             (BinOp::Add, Value::Int(a), Value::Int(b)) => Value::Int(a + b),

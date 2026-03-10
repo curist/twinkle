@@ -175,3 +175,8 @@ fn run_wasm_trap_string_slice_large_index() {
 fn run_wasm_string_from_code_point_large_int() {
     check("tests/run/string_from_code_point_large_int.tw");
 }
+
+#[test]
+fn run_wasm_byte_arithmetic_promotion() {
+    check("tests/run/byte_arithmetic_promotion.tw");
+}

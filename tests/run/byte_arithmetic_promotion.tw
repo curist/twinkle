@@ -1,0 +1,21 @@
+// Expected output:
+//   131
+//   67
+//   68
+//   1
+//   132
+//   33
+//   3
+//   133
+
+a: Byte = "AB"[0] // 65
+b: Byte = "AB"[1] // 66
+
+println("${a + b}")
+println("${a + 2}")
+println("${2 + b}")
+println("${b - a}")
+println("${b * 2}")
+println("${b / 2}")
+println("${b % 7}")
+println("${a + b + 2}")

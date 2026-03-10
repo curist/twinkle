@@ -353,6 +353,11 @@ fn byte_type() {
 }
 
 #[test]
+fn byte_arithmetic_promotion() {
+    check("tests/run/byte_arithmetic_promotion.tw");
+}
+
+#[test]
 fn string_chars() {
     check("tests/run/string_chars.tw");
 }

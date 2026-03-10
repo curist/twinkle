@@ -23,11 +23,14 @@ use crate::types::ty::{MonoType, TypeId};
 fn op_kind_from(ty: &MonoType) -> OpKind {
     match ty {
         MonoType::Int => OpKind::Int,
+        // Byte arithmetic/comparison is lowered through integer operators.
+        // Typechecking ensures arithmetic results are Int.
+        MonoType::Byte => OpKind::Int,
         MonoType::Float => OpKind::Float,
         MonoType::Bool => OpKind::Bool,
         MonoType::String => OpKind::String,
         other => panic!(
-            "op_kind_from: expected Int/Float/Bool/String, got {:?}",
+            "op_kind_from: expected Int/Byte/Float/Bool/String, got {:?}",
             other
         ),
     }

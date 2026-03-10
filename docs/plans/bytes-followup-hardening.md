@@ -1,6 +1,6 @@
 # Byte Semantics Follow-up Hardening
 
-**Status:** In progress (Phase 1 complete, Phase 2 active)  
+**Status:** In progress (Phase 1+2 complete, Phase 3 active)  
 **Last updated:** 2026-03-10
 
 ## Goal
@@ -162,6 +162,13 @@ Target files:
 * Extend binary operator typing rules to include `Byte` promotion matrix.
 * Update ANF operand-kind modeling (or add explicit promotion lowering prior to ANF binop emit).
 * Ensure interpreter and Wasm agree on resulting type/behavior.
+
+**Progress notes (2026-03-10)**
+
+* Landed Byte arithmetic promotion for `Byte×Byte` and `Byte×Int`/`Int×Byte`
+  across typechecker, ANF lowering, interpreter, and Wasm emit paths.
+* Added `tests/run/byte_arithmetic_promotion.tw` and wired explicit run/wasm tests;
+  differential parity passes with the new fixture included.
 
 **Exit criteria**
 
