@@ -156,13 +156,33 @@ LogicalOrExpr =
     LogicalAndExpr { "or" LogicalAndExpr } ;
 
 LogicalAndExpr =
-    EqualityExpr { "and" EqualityExpr } ;
+    BitwiseOrExpr { "and" BitwiseOrExpr } ;
+
+BitwiseOrExpr =
+    BitwiseXorExpr { "|" BitwiseXorExpr } ;
+
+BitwiseXorExpr =
+    BitwiseAndExpr { "^" BitwiseAndExpr } ;
+
+BitwiseAndExpr =
+    EqualityExpr { "&" EqualityExpr } ;
 
 EqualityExpr =
     ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
 
 ComparisonExpr =
-    AdditiveExpr { ( "<" | "<=" | ">" | ">=" ) AdditiveExpr } ;
+    ShiftExpr { ( "<" | "<=" | ">" | ">=" ) ShiftExpr } ;
+
+ShiftExpr =
+    AdditiveExpr { ( "<<" | ">>" ) AdditiveExpr } ;
+(* Implementation note:
+   - `<<` / `>>` are recognized in expression parsing only.
+   - Type parsing continues to treat `>` tokens independently so nested generic
+     syntax like `Vector<Vector<Int>>` remains unaffected.
+   - The parser may require adjacency (no whitespace/comments) between the two
+     `<` or `>` tokens when forming a shift operator.
+   - When three or more `<`/`>` tokens are consecutive (e.g. `<<<`), expression
+     parsing greedily forms the first valid shift operator and continues. *)
 
 AdditiveExpr =
     MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
@@ -171,7 +191,8 @@ MultiplicativeExpr =
     UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
 
 UnaryExpr =
-      ( "-" | "!" ) UnaryExpr
+      ( "-" | "!" | "~" ) UnaryExpr
+    | TryExpr
     | PostfixExpr ;
 
 PostfixExpr =
@@ -199,7 +220,6 @@ PrimaryExpr =
     | Block
     | IfExpr
     | CaseExpr
-    | TryExpr
     | CollectExpr
     | "(" Expr ")" ;
 
@@ -279,7 +299,7 @@ IdentifierPattern =
 (* ===== Try Expression ===== *)
 
 TryExpr =
-    "try" Expr ;
+    "try" UnaryExpr ;
 (* Implementation note:
    - Semantics: works only with `Result<T, E>`; `try` propagates `Err`.
    - Enforced in type checking, not grammar. *)

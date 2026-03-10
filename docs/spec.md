@@ -1525,10 +1525,48 @@ Arithmetic operators (`+`, `-`, `*`, `/`, `%`) are defined for:
 * `Byte × Int -> Int`
 * `Float × Float -> Float`
 
+Bitwise operators (`&`, `|`, `^`, `<<`, `>>`, unary `~`) are defined for integer
+types only:
+
+* `Int` and `Byte` are accepted as operands.
+* `Byte` operands are widened to their corresponding non-negative `Int` values
+  (`0..255`) before applying the operator.
+* Result type is always `Int`.
+* Example: for a `Byte` value `b` whose numeric value is `255`, `~b` evaluates
+  as `~255`, i.e. `-256`.
+
+Shift semantics:
+
+* `<<` and `>>` use 64-bit masked shift counts.
+* Effective count is the low 6 bits of the right operand (`right & 63`),
+  including when that operand is negative.
+* `>>` is arithmetic right shift (sign-preserving).
+
 No implicit narrowing conversion exists from `Int` to `Byte`; use `Byte.from_int`.
 There is no implicit mixing between `Byte` and `Float`.
 
 Comparison operators require both operands to have the same type; result is `Bool`.
+
+Operator precedence (tight to loose):
+
+1. unary (`-`, `!`, `~`, `try`)
+2. multiplicative (`*`, `/`, `%`)
+3. additive (`+`, `-`)
+4. shift (`<<`, `>>`)
+5. comparison (`<`, `<=`, `>`, `>=`)
+6. equality (`==`, `!=`)
+7. bitwise and (`&`)
+8. bitwise xor (`^`)
+9. bitwise or (`|`)
+10. logical and (`and`)
+11. logical or (`or`)
+12. assignment (`=`)
+
+This follows common C/JS-family expectations for mixed expressions.
+Because equality binds tighter than bitwise operators, `x & mask == 0` parses
+as `x & (mask == 0)`.
+In practice, bit-test expressions should be written with explicit parentheses:
+`(x & mask) == 0`.
 
 ---
 
