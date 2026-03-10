@@ -121,7 +121,7 @@ pub mod prelude {
     // Host stdlib bridge intrinsics used by `@std.fs` and `@std.proc`.
     // Kept outside the fixed 1..=40 prelude range so existing user FuncId
     // assignments (USER_FUNC_START=41) remain stable.
-    pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> String
+    pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> Result<Vector<Byte>, String>
     pub const HOST_WRITE_FILE: FuncId = FuncId(1002); // (path: String, content: String) -> Void
     pub const HOST_WRITE_BYTES: FuncId = FuncId(1003); // (path: String, bytes: Array<Int>) -> Void
     pub const HOST_MKDIRP: FuncId = FuncId(1004); // (path: String) -> Void

@@ -28,6 +28,7 @@ use @std.path
 dir := "{dir}"
 txt := path.join(dir, "hello.txt")
 bin := path.join(dir, "bytes.bin")
+bad := path.join(dir, "bad.bin")
 
 case fs.mkdirp(dir) {{
   .Ok(_) => println("mkdir-ok"),
@@ -44,9 +45,27 @@ case fs.write_bytes(bin, [65, 66, 67]) {{
   .Err(_) => println("write-bytes-err"),
 }}
 
+case fs.write_bytes(bad, [255, 254]) {{
+  .Ok(_) => println("write-bad-ok"),
+  .Err(_) => println("write-bad-err"),
+}}
+
 case fs.read_text(txt) {{
   .Ok(s) => println(s),
   .Err(_) => println("read-err"),
+}}
+
+case fs.read_bytes(bin) {{
+  .Ok(bs) => println("${{bs.len()}}:${{Byte.to_int(bs[0])}}:${{Byte.to_int(bs[2])}}"),
+  .Err(_) => println("read-bytes-err"),
+}}
+
+case fs.read_text(bad) {{
+  .Ok(_) => println("invalid-utf8-missed"),
+  .Err(e) => case e {{
+    .InvalidUtf8 => println("invalid-utf8-ok"),
+    _ => println("invalid-utf8-other"),
+  }},
 }}
 
 case fs.list_dir(dir) {{
@@ -73,8 +92,11 @@ println("${{fs.exists(bin)}}")
             "mkdir-ok",
             "write-text-ok",
             "write-bytes-ok",
+            "write-bad-ok",
             "hello stdlib",
-            "2",
+            "3:65:67",
+            "invalid-utf8-ok",
+            "3",
             "true",
             "true"
         ]

@@ -780,7 +780,10 @@ impl ValueEnv {
             "__host_read_file".to_string(),
             MonoType::Function {
                 params: vec![MonoType::String],
-                ret: Box::new(MonoType::String),
+                ret: Box::new(MonoType::Named {
+                    type_id: RESULT_TYPE_ID,
+                    args: vec![MonoType::Vector(Box::new(MonoType::Byte)), MonoType::String],
+                }),
             },
         );
         env.builtins.insert(

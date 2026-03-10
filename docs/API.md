@@ -199,14 +199,15 @@ Path manipulation (string-based, no I/O).
 File system operations. Functions return `Result` types with `FsError`.
 
 ```tw
-type FsError = { NotFound, PermissionDenied, Other(String) }
+type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
 type EntryKind = { File, Dir, Other }
 type DirEntry = .{ name: String, kind: EntryKind }
 ```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `read_text` | `fn(path: String) String!FsError` | Read file contents |
+| `read_bytes` | `fn(path: String) Vector<Byte>!FsError` | Read raw file bytes |
+| `read_text` | `fn(path: String) String!FsError` | Read UTF-8 text (`read_bytes` + decode) |
 | `write_text` | `fn(path: String, content: String) !FsError` | Write string to file |
 | `write_bytes` | `fn(path: String, bytes: Vector<Int>) !FsError` | Write bytes to file |
 | `mkdirp` | `fn(path: String) !FsError` | Create directory (and parents) |

@@ -15,7 +15,7 @@ They map 1:1 to host imports:
 
 | Internal Intrinsic | Host Import | Twinkle Type |
 |---|---|---|
-| `__host_read_file` | `host.read_file` | `fn(String) String` |
+| `__host_read_file` | `host.read_file` | `fn(String) Vector<Byte>!String` |
 | `__host_write_file` | `host.write_file` | `fn(String, String) Void` |
 | `__host_write_bytes` | `host.write_bytes` | `fn(String, Vector<Int>) Void` |
 | `__host_mkdirp` | `host.mkdirp` | `fn(String) Void` |
@@ -86,7 +86,7 @@ Source: `src/codegen/emit.rs` (`ensure_host_parse_float_import`)
 
 | Import | Signature | Description |
 |---|---|---|
-| `host.read_file` | `(ref null $String) → (ref $String)` | Read file contents as UTF-8 string |
+| `host.read_file` | `(ref null $String) → (ref null $Variant)` | Read file as bytes and return `Result<Vector<Byte>, String>` |
 | `host.write_file` | `(ref null $String, ref null $String) → ()` | Write string to file (path, content) |
 | `host.write_bytes` | `(ref null $String, ref null $Array) → ()` | Write byte array to file (path, bytes) |
 | `host.mkdirp` | `(ref null $String) → ()` | Create directory and parents |
@@ -125,6 +125,10 @@ Source: `src/codegen/prelude.rs`
 
 - **`host.env` returns an array**, not a nullable string, to avoid needing
   Option encoding at the host boundary. Empty array = not set.
+
+- **`host.read_file` should not trap for ordinary I/O failures.** Return
+  `Result.Err(String)` instead. `Result.Ok` carries `Vector<Byte>`; hosts should
+  avoid implicit UTF-8 decoding at this boundary.
 
 - **`host.parse_float` uses multi-value return:** `(f64, i32)` where `i32` is
   1 on success, 0 on failure. On failure the `f64` value is unspecified.

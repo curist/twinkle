@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::types::ty::RESULT_TYPE_ID;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use wasmtime::{
     AnyRef, ArrayRef, ArrayRefPre, ArrayType, AsContext, AsContextMut, Caller, Config, Engine,
-    ExternType, FuncType, HeapType, Linker, Module, Rooted, Store, Val, ValType,
+    ExternType, FuncType, HeapType, I31, Linker, Module, Rooted, Store, StructRef, StructRefPre,
+    StructType, Val, ValType,
 };
 
 #[derive(Default)]
@@ -40,6 +42,9 @@ struct HostImportTypes {
     string_array_ty: Option<ArrayType>,
     runtime_array_ty: Option<ArrayType>,
 }
+
+const RESULT_OK_VARIANT_ID: i32 = 0;
+const RESULT_ERR_VARIANT_ID: i32 = 1;
 
 impl HostImportTypes {
     fn from_module(module: &Module) -> Result<Self> {
@@ -85,10 +90,11 @@ impl HostImportTypes {
                 "read_file" => {
                     let path_ty = concrete_array_from_func_param(&func_ty, 0)
                         .with_context(|| format!("invalid host import signature for {name}"))?;
-                    let result_ty = concrete_array_from_func_result(&func_ty, 0)
-                        .with_context(|| format!("invalid host import signature for {name}"))?;
+                    let (_result_variant_ty, result_payload_array_ty) =
+                        read_file_result_layout(&func_ty)
+                            .with_context(|| format!("invalid host import signature for {name}"))?;
                     merge_string_array_ty(&mut out.string_array_ty, path_ty)?;
-                    merge_string_array_ty(&mut out.string_array_ty, result_ty)?;
+                    merge_runtime_array_ty(&mut out.runtime_array_ty, result_payload_array_ty)?;
                     ensure!(out.read_file.is_none(), "duplicate host import: read_file");
                     out.read_file = Some(func_ty);
                 }
@@ -301,6 +307,8 @@ impl HostImportTypes {
                 .string_array_ty
                 .clone()
                 .ok_or_else(|| anyhow!("missing string array type for host.read_file"))?;
+            let (result_variant_ty, runtime_array_ty) = read_file_result_layout(ty)
+                .context("missing result variant/runtime array types for host.read_file")?;
             linker.func_new(
                 "host",
                 "read_file",
@@ -310,12 +318,37 @@ impl HostImportTypes {
                     ensure!(results.len() == 1, "host.read_file expected 1 result");
                     let logical_path = decode_runtime_string(&mut caller, &params[0])?;
                     let host_path = resolve_host_path(caller.data(), &logical_path);
-                    let content = std::fs::read_to_string(&host_path).with_context(|| {
-                        format!("host.read_file failed for '{}'", host_path.display())
-                    })?;
-                    let content_ref =
-                        encode_runtime_string(&mut caller, &string_array_ty, &content)?;
-                    results[0] = Val::AnyRef(Some(content_ref));
+
+                    let result_ref = match std::fs::read(&host_path) {
+                        Ok(bytes) => {
+                            let bytes_ref =
+                                encode_runtime_byte_vector(&mut caller, &runtime_array_ty, &bytes)?;
+                            encode_runtime_result_variant(
+                                &mut caller,
+                                &result_variant_ty,
+                                &runtime_array_ty,
+                                RESULT_OK_VARIANT_ID,
+                                bytes_ref,
+                            )?
+                        }
+                        Err(err) => {
+                            let msg = format!(
+                                "host.read_file failed for '{}': {err}",
+                                host_path.display()
+                            );
+                            let msg_ref =
+                                encode_runtime_string(&mut caller, &string_array_ty, &msg)?;
+                            encode_runtime_result_variant(
+                                &mut caller,
+                                &result_variant_ty,
+                                &runtime_array_ty,
+                                RESULT_ERR_VARIANT_ID,
+                                msg_ref,
+                            )?
+                        }
+                    };
+
+                    results[0] = Val::AnyRef(Some(result_ref));
                     Ok(())
                 },
             )?;
@@ -609,6 +642,14 @@ fn concrete_array_from_func_result(func_ty: &FuncType, index: usize) -> Result<A
     concrete_array_from_val_type(ty)
 }
 
+fn concrete_struct_from_func_result(func_ty: &FuncType, index: usize) -> Result<StructType> {
+    let results = func_ty.results().collect::<Vec<_>>();
+    let ty = results
+        .get(index)
+        .ok_or_else(|| anyhow!("expected at least {} result(s)", index + 1))?;
+    concrete_struct_from_val_type(ty)
+}
+
 fn concrete_array_from_val_type(ty: &ValType) -> Result<ArrayType> {
     let r = match ty {
         ValType::Ref(r) => r,
@@ -619,6 +660,57 @@ fn concrete_array_from_val_type(ty: &ValType) -> Result<ArrayType> {
         other => bail!("expected concrete array reference type, got (ref {other})"),
     };
     Ok(array_ty)
+}
+
+fn concrete_struct_from_val_type(ty: &ValType) -> Result<StructType> {
+    let r = match ty {
+        ValType::Ref(r) => r,
+        other => bail!("expected reference type, got {other}"),
+    };
+    let struct_ty = match r.heap_type() {
+        HeapType::ConcreteStruct(struct_ty) => struct_ty.clone(),
+        other => bail!("expected concrete struct reference type, got (ref {other})"),
+    };
+    Ok(struct_ty)
+}
+
+fn read_file_result_layout(func_ty: &FuncType) -> Result<(StructType, ArrayType)> {
+    let result_variant_ty = concrete_struct_from_func_result(func_ty, 0)?;
+    ensure!(
+        result_variant_ty.fields().len() == 3,
+        "host.read_file result variant expected 3 fields"
+    );
+
+    let type_id_field = result_variant_ty
+        .field(0)
+        .ok_or_else(|| anyhow!("host.read_file result variant missing field 0"))?;
+    ensure!(
+        matches!(
+            type_id_field.element_type().as_val_type(),
+            Some(ValType::I32)
+        ),
+        "host.read_file result variant field 0 must be i32"
+    );
+    let variant_id_field = result_variant_ty
+        .field(1)
+        .ok_or_else(|| anyhow!("host.read_file result variant missing field 1"))?;
+    ensure!(
+        matches!(
+            variant_id_field.element_type().as_val_type(),
+            Some(ValType::I32)
+        ),
+        "host.read_file result variant field 1 must be i32"
+    );
+
+    let payload_field = result_variant_ty
+        .field(2)
+        .ok_or_else(|| anyhow!("host.read_file result variant missing field 2"))?;
+    let payload_val_ty = payload_field
+        .element_type()
+        .as_val_type()
+        .ok_or_else(|| anyhow!("host.read_file result payload must be a reference type"))?;
+    let payload_array_ty = concrete_array_from_val_type(payload_val_ty)?;
+    Ok((result_variant_ty, payload_array_ty))
 }
 
 fn merge_string_array_ty(slot: &mut Option<ArrayType>, candidate: ArrayType) -> Result<()> {
@@ -789,6 +881,56 @@ fn encode_runtime_string_array(
     Ok(array.to_anyref())
 }
 
+fn encode_runtime_byte_vector(
+    caller: &mut Caller<'_, HostOutput>,
+    runtime_array_ty: &ArrayType,
+    bytes: &[u8],
+) -> Result<Rooted<AnyRef>> {
+    // TODO: this boxes each byte as i31 and builds a full Val buffer up front.
+    // If Wasmtime exposes a bulk array-initialization API, switch to that path
+    // for better large-file behavior.
+    let allocator = ArrayRefPre::new(caller.as_context_mut(), runtime_array_ty.clone());
+    let mut elems = Vec::with_capacity(bytes.len());
+    for byte in bytes {
+        let boxed = AnyRef::from_i31(caller.as_context_mut(), I31::wrapping_u32(u32::from(*byte)));
+        elems.push(Val::AnyRef(Some(boxed)));
+    }
+    let array = ArrayRef::new_fixed(caller.as_context_mut(), &allocator, &elems)?;
+    Ok(array.to_anyref())
+}
+
+/// Build an erased runtime `Variant` for `Result<T, E>`.
+///
+/// `rt_types__Variant` stores payload fields as a tuple array in field 2, so
+/// single-field variants still wrap their value in a one-element `$Array`.
+fn encode_runtime_result_variant(
+    caller: &mut Caller<'_, HostOutput>,
+    result_variant_ty: &StructType,
+    variant_payload_array_ty: &ArrayType,
+    variant_id: i32,
+    payload_value: Rooted<AnyRef>,
+) -> Result<Rooted<AnyRef>> {
+    let payload_allocator =
+        ArrayRefPre::new(caller.as_context_mut(), variant_payload_array_ty.clone());
+    let payload = ArrayRef::new_fixed(
+        caller.as_context_mut(),
+        &payload_allocator,
+        &[Val::AnyRef(Some(payload_value))],
+    )?;
+
+    let result_allocator = StructRefPre::new(caller.as_context_mut(), result_variant_ty.clone());
+    let result = StructRef::new(
+        caller.as_context_mut(),
+        &result_allocator,
+        &[
+            Val::I32(RESULT_TYPE_ID.0 as i32),
+            Val::I32(variant_id),
+            Val::AnyRef(Some(payload.to_anyref())),
+        ],
+    )?;
+    Ok(result.to_anyref())
+}
+
 fn host_exit_code_from_val(val: &Val) -> Result<i64> {
     match val {
         Val::I64(v) => Ok(*v),
@@ -933,7 +1075,8 @@ mod tests {
                 (module
                   (type $String (array (mut i8)))
                   (type $Array (array (mut anyref)))
-                  (import "host" "read_file" (func (param (ref null $String)) (result (ref null $String))))
+                  (type $Variant (struct (field i32) (field i32) (field (ref null $Array))))
+                  (import "host" "read_file" (func (param (ref null $String)) (result (ref null $Variant))))
                   (import "host" "write_file" (func (param (ref null $String) (ref null $String))))
                   (import "host" "write_bytes" (func (param (ref null $String) (ref null $Array))))
                   (import "host" "mkdirp" (func (param (ref null $String))))
@@ -982,6 +1125,28 @@ mod tests {
         assert!(imports.env.is_some());
         assert!(imports.cwd.is_some());
         assert!(imports.exit.is_some());
+        assert!(imports.string_array_ty.is_some());
+        assert!(imports.runtime_array_ty.is_some());
+    }
+
+    #[test]
+    fn host_import_types_infers_runtime_array_from_read_file_result_variant() {
+        let engine = build_engine().expect("build engine");
+        let module = Module::new(
+            &engine,
+            r#"
+                (module
+                  (type $String (array (mut i8)))
+                  (type $Array (array (mut anyref)))
+                  (type $Variant (struct (field i32) (field i32) (field (ref null $Array))))
+                  (import "host" "read_file" (func (param (ref null $String)) (result (ref null $Variant))))
+                )
+            "#,
+        )
+        .expect("compile host import module");
+
+        let imports = HostImportTypes::from_module(&module).expect("collect host import types");
+        assert!(imports.read_file.is_some());
         assert!(imports.string_array_ty.is_some());
         assert!(imports.runtime_array_ty.is_some());
     }

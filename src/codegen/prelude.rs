@@ -4,9 +4,9 @@ use crate::intrinsics::contracts;
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    ref_array, ref_array_null, ref_dict, ref_dict_null, ref_string, ref_string_null,
+    T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_string, ref_string_null,
 };
-use crate::wasm::ir::{FuncSym, ValType};
+use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
 pub type PreludeMap = HashMap<FuncId, PreludeEntry>;
 
@@ -525,7 +525,10 @@ pub fn build_prelude_map() -> PreludeMap {
             "read_file",
             "host_read_file",
             vec![ref_string_null()],
-            vec![ref_string()],
+            vec![ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(T_VARIANT.into()),
+            }],
         ),
     );
     map.insert(

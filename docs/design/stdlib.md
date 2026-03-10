@@ -42,7 +42,7 @@ Thin wrapper over host file I/O imports. All operations return `Result`.
 #### Types
 
 ```tw
-pub type FsError = { NotFound, PermissionDenied, Other(String) }
+pub type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
 pub type EntryKind = { File, Dir, Other }
 pub type DirEntry = .{ name: String, kind: EntryKind }
 ```
@@ -50,11 +50,12 @@ pub type DirEntry = .{ name: String, kind: EntryKind }
 #### API
 
 ```tw
+pub fn read_bytes(path: String) -> Result<Vector<Byte>, FsError>
 pub fn read_text(path: String) -> Result<String, FsError>
 pub fn write_text(path: String, content: String) -> Result<Void, FsError>
-pub fn write_bytes(path: String, bytes: Array<Int>) -> Result<Void, FsError>
+pub fn write_bytes(path: String, bytes: Vector<Int>) -> Result<Void, FsError>
 pub fn mkdirp(path: String) -> Result<Void, FsError>
-pub fn list_dir(path: String) -> Result<Array<DirEntry>, FsError>
+pub fn list_dir(path: String) -> Result<Vector<DirEntry>, FsError>
 pub fn exists(path: String) -> Bool
 ```
 
