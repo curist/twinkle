@@ -450,11 +450,13 @@ StringLiteral =
 
 StringChar =
       ? any character except '"' and '\' ?
-    | "\\" ( "n" | "t" | "r" | '"' | "\\" | "${" )
+    | "\\" ( "n" | "t" | "r" | '"' | "\\" | "$" | "e" | "x" HexDigit HexDigit )
     | "${" Expr "}" ;
 (* Implementation note:
    - In practice, interpolation is handled lexically:
      string segments + `${` Expr `}` + string segments.
+   - `\$` emits a literal `$` instead of starting interpolation.
+   - `\e` is ASCII ESC (`0x1B`), equivalent to `\x1b`.
    - Type checker restricts `${Expr}` to primitive types or explicit conversions. *)
 
 BoolLiteral =

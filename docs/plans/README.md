@@ -179,13 +179,14 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | Stage | Description | Status | Details |
 |-------|-------------|--------|---------|
 | 9.5 | Monomorphization (historical context) | Done | [../internals/monomorphization.md](../internals/monomorphization.md) |
-| 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
+| 10 | Self-Hosted Compiler (`boot/`) | In Progress | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
 
 ### Active cross-cutting plans
 
 | Plan | Description |
 |------|-------------|
+| [string-escape-sequences.md](string-escape-sequences.md) | Add ergonomic string escapes (for example `\x1b`/`\e`) for control characters and ANSI output |
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |

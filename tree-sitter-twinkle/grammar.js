@@ -517,9 +517,12 @@ module.exports = grammar({
       choice(
         '"',
         '\\',
+        '$',
         'n',
         't',
         'r',
+        'e',
+        /x[0-9a-fA-F]{2}/,
       ),
     )),
 
