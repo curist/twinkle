@@ -9051,7 +9051,7 @@ mod tests {
     }
 
     #[test]
-    fn emit_loop_with_break_none_materializes_void_result() {
+    fn emit_loop_with_break_none_materializes_default_result() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
@@ -9078,8 +9078,7 @@ mod tests {
                             label: "cont_0".to_string(),
                             result: None,
                             body: vec![
-                                Instr::I32Const(0),
-                                Instr::RefI31,
+                                Instr::RefNull(HeapType::None),
                                 Instr::Br("break_0".to_string()),
                                 Instr::Br("cont_0".to_string()),
                             ],
