@@ -1,0 +1,113 @@
+// Expected output:
+//   ok: 42
+//   err: oops
+//   ok: 100
+//   err: fail
+//   ok: hello
+//   err: -1
+//   ok: 99
+//   err: bad
+//   nested ok(ok(1)): 1
+//   nested ok(err(x)): x
+//   nested err: outer
+//   inline ok(ok): 10
+//   inline ok(err): boom
+//   inline err: gone
+
+fn show_int_str(r: Result<Int, String>) {
+  case r {
+    .Ok(n) => println("ok: ${n}"),
+    .Err(e) => println("err: ${e}"),
+  }
+}
+
+fn show_str_int(r: Result<String, Int>) {
+  case r {
+    .Ok(s) => println("ok: ${s}"),
+    .Err(n) => println("err: ${n}"),
+  }
+}
+
+fn make_ok() Result<Int, String> {
+  .Ok(99)
+}
+
+fn make_err() Result<Int, String> {
+  .Err("bad")
+}
+
+fn identity(r: Result<Int, String>) Result<Int, String> {
+  r
+}
+
+fn main() {
+  // Direct literal + match
+  show_int_str(.Ok(42))
+  show_int_str(.Err("oops"))
+
+  // Reassignment through locals
+  x: Result<Int, String> = .Ok(100)
+  show_int_str(x)
+  x = .Err("fail")
+  show_int_str(x)
+
+  // Different type args
+  show_str_int(.Ok("hello"))
+  show_str_int(.Err(-1))
+
+  // Through function boundary roundtrip
+  show_int_str(identity(make_ok()))
+  show_int_str(identity(make_err()))
+
+  // Nested Result
+  nested: Result<Result<Int, String>, String> = .Ok(.Ok(1))
+  case nested {
+    .Ok(inner) => case inner {
+      .Ok(n) => println("nested ok(ok(${n})): ${n}"),
+      .Err(e) => println("nested ok(err(${e})): ${e}"),
+    },
+    .Err(e) => println("nested err: ${e}"),
+  }
+
+  nested = .Ok(.Err("x"))
+  case nested {
+    .Ok(inner) => case inner {
+      .Ok(n) => println("nested ok(ok(${n})): ${n}"),
+      .Err(e) => println("nested ok(err(${e})): ${e}"),
+    },
+    .Err(e) => println("nested err: ${e}"),
+  }
+
+  nested = .Err("outer")
+  case nested {
+    .Ok(inner) => case inner {
+      .Ok(n) => println("nested ok(ok(${n})): ${n}"),
+      .Err(e) => println("nested ok(err(${e})): ${e}"),
+    },
+    .Err(e) => println("nested err: ${e}"),
+  }
+
+  // Inline nested pattern destructuring in a single arm
+  r2: Result<Result<Int, String>, String> = .Ok(.Ok(10))
+  case r2 {
+    .Ok(.Ok(n)) => println("inline ok(ok): ${n}"),
+    .Ok(.Err(e)) => println("inline ok(err): ${e}"),
+    .Err(e) => println("inline err: ${e}"),
+  }
+
+  r2 = .Ok(.Err("boom"))
+  case r2 {
+    .Ok(.Ok(n)) => println("inline ok(ok): ${n}"),
+    .Ok(.Err(e)) => println("inline ok(err): ${e}"),
+    .Err(e) => println("inline err: ${e}"),
+  }
+
+  r2 = .Err("gone")
+  case r2 {
+    .Ok(.Ok(n)) => println("inline ok(ok): ${n}"),
+    .Ok(.Err(e)) => println("inline ok(err): ${e}"),
+    .Err(e) => println("inline err: ${e}"),
+  }
+}
+
+main()

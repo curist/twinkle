@@ -60,7 +60,6 @@ Done so far:
 
 Still open:
 
-* `Result<T, E>` typed specialization (infrastructure ready, not yet wired)
 * typed option from `AMatch` results (safe fallback today, optimization gap)
 
 These remaining items now build on top of the completed
@@ -276,7 +275,7 @@ What changes:
 
 ### C. General variant payload specialization
 
-Status: in progress — `Option<T>` local specialization is implemented.
+Status: done — `Option<T>` and `Result<T, E>` local specialization is implemented.
 
 Concrete `Option<T>` values created and consumed within a function body now use a typed
 struct (e.g. `$option__Int` with fields `(variant_id: i32, payload: i64)`) instead of the
@@ -300,8 +299,6 @@ What changed:
 
 What remains:
 
-* `Result<T, E>` specialization — infrastructure is in place (`typed_general_option_sym`
-  handles Result, struct emission supports it) but not yet wired up
 * `AMatch` results that produce `Option<T>` don't yet get typed option metadata — values
   flow through the universal erased path safely, but miss the optimization
 
@@ -337,7 +334,7 @@ What it does require is making the concrete iterator path fully typed end-to-end
 3. ~~B2: typed UnfoldStep payload (eliminates erased variant payload for step results).~~ Done.
 4. ~~B3: typed IterItem record fields (eliminates anyref fields in IterItem).~~ Done.
 5. ~~B4: typed Option wrapping (eliminates erased Option variant for iterator next results).~~ Done.
-6. ~~C: typed `Option<T>` local specialization.~~ Done (Option<T>); Result<T,E> follow-up.
+6. ~~C: typed `Option<T>` and `Result<T,E>` local specialization.~~ Done.
 
 ---
 
@@ -374,7 +371,14 @@ Completed (C — Option<T>):
 * the `twinkle_typechecker.tw` self-hosted test exercises this boundary heavily (recursive
   dict-lookup functions returning `Option<Record>`)
 
+Completed (C — Result<T,E>):
+
+* concrete `Result<T, E>` locals use typed structs with layout
+  `(variant_id: i32, ok_payload: T, err_payload: E)` instead of universal Variant
+* typed result values are automatically converted back to erased Variant at boundaries
+* `is_typed_general_result_candidate` validates both type args are concrete
+* pattern matching extracts Ok payload from struct field 1, Err from struct field 2
+
 Remaining:
 
-* `Result<T, E>` specialization (infrastructure ready, not yet wired)
 * typed option from `AMatch`-produced locals (safe fallback, optimization gap)

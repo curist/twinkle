@@ -232,6 +232,11 @@ fn run_wasm_result_assign_boundary() {
 }
 
 #[test]
+fn run_wasm_result_typed_specialization() {
+    check("tests/run/result_typed_specialization.tw");
+}
+
+#[test]
 fn run_wasm_option_generic_boundary() {
     check("tests/run/option_generic_boundary.tw");
 }

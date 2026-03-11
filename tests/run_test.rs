@@ -261,6 +261,11 @@ fn result_assign_boundary() {
 }
 
 #[test]
+fn result_typed_specialization() {
+    check("tests/run/result_typed_specialization.tw");
+}
+
+#[test]
 fn option_generic_boundary() {
     check("tests/run/option_generic_boundary.tw");
 }

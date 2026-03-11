@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
     EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, SumRepr, atom_iterator_state,
-    is_concrete_mono_type, is_typed_general_option_candidate, iterator_state_from_unfold_args,
-    mono_to_symbol_key, mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
+    is_concrete_mono_type, is_typed_general_option_candidate, is_typed_general_result_candidate,
+    is_typed_general_sum_candidate, iterator_state_from_unfold_args, mono_to_symbol_key,
+    mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
     resolve_unfold_step_types, sum_repr_from_mono, typed_cell_struct_sym, typed_closure_struct_sym,
     typed_closurefunc_sym, typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym,
     typed_iterator_state_sym, typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
@@ -20,8 +21,8 @@ use crate::runtime::types::{
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, TypeDef as LangTypeDef, TypeId,
-    UNFOLD_STEP_TYPE_ID,
+    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
+    TypeDef as LangTypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{
     FieldDef as WasmFieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ModuleIR,
@@ -834,10 +835,14 @@ fn emit_let_expr(
         .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
     let local_iter = iterator_state_from_op(op, ctx);
     let local_opt_raw = match op {
-        AnfOp::AVariant { type_id, .. } if *type_id == OPTION_TYPE_ID => local_mono
-            .as_ref()
-            .filter(|mono| is_typed_general_option_candidate(mono))
-            .cloned(),
+        AnfOp::AVariant { type_id, .. }
+            if *type_id == OPTION_TYPE_ID || *type_id == RESULT_TYPE_ID =>
+        {
+            local_mono
+                .as_ref()
+                .filter(|mono| is_typed_general_sum_candidate(mono))
+                .cloned()
+        }
         _ => typed_general_option_from_op(op, ctx),
     };
     let local_opt = local_opt_raw.filter(|mono| local_can_store_typed_option(local, mono, ctx));
@@ -1350,6 +1355,7 @@ fn emit_pattern_condition(
                         typed_unfold_step_state,
                         None,
                         field_monos.get(idx),
+                        *variant,
                         idx as i32,
                         ctx,
                     );
@@ -1428,6 +1434,7 @@ fn emit_pattern_condition(
                         typed_unfold_step_state,
                         None,
                         field_monos.get(idx),
+                        *variant,
                         idx as i32,
                         ctx,
                     );
@@ -1457,7 +1464,7 @@ fn emit_pattern_condition(
                 return instrs;
             }
 
-            // Typed general Option<T> path: direct struct field access.
+            // Typed general Option<T> / Result<T,E> path: direct struct field access.
             // Guarded by flow metadata to avoid assuming typed layout for erased/ABI values.
             if let Some(mono) = typed_general_option {
                 if let Some(option_sym) =
@@ -1466,10 +1473,6 @@ fn emit_pattern_condition(
                     let typed_ref = ValType::Ref {
                         nullable: true,
                         heap: HeapType::Named(option_sym.clone()),
-                    };
-                    let inner_mono = match mono {
-                        MonoType::Named { args, .. } => args.get(0),
-                        _ => None,
                     };
 
                     let mut outer_checks = Vec::new();
@@ -1504,20 +1507,22 @@ fn emit_pattern_condition(
                         if pattern_is_trivially_true(field_pat) {
                             continue;
                         }
-                        // Extract payload from typed struct field 1 (payload)
+                        let struct_field_idx =
+                            typed_sum_struct_field_offset(mono, *variant, idx as u32);
+                        let field_mono = variant_field_mono_for_typed_sum(mono, *variant, idx);
                         let payload_ty = mono_to_valtype_specialized(
-                            inner_mono.unwrap_or(&MonoType::Void),
+                            field_mono.unwrap_or(&MonoType::Void),
                             ctx.type_env,
                             &ctx.concrete_func_sigs,
                         );
                         let mut field_instrs = value_anyref_instrs.to_vec();
                         field_instrs.extend(emit_unbox_on_stack(&typed_ref));
-                        field_instrs.push(Instr::StructGet(option_sym.clone(), 1 + idx as u32));
+                        field_instrs.push(Instr::StructGet(option_sym.clone(), struct_field_idx));
                         field_instrs.extend(emit_coerce_stack(&payload_ty, &ValType::Anyref));
                         inner_checks.push(emit_pattern_condition(
                             field_pat,
                             &field_instrs,
-                            inner_mono,
+                            field_mono,
                             None,
                             None,
                             None,
@@ -1620,7 +1625,9 @@ fn emit_pattern_bindings(
             instrs.push(Instr::LocalSet(idx));
             instrs
         }
-        CorePattern::Variant { fields, .. } => {
+        CorePattern::Variant {
+            variant, fields, ..
+        } => {
             let mut instrs = Vec::new();
             for (idx, field_pat) in fields.iter().enumerate() {
                 let field_expected = expected_mono.and_then(|mono| variant_field_mono(mono, idx));
@@ -1631,6 +1638,7 @@ fn emit_pattern_bindings(
                     typed_unfold_step_state,
                     typed_general_option,
                     field_expected,
+                    *variant,
                     idx as i32,
                     ctx,
                 );
@@ -1668,6 +1676,7 @@ fn emit_variant_field_anyref(
     typed_unfold_step_state: Option<&(MonoType, MonoType)>,
     typed_general_option: Option<&MonoType>,
     field_mono: Option<&MonoType>,
+    variant_id: crate::ir::VariantId,
     field_idx: i32,
     ctx: &EmitCtx<'_>,
 ) -> Vec<Instr> {
@@ -1719,24 +1728,26 @@ fn emit_variant_field_anyref(
         return instrs;
     }
 
-    // Typed general Option<T> path.
+    // Typed general Option<T> / Result<T,E> path.
     if let Some(mono) = typed_general_option {
-        if let Some(option_sym) =
-            typed_general_option_pattern_sym(OPTION_TYPE_ID, expected_mono, Some(mono))
-        {
-            let inner_mono = match mono {
-                MonoType::Named { args, .. } => args.get(0),
-                _ => None,
-            };
-            let field_ty = inner_mono
+        if let Some(sum_sym) = typed_general_option_pattern_sym(
+            mono_type_id(mono).unwrap_or(OPTION_TYPE_ID),
+            expected_mono,
+            Some(mono),
+        ) {
+            let struct_field_idx =
+                typed_sum_struct_field_offset(mono, variant_id, field_idx as u32);
+            let field_mono_resolved =
+                variant_field_mono_for_typed_sum(mono, variant_id, field_idx as usize);
+            let field_ty = field_mono_resolved
                 .map(|m| mono_to_valtype_specialized(m, ctx.type_env, &ctx.concrete_func_sigs))
                 .unwrap_or(ValType::Anyref);
             let mut instrs = value_anyref_instrs.to_vec();
             instrs.push(Instr::RefCast {
                 nullable: true,
-                heap: HeapType::Named(option_sym.clone()),
+                heap: HeapType::Named(sum_sym.clone()),
             });
-            instrs.push(Instr::StructGet(option_sym, (field_idx + 1) as u32));
+            instrs.push(Instr::StructGet(sum_sym, struct_field_idx));
             instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
             return instrs;
         }
@@ -1788,11 +1799,11 @@ fn typed_general_option_pattern_sym(
     expected_mono: Option<&MonoType>,
     typed_general_option: Option<&MonoType>,
 ) -> Option<String> {
-    if type_id != OPTION_TYPE_ID {
+    if type_id != OPTION_TYPE_ID && type_id != RESULT_TYPE_ID {
         return None;
     }
     let mono = typed_general_option?;
-    if !is_typed_general_option_candidate(mono) {
+    if !is_typed_general_sum_candidate(mono) {
         return None;
     }
     if let Some(expected) = expected_mono {
@@ -1801,6 +1812,59 @@ fn typed_general_option_pattern_sym(
         }
     }
     Some(typed_general_option_sym(mono))
+}
+
+/// Map a variant's field index to a struct field index in a typed sum struct.
+/// Option layout: (variant_id, payload)      → field 0 is at struct index 1
+/// Result layout: (variant_id, ok, err)      → Ok field 0 is at struct index 1,
+///                                              Err field 0 is at struct index 2
+fn typed_sum_struct_field_offset(
+    mono: &MonoType,
+    variant_id: crate::ir::VariantId,
+    field_idx: u32,
+) -> u32 {
+    match mono {
+        MonoType::Named { type_id, .. } if *type_id == RESULT_TYPE_ID => {
+            // Result struct: (variant_id, ok_payload, err_payload)
+            // Ok = variant 0 → struct field 1; Err = variant 1 → struct field 2
+            variant_id.0 as u32 + 1 + field_idx
+        }
+        _ => {
+            // Option struct: (variant_id, payload)
+            1 + field_idx
+        }
+    }
+}
+
+/// Get the MonoType for a field within a typed sum variant.
+fn variant_field_mono_for_typed_sum<'a>(
+    mono: &'a MonoType,
+    variant_id: crate::ir::VariantId,
+    field_idx: usize,
+) -> Option<&'a MonoType> {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
+            // Ok = variant 0 → args[0], Err = variant 1 → args[1]
+            if field_idx == 0 {
+                args.get(variant_id.0 as usize)
+            } else {
+                None
+            }
+        }
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            // Some = variant 1, field 0 → args[0]
+            if field_idx == 0 { args.get(0) } else { None }
+        }
+        _ => None,
+    }
+}
+
+/// Extract the TypeId from a MonoType::Named.
+fn mono_type_id(mono: &MonoType) -> Option<TypeId> {
+    match mono {
+        MonoType::Named { type_id, .. } => Some(*type_id),
+        _ => None,
+    }
 }
 
 fn typed_unfold_step_pattern_info(
@@ -2268,42 +2332,39 @@ fn emit_sum_local_to_erased(
 ) -> Option<Vec<Instr>> {
     // Path 1: SumRepr metadata confirms local is typed → direct conversion.
     if let Some(sum_repr) = ctx.local_sum_repr(local_id).cloned() {
-        match &sum_repr {
-            SumRepr::TypedOption(mono) | SumRepr::TypedResult(mono) => {
-                if is_typed_general_option_candidate(mono)
-                    && local_can_store_typed_option(local_id, mono, ctx)
-                {
-                    // Debug: verify SumRepr and mono inference agree.
-                    debug_assert!(
-                        ctx.infer_atom_mono(&Atom::ALocal(local_id))
-                            .as_ref()
-                            .is_none_or(|inferred| inferred == mono),
-                        "SumRepr/mono inference mismatch for L{}: repr={:?} inferred={:?}",
-                        local_id.0,
-                        mono,
-                        ctx.infer_atom_mono(&Atom::ALocal(local_id)),
-                    );
-                    return Some(emit_typed_general_option_local_to_variant(
-                        local_idx, mono, target, ctx,
-                    ));
-                }
+        let candidate = match &sum_repr {
+            SumRepr::TypedOption(mono) => is_typed_general_option_candidate(mono).then_some(mono),
+            SumRepr::TypedResult(mono) => is_typed_general_result_candidate(mono).then_some(mono),
+            SumRepr::ErasedVariant => None,
+        };
+        if let Some(mono) = candidate {
+            if local_can_store_typed_option(local_id, mono, ctx) {
+                // Debug: verify SumRepr and mono inference agree.
+                debug_assert!(
+                    ctx.infer_atom_mono(&Atom::ALocal(local_id))
+                        .as_ref()
+                        .is_none_or(|inferred| inferred == mono),
+                    "SumRepr/mono inference mismatch for L{}: repr={:?} inferred={:?}",
+                    local_id.0,
+                    mono,
+                    ctx.infer_atom_mono(&Atom::ALocal(local_id)),
+                );
+                return Some(emit_typed_general_option_local_to_variant(
+                    local_idx, mono, target, ctx,
+                ));
             }
-            SumRepr::ErasedVariant => {}
         }
     }
 
-    // Path 2: No SumRepr, but inferred mono suggests typed option in anyref local.
+    // Path 2: No SumRepr, but inferred mono suggests typed sum in anyref local.
     // Use runtime dispatch (ref.test) to handle both representations safely.
     if *local_ty == ValType::Anyref {
-        if let Some(option_mono) = ctx
+        if let Some(sum_mono) = ctx
             .infer_atom_mono(&Atom::ALocal(local_id))
-            .filter(is_typed_general_option_candidate)
+            .filter(is_typed_general_sum_candidate)
         {
             return Some(emit_anyref_option_or_variant_local_to_variant(
-                local_idx,
-                &option_mono,
-                target,
-                ctx,
+                local_idx, &sum_mono, target, ctx,
             ));
         }
     }
@@ -2360,19 +2421,38 @@ fn emit_typed_general_option_local_to_variant(
     expected_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            emit_typed_option_local_to_variant(local_idx, mono, &args[0], expected_ty, ctx)
+        }
+        MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
+            emit_typed_result_local_to_variant(
+                local_idx,
+                mono,
+                &args[0],
+                &args[1],
+                expected_ty,
+                ctx,
+            )
+        }
+        _ => panic!(
+            "emit_typed_general_option_local_to_variant expects Option<T> or Result<T,E>, got {:?}",
+            mono
+        ),
+    }
+}
+
+fn emit_typed_option_local_to_variant(
+    local_idx: u32,
+    mono: &MonoType,
+    inner: &MonoType,
+    expected_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
     let option_sym = typed_general_option_sym(mono);
     let typed_ref = ValType::Ref {
         nullable: true,
         heap: HeapType::Named(option_sym.clone()),
-    };
-    let inner = match mono {
-        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
-            &args[0]
-        }
-        _ => panic!(
-            "emit_typed_general_option_local_to_variant expects Option<T>, got {:?}",
-            mono
-        ),
     };
     let payload_ty = mono_to_valtype_specialized(inner, ctx.type_env, &ctx.concrete_func_sigs);
 
@@ -2399,6 +2479,61 @@ fn emit_typed_general_option_local_to_variant(
         result: Some(ref_array()),
         then_body,
         else_body,
+    });
+
+    instrs.push(Instr::StructNew(T_VARIANT.to_string()));
+    instrs.extend(emit_coerce_stack(&ref_variant(), expected_ty));
+    instrs
+}
+
+/// Convert a typed Result<T,E> local to an erased $Variant.
+/// Result always has a single-element payload array: Ok extracts field 1,
+/// Err extracts field 2.
+fn emit_typed_result_local_to_variant(
+    local_idx: u32,
+    mono: &MonoType,
+    ok_inner: &MonoType,
+    err_inner: &MonoType,
+    expected_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let result_sym = typed_general_option_sym(mono);
+    let typed_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(result_sym.clone()),
+    };
+    let ok_ty = mono_to_valtype_specialized(ok_inner, ctx.type_env, &ctx.concrete_func_sigs);
+    let err_ty = mono_to_valtype_specialized(err_inner, ctx.type_env, &ctx.concrete_func_sigs);
+
+    let mut instrs = vec![Instr::I32Const(RESULT_TYPE_ID.0 as i32)];
+
+    // variant_id field
+    instrs.push(Instr::LocalGet(local_idx));
+    instrs.extend(emit_unbox_on_stack(&typed_ref));
+    instrs.push(Instr::StructGet(result_sym.clone(), 0));
+
+    // payload array: always 1 element — pick ok_payload (field 1) or err_payload (field 2)
+    instrs.push(Instr::LocalGet(local_idx));
+    instrs.extend(emit_unbox_on_stack(&typed_ref));
+    instrs.push(Instr::StructGet(result_sym.clone(), 0));
+    instrs.push(Instr::I32Const(0));
+    instrs.push(Instr::I32Eq);
+    // Ok branch: extract field 1 (ok_payload)
+    let mut ok_body = vec![Instr::LocalGet(local_idx)];
+    ok_body.extend(emit_unbox_on_stack(&typed_ref));
+    ok_body.push(Instr::StructGet(result_sym.clone(), 1));
+    ok_body.extend(emit_coerce_stack(&ok_ty, &ValType::Anyref));
+    ok_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    // Err branch: extract field 2 (err_payload)
+    let mut err_body = vec![Instr::LocalGet(local_idx)];
+    err_body.extend(emit_unbox_on_stack(&typed_ref));
+    err_body.push(Instr::StructGet(result_sym, 2));
+    err_body.extend(emit_coerce_stack(&err_ty, &ValType::Anyref));
+    err_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    instrs.push(Instr::If {
+        result: Some(ref_array()),
+        then_body: ok_body,
+        else_body: err_body,
     });
 
     instrs.push(Instr::StructNew(T_VARIANT.to_string()));
@@ -3498,10 +3633,10 @@ fn emit_variant_literal(
         );
     }
 
-    // Typed general Option<T> path: emit a typed struct for concrete Option<T>.
-    if type_id == OPTION_TYPE_ID {
+    // Typed general Option<T> / Result<T,E> path: emit a typed struct.
+    if type_id == OPTION_TYPE_ID || type_id == RESULT_TYPE_ID {
         if let Some(mono) = expected_mono {
-            if is_typed_general_option_candidate(mono)
+            if is_typed_general_sum_candidate(mono)
                 && typed_general_option_can_materialize_to(bind_ty, mono)
             {
                 return emit_typed_general_option_literal(variant, args, mono, bind_ty, ctx);
@@ -3533,9 +3668,11 @@ fn typed_general_option_can_materialize_to(bind_ty: &ValType, mono: &MonoType) -
     }
 }
 
-/// Emit a typed general Option literal.
-/// None: (variant_id=0, payload=default_value)
-/// Some(x): (variant_id=1, payload=x)
+/// Emit a typed general Option or Result literal.
+/// Option None:    (variant_id=0, payload=default)
+/// Option Some(x): (variant_id=1, payload=x)
+/// Result Ok(x):   (variant_id=0, ok_payload=x, err_payload=default)
+/// Result Err(e):  (variant_id=1, ok_payload=default, err_payload=e)
 fn emit_typed_general_option_literal(
     variant: crate::ir::VariantId,
     args: &[Atom],
@@ -3543,33 +3680,56 @@ fn emit_typed_general_option_literal(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    let inner = match mono {
+    let sym = typed_general_option_sym(mono);
+    ctx.request_typed_general_option(sym.clone(), mono.clone());
+
+    match mono {
         MonoType::Named {
             type_id,
             args: type_args,
-        } if *type_id == OPTION_TYPE_ID && type_args.len() == 1 => &type_args[0],
-        _ => panic!("emit_typed_general_option_literal: expected Option<T>"),
-    };
-    let sym = typed_general_option_sym(mono);
-    let payload_ty = mono_to_valtype_specialized(inner, ctx.type_env, &ctx.concrete_func_sigs);
-
-    // Register the typed struct
-    ctx.request_typed_general_option(sym.clone(), mono.clone());
-
-    let mut instrs = Vec::new();
-    instrs.push(Instr::I32Const(variant.0 as i32));
-
-    if variant.0 == 1 && args.len() == 1 {
-        // Some(value) — push the concrete payload
-        instrs.extend(emit_atom(&args[0], Some(&payload_ty), ctx));
-    } else {
-        // None — push a default value for the payload field
-        instrs.extend(emit_default_value_instrs(&payload_ty));
+        } if *type_id == OPTION_TYPE_ID && type_args.len() == 1 => {
+            let payload_ty =
+                mono_to_valtype_specialized(&type_args[0], ctx.type_env, &ctx.concrete_func_sigs);
+            let mut instrs = vec![Instr::I32Const(variant.0 as i32)];
+            if variant.0 == 1 && args.len() == 1 {
+                instrs.extend(emit_atom(&args[0], Some(&payload_ty), ctx));
+            } else {
+                instrs.extend(emit_default_value_instrs(&payload_ty));
+            }
+            instrs.push(Instr::StructNew(sym));
+            instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+            instrs
+        }
+        MonoType::Named {
+            type_id,
+            args: type_args,
+        } if *type_id == RESULT_TYPE_ID && type_args.len() == 2 => {
+            let ok_ty =
+                mono_to_valtype_specialized(&type_args[0], ctx.type_env, &ctx.concrete_func_sigs);
+            let err_ty =
+                mono_to_valtype_specialized(&type_args[1], ctx.type_env, &ctx.concrete_func_sigs);
+            let mut instrs = vec![Instr::I32Const(variant.0 as i32)];
+            if variant.0 == 0 && args.len() == 1 {
+                // Ok(value): push ok payload, default err
+                instrs.extend(emit_atom(&args[0], Some(&ok_ty), ctx));
+                instrs.extend(emit_default_value_instrs(&err_ty));
+            } else if variant.0 == 1 && args.len() == 1 {
+                // Err(value): default ok, push err payload
+                instrs.extend(emit_default_value_instrs(&ok_ty));
+                instrs.extend(emit_atom(&args[0], Some(&err_ty), ctx));
+            } else {
+                panic!(
+                    "unexpected Result variant {} with {} args",
+                    variant.0,
+                    args.len()
+                );
+            }
+            instrs.push(Instr::StructNew(sym));
+            instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+            instrs
+        }
+        _ => panic!("emit_typed_general_option_literal: expected Option<T> or Result<T,E>"),
     }
-
-    instrs.push(Instr::StructNew(sym));
-    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
-    instrs
 }
 
 fn emit_typed_unfold_step_literal(
@@ -4333,9 +4493,12 @@ fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorState
 
 fn typed_general_option_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     match op {
-        AnfOp::AVariant { type_id, .. } if *type_id == OPTION_TYPE_ID => ctx
-            .infer_op_mono_for_emit(op)
-            .filter(is_typed_general_option_candidate),
+        AnfOp::AVariant { type_id, .. }
+            if *type_id == OPTION_TYPE_ID || *type_id == RESULT_TYPE_ID =>
+        {
+            ctx.infer_op_mono_for_emit(op)
+                .filter(is_typed_general_sum_candidate)
+        }
         AnfOp::AInit { value } => atom_typed_general_option(value, ctx),
         AnfOp::AAssign { value, .. } => atom_typed_general_option(value, ctx),
         _ => None,
@@ -7087,38 +7250,62 @@ fn emit_typed_iter_item_struct_def(
     }
 }
 
-/// Emit a typed struct definition for a general `Option<T>` where T is concrete.
-/// Layout: (variant_id: i32, payload: T_wasm)
+/// Emit a typed struct definition for a general `Option<T>` or `Result<T, E>`.
+/// Option layout: (variant_id: i32, payload: T_wasm)
+/// Result layout: (variant_id: i32, ok_payload: T_wasm, err_payload: E_wasm)
 fn emit_typed_general_option_struct_def(
     mono: &MonoType,
     type_env: &TypeEnv,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> WasmTypeDef {
-    let inner = match mono {
+    match mono {
         MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
-            &args[0]
+            WasmTypeDef::Struct {
+                name: typed_general_option_sym(mono),
+                supertype: None,
+                non_final: false,
+                fields: vec![
+                    WasmFieldDef {
+                        name: Some("variant_id".to_string()),
+                        mutable: false,
+                        ty: ValType::I32,
+                    },
+                    WasmFieldDef {
+                        name: Some("payload".to_string()),
+                        mutable: false,
+                        ty: mono_to_valtype_specialized(&args[0], type_env, concrete_func_sigs),
+                    },
+                ],
+            }
+        }
+        MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
+            WasmTypeDef::Struct {
+                name: typed_general_option_sym(mono),
+                supertype: None,
+                non_final: false,
+                fields: vec![
+                    WasmFieldDef {
+                        name: Some("variant_id".to_string()),
+                        mutable: false,
+                        ty: ValType::I32,
+                    },
+                    WasmFieldDef {
+                        name: Some("ok_payload".to_string()),
+                        mutable: false,
+                        ty: mono_to_valtype_specialized(&args[0], type_env, concrete_func_sigs),
+                    },
+                    WasmFieldDef {
+                        name: Some("err_payload".to_string()),
+                        mutable: false,
+                        ty: mono_to_valtype_specialized(&args[1], type_env, concrete_func_sigs),
+                    },
+                ],
+            }
         }
         _ => panic!(
-            "emit_typed_general_option_struct_def: expected Option<T>, got {:?}",
+            "emit_typed_general_option_struct_def: expected Option<T> or Result<T,E>, got {:?}",
             mono
         ),
-    };
-    WasmTypeDef::Struct {
-        name: typed_general_option_sym(mono),
-        supertype: None,
-        non_final: false,
-        fields: vec![
-            WasmFieldDef {
-                name: Some("variant_id".to_string()),
-                mutable: false,
-                ty: ValType::I32,
-            },
-            WasmFieldDef {
-                name: Some("payload".to_string()),
-                mutable: false,
-                ty: mono_to_valtype_specialized(inner, type_env, concrete_func_sigs),
-            },
-        ],
     }
 }
 

@@ -1986,6 +1986,20 @@ pub fn is_typed_general_option_candidate(mono: &MonoType) -> bool {
     }
 }
 
+pub fn is_typed_general_result_candidate(mono: &MonoType) -> bool {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
+            is_concrete_mono_type(&args[0]) && is_concrete_mono_type(&args[1])
+        }
+        _ => false,
+    }
+}
+
+/// Check if a MonoType is a candidate for typed sum specialization (Option or Result).
+pub fn is_typed_general_sum_candidate(mono: &MonoType) -> bool {
+    is_typed_general_option_candidate(mono) || is_typed_general_result_candidate(mono)
+}
+
 /// Map a `MonoType` to a short tag string for use in mangled type symbols.
 /// e.g. `Int` → `"i64"`, `String` → `"str"`, `Vector<Int>` → `"arr"`.
 pub fn mono_to_type_tag(ty: &MonoType) -> String {
