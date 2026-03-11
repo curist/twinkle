@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::types::ty::RESULT_TYPE_ID;
@@ -996,6 +997,16 @@ pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, Strin
 }
 
 pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
+    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path)?;
+    if let Some(code) = exit_code {
+        if code != 0 {
+            return Err(anyhow!("process exited with code {code}"));
+        }
+    }
+    Ok((stdout, stderr))
+}
+
+fn run_wasm_capture_with_exit_code(path: &str) -> Result<(String, String, Option<i64>)> {
     let wasm_input = load_wasm_input(path)?;
     let engine = build_engine()?;
     let module = Module::new(&engine, &wasm_input)
@@ -1022,10 +1033,7 @@ pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
     let instantiated = linker.instantiate(&mut store, &module);
     if let Err(err) = instantiated {
         match store.data().exit_code {
-            Some(0) => {}
-            Some(code) => {
-                return Err(anyhow!("process exited with code {code}"));
-            }
+            Some(_) => {}
             None => {
                 return Err(err)
                     .with_context(|| format!("failed to instantiate/run Wasm module '{}'", path));
@@ -1034,16 +1042,27 @@ pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
     }
 
     let out = store.data();
-    Ok((out.stdout.clone(), out.stderr.clone()))
+    Ok((out.stdout.clone(), out.stderr.clone(), out.exit_code))
 }
 
 pub fn run_wasm_file(path: &str) -> Result<()> {
-    let (stdout, stderr) = run_wasm_capture(path)?;
+    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path)?;
     if !stdout.is_empty() {
         print!("{stdout}");
+        std::io::stdout()
+            .flush()
+            .context("failed to flush stdout after Wasm execution")?;
     }
     if !stderr.is_empty() {
         eprint!("{stderr}");
+        std::io::stderr()
+            .flush()
+            .context("failed to flush stderr after Wasm execution")?;
+    }
+    if let Some(code) = exit_code {
+        if code != 0 {
+            bail!("process exited with code {code}");
+        }
     }
     Ok(())
 }
