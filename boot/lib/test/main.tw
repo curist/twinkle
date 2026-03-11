@@ -1,44 +1,72 @@
 use runner
 use assert
 
+fn parse_port(s: String) Result<Int, String> {
+  if s == "8080" {
+    .Ok(8080)
+  } else {
+    .Err("invalid port: ${s}")
+  }
+}
+
 fn main() {
-  s := runner.suite("assert basics")
-    .test("str_eq pass", fn() Result<Void, String> {
+  s := runner.suite("assert helpers")
+    .test("str_eq", fn() {
       try assert.str_eq("hello", "hello")
       .Ok({})
     })
-    .test("str_eq fail", fn() Result<Void, String> {
-      try assert.str_eq("hello", "world")
+    .test("str_contains", fn() {
+      try assert.str_contains("hello world", "world")
       .Ok({})
     })
-    .test("int_eq pass", fn() Result<Void, String> {
+    .test("str_starts_with", fn() {
+      try assert.str_starts_with("twinkle", "twin")
+      .Ok({})
+    })
+    .test("str_ends_with", fn() {
+      try assert.str_ends_with("twinkle", "kle")
+      .Ok({})
+    })
+    .test("int_eq", fn() {
       try assert.int_eq(42, 42)
       .Ok({})
     })
-    .test("is_true", fn() Result<Void, String> {
+    .test("is_true", fn() {
       try assert.is_true(1 + 1 == 2)
       .Ok({})
     })
-    .test("is_false", fn() Result<Void, String> {
+    .test("is_false", fn() {
       try assert.is_false(1 > 2)
       .Ok({})
     })
-    .test("is_some", fn() Result<Void, String> {
+    .test("is_some", fn() {
       opt: Int? = .Some(5)
       try assert.is_some(opt)
       .Ok({})
     })
-    .test("is_none", fn() Result<Void, String> {
+    .test("is_none", fn() {
       opt: Int? = .None
       try assert.is_none(opt)
       .Ok({})
     })
-    .test("ok pass", fn() Result<Void, String> {
+    .test("ok", fn() {
       try assert.ok(true, "should not fail")
       .Ok({})
     })
-    .test("ok fail", fn() Result<Void, String> {
-      try assert.ok(false, "intentional failure")
+    .test("is_ok", fn() {
+      try assert.is_ok(parse_port("8080"))
+      .Ok({})
+    })
+    .test("is_err", fn() {
+      try assert.is_err(parse_port("abc"))
+      .Ok({})
+    })
+    .test("err_eq", fn() {
+      try assert.err_eq(parse_port("oops"), "invalid port: oops")
+      .Ok({})
+    })
+    .test("err_contains", fn() {
+      try assert.err_contains(parse_port("bad"), "invalid port")
       .Ok({})
     })
 

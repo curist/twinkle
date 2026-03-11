@@ -71,6 +71,14 @@ pub fn run_with(opts: RunOptions, s: Suite) Bool {
   run_stats(opts, s).failed == 0
 }
 
+pub fn suite_stats(s: Suite) RunStats {
+  suite_stats_with(default_options(), s)
+}
+
+pub fn suite_stats_with(opts: RunOptions, s: Suite) RunStats {
+  run_stats(opts, s)
+}
+
 fn run_stats(opts: RunOptions, s: Suite) RunStats {
   header := "── ${s.name} ──"
   case opts.filter {
@@ -116,8 +124,22 @@ pub fn run_all(suites: Vector<Suite>) Void {
   run_all_with(default_options(), suites)
 }
 
-pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
-  all_passed := true
+pub fn run_all_stats(suites: Vector<Suite>) RunStats {
+  run_all_stats_with(default_options(), suites)
+}
+
+fn print_totals(opts: RunOptions, total: Int, passed: Int, failed: Int, filtered: Int) Void {
+  line := "Ran ${total} tests: ${passed} passed"
+  if failed > 0 {
+    line = "${line}, ${red(opts.color, "${failed} failed")}"
+  }
+  if filtered > 0 {
+    line = "${line}, ${dim(opts.color, "${filtered} filtered out")}"
+  }
+  println(bold(opts.color, line))
+}
+
+pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
   total := 0
   passed := 0
   failed := 0
@@ -128,19 +150,14 @@ pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
     passed = passed + st.passed
     failed = failed + st.failed
     filtered = filtered + st.filtered
-    if st.failed > 0 {
-      all_passed = false
-    }
   }
-  line := "Ran ${total} tests: ${passed} passed"
-  if failed > 0 {
-    line = "${line}, ${red(opts.color, "${failed} failed")}"
-  }
-  if filtered > 0 {
-    line = "${line}, ${dim(opts.color, "${filtered} filtered out")}"
-  }
-  println(bold(opts.color, line))
-  if !all_passed {
+  print_totals(opts, total, passed, failed, filtered)
+  RunStats.{ total: total, passed: passed, failed: failed, filtered: filtered }
+}
+
+pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
+  st := run_all_stats_with(opts, suites)
+  if st.failed > 0 {
     proc.exit(1)
   }
 }

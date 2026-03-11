@@ -17,6 +17,30 @@ pub fn str_eq(actual: String, expected: String) Result<Void, String> {
   }
 }
 
+pub fn str_contains(actual: String, expected_substring: String) Result<Void, String> {
+  if actual.contains(expected_substring) {
+    .Ok({})
+  } else {
+    .Err("expected \"${actual}\" to contain \"${expected_substring}\"")
+  }
+}
+
+pub fn str_starts_with(actual: String, expected_prefix: String) Result<Void, String> {
+  if actual.starts_with(expected_prefix) {
+    .Ok({})
+  } else {
+    .Err("expected \"${actual}\" to start with \"${expected_prefix}\"")
+  }
+}
+
+pub fn str_ends_with(actual: String, expected_suffix: String) Result<Void, String> {
+  if actual.ends_with(expected_suffix) {
+    .Ok({})
+  } else {
+    .Err("expected \"${actual}\" to end with \"${expected_suffix}\"")
+  }
+}
+
 pub fn int_eq(actual: Int, expected: Int) Result<Void, String> {
   if actual == expected {
     .Ok({})
@@ -52,5 +76,33 @@ pub fn is_none<A>(opt: A?) Result<Void, String> {
   case opt {
     .Some(_) => .Err("expected None, got Some"),
     .None => .Ok({}),
+  }
+}
+
+pub fn is_ok<A, E>(res: Result<A, E>) Result<Void, String> {
+  case res {
+    .Ok(_) => .Ok({}),
+    .Err(_) => .Err("expected Ok, got Err"),
+  }
+}
+
+pub fn is_err<A, E>(res: Result<A, E>) Result<Void, String> {
+  case res {
+    .Ok(_) => .Err("expected Err, got Ok"),
+    .Err(_) => .Ok({}),
+  }
+}
+
+pub fn err_eq<A>(res: Result<A, String>, expected_error: String) Result<Void, String> {
+  case res {
+    .Ok(_) => .Err("expected Err(\"${expected_error}\"), got Ok"),
+    .Err(actual_error) => str_eq(actual_error, expected_error),
+  }
+}
+
+pub fn err_contains<A>(res: Result<A, String>, expected_substring: String) Result<Void, String> {
+  case res {
+    .Ok(_) => .Err("expected Err containing \"${expected_substring}\", got Ok"),
+    .Err(actual_error) => str_contains(actual_error, expected_substring),
   }
 }
