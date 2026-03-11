@@ -1,0 +1,146 @@
+// Minimal test runner with colored output.
+
+use @std.proc
+
+pub type Test = .{ name: String, run: fn() Result<Void, String> }
+pub type Suite = .{ name: String, tests: Vector<Test> }
+pub type RunOptions = .{ filter: String?, color: Bool }
+pub type RunStats = .{ total: Int, passed: Int, failed: Int, filtered: Int }
+
+// ANSI helpers (inlined to avoid cross-lib dependency)
+
+fn paint(enabled: Bool, code: String, s: String) String {
+  if enabled { "\e[${code}m${s}\e[0m" } else { s }
+}
+
+fn green(enabled: Bool, s: String) String { paint(enabled, "32", s) }
+fn red(enabled: Bool, s: String) String { paint(enabled, "31", s) }
+fn bold(enabled: Bool, s: String) String { paint(enabled, "1", s) }
+fn dim(enabled: Bool, s: String) String { paint(enabled, "2", s) }
+
+fn env_filter() String? {
+  out: String? = .None
+  case proc.env("TWK_TEST_FILTER") {
+    .Some(v) => {
+      trimmed := v.trim()
+      if trimmed != "" {
+        out = .Some(trimmed)
+      }
+    },
+    .None => {},
+  }
+  out
+}
+
+fn env_color_enabled() Bool {
+  case proc.env("NO_COLOR") {
+    .Some(_) => false,
+    .None => true,
+  }
+}
+
+pub fn default_options() RunOptions {
+  .{ filter: env_filter(), color: env_color_enabled() }
+}
+
+fn matches_filter(filter: String?, suite_name: String, test_name: String) Bool {
+  case filter {
+    .Some(f) => {
+      // Support matching by bare test name or fully-qualified suite::test.
+      test_name.contains(f) or "${suite_name}::${test_name}".contains(f)
+    },
+    .None => true,
+  }
+}
+
+// API
+
+pub fn suite(name: String) Suite {
+  Suite.{ name: name, tests: [] }
+}
+
+pub fn test(s: Suite, name: String, f: fn() Result<Void, String>) Suite {
+  Suite.{ name: s.name, tests: s.tests.push(Test.{ name: name, run: f }) }
+}
+
+pub fn run(s: Suite) Bool {
+  run_with(default_options(), s)
+}
+
+pub fn run_with(opts: RunOptions, s: Suite) Bool {
+  run_stats(opts, s).failed == 0
+}
+
+fn run_stats(opts: RunOptions, s: Suite) RunStats {
+  header := "── ${s.name} ──"
+  case opts.filter {
+    .Some(f) => {
+      header = "${header} ${dim(opts.color, "(filter: ${f})")}"
+    },
+    .None => {},
+  }
+  println(bold(opts.color, header))
+  total := s.tests.len()
+  passed := 0
+  failed := 0
+  filtered := 0
+  for t in s.tests {
+    if matches_filter(opts.filter, s.name, t.name) {
+      case t.run() {
+        .Ok(_) => {
+          println("  ${green(opts.color, "✓")} ${t.name}")
+          passed = passed + 1
+        },
+        .Err(msg) => {
+          println("  ${red(opts.color, "✗")} ${t.name} ${dim(opts.color, "→ ${msg}")}")
+          failed = failed + 1
+        },
+      }
+    } else {
+      filtered = filtered + 1
+    }
+  }
+  summary := "${passed} passed"
+  if failed > 0 {
+    summary = "${summary}, ${red(opts.color, "${failed} failed")}"
+  }
+  if filtered > 0 {
+    summary = "${summary}, ${dim(opts.color, "${filtered} filtered out")}"
+  }
+  println("  ${summary}")
+  println("")
+  RunStats.{ total: total, passed: passed, failed: failed, filtered: filtered }
+}
+
+pub fn run_all(suites: Vector<Suite>) Void {
+  run_all_with(default_options(), suites)
+}
+
+pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
+  all_passed := true
+  total := 0
+  passed := 0
+  failed := 0
+  filtered := 0
+  for s in suites {
+    st := run_stats(opts, s)
+    total = total + st.total
+    passed = passed + st.passed
+    failed = failed + st.failed
+    filtered = filtered + st.filtered
+    if st.failed > 0 {
+      all_passed = false
+    }
+  }
+  line := "Ran ${total} tests: ${passed} passed"
+  if failed > 0 {
+    line = "${line}, ${red(opts.color, "${failed} failed")}"
+  }
+  if filtered > 0 {
+    line = "${line}, ${dim(opts.color, "${filtered} filtered out")}"
+  }
+  println(bold(opts.color, line))
+  if !all_passed {
+    proc.exit(1)
+  }
+}

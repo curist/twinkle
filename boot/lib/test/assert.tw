@@ -1,0 +1,56 @@
+// Assertion helpers for test suites.
+// Each returns Result<Void, String> — Ok on pass, Err(message) on fail.
+
+pub fn ok(cond: Bool, msg: String) Result<Void, String> {
+  if cond { .Ok({}) } else { .Err(msg) }
+}
+
+pub fn fail(msg: String) Result<Void, String> {
+  .Err(msg)
+}
+
+pub fn str_eq(actual: String, expected: String) Result<Void, String> {
+  if actual == expected {
+    .Ok({})
+  } else {
+    .Err("expected \"${expected}\", got \"${actual}\"")
+  }
+}
+
+pub fn int_eq(actual: Int, expected: Int) Result<Void, String> {
+  if actual == expected {
+    .Ok({})
+  } else {
+    .Err("expected ${expected}, got ${actual}")
+  }
+}
+
+pub fn bool_eq(actual: Bool, expected: Bool) Result<Void, String> {
+  if actual == expected {
+    .Ok({})
+  } else {
+    .Err("expected ${expected}, got ${actual}")
+  }
+}
+
+pub fn is_true(actual: Bool) Result<Void, String> {
+  if actual { .Ok({}) } else { .Err("expected true, got false") }
+}
+
+pub fn is_false(actual: Bool) Result<Void, String> {
+  if !actual { .Ok({}) } else { .Err("expected false, got true") }
+}
+
+pub fn is_some<A>(opt: A?) Result<Void, String> {
+  case opt {
+    .Some(_) => .Ok({}),
+    .None => .Err("expected Some, got None"),
+  }
+}
+
+pub fn is_none<A>(opt: A?) Result<Void, String> {
+  case opt {
+    .Some(_) => .Err("expected None, got Some"),
+    .None => .Ok({}),
+  }
+}

@@ -1,0 +1,25 @@
+// ANSI terminal styling helpers
+
+pub fn bold(s: String) String {
+  "\e[1m${s}\e[0m"
+}
+
+pub fn dim(s: String) String {
+  "\e[2m${s}\e[0m"
+}
+
+pub fn yellow(s: String) String {
+  "\e[33m${s}\e[0m"
+}
+
+pub fn red(s: String) String {
+  "\e[31m${s}\e[0m"
+}
+
+pub fn green(s: String) String {
+  "\e[32m${s}\e[0m"
+}
+
+pub fn cyan(s: String) String {
+  "\e[36m${s}\e[0m"
+}

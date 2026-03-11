@@ -1,0 +1,48 @@
+use runner
+use assert
+
+fn main() {
+  s := runner.suite("assert basics")
+    .test("str_eq pass", fn() Result<Void, String> {
+      try assert.str_eq("hello", "hello")
+      .Ok({})
+    })
+    .test("str_eq fail", fn() Result<Void, String> {
+      try assert.str_eq("hello", "world")
+      .Ok({})
+    })
+    .test("int_eq pass", fn() Result<Void, String> {
+      try assert.int_eq(42, 42)
+      .Ok({})
+    })
+    .test("is_true", fn() Result<Void, String> {
+      try assert.is_true(1 + 1 == 2)
+      .Ok({})
+    })
+    .test("is_false", fn() Result<Void, String> {
+      try assert.is_false(1 > 2)
+      .Ok({})
+    })
+    .test("is_some", fn() Result<Void, String> {
+      opt: Int? = .Some(5)
+      try assert.is_some(opt)
+      .Ok({})
+    })
+    .test("is_none", fn() Result<Void, String> {
+      opt: Int? = .None
+      try assert.is_none(opt)
+      .Ok({})
+    })
+    .test("ok pass", fn() Result<Void, String> {
+      try assert.ok(true, "should not fail")
+      .Ok({})
+    })
+    .test("ok fail", fn() Result<Void, String> {
+      try assert.ok(false, "intentional failure")
+      .Ok({})
+    })
+
+  runner.run_all([s])
+}
+
+main()
