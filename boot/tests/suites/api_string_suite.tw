@@ -1,0 +1,115 @@
+use tests.runner
+use tests.assert
+
+pub fn suite() runner.Suite {
+  runner.suite("string")
+    .test("len returns byte length", fn() {
+      try assert.int_eq("hello".len(), 5)
+      try assert.int_eq("".len(), 0)
+      .Ok({})
+    })
+    .test("indexing returns byte", fn() {
+      s := "abc"
+      try assert.int_eq(s[0].to_int(), 97)
+      try assert.int_eq(s[1].to_int(), 98)
+      try assert.int_eq(s[2].to_int(), 99)
+      .Ok({})
+    })
+    .test("string get returns option byte", fn() {
+      s := "hi"
+      try assert.is_some(String.get(s, 0))
+      try assert.is_some(String.get(s, 1))
+      try assert.is_none(String.get(s, 2))
+      try assert.is_none(String.get(s, -1))
+      .Ok({})
+    })
+    .test("concat joins strings", fn() {
+      try assert.str_eq("hello".concat(" world"), "hello world")
+      try assert.str_eq("".concat("x"), "x")
+      .Ok({})
+    })
+    .test("contains finds substring", fn() {
+      try assert.is_true("hello world".contains("world"))
+      try assert.is_true("hello world".contains("hello"))
+      try assert.is_false("hello world".contains("xyz"))
+      try assert.is_true("abc".contains(""))
+      .Ok({})
+    })
+    .test("starts_with and ends_with", fn() {
+      s := "twinkle"
+      try assert.is_true(s.starts_with("twin"))
+      try assert.is_false(s.starts_with("wink"))
+      try assert.is_true(s.ends_with("kle"))
+      try assert.is_false(s.ends_with("ink"))
+      .Ok({})
+    })
+    .test("index_of finds position", fn() {
+      s := "hello world"
+      idx := s.index_of("world")
+      try assert.is_some(idx)
+      val := case idx { .Some(v) => v, .None => -1 }
+      try assert.int_eq(val, 6)
+      try assert.is_none(s.index_of("xyz"))
+      .Ok({})
+    })
+    .test("split divides string", fn() {
+      parts := "a,b,c".split(",")
+      try assert.int_eq(parts.len(), 3)
+      try assert.str_eq(parts[0], "a")
+      try assert.str_eq(parts[1], "b")
+      try assert.str_eq(parts[2], "c")
+      .Ok({})
+    })
+    .test("split with no match returns whole string", fn() {
+      parts := "hello".split(",")
+      try assert.int_eq(parts.len(), 1)
+      try assert.str_eq(parts[0], "hello")
+      .Ok({})
+    })
+    .test("trim strips whitespace", fn() {
+      try assert.str_eq("  hello  ".trim(), "hello")
+      try assert.str_eq("hello".trim(), "hello")
+      try assert.str_eq("   ".trim(), "")
+      .Ok({})
+    })
+    .test("slice extracts byte range", fn() {
+      s := "hello"
+      try assert.str_eq(String.slice(s, 1, 4), "ell")
+      try assert.str_eq(String.slice(s, 0, 5), "hello")
+      .Ok({})
+    })
+    .test("interpolation embeds values", fn() {
+      name := "world"
+      n := 42
+      try assert.str_eq("hello ${name}", "hello world")
+      try assert.str_eq("n=${n}", "n=42")
+      .Ok({})
+    })
+    .test("for iterates bytes", fn() {
+      s := "abc"
+      bytes := Cell.new("")
+      for b in s {
+        bytes.update(fn(acc) { "${acc}${b.to_int()} " })
+      }
+      try assert.str_eq(bytes.get(), "97 98 99 ")
+      .Ok({})
+    })
+    .test("chars iterates unicode scalars", fn() {
+      ascii_count := "hello".char_len()
+      try assert.int_eq(ascii_count, 5)
+      .Ok({})
+    })
+    .test("equality and comparison", fn() {
+      try assert.is_true("abc" == "abc")
+      try assert.is_false("abc" == "def")
+      try assert.is_true("abc" < "abd")
+      try assert.is_true("abc" < "b")
+      .Ok({})
+    })
+    .test("to_string on primitives", fn() {
+      try assert.str_eq(Int.to_string(42), "42")
+      try assert.str_eq(Bool.to_string(true), "true")
+      try assert.str_eq(Bool.to_string(false), "false")
+      .Ok({})
+    })
+}

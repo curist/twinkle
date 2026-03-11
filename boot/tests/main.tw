@@ -6,6 +6,9 @@ use tests.suites.semantic_control_flow_suite
 use tests.suites.api_option_result_suite
 use tests.suites.api_cell_suite
 use tests.suites.api_vector_suite
+use tests.suites.api_string_suite
+use tests.suites.api_dict_suite
+use tests.suites.api_range_iterator_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -15,4 +18,7 @@ runner.run_all([
   api_option_result_suite.suite(),
   api_cell_suite.suite(),
   api_vector_suite.suite(),
+  api_string_suite.suite(),
+  api_dict_suite.suite(),
+  api_range_iterator_suite.suite(),
 ])

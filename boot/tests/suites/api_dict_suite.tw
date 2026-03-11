@@ -1,0 +1,110 @@
+use tests.runner
+use tests.assert
+
+fn make_dict() Dict<String, Int> {
+  d: Dict<String, Int> = Dict.new()
+  d["a"] = 1
+  d["b"] = 2
+  d["c"] = 3
+  d
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("dict")
+    .test("new creates empty dict", fn() {
+      d: Dict<String, Int> = Dict.new()
+      try assert.int_eq(d.len(), 0)
+      .Ok({})
+    })
+    .test("assignment and lookup", fn() {
+      d: Dict<String, Int> = Dict.new()
+      d["x"] = 42
+      val := d["x"]
+      try assert.is_some(val)
+      v := case val { .Some(x) => x, .None => -1 }
+      try assert.int_eq(v, 42)
+      .Ok({})
+    })
+    .test("multiple assignments grow len", fn() {
+      d := make_dict()
+      try assert.int_eq(d.len(), 3)
+      .Ok({})
+    })
+    .test("assignment overwrites existing key", fn() {
+      d: Dict<String, Int> = Dict.new()
+      d["k"] = 1
+      d["k"] = 2
+      try assert.int_eq(d.len(), 1)
+      v := case d["k"] { .Some(x) => x, .None => -1 }
+      try assert.int_eq(v, 2)
+      .Ok({})
+    })
+    .test("has checks key existence", fn() {
+      d := make_dict()
+      try assert.is_true(d.has("a"))
+      try assert.is_false(d.has("z"))
+      .Ok({})
+    })
+    .test("lookup returns none for missing key", fn() {
+      d: Dict<String, Int> = Dict.new()
+      try assert.is_none(d["missing"])
+      .Ok({})
+    })
+    .test("remove deletes key", fn() {
+      d := make_dict()
+      d2 := d.remove("a")
+      try assert.int_eq(d.len(), 3)
+      try assert.int_eq(d2.len(), 2)
+      try assert.is_none(d2["a"])
+      try assert.is_some(d2["b"])
+      .Ok({})
+    })
+    .test("keys returns all keys", fn() {
+      d := make_dict()
+      ks := d.keys()
+      try assert.int_eq(ks.len(), 3)
+      try assert.is_true(ks.contains("a"))
+      try assert.is_true(ks.contains("b"))
+      try assert.is_true(ks.contains("c"))
+      .Ok({})
+    })
+    .test("values returns all values", fn() {
+      d := make_dict()
+      vs := d.values()
+      try assert.int_eq(vs.len(), 3)
+      .Ok({})
+    })
+    .test("int keys work", fn() {
+      d: Dict<Int, String> = Dict.new()
+      d[1] = "one"
+      d[2] = "two"
+      v := case d[1] { .Some(x) => x, .None => "missing" }
+      try assert.str_eq(v, "one")
+      try assert.int_eq(d.len(), 2)
+      .Ok({})
+    })
+    .test("for iterates key-value pairs", fn() {
+      d := make_dict()
+      sum := Cell.new(0)
+      for _, v in d {
+        sum.update(fn(n) { n + v })
+      }
+      try assert.int_eq(sum.get(), 6)
+      .Ok({})
+    })
+    .test("for iterates keys only", fn() {
+      d := make_dict()
+      count := 0
+      for _ in d {
+        count = count + 1
+      }
+      try assert.int_eq(count, 3)
+      .Ok({})
+    })
+    .test("collect from dict", fn() {
+      d := make_dict()
+      entries := collect k, v in d { "${k}=${v}" }
+      try assert.int_eq(entries.len(), 3)
+      .Ok({})
+    })
+}

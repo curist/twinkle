@@ -90,8 +90,8 @@ Note: keep `semantic_suite.tw` as a smoke suite; move deeper edge coverage into 
 ### Phase 3: API surface expansion (API.md-driven)
 
 - [x] Add Option/Result suite (including `try` usage patterns).
-- [ ] Add Vector/String/Dict suites with both normal and edge behavior.
-- [ ] Add Range/Iterator suite for `for` and `collect` combinations.
+- [x] Add Vector/String/Dict suites with both normal and edge behavior.
+- [x] Add Range/Iterator suite for `for` and `collect` combinations.
 
 ### Phase 4: Stdlib and host-boundary coverage
 
