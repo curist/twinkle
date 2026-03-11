@@ -9,7 +9,7 @@ Consolidate and harden the byte-first string/`Byte` work so behavior is stable a
 interpreter and Wasm backends, while reducing long-term maintenance risk in type inference
 and codegen (especially `Iterator.unfold` callback flows).
 
-This plan is a follow-up to [string-unicode-semantics.md](./string-unicode-semantics.md).
+This plan is a follow-up to [string-unicode-semantics.md](string-unicode-semantics.md).
 
 ---
 

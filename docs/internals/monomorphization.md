@@ -174,7 +174,7 @@ That means these are separate layers:
 This distinction is why Twinkle has both:
 
 * this internal monomorphization design note
-* [../plans/backend-pipeline-alignment.md](../plans/backend-pipeline-alignment.md)
+* [../plans/archive/backend-pipeline-alignment.md](../plans/archive/backend-pipeline-alignment.md)
 * [../plans/wasm-type-erasure-reduction.md](../plans/wasm-type-erasure-reduction.md)
 
 The pipeline-alignment plan is about making the backend-oriented pipeline match this design.

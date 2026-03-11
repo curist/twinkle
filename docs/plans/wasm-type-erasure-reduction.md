@@ -37,7 +37,7 @@ This plan therefore assumes:
 * monomorphization is the prerequisite that makes concrete helper/layout emission possible
 * backend erasure reduction is the follow-up that actually exploits that information
 * the backend pipeline alignment from
-  [backend-pipeline-alignment.md](backend-pipeline-alignment.md) is now in place
+  [archive/backend-pipeline-alignment.md](archive/backend-pipeline-alignment.md) is now in place
 
 ## Status
 
@@ -64,7 +64,7 @@ Still open:
 * typed option from `AMatch` results (safe fallback today, optimization gap)
 
 These remaining items now build on top of the completed
-[backend-pipeline-alignment.md](backend-pipeline-alignment.md) work: backend-facing ANF is
+[archive/backend-pipeline-alignment.md](archive/backend-pipeline-alignment.md) work: backend-facing ANF is
 monomorphized before optimization/codegen, while the interpreter remains a separate Core IR
 path.
 
@@ -326,13 +326,13 @@ What it does require is making the concrete iterator path fully typed end-to-end
 **Related docs:**
 
 * [../internals/monomorphization.md](../internals/monomorphization.md)
-* [backend-pipeline-alignment.md](backend-pipeline-alignment.md)
+* [archive/backend-pipeline-alignment.md](archive/backend-pipeline-alignment.md)
 
 ---
 
 ## Suggested Ordering
 
-1. ~~Finish [backend-pipeline-alignment.md](backend-pipeline-alignment.md).~~ Done.
+1. ~~Finish [archive/backend-pipeline-alignment.md](archive/backend-pipeline-alignment.md).~~ Done.
 2. ~~B1: typed iterator state struct (eliminates erased array container).~~ Done.
 3. ~~B2: typed UnfoldStep payload (eliminates erased variant payload for step results).~~ Done.
 4. ~~B3: typed IterItem record fields (eliminates anyref fields in IterItem).~~ Done.

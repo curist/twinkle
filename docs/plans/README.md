@@ -72,6 +72,14 @@ user source files → twc.wasm (running in host) → user ModuleIR → Linker �
   monomorphized Core IR before ANF lowering.
 * Self-hosted: `twc.wasm` compiled by stage0, then compiles itself.
 
+## Plan Lifecycle
+
+To keep this directory actionable:
+
+* `docs/plans/` top level contains active WIP/planned documents.
+* completed plans are moved to `docs/plans/archive/`.
+* archived stage/history indexes live in [archive/README.md](archive/README.md).
+
 ---
 
 ## Design Principles
@@ -162,54 +170,29 @@ This keeps the front end, IR, interpreter, and backend clearly separated.
 
 ---
 
-## Stage Index
+## Active Plan Index
+
+Historical/completed indexes are in [archive/README.md](archive/README.md).
+
+### Stage-aligned active plans
 
 | Stage | Description | Status | Details |
 |-------|-------------|--------|---------|
-| 0 | Skeleton & Testing Infrastructure | Done | [frontend.md](frontend.md) |
-| 1 | Lexer, Parser, Spans | Done | [frontend.md](frontend.md) |
-| 2 | Name Resolution & Monomorphic Typechecking | Done | [frontend.md](frontend.md) |
-| 3 | Core IR Design & Lowering | Done | [core-ir.md](core-ir.md) |
-| 4 | Module System & Inherent Method Desugaring | Done | [core-ir.md](core-ir.md) |
-| 5 | Core IR Interpreter | Done | [core-ir.md](core-ir.md) |
-| 6a | User-Defined Generics | Done | [type-system.md](type-system.md) |
-| 6b | Query-Friendly Pipeline Refactor | Done | [type-system.md](type-system.md) |
-| 6c | Full Damas-Milner Inference | Done | [type-system.md](type-system.md) |
-| 7 | ANF IR (Backend-Oriented) | Done | [optimization.md](optimization.md) |
-| 7.5 | Dataflow Analysis & ANF Optimization | Done | [optimization.md](optimization.md) |
-| 7.6 | Defer | Done | [optimization.md](optimization.md) |
-| 8a | Runtime IR + Linker | Done | [wasm-backend.md](wasm-backend.md) |
-| 8b | Runtime Modules | Done | [wasm-backend.md](wasm-backend.md) |
-| 8c | ANF → WAT Emitter | Done | [wasm-backend.md](wasm-backend.md) |
-| 8d | Full Build Pipeline | Done | [wasm-backend.md](wasm-backend.md) |
-| 8e | Standard Library | Done | [wasm-backend.md](wasm-backend.md) |
-| 9 | Host Integration & Validation | Done | [host-validation.md](host-validation.md) |
-| 9.5 | Monomorphization | Done | [../internals/monomorphization.md](../internals/monomorphization.md) |
-| 9.6 | Typed Closure Specialization | Done | [typed-closure-specialization.md](typed-closure-specialization.md) |
-| 9.7 | Standard Library & API Gaps | Done | [stdlib-api-gaps.md](stdlib-api-gaps.md) |
+| 9.5 | Monomorphization (historical context) | Done | [../internals/monomorphization.md](../internals/monomorphization.md) |
 | 10 | Self-Hosted Compiler | Planned | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
 
-### Cross-cutting plans
-
-These are not tied to a specific stage:
+### Active cross-cutting plans
 
 | Plan | Description |
 |------|-------------|
-| [vector-type.md](vector-type.md) | Replace `Array<T>` with `Vector<T>` |
-| [to-string-method-unification.md](to-string-method-unification.md) | Unify string conversion via `.to_string()` |
-| [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |
-| [bytes-followup-hardening.md](bytes-followup-hardening.md) | Follow-up hardening for byte semantics, intrinsic contracts, and unfold callback typing |
-| [byte-first-fs-read-api.md](byte-first-fs-read-api.md) | Migrate file-read host ABI and stdlib layering to byte-first semantics |
-| [bitwise-operations.md](bitwise-operations.md) | Add bitwise operators for Int/Byte with interpreter/Wasm parity |
-| [uniqueness-optimization.md](uniqueness-optimization.md) | Uniqueness-based in-place update optimization |
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [backend-pipeline-alignment.md](backend-pipeline-alignment.md) | Align backend pipeline to operate on monomorphized Core IR |
-| [hex-literals.md](hex-literals.md) | Hexadecimal integer literal syntax |
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
-| [prelude-stdlib.md](prelude-stdlib.md) | Auto-available prelude inherent methods |
-| [wasm-iterator-representation-boundaries.md](wasm-iterator-representation-boundaries.md) | Stabilize iterator specialization boundaries in Wasm backend |
 | [wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md) | Reduce type erasure in Wasm backend with monomorphized layouts |
 | [wasm-sum-representation-boundary-unification.md](wasm-sum-representation-boundary-unification.md) | Unify typed/erased Option/Result/Variant boundary handling to prevent cast-failure regressions |
+| [codegen-boundary-separation.md](codegen-boundary-separation.md) | Separate codegen planning, representation-flow analysis, and instruction emission |
+| [intrinsic-registry-unification.md](intrinsic-registry-unification.md) | Unify intrinsic/prelude metadata into one canonical registry |
+| [anf-analysis-consolidation.md](anf-analysis-consolidation.md) | Consolidate duplicated ANF tree analysis utilities across optimizer and codegen |
+| [module-compile-orchestrator-refactor.md](module-compile-orchestrator-refactor.md) | Refactor module compile orchestration into dependency, stage-runner, and env-integration layers |

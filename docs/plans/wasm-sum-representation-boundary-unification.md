@@ -7,7 +7,7 @@ centralizing representation decisions and boundary conversions.
 This plan is a follow-up to:
 
 * [wasm-type-erasure-reduction.md](./wasm-type-erasure-reduction.md)
-* [wasm-iterator-representation-boundaries.md](./wasm-iterator-representation-boundaries.md)
+* [wasm-iterator-representation-boundaries.md](./archive/wasm-iterator-representation-boundaries.md)
 
 Those plans improved specialization and performance, but they also exposed a persistent
 correctness problem: representation policy is still spread across multiple codegen paths.
@@ -224,30 +224,41 @@ Mitigation:
 
 ### Phase 0: Baseline and Guardrails
 
-- [ ] Add doc-comments in [src/codegen/emit.rs](../../src/codegen/emit.rs) near:
+- [x] Add doc-comments in [src/codegen/emit.rs](../../src/codegen/emit.rs) near:
   `emit_local_atom`, `emit_variant_literal`, and boundary conversion helpers
   defining allowed sum-boundary conversions.
-- [ ] Add a brief invariant comment in [src/codegen/ctx.rs](../../src/codegen/ctx.rs)
+- [x] Add a brief invariant comment in [src/codegen/ctx.rs](../../src/codegen/ctx.rs)
   documenting the distinction between semantic `MonoType` and physical local `ValType`.
-- [ ] Add/keep focused regression fixtures for current repro classes in `tests/run/`:
+  (SumRepr doc-comment explains the distinction.)
+- [x] Add/keep focused regression fixtures for current repro classes in `tests/run/`:
   cross-module closure capture + option assignment/merge boundaries.
+  Added: `closure_capture_cross_module2` wasm test, `result_assign_boundary`,
+  `option_generic_boundary`, `option_record_field_boundary`,
+  `result_match_reassign_boundary`, `option_branch_merge_boundary`,
+  `sum_cross_module_record`, `sum_closure_capture_option_record`.
 
 ### Phase 1: Representation Unification in Context
 
-- [ ] Introduce explicit sum repr metadata in [src/codegen/ctx.rs](../../src/codegen/ctx.rs):
+- [x] Introduce explicit sum repr metadata in [src/codegen/ctx.rs](../../src/codegen/ctx.rs):
   a `SumRepr` enum and storage on local backend info.
-- [ ] Add helpers in `EmitCtx`:
+- [x] Add helpers in `EmitCtx`:
   `local_sum_repr(local_id)`, `set_local_sum_repr(local_id, repr)`,
-  and flow push/restore wrappers.
-- [ ] Map existing `local_typed_option` usage to `SumRepr` reads/writes behind compatibility shims.
+  and flow push/restore wrappers (`push_flow_sum_repr_binding`, `restore_flow_sum_repr_binding`).
+- [x] Map existing `local_typed_option` usage to `SumRepr` reads/writes behind compatibility shims.
+  `local_typed_option` and `set_local_typed_option` now delegate through `SumRepr`.
+  `push_flow_typed_option_binding` uses `push_flow_sum_repr_binding` internally.
 
 ### Phase 2: Conversion API Adoption
 
-- [ ] Add centralized conversion helpers in [src/codegen/emit.rs](../../src/codegen/emit.rs):
-  typed option/result/iterator-option <-> erased variant.
-- [ ] Route `emit_local_atom` through these helpers for sum boundary crossings.
-- [ ] Route `emit_variant_literal` through these helpers when destination repr differs from source repr.
-- [ ] Remove duplicated path-local conversion snippets once covered by shared helpers.
+- [x] Add centralized conversion helpers in [src/codegen/emit.rs](../../src/codegen/emit.rs):
+  `emit_sum_local_to_erased` — single dispatcher using `SumRepr` for typed→erased.
+  `can_preserve_typed_sum` — shared helper for AInit/AAssign typed repr preservation.
+- [x] Route `emit_local_atom` through `emit_sum_local_to_erased` for sum boundary crossings.
+  Replaced two separate inline checks with single `SumRepr`-aware dispatch.
+- [x] Route `emit_variant_literal` through these helpers when destination repr differs from source repr.
+  (Already well-structured with typed/erased paths; no further refactoring needed.)
+- [x] Remove duplicated path-local conversion snippets once covered by shared helpers.
+  AInit and AAssign now share `can_preserve_typed_sum` instead of duplicating logic.
 
 ### Phase 3: Match and Flow-Merge Normalization
 

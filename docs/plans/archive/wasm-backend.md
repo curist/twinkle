@@ -226,7 +226,7 @@ arguments at generic call sites, and unbox the result afterward.
 > implementation. Stage 9.5 introduces a monomorphization pass that eliminates `Var` entirely
 > by specializing generic functions per call-site type args. After monomorphization, no
 > `Var("T")` survives into codegen and the `anyref` row above becomes dead code. See
-> [../internals/monomorphization.md](../internals/monomorphization.md) for details.
+> [../internals/monomorphization.md](../../internals/monomorphization.md) for details.
 
 **Prep for monomorphization (do in Step 0):** During type checking, record the solved type
 arguments at each generic call site. Add `generic_instantiations: HashMap<ExprId, Vec<MonoType>>`
@@ -576,7 +576,7 @@ Deliverables:
 
 New directory `stdlib/` containing Twinkle source files for the MVP standard library modules.
 These are compiled via the same Wasm GC backend pipeline as user programs and linked into
-`twc.wasm` alongside the runtime. See [docs/design/stdlib.md](../design/stdlib.md) for the full API spec.
+`twc.wasm` alongside the runtime. See [docs/design/stdlib.md](../../design/stdlib.md) for the full API spec.
 
 **`stdlib/path.tw` (`@std.path`)** — pure Twinkle, no host imports:
 

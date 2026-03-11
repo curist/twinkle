@@ -1,7 +1,7 @@
 # Backend Pipeline Alignment
 
 **Goal:** Align the actual compiler/backend pipeline with
-[../internals/monomorphization.md](../internals/monomorphization.md), so all backend-facing
+[../internals/monomorphization.md](../../internals/monomorphization.md), so all backend-facing
 paths operate on monomorphized Core IR before ANF lowering and Wasm-oriented optimization.
 
 This plan exists because the architecture direction is now clear, but the implementation is
@@ -11,7 +11,7 @@ still inconsistent across entrypoints.
 
 ## Why This Plan Exists
 
-[../internals/monomorphization.md](../internals/monomorphization.md) establishes the intended
+[../internals/monomorphization.md](../../internals/monomorphization.md) establishes the intended
 pipeline:
 
 ```text
@@ -171,5 +171,5 @@ This plan is done when:
 ## Follow-On
 
 After this plan completes, the remaining work in
-[wasm-type-erasure-reduction.md](wasm-type-erasure-reduction.md) should resume on top of the
+[wasm-type-erasure-reduction.md](../wasm-type-erasure-reduction.md) should resume on top of the
 aligned pipeline.

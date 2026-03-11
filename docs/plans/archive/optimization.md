@@ -304,7 +304,7 @@ Deliverables:
 **Goal:** Implement `defer` end-to-end: interpreter execution and ANF-level elimination,
 leaving no `Defer` nodes for the WAT backend.
 
-> **Full design:** See [docs/design/defer.md](../design/defer.md).
+> **Full design:** See [docs/design/defer.md](../../design/defer.md).
 
 `defer expr` is a block-scoped statement that schedules an expression to run when the
 enclosing block exits. Semantics: LIFO ordering, capture-by-value, triggers on normal
