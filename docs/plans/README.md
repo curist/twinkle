@@ -190,3 +190,4 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Plan for writing and scaling Twinkle-native test suites in `boot/tests/` |
+| [anf-verifier-pass.md](anf-verifier-pass.md) | Add ANF invariant verifier pass to catch control-flow and representation drift before codegen |
