@@ -1,0 +1,37 @@
+// Expected output:
+//   branch ok 41
+//   branch err nope
+//   sent ok 41
+//   sent err nope
+
+fn roundtrip(value: Result<Int, String>) Result<Int, String> {
+  value
+}
+
+fn show(label: String, value: Result<Int, String>) {
+  case value {
+    .Ok(n) => println("${label} ok ${n}"),
+    .Err(e) => println("${label} err ${e}"),
+  }
+}
+
+fn main() {
+  from_match_true: Result<Int, String> = case true {
+    true => .Ok(41),
+    _ => .Err("nope"),
+  }
+  from_match_false: Result<Int, String> = case false {
+    true => .Ok(41),
+    _ => .Err("nope"),
+  }
+
+  slot: Result<Int, String> = .Err("init")
+  slot = from_match_true
+  show("branch", slot)
+  show("branch", from_match_false)
+
+  show("sent", roundtrip(from_match_true))
+  show("sent", roundtrip(from_match_false))
+}
+
+main()

@@ -222,6 +222,16 @@ fn run_wasm_option_assign_match_boundary() {
 }
 
 #[test]
+fn run_wasm_option_amatch_typed_metadata() {
+    check("tests/run/option_amatch_typed_metadata.tw");
+}
+
+#[test]
+fn run_wasm_result_amatch_typed_metadata() {
+    check("tests/run/result_amatch_typed_metadata.tw");
+}
+
+#[test]
 fn run_wasm_closure_capture_cross_module2() {
     check("tests/run/closure_capture_cross_module2/main.tw");
 }

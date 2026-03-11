@@ -843,7 +843,7 @@ fn emit_let_expr(
                 .filter(|mono| is_typed_general_sum_candidate(mono))
                 .cloned()
         }
-        _ => typed_general_option_from_op(op, ctx),
+        _ => typed_general_option_from_op(local, op, ctx),
     };
     let local_opt = local_opt_raw.filter(|mono| local_can_store_typed_option(local, mono, ctx));
     if let Some(mono) = local_opt.as_ref() {
@@ -943,6 +943,15 @@ fn can_preserve_typed_sum(dest: crate::ir::LocalId, value: &Atom, ctx: &EmitCtx<
     match (dst_repr, value_typed_option.as_ref()) {
         (Some(SumRepr::TypedOption(dst_mono)), Some(src_mono))
         | (Some(SumRepr::TypedResult(dst_mono)), Some(src_mono)) => dst_mono == src_mono,
+        _ => false,
+    }
+}
+
+fn local_has_typed_sum_repr(local: crate::ir::LocalId, ctx: &EmitCtx<'_>) -> bool {
+    match ctx.local_sum_repr(local) {
+        Some(SumRepr::TypedOption(mono)) | Some(SumRepr::TypedResult(mono)) => {
+            local_can_store_typed_option(local, mono, ctx)
+        }
         _ => false,
     }
 }
@@ -1048,7 +1057,15 @@ fn emit_let_binding(
             instrs
         }
         AnfOp::AMatch { scrutinee, arms } => {
-            let mut instrs = emit_match_op(scrutinee, arms, &bind_ty, fn_return_ty, ctx);
+            let preserve_typed_sum = local_has_typed_sum_repr(local, ctx);
+            let mut instrs = emit_match_op(
+                scrutinee,
+                arms,
+                &bind_ty,
+                preserve_typed_sum,
+                fn_return_ty,
+                ctx,
+            );
             if !op_always_diverges(op) {
                 instrs.push(Instr::LocalSet(bind_idx));
             }
@@ -1136,6 +1153,7 @@ fn emit_match_op(
     scrutinee: &Atom,
     arms: &[AnfMatchArm],
     bind_ty: &ValType,
+    preserve_typed_sum: bool,
     fn_return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
@@ -1159,6 +1177,7 @@ fn emit_match_op(
         scrutinee_typed_option.as_ref(),
         arms,
         bind_ty,
+        preserve_typed_sum,
         fn_return_ty,
         ctx,
     )
@@ -1172,6 +1191,7 @@ fn emit_match_arm_chain(
     scrutinee_typed_option: Option<&MonoType>,
     arms: &[AnfMatchArm],
     bind_ty: &ValType,
+    preserve_typed_sum: bool,
     fn_return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
@@ -1198,7 +1218,17 @@ fn emit_match_arm_chain(
         scrutinee_typed_option,
         ctx,
     );
-    then_body.extend(emit_expr_value(&head.body, bind_ty, fn_return_ty, ctx));
+    let expected_ty = if preserve_typed_sum {
+        None
+    } else {
+        Some(bind_ty)
+    };
+    then_body.extend(emit_expr_value_with_expected(
+        &head.body,
+        expected_ty,
+        fn_return_ty,
+        ctx,
+    ));
     let tail_diverges = match_chain_always_diverges(&arms[1..]);
     let mut else_body = emit_match_arm_chain(
         scrutinee_anyref,
@@ -1208,6 +1238,7 @@ fn emit_match_arm_chain(
         scrutinee_typed_option,
         &arms[1..],
         bind_ty,
+        preserve_typed_sum,
         fn_return_ty,
         ctx,
     );
@@ -2007,13 +2038,22 @@ fn emit_expr_value(
     fn_return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    emit_expr_value_with_expected(expr, Some(expected_ty), fn_return_ty, ctx)
+}
+
+fn emit_expr_value_with_expected(
+    expr: &AnfExpr,
+    expected_ty: Option<&ValType>,
+    fn_return_ty: Option<&ValType>,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
     match expr {
         AnfExpr::Let { local, op, body } => {
             emit_let_expr(*local, op, body, fn_return_ty, ctx, |ctx, body| {
-                emit_expr_value(body, expected_ty, fn_return_ty, ctx)
+                emit_expr_value_with_expected(body, expected_ty, fn_return_ty, ctx)
             })
         }
-        AnfExpr::Atom(atom) => emit_atom(atom, Some(expected_ty), ctx),
+        AnfExpr::Atom(atom) => emit_atom(atom, expected_ty, ctx),
         AnfExpr::Return(None) => vec![Instr::Return],
         AnfExpr::Return(Some(atom)) => {
             let mut instrs = emit_atom(atom, fn_return_ty, ctx);
@@ -4491,13 +4531,158 @@ fn iterator_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<IteratorState
     }
 }
 
-fn typed_general_option_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+fn atom_typed_general_option_with_flow(
+    atom: &Atom,
+    ctx: &EmitCtx<'_>,
+    flow: &HashMap<crate::ir::LocalId, MonoType>,
+) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local_id) => flow
+            .get(local_id)
+            .cloned()
+            .or_else(|| atom_typed_general_option(atom, ctx)),
+        _ => None,
+    }
+}
+
+fn op_typed_general_option_source(
+    local: crate::ir::LocalId,
+    op: &AnfOp,
+    ctx: &EmitCtx<'_>,
+    flow: &HashMap<crate::ir::LocalId, MonoType>,
+) -> Option<MonoType> {
+    let inferred = ctx
+        .infer_let_op_mono_for_emit(local, op)
+        .filter(is_typed_general_sum_candidate);
     match op {
         AnfOp::AVariant { type_id, .. }
             if *type_id == OPTION_TYPE_ID || *type_id == RESULT_TYPE_ID =>
         {
-            ctx.infer_op_mono_for_emit(op)
+            inferred
+        }
+        AnfOp::AInit { value } => atom_typed_general_option_with_flow(value, ctx, flow)
+            .filter(|mono| inferred.as_ref() == Some(mono)),
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let then_src = if expr_always_diverges(then_branch) {
+                None
+            } else {
+                let mut then_flow = flow.clone();
+                expr_typed_general_option_source(then_branch, ctx, &mut then_flow)
+            };
+            let else_src = if expr_always_diverges(else_branch) {
+                None
+            } else {
+                let mut else_flow = flow.clone();
+                expr_typed_general_option_source(else_branch, ctx, &mut else_flow)
+            };
+            let branch_src = match (then_src, else_src) {
+                (Some(a), Some(b)) if a == b => Some(a),
+                (Some(a), None) if expr_always_diverges(else_branch) => Some(a),
+                (None, Some(b)) if expr_always_diverges(then_branch) => Some(b),
+                _ => None,
+            };
+            branch_src.filter(|mono| inferred.as_ref() == Some(mono))
+        }
+        AnfOp::AMatch { arms, .. } => {
+            let mut arm_src: Option<MonoType> = None;
+            for arm in arms.iter().filter(|arm| !expr_always_diverges(&arm.body)) {
+                let mut arm_flow = flow.clone();
+                let current = expr_typed_general_option_source(&arm.body, ctx, &mut arm_flow)?;
+                match &arm_src {
+                    None => arm_src = Some(current),
+                    Some(existing) if *existing == current => {}
+                    Some(_) => return None,
+                }
+            }
+            arm_src.filter(|mono| inferred.as_ref() == Some(mono))
+        }
+        _ => None,
+    }
+}
+
+fn expr_typed_general_option_source(
+    expr: &AnfExpr,
+    ctx: &EmitCtx<'_>,
+    flow: &mut HashMap<crate::ir::LocalId, MonoType>,
+) -> Option<MonoType> {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            let prev_local = flow.get(local).cloned();
+            let local_mono = op_typed_general_option_source(*local, op.as_ref(), ctx, flow);
+            if let Some(mono) = local_mono {
+                flow.insert(*local, mono);
+            } else {
+                flow.remove(local);
+            }
+
+            let assign_restore = if let AnfOp::AAssign {
+                local: target,
+                value,
+            } = op.as_ref()
+            {
+                let prev = flow.get(target).cloned();
+                if let Some(mono) = atom_typed_general_option_with_flow(value, ctx, flow) {
+                    flow.insert(*target, mono);
+                } else {
+                    flow.remove(target);
+                }
+                Some((*target, prev))
+            } else {
+                None
+            };
+
+            let result = expr_typed_general_option_source(body, ctx, flow);
+
+            if let Some((target, prev)) = assign_restore {
+                if let Some(mono) = prev {
+                    flow.insert(target, mono);
+                } else {
+                    flow.remove(&target);
+                }
+            }
+            if let Some(mono) = prev_local {
+                flow.insert(*local, mono);
+            } else {
+                flow.remove(local);
+            }
+            result
+        }
+        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
+            atom_typed_general_option_with_flow(atom, ctx, flow)
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => None,
+    }
+}
+
+fn typed_general_option_from_op(
+    local: crate::ir::LocalId,
+    op: &AnfOp,
+    ctx: &EmitCtx<'_>,
+) -> Option<MonoType> {
+    match op {
+        AnfOp::AVariant { type_id, .. }
+            if *type_id == OPTION_TYPE_ID || *type_id == RESULT_TYPE_ID =>
+        {
+            ctx.infer_let_op_mono_for_emit(local, op)
                 .filter(is_typed_general_sum_candidate)
+        }
+        AnfOp::AMatch { arms, .. } => {
+            let candidate = ctx
+                .infer_let_op_mono_for_emit(local, op)
+                .filter(is_typed_general_sum_candidate)?;
+            let all_typed_sources = arms
+                .iter()
+                .filter(|arm| !expr_always_diverges(&arm.body))
+                .all(|arm| {
+                    let mut flow = HashMap::new();
+                    expr_typed_general_option_source(&arm.body, ctx, &mut flow).as_ref()
+                        == Some(&candidate)
+                });
+            all_typed_sources.then_some(candidate)
         }
         AnfOp::AInit { value } => atom_typed_general_option(value, ctx),
         AnfOp::AAssign { value, .. } => atom_typed_general_option(value, ctx),
@@ -7756,7 +7941,7 @@ mod tests {
     use super::*;
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::{FieldId, LocalId, VariantId};
-    use crate::types::ty::{OPTION_TYPE_ID, RANGE_TYPE_ID};
+    use crate::types::ty::{MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID};
 
     fn ref_user_record_null(type_id: TypeId) -> ValType {
         ValType::Ref {
@@ -9014,6 +9199,150 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn emit_let_expr_match_option_seeds_typed_sum_metadata() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let option_int = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Int],
+        };
+
+        // let-bound AMatch result local + two branch locals that both carry Option<Int>.
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.local_map.insert(LocalId(2), (1, ValType::Anyref));
+        ctx.local_map.insert(LocalId(3), (2, ValType::Anyref));
+        ctx.local_mono.insert(LocalId(2), option_int.clone());
+        ctx.local_mono.insert(LocalId(3), option_int.clone());
+
+        let op = AnfOp::AMatch {
+            scrutinee: Atom::ALitBool(true),
+            arms: vec![
+                AnfMatchArm {
+                    pattern: CorePattern::LitBool(true),
+                    body: AnfExpr::Let {
+                        local: LocalId(2),
+                        op: Box::new(AnfOp::AVariant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(1),
+                            args: vec![Atom::ALitInt(7)],
+                        }),
+                        body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+                    },
+                },
+                AnfMatchArm {
+                    pattern: CorePattern::Wildcard,
+                    body: AnfExpr::Let {
+                        local: LocalId(3),
+                        op: Box::new(AnfOp::AVariant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(1),
+                            args: vec![Atom::ALitInt(8)],
+                        }),
+                        body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(3)))),
+                    },
+                },
+            ],
+        };
+
+        let mut observed_sum_repr: Option<SumRepr> = None;
+        let mut body_instrs: Vec<Instr> = Vec::new();
+        let body = AnfExpr::Atom(Atom::ALitVoid);
+        let _instrs = emit_let_expr(LocalId(1), &op, &body, None, &mut ctx, |ctx, _| {
+            observed_sum_repr = ctx.local_sum_repr(LocalId(1)).cloned();
+            body_instrs = emit_atom(&Atom::ALocal(LocalId(1)), Some(&ValType::Anyref), ctx);
+            body_instrs.clone()
+        });
+
+        assert!(
+            matches!(
+                observed_sum_repr,
+                Some(SumRepr::TypedOption(MonoType::Named { type_id, ref args }))
+                if type_id == OPTION_TYPE_ID && args.as_slice() == [MonoType::Int]
+            ),
+            "expected AMatch let-binding to seed TypedOption metadata, got {:?}",
+            observed_sum_repr
+        );
+        assert!(
+            !instr_tree_any(&body_instrs, &|i| matches!(
+                i,
+                Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(name),
+                } if name == T_VARIANT
+            )),
+            "typed AMatch local should lower to direct typed->erased conversion without runtime ref.test dispatch: {:?}",
+            body_instrs
+        );
+    }
+
+    #[test]
+    fn typed_general_option_from_match_supports_nested_if_sources() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let nested_if_some = |target: LocalId, lhs: i64, rhs: i64| AnfExpr::Let {
+            local: target,
+            op: Box::new(AnfOp::AIf {
+                cond: Atom::ALitBool(true),
+                then_branch: Box::new(AnfExpr::Let {
+                    local: LocalId(target.0 + 10),
+                    op: Box::new(AnfOp::AVariant {
+                        type_id: OPTION_TYPE_ID,
+                        variant: VariantId(1),
+                        args: vec![Atom::ALitInt(lhs)],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(target.0 + 10)))),
+                }),
+                else_branch: Box::new(AnfExpr::Let {
+                    local: LocalId(target.0 + 20),
+                    op: Box::new(AnfOp::AVariant {
+                        type_id: OPTION_TYPE_ID,
+                        variant: VariantId(1),
+                        args: vec![Atom::ALitInt(rhs)],
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(target.0 + 20)))),
+                }),
+            }),
+            body: Box::new(AnfExpr::Atom(Atom::ALocal(target))),
+        };
+
+        let op = AnfOp::AMatch {
+            scrutinee: Atom::ALitBool(true),
+            arms: vec![
+                AnfMatchArm {
+                    pattern: CorePattern::LitBool(true),
+                    body: nested_if_some(LocalId(1), 1, 2),
+                },
+                AnfMatchArm {
+                    pattern: CorePattern::Wildcard,
+                    body: nested_if_some(LocalId(2), 3, 4),
+                },
+            ],
+        };
+        let option_int = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Int],
+        };
+        ctx.op_result_mono.insert(LocalId(1), option_int.clone());
+        ctx.op_result_mono.insert(LocalId(2), option_int.clone());
+        ctx.op_result_mono.insert(LocalId(99), option_int);
+
+        assert!(
+            matches!(
+                typed_general_option_from_op(LocalId(99), &op, &ctx),
+                Some(MonoType::Named { type_id, ref args })
+                if type_id == OPTION_TYPE_ID && args.as_slice() == [MonoType::Int]
+            ),
+            "expected nested AIf Option sources in AMatch arms to preserve typed Option metadata"
+        );
     }
 
     #[test]

@@ -4,8 +4,25 @@
 
 This is a focused follow-up to:
 
-* [archive/wasm-type-erasure-reduction.md](./archive/wasm-type-erasure-reduction.md)
-* [archive/wasm-sum-representation-boundary-unification.md](./archive/wasm-sum-representation-boundary-unification.md)
+* [wasm-type-erasure-reduction.md](./wasm-type-erasure-reduction.md)
+* [wasm-sum-representation-boundary-unification.md](./wasm-sum-representation-boundary-unification.md)
+
+---
+
+## Status
+
+Completed on 2026-03-11.
+
+Implemented:
+
+* typed-sum source detection now includes `AnfOp::AMatch` and preserves metadata only when arm value flow proves a compatible typed sum source
+* `emit_let_expr` seeds `SumRepr::TypedOption` / `SumRepr::TypedResult` for eligible `AMatch` locals
+* match arm value emission preserves typed sum representation when destination local metadata is typed, preventing typed/erased representation mismatch
+* regression coverage added for `Option` and `Result` `AMatch`-produced values across assignment and function-boundary roundtrips with interpreter/wasm parity
+
+Validation:
+
+* `cargo test --test run_test --test run_wasm_test` (green)
 
 ---
 

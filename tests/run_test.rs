@@ -256,6 +256,16 @@ fn option_assign_match_boundary() {
 }
 
 #[test]
+fn option_amatch_typed_metadata() {
+    check("tests/run/option_amatch_typed_metadata.tw");
+}
+
+#[test]
+fn result_amatch_typed_metadata() {
+    check("tests/run/result_amatch_typed_metadata.tw");
+}
+
+#[test]
 fn result_assign_boundary() {
     check("tests/run/result_assign_boundary.tw");
 }

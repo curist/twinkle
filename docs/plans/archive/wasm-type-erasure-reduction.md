@@ -58,11 +58,7 @@ Done so far:
 * concrete `Option<T>` values created and matched locally use typed structs with unboxed
   payloads, with automatic erased conversion at function boundaries
 
-Still open:
-
-* typed option from `AMatch` results (safe fallback today, optimization gap)
-
-These remaining items now build on top of the completed
+These items build on top of the completed
 [backend-pipeline-alignment.md](backend-pipeline-alignment.md) work: backend-facing ANF is
 monomorphized before optimization/codegen, while the interpreter remains a separate Core IR
 path.
@@ -297,10 +293,10 @@ What changed:
 * `is_typed_general_option_candidate` (shared between ctx.rs and emit.rs) excludes
   `Option<IterItem<T>>` which has its own dedicated iterator-adjacent path
 
-What remains:
+Completed follow-up:
 
-* `AMatch` results that produce `Option<T>` don't yet get typed option metadata — values
-  flow through the universal erased path safely, but miss the optimization
+* `AMatch` results that produce typed `Option<T>` / `Result<T,E>` now preserve typed flow
+  metadata when arm source analysis proves compatible typed-sum sources
 
 ## Non-Goals
 
@@ -379,6 +375,6 @@ Completed (C — Result<T,E>):
 * `is_typed_general_result_candidate` validates both type args are concrete
 * pattern matching extracts Ok payload from struct field 1, Err from struct field 2
 
-Follow-up tracked in active plan:
+Follow-up completion:
 
-* [../wasm-option-amatch-typed-metadata.md](../wasm-option-amatch-typed-metadata.md) — typed option metadata for `AMatch`-produced locals
+* [wasm-option-amatch-typed-metadata.md](wasm-option-amatch-typed-metadata.md) — typed sum metadata for `AMatch`-produced locals

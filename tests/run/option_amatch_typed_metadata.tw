@@ -1,0 +1,37 @@
+// Expected output:
+//   branch some 41
+//   branch none
+//   sent some 41
+//   sent none
+
+fn roundtrip(value: Option<Int>) Option<Int> {
+  value
+}
+
+fn show(label: String, value: Option<Int>) {
+  case value {
+    .Some(n) => println("${label} some ${n}"),
+    .None => println("${label} none"),
+  }
+}
+
+fn main() {
+  from_match_true: Option<Int> = case true {
+    true => .Some(41),
+    _ => .None,
+  }
+  from_match_false: Option<Int> = case false {
+    true => .Some(41),
+    _ => .None,
+  }
+
+  slot: Option<Int> = .None
+  slot = from_match_true
+  show("branch", slot)
+  show("branch", from_match_false)
+
+  show("sent", roundtrip(from_match_true))
+  show("sent", roundtrip(from_match_false))
+}
+
+main()
