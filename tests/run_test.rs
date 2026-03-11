@@ -501,3 +501,8 @@ fn hex_literals() {
 fn bitwise_ops() {
     check("tests/run/bitwise_ops.tw");
 }
+
+#[test]
+fn shadow_rebind_closure_capture() {
+    check("tests/run/shadow_rebind_closure_capture.tw");
+}

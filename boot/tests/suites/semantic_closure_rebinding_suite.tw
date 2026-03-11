@@ -1,0 +1,163 @@
+use tests.runner
+use tests.assert
+
+fn make_adder(base: Int) fn(Int) Int {
+  fn(n: Int) Int { base + n }
+}
+
+fn make_counter() fn() Int {
+  c := Cell.new(0)
+  fn() Int {
+    c.update(fn(n) { n + 1 })
+    c.get()
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("closure and rebinding")
+    // §7.7.1 — capture-by-value at definition time
+    .test("capture by value freezes at definition", fn() {
+      x := 1
+      f := fn() Int { x }
+      x = 99
+      try assert.int_eq(f(), 1)
+      .Ok({})
+    })
+    // §7.7.2 — shadowing: closure captures innermost binding
+    .test("closure captures innermost shadow", fn() {
+      x := 1
+      inner := {
+        x := 10
+        fn() Int { x }
+      }
+      try assert.int_eq(inner(), 10)
+      try assert.int_eq(x, 1)
+      .Ok({})
+    })
+    // §7.7.3 — rebinding after closure creation does not affect it
+    .test("rebinding after closure does not affect it", fn() {
+      x := 1
+      f := fn() Int { x }
+      x = 2
+      x = 3
+      try assert.int_eq(f(), 1)
+      try assert.int_eq(x, 3)
+      .Ok({})
+    })
+    // multiple closures capture independently
+    .test("two closures capture different snapshots", fn() {
+      x := 10
+      f := fn() Int { x }
+      x = 20
+      g := fn() Int { x }
+      try assert.int_eq(f(), 10)
+      try assert.int_eq(g(), 20)
+      .Ok({})
+    })
+    // §7.7.5 — loop iteration captures per-iteration value
+    .test("loop closures capture per-iteration value", fn() {
+      fns := collect i in range(4) { fn() Int { i } }
+      try assert.int_eq(fns[0](), 0)
+      try assert.int_eq(fns[1](), 1)
+      try assert.int_eq(fns[2](), 2)
+      try assert.int_eq(fns[3](), 3)
+      .Ok({})
+    })
+    // closure over vector iteration variable
+    .test("loop closures capture vector element", fn() {
+      names: Vector<String> = ["alice", "bob", "carol"]
+      greeters := collect name in names { fn() String { "hi ${name}" } }
+      try assert.str_eq(greeters[0](), "hi alice")
+      try assert.str_eq(greeters[1](), "hi bob")
+      try assert.str_eq(greeters[2](), "hi carol")
+      .Ok({})
+    })
+    // nested closure captures
+    .test("nested closures capture correctly", fn() {
+      x := 5
+      outer := fn() fn() Int {
+        fn() Int { x }
+      }
+      inner := outer()
+      try assert.int_eq(inner(), 5)
+      .Ok({})
+    })
+    // closure factory captures argument
+    .test("closure factory captures argument", fn() {
+      add5 := make_adder(5)
+      add100 := make_adder(100)
+      try assert.int_eq(add5(1), 6)
+      try assert.int_eq(add100(1), 101)
+      try assert.int_eq(add5(add100(0)), 105)
+      .Ok({})
+    })
+    // shared mutable state via Cell (not rebinding)
+    .test("closures share state via cell", fn() {
+      count := make_counter()
+      try assert.int_eq(count(), 1)
+      try assert.int_eq(count(), 2)
+      try assert.int_eq(count(), 3)
+      .Ok({})
+    })
+    // two closures sharing same cell
+    .test("two closures sharing same cell see mutations", fn() {
+      c := Cell.new(0)
+      inc := fn() { c.update(fn(n) { n + 1 }) }
+      get := fn() Int { c.get() }
+      inc()
+      inc()
+      try assert.int_eq(get(), 2)
+      inc()
+      try assert.int_eq(get(), 3)
+      .Ok({})
+    })
+    // §7.3-7.4 — rebinding in loop accumulates
+    .test("rebinding in for loop accumulates", fn() {
+      acc := 0
+      for x in [1, 2, 3, 4, 5] {
+        acc = acc + x
+      }
+      try assert.int_eq(acc, 15)
+      .Ok({})
+    })
+    // rebinding inside if does not create new scope
+    .test("rebinding inside if affects outer binding", fn() {
+      x := 1
+      if true {
+        x = 42
+      }
+      try assert.int_eq(x, 42)
+      .Ok({})
+    })
+    // new binding with := inside if does shadow
+    .test("new binding inside if shadows but does not affect outer", fn() {
+      x := 1
+      if true {
+        x := 99
+        try assert.int_eq(x, 99)
+      }
+      try assert.int_eq(x, 1)
+      .Ok({})
+    })
+    // §7.4 — pattern-bound names shadow outer
+    .test("pattern-bound name shadows outer binding", fn() {
+      x := 100
+      opt: Int? = .Some(7)
+      val := case opt {
+        .Some(x) => x,
+        .None => -1,
+      }
+      try assert.int_eq(val, 7)
+      try assert.int_eq(x, 100)
+      .Ok({})
+    })
+    // immutable value aliasing: rebinding doesn't affect alias
+    .test("rebinding does not affect aliases", fn() {
+      xs: Vector<Int> = [1, 2, 3]
+      ys := xs
+      xs = xs.push(4)
+      try assert.int_eq(ys.len(), 3)
+      try assert.int_eq(xs.len(), 4)
+      .Ok({})
+    })
+}

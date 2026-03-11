@@ -1,8 +1,18 @@
 use tests.runner
 use tests.suites.assert_helpers_suite
 use tests.suites.semantic_suite
+use tests.suites.semantic_closure_rebinding_suite
+use tests.suites.semantic_control_flow_suite
+use tests.suites.api_option_result_suite
+use tests.suites.api_cell_suite
+use tests.suites.api_vector_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
   semantic_suite.suite(),
+  semantic_closure_rebinding_suite.suite(),
+  semantic_control_flow_suite.suite(),
+  api_option_result_suite.suite(),
+  api_cell_suite.suite(),
+  api_vector_suite.suite(),
 ])

@@ -1,0 +1,130 @@
+use tests.runner
+use tests.assert
+
+fn try_divide(a: Int, b: Int) Result<Int, String> {
+  if b == 0 {
+    .Err("division by zero")
+  } else {
+    .Ok(a / b)
+  }
+}
+
+fn try_both(a: Int, b: Int, c: Int) Result<Int, String> {
+  x := try try_divide(a, b)
+  y := try try_divide(x, c)
+  .Ok(y)
+}
+
+fn find_positive(xs: Vector<Int>) Int? {
+  for x in xs {
+    if x > 0 {
+      return .Some(x)
+    }
+  }
+  .None
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("option and result")
+    .test("option some and none construction", fn() {
+      s: Int? = .Some(42)
+      n: Int? = .None
+      try assert.is_some(s)
+      try assert.is_none(n)
+      .Ok({})
+    })
+    .test("option pattern matching extracts value", fn() {
+      opt: Int? = .Some(10)
+      result := case opt {
+        .Some(v) => v + 1,
+        .None => 0,
+      }
+      try assert.int_eq(result, 11)
+      .Ok({})
+    })
+    .test("option none branch in pattern match", fn() {
+      opt: Int? = .None
+      result := case opt {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(result, -1)
+      .Ok({})
+    })
+    .test("nested option", fn() {
+      inner: Int? = .Some(5)
+      outer: Option<Int?> = .Some(inner)
+      msg := case outer {
+        .Some(opt) => case opt {
+          .Some(v) => "found ${v}",
+          .None => "inner none",
+        },
+        .None => "outer none",
+      }
+      try assert.str_eq(msg, "found 5")
+      .Ok({})
+    })
+    .test("result ok and err construction", fn() {
+      ok: Result<Int, String> = .Ok(1)
+      err: Result<Int, String> = .Err("bad")
+      try assert.is_ok(ok)
+      try assert.is_err(err)
+      .Ok({})
+    })
+    .test("result pattern matching extracts ok", fn() {
+      r: Result<String, Int> = .Ok("hello")
+      val := case r {
+        .Ok(s) => s,
+        .Err(n) => "err: ${n}",
+      }
+      try assert.str_eq(val, "hello")
+      .Ok({})
+    })
+    .test("result pattern matching extracts err", fn() {
+      r: Result<String, Int> = .Err(404)
+      val := case r {
+        .Ok(s) => s,
+        .Err(n) => "err: ${n}",
+      }
+      try assert.str_eq(val, "err: 404")
+      .Ok({})
+    })
+    .test("try propagates err early", fn() {
+      r := try_both(100, 0, 5)
+      try assert.is_err(r)
+      try assert.err_eq(r, "division by zero")
+      .Ok({})
+    })
+    .test("try propagates through chain on success", fn() {
+      r := try_both(100, 2, 5)
+      try assert.is_ok(r)
+      val := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 10)
+      .Ok({})
+    })
+    .test("try propagates second err", fn() {
+      r := try_both(100, 5, 0)
+      try assert.is_err(r)
+      try assert.err_eq(r, "division by zero")
+      .Ok({})
+    })
+    .test("option from function returning none", fn() {
+      empty: Vector<Int> = []
+      try assert.is_none(find_positive(empty))
+      .Ok({})
+    })
+    .test("option from function returning some", fn() {
+      nums: Vector<Int> = [-1, -2, 3, 4]
+      opt := find_positive(nums)
+      try assert.is_some(opt)
+      val := case opt {
+        .Some(v) => v,
+        .None => -999,
+      }
+      try assert.int_eq(val, 3)
+      .Ok({})
+    })
+}

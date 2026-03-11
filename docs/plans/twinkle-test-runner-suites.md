@@ -77,19 +77,19 @@ Note: keep `semantic_suite.tw` as a smoke suite; move deeper edge coverage into 
 
 ### Phase 1: Foundation and conventions
 
-- [ ] Add `boot/tests/suites/README.md` with suite contract and template.
-- [ ] Normalize current suite naming style (`<domain> <behavior>`).
-- [ ] Add missing assertion helpers only when duplicated logic appears in 3+ tests.
+- [x] Add `boot/tests/suites/README.md` with suite contract and template.
+- [x] Normalize current suite naming style (`<domain> <behavior>`).
+- [x] Add missing assertion helpers only when duplicated logic appears in 3+ tests.
 
 ### Phase 2: Semantic core expansion (spec-driven)
 
-- [ ] Add `semantic_closure_rebinding_suite.tw`.
-- [ ] Add cases for closure non-rebinding error boundaries represented as runtime-adjacent behavior where possible.
-- [ ] Add control-flow edges (nested `case`, `for` with `break`/`continue`, `return` through helpers).
+- [x] Add `semantic_closure_rebinding_suite.tw`.
+- [x] Add cases for closure non-rebinding error boundaries represented as runtime-adjacent behavior where possible.
+- [x] Add control-flow edges (nested `case`, `for` with `break`/`continue`, `return` through helpers).
 
 ### Phase 3: API surface expansion (API.md-driven)
 
-- [ ] Add Option/Result suite (including `try` usage patterns).
+- [x] Add Option/Result suite (including `try` usage patterns).
 - [ ] Add Vector/String/Dict suites with both normal and edge behavior.
 - [ ] Add Range/Iterator suite for `for` and `collect` combinations.
 

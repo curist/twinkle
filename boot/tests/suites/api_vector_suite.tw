@@ -1,0 +1,167 @@
+use tests.runner
+use tests.assert
+
+pub fn suite() runner.Suite {
+  runner.suite("vector")
+    .test("literal construction and len", fn() {
+      xs: Vector<Int> = [1, 2, 3]
+      try assert.int_eq(xs.len(), 3)
+      .Ok({})
+    })
+    .test("empty vector has len zero", fn() {
+      xs: Vector<Int> = []
+      try assert.int_eq(xs.len(), 0)
+      .Ok({})
+    })
+    .test("indexing returns correct elements", fn() {
+      xs: Vector<String> = ["a", "b", "c"]
+      try assert.str_eq(xs[0], "a")
+      try assert.str_eq(xs[1], "b")
+      try assert.str_eq(xs[2], "c")
+      .Ok({})
+    })
+    .test("push returns new vector, original unchanged", fn() {
+      xs: Vector<Int> = [1, 2]
+      ys := xs.push(3)
+      try assert.int_eq(xs.len(), 2)
+      try assert.int_eq(ys.len(), 3)
+      try assert.int_eq(ys[2], 3)
+      .Ok({})
+    })
+    .test("set returns new vector with updated element", fn() {
+      xs: Vector<Int> = [10, 20, 30]
+      ys := case xs.set(1, 99) {
+        .Some(v) => v,
+        .None => xs,
+      }
+      try assert.int_eq(xs[1], 20)
+      try assert.int_eq(ys[1], 99)
+      .Ok({})
+    })
+    .test("get returns some for valid index", fn() {
+      xs: Vector<Int> = [5, 10, 15]
+      try assert.is_some(xs.get(0))
+      try assert.is_some(xs.get(2))
+      .Ok({})
+    })
+    .test("get returns none for out-of-bounds", fn() {
+      xs: Vector<Int> = [1, 2]
+      try assert.is_none(xs.get(5))
+      try assert.is_none(xs.get(-1))
+      .Ok({})
+    })
+    .test("set returns none for out-of-bounds", fn() {
+      xs: Vector<Int> = [1]
+      try assert.is_none(xs.set(3, 99))
+      .Ok({})
+    })
+    .test("collect produces vector", fn() {
+      squares := collect i in range(5) { i * i }
+      try assert.int_eq(squares.len(), 5)
+      try assert.int_eq(squares[0], 0)
+      try assert.int_eq(squares[4], 16)
+      .Ok({})
+    })
+    .test("map transforms elements", fn() {
+      xs: Vector<Int> = [1, 2, 3]
+      ys := xs.map(fn(x) { x * 10 })
+      try assert.int_eq(ys[0], 10)
+      try assert.int_eq(ys[1], 20)
+      try assert.int_eq(ys[2], 30)
+      .Ok({})
+    })
+    .test("filter keeps matching elements", fn() {
+      xs: Vector<Int> = [1, 2, 3, 4, 5, 6]
+      evens := xs.filter(fn(x) { x % 2 == 0 })
+      try assert.int_eq(evens.len(), 3)
+      try assert.int_eq(evens[0], 2)
+      try assert.int_eq(evens[1], 4)
+      try assert.int_eq(evens[2], 6)
+      .Ok({})
+    })
+    .test("fold accumulates left to right", fn() {
+      xs: Vector<Int> = [1, 2, 3, 4]
+      sum := xs.fold(0, fn(acc, x) { acc + x })
+      try assert.int_eq(sum, 10)
+      .Ok({})
+    })
+    .test("find returns first match", fn() {
+      xs: Vector<Int> = [1, 3, 5, 4, 2]
+      found := xs.find(fn(x) { x % 2 == 0 })
+      try assert.is_some(found)
+      val := case found {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(val, 4)
+      .Ok({})
+    })
+    .test("find returns none when no match", fn() {
+      xs: Vector<Int> = [1, 3, 5]
+      try assert.is_none(xs.find(fn(x) { x > 10 }))
+      .Ok({})
+    })
+    .test("any and all predicates", fn() {
+      xs: Vector<Int> = [2, 4, 6]
+      try assert.is_true(xs.all(fn(x) { x % 2 == 0 }))
+      try assert.is_false(xs.any(fn(x) { x > 10 }))
+      try assert.is_true(xs.any(fn(x) { x == 4 }))
+      .Ok({})
+    })
+    .test("reverse produces reversed vector", fn() {
+      xs: Vector<Int> = [1, 2, 3]
+      rev := xs.reverse()
+      try assert.int_eq(rev[0], 3)
+      try assert.int_eq(rev[1], 2)
+      try assert.int_eq(rev[2], 1)
+      .Ok({})
+    })
+    .test("join concatenates with separator", fn() {
+      xs: Vector<String> = ["a", "b", "c"]
+      try assert.str_eq(xs.join(", "), "a, b, c")
+      try assert.str_eq(xs.join(""), "abc")
+      .Ok({})
+    })
+    .test("concat merges two vectors", fn() {
+      a: Vector<Int> = [1, 2]
+      b: Vector<Int> = [3, 4]
+      c := a.concat(b)
+      try assert.int_eq(c.len(), 4)
+      try assert.int_eq(c[0], 1)
+      try assert.int_eq(c[3], 4)
+      .Ok({})
+    })
+    .test("slice extracts subvector", fn() {
+      xs: Vector<Int> = [10, 20, 30, 40, 50]
+      s := xs.slice(1, 4)
+      try assert.int_eq(s.len(), 3)
+      try assert.int_eq(s[0], 20)
+      try assert.int_eq(s[2], 40)
+      .Ok({})
+    })
+    .test("for loop iterates elements in order", fn() {
+      xs: Vector<Int> = [10, 20, 30]
+      sum := Cell.new(0)
+      for x in xs {
+        sum.update(fn(n) { n + x })
+      }
+      try assert.int_eq(sum.get(), 60)
+      .Ok({})
+    })
+    .test("for loop with index", fn() {
+      xs: Vector<String> = ["a", "b", "c"]
+      indices := Cell.new("")
+      for _, i in xs {
+        indices.update(fn(s) { "${s}${i}" })
+      }
+      try assert.str_eq(indices.get(), "012")
+      .Ok({})
+    })
+    .test("make creates vector with fill value", fn() {
+      xs := Vector.make(3, 0)
+      try assert.int_eq(xs.len(), 3)
+      try assert.int_eq(xs[0], 0)
+      try assert.int_eq(xs[2], 0)
+      .Ok({})
+    })
+}
