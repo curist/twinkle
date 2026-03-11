@@ -107,6 +107,11 @@ fn run_wasm_iterator_rebind_shape_change() {
 }
 
 #[test]
+fn run_wasm_iterator_unfold_collect_len() {
+    check("tests/run/iterator_unfold_collect_len.tw");
+}
+
+#[test]
 fn run_wasm_iterator_unfold_callback_typing() {
     check("tests/run/iterator_unfold_callback_typing.tw");
 }

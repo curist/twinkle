@@ -1,0 +1,8 @@
+// Expected output:
+//   len: 5
+
+it := Iterator.unfold(0, fn(s: Int) {
+  if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+})
+vals := collect x in it { x }
+println("len: ${vals.len()}")

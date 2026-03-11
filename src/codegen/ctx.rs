@@ -1809,7 +1809,17 @@ fn iterator_next_result_state_from_atom(
     ctx: &EmitCtx<'_>,
 ) -> Option<IteratorStateInfo> {
     match atom {
-        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id),
+        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id).or_else(|| {
+            let (_, local_ty) = ctx.local(*local_id)?;
+            let ValType::Ref {
+                heap: HeapType::Named(sym),
+                ..
+            } = local_ty
+            else {
+                return None;
+            };
+            ctx.requested_typed_iter_options().get(sym).cloned()
+        }),
         _ => None,
     }
 }
@@ -2293,13 +2303,18 @@ fn collect_pattern_locals_typed(
         } => {
             let field_tys = sum_variant_field_monos(type_env, *type_id, variant.0, expected_mono);
             for (idx, field_pat) in fields.iter().enumerate() {
-                let field_expected = field_tys.get(idx);
                 let field_iter_item_state = (*type_id == OPTION_TYPE_ID && variant.0 == 1)
                     .then_some(option_iter_item_state)
                     .flatten();
+                let typed_iter_item_expected = field_iter_item_state.map(|info| MonoType::Named {
+                    type_id: ITER_ITEM_TYPE_ID,
+                    args: vec![info.yield_ty.clone()],
+                });
+                let field_expected_owned =
+                    typed_iter_item_expected.or_else(|| field_tys.get(idx).cloned());
                 collect_pattern_locals_typed(
                     field_pat,
-                    field_expected,
+                    field_expected_owned.as_ref(),
                     field_iter_item_state,
                     type_env,
                     concrete_func_sigs,

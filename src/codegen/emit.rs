@@ -1611,11 +1611,23 @@ fn emit_pattern_bindings(
             instrs
         }
         CorePattern::Variant {
-            variant, fields, ..
+            type_id,
+            variant,
+            fields,
         } => {
             let mut instrs = Vec::new();
+            let typed_iter_option_fields = typed_iter_option_pattern_info(
+                *type_id,
+                expected_mono,
+                option_iter_item_state,
+                ctx,
+            )
+            .map(|(_, field_monos)| field_monos);
             for (idx, field_pat) in fields.iter().enumerate() {
-                let field_expected = expected_mono.and_then(|mono| variant_field_mono(mono, idx));
+                let field_expected = typed_iter_option_fields
+                    .as_ref()
+                    .and_then(|field_monos| field_monos.get(idx))
+                    .or_else(|| expected_mono.and_then(|mono| variant_field_mono(mono, idx)));
                 let field_anyref = emit_variant_field_anyref(
                     value_anyref_instrs,
                     expected_mono,
@@ -1756,27 +1768,33 @@ fn typed_iter_option_pattern_info(
         return None;
     }
     let info = option_iter_item_state?;
-    let MonoType::Named {
+    let fallback_payload = MonoType::Named {
+        type_id: ITER_ITEM_TYPE_ID,
+        args: vec![info.yield_ty.clone()],
+    };
+
+    if let Some(MonoType::Named {
         type_id: mono_type_id,
         args,
-    } = expected_mono?
-    else {
-        return None;
-    };
-    if *mono_type_id != OPTION_TYPE_ID || args.len() != 1 {
-        return None;
+    }) = expected_mono
+    {
+        if *mono_type_id == OPTION_TYPE_ID && args.len() == 1 {
+            if let MonoType::Named {
+                type_id: payload_type_id,
+                args: payload_args,
+            } = &args[0]
+            {
+                if *payload_type_id == ITER_ITEM_TYPE_ID && payload_args.len() == 1 {
+                    return Some((typed_iter_option_sym(info), vec![args[0].clone()]));
+                }
+            }
+            // Keep typed iterator-option lowering even if local mono metadata for
+            // the Option payload is absent or imprecise.
+            return Some((typed_iter_option_sym(info), vec![fallback_payload]));
+        }
     }
-    let MonoType::Named {
-        type_id: payload_type_id,
-        args: payload_args,
-    } = &args[0]
-    else {
-        return None;
-    };
-    if *payload_type_id != ITER_ITEM_TYPE_ID || payload_args.len() != 1 {
-        return None;
-    }
-    Some((typed_iter_option_sym(info), vec![args[0].clone()]))
+
+    Some((typed_iter_option_sym(info), vec![fallback_payload]))
 }
 
 fn typed_general_option_pattern_sym(
@@ -4458,7 +4476,12 @@ fn atom_iter_item_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateI
 
 fn atom_iterator_next_state(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<IteratorStateInfo> {
     match atom {
-        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id),
+        Atom::ALocal(local_id) => ctx.local_iterator_next_state(*local_id).or_else(|| {
+            // Fallback: recover typed iterator-next metadata from the local's
+            // physical Wasm ref type when flow metadata is missing/stale.
+            let (_, local_ty) = ctx.local(*local_id)?;
+            typed_iter_option_info_for_valtype(local_ty, ctx)
+        }),
         _ => None,
     }
 }
