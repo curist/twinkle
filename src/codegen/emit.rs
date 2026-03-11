@@ -10,6 +10,7 @@ use crate::codegen::ctx::{
     typed_iterator_state_sym, typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
 };
 use crate::codegen::prelude::build_prelude_map;
+use crate::intrinsics::registry::{self, LoweringKind};
 use crate::ir::FuncId;
 use crate::ir::anf::analysis::{
     collect_bound_locals, collect_free_locals, expr_always_diverges, op_always_diverges,
@@ -3996,103 +3997,114 @@ fn emit_prelude_call(
         return emit_runtime_prelude_call(entry, args, bind_ty, ctx);
     }
 
-    match func_id {
-        id if id == prelude_ids::STRING_TO_STRING => {
-            if args.len() != 1 {
-                panic!("string_to_string expects exactly one argument");
-            }
-            let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
-            instrs.extend(emit_coerce_stack(&ref_string_null(), bind_ty));
-            instrs
-        }
-        id if id == prelude_ids::VECTOR_PUSH => emit_array_append_intrinsic(args, bind_ty, ctx),
-        // Range constructors: build Record(RANGE_TYPE_ID, [start, end, step])
-        id if id == prelude_ids::RANGE => {
-            // range(n) -> Record(3, [0, n, 1])
-            emit_range_intrinsic(
-                &[Atom::ALitInt(0), args[0].clone(), Atom::ALitInt(1)],
-                bind_ty,
-                ctx,
-            )
-        }
-        id if id == prelude_ids::RANGE_FROM => {
-            // range_from(start, end) -> Record(3, [start, end, 1])
-            emit_range_intrinsic(
-                &[args[0].clone(), args[1].clone(), Atom::ALitInt(1)],
-                bind_ty,
-                ctx,
-            )
-        }
-        id if id == prelude_ids::RANGE_STEP => {
-            // range_step(start, end, step) -> Record(3, [start, end, step])
-            emit_range_intrinsic(
-                &[args[0].clone(), args[1].clone(), args[2].clone()],
-                bind_ty,
-                ctx,
-            )
-        }
-        // Cell operations
-        id if id == prelude_ids::CELL_NEW => emit_cell_new_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::CELL_GET => emit_cell_get_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::CELL_SET => emit_cell_set_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::CELL_UPDATE => emit_cell_update_intrinsic(args, bind_ty, ctx),
-        // Dict internal
-        id if id == prelude_ids::DICT_GET_UNSAFE => {
-            // dict_get_unsafe is same as dict_get but for internal loop use
-            ensure_rt_dict_get_import(ctx);
-            let mut instrs = emit_atom(&args[0], Some(&ref_dict_null()), ctx);
-            instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
-            instrs.push(Instr::Call("rt_dict__get".to_string()));
-            instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
-            instrs
-        }
-        // Iterator operations
-        id if id == prelude_ids::ITERATOR_UNFOLD => {
-            emit_iterator_unfold_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::ITERATOR_NEXT => emit_iterator_next_intrinsic(args, bind_ty, ctx),
-        // Vector builder operations (used by collect)
-        id if id == prelude_ids::VECTOR_BUILDER_NEW => {
-            emit_array_builder_new_intrinsic(bind_ty, ctx)
-        }
-        id if id == prelude_ids::VECTOR_BUILDER_PUSH => {
-            emit_array_builder_push_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::VECTOR_BUILDER_FREEZE => {
-            emit_array_builder_freeze_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::VECTOR_MAKE => emit_vector_make_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::VECTOR_GET => emit_vector_get_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::VECTOR_SET => emit_vector_set_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::VECTOR_SET_IN_PLACE => {
-            emit_vector_set_in_place_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::STRING_GET => emit_string_get_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::STRING_SLICE => emit_string_slice_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::CHAR_CODE_AT => emit_char_code_at_intrinsic(args, bind_ty, ctx),
-        id if id == prelude_ids::FROM_CHAR_CODE => {
-            emit_from_char_code_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::FROM_CODE_POINT => {
-            emit_from_code_point_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::STRING_UTF8_BYTES => {
-            emit_string_utf8_bytes_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::STRING_FROM_UTF8 => {
-            emit_string_from_utf8_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::INT_FROM_STRING => {
-            emit_int_from_string_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::FLOAT_FROM_STRING => {
-            emit_float_from_string_intrinsic(args, bind_ty, ctx)
-        }
-        id if id == prelude_ids::BYTE_TO_INT => emit_byte_to_int_intrinsic(args, ctx),
-        id if id == prelude_ids::BYTE_FROM_INT => emit_byte_from_int_intrinsic(args, ctx),
-        id if id == prelude_ids::BYTE_TO_STRING => emit_byte_to_string_intrinsic(args, ctx),
-        _ => emit_unimplemented_intrinsic_prelude_call(entry, ctx),
+    let Some(kind) = registry::lowering_kind(func_id) else {
+        return emit_unimplemented_intrinsic_prelude_call(entry, ctx);
+    };
+
+    match kind {
+        LoweringKind::StringToStringIdentity => emit_string_to_string_identity(args, bind_ty, ctx),
+        LoweringKind::VectorPush => emit_array_append_intrinsic(args, bind_ty, ctx),
+        LoweringKind::Range => emit_range_ctor_intrinsic(args, bind_ty, ctx),
+        LoweringKind::RangeFrom => emit_range_from_intrinsic(args, bind_ty, ctx),
+        LoweringKind::RangeStep => emit_range_step_intrinsic(args, bind_ty, ctx),
+        LoweringKind::CellNew => emit_cell_new_intrinsic(args, bind_ty, ctx),
+        LoweringKind::CellGet => emit_cell_get_intrinsic(args, bind_ty, ctx),
+        LoweringKind::CellSet => emit_cell_set_intrinsic(args, bind_ty, ctx),
+        LoweringKind::CellUpdate => emit_cell_update_intrinsic(args, bind_ty, ctx),
+        LoweringKind::DictGetUnsafe => emit_dict_get_unsafe_intrinsic(args, bind_ty, ctx),
+        LoweringKind::IteratorUnfold => emit_iterator_unfold_intrinsic(args, bind_ty, ctx),
+        LoweringKind::IteratorNext => emit_iterator_next_intrinsic(args, bind_ty, ctx),
+        LoweringKind::VectorMake => emit_vector_make_intrinsic(args, bind_ty, ctx),
+        LoweringKind::VectorGet => emit_vector_get_intrinsic(args, bind_ty, ctx),
+        LoweringKind::VectorSet => emit_vector_set_intrinsic(args, bind_ty, ctx),
+        LoweringKind::VectorSetInPlace => emit_vector_set_in_place_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringGet => emit_string_get_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringSlice => emit_string_slice_intrinsic(args, bind_ty, ctx),
+        LoweringKind::CharCodeAt => emit_char_code_at_intrinsic(args, bind_ty, ctx),
+        LoweringKind::FromCharCode => emit_from_char_code_intrinsic(args, bind_ty, ctx),
+        LoweringKind::FromCodePoint => emit_from_code_point_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringUtf8Bytes => emit_string_utf8_bytes_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringFromUtf8 => emit_string_from_utf8_intrinsic(args, bind_ty, ctx),
+        LoweringKind::IntFromString => emit_int_from_string_intrinsic(args, bind_ty, ctx),
+        LoweringKind::FloatFromString => emit_float_from_string_intrinsic(args, bind_ty, ctx),
+        LoweringKind::ByteToInt => emit_byte_to_int_intrinsic(args, ctx),
+        LoweringKind::ByteFromInt => emit_byte_from_int_intrinsic(args, ctx),
+        LoweringKind::ByteToString => emit_byte_to_string_intrinsic(args, ctx),
     }
+}
+
+fn emit_string_to_string_identity(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 1 {
+        panic!("string_to_string expects exactly one argument");
+    }
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.extend(emit_coerce_stack(&ref_string_null(), bind_ty));
+    instrs
+}
+
+fn emit_range_ctor_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 1 {
+        panic!("range expects 1 arg, got {}", args.len());
+    }
+    emit_range_intrinsic(
+        &[Atom::ALitInt(0), args[0].clone(), Atom::ALitInt(1)],
+        bind_ty,
+        ctx,
+    )
+}
+
+fn emit_range_from_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("range_from expects 2 args, got {}", args.len());
+    }
+    emit_range_intrinsic(
+        &[args[0].clone(), args[1].clone(), Atom::ALitInt(1)],
+        bind_ty,
+        ctx,
+    )
+}
+
+fn emit_range_step_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 3 {
+        panic!("range_step expects 3 args, got {}", args.len());
+    }
+    emit_range_intrinsic(
+        &[args[0].clone(), args[1].clone(), args[2].clone()],
+        bind_ty,
+        ctx,
+    )
+}
+
+fn emit_dict_get_unsafe_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("dict_get_unsafe expects 2 args, got {}", args.len());
+    }
+    ensure_rt_dict_get_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_dict_null()), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
+    instrs.push(Instr::Call("rt_dict__get".to_string()));
+    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+    instrs
 }
 
 fn emit_array_append_intrinsic(
@@ -5070,79 +5082,6 @@ fn emit_typed_iterator_next_helper(
         ],
         body,
     }
-}
-
-// --- Array builder intrinsics ---
-// Array builder is represented as a Cell (1-element array) containing an array.
-
-fn emit_array_builder_new_intrinsic(bind_ty: &ValType, _ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
-    // Creates Cell containing empty array: [[]]
-    let mut instrs = vec![
-        // Empty inner array
-        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
-        // Wrap in cell (1-element outer array)
-        Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
-    ];
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
-    instrs
-}
-
-fn emit_array_builder_push_intrinsic(
-    args: &[Atom],
-    bind_ty: &ValType,
-    ctx: &mut EmitCtx<'_>,
-) -> Vec<Instr> {
-    // array_builder_push(builder, elem) -> Void
-    // builder = Cell = array[1] where builder[0] is the accumulating array
-    // We need: new_arr = append(old_arr, elem); builder[0] = new_arr
-    ensure_rt_arr_concat_import(ctx);
-
-    let mut instrs = Vec::new();
-
-    // Target: builder[0] = concat(builder[0], [elem])
-    // array.set needs: array_ref, index, value
-
-    // Push builder ref (for array.set target)
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    // Push index 0
-    instrs.push(Instr::I32Const(0));
-
-    // Compute new value: concat(builder[0], [elem])
-    // Get current array from builder
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    instrs.push(Instr::I32Const(0));
-    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-    instrs.push(Instr::RefCast {
-        nullable: false,
-        heap: HeapType::Named(T_ARRAY.to_string()),
-    });
-
-    // Create 1-element array with the new element
-    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
-    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
-
-    // Concat
-    instrs.push(Instr::Call("rt_arr__concat".to_string()));
-
-    // array.set: builder[0] = new_array
-    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
-
-    instrs.extend(emit_void_value(Some(bind_ty)));
-    instrs
-}
-
-fn emit_array_builder_freeze_intrinsic(
-    args: &[Atom],
-    bind_ty: &ValType,
-    ctx: &mut EmitCtx<'_>,
-) -> Vec<Instr> {
-    // array_builder_freeze(builder) -> Array<T>
-    // builder = Cell = array[1], return builder[0]
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
-    instrs.push(Instr::I32Const(0));
-    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
-    instrs
 }
 
 fn emit_string_get_intrinsic(

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::intrinsics::contracts;
+use crate::intrinsics::registry;
 use crate::ir::core::{FuncId, LocalId};
 use crate::ir::lower::prelude;
 use crate::types::env::{TypeEnv, ValueEnv};
@@ -88,47 +88,7 @@ pub struct CompileState {
 
 pub fn default_func_table() -> HashMap<String, FuncId> {
     let mut func_table: HashMap<String, FuncId> = HashMap::new();
-
-    // Register prelude functions in the table (same as Lowerer::new does)
-    func_table.insert("print".to_string(), prelude::PRINT);
-    func_table.insert("println".to_string(), prelude::PRINTLN);
-    func_table.insert("error".to_string(), prelude::ERROR);
-    func_table.insert("eprint".to_string(), prelude::EPRINT);
-    func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
-    func_table.insert("string_len".to_string(), prelude::STRING_LEN);
-    func_table.insert("string_concat".to_string(), prelude::STRING_CONCAT);
-    func_table.insert("vector_len".to_string(), prelude::VECTOR_LEN);
-    func_table.insert("vector_push".to_string(), prelude::VECTOR_PUSH);
-    func_table.insert("vector_set_unsafe".to_string(), prelude::VECTOR_SET_UNSAFE);
-    func_table.insert("dict_set".to_string(), prelude::DICT_SET);
-    func_table.insert("dict_keys".to_string(), prelude::DICT_KEYS);
-    func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
-    func_table.insert("Vector.len".to_string(), prelude::VECTOR_LEN);
-    func_table.insert("Vector.concat".to_string(), prelude::VECTOR_CONCAT);
-    func_table.insert("Vector.slice".to_string(), prelude::VECTOR_SLICE);
-    func_table.insert("String.len".to_string(), prelude::STRING_LEN);
-    func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
-    func_table.insert("Dict.len".to_string(), prelude::DICT_LEN);
-    func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
-    func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
-    func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-    func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
-    func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
-    func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);
-    func_table.insert("__host_mkdirp".to_string(), prelude::HOST_MKDIRP);
-    func_table.insert("__host_list_dir".to_string(), prelude::HOST_LIST_DIR);
-    func_table.insert("__host_exists".to_string(), prelude::HOST_EXISTS);
-    func_table.insert("__host_args".to_string(), prelude::HOST_ARGS);
-    func_table.insert("__host_env".to_string(), prelude::HOST_ENV);
-    func_table.insert("__host_cwd".to_string(), prelude::HOST_CWD);
-    func_table.insert("__host_exit".to_string(), prelude::HOST_EXIT);
-
-    for func_id in contracts::prelude_signature_ids() {
-        let Some(name) = contracts::twinkle_name(*func_id) else {
-            continue;
-        };
-        func_table.insert(name.to_string(), *func_id);
-    }
+    registry::populate_func_table(&mut func_table, true);
     debug_assert!(
         !func_table
             .values()
@@ -142,17 +102,10 @@ pub fn default_func_table() -> HashMap<String, FuncId> {
 pub fn default_module_aliases() -> HashSet<String> {
     // Built-in module aliases: handled as module-qualified calls rather than
     // method calls on values.
-    let mut module_aliases = HashSet::new();
-    module_aliases.insert("Cell".to_string());
-    module_aliases.insert("Dict".to_string());
-    module_aliases.insert("Iterator".to_string());
-    module_aliases.insert("Vector".to_string());
-    module_aliases.insert("String".to_string());
-    module_aliases.insert("Int".to_string());
-    module_aliases.insert("Float".to_string());
-    module_aliases.insert("Bool".to_string());
-    module_aliases.insert("Byte".to_string());
-    module_aliases
+    registry::builtin_module_aliases()
+        .iter()
+        .map(|alias| (*alias).to_string())
+        .collect()
 }
 
 impl CompileState {

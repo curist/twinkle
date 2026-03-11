@@ -9,11 +9,11 @@ and Wasm emission cannot drift independently.
 
 Intrinsic and prelude behavior is currently defined in multiple places:
 
-* prelude IDs and constants in [`src/ir/lower.rs`](../../src/ir/lower.rs)
-* default function table bootstrap in [`src/module/context.rs`](../../src/module/context.rs)
-* type/ABI contracts in [`src/intrinsics/contracts.rs`](../../src/intrinsics/contracts.rs)
-* runtime binding map in [`src/codegen/prelude.rs`](../../src/codegen/prelude.rs)
-* lowering dispatch logic in [`src/codegen/emit.rs`](../../src/codegen/emit.rs)
+* prelude IDs and constants in [`src/ir/lower.rs`](../../../src/ir/lower.rs)
+* default function table bootstrap in [`src/module/context.rs`](../../../src/module/context.rs)
+* type/ABI contracts in [`src/intrinsics/contracts.rs`](../../../src/intrinsics/contracts.rs)
+* runtime binding map in [`src/codegen/prelude.rs`](../../../src/codegen/prelude.rs)
+* lowering dispatch logic in [`src/codegen/emit.rs`](../../../src/codegen/emit.rs)
 
 This duplication increases maintenance cost and creates drift risk when adding/changing intrinsics.
 
@@ -54,29 +54,29 @@ Key rules:
 
 ### Phase 0: Parity guardrails
 
-- [ ] Add tests that compare names/signatures/dispatch metadata across current sources.
-- [ ] Snapshot existing registry behavior for high-risk intrinsics (`Iterator.*`, `Cell.*`, string/byte conversions).
+- [x] Add tests that compare names/signatures/dispatch metadata across current sources.
+- [x] Snapshot existing registry behavior for high-risk intrinsics (`Iterator.*`, `Cell.*`, string/byte conversions).
 
 ### Phase 1: Canonical spec introduction
 
-- [ ] Add a new intrinsic spec module exposing stable iteration over all intrinsic entries.
-- [ ] Keep existing APIs (`contracts::*`, `build_prelude_map`) as compatibility wrappers initially.
+- [x] Add a new intrinsic spec module exposing stable iteration over all intrinsic entries.
+- [x] Keep existing APIs (`contracts::*`, `build_prelude_map`) as compatibility wrappers initially.
 
 ### Phase 2: Consumer migration
 
-- [ ] Migrate `default_func_table` and lowerer bootstrap to the canonical spec.
-- [ ] Migrate `contracts` helpers to derive from canonical entries.
-- [ ] Migrate codegen prelude runtime binding map to derive from canonical entries.
+- [x] Migrate `default_func_table` and lowerer bootstrap to the canonical spec.
+- [x] Migrate `contracts` helpers to derive from canonical entries.
+- [x] Migrate codegen prelude runtime binding map to derive from canonical entries.
 
 ### Phase 3: Dispatch cleanup
 
-- [ ] Replace repetitive call dispatch checks with table-driven `lowering_kind` routing.
-- [ ] Keep special-case handlers only where semantics genuinely differ.
+- [x] Replace repetitive call dispatch checks with table-driven `lowering_kind` routing.
+- [x] Keep special-case handlers only where semantics genuinely differ.
 
 ### Phase 4: Cleanup and policy hardening
 
-- [ ] Remove obsolete duplicated registration code.
-- [ ] Add retired-ID policy checks against the canonical intrinsic list.
+- [x] Remove obsolete duplicated registration code.
+- [x] Add retired-ID policy checks against the canonical intrinsic list.
 
 ---
 
@@ -86,12 +86,3 @@ Key rules:
 2. No duplicated manual bootstrap lists remain for default function table and prelude runtime map.
 3. Existing intrinsic behavior and ABI remain unchanged (tests/snapshots green).
 4. Retired prelude ID policy remains enforced.
-
----
-
-## Immediate Next Steps
-
-1. Add `IntrinsicSpec` and generate `contracts::function_signatures()` from it.
-2. Convert `default_func_table()` to use canonical entries.
-3. Convert `build_prelude_map()` to use canonical runtime binding fields.
-

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::intrinsics::contracts;
+use crate::intrinsics::registry;
 use crate::syntax::ast::{
     BinOp, Block, CaseArm, Expr, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
     StringPart,
@@ -226,40 +226,7 @@ const EXTERNAL_FUNC_ID_START: u32 = 1_000_000_000;
 impl Lowerer {
     pub fn new(type_map: TypeMap, type_env: TypeEnv) -> Self {
         let mut func_table = HashMap::new();
-
-        // Register prelude functions
-        func_table.insert("print".to_string(), prelude::PRINT);
-        func_table.insert("println".to_string(), prelude::PRINTLN);
-        func_table.insert("error".to_string(), prelude::ERROR);
-        func_table.insert("eprint".to_string(), prelude::EPRINT);
-        func_table.insert("eprintln".to_string(), prelude::EPRINTLN);
-        func_table.insert("Dict.new".to_string(), prelude::DICT_NEW);
-        func_table.insert("Vector.len".to_string(), prelude::VECTOR_LEN);
-        func_table.insert("Vector.concat".to_string(), prelude::VECTOR_CONCAT);
-        func_table.insert("Vector.slice".to_string(), prelude::VECTOR_SLICE);
-        func_table.insert("String.len".to_string(), prelude::STRING_LEN);
-        func_table.insert("String.concat".to_string(), prelude::STRING_CONCAT);
-        func_table.insert("Dict.len".to_string(), prelude::DICT_LEN);
-        func_table.insert("Dict.has".to_string(), prelude::DICT_HAS);
-        func_table.insert("Dict.keys".to_string(), prelude::DICT_KEYS);
-        func_table.insert("Dict.remove".to_string(), prelude::DICT_REMOVE);
-        func_table.insert("__host_read_file".to_string(), prelude::HOST_READ_FILE);
-        func_table.insert("__host_write_file".to_string(), prelude::HOST_WRITE_FILE);
-        func_table.insert("__host_write_bytes".to_string(), prelude::HOST_WRITE_BYTES);
-        func_table.insert("__host_mkdirp".to_string(), prelude::HOST_MKDIRP);
-        func_table.insert("__host_list_dir".to_string(), prelude::HOST_LIST_DIR);
-        func_table.insert("__host_exists".to_string(), prelude::HOST_EXISTS);
-        func_table.insert("__host_args".to_string(), prelude::HOST_ARGS);
-        func_table.insert("__host_env".to_string(), prelude::HOST_ENV);
-        func_table.insert("__host_cwd".to_string(), prelude::HOST_CWD);
-        func_table.insert("__host_exit".to_string(), prelude::HOST_EXIT);
-
-        for func_id in contracts::prelude_signature_ids() {
-            let Some(name) = contracts::twinkle_name(*func_id) else {
-                continue;
-            };
-            func_table.insert(name.to_string(), *func_id);
-        }
+        registry::populate_func_table(&mut func_table, false);
         debug_assert!(
             !func_table
                 .values()
@@ -269,16 +236,10 @@ impl Lowerer {
 
         // len is polymorphic and handled specially in lower_expr_call
 
-        let mut module_aliases = HashSet::new();
-        module_aliases.insert("Cell".to_string()); // built-in module alias
-        module_aliases.insert("Dict".to_string()); // built-in module alias
-        module_aliases.insert("Iterator".to_string()); // built-in module alias
-        module_aliases.insert("Vector".to_string()); // built-in module alias
-        module_aliases.insert("String".to_string()); // built-in module alias
-        module_aliases.insert("Int".to_string()); // built-in module alias
-        module_aliases.insert("Float".to_string()); // built-in module alias
-        module_aliases.insert("Bool".to_string()); // built-in module alias
-        module_aliases.insert("Byte".to_string()); // built-in module alias
+        let module_aliases = registry::builtin_module_aliases()
+            .iter()
+            .map(|alias| (*alias).to_string())
+            .collect();
 
         Self {
             type_map,

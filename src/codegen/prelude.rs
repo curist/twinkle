@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::intrinsics::contracts;
+use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
@@ -9,10 +9,6 @@ use crate::runtime::types::{
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
 pub type PreludeMap = HashMap<FuncId, PreludeEntry>;
-
-fn intrinsic_name(func_id: FuncId, fallback: &'static str) -> &'static str {
-    contracts::twinkle_name(func_id).unwrap_or(fallback)
-}
 
 #[derive(Debug, Clone)]
 pub struct PreludeEntry {
@@ -59,468 +55,229 @@ impl PreludeEntry {
     }
 }
 
-pub fn build_prelude_map() -> PreludeMap {
-    let mut map = HashMap::new();
-
-    map.insert(
-        prelude_ids::PRINT,
-        PreludeEntry::runtime(
-            "print",
+fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeEntry> {
+    match func_id {
+        id if id == prelude_ids::PRINT => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.core",
             "print",
             "rt_core__print",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::PRINTLN,
-        PreludeEntry::runtime(
-            "println",
+        )),
+        id if id == prelude_ids::PRINTLN => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.core",
             "println",
             "rt_core__println",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::ERROR,
-        PreludeEntry::runtime(
-            "error",
+        )),
+        id if id == prelude_ids::ERROR => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.core",
             "trap",
             "rt_core__trap",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::EPRINT,
-        PreludeEntry::runtime(
-            "eprint",
+        )),
+        id if id == prelude_ids::EPRINT => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.core",
             "eprint",
             "rt_core__eprint",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::EPRINTLN,
-        PreludeEntry::runtime(
-            "eprintln",
+        )),
+        id if id == prelude_ids::EPRINTLN => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.core",
             "eprintln",
             "rt_core__eprintln",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-
-    map.insert(
-        prelude_ids::INT_TO_STRING,
-        PreludeEntry::runtime(
-            intrinsic_name(prelude_ids::INT_TO_STRING, "int_to_string"),
+        )),
+        id if id == prelude_ids::INT_TO_STRING => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.str",
             "from_i64",
             "rt_str__from_i64",
             vec![ValType::I64],
             vec![ref_string()],
-        ),
-    );
-    map.insert(
-        prelude_ids::FLOAT_TO_STRING,
-        PreludeEntry::runtime(
-            intrinsic_name(prelude_ids::FLOAT_TO_STRING, "float_to_string"),
+        )),
+        id if id == prelude_ids::FLOAT_TO_STRING => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.str",
             "from_f64",
             "rt_str__from_f64",
             vec![ValType::F64],
             vec![ref_string()],
-        ),
-    );
-    map.insert(
-        prelude_ids::BOOL_TO_STRING,
-        PreludeEntry::runtime(
-            intrinsic_name(prelude_ids::BOOL_TO_STRING, "bool_to_string"),
+        )),
+        id if id == prelude_ids::BOOL_TO_STRING => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.str",
             "from_bool",
             "rt_str__from_bool",
             vec![ValType::I32],
             vec![ref_string()],
-        ),
-    );
-    map.insert(
-        prelude_ids::STRING_TO_STRING,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::STRING_TO_STRING,
-            "string_to_string",
         )),
-    );
-
-    map.insert(
-        prelude_ids::STRING_LEN,
-        PreludeEntry::runtime(
-            "String.len",
+        id if id == prelude_ids::STRING_LEN => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.str",
             "len",
             "rt_str__len",
             vec![ref_string_null()],
             vec![ValType::I32],
-        ),
-    );
-    map.insert(
-        prelude_ids::STRING_CONCAT,
-        PreludeEntry::runtime(
-            "String.concat",
+        )),
+        id if id == prelude_ids::STRING_CONCAT => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.str",
             "concat",
             "rt_str__concat",
             vec![ref_string_null(), ref_string_null()],
             vec![ref_string()],
-        ),
-    );
-    map.insert(
-        prelude_ids::STRING_GET,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::STRING_GET, "String.get")),
-    );
-    map.insert(
-        prelude_ids::STRING_SLICE,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::STRING_SLICE, "String.slice")),
-    );
-
-    map.insert(
-        prelude_ids::VECTOR_LEN,
-        PreludeEntry::runtime(
-            "Vector.len",
+        )),
+        id if id == prelude_ids::VECTOR_LEN => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "len",
             "rt_arr__len",
             vec![ref_array_null()],
             vec![ValType::I32],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_PUSH,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_PUSH, "Vector.push")),
-    );
-    map.insert(
-        prelude_ids::VECTOR_SET_UNSAFE,
-        PreludeEntry::runtime(
-            "Vector.set_unsafe",
+        )),
+        id if id == prelude_ids::VECTOR_SET_UNSAFE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "set",
             "rt_arr__set",
             vec![ref_array_null(), ValType::I32, ValType::Anyref],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_CONCAT,
-        PreludeEntry::runtime(
-            "Vector.concat",
+        )),
+        id if id == prelude_ids::VECTOR_CONCAT => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "concat",
             "rt_arr__concat",
             vec![ref_array_null(), ref_array_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_SLICE,
-        PreludeEntry::runtime(
-            "Vector.slice",
+        )),
+        id if id == prelude_ids::VECTOR_SLICE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "slice",
             "rt_arr__slice",
             vec![ref_array_null(), ValType::I32, ValType::I32],
             vec![ref_array()],
-        ),
-    );
-
-    map.insert(
-        prelude_ids::DICT_SET,
-        PreludeEntry::runtime(
-            "Dict.set",
+        )),
+        id if id == prelude_ids::DICT_SET => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "set",
             "rt_dict__set",
             vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
             vec![ref_dict()],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_KEYS,
-        PreludeEntry::runtime(
-            "Dict.keys",
+        )),
+        id if id == prelude_ids::DICT_KEYS => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "keys",
             "rt_dict__keys",
             vec![ref_dict_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_GET,
-        PreludeEntry::runtime(
-            "dict_get",
+        )),
+        id if id == prelude_ids::DICT_GET => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "get_option",
             "rt_dict__get_option",
             vec![ref_dict_null(), ValType::Anyref],
             vec![ValType::Ref {
                 nullable: false,
-                heap: crate::wasm::ir::HeapType::Named(
-                    crate::runtime::types::T_VARIANT.to_string(),
-                ),
+                heap: HeapType::Named(T_VARIANT.to_string()),
             }],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_NEW,
-        PreludeEntry::runtime(
-            "Dict.new",
+        )),
+        id if id == prelude_ids::DICT_NEW => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "make",
             "rt_dict__make",
             vec![],
             vec![ref_dict()],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_LEN,
-        PreludeEntry::runtime(
-            "Dict.len",
+        )),
+        id if id == prelude_ids::DICT_LEN => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "len",
             "rt_dict__len",
             vec![ref_dict_null()],
             vec![ValType::I32],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_HAS,
-        PreludeEntry::runtime(
-            "Dict.has",
+        )),
+        id if id == prelude_ids::DICT_HAS => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "has",
             "rt_dict__has",
             vec![ref_dict_null(), ValType::Anyref],
             vec![ValType::I32],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_REMOVE,
-        PreludeEntry::runtime(
-            "Dict.remove",
+        )),
+        id if id == prelude_ids::DICT_REMOVE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "remove",
             "rt_dict__remove",
             vec![ref_dict_null(), ValType::Anyref],
             vec![ref_dict()],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_SET_IN_PLACE,
-        PreludeEntry::runtime(
-            "__dict_set_in_place",
+        )),
+        id if id == prelude_ids::DICT_SET_IN_PLACE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "set_in_place",
             "rt_dict__set_in_place",
             vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
             vec![ref_dict()],
-        ),
-    );
-    map.insert(
-        prelude_ids::DICT_REMOVE_IN_PLACE,
-        PreludeEntry::runtime(
-            "__dict_remove_in_place",
+        )),
+        id if id == prelude_ids::DICT_REMOVE_IN_PLACE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.dict",
             "remove_in_place",
             "rt_dict__remove_in_place",
             vec![ref_dict_null(), ValType::Anyref],
             vec![ref_dict()],
-        ),
-    );
-
-    map.insert(
-        prelude_ids::RANGE_FROM,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE_FROM, "range_from")),
-    );
-    map.insert(
-        prelude_ids::RANGE,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE, "range")),
-    );
-    map.insert(
-        prelude_ids::RANGE_STEP,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::RANGE_STEP, "range_step")),
-    );
-    map.insert(
-        prelude_ids::CELL_NEW,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_NEW, "Cell.new")),
-    );
-    map.insert(
-        prelude_ids::CELL_GET,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_GET, "Cell.get")),
-    );
-    map.insert(
-        prelude_ids::CELL_SET,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_SET, "Cell.set")),
-    );
-    map.insert(
-        prelude_ids::CELL_UPDATE,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::CELL_UPDATE, "Cell.update")),
-    );
-    map.insert(
-        prelude_ids::DICT_GET_UNSAFE,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::DICT_GET_UNSAFE,
-            "dict_get_unsafe",
         )),
-    );
-    map.insert(
-        prelude_ids::ITERATOR_NEXT,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::ITERATOR_NEXT, "Iterator.next")),
-    );
-    map.insert(
-        prelude_ids::ITERATOR_UNFOLD,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::ITERATOR_UNFOLD,
-            "Iterator.unfold",
-        )),
-    );
-    map.insert(
-        prelude_ids::VECTOR_BUILDER_NEW,
-        PreludeEntry::runtime(
-            "__vector_builder_new",
+        id if id == prelude_ids::VECTOR_BUILDER_NEW => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "builder_new",
             "rt_arr__builder_new",
             vec![],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_BUILDER_PUSH,
-        PreludeEntry::runtime(
-            "__vector_builder_push",
+        )),
+        id if id == prelude_ids::VECTOR_BUILDER_PUSH => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "builder_push",
             "rt_arr__builder_push",
             vec![ref_array_null(), ValType::Anyref],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_BUILDER_FREEZE,
-        PreludeEntry::runtime(
-            "__vector_builder_freeze",
+        )),
+        id if id == prelude_ids::VECTOR_BUILDER_FREEZE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "builder_freeze",
             "rt_arr__builder_freeze",
             vec![ref_array_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::VECTOR_GET,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_GET, "Vector.get")),
-    );
-    map.insert(
-        prelude_ids::VECTOR_SET,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_SET, "Vector.set")),
-    );
-    map.insert(
-        prelude_ids::VECTOR_MAKE,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::VECTOR_MAKE, "Vector.make")),
-    );
-    map.insert(
-        prelude_ids::VECTOR_SET_IN_PLACE,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::VECTOR_SET_IN_PLACE,
-            "__vector_set_in_place",
         )),
-    );
-    map.insert(
-        prelude_ids::VECTOR_BUILDER_FROM,
-        PreludeEntry::runtime(
-            "__vector_builder_from",
+        id if id == prelude_ids::VECTOR_BUILDER_FROM => Some(PreludeEntry::runtime(
+            twinkle_name,
             "rt.arr",
             "builder_from",
             "rt_arr__builder_from",
             vec![ref_array_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::BYTE_TO_INT,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::BYTE_TO_INT, "Byte.to_int")),
-    );
-    map.insert(
-        prelude_ids::BYTE_FROM_INT,
-        PreludeEntry::intrinsic(intrinsic_name(prelude_ids::BYTE_FROM_INT, "Byte.from_int")),
-    );
-    map.insert(
-        prelude_ids::BYTE_TO_STRING,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::BYTE_TO_STRING,
-            "Byte.to_string",
         )),
-    );
-    map.insert(
-        prelude_ids::CHAR_CODE_AT,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::CHAR_CODE_AT,
-            "String.char_code_at",
-        )),
-    );
-    map.insert(
-        prelude_ids::FROM_CHAR_CODE,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::FROM_CHAR_CODE,
-            "String.from_char_code",
-        )),
-    );
-    map.insert(
-        prelude_ids::FROM_CODE_POINT,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::FROM_CODE_POINT,
-            "String.from_code_point",
-        )),
-    );
-    map.insert(
-        prelude_ids::STRING_UTF8_BYTES,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::STRING_UTF8_BYTES,
-            "String.utf8_bytes",
-        )),
-    );
-    map.insert(
-        prelude_ids::STRING_FROM_UTF8,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::STRING_FROM_UTF8,
-            "String.from_utf8",
-        )),
-    );
-    map.insert(
-        prelude_ids::INT_FROM_STRING,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::INT_FROM_STRING,
-            "Int.from_string",
-        )),
-    );
-    map.insert(
-        prelude_ids::FLOAT_FROM_STRING,
-        PreludeEntry::intrinsic(intrinsic_name(
-            prelude_ids::FLOAT_FROM_STRING,
-            "Float.from_string",
-        )),
-    );
-    map.insert(
-        prelude_ids::HOST_READ_FILE,
-        PreludeEntry::runtime(
-            "__host_read_file",
+        id if id == prelude_ids::HOST_READ_FILE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "read_file",
             "host_read_file",
@@ -529,107 +286,99 @@ pub fn build_prelude_map() -> PreludeMap {
                 nullable: true,
                 heap: HeapType::Named(T_VARIANT.into()),
             }],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_WRITE_FILE,
-        PreludeEntry::runtime(
-            "__host_write_file",
+        )),
+        id if id == prelude_ids::HOST_WRITE_FILE => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "write_file",
             "host_write_file",
             vec![ref_string_null(), ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_WRITE_BYTES,
-        PreludeEntry::runtime(
-            "__host_write_bytes",
+        )),
+        id if id == prelude_ids::HOST_WRITE_BYTES => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "write_bytes",
             "host_write_bytes",
             vec![ref_string_null(), ref_array_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_MKDIRP,
-        PreludeEntry::runtime(
-            "__host_mkdirp",
+        )),
+        id if id == prelude_ids::HOST_MKDIRP => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "mkdirp",
             "host_mkdirp",
             vec![ref_string_null()],
             vec![],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_LIST_DIR,
-        PreludeEntry::runtime(
-            "__host_list_dir",
+        )),
+        id if id == prelude_ids::HOST_LIST_DIR => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "list_dir",
             "host_list_dir",
             vec![ref_string_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_EXISTS,
-        PreludeEntry::runtime(
-            "__host_exists",
+        )),
+        id if id == prelude_ids::HOST_EXISTS => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "exists",
             "host_exists",
             vec![ref_string_null()],
             vec![ValType::I32],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_ARGS,
-        PreludeEntry::runtime(
-            "__host_args",
+        )),
+        id if id == prelude_ids::HOST_ARGS => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "args",
             "host_args",
             vec![],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_ENV,
-        PreludeEntry::runtime(
-            "__host_env",
+        )),
+        id if id == prelude_ids::HOST_ENV => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "env",
             "host_env",
             vec![ref_string_null()],
             vec![ref_array()],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_CWD,
-        PreludeEntry::runtime(
-            "__host_cwd",
+        )),
+        id if id == prelude_ids::HOST_CWD => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "cwd",
             "host_cwd",
             vec![],
             vec![ref_string()],
-        ),
-    );
-    map.insert(
-        prelude_ids::HOST_EXIT,
-        PreludeEntry::runtime(
-            "__host_exit",
+        )),
+        id if id == prelude_ids::HOST_EXIT => Some(PreludeEntry::runtime(
+            twinkle_name,
             "host",
             "exit",
             "host_exit",
             vec![ValType::I64],
             vec![],
-        ),
-    );
+        )),
+        _ => None,
+    }
+}
+
+pub fn build_prelude_map() -> PreludeMap {
+    let mut map = HashMap::new();
+
+    for spec in registry::all_specs() {
+        let entry = match spec.dispatch {
+            IntrinsicDispatch::Intrinsic => PreludeEntry::intrinsic(spec.twinkle_name),
+            IntrinsicDispatch::Runtime => runtime_entry(spec.func_id, spec.twinkle_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing runtime prelude binding for FuncId({}) '{}'",
+                        spec.func_id.0, spec.twinkle_name
+                    )
+                }),
+        };
+        map.insert(spec.func_id, entry);
+    }
 
     debug_assert!(map.contains_key(&prelude_ids::HOST_EXIT));
     map
@@ -638,6 +387,7 @@ pub fn build_prelude_map() -> PreludeMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intrinsics::registry::{self, IntrinsicDispatch};
 
     #[test]
     fn prelude_map_covers_all_fixed_ids() {
@@ -708,6 +458,25 @@ mod tests {
                     func_id.0
                 );
             }
+        }
+    }
+
+    #[test]
+    fn prelude_map_matches_canonical_registry() {
+        let map = build_prelude_map();
+        assert_eq!(map.len(), registry::all_specs().len());
+
+        for spec in registry::all_specs() {
+            let entry = map
+                .get(&spec.func_id)
+                .unwrap_or_else(|| panic!("missing prelude entry for FuncId({})", spec.func_id.0));
+            assert_eq!(entry.twinkle_name, spec.twinkle_name);
+            assert_eq!(
+                entry.is_runtime_call(),
+                matches!(spec.dispatch, IntrinsicDispatch::Runtime),
+                "dispatch mismatch for FuncId({})",
+                spec.func_id.0
+            );
         }
     }
 }

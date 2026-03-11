@@ -1,3 +1,4 @@
+use crate::intrinsics::registry;
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::types::ty::{
@@ -5,11 +6,7 @@ use crate::types::ty::{
     RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntrinsicDispatch {
-    Runtime,
-    Intrinsic,
-}
+pub use crate::intrinsics::registry::IntrinsicDispatch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntrinsicAbiResult {
@@ -369,41 +366,11 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
 }
 
 pub fn twinkle_name(func_id: FuncId) -> Option<&'static str> {
-    contract(func_id).map(|entry| entry.twinkle_name)
+    registry::spec(func_id).map(|spec| spec.twinkle_name)
 }
 
 pub fn prelude_signature_ids() -> &'static [FuncId] {
-    &[
-        prelude_ids::INT_TO_STRING,
-        prelude_ids::FLOAT_TO_STRING,
-        prelude_ids::BOOL_TO_STRING,
-        prelude_ids::STRING_TO_STRING,
-        prelude_ids::STRING_GET,
-        prelude_ids::STRING_SLICE,
-        prelude_ids::BYTE_TO_INT,
-        prelude_ids::BYTE_FROM_INT,
-        prelude_ids::BYTE_TO_STRING,
-        prelude_ids::CHAR_CODE_AT,
-        prelude_ids::FROM_CHAR_CODE,
-        prelude_ids::FROM_CODE_POINT,
-        prelude_ids::STRING_UTF8_BYTES,
-        prelude_ids::STRING_FROM_UTF8,
-        prelude_ids::INT_FROM_STRING,
-        prelude_ids::FLOAT_FROM_STRING,
-        prelude_ids::RANGE_FROM,
-        prelude_ids::RANGE,
-        prelude_ids::RANGE_STEP,
-        prelude_ids::CELL_NEW,
-        prelude_ids::CELL_GET,
-        prelude_ids::CELL_SET,
-        prelude_ids::CELL_UPDATE,
-        prelude_ids::ITERATOR_NEXT,
-        prelude_ids::ITERATOR_UNFOLD,
-        prelude_ids::VECTOR_PUSH,
-        prelude_ids::VECTOR_GET,
-        prelude_ids::VECTOR_SET,
-        prelude_ids::VECTOR_MAKE,
-    ]
+    registry::signature_func_ids()
 }
 
 pub fn function_signatures() -> Vec<FunctionSignature> {
@@ -470,6 +437,7 @@ fn unfold_step_ty(yield_ty: MonoType, seed_ty: MonoType) -> MonoType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intrinsics::registry;
 
     #[test]
     fn signature_registry_has_unique_names_and_ids() {
@@ -479,6 +447,28 @@ mod tests {
             let entry = contract(*func_id).expect("missing contract");
             assert!(names.insert(entry.twinkle_name));
             assert!(ids.insert(entry.func_id.0));
+        }
+    }
+
+    #[test]
+    fn signature_ids_match_canonical_registry() {
+        let expected_ids: Vec<_> = registry::all_specs()
+            .iter()
+            .filter(|spec| spec.include_in_signature_registry)
+            .map(|spec| spec.func_id)
+            .collect();
+        assert_eq!(prelude_signature_ids(), expected_ids.as_slice());
+    }
+
+    #[test]
+    fn canonical_registry_matches_contract_name_and_dispatch() {
+        for spec in registry::all_specs()
+            .iter()
+            .filter(|spec| spec.include_in_contract_registry)
+        {
+            let entry = contract(spec.func_id).expect("missing contract");
+            assert_eq!(entry.twinkle_name, spec.twinkle_name);
+            assert_eq!(entry.dispatch, spec.dispatch);
         }
     }
 }
