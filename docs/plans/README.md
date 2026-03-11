@@ -178,7 +178,6 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 
 | Stage | Description | Status | Details |
 |-------|-------------|--------|---------|
-| 9.5 | Monomorphization (historical context) | Done | [../internals/monomorphization.md](../internals/monomorphization.md) |
 | 10 | Self-Hosted Compiler (`boot/`) | In Progress | [self-hosting.md](self-hosting.md) |
 | Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
 
