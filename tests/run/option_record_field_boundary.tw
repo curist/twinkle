@@ -1,0 +1,38 @@
+// Expected output:
+//   alice: some
+//   bob: none
+//   alice: none
+//   bob: some
+
+type Entry = .{
+  name: String,
+  value: Option<Int>,
+}
+
+fn show(e: Entry) {
+  label := case e.value {
+    .Some(_) => "some",
+    .None => "none",
+  }
+  println("${e.name}: ${label}")
+}
+
+fn set_value(e: Entry, v: Option<Int>) Entry {
+  Entry.{ name: e.name, value: v }
+}
+
+fn main() {
+  a := Entry.{ name: "alice", value: .Some(1) }
+  b := Entry.{ name: "bob", value: .None }
+  show(a)
+  show(b)
+
+  // Cross function boundary: update record with option field
+  a2 := set_value(a, .None)
+  b2 := set_value(b, .Some(99))
+  show(a2)
+  show(b2)
+
+}
+
+main()

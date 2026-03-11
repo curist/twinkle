@@ -220,3 +220,63 @@ fn run_wasm_option_assign_boundary() {
 fn run_wasm_option_assign_match_boundary() {
     check("tests/run/option_assign_match_boundary.tw");
 }
+
+#[test]
+fn run_wasm_closure_capture_cross_module2() {
+    check("tests/run/closure_capture_cross_module2/main.tw");
+}
+
+#[test]
+fn run_wasm_result_assign_boundary() {
+    check("tests/run/result_assign_boundary.tw");
+}
+
+#[test]
+fn run_wasm_option_generic_boundary() {
+    check("tests/run/option_generic_boundary.tw");
+}
+
+#[test]
+fn run_wasm_option_record_field_boundary() {
+    check("tests/run/option_record_field_boundary.tw");
+}
+
+#[test]
+fn run_wasm_result_match_reassign_boundary() {
+    check("tests/run/result_match_reassign_boundary.tw");
+}
+
+#[test]
+fn run_wasm_option_branch_merge_boundary() {
+    check("tests/run/option_branch_merge_boundary.tw");
+}
+
+#[test]
+fn run_wasm_sum_cross_module_record() {
+    check("tests/run/sum_cross_module_record/main.tw");
+}
+
+#[test]
+fn run_wasm_sum_closure_capture_option_record() {
+    check("tests/run/sum_closure_capture_option_record/main.tw");
+}
+
+#[test]
+fn run_wasm_option_match_branch_reassign() {
+    check("tests/run/option_match_branch_reassign.tw");
+}
+
+#[test]
+fn run_wasm_sum_function_roundtrip() {
+    check("tests/run/sum_function_roundtrip.tw");
+}
+
+#[test]
+fn run_wasm_sum_record_field_roundtrip() {
+    check("tests/run/sum_record_field_roundtrip.tw");
+}
+
+#[test]
+fn run_wasm_sum_closure_return_boundary() {
+    check("tests/run/sum_closure_return_boundary.tw");
+}

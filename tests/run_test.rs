@@ -256,6 +256,61 @@ fn option_assign_match_boundary() {
 }
 
 #[test]
+fn result_assign_boundary() {
+    check("tests/run/result_assign_boundary.tw");
+}
+
+#[test]
+fn option_generic_boundary() {
+    check("tests/run/option_generic_boundary.tw");
+}
+
+#[test]
+fn option_record_field_boundary() {
+    check("tests/run/option_record_field_boundary.tw");
+}
+
+#[test]
+fn result_match_reassign_boundary() {
+    check("tests/run/result_match_reassign_boundary.tw");
+}
+
+#[test]
+fn option_branch_merge_boundary() {
+    check("tests/run/option_branch_merge_boundary.tw");
+}
+
+#[test]
+fn sum_cross_module_record() {
+    check("tests/run/sum_cross_module_record/main.tw");
+}
+
+#[test]
+fn sum_closure_capture_option_record() {
+    check("tests/run/sum_closure_capture_option_record/main.tw");
+}
+
+#[test]
+fn option_match_branch_reassign() {
+    check("tests/run/option_match_branch_reassign.tw");
+}
+
+#[test]
+fn sum_function_roundtrip() {
+    check("tests/run/sum_function_roundtrip.tw");
+}
+
+#[test]
+fn sum_record_field_roundtrip() {
+    check("tests/run/sum_record_field_roundtrip.tw");
+}
+
+#[test]
+fn sum_closure_return_boundary() {
+    check("tests/run/sum_closure_return_boundary.tw");
+}
+
+#[test]
 fn result_shorthand() {
     check("tests/run/result_shorthand.tw");
 }

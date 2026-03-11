@@ -1,0 +1,13 @@
+pub type Item = .{
+  name: String,
+  tag: Option<String>,
+  priority: Result<Int, String>,
+}
+
+pub fn make(name: String) Item {
+  Item.{ name: name, tag: .None, priority: .Err("unset") }
+}
+
+pub fn make_full(name: String, tag: String, pri: Int) Item {
+  Item.{ name: name, tag: .Some(tag), priority: .Ok(pri) }
+}

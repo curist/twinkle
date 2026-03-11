@@ -1,0 +1,77 @@
+// Expected output:
+//   roundtrip some: 42
+//   roundtrip none
+//   chain some: hello
+//   chain none
+//   nested some(some(5))
+//   nested none
+//   nested none
+
+// Option<T> and Result<T,E> values passing through multiple function
+// boundaries — tests ABI boundary conversion at call/return sites.
+
+fn identity_option(o: Option<Int>) Option<Int> { o }
+
+fn chain_option(a: Option<String>, b: Option<String>) Option<String> {
+  case a {
+    .Some(_) => a,
+    .None => b,
+  }
+}
+
+fn nest_option(o: Option<Int>) Option<Option<Int>> {
+  case o {
+    .Some(_) => .Some(o),
+    .None => .None,
+  }
+}
+
+fn show_nested(o: Option<Option<Int>>) {
+  case o {
+    .Some(inner) => {
+      case inner {
+        .Some(n) => println("nested some(some(${n}))"),
+        .None => println("nested some(none)"),
+      }
+    },
+    .None => println("nested none"),
+  }
+}
+
+fn main() {
+  // Simple roundtrip
+  a: Option<Int> = .Some(42)
+  b := identity_option(a)
+  case b {
+    .Some(n) => println("roundtrip some: ${n}"),
+    .None => println("roundtrip none"),
+  }
+
+  c := identity_option(.None)
+  case c {
+    .Some(n) => println("roundtrip some: ${n}"),
+    .None => println("roundtrip none"),
+  }
+
+  // Chain through multiple function calls
+  x: Option<String> = .None
+  y: Option<String> = .Some("hello")
+  r := chain_option(x, y)
+  case r {
+    .Some(s) => println("chain some: ${s}"),
+    .None => println("chain none"),
+  }
+
+  r2 := chain_option(.None, .None)
+  case r2 {
+    .Some(s) => println("chain some: ${s}"),
+    .None => println("chain none"),
+  }
+
+  // Nested option
+  show_nested(nest_option(.Some(5)))
+  show_nested(nest_option(.None))
+  show_nested(.None)
+}
+
+main()

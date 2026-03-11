@@ -1,0 +1,34 @@
+// Expected output:
+//   some: hello
+//   none
+//   some: 42
+//   none
+
+fn unwrap_or_show<T>(o: Option<T>, default_msg: String, show: fn(T) String) {
+  case o {
+    .Some(v) => println("some: ${show(v)}"),
+    .None => println(default_msg),
+  }
+}
+
+fn identity<T>(x: T) T { x }
+
+fn main() {
+  // Option<String> through generic function boundary
+  s: Option<String> = .Some("hello")
+  unwrap_or_show(s, "none", fn(x: String) String { x })
+
+  s = .None
+  unwrap_or_show(s, "none", fn(x: String) String { x })
+
+  // Option<Int> through generic function + identity
+  v: Option<Int> = .Some(42)
+  n := identity(v)
+  unwrap_or_show(n, "none", fn(x: Int) String { "${x}" })
+
+  v2: Option<Int> = .None
+  n2 := identity(v2)
+  unwrap_or_show(n2, "none", fn(x: Int) String { "${x}" })
+}
+
+main()

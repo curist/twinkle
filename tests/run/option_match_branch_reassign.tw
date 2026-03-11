@@ -1,0 +1,53 @@
+// Expected output:
+//   step1: none
+//   step2: some 42
+//   step3: some 42
+//   step4: none
+
+// Match inside branch arms with AAssign — tests SumRepr flow merge.
+// Each branch may reassign the same local with different Option variants,
+// and the value must be correct after the branch merge.
+
+fn parse(s: String) Option<Int> {
+  case s {
+    "yes" => .Some(42),
+    _ => .None,
+  }
+}
+
+fn show(label: String, o: Option<Int>) {
+  case o {
+    .Some(n) => println("${label}: some ${n}"),
+    .None => println("${label}: none"),
+  }
+}
+
+fn main() {
+  result: Option<Int> = .None
+  show("step1", result)
+
+  // Branch with match inside that reassigns result
+  input := "yes"
+  case parse(input) {
+    .Some(n) => {
+      result = .Some(n)
+    },
+    .None => {},
+  }
+  show("step2", result)
+
+  // Another branch — result should survive
+  case parse("no") {
+    .Some(n) => {
+      result = .Some(n + 100)
+    },
+    .None => {},
+  }
+  show("step3", result)
+
+  // Direct reassignment
+  result = .None
+  show("step4", result)
+}
+
+main()

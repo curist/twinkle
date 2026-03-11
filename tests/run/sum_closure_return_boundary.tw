@@ -1,0 +1,55 @@
+// Expected output:
+//   factory some: 10
+//   factory none
+//   composed some: hello world
+//   composed none
+
+// Closures returning Option/Result values — tests closure-call return
+// boundary for sum types.
+
+fn make_factory(threshold: Int) fn(Int) Option<Int> {
+  fn(x: Int) Option<Int> {
+    if x >= threshold { .Some(x) } else { .None }
+  }
+}
+
+fn compose_option(
+  first: fn(String) Option<String>,
+  second: fn(String) Option<String>,
+  input: String,
+) Option<String> {
+  case first(input) {
+    .Some(v) => second(v),
+    .None => .None,
+  }
+}
+
+fn main() {
+  factory := make_factory(10)
+
+  case factory(10) {
+    .Some(n) => println("factory some: ${n}"),
+    .None => println("factory none"),
+  }
+  case factory(5) {
+    .Some(n) => println("factory some: ${n}"),
+    .None => println("factory none"),
+  }
+
+  // Compose closures that return options
+  add_prefix := fn(s: String) Option<String> {
+    if s.len() > 0 { .Some("hello ${s}") } else { .None }
+  }
+  identity := fn(s: String) Option<String> { .Some(s) }
+
+  case compose_option(add_prefix, identity, "world") {
+    .Some(s) => println("composed some: ${s}"),
+    .None => println("composed none"),
+  }
+  case compose_option(add_prefix, identity, "") {
+    .Some(s) => println("composed some: ${s}"),
+    .None => println("composed none"),
+  }
+}
+
+main()

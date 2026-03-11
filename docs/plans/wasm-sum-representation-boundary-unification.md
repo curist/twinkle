@@ -262,24 +262,37 @@ Mitigation:
 
 ### Phase 3: Match and Flow-Merge Normalization
 
-- [ ] Update match lowering in [src/codegen/emit.rs](../../src/codegen/emit.rs):
+- [x] Update match lowering in [src/codegen/emit.rs](../../src/codegen/emit.rs):
   choose typed vs erased pattern path from unified sum repr metadata.
-- [ ] Ensure branch/loop merge logic reconciles sum repr metadata consistently,
+  (`atom_typed_general_option` → `local_typed_option` → `local_sum_repr` chain.)
+- [x] Ensure branch/loop merge logic reconciles sum repr metadata consistently,
   not only `MonoType`.
-- [ ] Add regressions for branch merge + `AAssign` + `match` combinations.
+  (`push_flow_typed_option_binding` now delegates to `push_flow_sum_repr_binding`.)
+- [x] Add regressions for branch merge + `AAssign` + `match` combinations.
+  Added: `option_match_branch_reassign.tw` (match inside branch arms with reassignment).
 
 ### Phase 4: ABI Boundary Hardening
 
-- [ ] Audit direct-call and closure-call boundaries in [src/codegen/emit.rs](../../src/codegen/emit.rs)
+- [x] Audit direct-call and closure-call boundaries in [src/codegen/emit.rs](../../src/codegen/emit.rs)
   for implicit sum casts.
-- [ ] Ensure function boundary paths explicitly convert sum repr where needed.
-- [ ] Audit record literal/get/update paths to ensure sum-typed fields cross boundaries explicitly.
+  All call paths pass `bind_ty` which drives coercion; `emit_sum_local_to_erased` handles
+  typed→erased at the local-load site before values reach call boundaries.
+- [x] Ensure function boundary paths explicitly convert sum repr where needed.
+  Added regression tests: `sum_function_roundtrip.tw` (Option through multiple function
+  roundtrips, nested options), `sum_closure_return_boundary.tw` (closures returning options).
+- [x] Audit record literal/get/update paths to ensure sum-typed fields cross boundaries explicitly.
+  Added: `sum_record_field_roundtrip.tw` (records with Option/Result fields through
+  function boundaries, field swap pattern).
 
 ### Phase 5: Verification and Cleanup
 
-- [ ] Add a debug verifier pass (or debug assertions) in [src/codegen/emit.rs](../../src/codegen/emit.rs)
+- [x] Add a debug verifier pass (or debug assertions) in [src/codegen/emit.rs](../../src/codegen/emit.rs)
   to reject illegal direct sum boundary casts.
-- [ ] Remove obsolete emergency guards that are superseded by unified repr + conversion APIs.
-- [ ] Re-run and keep green:
-  `run_wasm_test`, `typed_closure_test`, and targeted boundary fixtures.
-- [ ] Update plan status notes in this document with completed checkpoints.
+  Added `debug_assert!` in `emit_sum_local_to_erased` verifying SumRepr/mono inference consistency.
+- [x] Remove obsolete emergency guards that are superseded by unified repr + conversion APIs.
+  No obsolete guards found — the two inline checks in `emit_local_atom` were consolidated
+  into `emit_sum_local_to_erased`, and AInit/AAssign duplicated logic consolidated into
+  `can_preserve_typed_sum`.
+- [x] Re-run and keep green:
+  `run_wasm_test` (55 tests), `typed_closure_test` (17 tests), all interpreter tests (93 tests).
+- [x] Update plan status notes in this document with completed checkpoints.

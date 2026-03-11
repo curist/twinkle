@@ -1,0 +1,30 @@
+// Expected output:
+//   ok: 42
+//   err: bad
+//   ok: 99
+//   err: fail
+
+fn show(r: Result<Int, String>) {
+  case r {
+    .Ok(n) => println("ok: ${n}"),
+    .Err(e) => println("err: ${e}"),
+  }
+}
+
+fn main() {
+  // AAssign path: move typed Result through reassignment.
+  dst: Result<Int, String> = .Ok(42)
+  show(dst)
+
+  dst = .Err("bad")
+  show(dst)
+
+  // Reassign from a function return.
+  dst = .Ok(99)
+  show(dst)
+
+  dst = .Err("fail")
+  show(dst)
+}
+
+main()

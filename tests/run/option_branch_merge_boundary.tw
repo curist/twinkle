@@ -1,0 +1,45 @@
+// Expected output:
+//   a: some 10
+//   b: none
+//   c: some 99
+//   d: none
+
+// Option values flowing through if/else branches and being consumed after merge.
+// This stresses branch-merge representation reconciliation.
+
+fn pick(flag: Bool, val: Int) Option<Int> {
+  result: Option<Int> = if flag {
+    .Some(val)
+  } else {
+    .None
+  }
+  result
+}
+
+fn show(label: String, o: Option<Int>) {
+  case o {
+    .Some(n) => println("${label}: some ${n}"),
+    .None => println("${label}: none"),
+  }
+}
+
+fn main() {
+  // Direct if/else producing Option
+  show("a", pick(true, 10))
+  show("b", pick(false, 10))
+
+  // Reassignment after branch merge
+  x: Option<Int> = .None
+  if true {
+    x = .Some(99)
+  }
+  show("c", x)
+
+  y: Option<Int> = .Some(1)
+  if true {
+    y = .None
+  }
+  show("d", y)
+}
+
+main()

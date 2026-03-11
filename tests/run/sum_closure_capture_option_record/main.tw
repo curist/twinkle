@@ -1,0 +1,65 @@
+// Expected output:
+//   found: b (tag=hello, pri=2)
+//   not found
+//   high priority: b
+
+// Closures capturing variables used to match on Option/Result fields
+// inside cross-module records — exercises closure capture + sum boundary
+// at module boundaries simultaneously.
+
+use defs
+
+fn find_by_tag(items: Vector<defs.Item>, t: String) defs.Item? {
+  items.find(fn(x: defs.Item) Bool {
+    case x.tag {
+      .Some(s) => s == t,
+      .None => false,
+    }
+  })
+}
+
+fn find_high_priority(items: Vector<defs.Item>, threshold: Int) defs.Item? {
+  items.find(fn(x: defs.Item) Bool {
+    case x.priority {
+      .Ok(p) => p >= threshold,
+      .Err(_) => false,
+    }
+  })
+}
+
+fn show_item(item: defs.Item) String {
+  tag_str := case item.tag {
+    .Some(t) => "tag=${t}",
+    .None => "tag=none",
+  }
+  pri_str := case item.priority {
+    .Ok(p) => "pri=${p}",
+    .Err(e) => "pri=err:${e}",
+  }
+  "${item.name} (${tag_str}, ${pri_str})"
+}
+
+fn main() {
+  items: Vector<defs.Item> = [
+    defs.make("a"),
+    defs.make_full("b", "hello", 2),
+    defs.make_full("c", "world", 1),
+  ]
+
+  case find_by_tag(items, "hello") {
+    .Some(item) => println("found: ${show_item(item)}"),
+    .None => println("not found"),
+  }
+
+  case find_by_tag(items, "missing") {
+    .Some(item) => println("found: ${show_item(item)}"),
+    .None => println("not found"),
+  }
+
+  case find_high_priority(items, 2) {
+    .Some(item) => println("high priority: ${item.name}"),
+    .None => println("no high priority"),
+  }
+}
+
+main()

@@ -47,14 +47,54 @@ pub enum ValueRepr {
     },
 }
 
+/// Physical runtime representation of a sum-like value (Option, Result, etc.).
+///
+/// Semantic `MonoType` tells us what the value *is*; `SumRepr` tells us what
+/// Wasm struct layout it *lives in* at runtime. These can differ — for example
+/// a local may hold `Option<Int>` semantically but be stored as an erased
+/// `$Variant` struct when it crosses a function boundary.
+///
+/// All typed/erased boundary conversions should consult `SumRepr` rather than
+/// guessing from `MonoType` alone.
+///
+/// Each typed variant stores the *full* `MonoType` (e.g. `Option<Int>`, not
+/// just `Int`) so callers can reference the complete type without reconstruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SumRepr {
+    /// Universal erased `$Variant` struct (type_id, variant_id, payload_array).
+    ErasedVariant,
+    /// Typed `Option<T>` struct with concrete payload.
+    /// Stores the full `Option<T>` MonoType.
+    TypedOption(MonoType),
+    /// Typed `Result<T, E>` struct with concrete payload fields.
+    /// Stores the full `Result<T, E>` MonoType.
+    TypedResult(MonoType),
+}
+
+impl SumRepr {
+    /// Returns the full semantic `MonoType` this repr corresponds to.
+    pub fn mono_type(&self) -> Option<&MonoType> {
+        match self {
+            SumRepr::ErasedVariant => None,
+            SumRepr::TypedOption(mono) | SumRepr::TypedResult(mono) => Some(mono),
+        }
+    }
+
+    /// Returns true if this repr is a typed (non-erased) specialization.
+    pub fn is_typed(&self) -> bool {
+        !matches!(self, SumRepr::ErasedVariant)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LocalBackendInfo {
     pub repr: Option<ValueRepr>,
     pub iterator_state: Option<IteratorStateInfo>,
     pub iterator_next_state: Option<IteratorStateInfo>,
     pub iter_item_state: Option<IteratorStateInfo>,
-    /// Tracks locals that hold a typed Option<T> or Result<T, E> value.
-    pub typed_option: Option<MonoType>,
+    /// Physical sum representation for this local. Replaces the old
+    /// `typed_option` field with an explicit representation enum.
+    pub sum_repr: Option<SumRepr>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -279,14 +319,34 @@ impl<'a> EmitCtx<'a> {
         &self.specialized_types.string_literals
     }
 
-    pub fn local_typed_option(&self, local_id: LocalId) -> Option<&MonoType> {
+    /// Query the physical sum representation for a local.
+    pub fn local_sum_repr(&self, local_id: LocalId) -> Option<&SumRepr> {
         self.local_backend
             .get(&local_id)
-            .and_then(|info| info.typed_option.as_ref())
+            .and_then(|info| info.sum_repr.as_ref())
     }
 
+    /// Set the physical sum representation for a local.
+    pub fn set_local_sum_repr(&mut self, local_id: LocalId, repr: Option<SumRepr>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.sum_repr = repr;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    /// Compatibility shim: returns the full MonoType if the local holds a
+    /// typed Option<T> or Result<T,E> sum repr. Callers should migrate to
+    /// `local_sum_repr()` over time.
+    pub fn local_typed_option(&self, local_id: LocalId) -> Option<&MonoType> {
+        self.local_sum_repr(local_id).and_then(|r| r.mono_type())
+    }
+
+    /// Compatibility shim: sets a typed Option/Result sum repr from a full
+    /// MonoType. Callers should migrate to `set_local_sum_repr()` over time.
     pub fn set_local_typed_option(&mut self, local_id: LocalId, mono: Option<MonoType>) {
-        self.local_backend.entry(local_id).or_default().typed_option = mono;
+        let repr = mono.map(|m| sum_repr_from_mono(&m));
+        self.set_local_sum_repr(local_id, repr);
     }
 
     pub fn setup_locals(&mut self, func: &AnfFunctionDef) -> Vec<ValType> {
@@ -600,6 +660,21 @@ impl<'a> EmitCtx<'a> {
 
     pub fn restore_flow_value_repr_binding(&mut self, local: LocalId, prev: Option<ValueRepr>) {
         self.set_local_value_repr(local, prev);
+    }
+
+    pub fn push_flow_sum_repr_binding(
+        &mut self,
+        local: LocalId,
+        repr: Option<SumRepr>,
+        restores: &mut Vec<(LocalId, Option<SumRepr>)>,
+    ) {
+        let prev = self.local_sum_repr(local).cloned();
+        self.set_local_sum_repr(local, repr);
+        restores.push((local, prev));
+    }
+
+    pub fn restore_flow_sum_repr_binding(&mut self, local: LocalId, prev: Option<SumRepr>) {
+        self.set_local_sum_repr(local, prev);
     }
 
     pub fn push_flow_iterator_binding(
@@ -1464,6 +1539,21 @@ fn local_backend_entry_empty(info: &LocalBackendInfo) -> bool {
         && info.iterator_state.is_none()
         && info.iterator_next_state.is_none()
         && info.iter_item_state.is_none()
+        && info.sum_repr.is_none()
+}
+
+/// Derive a `SumRepr` from a full `MonoType` (e.g. `Option<Int>` → `TypedOption(Option<Int>)`).
+/// Returns `ErasedVariant` for non-Option/non-Result or unrecognized sum types.
+pub fn sum_repr_from_mono(mono: &MonoType) -> SumRepr {
+    match mono {
+        MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
+            SumRepr::TypedOption(mono.clone())
+        }
+        MonoType::Named { type_id, args: _ } if *type_id == RESULT_TYPE_ID => {
+            SumRepr::TypedResult(mono.clone())
+        }
+        _ => SumRepr::ErasedVariant,
+    }
 }
 
 pub(crate) fn value_repr_from_mono(
@@ -2848,5 +2938,89 @@ mod tests {
             ctx.infer_let_op_mono_for_emit(LocalId(1), &op),
             Some(MonoType::Void)
         );
+    }
+
+    // --- SumRepr tests ---
+
+    #[test]
+    fn sum_repr_from_option_is_typed_option() {
+        let mono = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Int],
+        };
+        let repr = sum_repr_from_mono(&mono);
+        assert!(matches!(repr, SumRepr::TypedOption(_)));
+        assert!(repr.is_typed());
+        assert_eq!(repr.mono_type(), Some(&mono));
+    }
+
+    #[test]
+    fn sum_repr_from_result_is_typed_result() {
+        let mono = MonoType::Named {
+            type_id: RESULT_TYPE_ID,
+            args: vec![MonoType::String, MonoType::Int],
+        };
+        let repr = sum_repr_from_mono(&mono);
+        assert!(matches!(repr, SumRepr::TypedResult(_)));
+        assert!(repr.is_typed());
+        assert_eq!(repr.mono_type(), Some(&mono));
+    }
+
+    #[test]
+    fn sum_repr_from_plain_type_is_erased() {
+        let repr = sum_repr_from_mono(&MonoType::Int);
+        assert!(matches!(repr, SumRepr::ErasedVariant));
+        assert!(!repr.is_typed());
+        assert_eq!(repr.mono_type(), None);
+    }
+
+    #[test]
+    fn local_typed_option_shim_roundtrips_through_sum_repr() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let option_int = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Int],
+        };
+
+        // Set via compatibility shim
+        ctx.set_local_typed_option(LocalId(10), Some(option_int.clone()));
+
+        // Read via compatibility shim
+        assert_eq!(ctx.local_typed_option(LocalId(10)), Some(&option_int));
+
+        // Read via new API
+        assert!(matches!(
+            ctx.local_sum_repr(LocalId(10)),
+            Some(SumRepr::TypedOption(_))
+        ));
+
+        // Clear
+        ctx.set_local_typed_option(LocalId(10), None);
+        assert_eq!(ctx.local_typed_option(LocalId(10)), None);
+        assert_eq!(ctx.local_sum_repr(LocalId(10)), None);
+    }
+
+    #[test]
+    fn set_local_sum_repr_cleans_up_empty_entries() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let repr = SumRepr::TypedOption(MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::String],
+        });
+
+        ctx.set_local_sum_repr(LocalId(20), Some(repr));
+        assert!(ctx.local_backend.contains_key(&LocalId(20)));
+
+        ctx.set_local_sum_repr(LocalId(20), None);
+        // Entry should be cleaned up since all fields are None
+        assert!(!ctx.local_backend.contains_key(&LocalId(20)));
     }
 }

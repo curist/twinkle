@@ -1,0 +1,59 @@
+// Expected output:
+//   a: value=some(1) error=ok(good)
+//   b: value=none error=err(bad)
+//   get_value a: 1
+//   get_value b: -1
+//   swapped a: value=none error=err(bad)
+//   swapped b: value=some(1) error=ok(good)
+
+// Records with sum-typed fields crossing function boundaries and being
+// stored/retrieved — tests record literal/get/update ABI for sum fields.
+
+type Entry = .{
+  name: String,
+  value: Option<Int>,
+  error: Result<String, String>,
+}
+
+fn show(label: String, e: Entry) {
+  val := case e.value {
+    .Some(n) => "some(${n})",
+    .None => "none",
+  }
+  err := case e.error {
+    .Ok(s) => "ok(${s})",
+    .Err(s) => "err(${s})",
+  }
+  println("${label}: value=${val} error=${err}")
+}
+
+fn get_value_or(e: Entry, default: Int) Int {
+  case e.value {
+    .Some(n) => n,
+    .None => default,
+  }
+}
+
+fn swap_fields(a: Entry, b: Entry) Entry {
+  // Build new entry using fields from b but name from a
+  Entry.{ name: a.name, value: b.value, error: b.error }
+}
+
+fn main() {
+  a := Entry.{ name: "a", value: .Some(1), error: .Ok("good") }
+  b := Entry.{ name: "b", value: .None, error: .Err("bad") }
+
+  show("a", a)
+  show("b", b)
+
+  println("get_value a: ${get_value_or(a, -1)}")
+  println("get_value b: ${get_value_or(b, -1)}")
+
+  // Swap fields across function boundary
+  sa := swap_fields(a, b)
+  sb := swap_fields(b, a)
+  show("swapped a", sa)
+  show("swapped b", sb)
+}
+
+main()

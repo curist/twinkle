@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
-    EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, atom_iterator_state,
+    EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, SumRepr, atom_iterator_state,
     is_concrete_mono_type, is_typed_general_option_candidate, iterator_state_from_unfold_args,
     mono_to_symbol_key, mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
-    resolve_unfold_step_types, typed_cell_struct_sym, typed_closure_struct_sym,
+    resolve_unfold_step_types, sum_repr_from_mono, typed_cell_struct_sym, typed_closure_struct_sym,
     typed_closurefunc_sym, typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym,
     typed_iterator_state_sym, typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
 };
@@ -888,22 +888,27 @@ fn emit_let_expr(
 fn push_flow_typed_option_binding(
     local: crate::ir::LocalId,
     mono: Option<MonoType>,
-    restores: &mut Vec<(crate::ir::LocalId, Option<MonoType>)>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<SumRepr>)>,
     ctx: &mut EmitCtx<'_>,
 ) {
-    let prev = ctx.local_typed_option(local).cloned();
-    ctx.set_local_typed_option(local, mono);
-    restores.push((local, prev));
+    let repr = mono.map(|m| sum_repr_from_mono(&m));
+    ctx.push_flow_sum_repr_binding(local, repr, restores);
 }
 
 fn restore_flow_typed_option_binding(
     local: crate::ir::LocalId,
-    prev: Option<MonoType>,
+    prev: Option<SumRepr>,
     ctx: &mut EmitCtx<'_>,
 ) {
-    ctx.set_local_typed_option(local, prev);
+    ctx.restore_flow_sum_repr_binding(local, prev);
 }
 
+/// Check if a Wasm local's physical type can hold a typed option/result struct.
+///
+/// Sum-boundary rule: a typed Option/Result struct can only be stored in a local
+/// whose Wasm type is either `Anyref` (universal) or a matching named ref type
+/// (e.g. `(ref null $option__i64)`). Storing in a mismatched ref type would
+/// cause a runtime cast failure.
 fn local_can_store_typed_option(
     local: crate::ir::LocalId,
     mono: &MonoType,
@@ -922,6 +927,21 @@ fn local_can_store_typed_option(
     }
 }
 
+/// Check if a value being stored into a local can keep typed sum repr without
+/// needing coercion to the local's declared Wasm type.
+///
+/// Returns true when both the destination local and source value agree on the
+/// same typed sum representation (e.g. both hold `Option<Int>` as a typed struct).
+fn can_preserve_typed_sum(dest: crate::ir::LocalId, value: &Atom, ctx: &EmitCtx<'_>) -> bool {
+    let dst_repr = ctx.local_sum_repr(dest);
+    let value_typed_option = atom_typed_general_option(value, ctx);
+    match (dst_repr, value_typed_option.as_ref()) {
+        (Some(SumRepr::TypedOption(dst_mono)), Some(src_mono))
+        | (Some(SumRepr::TypedResult(dst_mono)), Some(src_mono)) => dst_mono == src_mono,
+        _ => false,
+    }
+}
+
 fn emit_let_binding(
     local: crate::ir::LocalId,
     op: &AnfOp,
@@ -936,16 +956,8 @@ fn emit_let_binding(
     match op {
         AnfOp::AInit { value } => {
             let global_sym = ctx.module_global_sym(local).cloned();
-            let value_typed_option = atom_typed_general_option(value, ctx);
-            let preserve_typed_option = ctx
-                .local_typed_option(local)
-                .zip(value_typed_option.as_ref())
-                .is_some_and(|(dst, src)| dst == src);
-            let expected = if preserve_typed_option {
-                None
-            } else {
-                Some(&bind_ty)
-            };
+            let preserve = can_preserve_typed_sum(local, value, ctx);
+            let expected = if preserve { None } else { Some(&bind_ty) };
             let mut instrs = emit_atom(value, expected, ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             if let Some(global_sym) = global_sym {
@@ -962,16 +974,8 @@ fn emit_let_binding(
             let target_global_sym = ctx.module_global_sym(*target).cloned();
 
             if let Some((target_idx, target_ty)) = ctx.local(*target).cloned() {
-                let value_typed_option = atom_typed_general_option(value, ctx);
-                let preserve_typed_option = ctx
-                    .local_typed_option(*target)
-                    .zip(value_typed_option.as_ref())
-                    .is_some_and(|(dst, src)| dst == src);
-                let expected = if preserve_typed_option {
-                    None
-                } else {
-                    Some(&target_ty)
-                };
+                let preserve = can_preserve_typed_sum(*target, value, ctx);
+                let expected = if preserve { None } else { Some(&target_ty) };
                 instrs.extend(emit_atom(value, expected, ctx));
                 instrs.push(Instr::LocalSet(target_idx));
                 if let Some(global_sym) = target_global_sym.clone() {
@@ -2196,50 +2200,35 @@ fn emit_atom(atom: &Atom, expected_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>) 
     }
 }
 
+/// Emit instructions to load a local and coerce it to the expected Wasm type.
+///
+/// Sum-boundary conversions happen here: if a local holds a typed Option/Result
+/// struct (tracked via `SumRepr`) but the consumer expects an erased `$Variant`
+/// or `anyref`, this function emits the typed→erased conversion. Conversely,
+/// if the local is `anyref` but context proves it's a typed sum, direct struct
+/// access may be used.
 fn emit_local_atom(
     local_id: crate::ir::LocalId,
     expected_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     if let Some((idx, local_ty)) = ctx.local(local_id).cloned() {
-        if let Some(expected) = expected_ty {
-            if (is_variant_ref_type(expected) || *expected == ValType::Anyref)
-                && local_ty == ValType::Anyref
-            {
-                if let Some(option_mono) = ctx
-                    .infer_atom_mono(&Atom::ALocal(local_id))
-                    .filter(is_typed_general_option_candidate)
-                {
-                    let target = if *expected == ValType::Anyref {
-                        &ref_variant_null()
-                    } else {
-                        expected
-                    };
-                    return emit_anyref_option_or_variant_local_to_variant(
-                        idx,
-                        &option_mono,
-                        target,
-                        ctx,
-                    );
-                }
-            }
-        }
-
-        // Typed option locals need conversion to erased Variant when consumed
-        // outside of a match context (expected_ty is Anyref or Variant ref).
-        // This check must happen before the local_ty == expected short-circuit,
-        // since typed option locals are stored as anyref.
+        // Sum-boundary conversion: when a consumer expects an erased Variant or
+        // Anyref, check if this local holds a typed sum value that needs conversion.
+        // Uses SumRepr metadata first (authoritative), then falls back to mono
+        // inference for locals whose SumRepr wasn't set (e.g. anyref locals with
+        // inferred typed option content).
         if let Some(expected) = expected_ty {
             if is_variant_ref_type(expected) || *expected == ValType::Anyref {
-                if let Some(mono) = ctx.local_typed_option(local_id).cloned() {
-                    if is_typed_general_option_candidate(&mono) {
-                        let target = if *expected == ValType::Anyref {
-                            &ref_variant_null()
-                        } else {
-                            expected
-                        };
-                        return emit_typed_general_option_local_to_variant(idx, &mono, target, ctx);
-                    }
+                let target = if *expected == ValType::Anyref {
+                    &ref_variant_null()
+                } else {
+                    expected
+                };
+                if let Some(instrs) =
+                    emit_sum_local_to_erased(local_id, idx, &local_ty, target, ctx)
+                {
+                    return instrs;
                 }
             }
         }
@@ -2259,6 +2248,67 @@ fn emit_local_atom(
     }
 
     panic!("missing local mapping for L{}", local_id.0);
+}
+
+/// Centralized sum→erased conversion dispatcher for locals.
+///
+/// Checks `SumRepr` metadata first. If the local has a known typed sum repr,
+/// emits direct typed→erased conversion. If SumRepr is not set but mono
+/// inference suggests a typed option candidate (ambiguous anyref local),
+/// emits a runtime-dispatched conversion that handles both erased and typed
+/// representations.
+///
+/// Returns `None` if no sum conversion is needed.
+fn emit_sum_local_to_erased(
+    local_id: crate::ir::LocalId,
+    local_idx: u32,
+    local_ty: &ValType,
+    target: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Option<Vec<Instr>> {
+    // Path 1: SumRepr metadata confirms local is typed → direct conversion.
+    if let Some(sum_repr) = ctx.local_sum_repr(local_id).cloned() {
+        match &sum_repr {
+            SumRepr::TypedOption(mono) | SumRepr::TypedResult(mono) => {
+                if is_typed_general_option_candidate(mono)
+                    && local_can_store_typed_option(local_id, mono, ctx)
+                {
+                    // Debug: verify SumRepr and mono inference agree.
+                    debug_assert!(
+                        ctx.infer_atom_mono(&Atom::ALocal(local_id))
+                            .as_ref()
+                            .is_none_or(|inferred| inferred == mono),
+                        "SumRepr/mono inference mismatch for L{}: repr={:?} inferred={:?}",
+                        local_id.0,
+                        mono,
+                        ctx.infer_atom_mono(&Atom::ALocal(local_id)),
+                    );
+                    return Some(emit_typed_general_option_local_to_variant(
+                        local_idx, mono, target, ctx,
+                    ));
+                }
+            }
+            SumRepr::ErasedVariant => {}
+        }
+    }
+
+    // Path 2: No SumRepr, but inferred mono suggests typed option in anyref local.
+    // Use runtime dispatch (ref.test) to handle both representations safely.
+    if *local_ty == ValType::Anyref {
+        if let Some(option_mono) = ctx
+            .infer_atom_mono(&Atom::ALocal(local_id))
+            .filter(is_typed_general_option_candidate)
+        {
+            return Some(emit_anyref_option_or_variant_local_to_variant(
+                local_idx,
+                &option_mono,
+                target,
+                ctx,
+            ));
+        }
+    }
+
+    None
 }
 
 fn emit_anyref_option_or_variant_local_to_variant(
@@ -3417,6 +3467,12 @@ fn ref_record_null(
     }
 }
 
+/// Emit instructions for a variant literal (Option, Result, user enum, etc.).
+///
+/// Sum-boundary rule: when the destination `bind_ty` is a typed option/result
+/// struct ref, emit a typed struct directly. When it's `anyref` or `$Variant`
+/// ref, emit the universal erased `$Variant` layout. The decision is driven by
+/// `expected_mono` + `bind_ty`, not by inspecting the local's `SumRepr`.
 fn emit_variant_literal(
     type_id: TypeId,
     variant: crate::ir::VariantId,

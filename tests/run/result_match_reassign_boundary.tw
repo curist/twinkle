@@ -1,0 +1,44 @@
+// Expected output:
+//   ok: run
+//   err: missing
+
+// Result<T,E> flowing through match arms with reassignment — the pattern
+// that triggers repr drift when match arms produce typed vs erased results.
+
+fn parse_command(args: Vector<String>) Result<String, String> {
+  if args.len() == 0 {
+    return .Err("missing")
+  }
+  .Ok(args[0])
+}
+
+fn choose(flag: Bool) Result<String, String> {
+  result: Result<String, String> = .Err("unset")
+
+  probe := if flag {
+    parse_command(["run"])
+  } else {
+    parse_command([])
+  }
+
+  case probe {
+    .Ok(cmd) => {
+      next: Result<String, String> = .Ok(cmd)
+      result = next
+    },
+    .Err(e) => {
+      result = .Err(e)
+    },
+  }
+
+  result
+}
+
+case choose(true) {
+  .Ok(v) => println("ok: ${v}"),
+  .Err(e) => println("err: ${e}"),
+}
+case choose(false) {
+  .Ok(v) => println("ok: ${v}"),
+  .Err(e) => println("err: ${e}"),
+}

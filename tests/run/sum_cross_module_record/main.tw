@@ -1,0 +1,37 @@
+// Expected output:
+//   alpha: val=42 status=ok:good
+//   beta: val=none status=err:unset
+//   alpha: val=none status=ok:good
+//   beta: val=99 status=err:unset
+
+// Cross-module records with Option and Result fields — exercises
+// sum representation boundaries at module/function boundaries.
+
+use types
+
+fn show(c: types.Config) {
+  val_str := case c.value {
+    .Some(n) => "val=${n}",
+    .None => "val=none",
+  }
+  status_str := case c.status {
+    .Ok(s) => "status=ok:${s}",
+    .Err(e) => "status=err:${e}",
+  }
+  println("${c.name}: ${val_str} ${status_str}")
+}
+
+fn main() {
+  a := types.make_ok("alpha", 42)
+  b := types.make_empty("beta")
+  show(a)
+  show(b)
+
+  // Update through cross-module function — Option field boundary
+  a2 := types.update_value(a, .None)
+  b2 := types.update_value(b, .Some(99))
+  show(a2)
+  show(b2)
+}
+
+main()

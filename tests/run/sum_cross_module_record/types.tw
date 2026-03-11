@@ -1,0 +1,17 @@
+pub type Config = .{
+  name: String,
+  value: Option<Int>,
+  status: Result<String, String>,
+}
+
+pub fn make_ok(name: String, val: Int) Config {
+  Config.{ name: name, value: .Some(val), status: .Ok("good") }
+}
+
+pub fn make_empty(name: String) Config {
+  Config.{ name: name, value: .None, status: .Err("unset") }
+}
+
+pub fn update_value(c: Config, v: Option<Int>) Config {
+  Config.{ name: c.name, value: v, status: c.status }
+}
