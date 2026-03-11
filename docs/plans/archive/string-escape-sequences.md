@@ -113,33 +113,33 @@ These should include spans that cover the full escape sequence.
 
 ### Phase 1: Lexer and diagnostics
 
-- [ ] Refactor escape parsing in `src/syntax/lexer.rs` so structured escapes can consume multiple chars
-- [ ] Add `\xNN` parsing with exactly two required hex digits
-- [ ] Enforce Phase 1 ASCII bound for `\xNN` (`00..7F`) and reject out-of-range values
-- [ ] Add `\e` as an alias for ESC (`U+001B`)
-- [ ] Keep `\$` behavior unchanged so interpolation suppression still works
-- [ ] Add lexer error variants/messages for structured escape failures (`InvalidHexEscape`, span coverage)
+- [x] Refactor escape parsing in `src/syntax/lexer.rs` so structured escapes can consume multiple chars
+- [x] Add `\xNN` parsing with exactly two required hex digits
+- [x] Enforce Phase 1 ASCII bound for `\xNN` (`00..7F`) and reject out-of-range values
+- [x] Add `\e` as an alias for ESC (`U+001B`)
+- [x] Keep `\$` behavior unchanged so interpolation suppression still works
+- [x] Add lexer error variants/messages for structured escape failures (`InvalidHexEscape`, span coverage)
 
 ### Phase 1: Test coverage
 
-- [ ] Extend lexer unit tests for valid escapes (`\x1b`, `\x0A`, `\e`)
-- [ ] Extend lexer unit tests for invalid escapes (`\x`, `\xG0`, `\x80`, unterminated forms)
-- [ ] Add runtime fixture proving ANSI escape strings compile and run in interpreter mode
-- [ ] Add runtime fixture proving ANSI escape strings compile and run in wasm mode
-- [ ] Add diagnostic snapshot coverage for new lexer escape errors
+- [x] Extend lexer unit tests for valid escapes (`\x1b`, `\x0A`, `\e`)
+- [x] Extend lexer unit tests for invalid escapes (`\x`, `\xG0`, `\x80`, unterminated forms)
+- [x] Add runtime fixture proving ANSI escape strings compile and run in interpreter mode
+- [x] Add runtime fixture proving ANSI escape strings compile and run in wasm mode
+- [x] Add diagnostic snapshot coverage for new lexer escape errors
 
 ### Phase 1: Spec and docs
 
-- [ ] Update `docs/spec.md` string section with supported escape forms and rules
-- [ ] Document `\xNN` constraints and `\e` alias with at least one ANSI example
-- [ ] Add a short migration note showing replacement of `String.from_char_code(27)` patterns
+- [x] Update `docs/spec.md` string section with supported escape forms and rules
+- [x] Document `\xNN` constraints and `\e` alias with at least one ANSI example
+- [x] Add a short migration note showing replacement of `String.from_char_code(27)` patterns
 
 ### Phase 2 (optional): Unicode escapes
 
-- [ ] Add `\u{...}` parser (1..6 hex digits, closing `}`)
-- [ ] Reject invalid Unicode scalar values (including surrogates)
-- [ ] Add lexer tests for valid/invalid `\u{...}` cases
-- [ ] Update spec/docs to include Unicode escape semantics and examples
+- [x] Add `\u{...}` parser (1..6 hex digits, closing `}`)
+- [x] Reject invalid Unicode scalar values (including surrogates)
+- [x] Add lexer tests for valid/invalid `\u{...}` cases
+- [x] Update spec/docs to include Unicode escape semantics and examples
 
 ## Compatibility and Rollout
 

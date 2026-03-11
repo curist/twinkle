@@ -91,6 +91,16 @@ fn strings_escape() {
 }
 
 #[test]
+fn strings_escape_hex() {
+    check("tests/run/strings_escape_hex.tw");
+}
+
+#[test]
+fn strings_escape_unicode() {
+    check("tests/run/strings_escape_unicode.tw");
+}
+
+#[test]
 fn for_break() {
     check("tests/run/for_break.tw");
 }

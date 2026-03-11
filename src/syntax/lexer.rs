@@ -13,6 +13,8 @@ pub struct LexError {
 pub enum LexErrorKind {
     UnterminatedString,
     InvalidEscape(char),
+    InvalidHexEscape,
+    InvalidUnicodeEscape,
     InvalidNumber,
     InvalidHexLiteral,
     UnexpectedChar(char),
@@ -261,12 +263,7 @@ impl Lexer {
 
         while !self.is_eof() && self.peek() != '"' {
             if self.peek() == '\\' {
-                self.advance();
-                if self.is_eof() {
-                    let span = Span::new(self.file_id, start as u32, self.pos as u32);
-                    return Err(LexError::new(LexErrorKind::UnterminatedString, span));
-                }
-                let escaped = self.escape_char()?;
+                let escaped = self.parse_escape_sequence()?;
                 value.push(escaped);
             } else if self.peek() == '$' && self.peek_ahead(1) == '{' {
                 // String interpolation
@@ -337,12 +334,7 @@ impl Lexer {
 
                 while !self.is_eof() && self.peek() != '"' {
                     if self.peek() == '\\' {
-                        self.advance();
-                        if self.is_eof() {
-                            let span = Span::new(self.file_id, start as u32, self.pos as u32);
-                            return Err(LexError::new(LexErrorKind::UnterminatedString, span));
-                        }
-                        let escaped = self.escape_char()?;
+                        let escaped = self.parse_escape_sequence()?;
                         value.push(escaped);
                     } else if self.peek() == '$' && self.peek_ahead(1) == '{' {
                         has_more_interpolation = true;
@@ -384,8 +376,20 @@ impl Lexer {
         }
     }
 
-    fn escape_char(&mut self) -> LexResult<char> {
-        let start = self.pos - 1; // -1 for the backslash
+    fn parse_escape_sequence(&mut self) -> LexResult<char> {
+        debug_assert_eq!(
+            self.peek(),
+            '\\',
+            "parse_escape_sequence must be called at a backslash"
+        );
+        let start = self.pos;
+        self.advance(); // consume '\'
+
+        if self.is_eof() {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::UnterminatedString, span));
+        }
+
         let ch = self.advance();
 
         match ch {
@@ -395,9 +399,108 @@ impl Lexer {
             '"' => Ok('"'),
             '\\' => Ok('\\'),
             '$' => Ok('$'),
+            'e' => Ok('\u{001b}'),
+            'x' => self.parse_hex_escape(start),
+            'u' => self.parse_unicode_escape(start),
             _ => {
                 let span = Span::new(self.file_id, start as u32, self.pos as u32);
                 Err(LexError::new(LexErrorKind::InvalidEscape(ch), span))
+            }
+        }
+    }
+
+    fn parse_hex_escape(&mut self, start: usize) -> LexResult<char> {
+        let first = self.consume_required_hex_digit(start)?;
+        let second = self.consume_required_hex_digit(start)?;
+        let value = (first << 4) | second;
+
+        if value > 0x7f {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
+        }
+
+        Ok(char::from_u32(value).expect("ASCII code point must be valid"))
+    }
+
+    fn consume_required_hex_digit(&mut self, start: usize) -> LexResult<u32> {
+        if self.is_eof() {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
+        }
+
+        let ch = self.peek();
+        if !ch.is_ascii_hexdigit() {
+            // Include obvious malformed content in the escape span,
+            // but avoid consuming a string terminator.
+            if ch != '"' {
+                self.advance();
+            }
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
+        }
+
+        self.advance();
+        Ok(ch.to_digit(16).expect("hex digit must convert"))
+    }
+
+    fn parse_unicode_escape(&mut self, start: usize) -> LexResult<char> {
+        if self.is_eof() || self.peek() != '{' {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+        }
+
+        self.advance(); // consume '{'
+        let mut value: u32 = 0;
+        let mut digits = 0usize;
+
+        loop {
+            if self.is_eof() {
+                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+            }
+
+            let ch = self.peek();
+            if ch == '}' {
+                self.advance(); // consume '}'
+                break;
+            }
+
+            if !ch.is_ascii_hexdigit() {
+                // Include malformed content in the span, but do not consume a
+                // string terminator.
+                if ch != '"' {
+                    self.advance();
+                }
+                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+            }
+
+            if digits == 6 {
+                self.advance(); // consume the overflow digit for better span coverage
+                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+            }
+
+            self.advance();
+            digits += 1;
+            value = (value << 4) | ch.to_digit(16).expect("hex digit must convert");
+        }
+
+        if digits == 0 {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+        }
+
+        if (0xd800..=0xdfff).contains(&value) {
+            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
+        }
+
+        match char::from_u32(value) {
+            Some(ch) => Ok(ch),
+            None => {
+                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span))
             }
         }
     }
@@ -489,6 +592,130 @@ mod tests {
         let tokens = lex_simple(r#""hello\nworld\t""#);
         assert_eq!(tokens[0].kind, TokenKind::StringLit);
         assert_eq!(tokens[0].text, "hello\nworld\t");
+    }
+
+    #[test]
+    fn test_lex_string_hex_and_escape_alias() {
+        let tokens = lex_simple(r#""\x1b-\x0A-\e""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, "\u{001b}-\n-\u{001b}");
+    }
+
+    #[test]
+    fn test_lex_string_invalid_hex_escape_no_digits() {
+        let result = Lexer::lex(r#""\x""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexEscape);
+    }
+
+    #[test]
+    fn test_lex_string_invalid_hex_escape_non_hex_digit() {
+        let result = Lexer::lex(r#""\xG0""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexEscape);
+    }
+
+    #[test]
+    fn test_lex_string_invalid_hex_escape_out_of_ascii() {
+        let result = Lexer::lex(r#""\x80""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexEscape);
+    }
+
+    #[test]
+    fn test_lex_string_invalid_hex_escape_unterminated() {
+        let result = Lexer::lex(r#""\x1"#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexEscape);
+    }
+
+    #[test]
+    fn test_lex_string_interpolation_keeps_dollar_escape() {
+        let tokens = lex_simple(r#""cost=\$${n}""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "cost=$");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "n");
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, "");
+    }
+
+    #[test]
+    fn test_lex_string_interpolation_continuation_uses_hex_escape() {
+        let tokens = lex_simple(r#""${name}\x1b""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "name");
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, "\u{001b}");
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_valid() {
+        let tokens = lex_simple(r#""\u{41}\u{00E9}\u{1F44D}""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, "Aé👍");
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_missing_brace() {
+        let result = Lexer::lex(r#""\u41""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_empty_digits() {
+        let result = Lexer::lex(r#""\u{}""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_non_hex_digit() {
+        let result = Lexer::lex(r#""\u{ZZ}""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_too_many_digits() {
+        let result = Lexer::lex(r#""\u{1234567}""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_surrogate() {
+        let result = Lexer::lex(r#""\u{D800}""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_out_of_range() {
+        let result = Lexer::lex(r#""\u{110000}""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_unicode_escape_invalid_unterminated() {
+        let result = Lexer::lex(r#""\u{1F44D""#, FileId(0));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_lex_string_interpolation_continuation_uses_unicode_escape() {
+        let tokens = lex_simple(r#""${name}\u{1F44D}""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "name");
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, "👍");
     }
 
     #[test]

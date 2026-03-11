@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"invalid_unicode_escape.tw:2:12: Lexer error: InvalidUnicodeEscape\n   2 |   println(\"\\u{D800}\")\n\n                 ^"

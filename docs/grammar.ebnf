@@ -450,13 +450,32 @@ StringLiteral =
 
 StringChar =
       ? any character except '"' and '\' ?
-    | "\\" ( "n" | "t" | "r" | '"' | "\\" | "$" | "e" | "x" HexDigit HexDigit )
+    | "\\" SimpleEscape
+    | "\\" HexEscape
+    | "\\" UnicodeEscape
     | "${" Expr "}" ;
+
+SimpleEscape =
+      "n"
+    | "t"
+    | "r"
+    | '"'
+    | "\\"
+    | "$"
+    | "e" ;
+
+HexEscape =
+    "x" HexDigit HexDigit ;
+
+UnicodeEscape =
+    "u" "{" HexDigit [ HexDigit [ HexDigit [ HexDigit [ HexDigit [ HexDigit ] ] ] ] ] "}" ;
 (* Implementation note:
    - In practice, interpolation is handled lexically:
      string segments + `${` Expr `}` + string segments.
    - `\$` emits a literal `$` instead of starting interpolation.
    - `\e` is ASCII ESC (`0x1B`), equivalent to `\x1b`.
+   - `\xNN` requires exactly 2 hex digits and is ASCII-only (`00..7F`).
+   - `\u{...}` accepts 1..6 hex digits and must be a valid Unicode scalar.
    - Type checker restricts `${Expr}` to primitive types or explicit conversions. *)
 
 BoolLiteral =

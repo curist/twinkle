@@ -32,6 +32,16 @@ fn run_wasm_strings() {
 }
 
 #[test]
+fn run_wasm_strings_escape_hex() {
+    check("tests/run/strings_escape_hex.tw");
+}
+
+#[test]
+fn run_wasm_strings_escape_unicode() {
+    check("tests/run/strings_escape_unicode.tw");
+}
+
+#[test]
 fn run_wasm_string_methods() {
     check("tests/run/string_methods.tw");
 }

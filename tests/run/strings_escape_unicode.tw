@@ -1,0 +1,21 @@
+// Expected output:
+//   true
+//   true
+//   true
+//   Some(128077)
+//   Some(128077)
+
+fn show_opt_int(o: Int?) String {
+  case o {
+    .Some(n) => "Some(${n})",
+    .None => "None",
+  }
+}
+
+thumbs := "\u{1F44D}"
+
+println("${"\u{41}" == "A"}")
+println("${"\u{00E9}" == "é"}")
+println("${thumbs == "👍"}")
+println(show_opt_int(thumbs.code_point_at(0)))
+println(show_opt_int("\u{1F44D}".code_point_at(0)))

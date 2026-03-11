@@ -523,6 +523,7 @@ module.exports = grammar({
         'r',
         'e',
         /x[0-9a-fA-F]{2}/,
+        /u\{[0-9a-fA-F]{1,6}\}/,
       ),
     )),
 

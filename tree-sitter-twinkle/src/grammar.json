@@ -2363,6 +2363,10 @@
               },
               {
                 "type": "STRING",
+                "value": "$"
+              },
+              {
+                "type": "STRING",
                 "value": "n"
               },
               {
@@ -2372,6 +2376,18 @@
               {
                 "type": "STRING",
                 "value": "r"
+              },
+              {
+                "type": "STRING",
+                "value": "e"
+              },
+              {
+                "type": "PATTERN",
+                "value": "x[0-9a-fA-F]{2}"
+              },
+              {
+                "type": "PATTERN",
+                "value": "u\\{[0-9a-fA-F]{1,6}\\}"
               }
             ]
           }

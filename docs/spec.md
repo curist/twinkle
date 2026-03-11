@@ -950,7 +950,34 @@ User types that want to participate reuse these helpers by returning supported b
 
 ---
 
-## 11. String Interpolation
+## 11. String Literals and Interpolation
+
+### String Literal Escapes
+
+Twinkle string literals support these escapes:
+
+* `\n` newline
+* `\t` tab
+* `\r` carriage return
+* `\"` double quote
+* `\\` backslash
+* `\$` literal `$` (suppresses interpolation start)
+* `\xNN` exactly two hex digits (`N`), ASCII-only (`00..7F`)
+* `\e` escape character (`U+001B`, equivalent to `\x1b`)
+* `\u{...}` Unicode scalar escape with 1 to 6 hex digits
+
+`"\x1b[31mred\x1b[0m"` is valid and can be used for ANSI control sequences.
+`"\u{1F44D}"` is valid and produces `👍`.
+
+`\u{...}` must decode to a valid Unicode scalar value:
+
+* surrogate range values (`D800..DFFF`) are rejected
+* values above `10FFFF` are rejected
+
+Migration note: code that previously built ESC with `String.from_char_code(27)` can
+be simplified to `"\e"` or `"\x1b"` in literals.
+
+### String Interpolation
 
 String interpolation uses:
 

@@ -186,7 +186,6 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 
 | Plan | Description |
 |------|-------------|
-| [string-escape-sequences.md](string-escape-sequences.md) | Add ergonomic string escapes (for example `\x1b`/`\e`) for control characters and ANSI output |
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |

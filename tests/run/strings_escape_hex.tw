@@ -1,0 +1,28 @@
+// Expected output:
+//   27
+//   91
+//   51
+//   49
+//   100
+//   27
+//   91
+//   48
+//   27
+//   true
+//   true
+
+ansi_hex := "\x1b[31mred\x1b[0m"
+ansi_alias := "\e[31mred\e[0m"
+
+println("${ansi_hex.char_code_at(0)}")
+println("${ansi_hex.char_code_at(1)}")
+println("${ansi_hex.char_code_at(2)}")
+println("${ansi_hex.char_code_at(3)}")
+println("${ansi_hex.char_code_at(7)}")
+println("${ansi_hex.char_code_at(8)}")
+println("${ansi_hex.char_code_at(9)}")
+println("${ansi_hex.char_code_at(10)}")
+
+println("${ansi_alias.char_code_at(0)}")
+println("${ansi_hex == ansi_alias}")
+println("${ansi_hex.len() == 12}")

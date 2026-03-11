@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"invalid_hex_escape.tw:2:12: Lexer error: InvalidHexEscape\n   2 |   println(\"\\xG0\")\n\n                 ^"
