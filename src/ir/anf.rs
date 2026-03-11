@@ -15,6 +15,8 @@ use crate::ir::core::{CorePattern, FieldId, FuncId, LocalId, VariantId};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::ty::{MonoType, TypeId};
 
+pub mod analysis;
+
 /// The operand type for binary and unary operations.
 ///
 /// The WAT emitter uses this to select the correct Wasm instruction family

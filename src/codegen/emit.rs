@@ -11,6 +11,9 @@ use crate::codegen::ctx::{
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::ir::FuncId;
+use crate::ir::anf::analysis::{
+    collect_bound_locals, collect_free_locals, expr_always_diverges, op_always_diverges,
+};
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
@@ -498,16 +501,15 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
         .collect::<HashSet<_>>();
     let mut referenced_outside_init = HashSet::new();
     for func in &anf.functions {
-        let mut declared = func.params.iter().copied().collect::<HashSet<_>>();
-        let mut free = HashSet::new();
-        collect_free_locals_expr(&func.body, &mut declared, &mut free);
+        let declared = func.params.iter().copied().collect::<HashSet<_>>();
+        let free = collect_free_locals(&func.body, declared);
         referenced_outside_init.extend(free);
     }
 
     let mut bound_in_init = HashSet::new();
     for func in &anf.functions {
         if init_funcs.contains(&func.func_id) {
-            collect_bound_locals_expr(&func.body, &mut bound_in_init);
+            bound_in_init.extend(collect_bound_locals(&func.body));
         }
     }
 
@@ -519,177 +521,16 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
     globals
 }
 
-fn collect_bound_locals_expr(expr: &AnfExpr, out: &mut HashSet<crate::ir::LocalId>) {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            out.insert(*local);
-            collect_bound_locals_op(op, out);
-            collect_bound_locals_expr(body, out);
-        }
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
-    }
-}
-
-fn collect_bound_locals_op(op: &AnfOp, out: &mut HashSet<crate::ir::LocalId>) {
-    match op {
-        AnfOp::AIf {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_bound_locals_expr(then_branch, out);
-            collect_bound_locals_expr(else_branch, out);
-        }
-        AnfOp::AMatch { arms, .. } => {
-            for arm in arms {
-                collect_bound_locals_expr(&arm.body, out);
-            }
-        }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => collect_bound_locals_expr(body, out),
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 fn infer_capture_locals(func: &AnfFunctionDef) -> Vec<crate::ir::LocalId> {
-    let mut declared: HashSet<crate::ir::LocalId> = func.params.iter().copied().collect();
-    let mut free: HashSet<crate::ir::LocalId> = HashSet::new();
-    collect_free_locals_expr(&func.body, &mut declared, &mut free);
+    let declared = func.params.iter().copied().collect();
+    let free = collect_free_locals(&func.body, declared);
     // Filter out locals that are assigned within the function (assign targets that
     // are declared by an earlier let/init in the same function are NOT captures).
     // The free set only contains truly undeclared locals.
     let mut ordered = free.into_iter().collect::<Vec<_>>();
     ordered.sort_by_key(|id| id.0);
     ordered
-}
-
-fn collect_free_locals_expr(
-    expr: &AnfExpr,
-    declared: &mut HashSet<crate::ir::LocalId>,
-    free: &mut HashSet<crate::ir::LocalId>,
-) {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            collect_free_locals_op(op, declared, free);
-            declared.insert(*local);
-            collect_free_locals_expr(body, declared, free);
-        }
-        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
-            collect_free_locals_atom(atom, declared, free);
-        }
-        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => {}
-    }
-}
-
-fn collect_free_locals_op(
-    op: &AnfOp,
-    declared: &mut HashSet<crate::ir::LocalId>,
-    free: &mut HashSet<crate::ir::LocalId>,
-) {
-    match op {
-        AnfOp::ACall { callee, args } => {
-            collect_free_locals_atom(callee, declared, free);
-            for arg in args {
-                collect_free_locals_atom(arg, declared, free);
-            }
-        }
-        AnfOp::AIf {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            collect_free_locals_atom(cond, declared, free);
-            let mut then_declared = declared.clone();
-            let mut else_declared = declared.clone();
-            collect_free_locals_expr(then_branch, &mut then_declared, free);
-            collect_free_locals_expr(else_branch, &mut else_declared, free);
-        }
-        AnfOp::AMatch { scrutinee, arms } => {
-            collect_free_locals_atom(scrutinee, declared, free);
-            for arm in arms {
-                let mut arm_declared = declared.clone();
-                collect_pattern_bindings(&arm.pattern, &mut arm_declared);
-                collect_free_locals_expr(&arm.body, &mut arm_declared, free);
-            }
-        }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            let mut body_declared = declared.clone();
-            collect_free_locals_expr(body, &mut body_declared, free);
-        }
-        AnfOp::ABinOp { left, right, .. } => {
-            collect_free_locals_atom(left, declared, free);
-            collect_free_locals_atom(right, declared, free);
-        }
-        AnfOp::AUnOp { expr, .. } => {
-            collect_free_locals_atom(expr, declared, free);
-        }
-        AnfOp::AMakeClosure { free_vars, .. } => {
-            for local_id in free_vars {
-                if !declared.contains(local_id) {
-                    free.insert(*local_id);
-                }
-            }
-        }
-        AnfOp::ARecord { fields, .. } => {
-            for (_, atom) in fields {
-                collect_free_locals_atom(atom, declared, free);
-            }
-        }
-        AnfOp::ARecordGet { target, .. } => collect_free_locals_atom(target, declared, free),
-        AnfOp::ARecordUpdate { base, value, .. } => {
-            collect_free_locals_atom(base, declared, free);
-            collect_free_locals_atom(value, declared, free);
-        }
-        AnfOp::AVariant { args, .. } | AnfOp::AArrayLit(args) => {
-            for atom in args {
-                collect_free_locals_atom(atom, declared, free);
-            }
-        }
-        AnfOp::AIndex { base, index, .. } => {
-            collect_free_locals_atom(base, declared, free);
-            collect_free_locals_atom(index, declared, free);
-        }
-        AnfOp::AInit { value } => collect_free_locals_atom(value, declared, free),
-        AnfOp::AAssign { local, value } => {
-            if !declared.contains(local) {
-                free.insert(*local);
-            }
-            collect_free_locals_atom(value, declared, free);
-        }
-    }
-}
-
-fn collect_pattern_bindings(
-    pattern: &crate::ir::core::CorePattern,
-    declared: &mut HashSet<crate::ir::LocalId>,
-) {
-    use crate::ir::core::CorePattern;
-    match pattern {
-        CorePattern::Var(id) => {
-            declared.insert(*id);
-        }
-        CorePattern::Variant { fields, .. } => {
-            for field in fields {
-                collect_pattern_bindings(field, declared);
-            }
-        }
-        CorePattern::Wildcard
-        | CorePattern::LitInt(_)
-        | CorePattern::LitBool(_)
-        | CorePattern::LitStr(_) => {}
-    }
-}
-
-fn collect_free_locals_atom(
-    atom: &Atom,
-    declared: &HashSet<crate::ir::LocalId>,
-    free: &mut HashSet<crate::ir::LocalId>,
-) {
-    if let Atom::ALocal(local_id) = atom {
-        if !declared.contains(local_id) {
-            free.insert(*local_id);
-        }
-    }
 }
 
 fn mono_to_valtype_for_user_abi_result(
@@ -1256,41 +1097,6 @@ fn emit_match_arm_chain(
         else_body,
     });
     instrs
-}
-
-fn expr_always_diverges(expr: &AnfExpr) -> bool {
-    match expr {
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => true,
-        AnfExpr::Atom(_) => false,
-        AnfExpr::Let { op, body, .. } => op_always_diverges(op) || expr_always_diverges(body),
-    }
-}
-
-fn op_always_diverges(op: &AnfOp) -> bool {
-    match op {
-        AnfOp::AIf {
-            then_branch,
-            else_branch,
-            ..
-        } => expr_always_diverges(then_branch) && expr_always_diverges(else_branch),
-        AnfOp::AMatch { arms, .. } => arms.iter().all(|arm| expr_always_diverges(&arm.body)),
-        // A loop may break and produce a value; keep conservative.
-        AnfOp::ALoop { .. } => false,
-        // Defer lowering preserves inner expr structure but does not diverge at bind site.
-        AnfOp::ADefer(_) => false,
-        AnfOp::ACall { .. }
-        | AnfOp::ABinOp { .. }
-        | AnfOp::AUnOp { .. }
-        | AnfOp::AMakeClosure { .. }
-        | AnfOp::ARecord { .. }
-        | AnfOp::ARecordGet { .. }
-        | AnfOp::ARecordUpdate { .. }
-        | AnfOp::AVariant { .. }
-        | AnfOp::AArrayLit(_)
-        | AnfOp::AIndex { .. }
-        | AnfOp::AInit { .. }
-        | AnfOp::AAssign { .. } => false,
-    }
 }
 
 fn match_chain_always_diverges(arms: &[AnfMatchArm]) -> bool {

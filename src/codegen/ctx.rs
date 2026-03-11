@@ -5,6 +5,9 @@ use crate::intrinsics::contracts::{self, IntrinsicAbiResult};
 use crate::ir::FuncId;
 use crate::ir::LocalId;
 use crate::ir::VariantId;
+use crate::ir::anf::analysis::{
+    DivergenceOptions, collect_assigned_locals, expr_always_diverges_with,
+};
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
 use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT};
@@ -15,6 +18,10 @@ use crate::types::ty::{
     TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
+
+const CTX_DIVERGENCE: DivergenceOptions = DivergenceOptions {
+    empty_match_diverges: false,
+};
 
 #[derive(Debug, Clone)]
 pub struct FuncSigInfo {
@@ -370,7 +377,7 @@ impl<'a> EmitCtx<'a> {
         self.next_label_id = 0;
         self.in_init_func = func.name == "__init__";
         self.current_func_id = Some(func.func_id);
-        collect_assigned_locals_expr(&func.body, &mut self.assigned_locals);
+        self.assigned_locals = collect_assigned_locals(&func.body);
         let mut local_bind_counts = HashMap::new();
         collect_local_binding_counts_expr(&func.body, &mut local_bind_counts);
         self.rebound_locals.extend(
@@ -972,15 +979,19 @@ impl<'a> EmitCtx<'a> {
                 let else_ty = self.infer_expr_valtype(else_branch);
                 match (then_ty, else_ty) {
                     (Some(a), Some(b)) if a == b => Some(a),
-                    (Some(a), _) if expr_always_diverges(else_branch) => Some(a),
-                    (_, Some(b)) if expr_always_diverges(then_branch) => Some(b),
+                    (Some(a), _) if expr_always_diverges_with(else_branch, CTX_DIVERGENCE) => {
+                        Some(a)
+                    }
+                    (_, Some(b)) if expr_always_diverges_with(then_branch, CTX_DIVERGENCE) => {
+                        Some(b)
+                    }
                     _ => None,
                 }
             }
             AnfOp::AMatch { arms, .. } => {
                 let mut value_ty: Option<ValType> = None;
                 for arm in arms {
-                    if expr_always_diverges(&arm.body) {
+                    if expr_always_diverges_with(&arm.body, CTX_DIVERGENCE) {
                         continue;
                     }
                     let arm_ty = self.infer_expr_valtype(&arm.body)?;
@@ -993,7 +1004,11 @@ impl<'a> EmitCtx<'a> {
                 if value_ty.is_some() {
                     return value_ty;
                 }
-                if !arms.is_empty() && arms.iter().all(|arm| expr_always_diverges(&arm.body)) {
+                if !arms.is_empty()
+                    && arms
+                        .iter()
+                        .all(|arm| expr_always_diverges_with(&arm.body, CTX_DIVERGENCE))
+                {
                     // Unreachable expression (all arms diverge): use void-like i32
                     // rather than falling back to anyref.
                     return Some(ValType::I32);
@@ -1221,15 +1236,19 @@ impl<'a> EmitCtx<'a> {
                 let else_ty = self.infer_expr_mono(else_branch);
                 match (then_ty, else_ty) {
                     (Some(a), Some(b)) if a == b => Some(a),
-                    (Some(a), _) if expr_always_diverges(else_branch) => Some(a),
-                    (_, Some(b)) if expr_always_diverges(then_branch) => Some(b),
+                    (Some(a), _) if expr_always_diverges_with(else_branch, CTX_DIVERGENCE) => {
+                        Some(a)
+                    }
+                    (_, Some(b)) if expr_always_diverges_with(then_branch, CTX_DIVERGENCE) => {
+                        Some(b)
+                    }
                     _ => None,
                 }
             }
             AnfOp::AMatch { arms, .. } => {
                 let mut value_ty: Option<MonoType> = None;
                 for arm in arms {
-                    if expr_always_diverges(&arm.body) {
+                    if expr_always_diverges_with(&arm.body, CTX_DIVERGENCE) {
                         continue;
                     }
                     let arm_ty = self.infer_expr_mono(&arm.body)?;
@@ -1468,14 +1487,6 @@ fn record_field_mono(
     }
 }
 
-fn expr_always_diverges(expr: &AnfExpr) -> bool {
-    match expr {
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => true,
-        AnfExpr::Atom(_) => false,
-        AnfExpr::Let { op, body, .. } => op_always_diverges(op) || expr_always_diverges(body),
-    }
-}
-
 fn should_erase_assigned_local(mono: &MonoType) -> bool {
     match mono {
         MonoType::Int
@@ -1582,41 +1593,6 @@ pub(crate) fn value_repr_from_mono(
     }
 }
 
-fn collect_assigned_locals_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
-    match expr {
-        AnfExpr::Let { op, body, .. } => {
-            collect_assigned_locals_op(op, out);
-            collect_assigned_locals_expr(body, out);
-        }
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
-    }
-}
-
-fn collect_assigned_locals_op(op: &AnfOp, out: &mut HashSet<LocalId>) {
-    match op {
-        AnfOp::AAssign { local, .. } => {
-            out.insert(*local);
-        }
-        AnfOp::AIf {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_assigned_locals_expr(then_branch, out);
-            collect_assigned_locals_expr(else_branch, out);
-        }
-        AnfOp::AMatch { arms, .. } => {
-            for arm in arms {
-                collect_assigned_locals_expr(&arm.body, out);
-            }
-        }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            collect_assigned_locals_expr(body, out);
-        }
-        _ => {}
-    }
-}
-
 fn collect_local_binding_counts_expr(expr: &AnfExpr, out: &mut HashMap<LocalId, usize>) {
     match expr {
         AnfExpr::Let { local, op, body } => {
@@ -1647,20 +1623,6 @@ fn collect_local_binding_counts_op(op: &AnfOp, out: &mut HashMap<LocalId, usize>
             collect_local_binding_counts_expr(body, out);
         }
         _ => {}
-    }
-}
-
-fn op_always_diverges(op: &AnfOp) -> bool {
-    match op {
-        AnfOp::AIf {
-            then_branch,
-            else_branch,
-            ..
-        } => expr_always_diverges(then_branch) && expr_always_diverges(else_branch),
-        AnfOp::AMatch { arms, .. } => {
-            !arms.is_empty() && arms.iter().all(|arm| expr_always_diverges(&arm.body))
-        }
-        _ => false,
     }
 }
 

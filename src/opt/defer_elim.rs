@@ -20,8 +20,9 @@
 /// unwinds the outer loop's defers).
 ///
 /// After this pass no `ADefer` nodes remain; the WAT backend sees none.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
+use crate::ir::anf::analysis::collect_free_locals;
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom};
 use crate::ir::core::{CorePattern, LocalId};
 
@@ -296,131 +297,12 @@ fn prepend_snapshot_inits(snapshots: Vec<(LocalId, LocalId)>, tail: AnfExpr) -> 
 }
 
 fn collect_defer_captures(expr: &AnfExpr) -> Vec<LocalId> {
-    let mut declared = HashSet::new();
-    let mut free = HashSet::new();
-    collect_free_locals_expr(expr, &mut declared, &mut free);
+    // Defer capture discovery intentionally shares the canonical ANF free-local
+    // semantics to avoid drift from optimizer/codegen walkers.
+    let free = collect_free_locals(expr, std::collections::HashSet::new());
     let mut out: Vec<_> = free.into_iter().collect();
     out.sort_by_key(|id| id.0);
     out
-}
-
-fn collect_free_locals_expr(
-    expr: &AnfExpr,
-    declared: &mut HashSet<LocalId>,
-    free: &mut HashSet<LocalId>,
-) {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            collect_free_locals_op(op, declared, free);
-            declared.insert(*local);
-            collect_free_locals_expr(body, declared, free);
-        }
-        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
-            collect_free_locals_atom(atom, declared, free);
-        }
-        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => {}
-    }
-}
-
-fn collect_free_locals_op(
-    op: &AnfOp,
-    declared: &mut HashSet<LocalId>,
-    free: &mut HashSet<LocalId>,
-) {
-    match op {
-        AnfOp::ACall { callee, args } => {
-            collect_free_locals_atom(callee, declared, free);
-            for arg in args {
-                collect_free_locals_atom(arg, declared, free);
-            }
-        }
-        AnfOp::AIf {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            collect_free_locals_atom(cond, declared, free);
-            let mut then_declared = declared.clone();
-            let mut else_declared = declared.clone();
-            collect_free_locals_expr(then_branch, &mut then_declared, free);
-            collect_free_locals_expr(else_branch, &mut else_declared, free);
-        }
-        AnfOp::AMatch { scrutinee, arms } => {
-            collect_free_locals_atom(scrutinee, declared, free);
-            for AnfMatchArm { pattern, body } in arms {
-                let mut arm_declared = declared.clone();
-                collect_pattern_bindings(pattern, &mut arm_declared);
-                collect_free_locals_expr(body, &mut arm_declared, free);
-            }
-        }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            let mut body_declared = declared.clone();
-            collect_free_locals_expr(body, &mut body_declared, free);
-        }
-        AnfOp::ABinOp { left, right, .. } => {
-            collect_free_locals_atom(left, declared, free);
-            collect_free_locals_atom(right, declared, free);
-        }
-        AnfOp::AUnOp { expr, .. } => collect_free_locals_atom(expr, declared, free),
-        AnfOp::AMakeClosure { free_vars, .. } => {
-            for local_id in free_vars {
-                if !declared.contains(local_id) {
-                    free.insert(*local_id);
-                }
-            }
-        }
-        AnfOp::ARecord { fields, .. } => {
-            for (_, atom) in fields {
-                collect_free_locals_atom(atom, declared, free);
-            }
-        }
-        AnfOp::ARecordGet { target, .. } => collect_free_locals_atom(target, declared, free),
-        AnfOp::ARecordUpdate { base, value, .. } => {
-            collect_free_locals_atom(base, declared, free);
-            collect_free_locals_atom(value, declared, free);
-        }
-        AnfOp::AVariant { args, .. } | AnfOp::AArrayLit(args) => {
-            for atom in args {
-                collect_free_locals_atom(atom, declared, free);
-            }
-        }
-        AnfOp::AIndex { base, index, .. } => {
-            collect_free_locals_atom(base, declared, free);
-            collect_free_locals_atom(index, declared, free);
-        }
-        AnfOp::AInit { value } => collect_free_locals_atom(value, declared, free),
-        AnfOp::AAssign { local, value } => {
-            if !declared.contains(local) {
-                free.insert(*local);
-            }
-            collect_free_locals_atom(value, declared, free);
-        }
-    }
-}
-
-fn collect_pattern_bindings(pattern: &CorePattern, declared: &mut HashSet<LocalId>) {
-    match pattern {
-        CorePattern::Var(id) => {
-            declared.insert(*id);
-        }
-        CorePattern::Variant { fields, .. } => {
-            for field in fields {
-                collect_pattern_bindings(field, declared);
-            }
-        }
-        CorePattern::Wildcard
-        | CorePattern::LitInt(_)
-        | CorePattern::LitBool(_)
-        | CorePattern::LitStr(_) => {}
-    }
-}
-
-fn collect_free_locals_atom(atom: &Atom, declared: &HashSet<LocalId>, free: &mut HashSet<LocalId>) {
-    if let Atom::ALocal(local_id) = atom {
-        if !declared.contains(local_id) {
-            free.insert(*local_id);
-        }
-    }
 }
 
 fn remap_expr(expr: AnfExpr, remap: &HashMap<LocalId, LocalId>) -> AnfExpr {
