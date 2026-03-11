@@ -125,6 +125,109 @@ pub struct StringLiteralPoolEntry {
     pub getter_sym: String,
 }
 
+/// Representation-flow context: owns per-local physical representation
+/// metadata (sum repr, value repr, iterator state, closure locals) and
+/// provides scoped push/restore helpers for branch-sensitive flow analysis.
+///
+/// Extracted from `EmitCtx` so it can be tested independently and to
+/// decouple representation tracking from instruction emission.
+#[derive(Debug, Clone, Default)]
+pub struct ReprFlowCtx {
+    /// Tracks local bindings created from `AMakeClosure` so direct user calls
+    /// can materialize typed closures only at concrete higher-order boundaries.
+    pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
+    /// Unified backend flow metadata for iterator-related local specialization.
+    pub local_backend: HashMap<LocalId, LocalBackendInfo>,
+}
+
+impl ReprFlowCtx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.closure_locals.clear();
+        self.local_backend.clear();
+    }
+
+    // -- Sum repr --
+
+    pub fn local_sum_repr(&self, local_id: LocalId) -> Option<&SumRepr> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.sum_repr.as_ref())
+    }
+
+    pub fn set_local_sum_repr(&mut self, local_id: LocalId, repr: Option<SumRepr>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.sum_repr = repr;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    pub fn push_flow_sum_repr_binding(
+        &mut self,
+        local: LocalId,
+        repr: Option<SumRepr>,
+    ) -> Option<SumRepr> {
+        let prev = self.local_sum_repr(local).cloned();
+        self.set_local_sum_repr(local, repr);
+        prev
+    }
+
+    pub fn restore_flow_sum_repr_binding(&mut self, local: LocalId, prev: Option<SumRepr>) {
+        self.set_local_sum_repr(local, prev);
+    }
+
+    // -- Value repr --
+
+    pub fn local_value_repr(&self, local_id: LocalId) -> Option<ValueRepr> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.repr.clone())
+    }
+
+    pub fn set_local_value_repr(&mut self, local_id: LocalId, repr: Option<ValueRepr>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.repr = repr;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    // -- Iterator state --
+
+    pub fn local_iterator_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.iterator_state.clone())
+    }
+
+    pub fn set_local_iterator_state(&mut self, local_id: LocalId, info: Option<IteratorStateInfo>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.iterator_state = info;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    // -- Closure locals --
+
+    pub fn register_closure_local(
+        &mut self,
+        local: LocalId,
+        func_id: FuncId,
+        captures: Vec<LocalId>,
+    ) {
+        self.closure_locals.insert(local, (func_id, captures));
+    }
+
+    pub fn closure_local(&self, local: LocalId) -> Option<&(FuncId, Vec<LocalId>)> {
+        self.closure_locals.get(&local)
+    }
+}
+
 pub struct EmitCtx<'a> {
     pub local_map: HashMap<LocalId, (u32, ValType)>,
     /// Explicit ANF let-op result monotypes for the current function, keyed by
@@ -134,11 +237,8 @@ pub struct EmitCtx<'a> {
     /// more specific Wasm representation than plain `Anyref`.
     pub local_mono: HashMap<LocalId, MonoType>,
     pub capture_mono_by_func: HashMap<FuncId, HashMap<LocalId, MonoType>>,
-    /// Tracks local bindings created from `AMakeClosure` so direct user calls
-    /// can materialize typed closures only at concrete higher-order boundaries.
-    pub closure_locals: HashMap<LocalId, (FuncId, Vec<LocalId>)>,
-    /// Unified backend flow metadata for iterator-related local specialization.
-    pub local_backend: HashMap<LocalId, LocalBackendInfo>,
+    /// Representation-flow sub-context for physical repr tracking.
+    pub repr_flow: ReprFlowCtx,
     assigned_locals: HashSet<LocalId>,
     rebound_locals: HashSet<LocalId>,
     in_init_func: bool,
@@ -172,8 +272,7 @@ impl<'a> EmitCtx<'a> {
             op_result_mono: HashMap::new(),
             local_mono: HashMap::new(),
             capture_mono_by_func: HashMap::new(),
-            closure_locals: HashMap::new(),
-            local_backend: HashMap::new(),
+            repr_flow: ReprFlowCtx::new(),
             assigned_locals: HashSet::new(),
             rebound_locals: HashSet::new(),
             in_init_func: false,
@@ -328,18 +427,12 @@ impl<'a> EmitCtx<'a> {
 
     /// Query the physical sum representation for a local.
     pub fn local_sum_repr(&self, local_id: LocalId) -> Option<&SumRepr> {
-        self.local_backend
-            .get(&local_id)
-            .and_then(|info| info.sum_repr.as_ref())
+        self.repr_flow.local_sum_repr(local_id)
     }
 
     /// Set the physical sum representation for a local.
     pub fn set_local_sum_repr(&mut self, local_id: LocalId, repr: Option<SumRepr>) {
-        let entry = self.local_backend.entry(local_id).or_default();
-        entry.sum_repr = repr;
-        if local_backend_entry_empty(entry) {
-            self.local_backend.remove(&local_id);
-        }
+        self.repr_flow.set_local_sum_repr(local_id, repr);
     }
 
     /// Compatibility shim: returns the full MonoType if the local holds a
@@ -368,8 +461,8 @@ impl<'a> EmitCtx<'a> {
         self.local_map.clear();
         self.op_result_mono = func.op_result_mono.clone();
         self.local_mono.clear();
-        self.closure_locals.clear();
-        self.local_backend.clear();
+        self.repr_flow.closure_locals.clear();
+        self.repr_flow.local_backend.clear();
         self.assigned_locals.clear();
         self.rebound_locals.clear();
         self.label_stack.clear();
@@ -489,15 +582,11 @@ impl<'a> EmitCtx<'a> {
     }
 
     pub fn local_iterator_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
-        self.local_backend
-            .get(&local_id)
-            .and_then(|info| info.iterator_state.clone())
+        self.repr_flow.local_iterator_state(local_id)
     }
 
     pub fn local_value_repr(&self, local_id: LocalId) -> Option<ValueRepr> {
-        self.local_backend
-            .get(&local_id)
-            .and_then(|info| info.repr.clone())
+        self.repr_flow.local_value_repr(local_id)
     }
 
     pub fn local_typed_closure_sig(&self, local_id: LocalId) -> Option<(Vec<MonoType>, MonoType)> {
@@ -515,13 +604,15 @@ impl<'a> EmitCtx<'a> {
     }
 
     pub fn local_iterator_next_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
-        self.local_backend
+        self.repr_flow
+            .local_backend
             .get(&local_id)
             .and_then(|info| info.iterator_next_state.clone())
     }
 
     pub fn local_iter_item_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
-        self.local_backend
+        self.repr_flow
+            .local_backend
             .get(&local_id)
             .and_then(|info| info.iter_item_state.clone())
     }
@@ -531,11 +622,7 @@ impl<'a> EmitCtx<'a> {
         local_id: LocalId,
         info: Option<IteratorStateInfo>,
     ) {
-        let entry = self.local_backend.entry(local_id).or_default();
-        entry.iterator_state = info;
-        if local_backend_entry_empty(entry) {
-            self.local_backend.remove(&local_id);
-        }
+        self.repr_flow.set_local_iterator_state(local_id, info);
     }
 
     pub(crate) fn set_local_iterator_next_state(
@@ -543,10 +630,10 @@ impl<'a> EmitCtx<'a> {
         local_id: LocalId,
         info: Option<IteratorStateInfo>,
     ) {
-        let entry = self.local_backend.entry(local_id).or_default();
+        let entry = self.repr_flow.local_backend.entry(local_id).or_default();
         entry.iterator_next_state = info;
         if local_backend_entry_empty(entry) {
-            self.local_backend.remove(&local_id);
+            self.repr_flow.local_backend.remove(&local_id);
         }
     }
 
@@ -555,19 +642,15 @@ impl<'a> EmitCtx<'a> {
         local_id: LocalId,
         info: Option<IteratorStateInfo>,
     ) {
-        let entry = self.local_backend.entry(local_id).or_default();
+        let entry = self.repr_flow.local_backend.entry(local_id).or_default();
         entry.iter_item_state = info;
         if local_backend_entry_empty(entry) {
-            self.local_backend.remove(&local_id);
+            self.repr_flow.local_backend.remove(&local_id);
         }
     }
 
     pub(crate) fn set_local_value_repr(&mut self, local_id: LocalId, repr: Option<ValueRepr>) {
-        let entry = self.local_backend.entry(local_id).or_default();
-        entry.repr = repr;
-        if local_backend_entry_empty(entry) {
-            self.local_backend.remove(&local_id);
-        }
+        self.repr_flow.set_local_value_repr(local_id, repr);
     }
 
     #[cfg(test)]
@@ -813,7 +896,8 @@ impl<'a> EmitCtx<'a> {
                         self.set_local_iterator_next_state(*local, Some(info));
                     }
                     if let AnfOp::AMakeClosure { func_id, free_vars } = op.as_ref() {
-                        self.closure_locals
+                        self.repr_flow
+                            .closure_locals
                             .insert(*local, (*func_id, free_vars.clone()));
                     }
                     self.local_map.insert(*local, (*next_idx, local_ty.clone()));
@@ -2993,10 +3077,10 @@ mod tests {
         });
 
         ctx.set_local_sum_repr(LocalId(20), Some(repr));
-        assert!(ctx.local_backend.contains_key(&LocalId(20)));
+        assert!(ctx.repr_flow.local_backend.contains_key(&LocalId(20)));
 
         ctx.set_local_sum_repr(LocalId(20), None);
         // Entry should be cleaned up since all fields are None
-        assert!(!ctx.local_backend.contains_key(&LocalId(20)));
+        assert!(!ctx.repr_flow.local_backend.contains_key(&LocalId(20)));
     }
 }

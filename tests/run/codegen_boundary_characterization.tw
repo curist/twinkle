@@ -1,0 +1,135 @@
+// Expected output:
+//   closure_typed: 15
+//   closure_erased: 30
+//   option_typed_some: 42
+//   option_typed_none: -1
+//   option_boundary_call: 99
+//   result_typed_ok: 10
+//   result_typed_err: oops
+//   result_boundary: 7
+//   iterator_sum: 6
+//   iterator_boundary: 10
+//   cell_read: 5
+//   all_boundaries_ok
+
+// --- Typed closure boundary ---
+// A closure with concrete signature should get typed dispatch.
+fn apply_int(f: fn(Int) Int, x: Int) Int {
+  f(x)
+}
+
+fn make_adder(n: Int) fn(Int) Int {
+  fn(x: Int) Int { x + n }
+}
+
+// --- Erased closure boundary ---
+// A closure stored in a data structure forces erased (universal) path.
+fn apply_from_vec(fns: Vector<fn(Int) Int>, x: Int) Int {
+  f := fns[0]
+  f(x)
+}
+
+// --- Typed Option boundary ---
+fn option_or_default(o: Option<Int>, default: Int) Int {
+  case o {
+    .Some(n) => n,
+    .None => default,
+  }
+}
+
+fn make_some(n: Int) Option<Int> {
+  .Some(n)
+}
+
+// --- Typed Option across function boundary ---
+fn pass_option(o: Option<Int>) Option<Int> {
+  o
+}
+
+// --- Typed Result boundary ---
+fn show_result(r: Result<Int, String>) String {
+  case r {
+    .Ok(n) => "${n}",
+    .Err(e) => e,
+  }
+}
+
+fn make_result_ok(n: Int) Result<Int, String> {
+  .Ok(n)
+}
+
+fn make_result_err(msg: String) Result<Int, String> {
+  .Err(msg)
+}
+
+// --- Result across function boundary ---
+fn result_value(r: Result<Int, String>) Int {
+  case r {
+    .Ok(n) => n,
+    .Err(_) => -1,
+  }
+}
+
+// --- Iterator boundary ---
+fn counting(n: Int) Iterator<Int> {
+  Iterator.unfold(n, fn(i: Int) {
+    if i > 0 { UnfoldStep.Yield(i, i - 1) }
+    else     { UnfoldStep.Done }
+  })
+}
+
+fn sum_iter(it: Iterator<Int>) Int {
+  acc := 0
+  for x in it {
+    acc = acc + x
+  }
+  acc
+}
+
+// --- Iterator as first-class value (erased boundary) ---
+fn apply_iter(f: fn(Int) Iterator<Int>, n: Int) Int {
+  sum_iter(f(n))
+}
+
+// --- Cell boundary ---
+fn use_cell() Int {
+  c := Cell.new(5)
+  Cell.get(c)
+}
+
+fn main() {
+  // Typed closure: direct higher-order call
+  adder := make_adder(10)
+  println("closure_typed: ${apply_int(adder, 5)}")
+
+  // Erased closure: through vector
+  fns := [make_adder(20), make_adder(30)]
+  println("closure_erased: ${apply_from_vec(fns, 10)}")
+
+  // Typed Option
+  println("option_typed_some: ${option_or_default(.Some(42), 0)}")
+  println("option_typed_none: ${option_or_default(.None, -1)}")
+
+  // Option across function call boundary
+  println("option_boundary_call: ${option_or_default(pass_option(make_some(99)), 0)}")
+
+  // Typed Result
+  println("result_typed_ok: ${show_result(.Ok(10))}")
+  println("result_typed_err: ${show_result(.Err("oops"))}")
+
+  // Result across boundary
+  println("result_boundary: ${result_value(make_result_ok(7))}")
+
+  // Iterator
+  println("iterator_sum: ${sum_iter(counting(3))}")
+
+  // Iterator as first-class value
+  println("iterator_boundary: ${apply_iter(counting, 4)}")
+
+  // Cell
+  println("cell_read: ${use_cell()}")
+
+  println("all_boundaries_ok")
+}
+
+main()

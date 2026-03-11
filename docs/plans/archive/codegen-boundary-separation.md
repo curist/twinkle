@@ -92,29 +92,29 @@ After planning and before final WAT encoding, run debug assertions that check:
 
 ### Phase 0: Baseline and safety rails
 
-- [ ] Add characterization tests for current typed/erased closure, iterator, and sum boundary behavior.
-- [ ] Add lightweight instrumentation counters for boundary conversions in debug builds.
+- [x] Add characterization tests for current typed/erased closure, iterator, and sum boundary behavior.
+- [x] Add lightweight instrumentation counters for boundary conversions in debug builds.
 
 ### Phase 1: Module planning extraction
 
-- [ ] Extract non-instruction planning from `emit_user_module` into a plan builder.
-- [ ] Make helper/type registration deterministic from plan outputs.
+- [x] Extract non-instruction planning from `emit_user_module` into a plan builder.
+- [x] Make helper/type registration deterministic from plan outputs.
 
 ### Phase 2: `EmitCtx` decomposition
 
-- [ ] Move local layout logic out of the instruction emitter path.
-- [ ] Move representation-flow mutation helpers into `ReprFlowCtx`.
-- [ ] Keep emitter-facing API minimal and mostly read-only.
+- [x] Move local layout logic out of the instruction emitter path.
+- [x] Move representation-flow mutation helpers into `ReprFlowCtx`.
+- [x] Keep emitter-facing API minimal and mostly read-only.
 
 ### Phase 3: Intrinsic dispatch layering
 
-- [ ] Separate intrinsic policy decisions from instruction handlers.
-- [ ] Replace large `FuncId` match blocks in call lowering with table-driven dispatch where practical.
+- [x] Separate intrinsic policy decisions from instruction handlers.
+- [x] Replace large `FuncId` match blocks in call lowering with table-driven dispatch where practical.
 
 ### Phase 4: Verification and cleanup
 
-- [ ] Add debug verifier pass/checks against planned boundaries.
-- [ ] Remove path-local emergency guards made obsolete by phase split.
+- [x] Add debug verifier pass/checks against planned boundaries.
+- [x] Remove path-local emergency guards made obsolete by phase split.
 
 ---
 
@@ -129,6 +129,6 @@ After planning and before final WAT encoding, run debug assertions that check:
 
 ## Immediate Next Steps
 
-1. Extract `emit_user_module` planning steps into a dedicated `plan` module.
-2. Introduce `ReprFlowCtx` and migrate flow mutation helpers out of the instruction emitter path.
-3. Add one debug verifier for illegal sum/iterator boundary casts as first guardrail.
+1. ~~Extract `emit_user_module` planning steps into a dedicated `plan` module.~~ → Done (Phase 1, `src/codegen/planner.rs`)
+2. ~~Introduce `ReprFlowCtx` and migrate flow mutation helpers out of the instruction emitter path.~~ → Done (Phase 2, `src/codegen/ctx.rs`)
+3. ~~Add one debug verifier for illegal sum/iterator boundary casts as first guardrail.~~ → Done (Phase 4, `verify_boundary_invariants`)

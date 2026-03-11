@@ -33,6 +33,54 @@ use crate::wasm::ir::{
     TypeDef as WasmTypeDef, ValType,
 };
 
+// ---------------------------------------------------------------------------
+// Boundary conversion counters (debug builds only)
+// ---------------------------------------------------------------------------
+
+/// Lightweight counters tracking how many boundary conversions the emitter
+/// performs.  Only active in debug builds (`#[cfg(debug_assertions)]`).
+/// Used by characterization tests to verify that boundary paths are
+/// exercised as expected.
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, Default)]
+pub struct BoundaryCounters {
+    /// Typed Option<T> → erased Variant conversions.
+    pub typed_option_to_erased: u32,
+    /// Typed Result<T,E> → erased Variant conversions.
+    pub typed_result_to_erased: u32,
+    /// Typed closure `call_ref` dispatches (concrete signature).
+    pub typed_closure_calls: u32,
+    /// Universal (erased) closure `call_ref` dispatches.
+    pub universal_closure_calls: u32,
+    /// Typed iterator state access/creation.
+    pub typed_iterator_ops: u32,
+    /// Typed Cell struct creation/access.
+    pub typed_cell_ops: u32,
+}
+
+#[cfg(debug_assertions)]
+std::thread_local! {
+    static BOUNDARY_COUNTERS: std::cell::RefCell<BoundaryCounters> =
+        std::cell::RefCell::new(BoundaryCounters::default());
+}
+
+#[cfg(debug_assertions)]
+pub fn reset_boundary_counters() {
+    BOUNDARY_COUNTERS.with(|c| *c.borrow_mut() = BoundaryCounters::default());
+}
+
+#[cfg(debug_assertions)]
+pub fn boundary_counters() -> BoundaryCounters {
+    BOUNDARY_COUNTERS.with(|c| c.borrow().clone())
+}
+
+#[cfg(debug_assertions)]
+macro_rules! bump_boundary {
+    ($field:ident) => {
+        BOUNDARY_COUNTERS.with(|c| c.borrow_mut().$field += 1)
+    };
+}
+
 /// ANF -> ModuleIR emission with typed closure specialization.
 ///
 /// Emits specialized `ClosureFunc` / `Closure` struct types and typed
@@ -40,6 +88,16 @@ use crate::wasm::ir::{
 /// module.  At typed call sites a concrete `call_ref` is used — no anyref
 /// arg-boxing.  Dispatch through universal closures is unchanged.
 pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
+    let plan = build_module_emit_plan_impl(anf, type_env);
+    emit_user_module_from_plan(&plan, anf, type_env)
+}
+
+/// Build a `ModuleEmitPlan` by running all analysis/collection passes.
+/// Called by `planner::build_module_emit_plan`.
+pub(crate) fn build_module_emit_plan_impl(
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+) -> crate::codegen::planner::ModuleEmitPlan {
     let prelude = build_prelude_map();
     let concrete_func_sigs = collect_concrete_func_signatures(anf);
     validate_unfold_step_typing_invariants(anf, &concrete_func_sigs);
@@ -57,21 +115,49 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
     ctx.set_module_globals(module_global_map.clone());
     let capture_mono_by_func =
         collect_capture_mono_by_func(anf, &closure_capture_layouts, &mut ctx);
-    ctx.set_capture_mono_by_func(capture_mono_by_func);
+    ctx.set_capture_mono_by_func(capture_mono_by_func.clone());
     let user_func_iterator_states =
         collect_user_func_iterator_states(anf, &closure_capture_layouts, &mut ctx);
-    ctx.set_user_func_iterator_states(user_func_iterator_states);
+    let typed_cell_payloads = collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx);
+
+    crate::codegen::planner::ModuleEmitPlan {
+        concrete_func_sigs,
+        closure_capture_layouts,
+        user_sigs,
+        module_global_ids,
+        module_global_map,
+        capture_mono_by_func,
+        user_func_iterator_states,
+        typed_cell_payloads,
+    }
+}
+
+/// Emit a `ModuleIR` from a pre-computed plan.
+pub(crate) fn emit_user_module_from_plan(
+    plan: &crate::codegen::planner::ModuleEmitPlan,
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+) -> ModuleIR {
+    let prelude = build_prelude_map();
+    let user_sigs = plan.user_sigs.clone();
+    let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
+    ctx.set_concrete_func_sigs(plan.concrete_func_sigs.clone());
+    ctx.set_module_globals(plan.module_global_map.clone());
+    ctx.set_capture_mono_by_func(plan.capture_mono_by_func.clone());
+    ctx.set_user_func_iterator_states(plan.user_func_iterator_states.clone());
 
     // Register typed closures and cells in the unified registry.
-    for (_func_id, (params, ret)) in &concrete_func_sigs {
+    for (_func_id, (params, ret)) in &plan.concrete_func_sigs {
         let sym = typed_closurefunc_sym(params, ret);
         ctx.request_typed_closure(sym, params.clone(), ret.clone());
     }
-    for (sym, elem) in
-        collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx).into_iter()
-    {
-        ctx.request_typed_cell(sym, elem);
+    for (sym, elem) in &plan.typed_cell_payloads {
+        ctx.request_typed_cell(sym.clone(), elem.clone());
     }
+
+    let concrete_func_sigs = &plan.concrete_func_sigs;
+    let closure_capture_layouts = &plan.closure_capture_layouts;
+    let module_global_ids = &plan.module_global_ids;
 
     let mut module = ModuleIR::new("user");
 
@@ -256,7 +342,68 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
         .extend(emit_string_literal_pool_getters(&string_literals));
 
     module.imports.extend(ctx.imports());
+
+    #[cfg(debug_assertions)]
+    verify_boundary_invariants(&module);
+
     module
+}
+
+/// Debug verifier: checks that all typed struct types referenced in
+/// instructions (via ref.cast, struct.get, struct.new) have matching
+/// type definitions in the module.  Catches missing type registrations
+/// that would cause Wasm validation failures at runtime.
+#[cfg(debug_assertions)]
+fn verify_boundary_invariants(module: &ModuleIR) {
+    let defined_types: HashSet<&str> = module.types.iter().map(|td| td.name()).collect();
+
+    for func in &module.funcs {
+        verify_func_boundary_refs(&func.name, &func.body, &defined_types);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn verify_func_boundary_refs(func_name: &str, instrs: &[Instr], defined_types: &HashSet<&str>) {
+    for instr in instrs {
+        match instr {
+            Instr::StructNew(sym) | Instr::StructGet(sym, _) | Instr::StructSet(sym, _) => {
+                // Only verify user-defined types; runtime types (rt_*) are in separate modules.
+                if sym.starts_with("user__") {
+                    debug_assert!(
+                        defined_types.contains(sym.as_str()),
+                        "boundary verifier: {func_name} references struct type ${sym} which is not defined in the module"
+                    );
+                }
+            }
+            Instr::RefCast {
+                heap: HeapType::Named(sym),
+                ..
+            }
+            | Instr::RefTest {
+                heap: HeapType::Named(sym),
+                ..
+            } => {
+                if sym.starts_with("user__") {
+                    debug_assert!(
+                        defined_types.contains(sym.as_str()),
+                        "boundary verifier: {func_name} casts to type ${sym} which is not defined in the module"
+                    );
+                }
+            }
+            Instr::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                verify_func_boundary_refs(func_name, then_body, defined_types);
+                verify_func_boundary_refs(func_name, else_body, defined_types);
+            }
+            Instr::Block { body, .. } | Instr::Loop { body, .. } => {
+                verify_func_boundary_refs(func_name, body, defined_types);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn emit_user_init_func(anf: &AnfModule) -> Option<FuncDef> {
@@ -2006,7 +2153,7 @@ fn emit_specialized_closure_arg(
 ) -> Option<Vec<Instr>> {
     match arg {
         Atom::ALocal(local_id) => {
-            let (func_id, free_vars) = ctx.closure_locals.get(local_id)?.clone();
+            let (func_id, free_vars) = ctx.repr_flow.closure_locals.get(local_id)?.clone();
             let typed_ty = typed_closure_valtype(func_id, ctx)?;
             if &typed_ty != expected_ty {
                 return None;
@@ -2296,6 +2443,8 @@ fn emit_typed_option_local_to_variant(
     expected_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    #[cfg(debug_assertions)]
+    bump_boundary!(typed_option_to_erased);
     let option_sym = typed_general_option_sym(mono);
     let typed_ref = ValType::Ref {
         nullable: true,
@@ -2344,6 +2493,8 @@ fn emit_typed_result_local_to_variant(
     expected_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    #[cfg(debug_assertions)]
+    bump_boundary!(typed_result_to_erased);
     let result_sym = typed_general_option_sym(mono);
     let typed_ref = ValType::Ref {
         nullable: true,
@@ -3777,6 +3928,8 @@ fn emit_closure_call(
                 instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
                 instrs.push(Instr::StructGet(closure_sym, 2));
                 instrs.push(Instr::CallRef(closurefunc_sym));
+                #[cfg(debug_assertions)]
+                bump_boundary!(typed_closure_calls);
                 match ret {
                     MonoType::Void | MonoType::Never => {
                         instrs.extend(emit_void_value(Some(bind_ty)));
@@ -3811,6 +3964,8 @@ fn emit_closure_call(
     instrs.extend(emit_atom(callee, Some(&ref_closure_null()), ctx));
     instrs.push(Instr::StructGet(T_CLOSURE.to_string(), 0));
     instrs.push(Instr::CallRef(T_CLOSURE_FUNC.to_string()));
+    #[cfg(debug_assertions)]
+    bump_boundary!(universal_closure_calls);
     instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
     instrs
 }
@@ -4551,6 +4706,8 @@ fn typed_cell_info_from_atom(
 fn emit_cell_new_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     if let Some(inner_mono) = ctx.infer_atom_mono(&args[0]) {
         if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_inner_mono(&inner_mono, ctx) {
+            #[cfg(debug_assertions)]
+            bump_boundary!(typed_cell_ops);
             let mut instrs = emit_atom(&args[0], Some(&payload_ty), ctx);
             instrs.push(Instr::StructNew(cell_sym.clone()));
             instrs.extend(emit_coerce_stack(
@@ -4692,6 +4849,8 @@ fn emit_iterator_unfold_intrinsic(
             heap: HeapType::Named(state_sym.clone()),
         };
         ctx.request_typed_iterator_state(state_sym.clone(), info.clone());
+        #[cfg(debug_assertions)]
+        bump_boundary!(typed_iterator_ops);
         let mut instrs = emit_atom(
             &args[0],
             Some(&mono_to_valtype_specialized(

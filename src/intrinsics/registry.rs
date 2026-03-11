@@ -48,6 +48,9 @@ pub struct IntrinsicSpec {
     pub dispatch: IntrinsicDispatch,
     pub include_in_signature_registry: bool,
     pub include_in_contract_registry: bool,
+    /// Instruction-level lowering kind for intrinsic dispatch, or `None` for
+    /// runtime-forwarded calls that don't need special lowering.
+    pub lowering_kind: Option<LoweringKind>,
 }
 
 macro_rules! spec {
@@ -58,6 +61,17 @@ macro_rules! spec {
             dispatch: IntrinsicDispatch::$dispatch,
             include_in_signature_registry: $sig,
             include_in_contract_registry: $contract,
+            lowering_kind: None,
+        }
+    };
+    ($id:ident, $name:literal, $dispatch:ident, $sig:expr, $contract:expr, $kind:ident) => {
+        IntrinsicSpec {
+            func_id: prelude_ids::$id,
+            twinkle_name: $name,
+            dispatch: IntrinsicDispatch::$dispatch,
+            include_in_signature_registry: $sig,
+            include_in_contract_registry: $contract,
+            lowering_kind: Some(LoweringKind::$kind),
         }
     };
 }
@@ -71,13 +85,34 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(INT_TO_STRING, "Int.to_string", Runtime, true, true),
     spec!(FLOAT_TO_STRING, "Float.to_string", Runtime, true, true),
     spec!(BOOL_TO_STRING, "Bool.to_string", Runtime, true, true),
-    spec!(STRING_TO_STRING, "String.to_string", Intrinsic, true, true),
+    spec!(
+        STRING_TO_STRING,
+        "String.to_string",
+        Intrinsic,
+        true,
+        true,
+        StringToStringIdentity
+    ),
     spec!(STRING_LEN, "String.len", Runtime, false, false),
     spec!(STRING_CONCAT, "String.concat", Runtime, false, false),
-    spec!(STRING_GET, "String.get", Intrinsic, true, true),
-    spec!(STRING_SLICE, "String.slice", Intrinsic, true, true),
+    spec!(STRING_GET, "String.get", Intrinsic, true, true, StringGet),
+    spec!(
+        STRING_SLICE,
+        "String.slice",
+        Intrinsic,
+        true,
+        true,
+        StringSlice
+    ),
     spec!(VECTOR_LEN, "Vector.len", Runtime, false, false),
-    spec!(VECTOR_PUSH, "Vector.push", Intrinsic, true, true),
+    spec!(
+        VECTOR_PUSH,
+        "Vector.push",
+        Intrinsic,
+        true,
+        true,
+        VectorPush
+    ),
     spec!(
         VECTOR_SET_UNSAFE,
         "Vector.set_unsafe",
@@ -108,16 +143,44 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
-    spec!(RANGE_FROM, "range_from", Intrinsic, true, true),
-    spec!(RANGE, "range", Intrinsic, true, true),
-    spec!(RANGE_STEP, "range_step", Intrinsic, true, true),
-    spec!(CELL_NEW, "Cell.new", Intrinsic, true, true),
-    spec!(CELL_GET, "Cell.get", Intrinsic, true, true),
-    spec!(CELL_SET, "Cell.set", Intrinsic, true, true),
-    spec!(CELL_UPDATE, "Cell.update", Intrinsic, true, true),
-    spec!(DICT_GET_UNSAFE, "dict_get_unsafe", Intrinsic, false, true),
-    spec!(ITERATOR_NEXT, "Iterator.next", Intrinsic, true, true),
-    spec!(ITERATOR_UNFOLD, "Iterator.unfold", Intrinsic, true, true),
+    spec!(RANGE_FROM, "range_from", Intrinsic, true, true, RangeFrom),
+    spec!(RANGE, "range", Intrinsic, true, true, Range),
+    spec!(RANGE_STEP, "range_step", Intrinsic, true, true, RangeStep),
+    spec!(CELL_NEW, "Cell.new", Intrinsic, true, true, CellNew),
+    spec!(CELL_GET, "Cell.get", Intrinsic, true, true, CellGet),
+    spec!(CELL_SET, "Cell.set", Intrinsic, true, true, CellSet),
+    spec!(
+        CELL_UPDATE,
+        "Cell.update",
+        Intrinsic,
+        true,
+        true,
+        CellUpdate
+    ),
+    spec!(
+        DICT_GET_UNSAFE,
+        "dict_get_unsafe",
+        Intrinsic,
+        false,
+        true,
+        DictGetUnsafe
+    ),
+    spec!(
+        ITERATOR_NEXT,
+        "Iterator.next",
+        Intrinsic,
+        true,
+        true,
+        IteratorNext
+    ),
+    spec!(
+        ITERATOR_UNFOLD,
+        "Iterator.unfold",
+        Intrinsic,
+        true,
+        true,
+        IteratorUnfold
+    ),
     spec!(
         VECTOR_BUILDER_NEW,
         "__vector_builder_new",
@@ -139,15 +202,23 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
-    spec!(VECTOR_GET, "Vector.get", Intrinsic, true, true),
-    spec!(VECTOR_SET, "Vector.set", Intrinsic, true, true),
-    spec!(VECTOR_MAKE, "Vector.make", Intrinsic, true, true),
+    spec!(VECTOR_GET, "Vector.get", Intrinsic, true, true, VectorGet),
+    spec!(VECTOR_SET, "Vector.set", Intrinsic, true, true, VectorSet),
+    spec!(
+        VECTOR_MAKE,
+        "Vector.make",
+        Intrinsic,
+        true,
+        true,
+        VectorMake
+    ),
     spec!(
         VECTOR_SET_IN_PLACE,
         "__vector_set_in_place",
         Intrinsic,
         false,
-        true
+        true,
+        VectorSetInPlace
     ),
     spec!(
         VECTOR_BUILDER_FROM,
@@ -156,39 +227,78 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
-    spec!(BYTE_TO_INT, "Byte.to_int", Intrinsic, true, true),
-    spec!(BYTE_FROM_INT, "Byte.from_int", Intrinsic, true, true),
-    spec!(BYTE_TO_STRING, "Byte.to_string", Intrinsic, true, true),
-    spec!(CHAR_CODE_AT, "String.char_code_at", Intrinsic, true, true),
+    spec!(BYTE_TO_INT, "Byte.to_int", Intrinsic, true, true, ByteToInt),
+    spec!(
+        BYTE_FROM_INT,
+        "Byte.from_int",
+        Intrinsic,
+        true,
+        true,
+        ByteFromInt
+    ),
+    spec!(
+        BYTE_TO_STRING,
+        "Byte.to_string",
+        Intrinsic,
+        true,
+        true,
+        ByteToString
+    ),
+    spec!(
+        CHAR_CODE_AT,
+        "String.char_code_at",
+        Intrinsic,
+        true,
+        true,
+        CharCodeAt
+    ),
     spec!(
         FROM_CHAR_CODE,
         "String.from_char_code",
         Intrinsic,
         true,
-        true
+        true,
+        FromCharCode
     ),
     spec!(
         FROM_CODE_POINT,
         "String.from_code_point",
         Intrinsic,
         true,
-        true
+        true,
+        FromCodePoint
     ),
     spec!(
         STRING_UTF8_BYTES,
         "String.utf8_bytes",
         Intrinsic,
         true,
-        true
+        true,
+        StringUtf8Bytes
     ),
-    spec!(STRING_FROM_UTF8, "String.from_utf8", Intrinsic, true, true),
-    spec!(INT_FROM_STRING, "Int.from_string", Intrinsic, true, true),
+    spec!(
+        STRING_FROM_UTF8,
+        "String.from_utf8",
+        Intrinsic,
+        true,
+        true,
+        StringFromUtf8
+    ),
+    spec!(
+        INT_FROM_STRING,
+        "Int.from_string",
+        Intrinsic,
+        true,
+        true,
+        IntFromString
+    ),
     spec!(
         FLOAT_FROM_STRING,
         "Float.from_string",
         Intrinsic,
         true,
-        true
+        true,
+        FloatFromString
     ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
@@ -304,38 +414,10 @@ pub fn builtin_module_aliases() -> &'static [&'static str] {
     ]
 }
 
+/// Look up the lowering kind for an intrinsic by func_id.
+/// Uses the unified spec table instead of a separate match block.
 pub fn lowering_kind(func_id: FuncId) -> Option<LoweringKind> {
-    match func_id {
-        id if id == prelude_ids::STRING_TO_STRING => Some(LoweringKind::StringToStringIdentity),
-        id if id == prelude_ids::VECTOR_PUSH => Some(LoweringKind::VectorPush),
-        id if id == prelude_ids::RANGE => Some(LoweringKind::Range),
-        id if id == prelude_ids::RANGE_FROM => Some(LoweringKind::RangeFrom),
-        id if id == prelude_ids::RANGE_STEP => Some(LoweringKind::RangeStep),
-        id if id == prelude_ids::CELL_NEW => Some(LoweringKind::CellNew),
-        id if id == prelude_ids::CELL_GET => Some(LoweringKind::CellGet),
-        id if id == prelude_ids::CELL_SET => Some(LoweringKind::CellSet),
-        id if id == prelude_ids::CELL_UPDATE => Some(LoweringKind::CellUpdate),
-        id if id == prelude_ids::DICT_GET_UNSAFE => Some(LoweringKind::DictGetUnsafe),
-        id if id == prelude_ids::ITERATOR_UNFOLD => Some(LoweringKind::IteratorUnfold),
-        id if id == prelude_ids::ITERATOR_NEXT => Some(LoweringKind::IteratorNext),
-        id if id == prelude_ids::VECTOR_MAKE => Some(LoweringKind::VectorMake),
-        id if id == prelude_ids::VECTOR_GET => Some(LoweringKind::VectorGet),
-        id if id == prelude_ids::VECTOR_SET => Some(LoweringKind::VectorSet),
-        id if id == prelude_ids::VECTOR_SET_IN_PLACE => Some(LoweringKind::VectorSetInPlace),
-        id if id == prelude_ids::STRING_GET => Some(LoweringKind::StringGet),
-        id if id == prelude_ids::STRING_SLICE => Some(LoweringKind::StringSlice),
-        id if id == prelude_ids::CHAR_CODE_AT => Some(LoweringKind::CharCodeAt),
-        id if id == prelude_ids::FROM_CHAR_CODE => Some(LoweringKind::FromCharCode),
-        id if id == prelude_ids::FROM_CODE_POINT => Some(LoweringKind::FromCodePoint),
-        id if id == prelude_ids::STRING_UTF8_BYTES => Some(LoweringKind::StringUtf8Bytes),
-        id if id == prelude_ids::STRING_FROM_UTF8 => Some(LoweringKind::StringFromUtf8),
-        id if id == prelude_ids::INT_FROM_STRING => Some(LoweringKind::IntFromString),
-        id if id == prelude_ids::FLOAT_FROM_STRING => Some(LoweringKind::FloatFromString),
-        id if id == prelude_ids::BYTE_TO_INT => Some(LoweringKind::ByteToInt),
-        id if id == prelude_ids::BYTE_FROM_INT => Some(LoweringKind::ByteFromInt),
-        id if id == prelude_ids::BYTE_TO_STRING => Some(LoweringKind::ByteToString),
-        _ => None,
-    }
+    spec(func_id).and_then(|s| s.lowering_kind)
 }
 
 #[cfg(test)]
