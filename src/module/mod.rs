@@ -1,9 +1,12 @@
 pub mod artifacts;
 pub mod context;
 pub mod dce;
+mod env_integration;
 pub mod loader;
+mod planner;
+mod stage_runner;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -13,23 +16,25 @@ use crate::ir::CoreModule;
 use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
-use crate::query::api::{
-    lower_stage, parse_source_module, preassign_module_function_ids, resolve_stage,
-    typecheck_stage_with_options,
-};
+use crate::query::api::preassign_module_function_ids;
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
 use crate::syntax::ast::{ImportDecl, Item, Pattern, Stmt};
 use crate::syntax::span::FileRegistry;
-use crate::types::env::{TypeEnv, TypeEnvBindingSnapshot, ValueEnv, ValueEnvBindingSnapshot};
+use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{FunctionSignature, TypeId, builtin_method_alias, method_receiver_type_id};
 
 pub use artifacts::{ExternalFuncRef, LoweredModule, ResolvedModule, TypedModule};
 pub use context::{CompilationContext, CompileState, ModuleExports};
+use env_integration::{
+    DependencyProjection, project_dependency_exports, restore_compile_env, snapshot_compile_env,
+};
 pub use loader::{
     find_project_root, list_prelude_modules_default, resolve_module_path,
     resolve_stdlib_module_path, resolve_stdlib_module_path_from_root,
 };
+use planner::{PlannedDependencyKind, plan_module_dependencies};
+use stage_runner::ModuleStageRunner;
 
 trait ModuleSourceAdapter {
     fn canonicalize(&self, path: &Path) -> PathBuf;
@@ -194,37 +199,32 @@ fn normalize_path_lexical(path: &Path) -> PathBuf {
     }
 }
 
-#[derive(Clone)]
-struct CompileEnvSnapshot {
-    type_env: TypeEnvBindingSnapshot,
-    value_env: ValueEnvBindingSnapshot,
-    func_table: HashMap<String, FuncId>,
-    module_aliases: HashSet<String>,
-    qualified_value_globals: HashMap<String, LocalId>,
-    qualified_func_targets: HashMap<String, ExternalFuncRef>,
-    module_registry: HashMap<String, ModuleExports>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileStage {
+    Parse,
+    Resolve,
+    Typecheck,
+    Lower,
 }
 
-fn snapshot_compile_env(state: &CompileState) -> CompileEnvSnapshot {
-    CompileEnvSnapshot {
-        type_env: state.type_env.snapshot_bindings(),
-        value_env: state.value_env.snapshot_bindings(),
-        func_table: state.func_table.clone(),
-        module_aliases: state.module_aliases.clone(),
-        qualified_value_globals: state.qualified_value_globals.clone(),
-        qualified_func_targets: state.qualified_func_targets.clone(),
-        module_registry: state.module_registry.clone(),
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileTraceEvent {
+    pub module_path: PathBuf,
+    pub stage: CompileStage,
+    pub cache_hit: bool,
 }
 
-fn restore_compile_env(state: &mut CompileState, snapshot: CompileEnvSnapshot) {
-    state.type_env.restore_bindings(snapshot.type_env);
-    state.value_env.restore_bindings(snapshot.value_env);
-    state.func_table = snapshot.func_table;
-    state.module_aliases = snapshot.module_aliases;
-    state.qualified_value_globals = snapshot.qualified_value_globals;
-    state.qualified_func_targets = snapshot.qualified_func_targets;
-    state.module_registry = snapshot.module_registry;
+fn record_stage_trace(
+    stage_trace: &mut Vec<CompileTraceEvent>,
+    module_path: &Path,
+    stage: CompileStage,
+    cache_hit: bool,
+) {
+    stage_trace.push(CompileTraceEvent {
+        module_path: module_path.to_path_buf(),
+        stage,
+        cache_hit,
+    });
 }
 
 /// Compile a single module (file) and all its transitive dependencies.
@@ -241,6 +241,7 @@ pub fn compile_module(
     state: &mut CompileState,
     do_lower: bool,
 ) -> Result<(ModuleExports, FileRegistry)> {
+    let mut stage_trace = Vec::new();
     compile_module_with_adapter(
         file_path,
         alias,
@@ -249,6 +250,7 @@ pub fn compile_module(
         state,
         do_lower,
         &FsModuleSourceAdapter,
+        &mut stage_trace,
     )
 }
 
@@ -260,6 +262,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     state: &mut CompileState,
     do_lower: bool,
     adapter: &A,
+    stage_trace: &mut Vec<CompileTraceEvent>,
 ) -> Result<(ModuleExports, FileRegistry)> {
     // Canonicalize for deduplication / cycle detection
     let canonical = adapter.canonicalize(file_path);
@@ -280,116 +283,35 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     // Parse
     let source = adapter.read_source(&canonical)?;
     let source_hash = query_keys::hash_text(&source);
-    let parse_key = query_keys::parse_key(&canonical, source_hash);
-    let (cached_parsed, had_parse_entry) = with_global_cache(|cache| {
-        let had = cache.has_parse_entry(&canonical);
-        let parsed = cache.get_parsed(&canonical, parse_key);
-        (parsed, had)
-    });
-    let parsed = if let Some(parsed) = cached_parsed {
-        parsed
-    } else {
-        if had_parse_entry {
-            with_global_cache(|cache| cache.invalidate_changed_module(&canonical));
-        }
-        let parsed = parse_source_module(&source, &canonical)?;
-        with_global_cache(|cache| cache.put_parsed(&canonical, parse_key, parsed.clone()));
-        parsed
-    };
+    let parsed_stage_runner = ModuleStageRunner::new(&canonical, source_hash, 0, 0, false);
+    let parsed_result = parsed_stage_runner.parse(&source)?;
+    let parsed = parsed_result.value;
+    record_stage_trace(
+        stage_trace,
+        &canonical,
+        CompileStage::Parse,
+        parsed_result.cache_hit,
+    );
     let ast = parsed.ast.clone();
     let file_registry = parsed.file_registry.clone();
 
-    // Compile dependencies first (in source order)
+    // Compile dependencies from an explicit plan:
+    // source-order imports, then deterministic prelude auto-imports.
+    let dep_plan = plan_module_dependencies(file_path, &canonical, &ast, adapter)?;
+
     importing_stack.push(canonical.clone());
-    let mut dep_canonical_paths = Vec::new();
 
-    for item in &ast.items {
-        if let Item::Import(import) = item {
-            let dep_path = adapter.resolve_import_path(file_path, import);
-            let dep_canonical = adapter.canonicalize(&dep_path);
-            if !adapter.exists(&dep_canonical) {
-                importing_stack.pop();
-                return Err(anyhow!(
-                    "Cannot resolve module '{}': expected file '{}'",
-                    if import.is_stdlib {
-                        format!("@{}", import.module_path.join("."))
-                    } else {
-                        import.module_path.join(".")
-                    },
-                    dep_path.display()
-                ));
-            }
-            dep_canonical_paths.push(dep_canonical.clone());
-            let dep_alias = import.module_name().to_string();
-            let env_snapshot = snapshot_compile_env(state);
-            let result = compile_module_with_adapter(
-                &dep_canonical,
-                &dep_alias,
-                ctx,
-                importing_stack,
-                state,
-                do_lower,
-                adapter,
-            );
-            restore_compile_env(state, env_snapshot);
-            match result {
-                Ok((dep_exports, _)) => state.register_module_exports(&dep_alias, &dep_exports),
-                Err(e) => {
-                    importing_stack.pop();
-                    return Err(e);
-                }
-            }
-        }
-    }
-
-    // Prelude auto-import: inject stdlib/prelude/*.tw modules unless:
-    //  - This module is inside stdlib or prelude itself (avoid cycles)
-    //  - The prelude module is already an explicit dependency (canonical-path dedupe)
-    let stdlib_root_canonical = adapter.canonicalize(&adapter.stdlib_root());
-    let prelude_root_canonical = adapter.canonicalize(&adapter.prelude_root());
-    let is_internal = canonical.starts_with(&stdlib_root_canonical)
-        || canonical.starts_with(&prelude_root_canonical);
-    if !is_internal {
-        let prelude_modules = adapter.list_prelude_modules();
-        for prelude_path in &prelude_modules {
-            let prelude_canonical = adapter.canonicalize(prelude_path);
-            // Skip if already explicitly imported (canonical-path dedupe)
-            if dep_canonical_paths.contains(&prelude_canonical) {
-                continue;
-            }
-            if !adapter.exists(&prelude_canonical) {
-                continue;
-            }
-            let prelude_alias = format!(
-                "__prelude_{}",
-                prelude_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-            );
-            dep_canonical_paths.push(prelude_canonical.clone());
-            let env_snapshot = snapshot_compile_env(state);
-            let result = compile_module_with_adapter(
-                &prelude_canonical,
-                &prelude_alias,
-                ctx,
-                importing_stack,
-                state,
-                do_lower,
-                adapter,
-            );
-            restore_compile_env(state, env_snapshot);
-            match result {
-                Ok((dep_exports, _)) => {
-                    state.register_prelude_exports(&dep_exports);
-                }
-                Err(e) => {
-                    importing_stack.pop();
-                    return Err(e);
-                }
-            }
-        }
-    }
+    compile_planned_dependencies(
+        &dep_plan.dependencies,
+        ctx,
+        importing_stack,
+        state,
+        do_lower,
+        adapter,
+        stage_trace,
+    )?;
+    let dep_canonical_paths = dep_plan.canonical_paths;
+    let is_internal = dep_plan.is_internal;
 
     with_global_cache(|cache| cache.set_dependencies(&canonical, &dep_canonical_paths));
     let dep_hash_entries: Vec<(String, u64)> = dep_canonical_paths
@@ -406,37 +328,38 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
         .map(|(path, hash)| (path.to_string_lossy().to_string(), *hash))
         .collect();
     let context_hash = query_keys::context_hash(&context_entries);
+    let stage_runner = ModuleStageRunner::new(
+        &canonical,
+        source_hash,
+        deps_hash,
+        context_hash,
+        is_internal,
+    );
 
     // Pre-assign module-local FuncIds for this module's user functions.
     let mut module_next_func_id = prelude::USER_FUNC_START;
     preassign_module_function_ids(&ast, alias, &mut state.func_table, &mut module_next_func_id);
 
     // Resolve — pure function; takes accumulated envs, returns updated envs
-    let resolve_key = query_keys::with_context(
-        query_keys::resolve_key(&canonical, source_hash, deps_hash),
-        context_hash,
-    );
-    let mut resolved = if let Some(cached) =
-        with_global_cache(|cache| cache.get_resolved(&canonical, resolve_key))
-    {
-        cached
-    } else {
-        let type_env = state.type_env.clone();
-        let value_env = state.value_env.clone();
-        let type_env_for_errs = type_env.clone();
-        let resolved = match resolve_stage(&ast, type_env, value_env) {
-            Ok(r) => r,
-            Err(errors) => {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .map(|e| e.format(&file_registry, Some(&type_env_for_errs)))
-                    .collect();
-                importing_stack.pop();
-                return Err(anyhow!("{}", msgs.join("\n")));
-            }
-        };
-        with_global_cache(|cache| cache.put_resolved(&canonical, resolve_key, resolved.clone()));
-        resolved
+    let mut resolved = match stage_runner.resolve(
+        &ast,
+        state.type_env.clone(),
+        state.value_env.clone(),
+        &file_registry,
+    ) {
+        Ok(result) => {
+            record_stage_trace(
+                stage_trace,
+                &canonical,
+                CompileStage::Resolve,
+                result.cache_hit,
+            );
+            result.value
+        }
+        Err(err) => {
+            importing_stack.pop();
+            return Err(err);
+        }
     };
     // Register current module's own functions as inherent methods so that
     // p1.method() syntax works within the same file (not just cross-module).
@@ -445,42 +368,115 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     state.value_env = resolved.value_env.clone();
 
     // Typecheck — pure function; takes explicit envs and returns updated envs + TypeMap
-    let typecheck_key = query_keys::with_context(
-        query_keys::typecheck_key(&canonical, source_hash, deps_hash, is_internal),
-        context_hash,
-    );
-    let typed = if let Some(cached) =
-        with_global_cache(|cache| cache.get_typed(&canonical, typecheck_key))
-    {
-        cached
-    } else {
-        let type_env_for_errs = resolved.type_env.clone();
-        let typed = match typecheck_stage_with_options(
-            &ast,
-            resolved.clone(),
-            state.module_aliases.clone(),
-            is_internal,
-        ) {
-            Ok(t) => t,
-            Err(errors) => {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .map(|e| e.format(&file_registry, Some(&type_env_for_errs)))
-                    .collect();
-                importing_stack.pop();
-                return Err(anyhow!("{}", msgs.join("\n")));
-            }
-        };
-        with_global_cache(|cache| cache.put_typed(&canonical, typecheck_key, typed.clone()));
-        typed
+    let typed = match stage_runner.typecheck(
+        &ast,
+        resolved.clone(),
+        state.module_aliases.clone(),
+        &file_registry,
+    ) {
+        Ok(result) => {
+            record_stage_trace(
+                stage_trace,
+                &canonical,
+                CompileStage::Typecheck,
+                result.cache_hit,
+            );
+            result.value
+        }
+        Err(err) => {
+            importing_stack.pop();
+            return Err(err);
+        }
     };
-    state.type_env = typed.type_env;
-    state.value_env = typed.value_env;
+    let TypedModule {
+        type_env,
+        value_env,
+        type_map,
+    } = typed;
+    state.type_env = type_env;
+    state.value_env = value_env;
 
+    let exports = build_module_exports(&ast, &canonical, alias, state);
+
+    maybe_lower_module(
+        do_lower,
+        &stage_runner,
+        &ast,
+        alias,
+        &file_registry,
+        &canonical,
+        &dep_canonical_paths,
+        module_next_func_id,
+        type_map,
+        state,
+        importing_stack,
+        stage_trace,
+    )?;
+
+    let module_hash = query_keys::module_hash(source_hash, deps_hash);
+    state.module_hashes.insert(canonical.clone(), module_hash);
+    with_global_cache(|cache| cache.set_module_hash(&canonical, module_hash));
+
+    cleanup_module_local_bindings(&ast, alias, state);
+
+    importing_stack.pop();
+
+    // Cache and return
+    ctx.module_cache.insert(canonical, exports.clone());
+    Ok((exports, file_registry))
+}
+
+fn compile_planned_dependencies<A: ModuleSourceAdapter>(
+    dependencies: &[planner::PlannedDependency],
+    ctx: &mut CompilationContext,
+    importing_stack: &mut Vec<PathBuf>,
+    state: &mut CompileState,
+    do_lower: bool,
+    adapter: &A,
+    stage_trace: &mut Vec<CompileTraceEvent>,
+) -> Result<()> {
+    for dep in dependencies {
+        let env_snapshot = snapshot_compile_env(state);
+        let result = compile_module_with_adapter(
+            &dep.canonical_path,
+            &dep.alias,
+            ctx,
+            importing_stack,
+            state,
+            do_lower,
+            adapter,
+            stage_trace,
+        );
+        restore_compile_env(state, env_snapshot);
+        match result {
+            Ok((dep_exports, _)) => {
+                let projection = match dep.kind {
+                    PlannedDependencyKind::Import => DependencyProjection::Import {
+                        alias: dep.alias.as_str(),
+                    },
+                    PlannedDependencyKind::Prelude => DependencyProjection::Prelude,
+                };
+                project_dependency_exports(state, projection, &dep_exports);
+            }
+            Err(err) => {
+                importing_stack.pop();
+                return Err(err);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_module_exports(
+    ast: &crate::syntax::ast::SourceFile,
+    canonical: &Path,
+    alias: &str,
+    state: &CompileState,
+) -> ModuleExports {
     // Build ModuleExports from public declarations.
     // Pub let bindings get globally-unique LocalIds starting from state.next_global_local_id.
     let mut exports = ModuleExports::empty();
-    exports.canonical_path = canonical.clone();
+    exports.canonical_path = canonical.to_path_buf();
     let mut global_offset = state.next_global_local_id;
     for item in &ast.items {
         match item {
@@ -516,65 +512,57 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             _ => {}
         }
     }
+    exports
+}
 
-    // Lower (if requested) — pure function via explicit LowerInput
-    if do_lower {
-        let lower_key = query_keys::with_context(
-            query_keys::lower_key(
-                &canonical,
-                source_hash,
-                deps_hash,
-                state.next_global_local_id,
-            ),
-            context_hash,
-        );
-        let input = LowerInput {
-            type_env: state.type_env.clone(),
-            value_env: state.value_env.clone(),
-            func_table: state.func_table.clone(),
-            module_aliases: state.module_aliases.clone(),
-            qualified_value_globals: state.qualified_value_globals.clone(),
-            qualified_func_targets: state.qualified_func_targets.clone(),
-            next_func_id: module_next_func_id,
-            next_global_local_id: state.next_global_local_id,
-        };
-        let cached_lowered = with_global_cache(|cache| cache.get_lowered(&canonical, lower_key));
-        if let Some(mut lowered) = cached_lowered {
-            lowered.module_path = canonical.clone();
-            lowered.dependencies = dep_canonical_paths.clone();
-            state.next_global_local_id = lowered.next_global_local_id_after;
-            state.lowered_modules.push(lowered);
-        } else {
-            match lower_stage(&ast, typed.type_map, input, alias) {
-                Ok(mut lowered) => {
-                    lowered.module_path = canonical.clone();
-                    lowered.dependencies = dep_canonical_paths.clone();
-                    with_global_cache(|cache| {
-                        cache.put_lowered(&canonical, lower_key, lowered.clone());
-                    });
-                    state.next_global_local_id = lowered.next_global_local_id_after;
-                    state.lowered_modules.push(lowered);
-                }
-                Err(errs) => {
-                    let msgs: Vec<String> = errs.iter().map(|e| e.format(&file_registry)).collect();
-                    importing_stack.pop();
-                    return Err(anyhow!("Lowering failed:\n{}", msgs.join("\n")));
-                }
-            }
-        }
+#[allow(clippy::too_many_arguments)]
+fn maybe_lower_module(
+    do_lower: bool,
+    stage_runner: &ModuleStageRunner<'_>,
+    ast: &crate::syntax::ast::SourceFile,
+    alias: &str,
+    file_registry: &FileRegistry,
+    canonical: &Path,
+    dep_canonical_paths: &[PathBuf],
+    module_next_func_id: u32,
+    type_map: crate::types::type_map::TypeMap,
+    state: &mut CompileState,
+    importing_stack: &mut Vec<PathBuf>,
+    stage_trace: &mut Vec<CompileTraceEvent>,
+) -> Result<()> {
+    if !do_lower {
+        return Ok(());
     }
 
-    let module_hash = query_keys::module_hash(source_hash, deps_hash);
-    state.module_hashes.insert(canonical.clone(), module_hash);
-    with_global_cache(|cache| cache.set_module_hash(&canonical, module_hash));
-
-    cleanup_module_local_bindings(&ast, alias, state);
-
-    importing_stack.pop();
-
-    // Cache and return
-    ctx.module_cache.insert(canonical, exports.clone());
-    Ok((exports, file_registry))
+    let input = LowerInput {
+        type_env: state.type_env.clone(),
+        value_env: state.value_env.clone(),
+        func_table: state.func_table.clone(),
+        module_aliases: state.module_aliases.clone(),
+        qualified_value_globals: state.qualified_value_globals.clone(),
+        qualified_func_targets: state.qualified_func_targets.clone(),
+        next_func_id: module_next_func_id,
+        next_global_local_id: state.next_global_local_id,
+    };
+    let lowered_result = match stage_runner.lower(ast, type_map, input, alias, file_registry) {
+        Ok(result) => result,
+        Err(err) => {
+            importing_stack.pop();
+            return Err(err);
+        }
+    };
+    let mut lowered = lowered_result.value;
+    lowered.module_path = canonical.to_path_buf();
+    lowered.dependencies = dep_canonical_paths.to_vec();
+    state.next_global_local_id = lowered.next_global_local_id_after;
+    state.lowered_modules.push(lowered);
+    record_stage_trace(
+        stage_trace,
+        canonical,
+        CompileStage::Lower,
+        lowered_result.cache_hit,
+    );
+    Ok(())
 }
 
 /// Assemble a CoreModule from per-module lowered artifacts.
@@ -1177,6 +1165,19 @@ pub fn compile_entry_from_source_map(
     project_root: &Path,
     stdlib_root: &Path,
 ) -> Result<(CoreModule, FileRegistry)> {
+    let (core_module, registry, _) =
+        compile_entry_from_source_map_with_trace(entry_path, sources, project_root, stdlib_root)?;
+    Ok((core_module, registry))
+}
+
+/// Full pipeline (parse + resolve + typecheck + lower) from an in-memory module map,
+/// with per-module stage trace events.
+pub fn compile_entry_from_source_map_with_trace(
+    entry_path: &Path,
+    sources: &HashMap<PathBuf, String>,
+    project_root: &Path,
+    stdlib_root: &Path,
+) -> Result<(CoreModule, FileRegistry, Vec<CompileTraceEvent>)> {
     let adapter = SourceMapModuleAdapter::new(project_root, stdlib_root, sources);
     let entry = adapter.canonicalize(entry_path);
     if !adapter.exists(&entry) {
@@ -1194,6 +1195,7 @@ pub fn compile_entry_from_source_map(
     let mut ctx = CompilationContext::new();
     let mut state = CompileState::initial();
     state.entry_module_path = Some(entry.clone());
+    let mut stage_trace = Vec::new();
     let (_, registry) = compile_module_with_adapter(
         &entry,
         &alias,
@@ -1202,6 +1204,7 @@ pub fn compile_entry_from_source_map(
         &mut state,
         true,
         &adapter,
+        &mut stage_trace,
     )?;
-    Ok((dce::eliminate_dead_code(link(state)), registry))
+    Ok((dce::eliminate_dead_code(link(state)), registry, stage_trace))
 }
