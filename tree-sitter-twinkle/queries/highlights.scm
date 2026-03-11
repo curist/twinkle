@@ -4,6 +4,10 @@
 ; Generic identifier - FIRST, so specific captures can override
 (identifier) @variable
 
+; PascalCase identifiers default to type highlight (e.g. Cell.new(5))
+((identifier) @type
+ (#match? @type "^[A-Z]"))
+
 ; Keywords by semantic role
 "fn" @keyword.function
 
