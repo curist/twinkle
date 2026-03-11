@@ -171,5 +171,5 @@ This plan is done when:
 ## Follow-On
 
 After this plan completes, the remaining work in
-[wasm-type-erasure-reduction.md](../wasm-type-erasure-reduction.md) should resume on top of the
+[wasm-type-erasure-reduction.md](./wasm-type-erasure-reduction.md) should resume on top of the
 aligned pipeline.

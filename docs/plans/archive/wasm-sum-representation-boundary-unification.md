@@ -7,7 +7,7 @@ centralizing representation decisions and boundary conversions.
 This plan is a follow-up to:
 
 * [wasm-type-erasure-reduction.md](./wasm-type-erasure-reduction.md)
-* [wasm-iterator-representation-boundaries.md](./archive/wasm-iterator-representation-boundaries.md)
+* [wasm-iterator-representation-boundaries.md](./wasm-iterator-representation-boundaries.md)
 
 Those plans improved specialization and performance, but they also exposed a persistent
 correctness problem: representation policy is still spread across multiple codegen paths.
@@ -91,7 +91,7 @@ Add a shared backend representation enum for sum-like values:
 
 * `ErasedVariant`
 * `TypedOption(MonoType)`
-* `TypedResult(MonoType, MonoType)` (future-enabled)
+* `TypedResult(MonoType)`
 * `TypedIterOption(IteratorStateInfo)` (can remain mapped through existing iterator metadata if preferred)
 * `Unknown` / `ErasedAnyref`
 
@@ -224,10 +224,10 @@ Mitigation:
 
 ### Phase 0: Baseline and Guardrails
 
-- [x] Add doc-comments in [src/codegen/emit.rs](../../src/codegen/emit.rs) near:
+- [x] Add doc-comments in [src/codegen/emit.rs](../../../src/codegen/emit.rs) near:
   `emit_local_atom`, `emit_variant_literal`, and boundary conversion helpers
   defining allowed sum-boundary conversions.
-- [x] Add a brief invariant comment in [src/codegen/ctx.rs](../../src/codegen/ctx.rs)
+- [x] Add a brief invariant comment in [src/codegen/ctx.rs](../../../src/codegen/ctx.rs)
   documenting the distinction between semantic `MonoType` and physical local `ValType`.
   (SumRepr doc-comment explains the distinction.)
 - [x] Add/keep focused regression fixtures for current repro classes in `tests/run/`:
@@ -239,7 +239,7 @@ Mitigation:
 
 ### Phase 1: Representation Unification in Context
 
-- [x] Introduce explicit sum repr metadata in [src/codegen/ctx.rs](../../src/codegen/ctx.rs):
+- [x] Introduce explicit sum repr metadata in [src/codegen/ctx.rs](../../../src/codegen/ctx.rs):
   a `SumRepr` enum and storage on local backend info.
 - [x] Add helpers in `EmitCtx`:
   `local_sum_repr(local_id)`, `set_local_sum_repr(local_id, repr)`,
@@ -250,7 +250,7 @@ Mitigation:
 
 ### Phase 2: Conversion API Adoption
 
-- [x] Add centralized conversion helpers in [src/codegen/emit.rs](../../src/codegen/emit.rs):
+- [x] Add centralized conversion helpers in [src/codegen/emit.rs](../../../src/codegen/emit.rs):
   `emit_sum_local_to_erased` — single dispatcher using `SumRepr` for typed→erased.
   `can_preserve_typed_sum` — shared helper for AInit/AAssign typed repr preservation.
 - [x] Route `emit_local_atom` through `emit_sum_local_to_erased` for sum boundary crossings.
@@ -262,7 +262,7 @@ Mitigation:
 
 ### Phase 3: Match and Flow-Merge Normalization
 
-- [x] Update match lowering in [src/codegen/emit.rs](../../src/codegen/emit.rs):
+- [x] Update match lowering in [src/codegen/emit.rs](../../../src/codegen/emit.rs):
   choose typed vs erased pattern path from unified sum repr metadata.
   (`atom_typed_general_option` → `local_typed_option` → `local_sum_repr` chain.)
 - [x] Ensure branch/loop merge logic reconciles sum repr metadata consistently,
@@ -273,7 +273,7 @@ Mitigation:
 
 ### Phase 4: ABI Boundary Hardening
 
-- [x] Audit direct-call and closure-call boundaries in [src/codegen/emit.rs](../../src/codegen/emit.rs)
+- [x] Audit direct-call and closure-call boundaries in [src/codegen/emit.rs](../../../src/codegen/emit.rs)
   for implicit sum casts.
   All call paths pass `bind_ty` which drives coercion; `emit_sum_local_to_erased` handles
   typed→erased at the local-load site before values reach call boundaries.
@@ -286,7 +286,7 @@ Mitigation:
 
 ### Phase 5: Verification and Cleanup
 
-- [x] Add a debug verifier pass (or debug assertions) in [src/codegen/emit.rs](../../src/codegen/emit.rs)
+- [x] Add a debug verifier pass (or debug assertions) in [src/codegen/emit.rs](../../../src/codegen/emit.rs)
   to reject illegal direct sum boundary casts.
   Added `debug_assert!` in `emit_sum_local_to_erased` verifying SumRepr/mono inference consistency.
 - [x] Remove obsolete emergency guards that are superseded by unified repr + conversion APIs.
@@ -294,5 +294,5 @@ Mitigation:
   into `emit_sum_local_to_erased`, and AInit/AAssign duplicated logic consolidated into
   `can_preserve_typed_sum`.
 - [x] Re-run and keep green:
-  `run_wasm_test` (55 tests), `typed_closure_test` (17 tests), all interpreter tests (93 tests).
+  `run_wasm_test` (56 tests), `typed_closure_test` (17 tests), all interpreter tests (94 tests).
 - [x] Update plan status notes in this document with completed checkpoints.

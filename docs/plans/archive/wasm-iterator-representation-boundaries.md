@@ -4,7 +4,7 @@
 local optimization rather than an implicit ABI change that leaks across function, closure,
 and helper boundaries.
 
-This is a follow-up to [wasm-type-erasure-reduction.md](../wasm-type-erasure-reduction.md).
+This is a follow-up to [wasm-type-erasure-reduction.md](./wasm-type-erasure-reduction.md).
 That plan successfully introduced typed iterator fast paths, but it also exposed a broader
 backend design problem: iterator representation policy is currently spread across inference,
 local-slot allocation, helper generation, function ABI emission, closure func types, and

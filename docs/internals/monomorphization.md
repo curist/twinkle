@@ -175,7 +175,7 @@ This distinction is why Twinkle has both:
 
 * this internal monomorphization design note
 * [../plans/archive/backend-pipeline-alignment.md](../plans/archive/backend-pipeline-alignment.md)
-* [../plans/wasm-type-erasure-reduction.md](../plans/wasm-type-erasure-reduction.md)
+* [../plans/archive/wasm-type-erasure-reduction.md](../plans/archive/wasm-type-erasure-reduction.md)
 
 The pipeline-alignment plan is about making the backend-oriented pipeline match this design.
 The Wasm plan is about taking advantage of that concreteness in codegen.

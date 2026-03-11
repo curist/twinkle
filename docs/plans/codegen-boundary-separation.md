@@ -5,7 +5,7 @@ instruction emission stages so backend correctness no longer depends on one larg
 
 This plan is complementary to:
 
-* [wasm-sum-representation-boundary-unification.md](./wasm-sum-representation-boundary-unification.md)
+* [wasm-sum-representation-boundary-unification.md](./archive/wasm-sum-representation-boundary-unification.md)
 * [wasm-iterator-representation-boundaries.md](./archive/wasm-iterator-representation-boundaries.md)
 
 Those plans harden specific representation boundaries. This plan targets the broader structural
