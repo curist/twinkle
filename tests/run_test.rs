@@ -51,6 +51,11 @@ fn collect_while() {
 }
 
 #[test]
+fn collect_break_unfold() {
+    check("tests/run/collect_break_unfold.tw");
+}
+
+#[test]
 fn records() {
     check("tests/run/records.tw");
 }

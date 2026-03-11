@@ -1,0 +1,17 @@
+// Expected output:
+//   3
+//   5
+
+// collect with break
+vals := collect i in range(100) {
+  if i >= 3 { break }
+  i
+}
+println("${vals.len()}")
+
+// Iterator.unfold
+it := Iterator.unfold(0, fn(s: Int) {
+  if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+})
+vals2 := collect x in it { x }
+println("${vals2.len()}")

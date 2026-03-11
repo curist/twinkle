@@ -27,6 +27,11 @@ fn run_wasm_collect_while() {
 }
 
 #[test]
+fn run_wasm_collect_break_unfold() {
+    check("tests/run/collect_break_unfold.tw");
+}
+
+#[test]
 fn run_wasm_strings() {
     check("tests/run/strings.tw");
 }

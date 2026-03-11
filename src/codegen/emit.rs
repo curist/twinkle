@@ -2052,7 +2052,9 @@ fn emit_break(value: Option<&Atom>, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     match (value, break_result_ty.as_ref()) {
         (Some(atom), Some(expected)) => instrs.extend(emit_atom(atom, Some(expected), ctx)),
         (Some(atom), None) => instrs.extend(emit_atom(atom, None, ctx)),
-        (None, Some(expected)) => instrs.extend(emit_void_value(Some(expected))),
+        // A bare `break` in a value-typed loop still needs to satisfy the
+        // block result type in Wasm. Emit a typed default placeholder.
+        (None, Some(expected)) => instrs.extend(emit_default_value_instrs(expected)),
         (None, None) => {}
     }
     instrs.push(Instr::Br(break_label));
