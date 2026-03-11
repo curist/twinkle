@@ -25,18 +25,12 @@ impl LexError {
     }
 }
 
-/// Lexer state for string interpolation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StringState {
-    NotInString,
-    InString { brace_depth: u32 },
-}
-
 pub struct Lexer {
     source: Vec<char>,
     file_id: FileId,
     pos: usize,
-    string_state: StringState,
+    /// Stack of active `${...}` interpolation contexts (top = current depth).
+    interpolation_stack: Vec<u32>,
 }
 
 impl Lexer {
@@ -45,7 +39,7 @@ impl Lexer {
             source: source.chars().collect(),
             file_id,
             pos: 0,
-            string_state: StringState::NotInString,
+            interpolation_stack: Vec::new(),
         }
     }
 
@@ -68,10 +62,13 @@ impl Lexer {
 
     fn next_token(&mut self) -> LexResult<Token> {
         // Handle string interpolation state
-        if let StringState::InString { brace_depth } = self.string_state {
-            return self.lex_string_continuation(brace_depth);
+        if !self.interpolation_stack.is_empty() {
+            return self.lex_string_continuation();
         }
+        self.lex_regular_token()
+    }
 
+    fn lex_regular_token(&mut self) -> LexResult<Token> {
         let saw_newline = self.skip_whitespace_and_comments();
 
         let start = self.pos;
@@ -284,7 +281,7 @@ impl Lexer {
             // This is a string with interpolation
             self.advance(); // consume $
             self.advance(); // consume {
-            self.string_state = StringState::InString { brace_depth: 1 };
+            self.interpolation_stack.push(1);
 
             let span = Span::new(self.file_id, start as u32, self.pos as u32);
             Ok(Token::new(TokenKind::StringStart, span, value))
@@ -301,15 +298,20 @@ impl Lexer {
         }
     }
 
-    fn lex_string_continuation(&mut self, brace_depth: u32) -> LexResult<Token> {
+    fn lex_string_continuation(&mut self) -> LexResult<Token> {
         // We're inside a string interpolation, lexing tokens until we hit a closing }
+        let brace_depth = *self
+            .interpolation_stack
+            .last()
+            .expect("interpolation stack must be non-empty");
 
         // First, check if we're at a brace
         if self.peek() == '{' {
-            let new_depth = brace_depth + 1;
-            self.string_state = StringState::InString {
-                brace_depth: new_depth,
-            };
+            let top = self
+                .interpolation_stack
+                .last_mut()
+                .expect("interpolation stack must be non-empty");
+            *top += 1;
             return Ok(self.lex_single(TokenKind::LBrace));
         }
 
@@ -326,6 +328,7 @@ impl Lexer {
 
             if new_depth == 0 {
                 // End of interpolation, resume string
+                self.interpolation_stack.pop();
                 let start = self.pos;
                 self.advance(); // consume }
 
@@ -352,7 +355,7 @@ impl Lexer {
                 if has_more_interpolation {
                     self.advance(); // consume $
                     self.advance(); // consume {
-                    self.string_state = StringState::InString { brace_depth: 1 };
+                    self.interpolation_stack.push(1);
 
                     let span = Span::new(self.file_id, start as u32, self.pos as u32);
                     Ok(Token::new(TokenKind::StringContinue, span, value))
@@ -363,23 +366,21 @@ impl Lexer {
                     }
 
                     self.advance(); // consume closing "
-                    self.string_state = StringState::NotInString;
 
                     let span = Span::new(self.file_id, start as u32, self.pos as u32);
                     Ok(Token::new(TokenKind::StringEnd, span, value))
                 }
             } else {
-                self.string_state = StringState::InString {
-                    brace_depth: new_depth,
-                };
+                let top = self
+                    .interpolation_stack
+                    .last_mut()
+                    .expect("interpolation stack must be non-empty");
+                *top = new_depth;
                 Ok(self.lex_single(TokenKind::RBrace))
             }
         } else {
-            // Regular token inside interpolation - temporarily exit string state
-            self.string_state = StringState::NotInString;
-            let token = self.next_token()?;
-            self.string_state = StringState::InString { brace_depth };
-            Ok(token)
+            // Regular token inside interpolation.
+            self.lex_regular_token()
         }
     }
 
@@ -503,6 +504,25 @@ mod tests {
         assert_eq!(tokens[2].kind, TokenKind::StringEnd);
         assert_eq!(tokens[2].text, "");
         assert_eq!(tokens[3].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lex_nested_interpolation_keeps_outer_context() {
+        let source = r#"a := "${dim("x ${msg}")}"
+b := "${passed} passed""#;
+        let tokens = lex_simple(source);
+
+        let b_pos = tokens
+            .iter()
+            .position(|t| t.kind == TokenKind::Ident && t.text == "b")
+            .expect("expected second binding");
+
+        assert!(
+            tokens[b_pos..]
+                .iter()
+                .any(|t| t.kind == TokenKind::StringStart),
+            "expected interpolation in second string to lex successfully"
+        );
     }
 
     #[test]
