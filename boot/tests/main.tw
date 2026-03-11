@@ -1,0 +1,8 @@
+use tests.runner
+use tests.suites.assert_helpers_suite
+use tests.suites.semantic_suite
+
+runner.run_all([
+  assert_helpers_suite.suite(),
+  semantic_suite.suite(),
+])

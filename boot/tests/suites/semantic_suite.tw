@@ -1,0 +1,87 @@
+use tests.runner
+use tests.assert
+
+fn make_adder(base: Int) fn(Int) Int {
+  fn(n: Int) Int { base + n }
+}
+
+fn describe_option(x: Option<Int>) String {
+  case x {
+    .Some(n) => "found ${n}",
+    .None => "none",
+  }
+}
+
+fn describe_result(r: Result<String, Int>) String {
+  case r {
+    .Ok(s) => s,
+    .Err(n) => "err ${n}",
+  }
+}
+
+fn mark_true(counter: Cell<Int>) Bool {
+  counter.update(fn(n) { n + 1 })
+  true
+}
+
+fn find_first_gt(xs: Vector<Int>, threshold: Int) String {
+  for x in xs {
+    if x > threshold {
+      return "found: ${x}"
+    }
+  }
+  "not found"
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("semantic cases")
+    .test("closure capture by value", fn() {
+      acc := 0
+      f := fn() Int { acc }
+      acc = acc + 1
+      try assert.int_eq(f(), 0)
+      try assert.int_eq(acc, 1)
+      .Ok({})
+    })
+    .test("closure captures loop value per iteration", fn() {
+      fns := collect i in [0, 1, 2] { fn() Int { i } }
+      try assert.int_eq(fns[0](), 0)
+      try assert.int_eq(fns[1](), 1)
+      try assert.int_eq(fns[2](), 2)
+      .Ok({})
+    })
+    .test("closure keeps captured argument", fn() {
+      add10 := make_adder(10)
+      try assert.int_eq(add10(0), 10)
+      try assert.int_eq(add10(3), 13)
+      .Ok({})
+    })
+    .test("local option and result pattern matching", fn() {
+      try assert.str_eq(describe_option(.Some(42)), "found 42")
+      try assert.str_eq(describe_option(.None), "none")
+      try assert.str_eq(describe_result(.Ok("got ok")), "got ok")
+      .Ok({})
+    })
+    .test("boolean short-circuit respects evaluation order", fn() {
+      hits := Cell.new(0)
+
+      try assert.is_false(false and mark_true(hits))
+      try assert.int_eq(hits.get(), 0)
+
+      try assert.is_true(true or mark_true(hits))
+      try assert.int_eq(hits.get(), 0)
+
+      try assert.is_true(false or mark_true(hits))
+      try assert.int_eq(hits.get(), 1)
+
+      try assert.is_true(true and mark_true(hits))
+      try assert.int_eq(hits.get(), 2)
+      .Ok({})
+    })
+    .test("for loop + early return semantics", fn() {
+      nums: Vector<Int> = [1, 3, 5, 7, 9]
+      try assert.str_eq(find_first_gt(nums, 6), "found: 7")
+      try assert.str_eq(find_first_gt(nums, 10), "not found")
+      .Ok({})
+    })
+}
