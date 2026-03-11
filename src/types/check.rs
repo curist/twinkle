@@ -96,22 +96,33 @@ impl TypeChecker {
                 {
                     // Only simple identifier patterns for top-level lets
                     if let Pattern::Ident(name, _) = pattern {
-                        // Determine the expected type
+                        // Determine the expected type.
+                        // Even when checking fails, keep a binding to avoid
+                        // noisy follow-up "undefined variable" diagnostics.
                         let value_ty = if let Some(ann_ty) = ty {
                             // Type annotation provided - check mode
                             let expected = match checker.resolve_type(ann_ty) {
                                 Ok(t) => t,
-                                Err(()) => continue, // Error already recorded
+                                Err(()) => {
+                                    let recovery_ty = checker.fresh_meta();
+                                    checker.value_env.add_value(name.clone(), recovery_ty);
+                                    continue;
+                                }
                             };
-                            match checker.check_expr(value, &expected) {
-                                Ok(()) => expected,
-                                Err(()) => continue, // Error already recorded
+                            if checker.check_expr(value, &expected).is_err() {
+                                checker.value_env.add_value(name.clone(), expected);
+                                continue;
                             }
+                            expected
                         } else {
                             // No annotation - synthesis mode
                             let t = match checker.synth_expr(value) {
                                 Ok(t) => t,
-                                Err(()) => continue, // Error already recorded
+                                Err(()) => {
+                                    let recovery_ty = checker.fresh_meta();
+                                    checker.value_env.add_value(name.clone(), recovery_ty);
+                                    continue;
+                                }
                             };
                             let t = checker.zonk(&t);
                             if contains_meta(&t) {
@@ -121,6 +132,8 @@ impl TypeChecker {
                                     note: "type cannot be inferred; add a type annotation"
                                         .to_string(),
                                 });
+                                let recovery_ty = checker.fresh_meta();
+                                checker.value_env.add_value(name.clone(), recovery_ty);
                                 continue;
                             }
                             t
@@ -2851,14 +2864,16 @@ impl TypeChecker {
 
                     // Field not found - check if it's a method
                     if has_method {
-                        // Method calls are handled earlier via synth_method_call;
-                        // reaching here means field access syntax on a method name.
+                        // Method calls are handled earlier via synth_method_call.
+                        // Reaching here means field-access syntax on a method name
+                        // (e.g. `m := obj.method`), which is not supported yet.
                         self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "inherent method calls",
+                            feature: "method value references",
                             span,
                             note: format!(
-                                "Method '{}' exists but method calls are not yet fully implemented",
-                                field
+                                "Method '{}' exists, but methods are not first-class values yet. \
+Use a direct call like `obj.{}(...)`.",
+                                field, field
                             ),
                         });
                         return Err(());
