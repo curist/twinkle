@@ -305,3 +305,10 @@ fn run_wasm_sum_record_field_roundtrip() {
 fn run_wasm_sum_closure_return_boundary() {
     check("tests/run/sum_closure_return_boundary.tw");
 }
+
+/// Regression guard: same-scope/nested shadow (:=) + closure capture.
+/// See tests/run/shadow_rebind_closure_capture.tw for details.
+#[test]
+fn run_wasm_shadow_rebind_closure_capture() {
+    check("tests/run/shadow_rebind_closure_capture.tw");
+}

@@ -105,9 +105,9 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: &Atom) -> AnfOp {
             // a local, not an immediate). We leave free_vars unchanged.
             //
             // copy_propagate guards against this: it calls `uses_excluding_free_vars`
-            // and only propagates when the free-var-excluded count <= 1, ensuring
-            // that a local whose sole use is as a free_var is never propagated
-            // (which would drop the binding Let and orphan the closure).
+            // and only propagates when there is exactly one non-free-var use.
+            // A local whose sole use is as a free_var then has count 0 and is
+            // never propagated (which would orphan the closure capture).
             AnfOp::AMakeClosure { func_id, free_vars }
         }
         AnfOp::ARecord { type_id, fields } => AnfOp::ARecord {
@@ -258,7 +258,7 @@ fn dead_let_elim_op(
 // ── Literal copy propagation ──────────────────────────────────────────────────
 
 /// Inline `Let(t, AInit(lit), body)` where `lit` is a non-local atom and
-/// `t` is used at most once *excluding closure free_var positions*.
+/// `t` is used exactly once *excluding closure free_var positions*.
 ///
 /// The free_var exclusion is critical: `AMakeClosure.free_vars` holds
 /// `LocalId`s (not `Atom`s) and cannot receive literal substitution.
@@ -290,7 +290,7 @@ fn copy_propagate_inner(
             if let AnfOp::AInit { value: ref lit } = *op {
                 if is_non_local_atom(lit) {
                     let use_count = uses.get(&local).copied().unwrap_or(0);
-                    if use_count <= 1 && !assigned.contains(&local) {
+                    if use_count == 1 && !assigned.contains(&local) {
                         let new_body = subst_atom(*body, local, lit);
                         return (new_body, true);
                     }
@@ -653,9 +653,9 @@ fn branch_simplify_op(op: AnfOp) -> (AnfOp, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::dead_let_elim;
+    use super::{copy_propagate, dead_let_elim};
     use crate::ir::anf::{AnfExpr, AnfOp, Atom, OpKind};
-    use crate::ir::core::LocalId;
+    use crate::ir::core::{FuncId, LocalId};
     use crate::opt::use_count::{collect_assigned_locals, count_uses};
     use crate::syntax::ast::BinOp;
 
@@ -699,5 +699,37 @@ mod tests {
 
         assert!(changed);
         assert!(matches!(optimized, AnfExpr::Atom(Atom::ALitInt(42))));
+    }
+
+    #[test]
+    fn copy_propagate_keeps_local_used_only_by_closure_capture() {
+        let expr = AnfExpr::Let {
+            local: LocalId(1),
+            op: Box::new(AnfOp::AInit {
+                value: Atom::ALitInt(10),
+            }),
+            body: Box::new(AnfExpr::Let {
+                local: LocalId(2),
+                op: Box::new(AnfOp::AMakeClosure {
+                    func_id: FuncId(99),
+                    free_vars: vec![LocalId(1)],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+            }),
+        };
+
+        let (optimized, changed) = copy_propagate(expr);
+
+        assert!(!changed, "capture-only locals must not be propagated away");
+        assert!(
+            matches!(
+                optimized,
+                AnfExpr::Let {
+                    local: LocalId(1),
+                    ..
+                }
+            ),
+            "outer captured local binding should be preserved"
+        );
     }
 }

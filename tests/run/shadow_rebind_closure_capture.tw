@@ -1,0 +1,39 @@
+// Expected output:
+//   10
+//   20
+//   42
+
+// Regression guard:
+// Same-scope or nested shadow (:=) followed by closure capture must preserve
+// the shadow binding and produce correct results in both interpreter and Wasm.
+
+// Case 1: same-scope shadow then capture
+fn shadow_same_scope() Int {
+  x := 1
+  x := 10
+  f := fn() Int { x }
+  f()
+}
+
+// Case 2: nested-block shadow then capture
+fn shadow_nested_block() Int {
+  x := 1
+  result := {
+    x := 20
+    f := fn() Int { x }
+    f()
+  }
+  result
+}
+
+// Case 3: shadow + capture with different types
+fn shadow_different_init() Int {
+  x := 0
+  x := 42
+  adder := fn(n: Int) Int { x + n }
+  adder(0)
+}
+
+println("${shadow_same_scope()}")
+println("${shadow_nested_block()}")
+println("${shadow_different_init()}")
