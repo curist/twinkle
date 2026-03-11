@@ -245,6 +245,30 @@ fn test_error_note_generic_call() {
     );
 }
 
+#[test]
+fn test_failed_let_initializer_does_not_emit_undefined_variable_cascade() {
+    let src = r#"
+fn main() {
+    s: Int = "oops"
+    println("${s}")
+}
+main()
+"#;
+    let errors = check_errors(src);
+    assert!(!errors.is_empty(), "expected a type error");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("Type mismatch"),
+        "expected primary type mismatch error:\n{}",
+        joined
+    );
+    assert!(
+        !joined.contains("Undefined variable: s"),
+        "unexpected cascade error for 's':\n{}",
+        joined
+    );
+}
+
 // Closure capture-by-value semantics (spec §7.7).
 // A closure must capture the value at definition time; later rebinding of
 // the source variable must not affect the captured value.

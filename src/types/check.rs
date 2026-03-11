@@ -2660,22 +2660,32 @@ impl TypeChecker {
         // For now, only support simple identifier patterns
         match pattern {
             Pattern::Ident(name, _span) => {
-                // Determine the expected type
-                let value_ty = if let Some(ann_ty) = ty {
-                    // Type annotation provided - check mode
+                if let Some(ann_ty) = ty {
+                    // Type annotation provided - check mode.
+                    // Even if checking fails, keep a binding to avoid noisy
+                    // follow-up "undefined variable" diagnostics.
                     let expected = match self.resolve_type(ann_ty) {
                         Ok(t) => t,
-                        Err(()) => return, // Error already recorded
+                        Err(()) => {
+                            let recovery_ty = self.fresh_meta();
+                            self.local_env.bind(name.clone(), recovery_ty);
+                            return;
+                        }
                     };
-                    match self.check_expr(value, &expected) {
-                        Ok(()) => expected,
-                        Err(()) => return, // Error already recorded
+                    if self.check_expr(value, &expected).is_err() {
+                        self.local_env.bind(name.clone(), expected);
+                        return;
                     }
+                    self.local_env.bind(name.clone(), expected);
                 } else {
-                    // No annotation - synthesis mode
+                    // No annotation - synthesis mode.
                     let t = match self.synth_expr(value) {
                         Ok(t) => t,
-                        Err(()) => return,
+                        Err(()) => {
+                            let recovery_ty = self.fresh_meta();
+                            self.local_env.bind(name.clone(), recovery_ty);
+                            return;
+                        }
                     };
                     let t = self.zonk(&t);
                     if contains_meta(&t) {
@@ -2684,13 +2694,12 @@ impl TypeChecker {
                             span: value.span,
                             note: "type cannot be inferred; add a type annotation".to_string(),
                         });
+                        let recovery_ty = self.fresh_meta();
+                        self.local_env.bind(name.clone(), recovery_ty);
                         return;
                     }
-                    t
-                };
-
-                // Bind the variable
-                self.local_env.bind(name.clone(), value_ty);
+                    self.local_env.bind(name.clone(), t);
+                }
             }
             Pattern::Wildcard(_) => {
                 // Just evaluate the value for side effects
