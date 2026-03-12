@@ -11,7 +11,7 @@
 //! **Local bindings:**
 //! - `UndeclaredLocal` — every referenced local is declared (param, let-bound, pattern-bound, or implicit capture)
 //! - `StrictUndeclaredLocal` — `AMakeClosure.free_vars` and `AAssign` targets are declared
-//!   in the enclosing function's params or let-bindings (strict enforcement, no implicit capture fallback)
+//!   in the enclosing function scope (params, let-bindings, or module-proven closure captures)
 //! - `AssignTypeMismatch` — assigned value type matches the local's declared type
 //! - `op_result_mono` completeness (post-lowering only)
 //!
@@ -35,7 +35,7 @@
 //! - Closure captures: the `UndeclaredLocal` check treats free locals as implicit captures.
 //!   The `StrictUndeclaredLocal` check (enabled post-lowering and post-optimization)
 //!   enforces that `AMakeClosure.free_vars` and `AAssign` targets are actually declared
-//!   in enclosing scope without the implicit capture fallback.
+//!   in enclosing scope, seeding closure-capture locals from module closure creation sites.
 //! - Representation-level checks (iterator metadata, sum repr, typed symbols) require
 //!   `EmitCtx` and are enforced by existing `debug_assert!` calls in `codegen/emit.rs`
 //!   and `codegen/ctx.rs`, not by this verifier.
@@ -45,7 +45,7 @@ use std::fmt;
 
 use crate::ir::anf::analysis::{collect_free_locals, collect_pattern_bindings};
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom};
-use crate::ir::core::LocalId;
+use crate::ir::core::{FuncId, LocalId};
 use crate::types::ty::{MonoType, UNFOLD_STEP_TYPE_ID};
 
 // ── Error types ─────────────────────────────────────────────────────────────
@@ -597,8 +597,12 @@ fn verify_op_result_mono_op(
 /// Walk a function body tracking declared locals (params + let-bindings).
 /// Report errors when `AMakeClosure.free_vars` or `AAssign.local` references
 /// a local that is not declared in any enclosing scope at this point.
-fn verify_strict_locals(func: &AnfFunctionDef) -> Vec<VerifyError> {
+fn verify_strict_locals(
+    func: &AnfFunctionDef,
+    capture_seed: &HashSet<LocalId>,
+) -> Vec<VerifyError> {
     let mut declared: HashSet<LocalId> = func.params.iter().copied().collect();
+    declared.extend(capture_seed.iter().copied());
     let mut errors = Vec::new();
     verify_strict_locals_expr(func, &func.body, &mut declared, &mut errors);
     errors
@@ -690,17 +694,67 @@ fn verify_strict_locals_op(
     }
 }
 
+fn collect_module_capture_seeds(module: &AnfModule) -> HashMap<FuncId, HashSet<LocalId>> {
+    let mut seeds: HashMap<FuncId, HashSet<LocalId>> = HashMap::new();
+    for func in &module.functions {
+        collect_capture_seeds_expr(&func.body, &mut seeds);
+    }
+    seeds
+}
+
+fn collect_capture_seeds_expr(expr: &AnfExpr, seeds: &mut HashMap<FuncId, HashSet<LocalId>>) {
+    if let AnfExpr::Let { op, body, .. } = expr {
+        collect_capture_seeds_op(op, seeds);
+        collect_capture_seeds_expr(body, seeds);
+    }
+}
+
+fn collect_capture_seeds_op(op: &AnfOp, seeds: &mut HashMap<FuncId, HashSet<LocalId>>) {
+    match op {
+        AnfOp::AMakeClosure { func_id, free_vars } => {
+            let entry = seeds.entry(*func_id).or_default();
+            entry.extend(free_vars.iter().copied());
+        }
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_capture_seeds_expr(then_branch, seeds);
+            collect_capture_seeds_expr(else_branch, seeds);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_capture_seeds_expr(&arm.body, seeds);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_capture_seeds_expr(body, seeds);
+        }
+        _ => {}
+    }
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Verify a single ANF function definition. Returns errors found.
 pub fn verify_function(func: &AnfFunctionDef, options: &VerifyOptions) -> Vec<VerifyError> {
+    let empty_capture_seed = HashSet::new();
+    verify_function_with_capture_seed(func, options, &empty_capture_seed)
+}
+
+fn verify_function_with_capture_seed(
+    func: &AnfFunctionDef,
+    options: &VerifyOptions,
+    capture_seed: &HashSet<LocalId>,
+) -> Vec<VerifyError> {
     let mut ctx = VerifyCtx::new(func, options.clone());
     verify_expr(&mut ctx, &func.body);
     if options.check_op_result_mono {
         verify_op_result_mono(&mut ctx, func);
     }
     if options.strict_locals {
-        ctx.errors.extend(verify_strict_locals(func));
+        ctx.errors.extend(verify_strict_locals(func, capture_seed));
     }
     ctx.errors
 }
@@ -708,8 +762,17 @@ pub fn verify_function(func: &AnfFunctionDef, options: &VerifyOptions) -> Vec<Ve
 /// Verify all functions in an ANF module. Returns errors found.
 pub fn verify_module(module: &AnfModule, options: &VerifyOptions) -> Vec<VerifyError> {
     let mut errors = Vec::new();
+    let capture_seeds = collect_module_capture_seeds(module);
+    let empty_capture_seed = HashSet::new();
     for func in &module.functions {
-        errors.extend(verify_function(func, options));
+        let capture_seed = capture_seeds
+            .get(&func.func_id)
+            .unwrap_or(&empty_capture_seed);
+        errors.extend(verify_function_with_capture_seed(
+            func,
+            options,
+            capture_seed,
+        ));
     }
     errors
 }
@@ -1483,6 +1546,57 @@ mod tests {
                 .iter()
                 .any(|e| e.invariant == Invariant::BreakOutsideLoop && e.func_name == "test_fn")
         );
-        assert!(errors.iter().any(|e| e.invariant == Invariant::ContinueOutsideLoop && e.func_name == "other_fn"));
+        assert!(errors
+            .iter()
+            .any(|e| e.invariant == Invariant::ContinueOutsideLoop && e.func_name == "other_fn"));
+    }
+
+    #[test]
+    fn verify_module_allows_nested_closure_recapture_of_enclosing_capture() {
+        // outer creates mid with free_vars=[L97]
+        // mid creates inner with free_vars=[L97]
+        // L97 is not let-bound inside mid, but is available via mid's closure capture.
+        let outer_body = AnfExpr::Let {
+            local: lid(97),
+            op: Box::new(AnfOp::AInit {
+                value: Atom::ALitInt(5),
+            }),
+            body: Box::new(AnfExpr::Let {
+                local: lid(0),
+                op: Box::new(AnfOp::AMakeClosure {
+                    func_id: fid(2),
+                    free_vars: vec![lid(97)],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            }),
+        };
+        let mut outer = make_func(outer_body, vec![], HashMap::new());
+        outer.func_id = fid(1);
+        outer.name = "outer".to_string();
+
+        let mid_body = AnfExpr::Let {
+            local: lid(1),
+            op: Box::new(AnfOp::AMakeClosure {
+                func_id: fid(3),
+                free_vars: vec![lid(97)],
+            }),
+            body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+        };
+        let mut mid = make_func(mid_body, vec![], HashMap::new());
+        mid.func_id = fid(2);
+        mid.name = "mid".to_string();
+
+        let mut inner = make_func(AnfExpr::Atom(Atom::ALocal(lid(97))), vec![], HashMap::new());
+        inner.func_id = fid(3);
+        inner.name = "inner".to_string();
+        inner.return_ty = MonoType::Int;
+
+        let module = AnfModule {
+            functions: vec![outer, mid, inner],
+            init_func_id: None,
+            all_init_func_ids: vec![],
+        };
+        let errors = verify_module(&module, &VerifyOptions::post_optimization());
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
     }
 }
