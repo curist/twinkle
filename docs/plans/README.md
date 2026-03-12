@@ -191,4 +191,3 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [iterator-to-vector.md](iterator-to-vector.md) | Add `Iterator.to_vector()` as method-form materialization equivalent to `collect` |
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
-| [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Plan for writing and scaling Twinkle-native test suites in `boot/tests/` |

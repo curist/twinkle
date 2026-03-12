@@ -63,3 +63,4 @@ Related historical context outside this folder:
 | [string-escape-sequences.md](string-escape-sequences.md) | Add ergonomic string escapes (`\xNN`, `\e`, `\u{...}`) with lexer diagnostics and runtime coverage |
 | [anf-verifier-pass.md](anf-verifier-pass.md) | ANF invariant verifier pass for control-flow, local binding, representation, and codegen metadata consistency |
 | [first-class-inherent-methods.md](first-class-inherent-methods.md) | First-class inherent method values (`receiver.method` → closure) |
+| [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Twinkle-native test runner and suite infrastructure in `boot/tests/` |

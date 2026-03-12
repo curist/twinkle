@@ -101,9 +101,10 @@ Note: keep `semantic_suite.tw` as a smoke suite; move deeper edge coverage into 
 
 ### Phase 5: Execution matrix and CI hooks
 
-- [ ] Run all suites in interpreter mode (`-i`) and Wasm mode.
-- [ ] Add CI command pair for both modes.
-- [ ] Keep filterability by ensuring unique test names across suites.
+- [x] Run all suites in interpreter mode (`-i`) — 166 tests passing.
+- [ ] Run all suites in Wasm mode — **blocked** by pre-existing ANF verifier bug (`StrictUndeclaredLocal` in closure free_var).
+- [x] Add `scripts/test-suites.sh` with `-i` / `-w` / `both` modes; respects `TWK_TEST_FILTER`.
+- [x] Keep filterability by ensuring unique test names across suites (verified).
 
 ---
 
@@ -140,9 +141,9 @@ runner.run_all([
 
 ## Definition of Done
 
-- [ ] Each high-value spec/API area above has at least one dedicated suite.
-- [ ] Full run passes in both backends:
-  - `cargo run -- run -i boot/tests/main.tw`
-  - `cargo run -- run boot/tests/main.tw`
-- [ ] Filtered run works predictably for suite/test names.
-- [ ] New suite additions require only: file + `use` + `run_all([...])` registration.
+- [x] Each high-value spec/API area above has at least one dedicated suite.
+- [~] Full run passes in both backends:
+  - [x] `cargo run -- run -i boot/tests/main.tw` (166 tests passing)
+  - [ ] `cargo run -- run boot/tests/main.tw` (blocked by ANF verifier bug)
+- [x] Filtered run works predictably for suite/test names.
+- [x] New suite additions require only: file + `use` + `run_all([...])` registration.
