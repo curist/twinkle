@@ -7,6 +7,7 @@
 | `Int` | i64 | 64-bit integer |
 | `Float` | f64 | 64-bit floating-point |
 | `Bool` | i32 | Boolean (`true` / `false`) |
+| `Byte` | i32 | Single byte (0–255) |
 | `Void` | — | Unit type |
 
 ## Built-in Types
@@ -80,26 +81,59 @@ type UnfoldStep<T, S> = { Done, Yield(T, S) }
 | `Float.from_string` | `fn(s: String) Option<Float>` | Parse string to `Float` |
 | `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
 | `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
-| `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value |
+| `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value (ASCII range) |
+| `String.from_code_point` | `fn(n: Int) Option<String>` | String from Unicode code point (full range) |
 
 Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly.
 
+## Byte
+
+Primitive type representing a single byte (0–255). Returned by string indexing (`s[i]`) and byte iteration (`for b in s`).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Byte.to_int` | `fn(b: Byte) Int` | Convert byte to integer |
+| `Byte.to_string` | `fn(b: Byte) String` | Convert byte to string representation |
+
 ## String
 
-Strings are immutable and GC-managed. String interpolation: `"hello ${name}"`.
+Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"hello ${name}"`.
+
+**Byte-oriented model:** Lengths, indices, and slicing all operate on **byte offsets**, not characters. Indexing (`s[i]`) returns a `Byte`. This is efficient but means multi-byte UTF-8 characters occupy multiple index positions. Use the Unicode helpers below for character-level operations.
+
+### Core (builtin)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `.len()` | `fn(s: String) Int` | Length in bytes |
+| `.len()` | `fn(s: String) Int` | Length in **bytes** |
+| `s[i]` | — | Byte at byte offset `i` (returns `Byte`, traps on OOB) |
+| `.get(i)` | `fn(s: String, i: Int) Option<Byte>` | Safe byte lookup at byte offset |
+| `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`, traps if indices fall mid-codepoint |
 | `.concat(other)` | `fn(s: String, other: String) String` | Concatenate two strings |
-| `.substring(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring `[start, end)`, clamps to bounds |
-| `.index_of(needle)` | `fn(s: String, needle: String) Option<Int>` | First occurrence of `needle` |
+| `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at byte offset `i` (same as `Byte.to_int(s[i])`) |
+| `.utf8_bytes()` | `fn(s: String) Vector<Byte>` | Copy string bytes into a vector |
+| `String.from_utf8` | `fn(bytes: Vector<Byte>) Option<String>` | Validate UTF-8 and create string |
+
+### Prelude (auto-imported, no import needed)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `.index_of(needle)` | `fn(s: String, needle: String) Option<Int>` | First byte offset of `needle` |
 | `.contains(needle)` | `fn(s: String, needle: String) Bool` | Whether `s` contains `needle` |
 | `.starts_with(prefix)` | `fn(s: String, prefix: String) Bool` | Prefix check |
 | `.ends_with(suffix)` | `fn(s: String, suffix: String) Bool` | Suffix check |
-| `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at index `i` |
 | `.split(sep)` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
 | `.trim()` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
+
+### Unicode helpers (prelude)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `.chars()` | `fn(s: String) Iterator<String>` | Iterate Unicode scalars (each as a 1–4 byte `String`) |
+| `.char_len()` | `fn(s: String) Int` | Number of Unicode scalars |
+| `.code_point_at(i)` | `fn(s: String, i: Int) Option<Int>` | Code point at **scalar index** `i` (O(n)) |
+
+**Iteration:** `for b in s { ... }` iterates **bytes** (`b: Byte`). Use `for ch in s.chars() { ... }` to iterate Unicode scalars.
 
 Qualified forms (`String.len`, `String.trim`, etc.) also work.
 
