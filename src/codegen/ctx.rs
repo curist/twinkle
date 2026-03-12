@@ -521,7 +521,174 @@ impl<'a> EmitCtx<'a> {
 
         let mut wasm_locals = Vec::new();
         self.assign_expr_locals(&func.body, &mut next_idx, &mut wasm_locals);
+
+        #[cfg(debug_assertions)]
+        self.verify_codegen_metadata(&func.name, func.func_id);
+
         wasm_locals
+    }
+
+    /// Verify internal consistency of codegen metadata after local assignment.
+    ///
+    /// Checks:
+    /// - Iterator metadata coherence: `iterator_state` locals have Iterator mono,
+    ///   `iterator_next_state` locals have Option mono, `iter_item_state` locals
+    ///   have IterItem mono.
+    /// - Sum repr coherence: `SumRepr::TypedOption` / `TypedResult` agree with
+    ///   local mono inference.
+    /// - Typed symbol consistency: named ref-type locals have corresponding type
+    ///   registrations in the specialized type registry.
+    #[cfg(debug_assertions)]
+    fn verify_codegen_metadata(&self, func_name: &str, func_id: FuncId) {
+        for (local_id, info) in &self.repr_flow.local_backend {
+            let local_mono = self.local_mono.get(local_id);
+
+            // ── Iterator metadata coherence ────────────────────────────
+            if info.iterator_state.is_some() {
+                if let Some(mono) = local_mono {
+                    let is_iterator = matches!(
+                        mono,
+                        MonoType::Named { type_id, .. } if *type_id == ITERATOR_TYPE_ID
+                    );
+                    debug_assert!(
+                        is_iterator,
+                        "codegen verify: {func_name} (FuncId({})): L{} has iterator_state but mono is {:?}, expected Iterator",
+                        func_id.0, local_id.0, mono
+                    );
+                }
+            }
+            if let Some(next_info) = &info.iterator_next_state {
+                if let Some(mono) = local_mono {
+                    let is_option = matches!(
+                        mono,
+                        MonoType::Named { type_id, .. } if *type_id == OPTION_TYPE_ID
+                    );
+                    debug_assert!(
+                        is_option,
+                        "codegen verify: {func_name} (FuncId({})): L{} has iterator_next_state ({:?}) but mono is {:?}, expected Option",
+                        func_id.0, local_id.0, next_info, mono
+                    );
+                }
+            }
+            if let Some(item_info) = &info.iter_item_state {
+                if let Some(mono) = local_mono {
+                    let is_iter_item = matches!(
+                        mono,
+                        MonoType::Named { type_id, .. } if *type_id == ITER_ITEM_TYPE_ID
+                    );
+                    debug_assert!(
+                        is_iter_item,
+                        "codegen verify: {func_name} (FuncId({})): L{} has iter_item_state ({:?}) but mono is {:?}, expected IterItem",
+                        func_id.0, local_id.0, item_info, mono
+                    );
+                }
+            }
+
+            // ── Sum repr coherence ─────────────────────────────────────
+            if let Some(sum_repr) = &info.sum_repr {
+                match sum_repr {
+                    SumRepr::TypedOption(repr_mono) => {
+                        if let Some(mono) = local_mono {
+                            debug_assert!(
+                                mono == repr_mono,
+                                "codegen verify: {func_name} (FuncId({})): L{} SumRepr::TypedOption({:?}) disagrees with local mono {:?}",
+                                func_id.0,
+                                local_id.0,
+                                repr_mono,
+                                mono
+                            );
+                        }
+                    }
+                    SumRepr::TypedResult(repr_mono) => {
+                        if let Some(mono) = local_mono {
+                            debug_assert!(
+                                mono == repr_mono,
+                                "codegen verify: {func_name} (FuncId({})): L{} SumRepr::TypedResult({:?}) disagrees with local mono {:?}",
+                                func_id.0,
+                                local_id.0,
+                                repr_mono,
+                                mono
+                            );
+                        }
+                    }
+                    SumRepr::ErasedVariant => {}
+                }
+            }
+        }
+
+        // ── Typed symbol ↔ local ref-type consistency ──────────────────
+        // The specialized type registry is populated lazily during function
+        // emission (request_typed_*), so we can't check against it here.
+        // Instead we verify that the local's typed ref-type is consistent
+        // with its per-local metadata (iterator_state, value_repr, etc.).
+        for (local_id, (_idx, val_ty)) in &self.local_map {
+            if let ValType::Ref {
+                heap: HeapType::Named(sym),
+                ..
+            } = val_ty
+            {
+                if sym.starts_with("iter_state__") {
+                    debug_assert!(
+                        self.repr_flow.local_iterator_state(*local_id).is_some(),
+                        "codegen verify: {func_name} (FuncId({})): L{} has ref type {sym} but no iterator_state metadata",
+                        func_id.0,
+                        local_id.0,
+                    );
+                } else if sym.starts_with("iter_item__") {
+                    debug_assert!(
+                        self.repr_flow
+                            .local_backend
+                            .get(local_id)
+                            .is_some_and(|info| info.iter_item_state.is_some()),
+                        "codegen verify: {func_name} (FuncId({})): L{} has ref type {sym} but no iter_item_state metadata",
+                        func_id.0,
+                        local_id.0,
+                    );
+                } else if sym.starts_with("option__iter_item__") {
+                    debug_assert!(
+                        self.repr_flow
+                            .local_backend
+                            .get(local_id)
+                            .is_some_and(|info| info.iterator_next_state.is_some()),
+                        "codegen verify: {func_name} (FuncId({})): L{} has ref type {sym} but no iterator_next_state metadata",
+                        func_id.0,
+                        local_id.0,
+                    );
+                } else if sym.starts_with("closure_") {
+                    // Closure locals may get a typed ref via infer_op_valtype
+                    // (AMakeClosure with concrete sig). Verify that at least one
+                    // of: value_repr, local_mono, or closure_locals confirms it.
+                    let has_repr = self
+                        .repr_flow
+                        .local_value_repr(*local_id)
+                        .is_some_and(|r| matches!(r, ValueRepr::TypedClosure { .. }));
+                    let has_func_mono = self
+                        .local_mono
+                        .get(local_id)
+                        .is_some_and(|m| matches!(m, MonoType::Function { .. }));
+                    let has_closure_local = self.repr_flow.closure_locals.contains_key(local_id);
+                    debug_assert!(
+                        has_repr || has_func_mono || has_closure_local,
+                        "codegen verify: {func_name} (FuncId({})): L{} has closure ref type {sym} but no TypedClosure repr, Function mono, or closure_locals entry",
+                        func_id.0,
+                        local_id.0,
+                    );
+                } else if sym.starts_with("cell_") {
+                    let has_repr = self
+                        .repr_flow
+                        .local_value_repr(*local_id)
+                        .is_some_and(|r| matches!(r, ValueRepr::TypedCell { .. }));
+                    let has_cell_mono = self.local_mono.get(local_id)
+                        .is_some_and(|m| matches!(m, MonoType::Named { type_id, .. } if *type_id == CELL_TYPE_ID));
+                    debug_assert!(
+                        has_repr || has_cell_mono,
+                        "codegen verify: {func_name} (FuncId({})): L{} has cell ref type {sym} but no TypedCell repr or Cell mono",
+                        func_id.0,
+                        local_id.0,
+                    );
+                }
+            }
+        }
     }
 
     pub fn fresh_loop_labels(&mut self) -> (Label, Label) {

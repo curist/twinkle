@@ -10,6 +10,9 @@ use crate::opt::passes::{
 use crate::opt::uniqueness::uniqueness_rewrite;
 use crate::opt::use_count::{collect_assigned_locals, count_uses};
 
+#[cfg(debug_assertions)]
+use crate::ir::anf::verify::verify_function_after_pass;
+
 const MAX_ROUNDS: usize = 10;
 
 /// Run all peephole optimization passes to a fixed point on a single function,
@@ -24,18 +27,26 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
         let (body, c) = dead_let_elim(func.body, &uses, &assigned);
         func.body = body;
         changed |= c;
+        #[cfg(debug_assertions)]
+        verify_function_after_pass(&func, "dead_let_elim");
 
         let (body, c) = copy_propagate_with_pinned(func.body, pinned);
         func.body = body;
         changed |= c;
+        #[cfg(debug_assertions)]
+        verify_function_after_pass(&func, "copy_propagate");
 
         let (body, c) = constant_fold(func.body);
         func.body = body;
         changed |= c;
+        #[cfg(debug_assertions)]
+        verify_function_after_pass(&func, "constant_fold");
 
         let (body, c) = branch_simplify(func.body);
         func.body = body;
         changed |= c;
+        #[cfg(debug_assertions)]
+        verify_function_after_pass(&func, "branch_simplify");
 
         if !changed {
             break;
@@ -43,9 +54,13 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
     }
 
     uniqueness_rewrite(&mut func);
+    #[cfg(debug_assertions)]
+    verify_function_after_pass(&func, "uniqueness_rewrite");
     // Eliminate all ADefer nodes — must run after peephole passes since it
     // restructures terminal nodes (Return/Break/Continue/Atom) irreversibly.
     func = eliminate_defers(func);
+    #[cfg(debug_assertions)]
+    verify_function_after_pass(&func, "eliminate_defers");
     func
 }
 

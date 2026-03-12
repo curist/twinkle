@@ -117,44 +117,50 @@ If verification fails, stop compilation with:
 
 ### Setup
 
-- [ ] Create `src/ir/anf/verify.rs` module skeleton.
-- [ ] Add verifier entrypoint API (`verify_module` / `verify_function`).
-- [ ] Wire verifier invocation into post-lowering pipeline stage.
-- [ ] Wire verifier invocation into pre-codegen stage.
+- [x] Create `src/ir/anf/verify.rs` module skeleton.
+- [x] Add verifier entrypoint API (`verify_module` / `verify_function`).
+- [x] Wire verifier invocation into post-lowering pipeline stage.
+- [x] Wire verifier invocation into pre-codegen stage (post-optimization in `compile_backend_opt`).
 
 ### Phase 1 Checklist
 
-- [ ] Track function return-type context during ANF walk.
-- [ ] Track loop stack and expected loop result type.
-- [ ] Validate `break`/`continue` loop-context legality.
-- [ ] Validate `break` value compatibility with loop result type.
-- [ ] Validate `return` value compatibility with function return type.
-- [ ] Add unit tests for control-flow invariant failures.
+- [x] Track function return-type context during ANF walk.
+- [x] Track loop stack and expected loop result type.
+- [x] Validate `break`/`continue` loop-context legality.
+- [x] Validate `break` value compatibility with loop result type.
+- [x] Validate `return` value compatibility with function return type.
+- [x] Add unit tests for control-flow invariant failures.
 
 ### Phase 2 Checklist
 
-- [ ] Validate local mapping existence for every referenced `LocalId`.
-- [ ] Validate physical local type stability across rebinding/assign.
-- [ ] Validate iterator metadata coherence (`iterator_state`, `iterator_next_state`, `iter_item_state`).
-- [ ] Validate sum representation coherence (`typed` vs `erased`).
-- [ ] Validate typed symbol ↔ local ref-type consistency.
-- [ ] Replace existing ad-hoc unfold-step assertions with verifier checks.
+- [x] Validate local mapping existence for every referenced `LocalId` (scoped, with implicit capture support).
+- [x] Validate `op_result_mono` completeness for let-bound locals (post-lowering).
+- [x] Validate `ADefer` absence post-optimization.
+- [x] Validate `AMakeClosure` free_vars reference known locals (treats unknown locals as implicit captures at function scope, not strict declared-local enforcement).
+- [x] Validate `AAssign` targets reference known locals (same implicit-capture semantics as above).
+- [x] Strict declared-local enforcement for `AMakeClosure` free_vars (`StrictUndeclaredLocal` invariant, enabled post-lowering/post-optimization).
+- [x] Strict declared-local enforcement for `AAssign` targets (`StrictUndeclaredLocal` invariant, enabled post-lowering/post-optimization).
+- [x] Validate physical local type stability across rebinding/assign (`AssignTypeMismatch`).
+- [x] Validate iterator metadata coherence (`iterator_state`, `iterator_next_state`, `iter_item_state`) — codegen-level `verify_codegen_metadata` in `EmitCtx`, debug-only.
+- [x] Validate sum representation coherence (`typed` vs `erased`) — codegen-level `verify_codegen_metadata`, checks `SumRepr` vs `local_mono` agreement.
+- [x] Validate typed symbol ↔ local ref-type consistency — codegen-level `verify_codegen_metadata`, checks named ref-types have corresponding metadata (iterator_state, value_repr, closure_locals).
+- [x] Replace existing ad-hoc unfold-step assertions with verifier checks (`UnfoldStepMetadataMissing` invariant).
 
 ### Phase 3 Checklist
 
-- [ ] Add verifier hook after each ANF optimization pass in debug mode.
-- [ ] Annotate verifier errors with pass name when failing post-pass.
-- [ ] Add regression fixture for `collect + break + unfold`.
-- [ ] Add regression fixture for typed iterator-option pattern path.
-- [ ] Add regression fixture for closure shadow/capture propagation path.
+- [x] Add verifier hook after each ANF optimization pass in debug mode.
+- [x] Annotate verifier errors with pass name when failing post-pass.
+- [x] Add regression fixture for `collect + break + unfold` (existing: `collect_break_unfold.tw`).
+- [x] Add regression fixture for typed iterator-option pattern path (existing: `iterator_unfold_nested_match_typing.tw` et al).
+- [x] Add regression fixture for closure shadow/capture propagation path (existing: `shadow_rebind_closure_capture.tw`).
 
 ### Phase 4 Checklist
 
-- [ ] Add structured verifier error type with invariant identifiers.
-- [ ] Include function/local/span context in all verifier errors.
-- [ ] Add snapshot tests for verifier diagnostics output.
-- [ ] Decide release-mode policy (always-on vs selected invariants).
-- [ ] Document verifier guarantees and limitations in internals docs.
+- [x] Add structured verifier error type with invariant identifiers (`Invariant` enum).
+- [x] Include function context in all verifier errors; local context where applicable (`local_id: Option<LocalId>` field, `err_local` helper, `[Lx]` in display format). Control-flow errors (e.g. `BreakOutsideLoop`) have no associated local and use `local_id: None`.
+- [x] Add snapshot tests for verifier diagnostics output (exact message format assertions).
+- [x] Decide release-mode policy: pipeline gates (post-lowering, post-optimization) always-on; per-pass hooks debug-only (`#[cfg(debug_assertions)]`).
+- [x] Document verifier guarantees and limitations in internals docs (module-level doc comment in `verify.rs`).
 
 ## Testing Strategy
 

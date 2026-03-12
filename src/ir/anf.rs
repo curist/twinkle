@@ -16,6 +16,7 @@ use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::ty::{MonoType, TypeId};
 
 pub mod analysis;
+pub mod verify;
 
 /// The operand type for binary and unary operations.
 ///
