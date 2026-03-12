@@ -1,0 +1,107 @@
+// Expected output:
+//   mq.vector=2
+//   mq.string=2
+//   mq.dict=1
+//   mq.cell=3
+//   mq.iterator=0
+//   dot.vector=2
+//   dot.string=abc
+//   dot.dict=true
+//   dot.cell=3
+//   dot.iterator=10
+//   dot.int=42
+//   dot.float=7.25
+//   dot.bool=true
+//   dot.byte=8
+//   ref.vector=2
+//   ref.string=xy
+//   ref.dict=true
+//   ref.cell=3
+//   ref.iterator=20
+//   ref.int=42
+//   ref.float=1.5
+//   ref.bool=false
+//   ref.byte=9
+
+// Module-qualified calls
+xs := [1, 2]
+println("mq.vector=${Vector.len(xs)}")
+println("mq.string=${String.len("hi")}")
+
+d: Dict<String, Int> = Dict.new()
+d["k"] = 1
+println("mq.dict=${Dict.len(d)}")
+
+c := Cell.new(1)
+Cell.set(c, 3)
+println("mq.cell=${Cell.get(c)}")
+
+it_mq := Iterator.unfold(0, fn(i: Int) {
+  if i < 1 { UnfoldStep.Yield(i, i + 1) }
+  else     { UnfoldStep.Done }
+})
+case Iterator.next(it_mq) {
+  .Some(item) => println("mq.iterator=${item.value}"),
+  .None => println("mq.iterator=none"),
+}
+
+// Dot-syntax method calls
+println("dot.vector=${xs.len()}")
+println("dot.string=${"ab".concat("c")}")
+println("dot.dict=${d.has("k")}")
+println("dot.cell=${c.get()}")
+
+it_dot := Iterator.unfold(10, fn(i: Int) {
+  if i < 11 { UnfoldStep.Yield(i, i + 1) }
+  else      { UnfoldStep.Done }
+})
+case it_dot.next() {
+  .Some(item) => println("dot.iterator=${item.value}"),
+  .None => println("dot.iterator=none"),
+}
+
+println("dot.int=${(42).to_string()}")
+println("dot.float=${(7.25).to_string()}")
+println("dot.bool=${(true).to_string()}")
+case Byte.from_int(8) {
+  .Some(b) => println("dot.byte=${b.to_int()}"),
+  .None => println("dot.byte=none"),
+}
+
+// First-class method value refs (module-qualified)
+vec_len: fn(Vector<Int>) Int = Vector.len
+println("ref.vector=${vec_len(xs)}")
+
+str_concat: fn(String, String) String = String.concat
+println("ref.string=${str_concat("x", "y")}")
+
+dict_has: fn(Dict<String, Int>, String) Bool = Dict.has
+println("ref.dict=${dict_has(d, "k")}")
+
+cell_get: fn(Cell<Int>) Int = Cell.get
+println("ref.cell=${cell_get(c)}")
+
+it_ref := Iterator.unfold(20, fn(i: Int) {
+  if i < 21 { UnfoldStep.Yield(i, i + 1) }
+  else      { UnfoldStep.Done }
+})
+next_ref: fn(Iterator<Int>) IterItem<Int>? = Iterator.next
+case next_ref(it_ref) {
+  .Some(item) => println("ref.iterator=${item.value}"),
+  .None => println("ref.iterator=none"),
+}
+
+int_to_string := Int.to_string
+println("ref.int=${int_to_string(42)}")
+
+float_to_string := Float.to_string
+println("ref.float=${float_to_string(1.5)}")
+
+bool_to_string := Bool.to_string
+println("ref.bool=${bool_to_string(false)}")
+
+byte_to_int := Byte.to_int
+case Byte.from_int(9) {
+  .Some(b) => println("ref.byte=${byte_to_int(b)}"),
+  .None => println("ref.byte=none"),
+}

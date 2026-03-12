@@ -1,0 +1,39 @@
+pub fn to_string(s: String) String {
+  ""
+}
+
+pub fn len(s: String) Int {
+  0
+}
+
+pub fn concat(a: String, b: String) String {
+  ""
+}
+
+pub fn get(s: String, i: Int) Option<Byte> {
+  .None
+}
+
+pub fn slice(s: String, start: Int, end: Int) String {
+  ""
+}
+
+pub fn char_code_at(s: String, i: Int) Int {
+  0
+}
+
+pub fn from_char_code(code: Int) Option<String> {
+  .None
+}
+
+pub fn from_code_point(code: Int) Option<String> {
+  .None
+}
+
+pub fn utf8_bytes(s: String) Vector<Byte> {
+  []
+}
+
+pub fn from_utf8(bytes: Vector<Byte>) Option<String> {
+  .None
+}

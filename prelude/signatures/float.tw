@@ -1,0 +1,7 @@
+pub fn to_string(f: Float) String {
+  ""
+}
+
+pub fn from_string(s: String) Option<Float> {
+  .None
+}

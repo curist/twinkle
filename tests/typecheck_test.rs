@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
+use twinkle::types::TypeError;
 use twinkle::types::env::{TypeEnv, ValueEnv};
 
 /// Built-in module aliases recognised by the type checker.
@@ -322,4 +323,42 @@ main()
     let output = String::from_utf8(bytes).expect("interpreter output is valid UTF-8");
     let _ = fs::remove_file(path);
     assert_eq!(output, "0\n1\n");
+}
+
+#[test]
+fn test_missing_method_signature_reports_type_error_not_panic() {
+    let src = r#"
+fn main() Int {
+    xs := [1]
+    f := xs.push
+    f(2).len()
+}
+main()
+"#;
+
+    let (ast, _registry) = twinkle::syntax::parse_source(src, "test.tw").expect("parse failed");
+    let resolved = twinkle::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new())
+        .expect("resolve failed");
+
+    let mut broken_value_env = resolved.value_env;
+    broken_value_env.remove_function("Vector.push");
+
+    let result = twinkle::types::TypeChecker::check_module(
+        &ast,
+        resolved.type_env,
+        broken_value_env,
+        builtin_aliases(),
+    );
+
+    let errors = result.expect_err("expected a type error, not success");
+    assert!(
+        errors.iter().any(|err| {
+            matches!(
+                err,
+                TypeError::UndefinedVariable { name, .. } if name == "Vector.push"
+            )
+        }),
+        "expected UndefinedVariable for Vector.push, got: {:?}",
+        errors
+    );
 }

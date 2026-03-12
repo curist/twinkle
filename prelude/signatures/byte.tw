@@ -1,0 +1,11 @@
+pub fn to_int(b: Byte) Int {
+  0
+}
+
+pub fn from_int(n: Int) Option<Byte> {
+  .None
+}
+
+pub fn to_string(b: Byte) String {
+  ""
+}

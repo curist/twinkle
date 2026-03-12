@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use super::error::TypeError;
 use super::ty::{
-    BUILTIN_BYTE_TYPE_ID, BUILTIN_STRING_TYPE_ID, CELL_TYPE_ID, FunctionSignature,
-    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID,
-    RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+    BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
+    BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
+    FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
+    RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
 };
-use crate::intrinsics::contracts;
+use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
 
 /// Type environment - tracks user-defined type declarations
@@ -165,8 +166,53 @@ impl TypeEnv {
             UNFOLD_STEP_TYPE_ID,
         );
 
-        // Builtin String method aliases for intrinsics that are not defined in
-        // prelude/string.tw.
+        // Register all builtin method mappings.
+        // These map (synthetic_type_id, method_name) → qualified function name
+        // so that the env-driven resolution path works for all builtin types.
+
+        // Vector methods
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "len".to_string(),
+            "Vector.len".to_string(),
+        );
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "push".to_string(),
+            "Vector.push".to_string(),
+        );
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "concat".to_string(),
+            "Vector.concat".to_string(),
+        );
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "slice".to_string(),
+            "Vector.slice".to_string(),
+        );
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "get".to_string(),
+            "Vector.get".to_string(),
+        );
+        env.add_method(
+            BUILTIN_VECTOR_TYPE_ID,
+            "set".to_string(),
+            "Vector.set".to_string(),
+        );
+
+        // String methods
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "len".to_string(),
+            "String.len".to_string(),
+        );
+        env.add_method(
+            BUILTIN_STRING_TYPE_ID,
+            "concat".to_string(),
+            "String.concat".to_string(),
+        );
         env.add_method(
             BUILTIN_STRING_TYPE_ID,
             "slice".to_string(),
@@ -192,6 +238,68 @@ impl TypeEnv {
             "utf8_bytes".to_string(),
             "String.utf8_bytes".to_string(),
         );
+
+        // Dict methods
+        env.add_method(
+            BUILTIN_DICT_TYPE_ID,
+            "len".to_string(),
+            "Dict.len".to_string(),
+        );
+        env.add_method(
+            BUILTIN_DICT_TYPE_ID,
+            "has".to_string(),
+            "Dict.has".to_string(),
+        );
+        env.add_method(
+            BUILTIN_DICT_TYPE_ID,
+            "keys".to_string(),
+            "Dict.keys".to_string(),
+        );
+        env.add_method(
+            BUILTIN_DICT_TYPE_ID,
+            "remove".to_string(),
+            "Dict.remove".to_string(),
+        );
+        env.add_method(
+            BUILTIN_DICT_TYPE_ID,
+            "set".to_string(),
+            "Dict.set".to_string(),
+        );
+
+        // Cell methods
+        env.add_method(CELL_TYPE_ID, "get".to_string(), "Cell.get".to_string());
+        env.add_method(CELL_TYPE_ID, "set".to_string(), "Cell.set".to_string());
+        env.add_method(
+            CELL_TYPE_ID,
+            "update".to_string(),
+            "Cell.update".to_string(),
+        );
+
+        // Iterator methods
+        env.add_method(
+            ITERATOR_TYPE_ID,
+            "next".to_string(),
+            "Iterator.next".to_string(),
+        );
+
+        // Primitive methods
+        env.add_method(
+            BUILTIN_INT_TYPE_ID,
+            "to_string".to_string(),
+            "Int.to_string".to_string(),
+        );
+        env.add_method(
+            BUILTIN_FLOAT_TYPE_ID,
+            "to_string".to_string(),
+            "Float.to_string".to_string(),
+        );
+        env.add_method(
+            BUILTIN_BOOL_TYPE_ID,
+            "to_string".to_string(),
+            "Bool.to_string".to_string(),
+        );
+
+        // Byte methods
         env.add_method(
             BUILTIN_BYTE_TYPE_ID,
             "to_int".to_string(),
@@ -692,6 +800,14 @@ pub struct ValueEnvBindingSnapshot {
 
 impl ValueEnv {
     pub fn new() -> Self {
+        let mut env = Self::new_without_intrinsic_signatures();
+        for sig in signatures::function_signatures() {
+            env.add_function(sig);
+        }
+        env
+    }
+
+    pub(crate) fn new_without_intrinsic_signatures() -> Self {
         let mut env = Self {
             functions: HashMap::new(),
             values: HashMap::new(),
@@ -771,10 +887,6 @@ impl ValueEnv {
                 ret: Box::new(MonoType::named(RANGE_TYPE_ID)),
             },
         );
-
-        for sig in contracts::function_signatures() {
-            env.add_function(sig);
-        }
 
         env.builtins.insert(
             "__host_read_file".to_string(),

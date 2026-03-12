@@ -115,6 +115,93 @@ pub fn cwd() String {
 }
 
 #[test]
+fn compile_entry_from_source_map_rejects_intrinsic_arity_drift() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/intrinsic_signature_validation");
+    let stdlib_root = project_root.join("stdlib");
+    let prelude_root = project_root.join("prelude");
+    let entry = project_root.join("main.tw");
+    let prelude_vector = prelude_root.join("vector.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), "println(\"ok\")\n".to_string());
+    sources.insert(
+        prelude_vector,
+        r#"
+pub fn push(xs: Vector<Int>) Vector<Int> {
+  xs
+}
+"#
+        .to_string(),
+    );
+
+    let err = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect_err("mismatched intrinsic signature should fail validation");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("intrinsic signature validation failed"),
+        "unexpected error:\n{}",
+        msg
+    );
+    assert!(msg.contains("Vector.push"), "unexpected error:\n{}", msg);
+    assert!(msg.contains("arity mismatch"), "unexpected error:\n{}", msg);
+}
+
+#[test]
+fn compile_entry_from_source_map_accepts_new_prelude_method_without_rust_changes() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/prelude_method_drift");
+    let stdlib_root = project_root.join("stdlib");
+    let prelude_root = project_root.join("prelude");
+    let entry = project_root.join("main.tw");
+    let prelude_vector = prelude_root.join("vector.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        entry.clone(),
+        r#"
+xs := [1, 2, 3]
+println("${xs.first_or(0)}")
+println("${Vector.first_or([], 99)}")
+"#
+        .to_string(),
+    );
+    sources.insert(
+        prelude_vector,
+        r#"
+pub fn first_or<A>(xs: Vector<A>, fallback: A) A {
+  case xs.get(0) {
+    .Some(v) => v,
+    .None => fallback,
+  }
+}
+"#
+        .to_string(),
+    );
+
+    let (core_module, _registry) = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("new prelude method should compile without Rust-side registration changes");
+
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("compiled module should run");
+    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    assert_eq!(output, "1\n99\n");
+}
+
+#[test]
 fn source_map_typecheck_cache_does_not_cross_internal_mode_boundary() {
     reset_global_cache();
 

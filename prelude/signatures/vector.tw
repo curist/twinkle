@@ -1,0 +1,27 @@
+pub fn len<T>(xs: Vector<T>) Int {
+  0
+}
+
+pub fn push<T>(xs: Vector<T>, x: T) Vector<T> {
+  xs
+}
+
+pub fn concat<T>(a: Vector<T>, b: Vector<T>) Vector<T> {
+  a
+}
+
+pub fn slice<T>(xs: Vector<T>, start: Int, end: Int) Vector<T> {
+  xs
+}
+
+pub fn get<T>(xs: Vector<T>, index: Int) Option<T> {
+  .None
+}
+
+pub fn set<T>(xs: Vector<T>, index: Int, value: T) Option<Vector<T>> {
+  .None
+}
+
+pub fn make<T>(len: Int, value: T) Vector<T> {
+  []
+}

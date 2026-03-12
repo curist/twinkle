@@ -1,0 +1,13 @@
+pub fn new<T>(value: T) Cell<T> {
+  value
+}
+
+pub fn get<T>(cell: Cell<T>) T {
+  0
+}
+
+pub fn set<T>(cell: Cell<T>, value: T) Void {
+}
+
+pub fn update<T>(cell: Cell<T>, f: fn(T) T) Void {
+}

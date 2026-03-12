@@ -2,8 +2,8 @@ use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
-    CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, TypeId, UNFOLD_STEP_TYPE_ID, contains_meta, method_receiver_type_id, zonk_ty,
+    ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, TypeId,
+    builtin_method_alias, contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -1162,26 +1162,18 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        // Special: Cell, Dict, Iterator, Vector, and String modules provide polymorphic operations.
-        if alias == "Cell" {
-            return self.synth_cell_call(func_name, args, span);
+        // Dict.new() remains compiler-special because type parameters must come
+        // from contextual annotation; naked calls are intentionally rejected.
+        if alias == "Dict" && func_name == "new" {
+            self.errors.push(TypeError::UnsupportedFeature {
+                feature: "Dict.new() without type annotation",
+                span,
+                note:
+                    "Dict.new() requires a type annotation, e.g. `m: Dict<String, Int> = Dict.new()`"
+                        .to_string(),
+            });
+            return Err(());
         }
-        if alias == "Dict" {
-            return self.synth_dict_module_call(func_name, args, span);
-        }
-        if alias == "Iterator" {
-            return self.synth_iterator_call(func_name, args, span);
-        }
-        if alias == "Vector" {
-            return self.synth_vector_call(func_name, args, span);
-        }
-        if alias == "String" {
-            return self.synth_string_call(func_name, args, span);
-        }
-        if alias == "Byte" {
-            return self.synth_byte_call(func_name, args, span);
-        }
-
         self.synth_qualified_call(alias, func_name, args, span)
     }
 
@@ -1231,542 +1223,6 @@ impl TypeChecker {
                 Err(())
             }
         }
-    }
-
-    /// Handle Cell.new / Cell.get / Cell.set / Cell.update polymorphically.
-    fn synth_cell_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        match func_name {
-            "new" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let inner = self.synth_expr(&args[0])?;
-                Ok(MonoType::Named {
-                    type_id: CELL_TYPE_ID,
-                    args: vec![inner],
-                })
-            }
-            "get" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let cell_ty = self.synth_expr(&args[0])?;
-                match cell_ty {
-                    MonoType::Named {
-                        type_id,
-                        args: cell_args,
-                    } if type_id == CELL_TYPE_ID => {
-                        Ok(cell_args.into_iter().next().unwrap_or(MonoType::Void))
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named {
-                                type_id: CELL_TYPE_ID,
-                                args: vec![],
-                            },
-                            actual: other,
-                            span,
-                            note: None,
-                        });
-                        Err(())
-                    }
-                }
-            }
-            "set" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let cell_ty = self.synth_expr(&args[0])?;
-                match cell_ty {
-                    MonoType::Named {
-                        type_id,
-                        args: cell_args,
-                    } if type_id == CELL_TYPE_ID => {
-                        let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
-                        self.check_expr(&args[1], &inner)?;
-                        Ok(MonoType::Void)
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named {
-                                type_id: CELL_TYPE_ID,
-                                args: vec![],
-                            },
-                            actual: other,
-                            span,
-                            note: None,
-                        });
-                        Err(())
-                    }
-                }
-            }
-            "update" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let cell_ty = self.synth_expr(&args[0])?;
-                match cell_ty {
-                    MonoType::Named {
-                        type_id,
-                        args: cell_args,
-                    } if type_id == CELL_TYPE_ID => {
-                        let inner = cell_args.into_iter().next().unwrap_or(MonoType::Void);
-                        let expected_fn = MonoType::Function {
-                            params: vec![inner.clone()],
-                            ret: Box::new(inner),
-                        };
-                        self.check_expr(&args[1], &expected_fn)?;
-                        Ok(MonoType::Void)
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named {
-                                type_id: CELL_TYPE_ID,
-                                args: vec![],
-                            },
-                            actual: other,
-                            span,
-                            note: None,
-                        });
-                        Err(())
-                    }
-                }
-            }
-            _ => {
-                self.errors.push(TypeError::UndefinedVariable {
-                    name: format!("Cell.{}", func_name),
-                    span,
-                });
-                Err(())
-            }
-        }
-    }
-
-    /// Handle Dict module-qualified calls.
-    /// Dict.new() requires annotation context; other methods synthesize from first arg.
-    fn synth_dict_module_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        match func_name {
-            "new" => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "Dict.new() without type annotation",
-                    span,
-                    note: "Dict.new() requires a type annotation, e.g. `m: Dict<String, Int> = Dict.new()`".to_string(),
-                });
-                Err(())
-            }
-            "len" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let dict_ty = self.synth_expr(&args[0])?;
-                if !matches!(dict_ty, MonoType::Dict(_, _)) {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Dict(
-                            Box::new(MonoType::Void),
-                            Box::new(MonoType::Void),
-                        ),
-                        actual: dict_ty,
-                        span,
-                        note: Some("Dict.len expects Dict<K,V> as first argument".to_string()),
-                    });
-                    return Err(());
-                }
-                Ok(MonoType::Int)
-            }
-            "has" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let dict_ty = self.synth_expr(&args[0])?;
-                match dict_ty {
-                    MonoType::Dict(ref k_ty, _) => {
-                        let k_ty = *k_ty.clone();
-                        self.check_expr(&args[1], &k_ty)?;
-                        Ok(MonoType::Bool)
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(
-                                Box::new(MonoType::Void),
-                                Box::new(MonoType::Void),
-                            ),
-                            actual: other,
-                            span,
-                            note: Some("Dict.has expects Dict<K,V> as first argument".to_string()),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            "keys" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let dict_ty = self.synth_expr(&args[0])?;
-                match dict_ty {
-                    MonoType::Dict(k_ty, _) => Ok(MonoType::Vector(k_ty)),
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(
-                                Box::new(MonoType::Void),
-                                Box::new(MonoType::Void),
-                            ),
-                            actual: other,
-                            span,
-                            note: Some("Dict.keys expects Dict<K,V> as first argument".to_string()),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            "remove" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let dict_ty = self.synth_expr(&args[0])?;
-                match dict_ty.clone() {
-                    MonoType::Dict(ref k_ty, _) => {
-                        let k_ty = *k_ty.clone();
-                        self.check_expr(&args[1], &k_ty)?;
-                        Ok(dict_ty)
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Dict(
-                                Box::new(MonoType::Void),
-                                Box::new(MonoType::Void),
-                            ),
-                            actual: other,
-                            span,
-                            note: Some(
-                                "Dict.remove expects Dict<K,V> as first argument".to_string(),
-                            ),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            other => self.synth_qualified_call("Dict", other, args, span),
-        }
-    }
-
-    /// Handle Iterator.next / Iterator.unfold polymorphically.
-    fn synth_iterator_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        match func_name {
-            "next" => {
-                // Iterator.next(it: Iterator<T>) Option<IterItem<T>>
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let it_ty = self.synth_expr(&args[0])?;
-                match it_ty {
-                    MonoType::Named {
-                        type_id,
-                        args: ref it_args,
-                    } if type_id == ITERATOR_TYPE_ID => {
-                        let elem_ty = it_args.first().cloned().unwrap_or(MonoType::Void);
-                        let item_ty = MonoType::Named {
-                            type_id: ITER_ITEM_TYPE_ID,
-                            args: vec![elem_ty],
-                        };
-                        Ok(MonoType::Named {
-                            type_id: OPTION_TYPE_ID,
-                            args: vec![item_ty],
-                        })
-                    }
-                    other => {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected: MonoType::Named {
-                                type_id: ITERATOR_TYPE_ID,
-                                args: vec![],
-                            },
-                            actual: other,
-                            span,
-                            note: Some("Iterator.next expects an Iterator<T>".to_string()),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            "unfold" => {
-                // Iterator.unfold(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>
-                // We infer T and S from the step function's signature.
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                // Synthesize seed to determine S
-                let seed_ty = self.synth_expr(&args[0])?;
-                // Synthesize the step closure
-                let step_ty = self.synth_expr(&args[1])?;
-                // Validate: step must be fn(S) UnfoldStep<T,S>
-                match step_ty {
-                    MonoType::Function {
-                        ref params,
-                        ref ret,
-                    } => {
-                        if params.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: params.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        // Check parameter matches seed type
-                        let param_ty = &params[0];
-                        if param_ty != &seed_ty {
-                            self.errors.push(TypeError::TypeMismatch {
-                                expected: seed_ty.clone(),
-                                actual: param_ty.clone(),
-                                span,
-                                note: Some("Iterator.unfold: step function parameter type must match seed type".to_string()),
-                            });
-                            return Err(());
-                        }
-                        // Return type should be UnfoldStep<T,S>; extract T
-                        match ret.as_ref() {
-                            MonoType::Named {
-                                type_id,
-                                args: ret_args,
-                            } if *type_id == UNFOLD_STEP_TYPE_ID => {
-                                let elem_ty = ret_args.first().cloned().unwrap_or(MonoType::Void);
-                                Ok(MonoType::Named {
-                                    type_id: ITERATOR_TYPE_ID,
-                                    args: vec![elem_ty],
-                                })
-                            }
-                            other => {
-                                self.errors.push(TypeError::TypeMismatch {
-                                    expected: MonoType::Named { type_id: UNFOLD_STEP_TYPE_ID, args: vec![] },
-                                    actual: other.clone(),
-                                    span,
-                                    note: Some("Iterator.unfold: step function must return UnfoldStep<T,S>".to_string()),
-                                });
-                                Err(())
-                            }
-                        }
-                    }
-                    other => {
-                        self.errors
-                            .push(TypeError::NotAFunction { ty: other, span });
-                        Err(())
-                    }
-                }
-            }
-            other => {
-                self.errors.push(TypeError::UndefinedVariable {
-                    name: format!("Iterator.{}", other),
-                    span,
-                });
-                Err(())
-            }
-        }
-    }
-
-    /// Handle Vector.method(vec, ...) module-qualified calls.
-    fn synth_vector_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        match func_name {
-            "len" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let vec_ty = self.synth_expr(&args[0])?;
-                if !matches!(vec_ty, MonoType::Vector(_)) {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Vector(Box::new(MonoType::Void)),
-                        actual: vec_ty,
-                        span,
-                        note: Some("Vector.len expects Vector<T> as first argument".to_string()),
-                    });
-                    return Err(());
-                }
-                Ok(MonoType::Int)
-            }
-            "concat" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let vec_ty = self.synth_expr(&args[0])?;
-                if !matches!(vec_ty, MonoType::Vector(_)) {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Vector(Box::new(MonoType::Void)),
-                        actual: vec_ty,
-                        span,
-                        note: Some("Vector.concat expects Vector<T> as first argument".to_string()),
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[1], &vec_ty)?;
-                Ok(vec_ty)
-            }
-            "slice" => {
-                if args.len() != 3 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 3,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                let vec_ty = self.synth_expr(&args[0])?;
-                if !matches!(vec_ty, MonoType::Vector(_)) {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected: MonoType::Vector(Box::new(MonoType::Void)),
-                        actual: vec_ty,
-                        span,
-                        note: Some("Vector.slice expects Vector<T> as first argument".to_string()),
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[1], &MonoType::Int)?;
-                self.check_expr(&args[2], &MonoType::Int)?;
-                Ok(vec_ty)
-            }
-            "make" => {
-                // Vector.make(size: Int, fill: T) Vector<T>
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::Int)?;
-                let elem_ty = self.synth_expr(&args[1])?;
-                Ok(MonoType::Vector(Box::new(elem_ty)))
-            }
-            other => self.synth_qualified_call("Vector", other, args, span),
-        }
-    }
-
-    /// Handle String.method(s, ...) module-qualified calls.
-    fn synth_string_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        match func_name {
-            "len" => {
-                if args.len() != 1 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 1,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                Ok(MonoType::Int)
-            }
-            "concat" => {
-                if args.len() != 2 {
-                    self.errors.push(TypeError::WrongArity {
-                        expected: 2,
-                        actual: args.len(),
-                        span,
-                    });
-                    return Err(());
-                }
-                self.check_expr(&args[0], &MonoType::String)?;
-                self.check_expr(&args[1], &MonoType::String)?;
-                Ok(MonoType::String)
-            }
-            // Remaining String module calls are resolved through registered
-            // qualified signatures (intrinsic contracts + stdlib/prelude funcs).
-            other => self.synth_qualified_call("String", other, args, span),
-        }
-    }
-
-    /// Handle Byte.method(...) module-qualified calls.
-    fn synth_byte_call(
-        &mut self,
-        func_name: &str,
-        args: &[Expr],
-        span: Span,
-    ) -> Result<MonoType, ()> {
-        self.synth_qualified_call("Byte", func_name, args, span)
     }
 
     fn check_interpolation_expr(&mut self, expr: &Expr) -> Result<(), ()> {
@@ -1869,36 +1325,8 @@ impl TypeChecker {
         expr_id: ExprId,
         span: Span,
     ) -> Result<(), ()> {
-        // expected must be a function type
-        let (params, ret) = match expected {
-            MonoType::Function { params, ret } => (params, ret.as_ref()),
-            _ => {
-                self.errors.push(TypeError::TypeMismatch {
-                    expected: expected.clone(),
-                    actual: MonoType::Function {
-                        params: vec![],
-                        ret: Box::new(MonoType::Void),
-                    },
-                    span,
-                    note: Some(format!("'{}.{}' is a function", alias, method)),
-                });
-                return Err(());
-            }
-        };
-
-        if params.is_empty() {
-            self.errors.push(TypeError::UnsupportedFeature {
-                feature: "module method reference with no params",
-                span,
-                note: format!("'{}.{}' must take at least one argument", alias, method),
-            });
-            return Err(());
-        }
-
-        // Prefer registered/qualified function signatures when available.
-        // This covers stdlib-defined builtin receiver methods (e.g. Vector.map,
-        // Dict.values, Int.to_float) without hard-coding every method shape.
         let qualified = format!("{}.{}", alias, method);
+
         if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
             let full_fn_ty = MonoType::Function {
                 params: sig.params.clone(),
@@ -1910,103 +1338,19 @@ impl TypeChecker {
             return Ok(());
         }
 
-        // Validate the first param matches the base type and check the shape
-        let valid = match alias {
-            "Vector" => {
-                if !matches!(params[0], MonoType::Vector(_)) {
-                    false
-                } else {
-                    match (method, params.len()) {
-                        ("len", 1) => matches!(ret, MonoType::Int),
-                        ("concat", 2) => matches!(ret, MonoType::Vector(_)),
-                        ("slice", 3) => matches!(ret, MonoType::Vector(_)),
-                        _ => false,
-                    }
-                }
+        match self.value_env.lookup(&qualified) {
+            Some(actual) => {
+                self.unify(expected, &actual, span)?;
+                self.type_map.set_expr_type(expr_id, self.zonk(expected));
+                Ok(())
             }
-            "String" => {
-                if !matches!(params[0], MonoType::String) {
-                    false
-                } else {
-                    match (method, params.len()) {
-                        ("len", 1) => matches!(ret, MonoType::Int),
-                        ("concat", 2) => matches!(ret, MonoType::String),
-                        ("substring", 3) => matches!(ret, MonoType::String),
-                        ("get", 2) => matches!(
-                            ret,
-                            MonoType::Named { type_id, args }
-                                if *type_id == crate::types::ty::OPTION_TYPE_ID
-                                    && args.len() == 1
-                                    && args[0] == MonoType::String
-                        ),
-                        ("to_string", 1) => matches!(ret, MonoType::String),
-                        _ => false,
-                    }
-                }
+            None => {
+                self.errors.push(TypeError::UndefinedVariable {
+                    name: qualified,
+                    span,
+                });
+                Err(())
             }
-            "Dict" => {
-                if !matches!(params[0], MonoType::Dict(_, _)) {
-                    false
-                } else {
-                    match (method, params.len()) {
-                        ("len", 1) => matches!(ret, MonoType::Int),
-                        ("has", 2) => matches!(ret, MonoType::Bool),
-                        ("keys", 1) => matches!(ret, MonoType::Vector(_)),
-                        ("remove", 2) => matches!(ret, MonoType::Dict(_, _)),
-                        _ => false,
-                    }
-                }
-            }
-            "Int" => {
-                if !matches!(params[0], MonoType::Int) {
-                    false
-                } else {
-                    matches!(
-                        (method, params.len(), ret),
-                        ("to_string", 1, MonoType::String)
-                    )
-                }
-            }
-            "Float" => {
-                if !matches!(params[0], MonoType::Float) {
-                    false
-                } else {
-                    matches!(
-                        (method, params.len(), ret),
-                        ("to_string", 1, MonoType::String)
-                    )
-                }
-            }
-            "Bool" => {
-                if !matches!(params[0], MonoType::Bool) {
-                    false
-                } else {
-                    matches!(
-                        (method, params.len(), ret),
-                        ("to_string", 1, MonoType::String)
-                    )
-                }
-            }
-            _ => false,
-        };
-
-        if valid {
-            self.type_map.set_expr_type(expr_id, expected.clone());
-            Ok(())
-        } else {
-            self.errors.push(TypeError::TypeMismatch {
-                expected: expected.clone(),
-                actual: MonoType::Function {
-                    params: vec![],
-                    ret: Box::new(MonoType::Void),
-                },
-                span,
-                note: Some(format!(
-                    "'{}.{}' signature does not match annotation",
-                    alias, method
-                )),
-            });
-            Err(())
         }
     }
 
@@ -2077,399 +1421,95 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        match base_ty.clone() {
-            MonoType::Vector(ref elem_ty) => {
-                let elem_ty = *elem_ty.clone();
-                match method {
-                    "len" => {
-                        if !args.is_empty() {
+        if let Some(ret_ty) =
+            self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
+        {
+            return Ok(ret_ty);
+        }
+
+        if let MonoType::Named {
+            type_id,
+            args: named_args,
+        } = base_ty.clone()
+        {
+            // If there is no inherent method, this may still be a capability
+            // record function field call: `record.fn_field(args)`.
+            if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
+                if let Some(fields) = self.type_env.get_record_fields(type_id) {
+                    let type_params = self
+                        .type_env
+                        .get_def(type_id)
+                        .map(|d| d.type_params().to_vec())
+                        .unwrap_or_default();
+                    let subst = build_type_subst(&type_params, &named_args);
+                    let field_ty = apply_subst(&fields[field_idx].ty, &subst);
+                    if let MonoType::Function { params, ret } = field_ty {
+                        if params.len() != args.len() {
                             self.errors.push(TypeError::WrongArity {
-                                expected: 0,
+                                expected: params.len(),
                                 actual: args.len(),
                                 span,
                             });
                             return Err(());
                         }
-                        Ok(MonoType::Int)
-                    }
-                    "push" => {
-                        if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &elem_ty)?;
-                        Ok(base_ty)
-                    }
-                    "concat" => {
-                        if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &base_ty)?;
-                        Ok(base_ty)
-                    }
-                    "slice" => {
-                        if args.len() != 2 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 2,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &MonoType::Int)?;
-                        self.check_expr(&args[1], &MonoType::Int)?;
-                        Ok(base_ty)
-                    }
-                    "get" => {
-                        // v.get(i) Option<T> — safe index access
-                        if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &MonoType::Int)?;
-                        Ok(MonoType::Named {
-                            type_id: crate::types::ty::OPTION_TYPE_ID,
-                            args: vec![elem_ty],
-                        })
-                    }
-                    "set" => {
-                        // v.set(i, val) Option<Vector<T>> — safe update
-                        if args.len() != 2 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 2,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &MonoType::Int)?;
-                        self.check_expr(&args[1], &elem_ty)?;
-                        Ok(MonoType::Named {
-                            type_id: crate::types::ty::OPTION_TYPE_ID,
-                            args: vec![base_ty],
-                        })
-                    }
-                    _ => {
-                        if let Some(ret_ty) = self
-                            .try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                        {
-                            return Ok(ret_ty);
-                        }
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "unknown vector method",
-                            span,
-                            note: format!("Vector has no method '{}'", method),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            MonoType::String => match method {
-                "len" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::Int)
-                }
-                "concat" => {
-                    if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 1,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    self.check_expr(&args[0], &MonoType::String)?;
-                    Ok(MonoType::String)
-                }
-                _ => {
-                    if let Some(ret_ty) =
-                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                    {
-                        return Ok(ret_ty);
-                    }
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "unknown string method",
-                        span,
-                        note: format!("String has no method '{}'", method),
-                    });
-                    Err(())
-                }
-            },
-            MonoType::Dict(k_ty, v_ty) => match method {
-                "keys" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::Vector(k_ty))
-                }
-                "len" => {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::Int)
-                }
-                "has" => {
-                    if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 1,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    self.check_expr(&args[0], &k_ty)?;
-                    Ok(MonoType::Bool)
-                }
-                "remove" => {
-                    if args.len() != 1 {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 1,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    self.check_expr(&args[0], &k_ty)?;
-                    Ok(MonoType::Dict(k_ty, v_ty))
-                }
-                _ => {
-                    if let Some(ret_ty) =
-                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                    {
-                        return Ok(ret_ty);
-                    }
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "unknown dict method",
-                        span,
-                        note: format!("Dict has no method '{}'", method),
-                    });
-                    Err(())
-                }
-            },
-            MonoType::Byte => {
-                if let Some(ret_ty) =
-                    self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                {
-                    return Ok(ret_ty);
-                }
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "method on Byte type",
-                    span,
-                    note: format!("Byte has no method '{}'", method),
-                });
-                Err(())
-            }
-            MonoType::Int | MonoType::Float | MonoType::Bool => {
-                if method == "to_string" {
-                    if !args.is_empty() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: 0,
-                            actual: args.len(),
-                            span,
-                        });
-                        return Err(());
-                    }
-                    Ok(MonoType::String)
-                } else {
-                    if let Some(ret_ty) =
-                        self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
-                    {
-                        return Ok(ret_ty);
-                    }
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "method on primitive type",
-                        span,
-                        note: format!("Type {:?} has no method '{}'", base_ty, method),
-                    });
-                    Err(())
-                }
-            }
-            MonoType::Named {
-                type_id,
-                args: ref cell_args,
-            } if type_id == CELL_TYPE_ID => {
-                let inner = cell_args.first().cloned().unwrap_or(MonoType::Void);
-                match method {
-                    "get" => {
-                        if !args.is_empty() {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 0,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        Ok(inner)
-                    }
-                    "set" => {
-                        if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        self.check_expr(&args[0], &inner)?;
-                        Ok(MonoType::Void)
-                    }
-                    "update" => {
-                        if args.len() != 1 {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: 1,
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        let expected_fn = MonoType::Function {
-                            params: vec![inner.clone()],
-                            ret: Box::new(inner),
-                        };
-                        self.check_expr(&args[0], &expected_fn)?;
-                        Ok(MonoType::Void)
-                    }
-                    _ => {
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "unknown Cell method",
-                            span,
-                            note: format!(
-                                "Cell has no method '{}'; available: get, set, update",
-                                method
-                            ),
-                        });
-                        Err(())
-                    }
-                }
-            }
-            MonoType::Named {
-                type_id,
-                args: named_args,
-            } => {
-                // Look up user-defined inherent method
-                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned()
-                {
-                    if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
-                        // all_args: receiver + explicit args
-                        let explicit_count = args.len();
-                        let expected_count = sig.params.len().saturating_sub(1);
-                        if explicit_count != expected_count {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: expected_count,
-                                actual: explicit_count,
-                                span,
-                            });
-                            return Err(());
-                        }
-                        // Instantiate the full method signature with MetaVars so that
-                        // type-level params (e.g. T in Box<T>) and method-level params
-                        // are all properly solved via unification.
-                        let full_fn_ty = MonoType::Function {
-                            params: sig.params.clone(),
-                            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
-                        };
-                        let (inst_ty, _var_to_meta) =
-                            self.instantiate_vars(&sig.type_params, &full_fn_ty);
-                        let (inst_params, inst_ret) = match inst_ty {
-                            MonoType::Function { params, ret } => (params, *ret),
-                            _ => unreachable!(),
-                        };
-                        // Unify the already-synthesised receiver type against the
-                        // instantiated first param — this solves the MetaVars for the
-                        // type-level type params (e.g. T → String for Box<String>).
-                        if let Some(recv_ty) = inst_params.first() {
-                            self.unify(&base_ty, recv_ty, base.span)?;
-                        }
-                        // Check remaining explicit args
-                        for (arg, expected_ty) in args.iter().zip(inst_params.iter().skip(1)) {
+                        for (arg, expected_ty) in args.iter().zip(params.iter()) {
                             self.check_expr(arg, expected_ty)?;
                         }
-                        return Ok(self.zonk(&inst_ret));
+                        return Ok(*ret);
                     }
                 }
-
-                // No inherent method — check if it's a function-typed record field
-                // (capability record call: `record.fn_field(args)`)
-                // Apply type-arg substitution for generic capability records
-                if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
-                    if let Some(fields) = self.type_env.get_record_fields(type_id) {
-                        let type_params = self
-                            .type_env
-                            .get_def(type_id)
-                            .map(|d| d.type_params().to_vec())
-                            .unwrap_or_default();
-                        let subst = build_type_subst(&type_params, &named_args);
-                        let field_ty = apply_subst(&fields[field_idx].ty, &subst);
-                        if let MonoType::Function { params, ret } = field_ty {
-                            if params.len() != args.len() {
-                                self.errors.push(TypeError::WrongArity {
-                                    expected: params.len(),
-                                    actual: args.len(),
-                                    span,
-                                });
-                                return Err(());
-                            }
-                            for (arg, expected_ty) in args.iter().zip(params.iter()) {
-                                self.check_expr(arg, expected_ty)?;
-                            }
-                            return Ok(*ret);
-                        }
-                    }
-                }
-
-                // No method found — report as missing field
-                let type_name = self
-                    .type_env
-                    .get_def(type_id)
-                    .map(|d| d.name().to_string())
-                    .unwrap_or_else(|| format!("Type#{}", type_id.0));
-                self.errors.push(TypeError::NoSuchField {
-                    record_type: type_name,
-                    field: method.to_string(),
-                    span,
-                });
-                Err(())
             }
-            _ => {
-                self.errors.push(TypeError::TypeMismatch {
-                    expected: MonoType::Int, // dummy
-                    actual: base_ty,
-                    span: base.span,
-                    note: None,
-                });
-                Err(())
-            }
+
+            let type_name = self
+                .type_env
+                .get_def(type_id)
+                .map(|d| d.name().to_string())
+                .unwrap_or_else(|| format!("Type#{}", type_id.0));
+            self.errors.push(TypeError::NoSuchField {
+                record_type: type_name,
+                field: method.to_string(),
+                span,
+            });
+            return Err(());
         }
+
+        match method_receiver_type_id(&base_ty).and_then(builtin_method_alias) {
+            Some("Vector") => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "unknown vector method",
+                span,
+                note: format!("Vector has no method '{}'", method),
+            }),
+            Some("String") => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "unknown string method",
+                span,
+                note: format!("String has no method '{}'", method),
+            }),
+            Some("Dict") => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "unknown dict method",
+                span,
+                note: format!("Dict has no method '{}'", method),
+            }),
+            Some("Byte") => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "method on Byte type",
+                span,
+                note: format!("Byte has no method '{}'", method),
+            }),
+            Some("Int" | "Float" | "Bool") => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "method on primitive type",
+                span,
+                note: format!("Type {:?} has no method '{}'", base_ty, method),
+            }),
+            _ => self.errors.push(TypeError::UnsupportedFeature {
+                feature: "unknown method call",
+                span,
+                note: format!(
+                    "Type {} has no method '{}'",
+                    base_ty.format_with_names(&self.type_env),
+                    method
+                ),
+            }),
+        }
+        Err(())
     }
 
     //
@@ -2776,12 +1816,32 @@ impl TypeChecker {
         method: &str,
         span: Span,
     ) -> Result<MonoType, ()> {
-        let func_name = self
-            .type_env
-            .get_method_function(type_id, method)
-            .cloned()
-            .unwrap();
-        let sig = self.value_env.get_function(&func_name).cloned().unwrap();
+        let func_name =
+            if let Some(name) = self.type_env.get_method_function(type_id, method).cloned() {
+                name
+            } else {
+                let type_name = self
+                    .type_env
+                    .get_def(type_id)
+                    .map(|d| d.name().to_string())
+                    .or_else(|| builtin_method_alias(type_id).map(|name| name.to_string()))
+                    .unwrap_or_else(|| format!("Type#{}", type_id.0));
+                self.errors.push(TypeError::NoSuchField {
+                    record_type: type_name,
+                    field: method.to_string(),
+                    span,
+                });
+                return Err(());
+            };
+        let sig = if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+            sig
+        } else {
+            self.errors.push(TypeError::UndefinedVariable {
+                name: func_name,
+                span,
+            });
+            return Err(());
+        };
         let full_fn_ty = MonoType::Function {
             params: sig.params.clone(),
             ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
@@ -2934,16 +1994,7 @@ impl TypeChecker {
                 }
             }
             _ => {
-                // Check for builtin method value reference (e.g. n.to_string, xs.len)
-                if let Some((params, ret, _func_id)) =
-                    crate::ir::lower::resolve_builtin_method_value(&base_ty, field)
-                {
-                    return Ok(MonoType::Function {
-                        params,
-                        ret: Box::new(ret),
-                    });
-                }
-                // Check for registered method value reference (e.g. xs.map, xs.filter)
+                // Check for registered method value reference (e.g. xs.map, n.to_string).
                 if let Some(type_id) = method_receiver_type_id(&base_ty) {
                     if self.type_env.has_method(type_id, field) {
                         return self.synth_method_value_ref(&base_ty, type_id, field, span);
@@ -3164,13 +2215,14 @@ impl TypeChecker {
         expected: &MonoType,
         span: Span,
     ) -> Result<(), ()> {
-        match expected {
+        let expected = self.zonk(expected);
+        match &expected {
             MonoType::Named { type_id, args } => {
                 self.check_record_lit_fields(*type_id, args, fields, span)
             }
             _ => {
                 self.errors.push(TypeError::TypeMismatch {
-                    expected: expected.clone(),
+                    expected,
                     actual: MonoType::Void, // Dummy
                     span,
                     note: None,

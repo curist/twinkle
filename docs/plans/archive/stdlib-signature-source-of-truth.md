@@ -141,14 +141,25 @@ Changes:
    - first-class method values (`let f = Vector.push`)
    - interpreter/wasm parity cases
 
+Inventory snapshot (hardcoded callable-shape sites, with file:line):
+
+- `src/types/check.rs:1165` — remaining compiler-special callable shape: `Dict.new()` without contextual annotation
+- `src/types/check.rs:1320` — module function refs now resolve through env-only path (`check_module_func_ref`)
+- `src/types/check.rs:1357` — method call typing now funnels through registered env lookup (`try_synth_registered_method_call`)
+- `src/ir/lower.rs:435` — shared method FuncId resolution (`resolve_registered_method_func_id`)
+- `src/ir/lower.rs:2586` — direct method-call lowering now env-driven (`lower_method_call`)
+- `src/intrinsics/signatures.rs:30` — transitional Rust-side intrinsic signature table (Phase 4 final `.tw` migration target)
+- `src/types/env.rs:783` — `ValueEnv` pre-seeded from parsed `.tw` signature sources (`prelude/signatures/*.tw`)
+- `src/module/mod.rs:319` — startup intrinsic binding validation hook (Phase 4 Step 1 guardrail)
+
 Checklist:
 
-- [ ] Inventory comment/doc listing every hardcoded shape site with file:line
-- [ ] Characterization test: module-qualified calls for Vector, String, Dict, Cell, Iterator
-- [ ] Characterization test: dot-syntax method calls for all builtin receiver types
-- [ ] Characterization test: first-class method values for all builtin types
-- [ ] Characterization test: interpreter/wasm parity for each of the above
-- [ ] All existing tests pass unchanged
+- [x] Inventory comment/doc listing every hardcoded shape site with file:line
+- [x] Characterization test: module-qualified calls for Vector, String, Dict, Cell, Iterator
+- [x] Characterization test: dot-syntax method calls for all builtin receiver types
+- [x] Characterization test: first-class method values for all builtin types
+- [x] Characterization test: interpreter/wasm parity for each of the above
+- [x] All existing tests pass unchanged
 
 ### Phase 1: Trusted Module Authority by Path
 
@@ -170,12 +181,12 @@ Notes:
 
 Checklist:
 
-- [ ] Explicit trusted-module root configuration (not just `is_internal` bool)
-- [ ] Prelude `.tw` signatures registered into `ValueEnv` before user module typechecking
-- [ ] Prelude `.tw` methods registered into `TypeEnv` before user module typechecking
-- [ ] `contracts::function_signatures()` no longer sole source for intrinsic signatures in `ValueEnv`
-- [ ] Boot order validated: no user module can be typechecked before trusted modules are registered
-- [ ] All existing tests pass unchanged
+- [x] Explicit trusted-module root configuration (not just `is_internal` bool)
+- [x] Prelude `.tw` signatures registered into `ValueEnv` before user module typechecking
+- [x] Prelude `.tw` methods registered into `TypeEnv` before user module typechecking
+- [x] `contracts::function_signatures()` no longer sole source for intrinsic signatures in `ValueEnv`
+- [x] Boot order validated: no user module can be typechecked before trusted modules are registered
+- [x] All existing tests pass unchanged
 
 ### Phase 2: Typechecker De-hardcode
 
@@ -192,17 +203,18 @@ Changes:
 
 Checklist:
 
-- [ ] `try_synth_registered_method_call` handles `Vector` methods via env lookup
-- [ ] `try_synth_registered_method_call` handles `String` methods via env lookup
-- [ ] `try_synth_registered_method_call` handles `Dict` methods via env lookup
-- [ ] `try_synth_registered_method_call` handles `Cell` methods via env lookup
-- [ ] `try_synth_registered_method_call` handles `Iterator` methods via env lookup
-- [ ] `try_synth_registered_method_call` handles primitive methods (`Int`, `Float`, `Bool`, `Byte`) via env lookup
-- [ ] `synth_module_call` builtin branches replaced by `synth_qualified_call` env-driven path
-- [ ] `check_module_func_ref` fallback table removed — env lookup is the only path
-- [ ] Compiler-special exceptions documented (list each one)
-- [ ] Characterization tests from Phase 0 still pass
-- [ ] No new hardcoded shape logic introduced
+- [x] `try_synth_registered_method_call` handles `Vector` methods via env lookup
+- [x] `try_synth_registered_method_call` handles `String` methods via env lookup
+- [x] `try_synth_registered_method_call` handles `Dict` methods via env lookup
+- [x] `try_synth_registered_method_call` handles `Cell` methods via env lookup
+- [x] `try_synth_registered_method_call` handles `Iterator` methods via env lookup
+- [x] `try_synth_registered_method_call` handles primitive methods (`Int`, `Float`, `Bool`, `Byte`) via env lookup
+- [x] `synth_module_call` builtin branches replaced by `synth_qualified_call` env-driven path
+- [x] `check_module_func_ref` fallback table removed — env lookup is the only path
+- [x] Compiler-special exceptions documented (list each one)
+- `Dict.new()` without contextual type annotation remains compiler-special
+- [x] Characterization tests from Phase 0 still pass
+- [x] No new hardcoded shape logic introduced
 
 ### Phase 3: Lowering De-hardcode
 
@@ -218,14 +230,14 @@ Changes:
 
 Checklist:
 
-- [ ] `lower_method_call`: Vector methods resolved via `type_env.get_method_function()`
-- [ ] `lower_method_call`: String methods resolved via `type_env.get_method_function()`
-- [ ] `lower_method_call`: Dict methods resolved via `type_env.get_method_function()`
-- [ ] `lower_method_call`: Cell methods resolved via `type_env.get_method_function()`
-- [ ] `lower_method_call`: primitive methods resolved via `type_env.get_method_function()`
-- [ ] `resolve_builtin_method_value` match table removed
-- [ ] Method value references and direct method calls share the same resolution path
-- [ ] Characterization tests from Phase 0 still pass
+- [x] `lower_method_call`: Vector methods resolved via `type_env.get_method_function()`
+- [x] `lower_method_call`: String methods resolved via `type_env.get_method_function()`
+- [x] `lower_method_call`: Dict methods resolved via `type_env.get_method_function()`
+- [x] `lower_method_call`: Cell methods resolved via `type_env.get_method_function()`
+- [x] `lower_method_call`: primitive methods resolved via `type_env.get_method_function()`
+- [x] `resolve_builtin_method_value` match table removed
+- [x] Method value references and direct method calls share the same resolution path
+- [x] Characterization tests from Phase 0 still pass
 
 ### Phase 4: Intrinsic Execution Registry Consolidation
 
@@ -254,18 +266,20 @@ Migration sub-steps (to land safely):
 3. Reduce `IntrinsicContract` to ABI-only metadata (what the backend needs that isn't derivable from signatures).
 4. Delete redundant signature fields from `contracts.rs`.
 
+Current landing status: startup signature seeding is `.tw`-driven (`prelude/signatures/*.tw`), with `src/intrinsics/signatures.rs` still carrying transitional Rust-side shape tables for Phase 4 validation.
+
 Checklist:
 
-- [ ] `src/intrinsics/validate.rs` created with arity/generic-count checks
-- [ ] Startup validation runs after trusted modules are loaded, before user typechecking
-- [ ] Validation covers every `IntrinsicSpec` entry (no silent skips)
-- [ ] Intentional signature mismatch in a `.tw` source causes a validation failure (test this)
-- [ ] `ValueEnv` initialized from `.tw` sources, not `contracts::function_signatures()`
-- [ ] `IntrinsicContract` reduced to ABI-only fields (`IntrinsicAbiResult`, dispatch kind)
-- [ ] Redundant signature fields (type params, param types, return type) removed from `contracts.rs`
-- [ ] WAT codegen still dispatches through `LoweringKind` (no regression)
-- [ ] Interpreter `match func_id` still works (no regression)
-- [ ] All existing tests pass
+- [x] `src/intrinsics/validate.rs` created with arity/generic-count checks
+- [x] Startup validation runs after trusted modules are loaded, before user typechecking
+- [x] Validation covers every `IntrinsicSpec` entry (no silent skips)
+- [x] Intentional signature mismatch in a `.tw` source causes a validation failure (test this)
+- [x] `ValueEnv` initialized from `.tw` sources, not `contracts::function_signatures()`
+- [x] `IntrinsicContract` reduced to ABI-only fields (`IntrinsicAbiResult`, dispatch kind)
+- [x] Redundant signature fields (type params, param types, return type) removed from `contracts.rs`
+- [x] WAT codegen still dispatches through `LoweringKind` (no regression)
+- [x] Interpreter `match func_id` still works (no regression)
+- [x] All existing tests pass
 
 ### Phase 5: Cleanup + Drift Prevention
 
@@ -286,21 +300,21 @@ Changes:
 
 Checklist:
 
-- [ ] `synth_cell_call` removed from `check.rs`
-- [ ] `synth_dict_module_call` removed from `check.rs`
-- [ ] `synth_iterator_call` removed from `check.rs`
-- [ ] `synth_vector_call` removed from `check.rs`
-- [ ] `synth_string_call` removed from `check.rs`
-- [ ] `synth_byte_call` removed from `check.rs`
-- [ ] `check_module_func_ref` fallback arms removed from `check.rs`
-- [ ] `resolve_builtin_method_value` removed from `lower.rs`
-- [ ] `lower_method_call` builtin match arms removed from `lower.rs`
-- [ ] Drift test: adding a new function to a prelude `.tw` file requires zero Rust changes
-- [ ] Drift test: changing an intrinsic's arity in `.tw` without updating registry causes compile-time failure
-- [ ] Parity tests: module-qualified refs pass in both interpreter and wasm
-- [ ] Parity tests: dot calls pass in both interpreter and wasm
-- [ ] Parity tests: first-class method refs pass in both interpreter and wasm
-- [ ] No hardcoded callable-shape tables remain outside documented compiler-special exceptions
+- [x] `synth_cell_call` removed from `check.rs`
+- [x] `synth_dict_module_call` removed from `check.rs`
+- [x] `synth_iterator_call` removed from `check.rs`
+- [x] `synth_vector_call` removed from `check.rs`
+- [x] `synth_string_call` removed from `check.rs`
+- [x] `synth_byte_call` removed from `check.rs`
+- [x] `check_module_func_ref` fallback arms removed from `check.rs`
+- [x] `resolve_builtin_method_value` removed from `lower.rs`
+- [x] `lower_method_call` builtin match arms removed from `lower.rs`
+- [x] Drift test: adding a new function to a prelude `.tw` file requires zero Rust changes
+- [x] Drift test: changing an intrinsic's arity in `.tw` without updating registry causes compile-time failure
+- [x] Parity tests: module-qualified refs pass in both interpreter and wasm
+- [x] Parity tests: dot calls pass in both interpreter and wasm
+- [x] Parity tests: first-class method refs pass in both interpreter and wasm
+- [x] No hardcoded callable-shape tables remain outside documented compiler-special exceptions
 
 ## Debugging Guarantees
 

@@ -1,0 +1,7 @@
+pub fn to_string(n: Int) String {
+  ""
+}
+
+pub fn from_string(s: String) Option<Int> {
+  .None
+}

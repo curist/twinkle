@@ -548,6 +548,11 @@ fn first_class_method_registered() {
 }
 
 #[test]
+fn stdlib_callable_shape_characterization() {
+    check("tests/run/stdlib_callable_shape_characterization.tw");
+}
+
+#[test]
 fn first_class_method_cross_module() {
     check("tests/modules/method_value_ref/main.tw");
 }

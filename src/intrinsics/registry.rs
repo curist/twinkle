@@ -93,8 +93,8 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         StringToStringIdentity
     ),
-    spec!(STRING_LEN, "String.len", Runtime, false, false),
-    spec!(STRING_CONCAT, "String.concat", Runtime, false, false),
+    spec!(STRING_LEN, "String.len", Runtime, true, true),
+    spec!(STRING_CONCAT, "String.concat", Runtime, true, true),
     spec!(STRING_GET, "String.get", Intrinsic, true, true, StringGet),
     spec!(
         STRING_SLICE,
@@ -104,7 +104,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         StringSlice
     ),
-    spec!(VECTOR_LEN, "Vector.len", Runtime, false, false),
+    spec!(VECTOR_LEN, "Vector.len", Runtime, true, true),
     spec!(
         VECTOR_PUSH,
         "Vector.push",
@@ -120,15 +120,15 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
-    spec!(VECTOR_CONCAT, "Vector.concat", Runtime, false, false),
-    spec!(VECTOR_SLICE, "Vector.slice", Runtime, false, false),
-    spec!(DICT_SET, "Dict.set", Runtime, false, false),
-    spec!(DICT_KEYS, "Dict.keys", Runtime, false, false),
+    spec!(VECTOR_CONCAT, "Vector.concat", Runtime, true, true),
+    spec!(VECTOR_SLICE, "Vector.slice", Runtime, true, true),
+    spec!(DICT_SET, "Dict.set", Runtime, true, true),
+    spec!(DICT_KEYS, "Dict.keys", Runtime, true, true),
     spec!(DICT_GET, "dict_get", Runtime, false, false),
-    spec!(DICT_NEW, "Dict.new", Runtime, false, false),
-    spec!(DICT_LEN, "Dict.len", Runtime, false, false),
-    spec!(DICT_HAS, "Dict.has", Runtime, false, false),
-    spec!(DICT_REMOVE, "Dict.remove", Runtime, false, false),
+    spec!(DICT_NEW, "Dict.new", Runtime, true, true),
+    spec!(DICT_LEN, "Dict.len", Runtime, true, true),
+    spec!(DICT_HAS, "Dict.has", Runtime, true, true),
+    spec!(DICT_REMOVE, "Dict.remove", Runtime, true, true),
     spec!(
         DICT_SET_IN_PLACE,
         "__dict_set_in_place",

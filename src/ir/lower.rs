@@ -163,99 +163,6 @@ pub mod prelude {
     }
 }
 
-/// Resolve a builtin method value reference: given a receiver type and method name,
-/// return (params_without_receiver, return_type, prelude_func_id).
-/// Returns None if the method is not a known builtin.
-pub fn resolve_builtin_method_value(
-    receiver: &MonoType,
-    method: &str,
-) -> Option<(Vec<MonoType>, MonoType, FuncId)> {
-    match (receiver, method) {
-        // Vector methods
-        (MonoType::Vector(_), "len") => Some((vec![], MonoType::Int, prelude::VECTOR_LEN)),
-        (MonoType::Vector(elem), "push") => {
-            Some((vec![*elem.clone()], receiver.clone(), prelude::VECTOR_PUSH))
-        }
-        (MonoType::Vector(_), "concat") => Some((
-            vec![receiver.clone()],
-            receiver.clone(),
-            prelude::VECTOR_CONCAT,
-        )),
-        (MonoType::Vector(_), "slice") => Some((
-            vec![MonoType::Int, MonoType::Int],
-            receiver.clone(),
-            prelude::VECTOR_SLICE,
-        )),
-        (MonoType::Vector(elem), "get") => Some((
-            vec![MonoType::Int],
-            MonoType::Named {
-                type_id: crate::types::ty::OPTION_TYPE_ID,
-                args: vec![*elem.clone()],
-            },
-            prelude::VECTOR_GET,
-        )),
-        (MonoType::Vector(elem), "set") => Some((
-            vec![MonoType::Int, *elem.clone()],
-            MonoType::Named {
-                type_id: crate::types::ty::OPTION_TYPE_ID,
-                args: vec![receiver.clone()],
-            },
-            prelude::VECTOR_SET,
-        )),
-        // String methods
-        (MonoType::String, "len") => Some((vec![], MonoType::Int, prelude::STRING_LEN)),
-        (MonoType::String, "concat") => Some((
-            vec![MonoType::String],
-            MonoType::String,
-            prelude::STRING_CONCAT,
-        )),
-        (MonoType::String, "slice") => Some((
-            vec![MonoType::Int, MonoType::Int],
-            MonoType::String,
-            prelude::STRING_SLICE,
-        )),
-        (MonoType::String, "get") => Some((
-            vec![MonoType::Int],
-            MonoType::Named {
-                type_id: crate::types::ty::OPTION_TYPE_ID,
-                args: vec![MonoType::Byte],
-            },
-            prelude::STRING_GET,
-        )),
-        (MonoType::String, "utf8_bytes") => Some((
-            vec![],
-            MonoType::Vector(Box::new(MonoType::Byte)),
-            prelude::STRING_UTF8_BYTES,
-        )),
-        (MonoType::String, "to_string") => {
-            Some((vec![], MonoType::String, prelude::STRING_TO_STRING))
-        }
-        // Dict methods
-        (MonoType::Dict(k, _), "keys") => {
-            Some((vec![], MonoType::Vector(k.clone()), prelude::DICT_KEYS))
-        }
-        (MonoType::Dict(_, _), "len") => Some((vec![], MonoType::Int, prelude::DICT_LEN)),
-        (MonoType::Dict(k, _), "has") => {
-            Some((vec![*k.clone()], MonoType::Bool, prelude::DICT_HAS))
-        }
-        (MonoType::Dict(k, v), "remove") => Some((
-            vec![*k.clone()],
-            MonoType::Dict(k.clone(), v.clone()),
-            prelude::DICT_REMOVE,
-        )),
-        // Primitive to_string
-        (MonoType::Int, "to_string") => Some((vec![], MonoType::String, prelude::INT_TO_STRING)),
-        (MonoType::Float, "to_string") => {
-            Some((vec![], MonoType::String, prelude::FLOAT_TO_STRING))
-        }
-        (MonoType::Bool, "to_string") => Some((vec![], MonoType::String, prelude::BOOL_TO_STRING)),
-        // Byte methods
-        (MonoType::Byte, "to_int") => Some((vec![], MonoType::Int, prelude::BYTE_TO_INT)),
-        (MonoType::Byte, "to_string") => Some((vec![], MonoType::String, prelude::BYTE_TO_STRING)),
-        _ => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // LowerInput / Lowerer
 // ---------------------------------------------------------------------------
@@ -2254,16 +2161,15 @@ impl Lowerer {
                         }
                     }
                     _ => {
-                        // Builtin method value reference (e.g. xs.len, n.to_string)
-                        if let Some((_params, _ret, func_id)) =
-                            resolve_builtin_method_value(&base_ty, field)
-                        {
-                            self.lower_builtin_method_value_ref(base_expr, func_id, ty, span)
-                        } else if let Some(func_id) =
+                        // Method value reference resolved through TypeEnv/ValueEnv
+                        // (covers both builtin receiver types and named types).
+                        let error_count_before = self.errors.len();
+                        if let Some(func_id) =
                             self.resolve_registered_method_func_id(&base_ty, field, span)
                         {
-                            // Registered method value reference (e.g. xs.map, xs.filter)
                             self.lower_builtin_method_value_ref(base_expr, func_id, ty, span)
+                        } else if self.errors.len() > error_count_before {
+                            None
                         } else {
                             self.errors.push(LowerError::InternalError {
                                 message: format!("field access on non-record type {:?}", base_ty),
@@ -2693,50 +2599,14 @@ impl Lowerer {
             all_args.push(self.lower_expr(a)?);
         }
 
-        let func_id = match (&base_ty, method) {
-            (MonoType::Vector(_), "len") => prelude::VECTOR_LEN,
-            (MonoType::Vector(_), "push") => prelude::VECTOR_PUSH,
-            (MonoType::Vector(_), "concat") => prelude::VECTOR_CONCAT,
-            (MonoType::Vector(_), "slice") => prelude::VECTOR_SLICE,
-            (MonoType::Vector(_), "get") => prelude::VECTOR_GET,
-            (MonoType::Vector(_), "set") => prelude::VECTOR_SET,
-            (MonoType::Dict(_, _), "len") => prelude::DICT_LEN,
-            (MonoType::Dict(_, _), "has") => prelude::DICT_HAS,
-            (MonoType::Dict(_, _), "remove") => prelude::DICT_REMOVE,
-            (MonoType::String, "len") => prelude::STRING_LEN,
-            (MonoType::String, "concat") => prelude::STRING_CONCAT,
-            (MonoType::String, "slice") => prelude::STRING_SLICE,
-            (MonoType::String, "get") => prelude::STRING_GET,
-            (MonoType::String, "utf8_bytes") => prelude::STRING_UTF8_BYTES,
-            (MonoType::Int, "to_string") => prelude::INT_TO_STRING,
-            (MonoType::Float, "to_string") => prelude::FLOAT_TO_STRING,
-            (MonoType::Bool, "to_string") => prelude::BOOL_TO_STRING,
-            (MonoType::Byte, "to_int") => prelude::BYTE_TO_INT,
-            (MonoType::Byte, "to_string") => prelude::BYTE_TO_STRING,
-            (MonoType::String, "to_string") => prelude::STRING_TO_STRING,
-            (MonoType::Dict(_, _), "keys") => prelude::DICT_KEYS,
-            (MonoType::Named { type_id, .. }, "get")
-                if *type_id == crate::types::ty::CELL_TYPE_ID =>
-            {
-                prelude::CELL_GET
-            }
-            (MonoType::Named { type_id, .. }, "set")
-                if *type_id == crate::types::ty::CELL_TYPE_ID =>
-            {
-                prelude::CELL_SET
-            }
-            (MonoType::Named { type_id, .. }, "update")
-                if *type_id == crate::types::ty::CELL_TYPE_ID =>
-            {
-                prelude::CELL_UPDATE
-            }
-            (MonoType::Named { type_id, .. }, _) => {
-                // User-defined inherent method: look up via TypeEnv → func_table
-                let type_id = *type_id;
-                if let Some(func_name) = self.type_env.get_method_function(type_id, method).cloned()
-                {
-                    self.resolve_named_func_id(&func_name, span)?
-                } else if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
+        let error_count_before = self.errors.len();
+        let func_id =
+            if let Some(func_id) = self.resolve_registered_method_func_id(&base_ty, method, span) {
+                func_id
+            } else if self.errors.len() > error_count_before {
+                return None;
+            } else if let MonoType::Named { type_id, .. } = base_ty.clone() {
+                if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
                     // Function-typed record field: `record.fn_field(args)` — call the closure stored in the field
                     let field_ty = self
                         .type_env
@@ -2756,31 +2626,22 @@ impl Lowerer {
                         callee: Box::new(field_expr),
                         args: all_args.into_iter().skip(1).collect(),
                     });
-                } else {
-                    self.errors.push(LowerError::InternalError {
-                        message: format!(
-                            "no inherent method '{}' for type Type#{}",
-                            method, type_id.0
-                        ),
-                        span,
-                    });
-                    return None;
                 }
-            }
-            _ => {
-                if let Some(func_id) =
-                    self.resolve_registered_method_func_id(&base_ty, method, span)
-                {
-                    func_id
-                } else {
-                    self.errors.push(LowerError::InternalError {
-                        message: format!("no inherent method '{}' for type {:?}", method, base_ty),
-                        span,
-                    });
-                    return None;
-                }
-            }
-        };
+                self.errors.push(LowerError::InternalError {
+                    message: format!(
+                        "no inherent method '{}' for type Type#{}",
+                        method, type_id.0
+                    ),
+                    span,
+                });
+                return None;
+            } else {
+                self.errors.push(LowerError::InternalError {
+                    message: format!("no inherent method '{}' for type {:?}", method, base_ty),
+                    span,
+                });
+                return None;
+            };
 
         let func_ty = MonoType::Function {
             params: all_args.iter().map(|a| a.ty.clone()).collect(),

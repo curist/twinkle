@@ -570,7 +570,7 @@ fn collect_capture_mono_by_func(
                 .map(|local_id| (local_id, ValType::Anyref))
                 .collect::<Vec<_>>();
             let _locals = ctx.setup_locals_with_extra(func, &extra_params);
-            collect_capture_mono_expr(&func.body, &ctx.local_mono, &mut out);
+            collect_capture_mono_expr(&func.body, &ctx.local_mono, &ctx.op_result_mono, &mut out);
         }
         if out == snapshot {
             return out;
@@ -581,12 +581,13 @@ fn collect_capture_mono_by_func(
 fn collect_capture_mono_expr(
     expr: &AnfExpr,
     local_mono: &HashMap<crate::ir::LocalId, MonoType>,
+    op_result_mono: &HashMap<crate::ir::LocalId, MonoType>,
     out: &mut HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>>,
 ) {
     match expr {
         AnfExpr::Let { op, body, .. } => {
-            collect_capture_mono_op(op, local_mono, out);
-            collect_capture_mono_expr(body, local_mono, out);
+            collect_capture_mono_op(op, local_mono, op_result_mono, out);
+            collect_capture_mono_expr(body, local_mono, op_result_mono, out);
         }
         AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
     }
@@ -595,13 +596,17 @@ fn collect_capture_mono_expr(
 fn collect_capture_mono_op(
     op: &AnfOp,
     local_mono: &HashMap<crate::ir::LocalId, MonoType>,
+    op_result_mono: &HashMap<crate::ir::LocalId, MonoType>,
     out: &mut HashMap<FuncId, HashMap<crate::ir::LocalId, MonoType>>,
 ) {
     match op {
         AnfOp::AMakeClosure { func_id, free_vars } => {
             let entry = out.entry(*func_id).or_default();
             for local_id in free_vars {
-                if let Some(mono) = local_mono.get(local_id) {
+                if let Some(mono) = local_mono
+                    .get(local_id)
+                    .or_else(|| op_result_mono.get(local_id))
+                {
                     entry.entry(*local_id).or_insert_with(|| mono.clone());
                 }
             }
@@ -611,16 +616,16 @@ fn collect_capture_mono_op(
             else_branch,
             ..
         } => {
-            collect_capture_mono_expr(then_branch, local_mono, out);
-            collect_capture_mono_expr(else_branch, local_mono, out);
+            collect_capture_mono_expr(then_branch, local_mono, op_result_mono, out);
+            collect_capture_mono_expr(else_branch, local_mono, op_result_mono, out);
         }
         AnfOp::AMatch { arms, .. } => {
             for arm in arms {
-                collect_capture_mono_expr(&arm.body, local_mono, out);
+                collect_capture_mono_expr(&arm.body, local_mono, op_result_mono, out);
             }
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            collect_capture_mono_expr(body, local_mono, out);
+            collect_capture_mono_expr(body, local_mono, op_result_mono, out);
         }
         AnfOp::ACall { .. }
         | AnfOp::ABinOp { .. }
@@ -7757,6 +7762,12 @@ fn collect_typed_cell_payloads(
             .collect::<Vec<_>>();
         let _locals = ctx.setup_locals_with_extra(func, &extra_params);
         for mono in ctx.local_mono.values() {
+            collect_cell_payloads_from_mono(mono, &mut out);
+        }
+        // Init-function cell locals can be intentionally erased from local_mono
+        // for backend layout reasons; collect from op_result_mono as well so
+        // typed cell payloads used by intrinsic emission are still declared.
+        for mono in ctx.op_result_mono.values() {
             collect_cell_payloads_from_mono(mono, &mut out);
         }
     }

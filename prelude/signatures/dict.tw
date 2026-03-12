@@ -1,0 +1,23 @@
+pub fn set<K, V>(d: Dict<K, V>, k: K, v: V) Dict<K, V> {
+  d
+}
+
+pub fn keys<K, V>(d: Dict<K, V>) Vector<K> {
+  []
+}
+
+pub fn new<K, V>() Dict<K, V> {
+  []
+}
+
+pub fn len<K, V>(d: Dict<K, V>) Int {
+  0
+}
+
+pub fn has<K, V>(d: Dict<K, V>, k: K) Bool {
+  false
+}
+
+pub fn remove<K, V>(d: Dict<K, V>, k: K) Dict<K, V> {
+  d
+}

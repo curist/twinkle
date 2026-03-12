@@ -1,0 +1,7 @@
+pub fn next<T>(it: Iterator<T>) Option<IterItem<T>> {
+  .None
+}
+
+pub fn unfold<T, S>(seed: S, step: fn(S) UnfoldStep<T, S>) Iterator<T> {
+  []
+}

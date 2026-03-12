@@ -1,0 +1,11 @@
+pub fn range_from(start: Int, end: Int) Range {
+  0
+}
+
+pub fn range(end: Int) Range {
+  0
+}
+
+pub fn range_step(start: Int, end: Int, step: Int) Range {
+  0
+}

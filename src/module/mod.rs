@@ -313,6 +313,13 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let dep_canonical_paths = dep_plan.canonical_paths;
     let is_internal = dep_plan.is_internal;
 
+    // Validate intrinsic bindings only for user-facing modules, after trusted
+    // modules have been projected into the compile env and before typechecking.
+    if !is_internal {
+        crate::intrinsics::validate::validate_intrinsic_bindings(&state.value_env)
+            .map_err(|err| anyhow!("{err}"))?;
+    }
+
     with_global_cache(|cache| cache.set_dependencies(&canonical, &dep_canonical_paths));
     let dep_hash_entries: Vec<(String, u64)> = dep_canonical_paths
         .iter()
