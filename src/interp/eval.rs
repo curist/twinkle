@@ -12,7 +12,9 @@ use crate::ir::core::{
 use crate::ir::lower::prelude as prelude_ids;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
-use crate::types::ty::{ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID};
+use crate::types::ty::{
+    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+};
 
 use super::value::Value;
 
@@ -1264,6 +1266,100 @@ impl<W: Write> Interpreter<W> {
                     }
                     _ => panic!("__dict_remove_in_place: expected Dict"),
                 }
+            }
+            prelude_ids::HOST_READ_FILE => {
+                // __host_read_file(path: String) -> Result<Vector<Byte>, String>
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_read_file: expected String path"),
+                };
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        let byte_vals = bytes.into_iter().map(|b| Value::Byte(b)).collect();
+                        Ok(Value::Variant(
+                            RESULT_TYPE_ID,
+                            0,
+                            vec![Value::Vec(byte_vals)],
+                        )) // Ok(bytes)
+                    }
+                    Err(e) => {
+                        Ok(Value::Variant(
+                            RESULT_TYPE_ID,
+                            1,
+                            vec![Value::Str(e.to_string())],
+                        )) // Err(msg)
+                    }
+                }
+            }
+            prelude_ids::HOST_WRITE_FILE => {
+                // __host_write_file(path: String, content: String) -> Void
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_write_file: expected String path"),
+                };
+                let content = match &args[1] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_write_file: expected String content"),
+                };
+                std::fs::write(&path, content).map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("write_file failed: {e}")))
+                })?;
+                Ok(Value::Void)
+            }
+            prelude_ids::HOST_WRITE_BYTES => {
+                // __host_write_bytes(path: String, bytes: Vector<Int>) -> Void
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_write_bytes: expected String path"),
+                };
+                let byte_vec = match &args[1] {
+                    Value::Vec(v) => v
+                        .iter()
+                        .map(|val| match val {
+                            Value::Int(i) => *i as u8,
+                            _ => panic!("__host_write_bytes: expected Int elements"),
+                        })
+                        .collect::<Vec<u8>>(),
+                    _ => panic!("__host_write_bytes: expected Vec"),
+                };
+                std::fs::write(&path, byte_vec).map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("write_bytes failed: {e}")))
+                })?;
+                Ok(Value::Void)
+            }
+            prelude_ids::HOST_MKDIRP => {
+                // __host_mkdirp(path: String) -> Void
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_mkdirp: expected String path"),
+                };
+                std::fs::create_dir_all(&path).map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("mkdirp failed: {e}")))
+                })?;
+                Ok(Value::Void)
+            }
+            prelude_ids::HOST_LIST_DIR => {
+                // __host_list_dir(path: String) -> Vector<String>
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_list_dir: expected String path"),
+                };
+                let entries = std::fs::read_dir(&path).map_err(|e| {
+                    Signal::Trap(TrapError::UserError(format!("list_dir failed: {e}")))
+                })?;
+                let names: Vec<Value> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| Value::Str(e.file_name().to_string_lossy().into_owned()))
+                    .collect();
+                Ok(Value::Vec(names))
+            }
+            prelude_ids::HOST_EXISTS => {
+                // __host_exists(path: String) -> Bool
+                let path = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!("__host_exists: expected String path"),
+                };
+                Ok(Value::Bool(std::path::Path::new(&path).exists()))
             }
             prelude_ids::HOST_ARGS => {
                 // __host_args() -> Vector<String>

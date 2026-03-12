@@ -95,9 +95,9 @@ Note: keep `semantic_suite.tw` as a smoke suite; move deeper edge coverage into 
 
 ### Phase 4: Stdlib and host-boundary coverage
 
-- [ ] Add path suite (`@std.path`) with normalization/join corner cases.
-- [ ] Add host suite (`@std.fs`, `@std.proc`) with deterministic assertions only.
-- [ ] Avoid environment-dependent expectations (assert shape, not machine-specific values).
+- [x] Add path suite (`@std.path`) with normalization/join corner cases.
+- [x] Add host suite (`@std.fs`, `@std.proc`) with deterministic assertions only.
+- [x] Avoid environment-dependent expectations (assert shape, not machine-specific values).
 
 ### Phase 5: Execution matrix and CI hooks
 

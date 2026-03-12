@@ -66,7 +66,16 @@ pub fn index_of(s: String, needle: String) Int? {
   i := 0
   last := n - m
   for i <= last {
-    if s.slice(i, i + m) == needle {
+    found := true
+    j := 0
+    for j < m {
+      if s[i + j] != needle[j] {
+        found = false
+        break
+      }
+      j = j + 1
+    }
+    if found {
       return .Some(i)
     }
     i = i + 1
@@ -111,7 +120,16 @@ pub fn split(s: String, sep: String) Vector<String> {
   i := 0
 
   for i <= n - m {
-    if s.slice(i, i + m) == sep {
+    found := true
+    j := 0
+    for j < m {
+      if s[i + j] != sep[j] {
+        found = false
+        break
+      }
+      j = j + 1
+    }
+    if found {
       parts = parts.push(s.slice(start, i))
       i = i + m
       start = i
