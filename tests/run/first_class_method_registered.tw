@@ -1,0 +1,15 @@
+// Expected output:
+//   2,4,6
+//   1,2,3
+
+// Vector.map is a registered method (from prelude), not a hardcoded builtin.
+// It's polymorphic, so we need a type annotation.
+xs := [1, 2, 3]
+f: fn(fn(Int) Int) Vector<Int> = xs.map
+doubled := f(fn(n: Int) Int { n * 2 })
+println(doubled.map(Int.to_string).join(","))
+
+// Vector.join is registered on Vector<String> — monomorphic after base type known
+strs := xs.map(Int.to_string)
+h := strs.join
+println(h(","))

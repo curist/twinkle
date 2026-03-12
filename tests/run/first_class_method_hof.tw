@@ -1,0 +1,15 @@
+// Expected output:
+//   11,12,13
+
+type Adder = .{ base: Int }
+
+fn add(a: Adder, n: Int) Int {
+  a.base + n
+}
+
+adder := Adder.{ base: 10 }
+
+// Pass method value ref to map (receiver bound, fn(Int) Int remains)
+f := adder.add
+results := [1, 2, 3].map(f)
+println(results.map(Int.to_string).join(","))

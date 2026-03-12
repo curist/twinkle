@@ -3,7 +3,7 @@ use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
     CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID, contains_meta, method_receiver_type_id, zonk_ty,
+    RESULT_TYPE_ID, TypeId, UNFOLD_STEP_TYPE_ID, contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -2767,6 +2767,45 @@ impl TypeChecker {
     // Field access
     //
 
+    /// Synthesize a first-class method value reference: `receiver.method` → `fn(args...) ret`.
+    /// The receiver is already bound, so the returned function type drops the first param.
+    fn synth_method_value_ref(
+        &mut self,
+        base_ty: &MonoType,
+        type_id: TypeId,
+        method: &str,
+        span: Span,
+    ) -> Result<MonoType, ()> {
+        let func_name = self
+            .type_env
+            .get_method_function(type_id, method)
+            .cloned()
+            .unwrap();
+        let sig = self.value_env.get_function(&func_name).cloned().unwrap();
+        let full_fn_ty = MonoType::Function {
+            params: sig.params.clone(),
+            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+        };
+        let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+        let (inst_params, inst_ret) = match inst_ty {
+            MonoType::Function { params, ret } => (params, *ret),
+            _ => unreachable!(),
+        };
+        // Unify receiver param with base type
+        if let Some(recv_ty) = inst_params.first() {
+            self.unify(base_ty, recv_ty, span)?;
+        }
+        // Return function type with remaining params (receiver stripped)
+        let remaining_params: Vec<MonoType> = inst_params.into_iter().skip(1).collect();
+        let ret = self.zonk(&inst_ret);
+        let remaining_params: Vec<MonoType> =
+            remaining_params.iter().map(|p| self.zonk(p)).collect();
+        Ok(MonoType::Function {
+            params: remaining_params,
+            ret: Box::new(ret),
+        })
+    }
+
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
         // Check for TypeName.Variant syntax: base is a type name, field is a variant
         if let ExprKind::Ident(type_name) = &base.kind {
@@ -2862,21 +2901,9 @@ impl TypeChecker {
                         }
                     }
 
-                    // Field not found - check if it's a method
+                    // Field not found - check if it's a method value reference
                     if has_method {
-                        // Method calls are handled earlier via synth_method_call.
-                        // Reaching here means field-access syntax on a method name
-                        // (e.g. `m := obj.method`), which is not supported yet.
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "method value references",
-                            span,
-                            note: format!(
-                                "Method '{}' exists, but methods are not first-class values yet. \
-Use a direct call like `obj.{}(...)`.",
-                                field, field
-                            ),
-                        });
-                        return Err(());
+                        return self.synth_method_value_ref(&base_ty, type_id, field, span);
                     }
 
                     // Neither field nor method
@@ -2892,8 +2919,11 @@ Use a direct call like `obj.{}(...)`.",
                         span,
                     });
                     Err(())
+                } else if has_method {
+                    // Non-record Named type (e.g. enum) with a method
+                    return self.synth_method_value_ref(&base_ty, type_id, field, span);
                 } else {
-                    // Not a record type
+                    // Not a record type and no method
                     self.errors.push(TypeError::TypeMismatch {
                         expected: MonoType::Int, // Dummy
                         actual: base_ty,
@@ -2904,6 +2934,21 @@ Use a direct call like `obj.{}(...)`.",
                 }
             }
             _ => {
+                // Check for builtin method value reference (e.g. n.to_string, xs.len)
+                if let Some((params, ret, _func_id)) =
+                    crate::ir::lower::resolve_builtin_method_value(&base_ty, field)
+                {
+                    return Ok(MonoType::Function {
+                        params,
+                        ret: Box::new(ret),
+                    });
+                }
+                // Check for registered method value reference (e.g. xs.map, xs.filter)
+                if let Some(type_id) = method_receiver_type_id(&base_ty) {
+                    if self.type_env.has_method(type_id, field) {
+                        return self.synth_method_value_ref(&base_ty, type_id, field, span);
+                    }
+                }
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Int, // Dummy
                     actual: base_ty,

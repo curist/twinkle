@@ -1,0 +1,18 @@
+// Expected output:
+//   making foo
+//   hello foo
+
+type Foo = .{ x: Int }
+
+fn hello(_: Foo) {
+  println("hello foo")
+}
+
+fn make_foo() Foo {
+  println("making foo")
+  Foo.{ x: 1 }
+}
+
+// Receiver evaluated exactly once
+f := make_foo().hello
+f()

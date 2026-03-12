@@ -1,0 +1,28 @@
+// Method value reference type inference for monomorphic methods
+
+type Foo = .{ x: Int }
+
+fn double_x(f: Foo) Int {
+  f.x * 2
+}
+
+fn hello(_: Foo) {
+  println("hello")
+}
+
+fn translate(f: Foo, dx: Int, dy: Int) Int {
+  f.x + dx + dy
+}
+
+fn main() {
+  foo := Foo.{ x: 5 }
+
+  // Monomorphic method value ref: fn(Foo) Int → fn() Int
+  f := foo.double_x
+
+  // Void-returning method: fn(Foo) Void → fn() Void
+  g := foo.hello
+
+  // Receiver stripping with additional params: fn(Foo, Int, Int) Int → fn(Int, Int) Int
+  h := foo.translate
+}

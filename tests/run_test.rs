@@ -516,3 +516,38 @@ fn bitwise_ops() {
 fn shadow_rebind_closure_capture() {
     check("tests/run/shadow_rebind_closure_capture.tw");
 }
+
+#[test]
+fn first_class_method() {
+    check("tests/run/first_class_method.tw");
+}
+
+#[test]
+fn first_class_method_once() {
+    check("tests/run/first_class_method_once.tw");
+}
+
+#[test]
+fn first_class_method_args() {
+    check("tests/run/first_class_method_args.tw");
+}
+
+#[test]
+fn first_class_method_hof() {
+    check("tests/run/first_class_method_hof.tw");
+}
+
+#[test]
+fn first_class_method_builtin() {
+    check("tests/run/first_class_method_builtin.tw");
+}
+
+#[test]
+fn first_class_method_registered() {
+    check("tests/run/first_class_method_registered.tw");
+}
+
+#[test]
+fn first_class_method_cross_module() {
+    check("tests/modules/method_value_ref/main.tw");
+}

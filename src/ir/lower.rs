@@ -163,6 +163,99 @@ pub mod prelude {
     }
 }
 
+/// Resolve a builtin method value reference: given a receiver type and method name,
+/// return (params_without_receiver, return_type, prelude_func_id).
+/// Returns None if the method is not a known builtin.
+pub fn resolve_builtin_method_value(
+    receiver: &MonoType,
+    method: &str,
+) -> Option<(Vec<MonoType>, MonoType, FuncId)> {
+    match (receiver, method) {
+        // Vector methods
+        (MonoType::Vector(_), "len") => Some((vec![], MonoType::Int, prelude::VECTOR_LEN)),
+        (MonoType::Vector(elem), "push") => {
+            Some((vec![*elem.clone()], receiver.clone(), prelude::VECTOR_PUSH))
+        }
+        (MonoType::Vector(_), "concat") => Some((
+            vec![receiver.clone()],
+            receiver.clone(),
+            prelude::VECTOR_CONCAT,
+        )),
+        (MonoType::Vector(_), "slice") => Some((
+            vec![MonoType::Int, MonoType::Int],
+            receiver.clone(),
+            prelude::VECTOR_SLICE,
+        )),
+        (MonoType::Vector(elem), "get") => Some((
+            vec![MonoType::Int],
+            MonoType::Named {
+                type_id: crate::types::ty::OPTION_TYPE_ID,
+                args: vec![*elem.clone()],
+            },
+            prelude::VECTOR_GET,
+        )),
+        (MonoType::Vector(elem), "set") => Some((
+            vec![MonoType::Int, *elem.clone()],
+            MonoType::Named {
+                type_id: crate::types::ty::OPTION_TYPE_ID,
+                args: vec![receiver.clone()],
+            },
+            prelude::VECTOR_SET,
+        )),
+        // String methods
+        (MonoType::String, "len") => Some((vec![], MonoType::Int, prelude::STRING_LEN)),
+        (MonoType::String, "concat") => Some((
+            vec![MonoType::String],
+            MonoType::String,
+            prelude::STRING_CONCAT,
+        )),
+        (MonoType::String, "slice") => Some((
+            vec![MonoType::Int, MonoType::Int],
+            MonoType::String,
+            prelude::STRING_SLICE,
+        )),
+        (MonoType::String, "get") => Some((
+            vec![MonoType::Int],
+            MonoType::Named {
+                type_id: crate::types::ty::OPTION_TYPE_ID,
+                args: vec![MonoType::Byte],
+            },
+            prelude::STRING_GET,
+        )),
+        (MonoType::String, "utf8_bytes") => Some((
+            vec![],
+            MonoType::Vector(Box::new(MonoType::Byte)),
+            prelude::STRING_UTF8_BYTES,
+        )),
+        (MonoType::String, "to_string") => {
+            Some((vec![], MonoType::String, prelude::STRING_TO_STRING))
+        }
+        // Dict methods
+        (MonoType::Dict(k, _), "keys") => {
+            Some((vec![], MonoType::Vector(k.clone()), prelude::DICT_KEYS))
+        }
+        (MonoType::Dict(_, _), "len") => Some((vec![], MonoType::Int, prelude::DICT_LEN)),
+        (MonoType::Dict(k, _), "has") => {
+            Some((vec![*k.clone()], MonoType::Bool, prelude::DICT_HAS))
+        }
+        (MonoType::Dict(k, v), "remove") => Some((
+            vec![*k.clone()],
+            MonoType::Dict(k.clone(), v.clone()),
+            prelude::DICT_REMOVE,
+        )),
+        // Primitive to_string
+        (MonoType::Int, "to_string") => Some((vec![], MonoType::String, prelude::INT_TO_STRING)),
+        (MonoType::Float, "to_string") => {
+            Some((vec![], MonoType::String, prelude::FLOAT_TO_STRING))
+        }
+        (MonoType::Bool, "to_string") => Some((vec![], MonoType::String, prelude::BOOL_TO_STRING)),
+        // Byte methods
+        (MonoType::Byte, "to_int") => Some((vec![], MonoType::Int, prelude::BYTE_TO_INT)),
+        (MonoType::Byte, "to_string") => Some((vec![], MonoType::String, prelude::BYTE_TO_STRING)),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LowerInput / Lowerer
 // ---------------------------------------------------------------------------
@@ -2145,6 +2238,12 @@ impl Lowerer {
                                 target: Box::new(base_expr),
                                 field: FieldId(idx),
                             })
+                        } else if let Some(func_name) =
+                            self.type_env.get_method_function(*type_id, field).cloned()
+                        {
+                            // First-class method value reference: receiver.method
+                            // Lower to a closure that captures the receiver and calls the method.
+                            self.lower_method_value_ref(base_expr, &func_name, ty, span)
                         } else {
                             self.errors.push(LowerError::UnknownField {
                                 field: field.clone(),
@@ -2155,11 +2254,23 @@ impl Lowerer {
                         }
                     }
                     _ => {
-                        self.errors.push(LowerError::InternalError {
-                            message: format!("field access on non-record type {:?}", base_ty),
-                            span,
-                        });
-                        None
+                        // Builtin method value reference (e.g. xs.len, n.to_string)
+                        if let Some((_params, _ret, func_id)) =
+                            resolve_builtin_method_value(&base_ty, field)
+                        {
+                            self.lower_builtin_method_value_ref(base_expr, func_id, ty, span)
+                        } else if let Some(func_id) =
+                            self.resolve_registered_method_func_id(&base_ty, field, span)
+                        {
+                            // Registered method value reference (e.g. xs.map, xs.filter)
+                            self.lower_builtin_method_value_ref(base_expr, func_id, ty, span)
+                        } else {
+                            self.errors.push(LowerError::InternalError {
+                                message: format!("field access on non-record type {:?}", base_ty),
+                                span,
+                            });
+                            None
+                        }
                     }
                 }
             }
@@ -2685,6 +2796,138 @@ impl Lowerer {
         Some(CoreExprKind::Call {
             callee: Box::new(func_expr),
             args: all_args,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // First-class method value references
+    // -----------------------------------------------------------------------
+
+    /// Lower `receiver.method` to a closure that captures the receiver and calls the method.
+    /// `base_expr` is the already-lowered receiver expression.
+    /// `func_name` is the qualified method function name.
+    /// `result_ty` is the function type with receiver stripped (from type checker).
+    fn lower_method_value_ref(
+        &mut self,
+        base_expr: CoreExpr,
+        func_name: &str,
+        result_ty: &MonoType,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        let method_func_id = self.resolve_named_func_id(func_name, span)?;
+        self.lower_method_value_ref_with_id(base_expr, method_func_id, result_ty, span)
+    }
+
+    /// Lower a builtin method value reference (e.g. xs.len, n.to_string).
+    fn lower_builtin_method_value_ref(
+        &mut self,
+        base_expr: CoreExpr,
+        func_id: FuncId,
+        result_ty: &MonoType,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        self.lower_method_value_ref_with_id(base_expr, func_id, result_ty, span)
+    }
+
+    /// Core: lower a method value reference given a resolved FuncId.
+    fn lower_method_value_ref_with_id(
+        &mut self,
+        base_expr: CoreExpr,
+        method_func_id: FuncId,
+        result_ty: &MonoType,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        // Extract param types and return type from the result function type
+        let (param_tys, return_ty) = match result_ty {
+            MonoType::Function { params, ret } => (params.clone(), (**ret).clone()),
+            _ => {
+                self.errors.push(LowerError::InternalError {
+                    message: "method value ref has non-function type".to_string(),
+                    span,
+                });
+                return None;
+            }
+        };
+
+        // Store receiver in a local so it's evaluated once
+        let recv_local = self
+            .local_allocator
+            .alloc_and_bind(format!("__mref_recv@{}", span.start));
+        let recv_ty = base_expr.ty.clone();
+
+        // Create params for the wrapper function (one per non-receiver arg)
+        self.local_allocator.push_scope();
+        let wrapper_params: Vec<LocalId> = param_tys
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                self.local_allocator
+                    .alloc_and_bind(format!("__mref_arg{}", i))
+            })
+            .collect();
+
+        // Build call: method_func(captured_receiver, arg0, arg1, ...)
+        let mut call_args = Vec::with_capacity(1 + wrapper_params.len());
+        call_args.push(CoreExpr {
+            kind: CoreExprKind::Local(recv_local),
+            ty: recv_ty.clone(),
+            span,
+        });
+        for (i, param_id) in wrapper_params.iter().enumerate() {
+            call_args.push(CoreExpr {
+                kind: CoreExprKind::Local(*param_id),
+                ty: param_tys[i].clone(),
+                span,
+            });
+        }
+
+        let all_param_tys: Vec<MonoType> = std::iter::once(recv_ty.clone())
+            .chain(param_tys.iter().cloned())
+            .collect();
+        let func_expr = CoreExpr {
+            kind: CoreExprKind::GlobalFunc(method_func_id),
+            ty: MonoType::Function {
+                params: all_param_tys,
+                ret: Box::new(return_ty.clone()),
+            },
+            span,
+        };
+        let body = CoreExpr {
+            kind: CoreExprKind::Call {
+                callee: Box::new(func_expr),
+                args: call_args,
+            },
+            ty: return_ty.clone(),
+            span,
+        };
+
+        self.local_allocator.pop_scope();
+
+        // Hoist wrapper as a FunctionDef
+        let func_id = self.alloc_hoisted_id();
+        let hoisted = FunctionDef {
+            func_id,
+            name: format!("<method_ref@{}>", span.start),
+            params: wrapper_params.clone(),
+            param_tys: param_tys.clone(),
+            body,
+            return_ty,
+        };
+        self.hoisted_functions.push(hoisted);
+
+        // Emit Let(recv_local, base_expr, MakeClosure { func_id, free_vars: [recv_local] })
+        let closure = CoreExpr {
+            kind: CoreExprKind::MakeClosure {
+                func_id,
+                free_vars: vec![recv_local],
+            },
+            ty: result_ty.clone(),
+            span,
+        };
+        Some(CoreExprKind::Let {
+            local: recv_local,
+            value: Box::new(base_expr),
+            body: Box::new(closure),
         })
     }
 

@@ -1,0 +1,16 @@
+// Expected output:
+//   25
+//   4,6
+
+use geom
+
+p: geom.Point = geom.Point.{ x: 3, y: 4 }
+
+// Cross-module method value ref: no-arg method
+f := p.magnitude_sq
+println(f().to_string())
+
+// Cross-module method value ref: multi-arg method
+g := p.translate
+p2 := g(1, 2)
+println("${p2.x},${p2.y}")

@@ -188,7 +188,6 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [first-class-inherent-methods.md](first-class-inherent-methods.md) | Support `f := foo.method` as a first-class, receiver-bound inherent method value |
 | [stdlib-signature-source-of-truth.md](stdlib-signature-source-of-truth.md) | Make `prelude/*` and `stdlib/*` the signature source of truth; remove cross-file Rust signature duplication |
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Plan for writing and scaling Twinkle-native test suites in `boot/tests/` |

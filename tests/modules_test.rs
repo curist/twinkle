@@ -202,3 +202,24 @@ fn test_module_multiseg_lower() {
         result.err()
     );
 }
+
+/// cross-module method value reference extraction
+#[test]
+fn test_module_method_value_ref_check() {
+    let result = check("method_value_ref/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected cross-module method value ref check to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_method_value_ref_lower() {
+    let result = lower("method_value_ref/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected cross-module method value ref lower to pass: {:?}",
+        result.err()
+    );
+}

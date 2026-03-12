@@ -1,0 +1,27 @@
+// Expected output:
+//   hello foo
+//   hello foo
+//   30
+
+type Foo = .{ x: Int }
+
+fn hello(f: Foo) {
+  println("hello foo")
+}
+
+fn double_x(f: Foo) Int {
+  f.x * 2
+}
+
+foo := Foo.{ x: 15 }
+
+// Direct call still works
+foo.hello()
+
+// Extract method as first-class value and call it
+f := foo.hello
+f()
+
+// Method with return value
+g := foo.double_x
+println(g().to_string())

@@ -322,3 +322,38 @@ fn run_wasm_sum_closure_return_boundary() {
 fn run_wasm_shadow_rebind_closure_capture() {
     check("tests/run/shadow_rebind_closure_capture.tw");
 }
+
+#[test]
+fn run_wasm_first_class_method() {
+    check("tests/run/first_class_method.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_once() {
+    check("tests/run/first_class_method_once.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_args() {
+    check("tests/run/first_class_method_args.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_hof() {
+    check("tests/run/first_class_method_hof.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_builtin() {
+    check("tests/run/first_class_method_builtin.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_registered() {
+    check("tests/run/first_class_method_registered.tw");
+}
+
+#[test]
+fn run_wasm_first_class_method_cross_module() {
+    check("tests/modules/method_value_ref/main.tw");
+}

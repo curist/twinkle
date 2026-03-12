@@ -1,0 +1,15 @@
+// Ambiguous polymorphic method value without annotation should fail
+
+type Wrap = .{ x: Int }
+
+fn convert<T>(w: Wrap) T {
+  error("not implemented")
+}
+
+fn main() {
+  w := Wrap.{ x: 1 }
+
+  // w.convert is polymorphic: fn<T>(Wrap) T
+  // T is not constrained by receiver type → ambiguous type
+  f := w.convert
+}

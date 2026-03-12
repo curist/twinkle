@@ -1827,7 +1827,12 @@ pub(crate) fn value_repr_from_mono(
     }
 
     match mono {
-        MonoType::Function { params, ret } if is_concrete_mono_type(mono) => {
+        MonoType::Function { params, ret }
+            if is_concrete_mono_type(mono)
+                && concrete_func_sigs
+                    .values()
+                    .any(|(p, r)| p == params && *r == **ret) =>
+        {
             Some(ValueRepr::TypedClosure {
                 params: params.clone(),
                 ret: ret.as_ref().clone(),
@@ -2073,7 +2078,11 @@ pub fn mono_to_valtype_specialized(
 ) -> ValType {
     match ty {
         MonoType::Function { params, ret }
-            if !concrete_func_sigs.is_empty() && is_concrete_mono_type(ty) =>
+            if !concrete_func_sigs.is_empty()
+                && is_concrete_mono_type(ty)
+                && concrete_func_sigs
+                    .values()
+                    .any(|(p, r)| p == params && *r == **ret) =>
         {
             ref_named(true, &typed_closure_struct_sym(params, ret))
         }

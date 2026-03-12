@@ -1,0 +1,25 @@
+// Expected output:
+//   3
+//   42
+//   true
+//   hello world
+
+// Vector.len as method value ref
+xs := [1, 2, 3]
+f := xs.len
+println(f().to_string())
+
+// Int.to_string as method value ref
+n := 42
+g := n.to_string
+println(g())
+
+// Bool.to_string as method value ref
+b := true
+h := b.to_string
+println(h())
+
+// String.concat as method value ref
+s := "hello "
+c := s.concat
+println(c("world"))

@@ -1,0 +1,14 @@
+// Annotated polymorphic method value reference
+
+type Box<T> = .{ value: T }
+
+fn unwrap<T>(b: Box<T>) T {
+  b.value
+}
+
+fn main() {
+  b := Box.{ value: 42 }
+
+  // Polymorphic method with annotation to resolve type var T
+  f: fn() Int = b.unwrap
+}
