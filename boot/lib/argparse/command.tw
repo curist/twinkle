@@ -1,4 +1,4 @@
-use arg
+use lib.argparse.arg
 
 pub type Command = .{
   name: String,
@@ -6,6 +6,42 @@ pub type Command = .{
   args: Vector<arg.Arg>,
 }
 
+pub fn make(name: String, help: String) Command {
+  Command.{ name: name, help: help, args: [] }
+}
+
 pub fn add_arg(cmd: Command, a: arg.Arg) Command {
   .{ name: cmd.name, help: cmd.help, args: cmd.args.push(a) }
+}
+
+pub fn add_args(cmd: Command, args: Vector<arg.Arg>) Command {
+  out := cmd
+  for a in args {
+    out = out.add_arg(a)
+  }
+  out
+}
+
+pub fn add_positional(cmd: Command, name: String, help: String) Command {
+  cmd.add_arg(arg.positional(name, help))
+}
+
+pub fn add_required_positional(cmd: Command, name: String, help: String) Command {
+  cmd.add_arg(arg.required(arg.positional(name, help)))
+}
+
+pub fn add_flag(cmd: Command, name: String, help: String) Command {
+  cmd.add_arg(arg.flag(name, help))
+}
+
+pub fn add_short_flag(cmd: Command, name: String, short_name: String, help: String) Command {
+  cmd.add_arg(arg.short(arg.flag(name, help), short_name))
+}
+
+pub fn add_option(cmd: Command, name: String, help: String) Command {
+  cmd.add_arg(arg.option(name, help))
+}
+
+pub fn add_short_option(cmd: Command, name: String, short_name: String, help: String) Command {
+  cmd.add_arg(arg.short(arg.option(name, help), short_name))
 }

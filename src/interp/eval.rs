@@ -74,6 +74,7 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
     func_index: HashMap<FuncId, usize>,
     output: W,
     error_output: Vec<u8>,
+    argv: Vec<String>,
     /// Module-level globals populated during __init__ execution.
     globals: Frame,
     /// True while directly executing the __init__ body (not inside nested calls).
@@ -86,6 +87,11 @@ pub struct Interpreter<W: Write = Box<dyn Write>> {
 
 impl<W: Write> Interpreter<W> {
     pub fn new(module: CoreModule, output: W) -> Self {
+        let argv = std::env::args().collect();
+        Self::new_with_argv(module, output, argv)
+    }
+
+    pub fn new_with_argv(module: CoreModule, output: W, argv: Vec<String>) -> Self {
         let func_index = module
             .functions
             .iter()
@@ -97,6 +103,7 @@ impl<W: Write> Interpreter<W> {
             func_index,
             output,
             error_output: Vec::new(),
+            argv,
             globals: HashMap::new(),
             in_init_frame: false,
             defer_stack: Vec::new(),
@@ -1363,7 +1370,12 @@ impl<W: Write> Interpreter<W> {
             }
             prelude_ids::HOST_ARGS => {
                 // __host_args() -> Vector<String>
-                let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
+                let argv = self
+                    .argv
+                    .iter()
+                    .cloned()
+                    .map(Value::Str)
+                    .collect::<Vec<_>>();
                 Ok(Value::Vec(argv))
             }
             prelude_ids::HOST_ENV => {

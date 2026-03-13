@@ -997,7 +997,7 @@ pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, Strin
 }
 
 pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
-    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path)?;
+    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, &[])?;
     if let Some(code) = exit_code {
         if code != 0 {
             return Err(anyhow!("process exited with code {code}"));
@@ -1006,7 +1006,10 @@ pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
     Ok((stdout, stderr))
 }
 
-fn run_wasm_capture_with_exit_code(path: &str) -> Result<(String, String, Option<i64>)> {
+fn run_wasm_capture_with_exit_code(
+    path: &str,
+    program_args: &[String],
+) -> Result<(String, String, Option<i64>)> {
     let wasm_input = load_wasm_input(path)?;
     let engine = build_engine()?;
     let module = Module::new(&engine, &wasm_input)
@@ -1017,7 +1020,9 @@ fn run_wasm_capture_with_exit_code(path: &str) -> Result<(String, String, Option
     host_imports.define_all(&mut linker)?;
 
     let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
-    let argv = vec![path.to_string()];
+    let mut argv = Vec::with_capacity(program_args.len() + 1);
+    argv.push(path.to_string());
+    argv.extend(program_args.iter().cloned());
     let env = std::env::vars().collect::<HashMap<_, _>>();
     let mut store = Store::new(
         &engine,
@@ -1046,7 +1051,11 @@ fn run_wasm_capture_with_exit_code(path: &str) -> Result<(String, String, Option
 }
 
 pub fn run_wasm_file(path: &str) -> Result<()> {
-    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path)?;
+    run_wasm_file_with_args(path, &[])
+}
+
+pub fn run_wasm_file_with_args(path: &str, program_args: &[String]) -> Result<()> {
+    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, program_args)?;
     if !stdout.is_empty() {
         print!("{stdout}");
         std::io::stdout()

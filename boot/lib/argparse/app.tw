@@ -1,6 +1,6 @@
-use arg
-use command
-use style
+use lib.argparse.arg
+use lib.argparse.command
+use lib.argparse.style
 
 pub type App = .{
   name: String,
@@ -24,8 +24,20 @@ pub type ParseError = {
   HelpRequested(String),
 }
 
+pub fn make(name: String, help: String) App {
+  App.{ name: name, help: help, commands: [], args: [] }
+}
+
 pub fn add_command(a: App, cmd: command.Command) App {
   .{ name: a.name, help: a.help, commands: a.commands.push(cmd), args: a.args }
+}
+
+pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
+  out := a
+  for c in cmds {
+    out = out.add_command(c)
+  }
+  out
 }
 
 pub fn has_flag(r: ParseResult, name: String) Bool {

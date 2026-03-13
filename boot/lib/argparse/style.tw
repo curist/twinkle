@@ -1,25 +1,43 @@
 // ANSI terminal styling helpers
 
+use @std.proc
+
+fn color_enabled() Bool {
+  case proc.env("NO_COLOR") {
+    // Convention: any non-empty NO_COLOR disables ANSI styling.
+    .Some(v) => v == "",
+    .None => true,
+  }
+}
+
+fn paint(code: String, s: String) String {
+  if color_enabled() {
+    "\e[${code}m${s}\e[0m"
+  } else {
+    s
+  }
+}
+
 pub fn bold(s: String) String {
-  "\e[1m${s}\e[0m"
+  paint("1", s)
 }
 
 pub fn dim(s: String) String {
-  "\e[2m${s}\e[0m"
+  paint("2", s)
 }
 
 pub fn yellow(s: String) String {
-  "\e[33m${s}\e[0m"
+  paint("33", s)
 }
 
 pub fn red(s: String) String {
-  "\e[31m${s}\e[0m"
+  paint("31", s)
 }
 
 pub fn green(s: String) String {
-  "\e[32m${s}\e[0m"
+  paint("32", s)
 }
 
 pub fn cyan(s: String) String {
-  "\e[36m${s}\e[0m"
+  paint("36", s)
 }

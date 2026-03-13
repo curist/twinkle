@@ -46,6 +46,9 @@ enum Commands {
         /// Run through the Core IR interpreter instead of Wasmtime
         #[arg(short = 'i', long = "interpreter")]
         interpreter: bool,
+        /// Arguments passed to the Twinkle program (must come after `--`)
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Compile a Twinkle program to WAT/Wasm
     Build {
@@ -86,11 +89,15 @@ fn main() -> Result<()> {
             let path = std::path::Path::new(&file);
             twinkle::cli::opt::cmd_opt(path, show_original)?;
         }
-        Commands::Run { file, interpreter } => {
+        Commands::Run {
+            file,
+            interpreter,
+            args,
+        } => {
             if interpreter {
-                twinkle::cli::run::run_file(&file)?;
+                twinkle::cli::run::run_file_with_args(&file, &args)?;
             } else {
-                twinkle::cli::run_wasm::run_wasm_file(&file)?;
+                twinkle::cli::run_wasm::run_wasm_file_with_args(&file, &args)?;
             }
         }
         Commands::Build {
@@ -116,9 +123,14 @@ mod tests {
     fn run_subcommand_defaults_to_wasm_mode() {
         let cli = Cli::try_parse_from(["twk", "run", "tests/run/hello.tw"]).expect("parse args");
         match cli.command {
-            Commands::Run { file, interpreter } => {
+            Commands::Run {
+                file,
+                interpreter,
+                args,
+            } => {
                 assert_eq!(file, "tests/run/hello.tw");
                 assert!(!interpreter, "run should default to wasm mode");
+                assert!(args.is_empty(), "run should default to no passthrough args");
             }
             _ => panic!("expected run subcommand"),
         }
@@ -129,9 +141,40 @@ mod tests {
         let cli =
             Cli::try_parse_from(["twk", "run", "-i", "tests/run/hello.tw"]).expect("parse args");
         match cli.command {
-            Commands::Run { file, interpreter } => {
+            Commands::Run {
+                file,
+                interpreter,
+                args,
+            } => {
                 assert_eq!(file, "tests/run/hello.tw");
                 assert!(interpreter, "--interpreter flag should switch runtime mode");
+                assert!(args.is_empty(), "run should default to no passthrough args");
+            }
+            _ => panic!("expected run subcommand"),
+        }
+    }
+
+    #[test]
+    fn run_subcommand_accepts_passthrough_args_after_double_dash() {
+        let cli = Cli::try_parse_from([
+            "twk",
+            "run",
+            "boot/main.tw",
+            "--",
+            "run",
+            "foo.tw",
+            "--emit-wat",
+        ])
+        .expect("parse args");
+        match cli.command {
+            Commands::Run {
+                file,
+                interpreter,
+                args,
+            } => {
+                assert_eq!(file, "boot/main.tw");
+                assert!(!interpreter);
+                assert_eq!(args, vec!["run", "foo.tw", "--emit-wat"]);
             }
             _ => panic!("expected run subcommand"),
         }

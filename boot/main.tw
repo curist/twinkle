@@ -1,0 +1,192 @@
+use @std.proc
+use lib.argparse.app
+use lib.argparse.command
+
+fn file_command(name: String, help: String) command.Command {
+  command.make(name, help).add_required_positional("file", "Path to the .tw source file")
+}
+
+fn parse_cmd() command.Command {
+  file_command("parse", "Parse source and print AST (placeholder)")
+}
+
+fn check_cmd() command.Command {
+  file_command("check", "Type-check source (placeholder)")
+}
+
+fn lower_cmd() command.Command {
+  file_command("lower", "Lower to Core IR (placeholder)")
+}
+
+fn lower_anf_cmd() command.Command {
+  file_command("lower-anf", "Lower to ANF IR (placeholder)")
+}
+
+fn opt_cmd() command.Command {
+  file_command("opt", "Optimize ANF IR (placeholder)")
+    .add_short_flag("show-original", "s", "Also print unoptimized ANF")
+}
+
+fn run_cmd() command.Command {
+  file_command("run", "Run program (placeholder)")
+    .add_short_flag("interpreter", "i", "Run with interpreter backend")
+}
+
+fn build_cmd() command.Command {
+  file_command("build", "Compile to Wasm/WAT (placeholder)")
+    .add_short_option("output", "o", "Output path (.wasm or .wat)")
+    .add_flag("emit-wat", "Emit sibling .wat when outputting .wasm")
+}
+
+fn runtime_dump_cmd() command.Command {
+  command.make("runtime-dump", "Dump linked runtime WAT (placeholder)")
+}
+
+fn twk_app() app.App {
+  app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
+    parse_cmd(),
+    check_cmd(),
+    lower_cmd(),
+    lower_anf_cmd(),
+    opt_cmd(),
+    run_cmd(),
+    build_cmd(),
+    runtime_dump_cmd(),
+  ])
+}
+
+fn usage_hint() String {
+  "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
+}
+
+fn is_program_path(s: String) Bool {
+  s.ends_with(".tw") or s.ends_with(".wat") or s.ends_with(".wasm")
+}
+
+// Normalize host argv across interpreter and wasm runners:
+// - Interpreter currently exposes host CLI argv:
+//   [".../twk", "run", "-i?", "<program>.tw", ...user_args]
+// - Wasm runner currently exposes:
+//   ["<program>.tw"]
+// We normalize both into logical tool argv:
+//   ["twk", ...user_args]
+fn normalize_argv(raw: Vector<String>) Vector<String> {
+  if raw.len() == 0 {
+    return ["twk"]
+  }
+
+  prog_idx: Int? = .None
+  i := 0
+  for i < raw.len() {
+    if is_program_path(raw[i]) {
+      prog_idx = .Some(i)
+      break
+    }
+    i = i + 1
+  }
+
+  case prog_idx {
+    .Some(idx) => {
+      if idx + 1 < raw.len() {
+        ["twk"].concat(raw.slice(idx + 1, raw.len()))
+      } else {
+        ["twk"]
+      }
+    },
+    .None => raw,
+  }
+}
+
+fn get_positional(parsed: app.ParseResult, idx: Int, name: String) String!String {
+  if idx < parsed.positional.len() {
+    .Ok(parsed.positional[idx])
+  } else {
+    .Err("missing required positional argument '${name}'")
+  }
+}
+
+type CommandPlan = .{ cmd: String, detail: String }
+
+fn file_detail(parsed: app.ParseResult, render: fn(String) String) String!String {
+  file := try get_positional(parsed, 0, "file")
+  .Ok(render(file))
+}
+
+fn not_implemented(cmd: String, detail: String) {
+  eprintln("TODO: '${cmd}' is not implemented in boot/main.tw yet.")
+  if detail != "" {
+    eprintln(detail)
+  }
+  proc.exit(1)
+}
+
+fn exit_usage_error(msg: String) {
+  eprintln(msg)
+  eprintln("")
+  eprintln(usage_hint())
+  proc.exit(2)
+}
+
+fn build_command_plan(parsed: app.ParseResult) CommandPlan!String {
+  case parsed.command {
+    .Some(cmd) => {
+      detail := case cmd {
+        "parse" => try file_detail(parsed, fn(file) { "Would parse '${file}'." }),
+        "check" => try file_detail(parsed, fn(file) { "Would type-check '${file}'." }),
+        "lower" => try file_detail(parsed, fn(file) { "Would lower '${file}' to Core IR." }),
+        "lower-anf" => try file_detail(parsed, fn(file) { "Would lower '${file}' to ANF IR." }),
+        "opt" => {
+          show := app.has_flag(parsed, "show-original")
+          try file_detail(parsed, fn(file) {
+            "Would optimize '${file}' (show-original=${show})."
+          })
+        },
+        "run" => {
+          interp := app.has_flag(parsed, "interpreter")
+          mode := if interp { "interpreter" } else { "wasm" }
+          try file_detail(parsed, fn(file) {
+            "Would run '${file}' via ${mode} backend."
+          })
+        },
+        "build" => {
+          emit_wat := app.has_flag(parsed, "emit-wat")
+          output := case app.get_option(parsed, "output") {
+            .Some(out) => out,
+            .None => "<default: <input>.wasm>",
+          }
+          try file_detail(parsed, fn(file) {
+            "Would build '${file}' to '${output}' (emit-wat=${emit_wat})."
+          })
+        },
+        "runtime-dump" => "Would print linked runtime WAT.",
+        _ => { return .Err("internal error: unsupported command '${cmd}'") },
+      }
+      .Ok(.{ cmd: cmd, detail: detail })
+    },
+    .None => .Err(usage_hint()),
+  }
+}
+
+fn run_command(parsed: app.ParseResult) {
+  case build_command_plan(parsed) {
+    .Ok(plan) => not_implemented(plan.cmd, plan.detail),
+    .Err(msg) => exit_usage_error(msg),
+  }
+}
+
+fn main() {
+  parser := twk_app()
+  argv := normalize_argv(proc.args())
+
+  case app.parse(parser, argv) {
+    .Ok(parsed) => run_command(parsed),
+    .Err(err) => {
+      case err {
+        .HelpRequested(msg) => println(msg),
+        _ => exit_usage_error(app.error_message(err)),
+      }
+    },
+  }
+}
+
+main()
