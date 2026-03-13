@@ -192,3 +192,4 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [boot-foundation-libs.md](boot-foundation-libs.md) | Stage 10 support libs in `boot/lib` (`source`, `module`, `graph`, `query`) |
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
 | [option-result-transpose.md](option-result-transpose.md) | Add symmetric `Option.transpose` / `Result.transpose` conversions for nested `Option<Result<...>>` and `Result<Option<...>>` |
+| [record-constructor-aliases.md](record-constructor-aliases.md) | Close the `P.{ ... }` gap by resolving record constructor targets through transparent type aliases |
