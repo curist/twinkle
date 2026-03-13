@@ -1,7 +1,9 @@
+/// Convert an integer to its string representation.
 pub fn to_string(n: Int) String {
   ""
 }
 
+/// Parse a string as an integer, returning None on failure.
 pub fn from_string(s: String) Option<Int> {
   .None
 }

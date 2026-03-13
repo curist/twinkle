@@ -183,6 +183,7 @@ fn next_grapheme_end(s: String, pos: Int) Int {
   next
 }
 
+/// Iterate extended grapheme clusters.
 pub fn graphemes(s: String) Iterator<String> {
   Iterator.unfold(0, fn(pos: Int) {
     if pos >= s.len() {
@@ -194,6 +195,7 @@ pub fn graphemes(s: String) Iterator<String> {
   })
 }
 
+/// Iterate Unicode scalars as strings.
 pub fn chars(s: String) Iterator<String> {
   Iterator.unfold(0, fn(pos: Int) {
     if pos >= s.len() {
@@ -209,6 +211,7 @@ pub fn chars(s: String) Iterator<String> {
   })
 }
 
+/// Return code point at scalar index i.
 pub fn code_point_at(s: String, i: Int) Int? {
   pos := 0
   idx := 0
@@ -236,6 +239,7 @@ pub fn code_point_at(s: String, i: Int) Int? {
   .None
 }
 
+/// Return the number of Unicode scalars.
 pub fn char_len(s: String) Int {
   count := 0
   for ch in s.chars() {
@@ -248,6 +252,7 @@ fn is_ascii_space(code: Int) Bool {
   code == 32 or code == 9 or code == 10 or code == 11 or code == 12 or code == 13
 }
 
+/// Return the first byte offset of needle.
 pub fn index_of(s: String, needle: String) Int? {
   n := s.len()
   m := needle.len()
@@ -279,6 +284,7 @@ pub fn index_of(s: String, needle: String) Int? {
   .None
 }
 
+/// Return true if s contains needle.
 pub fn contains(s: String, needle: String) Bool {
   case s.index_of(needle) {
     .Some(_) => true,
@@ -286,6 +292,7 @@ pub fn contains(s: String, needle: String) Bool {
   }
 }
 
+/// Return true if s starts with prefix.
 pub fn starts_with(s: String, prefix: String) Bool {
   n := s.len()
   m := prefix.len()
@@ -295,6 +302,7 @@ pub fn starts_with(s: String, prefix: String) Bool {
   s.slice(0, m) == prefix
 }
 
+/// Return true if s ends with suffix.
 pub fn ends_with(s: String, suffix: String) Bool {
   n := s.len()
   m := suffix.len()
@@ -304,6 +312,7 @@ pub fn ends_with(s: String, suffix: String) Bool {
   s.slice(n - m, n) == suffix
 }
 
+/// Split s by sep into a vector of strings.
 pub fn split(s: String, sep: String) Vector<String> {
   if sep == "" {
     return [s]
@@ -337,6 +346,7 @@ pub fn split(s: String, sep: String) Vector<String> {
   parts.push(s.slice(start, n))
 }
 
+/// Trim leading and trailing ASCII whitespace.
 pub fn trim(s: String) String {
   n := s.len()
   if n == 0 {

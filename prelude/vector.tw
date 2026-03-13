@@ -1,13 +1,16 @@
+/// Transform each element with f.
 pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs { f(x) }
 }
 
+/// Keep elements where f returns true.
 pub fn filter<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A> {
   collect x in xs {
     if f(x) { x } else { continue }
   }
 }
 
+/// Left-fold a vector.
 pub fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
   acc := init
   for x in xs {
@@ -16,6 +19,7 @@ pub fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
   acc
 }
 
+/// Return the first element matching f.
 pub fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
   for x in xs {
     if f(x) {
@@ -25,6 +29,7 @@ pub fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
   .None
 }
 
+/// Return true if any element matches f.
 pub fn any<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
   for x in xs {
     if f(x) {
@@ -34,6 +39,7 @@ pub fn any<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
   false
 }
 
+/// Return true if all elements match f.
 pub fn all<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
   for x in xs {
     if !f(x) {
@@ -43,6 +49,7 @@ pub fn all<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
   true
 }
 
+/// Return true if elem is in xs.
 pub fn contains<A>(xs: Vector<A>, elem: A) Bool {
   for x in xs {
     if x == elem {
@@ -52,6 +59,7 @@ pub fn contains<A>(xs: Vector<A>, elem: A) Bool {
   false
 }
 
+/// Return a new vector with reversed order.
 pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   n := xs.len()
   if n == 0 {
@@ -67,6 +75,7 @@ pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   out
 }
 
+/// Join strings with sep.
 pub fn join(xs: Vector<String>, sep: String) String {
   n := xs.len()
   if n == 0 {

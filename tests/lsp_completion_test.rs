@@ -190,6 +190,36 @@ value := n.inc()
     );
 }
 
+#[test]
+fn completion_includes_doc_for_builtin_function() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_completion_builtin_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"value := range(1)
+"#;
+
+    let mut base_sources = HashMap::new();
+    base_sources.insert(entry.clone(), source.to_string());
+    let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+    let position = position_after(source, "ran");
+    let items = session
+        .completion(&entry, &entry, position)
+        .expect("completion should succeed");
+
+    let item = items
+        .iter()
+        .find(|item| item.label == "range")
+        .expect("expected completion item for range");
+    assert_eq!(
+        item.documentation.as_deref(),
+        Some("Create a range from 0 to `n` (exclusive)."),
+        "expected builtin function docs from signature registry"
+    );
+}
+
 fn position_after(source: &str, needle: &str) -> twinkle::lsp::position::PositionUtf16 {
     let byte_offset = source.find(needle).expect("needle should be present") + needle.len();
     byte_offset_to_position_utf16(source, byte_offset).expect("position should convert")

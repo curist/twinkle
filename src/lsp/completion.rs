@@ -311,11 +311,17 @@ fn identifier_completions(
             continue; // Skip internal builtins
         }
         if matches_prefix(name, prefix) && seen.insert(name.to_string()) {
+            let documentation = module
+                .typed
+                .value_env
+                .get_function(name)
+                .and_then(|sig| sig.doc.clone())
+                .or_else(|| builtin_value_doc(name).map(str::to_string));
             items.push(CompletionItem {
                 label: name.to_string(),
                 kind: CompletionKind::Function,
                 detail: Some(ty.format_with_names(&module.typed.type_env)),
-                documentation: builtin_value_doc(name).map(str::to_string),
+                documentation,
             });
         }
     }

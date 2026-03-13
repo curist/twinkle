@@ -1,3 +1,4 @@
+/// Materialize an iterator into a vector.
 pub fn to_vector<T>(it: Iterator<T>) Vector<T> {
   collect x in it { x }
 }

@@ -1,7 +1,9 @@
+/// Convert a float to its string representation.
 pub fn to_string(f: Float) String {
   ""
 }
 
+/// Parse a string as a float, returning None on failure.
 pub fn from_string(s: String) Option<Float> {
   .None
 }

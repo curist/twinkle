@@ -1,7 +1,9 @@
+/// Advance the iterator and return the next value and rest iterator.
 pub fn next<T>(it: Iterator<T>) Option<IterItem<T>> {
   .None
 }
 
+/// Build an iterator from a seed and step function.
 pub fn unfold<T, S>(seed: S, step: fn(S) UnfoldStep<T, S>) Iterator<T> {
   []
 }

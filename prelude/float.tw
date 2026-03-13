@@ -7,6 +7,7 @@ fn normalize_integral_float_text(s: String) String {
   }
 }
 
+/// Convert an integral Float to Int.
 pub fn to_int(f: Float) Int {
   s := normalize_integral_float_text(f.to_string())
   case Int.from_string(s) {

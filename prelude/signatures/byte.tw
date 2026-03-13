@@ -1,11 +1,14 @@
+/// Convert a byte to its integer value.
 pub fn to_int(b: Byte) Int {
   0
 }
 
+/// Convert an integer to a byte, returning None when out of range.
 pub fn from_int(n: Int) Option<Byte> {
   .None
 }
 
+/// Convert a byte to its string representation.
 pub fn to_string(b: Byte) String {
   ""
 }

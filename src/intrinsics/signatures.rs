@@ -636,7 +636,11 @@ pub fn function_signatures() -> Vec<FunctionSignature> {
                             spec.twinkle_name
                         )
                     });
-                    sig.doc = builtin_doc(spec.twinkle_name).map(str::to_string);
+                    // Keep parsed /// docs from signature sources, but allow
+                    // hard-coded builtin docs to override when explicitly set.
+                    if let Some(doc) = builtin_doc(spec.twinkle_name) {
+                        sig.doc = Some(doc.to_string());
+                    }
                     sig
                 })
                 .collect()
@@ -652,7 +656,7 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "Int.abs" => "Return the absolute value.",
         "Int.min" => "Return the smaller of two integers.",
         "Int.max" => "Return the larger of two integers.",
-        "Int.parse" => "Parse a string as an integer. Returns `Int?`.",
+        "Int.from_string" => "Parse a string as an integer. Returns `Int?`.",
 
         // Float
         "Float.to_string" => "Convert a float to its string representation.",
@@ -660,7 +664,7 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "Float.ceil" => "Round toward positive infinity.",
         "Float.round" => "Round to the nearest integer.",
         "Float.abs" => "Return the absolute value.",
-        "Float.parse" => "Parse a string as a float. Returns `Float?`.",
+        "Float.from_string" => "Parse a string as a float. Returns `Float?`.",
         "Float.from_int" => "Convert an integer to a float.",
         "Float.min" => "Return the smaller of two floats.",
         "Float.max" => "Return the larger of two floats.",
@@ -677,6 +681,9 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "String.substring" => "Return a substring by byte offsets (no boundary check).",
         "String.utf8_bytes" => "Copy the string's UTF-8 bytes into a `Vector<Byte>`.",
         "String.from_utf8" => "Validate UTF-8 bytes and create a string. Returns `String?`.",
+        "String.from_char_code" => {
+            "Create a string from a byte value (ASCII range). Returns `String?`."
+        }
         "String.from_code_point" => "Create a string from a Unicode code point. Returns `String?`.",
 
         // Byte
@@ -802,5 +809,44 @@ mod tests {
             assert_eq!(entry.twinkle_name, spec.twinkle_name);
             assert_eq!(entry.dispatch, spec.dispatch);
         }
+    }
+
+    #[test]
+    fn conversion_signature_docs_are_present() {
+        let by_name: std::collections::HashMap<_, _> = function_signatures()
+            .into_iter()
+            .map(|sig| (sig.name.clone(), sig))
+            .collect();
+
+        let int_from_string = by_name
+            .get("Int.from_string")
+            .expect("Int.from_string signature");
+        assert_eq!(
+            int_from_string.doc.as_deref(),
+            Some("Parse a string as an integer. Returns `Int?`.")
+        );
+
+        let float_from_string = by_name
+            .get("Float.from_string")
+            .expect("Float.from_string signature");
+        assert_eq!(
+            float_from_string.doc.as_deref(),
+            Some("Parse a string as a float. Returns `Float?`.")
+        );
+    }
+
+    #[test]
+    fn string_from_char_code_signature_doc_is_present() {
+        let by_name: std::collections::HashMap<_, _> = function_signatures()
+            .into_iter()
+            .map(|sig| (sig.name.clone(), sig))
+            .collect();
+        let sig = by_name
+            .get("String.from_char_code")
+            .expect("String.from_char_code signature");
+        assert_eq!(
+            sig.doc.as_deref(),
+            Some("Create a string from a byte value (ASCII range). Returns `String?`.")
+        );
     }
 }

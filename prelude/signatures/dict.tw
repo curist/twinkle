@@ -1,23 +1,29 @@
+/// Return a new dict with key set to value.
 pub fn set<K, V>(d: Dict<K, V>, k: K, v: V) Dict<K, V> {
   d
 }
 
+/// Return all keys from the dict.
 pub fn keys<K, V>(d: Dict<K, V>) Vector<K> {
   []
 }
 
+/// Create an empty dict.
 pub fn new<K, V>() Dict<K, V> {
   []
 }
 
+/// Return the number of entries in the dict.
 pub fn len<K, V>(d: Dict<K, V>) Int {
   0
 }
 
+/// Return true when key exists in the dict.
 pub fn has<K, V>(d: Dict<K, V>, k: K) Bool {
   false
 }
 
+/// Return a new dict with key removed.
 pub fn remove<K, V>(d: Dict<K, V>, k: K) Dict<K, V> {
   d
 }

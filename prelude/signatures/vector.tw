@@ -1,27 +1,34 @@
+/// Return the number of elements.
 pub fn len<T>(xs: Vector<T>) Int {
   0
 }
 
+/// Return a new vector with x appended.
 pub fn push<T>(xs: Vector<T>, x: T) Vector<T> {
   xs
 }
 
+/// Return a new vector containing a then b.
 pub fn concat<T>(a: Vector<T>, b: Vector<T>) Vector<T> {
   a
 }
 
+/// Return a subvector [start, end).
 pub fn slice<T>(xs: Vector<T>, start: Int, end: Int) Vector<T> {
   xs
 }
 
+/// Return the element at index, or None if out of bounds.
 pub fn get<T>(xs: Vector<T>, index: Int) Option<T> {
   .None
 }
 
+/// Return a new vector with index replaced, or None if out of bounds.
 pub fn set<T>(xs: Vector<T>, index: Int, value: T) Option<Vector<T>> {
   .None
 }
 
+/// Create a vector of len copies of value.
 pub fn make<T>(len: Int, value: T) Vector<T> {
   []
 }

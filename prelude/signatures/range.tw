@@ -1,11 +1,14 @@
+/// Create a range from start to end (exclusive).
 pub fn range_from(start: Int, end: Int) Range {
   0
 }
 
+/// Create a range from 0 to end (exclusive).
 pub fn range(end: Int) Range {
   0
 }
 
+/// Create a range from start to end with a custom step.
 pub fn range_step(start: Int, end: Int, step: Int) Range {
   0
 }
