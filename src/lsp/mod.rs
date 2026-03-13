@@ -706,7 +706,7 @@ fn visit_expr_field_access<'a>(
     }
 
     if let ExprKind::FieldAccess { base, field } = &expr.kind {
-        if is_offset_on_field(base, expr.span, byte_offset) {
+        if is_offset_on_field(field, expr.span, byte_offset) {
             let is_better = best.as_ref().is_none_or(|current| {
                 expr.span.len() < current.span.len()
                     || (expr.span.len() == current.span.len()
@@ -799,6 +799,10 @@ fn visit_expr_field_access<'a>(
     }
 }
 
-fn is_offset_on_field(base: &Expr, span: Span, offset: u32) -> bool {
-    offset > base.span.end && offset < span.end
+fn is_offset_on_field(field: &str, span: Span, offset: u32) -> bool {
+    let Ok(field_len) = u32::try_from(field.len()) else {
+        return false;
+    };
+    let field_start = span.end.saturating_sub(field_len);
+    offset >= field_start && offset <= span.end
 }

@@ -562,3 +562,62 @@ type Color = .{ r: Int, g: Int, b: Int }
         "expected hover on type definition to include /// docs, got: {hover}"
     );
 }
+
+#[test]
+fn hover_on_graphemes_method_name_is_stable_across_columns() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_graphemes_columns");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"/// First stage.
+fn graphemes(s: String) Iterator<String> {
+  Iterator.unfold(0, fn(i: Int) UnfoldStep<String, Int> {
+    if i == 0 {
+      UnfoldStep.Yield(s, 1)
+    } else {
+      UnfoldStep.Done
+    }
+  })
+}
+
+/// Second stage.
+fn to_vector(it: Iterator<String>) Vector<String> {
+  collect x in it { x }
+}
+
+gs := "hello".graphemes().to_vector()
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let graphemes_offset = source.find("graphemes").expect("graphemes call");
+    let g_pos = byte_offset_to_position_utf16(source, graphemes_offset).expect("g position");
+    let g_hover = hover_at_module(main, g_pos).expect("hover on g");
+
+    let second_e_offset = graphemes_offset + 7;
+    let e_pos = byte_offset_to_position_utf16(source, second_e_offset).expect("second e position");
+    let e_hover = hover_at_module(main, e_pos).expect("hover on second e");
+
+    assert!(
+        g_hover.contains("fn(String) Iterator<String>"),
+        "expected graphemes signature on g, got: {g_hover}"
+    );
+    assert!(
+        e_hover.contains("fn(String) Iterator<String>"),
+        "expected graphemes signature on second e, got: {e_hover}"
+    );
+}
