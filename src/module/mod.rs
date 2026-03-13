@@ -16,7 +16,7 @@ use crate::ir::CoreModule;
 use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
-use crate::query::api::preassign_module_function_ids;
+use crate::query::api::{QueryDiagnostic, preassign_module_function_ids};
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
 use crate::syntax::ast::{ImportDecl, Item, Pattern, Stmt};
@@ -146,12 +146,16 @@ impl ModuleSourceAdapter for SourceMapModuleAdapter {
     }
 
     fn list_prelude_modules(&self) -> Vec<PathBuf> {
-        // List prelude modules from the source map — prelude/ is a sibling of stdlib/
+        // List prelude modules from the source map — prelude/ is a sibling of stdlib/.
+        // Match filesystem behavior: include only direct `prelude/*.tw` modules.
         let prelude_root = self.prelude_root();
         let mut paths: Vec<PathBuf> = self
             .sources
             .keys()
-            .filter(|p| p.starts_with(&prelude_root) && p.extension().is_some_and(|e| e == "tw"))
+            .filter(|p| {
+                p.parent() == Some(prelude_root.as_path())
+                    && p.extension().is_some_and(|e| e == "tw")
+            })
             .cloned()
             .collect();
         paths.sort();
@@ -214,6 +218,67 @@ pub struct CompileTraceEvent {
     pub cache_hit: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyzedImport {
+    pub alias: String,
+    pub canonical_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalyzedModule {
+    pub ast: crate::syntax::ast::SourceFile,
+    pub file_registry: FileRegistry,
+    pub typed: TypedModule,
+    pub imports: Vec<AnalyzedImport>,
+    pub qualified_func_targets: HashMap<String, ExternalFuncRef>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceAnalysis {
+    pub entry_path: PathBuf,
+    pub modules: HashMap<PathBuf, AnalyzedModule>,
+    pub diagnostics: HashMap<PathBuf, Vec<QueryDiagnostic>>,
+}
+
+#[derive(Debug, Default)]
+struct AnalysisCollector {
+    enabled: bool,
+    modules: HashMap<PathBuf, AnalyzedModule>,
+    diagnostics: HashMap<PathBuf, Vec<QueryDiagnostic>>,
+}
+
+impl AnalysisCollector {
+    fn disabled() -> Self {
+        Self::default()
+    }
+
+    fn enabled() -> Self {
+        Self {
+            enabled: true,
+            ..Self::default()
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn record_module(&mut self, module_path: &Path, module: AnalyzedModule) {
+        if !self.enabled {
+            return;
+        }
+        self.modules.insert(module_path.to_path_buf(), module);
+    }
+
+    fn into_workspace(self, entry_path: PathBuf) -> WorkspaceAnalysis {
+        WorkspaceAnalysis {
+            entry_path,
+            modules: self.modules,
+            diagnostics: self.diagnostics,
+        }
+    }
+}
+
 fn record_stage_trace(
     stage_trace: &mut Vec<CompileTraceEvent>,
     module_path: &Path,
@@ -242,6 +307,7 @@ pub fn compile_module(
     do_lower: bool,
 ) -> Result<(ModuleExports, FileRegistry)> {
     let mut stage_trace = Vec::new();
+    let mut analysis_collector = AnalysisCollector::disabled();
     compile_module_with_adapter(
         file_path,
         alias,
@@ -251,6 +317,7 @@ pub fn compile_module(
         do_lower,
         &FsModuleSourceAdapter,
         &mut stage_trace,
+        &mut analysis_collector,
     )
 }
 
@@ -263,6 +330,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     do_lower: bool,
     adapter: &A,
     stage_trace: &mut Vec<CompileTraceEvent>,
+    analysis_collector: &mut AnalysisCollector,
 ) -> Result<(ModuleExports, FileRegistry)> {
     // Canonicalize for deduplication / cycle detection
     let canonical = adapter.canonicalize(file_path);
@@ -309,9 +377,21 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
         do_lower,
         adapter,
         stage_trace,
+        analysis_collector,
     )?;
     let dep_canonical_paths = dep_plan.canonical_paths;
     let is_internal = dep_plan.is_internal;
+    let analyzed_imports: Vec<AnalyzedImport> = dep_plan
+        .dependencies
+        .iter()
+        .filter_map(|dep| match dep.kind {
+            PlannedDependencyKind::Import => Some(AnalyzedImport {
+                alias: dep.alias.clone(),
+                canonical_path: dep.canonical_path.clone(),
+            }),
+            PlannedDependencyKind::Prelude => None,
+        })
+        .collect();
 
     // Validate intrinsic bindings only for user-facing modules, after trusted
     // modules have been projected into the compile env and before typechecking.
@@ -400,6 +480,22 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
         value_env,
         type_map,
     } = typed;
+    if analysis_collector.is_enabled() {
+        analysis_collector.record_module(
+            &canonical,
+            AnalyzedModule {
+                ast: ast.clone(),
+                file_registry: file_registry.clone(),
+                typed: TypedModule {
+                    type_map: type_map.clone(),
+                    type_env: type_env.clone(),
+                    value_env: value_env.clone(),
+                },
+                imports: analyzed_imports,
+                qualified_func_targets: state.qualified_func_targets.clone(),
+            },
+        );
+    }
     state.type_env = type_env;
     state.value_env = value_env;
 
@@ -441,6 +537,7 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
     do_lower: bool,
     adapter: &A,
     stage_trace: &mut Vec<CompileTraceEvent>,
+    analysis_collector: &mut AnalysisCollector,
 ) -> Result<()> {
     for dep in dependencies {
         let env_snapshot = snapshot_compile_env(state);
@@ -453,6 +550,7 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
             do_lower,
             adapter,
             stage_trace,
+            analysis_collector,
         );
         restore_compile_env(state, env_snapshot);
         match result {
@@ -1203,6 +1301,7 @@ pub fn compile_entry_from_source_map_with_trace(
     let mut state = CompileState::initial();
     state.entry_module_path = Some(entry.clone());
     let mut stage_trace = Vec::new();
+    let mut analysis_collector = AnalysisCollector::disabled();
     let (_, registry) = compile_module_with_adapter(
         &entry,
         &alias,
@@ -1212,6 +1311,50 @@ pub fn compile_entry_from_source_map_with_trace(
         true,
         &adapter,
         &mut stage_trace,
+        &mut analysis_collector,
     )?;
     Ok((dce::eliminate_dead_code(link(state)), registry, stage_trace))
+}
+
+/// Analysis-only pipeline (parse + resolve + typecheck, no lowering) from an
+/// in-memory source map.
+///
+/// Returns per-module typed artifacts suitable for editor tooling.
+pub fn analyze_entry_from_source_map(
+    entry_path: &Path,
+    sources: &HashMap<PathBuf, String>,
+    project_root: &Path,
+    stdlib_root: &Path,
+) -> Result<WorkspaceAnalysis> {
+    let adapter = SourceMapModuleAdapter::new(project_root, stdlib_root, sources);
+    let entry = adapter.canonicalize(entry_path);
+    if !adapter.exists(&entry) {
+        return Err(anyhow!(
+            "Cannot read '{}': source not found in module map",
+            entry.display()
+        ));
+    }
+
+    let alias = entry
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    let mut ctx = CompilationContext::new();
+    let mut state = CompileState::initial();
+    state.entry_module_path = Some(entry.clone());
+    let mut stage_trace = Vec::new();
+    let mut analysis_collector = AnalysisCollector::enabled();
+    let _ = compile_module_with_adapter(
+        &entry,
+        &alias,
+        &mut ctx,
+        &mut vec![],
+        &mut state,
+        false,
+        &adapter,
+        &mut stage_trace,
+        &mut analysis_collector,
+    )?;
+    Ok(analysis_collector.into_workspace(entry))
 }

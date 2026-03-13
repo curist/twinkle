@@ -4,6 +4,7 @@ pub mod codegen;
 pub mod interp;
 pub mod intrinsics;
 pub mod ir;
+pub mod lsp;
 pub mod module;
 pub mod opt;
 pub mod query;

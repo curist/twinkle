@@ -63,6 +63,8 @@ enum Commands {
     },
     /// Dump the built-in runtime as linked WAT
     RuntimeDump,
+    /// Run the language server over stdio
+    Lsp,
 }
 
 fn main() -> Result<()> {
@@ -109,6 +111,9 @@ fn main() -> Result<()> {
         }
         Commands::RuntimeDump => {
             twinkle::cli::runtime_dump::runtime_dump()?;
+        }
+        Commands::Lsp => {
+            twinkle::cli::lsp::cmd_lsp()?;
         }
     }
 

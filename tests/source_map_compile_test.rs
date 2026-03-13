@@ -366,3 +366,51 @@ println("${foo.broken()}")
         );
     }
 }
+
+#[test]
+fn compile_entry_from_source_map_ignores_nested_prelude_signature_modules() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/prelude_nested_signatures");
+    let stdlib_root = project_root.join("stdlib");
+    let prelude_root = project_root.join("prelude");
+    let entry = project_root.join("main.tw");
+    let prelude_vector = prelude_root.join("vector.tw");
+    let prelude_signature_cell = prelude_root.join("signatures").join("cell.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), "println(\"ok\")\n".to_string());
+    sources.insert(
+        prelude_vector,
+        r#"
+pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
+  collect x in xs { f(x) }
+}
+"#
+        .to_string(),
+    );
+    // This file intentionally contains type errors and must not be auto-imported
+    // as a prelude module by source-map compilation.
+    sources.insert(
+        prelude_signature_cell,
+        r#"
+pub fn bad<T>(value: T) Cell<T> {
+  value
+}
+"#
+        .to_string(),
+    );
+
+    let (core_module, _registry) = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("nested prelude signature modules should be ignored for auto-import");
+
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("compiled module should run");
+    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    assert_eq!(output, "ok\n");
+}
