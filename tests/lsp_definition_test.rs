@@ -257,6 +257,42 @@ pub fn parse() ParseError {
     assert_eq!(snippet, "HelpRequested");
 }
 
+#[test]
+fn definition_resolves_import_module_to_file() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_definition_import_module");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let math = project_root.join("math.tw");
+    let main_source = r#"use math
+
+value := math.answer()
+"#;
+    let math_source = r#"pub fn answer() Int {
+  42
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), main_source.to_string());
+    sources.insert(math.clone(), math_source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+
+    // Cursor on "math" in "use math"
+    let pos = position_of(main_source, "use math", 4);
+    let target = definition_at_workspace(&analysis, &entry, pos)
+        .expect("import module definition should resolve");
+    assert_eq!(target.path, math);
+}
+
 fn position_of(source: &str, needle: &str, relative_offset: usize) -> PositionUtf16 {
     let start = source.find(needle).expect("needle should be present");
     byte_offset_to_position_utf16(source, start + relative_offset).expect("position should convert")

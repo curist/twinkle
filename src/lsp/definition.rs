@@ -34,6 +34,10 @@ pub fn definition_at_workspace(
         return Some(target);
     }
 
+    if let Some(target) = resolve_import_module_target(workspace, module, file_id, byte_offset) {
+        return Some(target);
+    }
+
     let index = ExprSpanIndex::build(&module.ast);
     if let Some(entry) = index.find_smallest_containing(file_id, byte_offset) {
         if let Some(expr) = find_expr_by_id(&module.ast, entry.expr_id) {
@@ -69,6 +73,30 @@ pub fn definition_at_workspace(
 
     let ty = find_smallest_type_at_offset(&module.ast, file_id, byte_offset)?;
     resolve_type_definition_target(workspace, module_path, module, ty)
+}
+
+fn resolve_import_module_target(
+    workspace: &WorkspaceAnalysis,
+    module: &AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+) -> Option<DefinitionTarget> {
+    for item in &module.ast.items {
+        let Item::Import(decl) = item else {
+            continue;
+        };
+        if decl.span.file_id != file_id || !decl.span.contains(byte_offset) {
+            continue;
+        }
+        let alias = decl.module_name();
+        let import = module.imports.iter().find(|entry| entry.alias == alias)?;
+        let target_module = workspace.modules.get(&import.canonical_path)?;
+        return Some(DefinitionTarget {
+            path: import.canonical_path.clone(),
+            span: target_module.ast.span,
+        });
+    }
+    None
 }
 
 fn resolve_import_qualified_target(
