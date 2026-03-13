@@ -23,11 +23,194 @@ pub fn parse_source(source: &str, file_name: &str) -> Result<(SourceFile, FileRe
     let mut parser = parser::Parser::new(tokens, file_id);
 
     // Parse full source file with all items
-    let source_file = parser
+    let mut source_file = parser
         .parse_source_file()
         .map_err(|e| format_parse_error(&registry, e))?;
+    attach_top_level_doc_comments(&mut source_file, source);
 
     Ok((source_file, registry))
+}
+
+fn attach_top_level_doc_comments(source_file: &mut SourceFile, source: &str) {
+    let line_starts = compute_line_starts(source);
+
+    for item in &mut source_file.items {
+        match item {
+            ast::Item::Function(decl) => {
+                decl.doc = extract_doc_comment(source, &line_starts, decl.span.start);
+            }
+            ast::Item::TypeDecl(decl) => {
+                decl.doc = extract_doc_comment(source, &line_starts, decl.span.start);
+            }
+            ast::Item::Stmt(ast::Stmt::Let {
+                is_pub: true,
+                span,
+                doc,
+                ..
+            }) => {
+                *doc = extract_doc_comment(source, &line_starts, span.start);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_doc_comment(
+    source: &str,
+    line_starts: &[usize],
+    start_char_offset: u32,
+) -> Option<String> {
+    if line_starts.is_empty() {
+        return None;
+    }
+
+    let start_byte_offset = char_offset_to_byte_offset(source, start_char_offset as usize);
+    let decl_line_idx = match line_starts.binary_search(&start_byte_offset) {
+        Ok(idx) => idx,
+        Err(idx) => idx.saturating_sub(1),
+    };
+
+    if decl_line_idx == 0 {
+        return None;
+    }
+
+    let mut line_idx = decl_line_idx as isize - 1;
+    let line = line_text(source, line_starts, line_idx as usize);
+    if line.trim().is_empty() {
+        // A blank line directly above the declaration breaks doc attachment.
+        return None;
+    }
+
+    let mut lines_rev = Vec::new();
+    while line_idx >= 0 {
+        let line = line_text(source, line_starts, line_idx as usize);
+        let trimmed = line.trim_start();
+        let Some(after_marker) = trimmed.strip_prefix("///") else {
+            break;
+        };
+        let text = after_marker
+            .strip_prefix(' ')
+            .unwrap_or(after_marker)
+            .trim_end_matches('\r')
+            .to_string();
+        lines_rev.push(text);
+        line_idx -= 1;
+    }
+
+    if lines_rev.is_empty() {
+        return None;
+    }
+
+    lines_rev.reverse();
+    Some(lines_rev.join("\n"))
+}
+
+fn compute_line_starts(source: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (idx, ch) in source.char_indices() {
+        if ch == '\n' {
+            starts.push(idx + 1);
+        }
+    }
+    starts
+}
+
+fn line_text<'a>(source: &'a str, line_starts: &[usize], line_idx: usize) -> &'a str {
+    let start = line_starts.get(line_idx).copied().unwrap_or(0);
+    let end = line_starts
+        .get(line_idx + 1)
+        .copied()
+        .unwrap_or(source.len());
+    source[start..end].trim_end_matches('\n')
+}
+
+fn char_offset_to_byte_offset(source: &str, char_offset: usize) -> usize {
+    if char_offset == 0 {
+        return 0;
+    }
+    for (seen, (byte_idx, _)) in source.char_indices().enumerate() {
+        if seen == char_offset {
+            return byte_idx;
+        }
+    }
+    source.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doc_comments_attach_to_next_function_decl() {
+        let source = r#"/// Adds one.
+/// Useful for tests.
+fn add_one(x: Int) Int {
+  x + 1
+}
+"#;
+
+        let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected first item to be a function");
+        };
+        assert_eq!(
+            decl.doc.as_deref(),
+            Some("Adds one.\nUseful for tests."),
+            "expected contiguous /// lines to attach to function"
+        );
+    }
+
+    #[test]
+    fn blank_line_breaks_doc_comment_attachment() {
+        let source = r#"/// Detached.
+
+fn f() Int {
+  1
+}
+"#;
+
+        let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected first item to be a function");
+        };
+        assert_eq!(
+            decl.doc, None,
+            "blank line between /// block and declaration should break attachment"
+        );
+    }
+
+    #[test]
+    fn non_doc_comment_does_not_attach_as_doc() {
+        let source = r#"/// Doc line.
+// regular note
+fn f() Int {
+  1
+}
+"#;
+
+        let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected first item to be a function");
+        };
+        assert_eq!(
+            decl.doc, None,
+            "non-doc comments are ignored and break contiguous doc attachment"
+        );
+    }
+
+    #[test]
+    fn doc_comments_attach_to_pub_let() {
+        let source = r#"/// Exported answer.
+pub answer := 42
+"#;
+
+        let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Stmt(ast::Stmt::Let { doc, is_pub, .. })) = ast.items.first() else {
+            panic!("expected first item to be a let statement");
+        };
+        assert!(*is_pub, "expected pub let");
+        assert_eq!(doc.as_deref(), Some("Exported answer."));
+    }
 }
 
 fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {

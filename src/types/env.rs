@@ -776,6 +776,28 @@ impl TypeEnv {
     pub fn type_count(&self) -> usize {
         self.types.len()
     }
+
+    /// Iterate all methods registered for a given type.
+    /// Returns (method_name, qualified_function_name) pairs.
+    pub fn methods_for_type(&self, type_id: TypeId) -> Vec<(&str, &str)> {
+        self.methods
+            .iter()
+            .filter_map(move |((tid, method_name), func_name)| {
+                if *tid == type_id {
+                    Some((method_name.as_str(), func_name.as_str()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Iterate all type names and their TypeIds.
+    pub fn all_type_names(&self) -> impl Iterator<Item = (&str, TypeId)> {
+        self.type_names
+            .iter()
+            .map(|(name, id)| (name.as_str(), *id))
+    }
 }
 
 impl Default for TypeEnv {
@@ -1033,6 +1055,21 @@ impl ValueEnv {
     /// Get a function signature if it exists
     pub fn get_function(&self, name: &str) -> Option<&FunctionSignature> {
         self.functions.get(name)
+    }
+
+    /// Iterate all registered function signatures.
+    pub fn all_functions(&self) -> impl Iterator<Item = (&str, &FunctionSignature)> {
+        self.functions.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Iterate all top-level value bindings.
+    pub fn all_values(&self) -> impl Iterator<Item = (&str, &MonoType)> {
+        self.values.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Iterate all builtin functions.
+    pub fn all_builtins(&self) -> impl Iterator<Item = (&str, &MonoType)> {
+        self.builtins.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Snapshot function/value bindings for scoped compilation.

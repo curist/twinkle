@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::lsp::completion::CompletionItem;
 use crate::lsp::definition::definition_at_workspace;
 use crate::lsp::diagnostics::LspDiagnostic;
 use crate::lsp::position::{PositionUtf16, file_byte_offset_to_position_utf16};
@@ -69,7 +70,10 @@ fn handle_lsp_message(
                         "capabilities": {
                             "textDocumentSync": 1,
                             "hoverProvider": true,
-                            "definitionProvider": true
+                            "definitionProvider": true,
+                            "completionProvider": {
+                                "triggerCharacters": ["."]
+                            }
                         },
                         "serverInfo": {
                             "name": "twk"
@@ -158,6 +162,25 @@ fn handle_lsp_message(
                 write_response(writer, id, response)?;
             }
         }
+        "textDocument/completion" => {
+            if let Some(id) = id {
+                let response = match state.session.as_ref() {
+                    Some(session) => {
+                        handle_completion_request(session, params).unwrap_or_else(|_| {
+                            json!({
+                                "isIncomplete": false,
+                                "items": []
+                            })
+                        })
+                    }
+                    None => json!({
+                        "isIncomplete": false,
+                        "items": []
+                    }),
+                };
+                write_response(writer, id, response)?;
+            }
+        }
         _ => {
             if let Some(id) = id {
                 write_error_response(writer, id, -32601, "Method not found")?;
@@ -181,10 +204,11 @@ fn handle_hover_request(session: &AnalysisSession, params: Option<&Value>) -> Re
 
     let hover = session.hover(&path, &path, position)?;
     if let Some(contents) = hover {
+        let markdown = hover_to_markdown(&contents);
         Ok(json!({
             "contents": {
-                "kind": "plaintext",
-                "value": contents
+                "kind": "markdown",
+                "value": markdown
             }
         }))
     } else {
@@ -233,6 +257,25 @@ fn handle_definition_request(session: &AnalysisSession, params: Option<&Value>) 
             "start": { "line": start.line, "character": start.character },
             "end": { "line": end.line, "character": end.character }
         }
+    }))
+}
+
+fn handle_completion_request(session: &AnalysisSession, params: Option<&Value>) -> Result<Value> {
+    let Some(params) = params else {
+        return Ok(json!({ "isIncomplete": false, "items": [] }));
+    };
+    let Some(path) = extract_text_document_path(params) else {
+        return Ok(json!({ "isIncomplete": false, "items": [] }));
+    };
+    let Some(position) = extract_position(params) else {
+        return Ok(json!({ "isIncomplete": false, "items": [] }));
+    };
+
+    let items = session.completion(&path, &path, position)?;
+    let lsp_items: Vec<Value> = items.iter().map(completion_item_to_json).collect();
+    Ok(json!({
+        "isIncomplete": false,
+        "items": lsp_items
     }))
 }
 
@@ -445,6 +488,40 @@ fn lsp_diagnostic_to_json(diag: &LspDiagnostic) -> Value {
     })
 }
 
+fn completion_item_to_json(item: &CompletionItem) -> Value {
+    let mut value = json!({
+        "label": item.label,
+        "kind": item.kind as u32,
+    });
+    if let Some(detail) = &item.detail {
+        value["detail"] = json!(detail);
+    }
+    if let Some(doc) = &item.documentation {
+        value["documentation"] = json!({
+            "kind": "plaintext",
+            "value": doc
+        });
+    }
+    value
+}
+
+fn hover_to_markdown(contents: &str) -> String {
+    let (signature, docs) = if let Some((sig, rest)) = contents.split_once("\n\n") {
+        (sig, Some(rest))
+    } else {
+        (contents, None)
+    };
+
+    let mut markdown = format!("```twinkle\n{signature}\n```");
+    if let Some(doc_text) = docs {
+        if !doc_text.trim().is_empty() {
+            markdown.push_str("\n\n");
+            markdown.push_str(doc_text);
+        }
+    }
+    markdown
+}
+
 fn write_lsp_payload(writer: &mut impl Write, payload: &Value) -> Result<()> {
     let body = serde_json::to_vec(payload)?;
     write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
@@ -463,4 +540,127 @@ fn path_to_file_uri(path: &Path) -> Result<String> {
     Url::from_file_path(path)
         .map_err(|_| anyhow!("cannot convert file path to URI: {}", path.display()))
         .map(|u| u.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp::position::byte_offset_to_position_utf16;
+    use crate::query::cache::reset_global_cache;
+
+    #[test]
+    fn completion_request_returns_lsp_completion_items() {
+        reset_global_cache();
+
+        let project_root = PathBuf::from("/virtual/lsp_cli_completion");
+        let stdlib_root = project_root.join("stdlib");
+        let entry = project_root.join("main.tw");
+        let source = "text := \"hello\"\nsize := text.len()\n";
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(entry.clone(), source.to_string());
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+        };
+
+        let cursor = source.find("text.").expect("text receiver") + "text.".len();
+        let pos = byte_offset_to_position_utf16(source, cursor).expect("position");
+        let uri = path_to_file_uri(&entry).expect("uri");
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": pos.line, "character": pos.character }
+            }
+        });
+
+        let mut writer = Vec::new();
+        let should_exit = handle_lsp_message(&mut state, &payload, &mut writer).expect("handle");
+        assert!(!should_exit, "completion request should not exit");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["id"], json!(1));
+        assert_eq!(response["result"]["isIncomplete"], json!(false));
+
+        let items = response["result"]["items"]
+            .as_array()
+            .expect("completion items array");
+        assert!(
+            items
+                .iter()
+                .any(|item| item.get("label") == Some(&json!("len"))
+                    && item.get("kind") == Some(&json!(2))),
+            "expected method completion item for `len`, got: {:?}",
+            items
+        );
+        assert!(
+            items.iter().any(|item| {
+                item.get("label") == Some(&json!("len")) && item.get("documentation").is_some()
+            }),
+            "expected completion item docs in protocol response, got: {:?}",
+            items
+        );
+    }
+
+    #[test]
+    fn hover_request_returns_markdown_fenced_signature() {
+        reset_global_cache();
+
+        let project_root = PathBuf::from("/virtual/lsp_cli_hover_markdown");
+        let stdlib_root = project_root.join("stdlib");
+        let entry = project_root.join("main.tw");
+        let source = "value := range(10)\n";
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(entry.clone(), source.to_string());
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+        };
+
+        let cursor = source.find("range").expect("range symbol");
+        let pos = byte_offset_to_position_utf16(source, cursor).expect("position");
+        let uri = path_to_file_uri(&entry).expect("uri");
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": pos.line, "character": pos.character }
+            }
+        });
+
+        let mut writer = Vec::new();
+        let should_exit = handle_lsp_message(&mut state, &payload, &mut writer).expect("handle");
+        assert!(!should_exit, "hover request should not exit");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["id"], json!(2));
+        assert_eq!(response["result"]["contents"]["kind"], json!("markdown"));
+        let value = response["result"]["contents"]["value"]
+            .as_str()
+            .expect("hover markdown value");
+        assert!(
+            value.starts_with("```twinkle\n"),
+            "hover markdown should start with twinkle fence, got: {value}"
+        );
+        assert!(
+            value.contains("\n```"),
+            "hover markdown should close fence, got: {value}"
+        );
+    }
+
+    fn decode_lsp_body(buffer: &[u8]) -> Value {
+        let raw = std::str::from_utf8(buffer).expect("utf8 response");
+        let (_, body) = raw.split_once("\r\n\r\n").expect("header/body split");
+        serde_json::from_str(body).expect("valid json body")
+    }
 }

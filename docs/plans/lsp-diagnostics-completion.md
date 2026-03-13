@@ -169,9 +169,35 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 * Tests: `tests/lsp_hover_test.rs` — `hover_on_builtin_function_shows_doc_string`,
   `hover_on_method_call_shows_doc_string`.
 
-### C1 — Completion Core (No Docs Yet)
+### C1 — Completion Core (No Docs Yet)  ✅
 
-**Code changes:**
+**Status (2026-03-13):**
+
+Implemented:
+
+* `src/lsp/completion.rs` added with semantic completion query + context classifier (`Identifier` vs `Dot`).
+* Candidate gathering implemented for:
+  * lexical locals/params (scope walk)
+  * module top-level functions/values
+  * import aliases
+  * module exports after `alias.`
+  * type members after `expr.` (record fields + methods via `TypeEnv`)
+  * builtins, type names, sum variants, keywords
+* `src/lsp/session.rs` exposes `completion(entry, module, position)`.
+* `src/lsp/mod.rs` exports new completion module.
+* `src/types/env.rs` now exposes iteration helpers used by completion:
+  * `TypeEnv::methods_for_type`
+  * `TypeEnv::all_type_names`
+  * `ValueEnv::all_functions` / `all_values` / `all_builtins`
+* `src/cli/lsp.rs` now:
+  * advertises `completionProvider` in `initialize` capabilities
+  * handles `textDocument/completion`
+  * maps completion results to protocol `CompletionItem` JSON
+* Tests added:
+  * `tests/lsp_completion_test.rs` (locals, import alias, method completion)
+  * `src/cli/lsp.rs` unit test for protocol request/response completion path
+
+**Code changes (target state):**
 
 * Context classification + candidate gathering from lexical/module/import/method sources.
 
@@ -184,8 +210,32 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 **Acceptance:**
 
 * completion returns stable candidates in the core contexts listed above.
+* completion is reachable through LSP (`textDocument/completion`).
+* completion behavior is covered by automated tests.
 
-### C2 — Simple Doc Comments (`///`) + Completion/Hover Detail
+### C2 — Simple Doc Comments (`///`) + Completion/Hover Detail  ✅
+
+**Status (2026-03-13):**
+
+Implemented:
+
+* `///` parsing/attachment for top-level declarations (`fn`, `type`, `pub let`) via a
+  post-parse source pass in `src/syntax/mod.rs` (strict contiguous block, blank-line break).
+* AST doc storage:
+  * `FunctionDecl.doc: Option<String>`
+  * `TypeDecl.doc: Option<String>`
+  * `Stmt::Let { doc: Option<String>, ... }` (used for `pub let`)
+* Resolver now threads source docs into `FunctionSignature.doc` (`src/types/resolve.rs`).
+* Completion items now carry `documentation` text in addition to `detail`
+  (`src/lsp/completion.rs` + protocol mapping in `src/cli/lsp.rs`).
+* Hover now shows source `///` docs automatically through existing `FunctionSignature.doc`
+  lookup path (`src/lsp/mod.rs` behavior unchanged, data path now populated).
+
+Notes:
+
+* This implementation intentionally does not add lexer-level doc trivia tokens yet.
+  It uses the current parser + source-text attachment pass to keep scope small and
+  land user-visible value quickly.
 
 **Code changes:**
 
@@ -195,12 +245,12 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 
 **Likely files:**
 
-* `src/syntax/lexer.rs`
-* `src/syntax/tokens.rs`
+* `src/syntax/mod.rs`
 * `src/syntax/parser.rs`
 * `src/syntax/ast.rs`
+* `src/types/resolve.rs`
 * `src/lsp/completion.rs`
-* `src/lsp/mod.rs` (hover)
+* `src/cli/lsp.rs`
 
 **Acceptance:**
 
@@ -214,22 +264,23 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 
 ### Unit tests
 
-* `///` attachment rules (blank-line break, contiguous blocks).
+* `///` attachment rules (blank-line break, contiguous blocks).  ✅
 * diagnostics range conversion (including Unicode).  ✅
-* completion context classifier.
+* completion context classifier.  (pending, not isolated yet)
 * builtin doc strings populated on `FunctionSignature`.  ✅
 
 ### Integration tests
 
 * publish diagnostics after invalid edit, then clear after fix.  ✅
-* completion for locals/import aliases/methods.
-* completion docs populated from `///`.
+* completion for locals/import aliases/methods.  ✅
+* completion docs populated from `///`.  ✅
 * hover shows doc string for builtins (`println`, `String.len`, etc.).  ✅
+* hover shows doc strings from user `///` declarations.  ✅
 
 ### Protocol smoke tests
 
 * initialize -> open -> change -> publish diagnostics.
-* completion request in several positions with expected labels.
+* completion request in several positions with expected labels.  (partial: request/response path covered by unit test)
 
 ---
 
@@ -246,3 +297,89 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 * formatter/linter integration into diagnostics stream
 * block doc syntax (`/** */`)
 * completion snippets with import auto-insertion
+
+---
+
+## Next Slice
+
+1. Execute optional hardening plan below (`DocComment` trivia/tokens in lexer+parser).
+2. Add protocol smoke tests that issue completion requests at multiple cursor positions and assert
+   `documentation` payloads directly.
+
+---
+
+## Optional Hardening Plan — Doc Trivia Model
+
+### Goal
+
+Replace the current source-text post-pass doc attachment with a lexer/parser-driven model so
+doc comments become stable syntax artifacts that are reusable by formatter/lossless tooling.
+
+### Scope
+
+In scope:
+
+* `DocComment` token/trivia support for `///`.
+* Parser-side doc attachment for top-level `fn` / `type` / `pub let`.
+* Removal of source-text attachment logic from `src/syntax/mod.rs`.
+* Behavior parity with current rules (contiguous-only, blank-line break, ignore non-doc comments).
+
+Out of scope:
+
+* Block doc syntax (`/** ... */`).
+* Doc comments on non-top-level declarations.
+* Markdown rendering/formatting semantics for docs.
+
+### Milestones
+
+#### H1 — Lexer/Token plumbing
+
+* Extend lexer/token model to preserve `///` as doc-comment trivia (or explicit `DocComment` token).
+* Preserve enough line-boundary information to enforce blank-line break semantics in parser.
+
+Likely files:
+
+* `src/syntax/lexer.rs`
+* `src/syntax/tokens.rs`
+
+Acceptance:
+
+* `///` is recoverable by parser without scanning raw source text.
+* Existing non-doc comment behavior is unchanged.
+
+#### H2 — Parser attachment
+
+* Attach doc blocks in parser right before consuming top-level declarations.
+* Keep strict attachment semantics:
+  * contiguous `///` lines only
+  * blank line breaks block
+  * non-doc comment breaks/ignores doc block
+
+Likely files:
+
+* `src/syntax/parser.rs`
+* `src/syntax/ast.rs`
+
+Acceptance:
+
+* AST `doc` fields are populated with identical results to current C2 behavior.
+* `src/syntax/mod.rs` no longer needs source-text doc attachment pass.
+
+#### H3 — Cleanup + regression hardening
+
+* Delete/retire now-redundant source-pass helpers from `src/syntax/mod.rs`.
+* Add targeted parser/lexer tests for doc-tokenization and attachment rules.
+* Re-run LSP completion/hover doc tests to ensure no behavior regressions.
+
+Likely files:
+
+* `src/syntax/mod.rs`
+* `src/syntax/lexer.rs`
+* `src/syntax/parser.rs`
+* `tests/lsp_completion_test.rs`
+* `tests/lsp_hover_test.rs`
+
+Acceptance:
+
+* No user-visible behavior change in hover/completion docs.
+* Implementation no longer depends on byte/char offset conversion for doc attachment.

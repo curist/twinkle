@@ -45,6 +45,7 @@ impl ImportDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecl {
     pub is_pub: bool,
+    pub doc: Option<String>,
     pub name: String,
     pub type_params: Vec<String>,
     pub definition: TypeDef,
@@ -79,6 +80,7 @@ pub struct Variant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecl {
     pub is_pub: bool,
+    pub doc: Option<String>,
     pub name: String,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
@@ -277,6 +279,7 @@ pub enum Stmt {
         ty: Option<Type>,
         value: Expr,
         is_pub: bool,
+        doc: Option<String>,
         span: Span,
     },
 

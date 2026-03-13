@@ -418,3 +418,42 @@ n := xs.len()
         "should have doc on a separate line, got: {hover}"
     );
 }
+
+#[test]
+fn hover_on_user_function_call_shows_doc_comment() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_user_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"/// Add one to x.
+fn add_one(x: Int) Int {
+  x + 1
+}
+
+value := add_one(1)
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = source.find("add_one(1)").expect("function call");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("Add one to x."),
+        "expected hover to include parsed /// docs, got: {hover}"
+    );
+}

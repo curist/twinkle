@@ -385,6 +385,7 @@ impl Parser {
 
         Ok(TypeDecl {
             is_pub,
+            doc: None,
             name,
             type_params,
             definition,
@@ -444,6 +445,7 @@ impl Parser {
 
         Ok(FunctionDecl {
             is_pub,
+            doc: None,
             name,
             type_params,
             params,
@@ -1390,6 +1392,7 @@ impl Parser {
             ty,
             value,
             is_pub,
+            doc: None,
             span,
         })
     }

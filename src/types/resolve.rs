@@ -294,7 +294,7 @@ impl Resolver {
             type_params,
             params,
             ret,
-            doc: None,
+            doc: decl.doc.clone(),
         })
     }
 
