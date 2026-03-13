@@ -158,23 +158,16 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 * `src/cli/lsp.rs` — `didOpen`/`didChange` push `publishDiagnostics`; `didClose` clears.
 * Tests: `tests/lsp_diagnostics_test.rs` (7 tests).
 
-### B1 — Builtin Doc Strings
+### B1 — Builtin Doc Strings  ✅
 
-**Code changes:**
-
-* Add `doc: Option<String>` to `FunctionSignature`.
-* Populate doc strings for builtins registered in `ValueEnv::new()`.
-* Surface docs in hover (append doc below type signature).
-
-**Likely files:**
-
-* `src/types/ty.rs` — `FunctionSignature` struct
-* `src/types/env.rs` — builtin registration with doc strings
-* `src/lsp/mod.rs` — hover formatting to include docs
-
-**Acceptance:**
-
-* Hovering over `println`, `range`, `Cell.new`, `String.len`, etc. shows a doc string alongside the type.
+* `src/types/ty.rs` — `FunctionSignature.doc: Option<String>` field added.
+* `src/intrinsics/signatures.rs` — `builtin_doc()` table populates docs for all user-facing
+  intrinsics (Int, Float, Bool, String, Byte, Vector, Dict, Cell, Range, Iterator).
+* `src/lsp/mod.rs` — hover appends doc below type signature for both expression identifiers
+  and method/qualified call targets; `builtin_value_doc()` covers `println`/`print`/`error`/etc.
+* `src/module/context.rs`, `src/module/mod.rs` — propagate `doc` through FunctionSignature clones.
+* Tests: `tests/lsp_hover_test.rs` — `hover_on_builtin_function_shows_doc_string`,
+  `hover_on_method_call_shows_doc_string`.
 
 ### C1 — Completion Core (No Docs Yet)
 
@@ -224,14 +217,14 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 * `///` attachment rules (blank-line break, contiguous blocks).
 * diagnostics range conversion (including Unicode).  ✅
 * completion context classifier.
-* builtin doc strings populated on `FunctionSignature`.
+* builtin doc strings populated on `FunctionSignature`.  ✅
 
 ### Integration tests
 
 * publish diagnostics after invalid edit, then clear after fix.  ✅
 * completion for locals/import aliases/methods.
 * completion docs populated from `///`.
-* hover shows doc string for builtins (`println`, `String.len`, etc.).
+* hover shows doc string for builtins (`println`, `String.len`, etc.).  ✅
 
 ### Protocol smoke tests
 
