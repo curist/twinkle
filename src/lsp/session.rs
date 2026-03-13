@@ -6,6 +6,7 @@ use anyhow::Result;
 use crate::module::{WorkspaceAnalysis, analyze_entry_from_source_map};
 
 use super::definition::{DefinitionTarget, definition_at_workspace};
+use super::diagnostics::{LspDiagnostic, query_diagnostic_to_lsp};
 use super::hover_at_module;
 use super::position::PositionUtf16;
 
@@ -70,6 +71,65 @@ impl AnalysisSession {
             return Ok(None);
         };
         Ok(hover_at_module(module, position))
+    }
+
+    /// Return LSP diagnostics for a module within the workspace rooted at `entry_path`.
+    pub fn diagnostics(
+        &self,
+        entry_path: impl AsRef<Path>,
+        module_path: impl AsRef<Path>,
+    ) -> Result<Vec<LspDiagnostic>> {
+        let analysis = self.analyze_entry(entry_path)?;
+        let module_key = self.normalize_path(module_path.as_ref());
+
+        let query_diags = analysis
+            .diagnostics
+            .get(&module_key)
+            .cloned()
+            .unwrap_or_default();
+
+        // Find the file_registry for span→UTF-16 conversion.
+        // Try the analyzed module first, then the fallback registries for
+        // modules that failed resolve/typecheck but succeeded parsing.
+        let empty_registry = crate::syntax::span::FileRegistry::new();
+        let registry = analysis
+            .modules
+            .get(&module_key)
+            .map(|m| &m.file_registry)
+            .or_else(|| analysis.file_registries.get(&module_key))
+            .unwrap_or(&empty_registry);
+
+        Ok(query_diags
+            .iter()
+            .filter_map(|d| query_diagnostic_to_lsp(d, registry))
+            .collect())
+    }
+
+    /// Return LSP diagnostics for all modules in the workspace.
+    pub fn all_diagnostics(
+        &self,
+        entry_path: impl AsRef<Path>,
+    ) -> Result<Vec<(PathBuf, Vec<LspDiagnostic>)>> {
+        let analysis = self.analyze_entry(entry_path)?;
+        let empty_registry = crate::syntax::span::FileRegistry::new();
+
+        let mut result = Vec::new();
+        for (path, query_diags) in &analysis.diagnostics {
+            let registry = analysis
+                .modules
+                .get(path)
+                .map(|m| &m.file_registry)
+                .or_else(|| analysis.file_registries.get(path))
+                .unwrap_or(&empty_registry);
+            let lsp_diags: Vec<LspDiagnostic> = query_diags
+                .iter()
+                .filter_map(|d| query_diagnostic_to_lsp(d, registry))
+                .collect();
+            if !lsp_diags.is_empty() {
+                result.push((path.clone(), lsp_diags));
+            }
+        }
+        Ok(result)
     }
 
     pub fn definition(

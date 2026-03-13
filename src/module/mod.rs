@@ -16,7 +16,10 @@ use crate::ir::CoreModule;
 use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
-use crate::query::api::{QueryDiagnostic, preassign_module_function_ids};
+use crate::query::api::{
+    QueryDiagnostic, preassign_module_function_ids, resolve_stage_with_diagnostics,
+    typecheck_stage_with_diagnostics_and_options,
+};
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
 use crate::syntax::ast::{ImportDecl, Item, Pattern, Stmt};
@@ -238,6 +241,10 @@ pub struct WorkspaceAnalysis {
     pub entry_path: PathBuf,
     pub modules: HashMap<PathBuf, AnalyzedModule>,
     pub diagnostics: HashMap<PathBuf, Vec<QueryDiagnostic>>,
+    /// File registries for modules that failed analysis (parse succeeded
+    /// but resolve/typecheck failed). Used for span→position conversion
+    /// when producing LSP diagnostics.
+    pub file_registries: HashMap<PathBuf, FileRegistry>,
 }
 
 #[derive(Debug, Default)]
@@ -245,6 +252,7 @@ struct AnalysisCollector {
     enabled: bool,
     modules: HashMap<PathBuf, AnalyzedModule>,
     diagnostics: HashMap<PathBuf, Vec<QueryDiagnostic>>,
+    file_registries: HashMap<PathBuf, FileRegistry>,
 }
 
 impl AnalysisCollector {
@@ -270,11 +278,44 @@ impl AnalysisCollector {
         self.modules.insert(module_path.to_path_buf(), module);
     }
 
+    fn record_diagnostics(&mut self, module_path: &Path, diags: Vec<QueryDiagnostic>) {
+        if !self.enabled || diags.is_empty() {
+            return;
+        }
+        self.diagnostics
+            .entry(module_path.to_path_buf())
+            .or_default()
+            .extend(diags);
+    }
+
+    fn record_parse_error(&mut self, module_path: &Path, err: &anyhow::Error) {
+        if !self.enabled {
+            return;
+        }
+        self.diagnostics
+            .entry(module_path.to_path_buf())
+            .or_default()
+            .push(QueryDiagnostic {
+                code: "E_PARSE",
+                message: err.to_string(),
+                span: None,
+            });
+    }
+
+    fn record_file_registry(&mut self, module_path: &Path, registry: FileRegistry) {
+        if !self.enabled {
+            return;
+        }
+        self.file_registries
+            .insert(module_path.to_path_buf(), registry);
+    }
+
     fn into_workspace(self, entry_path: PathBuf) -> WorkspaceAnalysis {
         WorkspaceAnalysis {
             entry_path,
             modules: self.modules,
             diagnostics: self.diagnostics,
+            file_registries: self.file_registries,
         }
     }
 }
@@ -352,7 +393,13 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let source = adapter.read_source(&canonical)?;
     let source_hash = query_keys::hash_text(&source);
     let parsed_stage_runner = ModuleStageRunner::new(&canonical, source_hash, 0, 0, false);
-    let parsed_result = parsed_stage_runner.parse(&source)?;
+    let parsed_result = match parsed_stage_runner.parse(&source) {
+        Ok(result) => result,
+        Err(err) => {
+            analysis_collector.record_parse_error(&canonical, &err);
+            return Err(err);
+        }
+    };
     let parsed = parsed_result.value;
     record_stage_trace(
         stage_trace,
@@ -428,24 +475,45 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     preassign_module_function_ids(&ast, alias, &mut state.func_table, &mut module_next_func_id);
 
     // Resolve — pure function; takes accumulated envs, returns updated envs
-    let mut resolved = match stage_runner.resolve(
-        &ast,
-        state.type_env.clone(),
-        state.value_env.clone(),
-        &file_registry,
-    ) {
-        Ok(result) => {
-            record_stage_trace(
-                stage_trace,
-                &canonical,
-                CompileStage::Resolve,
-                result.cache_hit,
-            );
-            result.value
+    let mut resolved = if analysis_collector.is_enabled() {
+        // Use structured diagnostics path for analysis
+        match resolve_stage_with_diagnostics(
+            &ast,
+            state.type_env.clone(),
+            state.value_env.clone(),
+            &file_registry,
+        ) {
+            Ok(resolved) => {
+                record_stage_trace(stage_trace, &canonical, CompileStage::Resolve, false);
+                resolved
+            }
+            Err(diags) => {
+                analysis_collector.record_diagnostics(&canonical, diags);
+                analysis_collector.record_file_registry(&canonical, file_registry.clone());
+                importing_stack.pop();
+                return Err(anyhow!("resolve failed with diagnostics"));
+            }
         }
-        Err(err) => {
-            importing_stack.pop();
-            return Err(err);
+    } else {
+        match stage_runner.resolve(
+            &ast,
+            state.type_env.clone(),
+            state.value_env.clone(),
+            &file_registry,
+        ) {
+            Ok(result) => {
+                record_stage_trace(
+                    stage_trace,
+                    &canonical,
+                    CompileStage::Resolve,
+                    result.cache_hit,
+                );
+                result.value
+            }
+            Err(err) => {
+                importing_stack.pop();
+                return Err(err);
+            }
         }
     };
     // Register current module's own functions as inherent methods so that
@@ -455,24 +523,45 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     state.value_env = resolved.value_env.clone();
 
     // Typecheck — pure function; takes explicit envs and returns updated envs + TypeMap
-    let typed = match stage_runner.typecheck(
-        &ast,
-        resolved.clone(),
-        state.module_aliases.clone(),
-        &file_registry,
-    ) {
-        Ok(result) => {
-            record_stage_trace(
-                stage_trace,
-                &canonical,
-                CompileStage::Typecheck,
-                result.cache_hit,
-            );
-            result.value
+    let typed = if analysis_collector.is_enabled() {
+        match typecheck_stage_with_diagnostics_and_options(
+            &ast,
+            resolved.clone(),
+            state.module_aliases.clone(),
+            &file_registry,
+            is_internal,
+        ) {
+            Ok(typed) => {
+                record_stage_trace(stage_trace, &canonical, CompileStage::Typecheck, false);
+                typed
+            }
+            Err(diags) => {
+                analysis_collector.record_diagnostics(&canonical, diags);
+                analysis_collector.record_file_registry(&canonical, file_registry.clone());
+                importing_stack.pop();
+                return Err(anyhow!("typecheck failed with diagnostics"));
+            }
         }
-        Err(err) => {
-            importing_stack.pop();
-            return Err(err);
+    } else {
+        match stage_runner.typecheck(
+            &ast,
+            resolved.clone(),
+            state.module_aliases.clone(),
+            &file_registry,
+        ) {
+            Ok(result) => {
+                record_stage_trace(
+                    stage_trace,
+                    &canonical,
+                    CompileStage::Typecheck,
+                    result.cache_hit,
+                );
+                result.value
+            }
+            Err(err) => {
+                importing_stack.pop();
+                return Err(err);
+            }
         }
     };
     let TypedModule {
@@ -564,6 +653,11 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
                 project_dependency_exports(state, projection, &dep_exports);
             }
             Err(err) => {
+                if analysis_collector.is_enabled() {
+                    // Continue compiling remaining dependencies; diagnostics
+                    // were already recorded inside compile_module_with_adapter.
+                    continue;
+                }
                 importing_stack.pop();
                 return Err(err);
             }
@@ -1345,6 +1439,8 @@ pub fn analyze_entry_from_source_map(
     state.entry_module_path = Some(entry.clone());
     let mut stage_trace = Vec::new();
     let mut analysis_collector = AnalysisCollector::enabled();
+    // Errors are recorded as diagnostics in the analysis collector;
+    // we intentionally ignore the Result to return partial analysis.
     let _ = compile_module_with_adapter(
         &entry,
         &alias,
@@ -1355,6 +1451,6 @@ pub fn analyze_entry_from_source_map(
         &adapter,
         &mut stage_trace,
         &mut analysis_collector,
-    )?;
+    );
     Ok(analysis_collector.into_workspace(entry))
 }

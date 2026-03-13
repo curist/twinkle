@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::lsp::definition::definition_at_workspace;
+use crate::lsp::diagnostics::LspDiagnostic;
 use crate::lsp::position::{PositionUtf16, file_byte_offset_to_position_utf16};
 use crate::lsp::session::AnalysisSession;
 
@@ -102,7 +103,8 @@ fn handle_lsp_message(
                         .and_then(|td| td.get("text"))
                         .and_then(Value::as_str),
                 ) {
-                    session.did_open(path, text.to_string());
+                    session.did_open(&path, text.to_string());
+                    publish_diagnostics_for_file(session, &path, writer)?;
                 }
             }
         }
@@ -116,7 +118,8 @@ fn handle_lsp_message(
                         .and_then(|change| change.get("text"))
                         .and_then(Value::as_str);
                     if let Some(text) = text {
-                        session.did_change(path, text.to_string());
+                        session.did_change(&path, text.to_string());
+                        publish_diagnostics_for_file(session, &path, writer)?;
                     }
                 }
             }
@@ -124,7 +127,14 @@ fn handle_lsp_message(
         "textDocument/didClose" => {
             if let (Some(session), Some(params)) = (state.session.as_mut(), params) {
                 if let Some(path) = extract_text_document_path(params) {
-                    session.did_close(path);
+                    session.did_close(&path);
+                    // Clear diagnostics for the closed file
+                    let uri = path_to_file_uri(&path)?;
+                    write_notification(
+                        writer,
+                        "textDocument/publishDiagnostics",
+                        json!({ "uri": uri, "diagnostics": [] }),
+                    )?;
                 }
             }
         }
@@ -396,6 +406,43 @@ fn write_error_response(
         }
     });
     write_lsp_payload(writer, &payload)
+}
+
+fn write_notification(writer: &mut impl Write, method: &str, params: Value) -> Result<()> {
+    let payload = json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params
+    });
+    write_lsp_payload(writer, &payload)
+}
+
+fn publish_diagnostics_for_file(
+    session: &AnalysisSession,
+    path: &Path,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let diags = session.diagnostics(path, path).unwrap_or_default();
+    let uri = path_to_file_uri(path)?;
+    let lsp_diags: Vec<Value> = diags.iter().map(lsp_diagnostic_to_json).collect();
+    write_notification(
+        writer,
+        "textDocument/publishDiagnostics",
+        json!({ "uri": uri, "diagnostics": lsp_diags }),
+    )
+}
+
+fn lsp_diagnostic_to_json(diag: &LspDiagnostic) -> Value {
+    json!({
+        "range": {
+            "start": { "line": diag.range.start_line, "character": diag.range.start_character },
+            "end": { "line": diag.range.end_line, "character": diag.range.end_character }
+        },
+        "severity": diag.severity.to_lsp_number(),
+        "code": diag.code,
+        "source": "twk",
+        "message": diag.message
+    })
 }
 
 fn write_lsp_payload(writer: &mut impl Write, payload: &Value) -> Result<()> {
