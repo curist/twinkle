@@ -192,3 +192,4 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [boot-foundation-libs.md](boot-foundation-libs.md) | Stage 10 support libs in `boot/lib` (`source`, `module`, `graph`, `query`) |
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
 | [module-relative-imports.md](module-relative-imports.md) | Add explicit relative module imports via `use .foo` without changing absolute import behavior |
+| [option-result-ergonomics.md](option-result-ergonomics.md) | Phase `Option.ok_or` / `Option.ok_or_else` and optional `try Option` support with required spec/API docs updates |

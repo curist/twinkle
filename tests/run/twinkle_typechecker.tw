@@ -2,6 +2,7 @@
 //   recursive_types: ok
 //   recursive_types_bad: rejected
 //   bad_call_arity: rejected
+//   pattern_bind_shadowing: ok
 
 // A mini typechecker implemented in Twinkle.
 // It type-checks a Twinkle-like AST encoded as data.
@@ -111,7 +112,9 @@ fn find_binding(bindings: Vector<Binding>, name: String, i: Int) Binding? {
     if i >= bindings.len() {
         .None
     } else {
-        b := bindings[i]
+        // Lookup from newest to oldest so inner bindings shadow outer ones.
+        idx := bindings.len() - 1 - i
+        b := bindings[idx]
         if b.name == name {
             .Some(b)
         } else {
@@ -661,6 +664,25 @@ fn program_bad_call_arity() Program {
     program
 }
 
+fn program_pattern_bind_shadowing() Program {
+    shadow_demo: FnDecl = .{
+        name: "shadow_demo",
+        params: [.{ name: "x", ty: .TBool }],
+        ret: .TInt,
+        body: .Case(
+            .IntLit(42),
+            [.{ pattern: .PBind("x"), body: .Var("x") }]
+        ),
+    }
+
+    program: Program = .{
+        types: [],
+        functions: [shadow_demo],
+    }
+
+    program
+}
+
 fn print_check_result(label: String, result: !String) {
     case result {
         .Ok(_) => println("${label}: ok"),
@@ -720,3 +742,4 @@ fn parse_recursive_types_source(source: String) Program!String {
 print_check_result("recursive_types", check_program(program_recursive_types_ok()))
 print_check_result("recursive_types_bad", check_program(program_recursive_types_bad()))
 print_check_result("bad_call_arity", check_program(program_bad_call_arity()))
+print_check_result("pattern_bind_shadowing", check_program(program_pattern_bind_shadowing()))
