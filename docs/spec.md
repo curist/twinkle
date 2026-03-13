@@ -1302,6 +1302,9 @@ String operations via module functions (all return new strings):
 * `String.get(s, i) Byte?` (safe byte index; returns `None` if out-of-bounds)
 * `String.char_code_at(s, i) Int` (compatibility alias for byte-at-offset as `Int`)
 * `String.to_string(s) String` (identity helper; `s.to_string()` is preferred)
+* `s.chars() Iterator<String>` — iterate Unicode scalar values (each yielded as a 1–4 byte `String`)
+* `s.char_len() Int` — number of Unicode scalars (O(n))
+* `s.graphemes() Iterator<String>` — iterate extended grapheme clusters (user-perceived characters); handles combining marks, ZWJ emoji sequences, and regional indicator flags via a simplified UAX #29 implementation
 * etc.
 
 ---
@@ -1429,7 +1432,7 @@ Includes:
 * vector module: `Vector.make`, `Vector.len`, `Vector.concat`, `Vector.slice`, `Vector.get`, `Vector.set`, etc.
 * dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
-* string module: `String.concat`, `String.slice`, `String.get`, `String.char_code_at`, `String.from_char_code`, `String.to_string`, etc.
+* string module: `String.concat`, `String.slice`, `String.get`, `String.char_code_at`, `String.from_char_code`, `String.to_string`, `s.chars()`, `s.char_len()`, `s.graphemes()`, etc.
 * byte module: `Byte.to_int`, `Byte.from_int`, `Byte.to_string`
 * iterator module: `Iterator.next`, `Iterator.unfold`, `Iterator.to_vector` (see [docs/design/iterator.md](design/iterator.md)). `to_vector` materializes the full iterator into a `Vector<T>` (equivalent to `collect x in it { x }`). Infinite iterators will not terminate; O(n) memory.
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.

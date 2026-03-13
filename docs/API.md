@@ -133,8 +133,9 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.chars()` | `fn(s: String) Iterator<String>` | Iterate Unicode scalars (each as a 1–4 byte `String`) |
 | `.char_len()` | `fn(s: String) Int` | Number of Unicode scalars |
 | `.code_point_at(i)` | `fn(s: String, i: Int) Option<Int>` | Code point at **scalar index** `i` (O(n)) |
+| `.graphemes()` | `fn(s: String) Iterator<String>` | Iterate extended grapheme clusters (user-perceived characters). Handles combining marks, ZWJ emoji sequences, and regional indicator flags via a simplified UAX #29 implementation. |
 
-**Iteration:** `for b in s { ... }` iterates **bytes** (`b: Byte`). Use `for ch in s.chars() { ... }` to iterate Unicode scalars.
+**Iteration:** `for b in s { ... }` iterates **bytes** (`b: Byte`). Use `for ch in s.chars() { ... }` to iterate Unicode scalars, or `for g in s.graphemes() { ... }` for user-perceived characters (grapheme clusters).
 
 Qualified forms (`String.len`, `String.trim`, etc.) also work.
 

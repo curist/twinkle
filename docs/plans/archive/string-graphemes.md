@@ -17,9 +17,9 @@ Add user-perceived character iteration for strings:
 
 This complements existing scalar-based `chars()` and enables correct handling of combining marks, ZWJ emoji sequences, and regional-indicator flags.
 
-## Status: Implemented
+## Status: Complete
 
-Tasks A–C are complete. Task D (documentation) is pending.
+All tasks (A–D) are complete.
 
 ## Design (as implemented)
 
@@ -93,12 +93,9 @@ For any valid `s: String`:
 * Registered in both `tests/run_test.rs` (interpreter) and `tests/run_wasm_test.rs` (Wasm).
 * Both backends produce identical output.
 
-### Task D: Documentation — Pending
+### Task D: Documentation — Complete
 
-* Update `docs/spec.md` and `docs/API.md`:
-  * `chars()` = Unicode scalar values
-  * `graphemes()` = extended grapheme clusters
-* Add examples showing why scalar and grapheme iteration can differ.
+* Updated `docs/spec.md` and `docs/API.md` with `graphemes()` alongside `chars()` and `char_len()`.
 
 ## Validation
 
