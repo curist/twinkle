@@ -1,0 +1,80 @@
+// Expected output:
+//   ascii: [h, e, l, l, o]
+//   combining_count=1
+//   combining_bytes=3
+//   emoji_modifier: [👍🏽]
+//   emoji_mod_count=1
+//   flag: [🇺🇸]
+//   flag_count=1
+//   zwj_family_count=1
+//   zwj_bytes=25
+//   zwj_non_extpict_count=2
+//   mixed_count=4
+//   empty_count=0
+//   roundtrip_combining=true
+//   roundtrip_mixed=true
+
+// ASCII — each character is its own grapheme
+gs := collect g in "hello".graphemes() { g }
+print("ascii: [")
+for g, i in gs {
+  if i > 0 { print(", ") }
+  print(g)
+}
+println("]")
+
+// Combining mark: e + combining acute = single grapheme
+combining := "\u{0065}\u{0301}"
+gs2 := collect g in combining.graphemes() { g }
+println("combining_count=${gs2.len()}")
+println("combining_bytes=${gs2[0].len()}")
+
+// Emoji with skin tone modifier
+emoji_mod := "👍🏽"
+gs3 := collect g in emoji_mod.graphemes() { g }
+print("emoji_modifier: [")
+for g, i in gs3 {
+  if i > 0 { print(", ") }
+  print(g)
+}
+println("]")
+println("emoji_mod_count=${gs3.len()}")
+
+// Regional indicator flag
+flag := "🇺🇸"
+gs4 := collect g in flag.graphemes() { g }
+print("flag: [")
+for g, i in gs4 {
+  if i > 0 { print(", ") }
+  print(g)
+}
+println("]")
+println("flag_count=${gs4.len()}")
+
+// ZWJ family sequence
+family := "👨\u{200D}👩\u{200D}👧\u{200D}👦"
+gs5 := collect g in family.graphemes() { g }
+println("zwj_family_count=${gs5.len()}")
+println("zwj_bytes=${gs5[0].len()}")
+
+// GB11: ZWJ after non-ExtPict base should NOT merge with following emoji
+zwj_non_ep := "a\u{200D}😀"
+gs_zwj_ne := collect g in zwj_non_ep.graphemes() { g }
+println("zwj_non_extpict_count=${gs_zwj_ne.len()}")
+
+// Mixed text
+mixed := "a\u{0065}\u{0301}👍🏽🇺🇸"
+gs6 := collect g in mixed.graphemes() { g }
+println("mixed_count=${gs6.len()}")
+
+// Empty string
+gs7 := collect g in "".graphemes() { g }
+println("empty_count=${gs7.len()}")
+
+// Round-trip: join(graphemes(s)) == s
+rt1 := collect g in combining.graphemes() { g }
+println("roundtrip_combining=${rt1.join("") == combining}")
+
+rt_str := "a\u{0065}\u{0301}👍🏽🇺🇸👨\u{200D}👩\u{200D}👧\u{200D}👦"
+rt2 := collect g in rt_str.graphemes() { g }
+println("roundtrip_mixed=${rt2.join("") == rt_str}")

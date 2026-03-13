@@ -488,6 +488,11 @@ fn string_chars() {
 }
 
 #[test]
+fn string_graphemes() {
+    check("tests/run/string_graphemes.tw");
+}
+
+#[test]
 fn string_code_point() {
     check("tests/run/string_code_point.tw");
 }

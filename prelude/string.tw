@@ -1,3 +1,199 @@
+// Decode the code point at byte position `pos` in string `s`.
+fn decode_cp(s: String, pos: Int) Int {
+  lead := Byte.to_int(s[pos])
+  if lead < 0x80 {
+    lead
+  } else if lead < 0xE0 {
+    ((lead - 0xC0) * 64) + (Byte.to_int(s[pos + 1]) - 0x80)
+  } else if lead < 0xF0 {
+    ((lead - 0xE0) * 4096) + ((Byte.to_int(s[pos + 1]) - 0x80) * 64) + (Byte.to_int(s[pos + 2]) - 0x80)
+  } else {
+    ((lead - 0xF0) * 262144) + ((Byte.to_int(s[pos + 1]) - 0x80) * 4096) + ((Byte.to_int(s[pos + 2]) - 0x80) * 64) + (Byte.to_int(s[pos + 3]) - 0x80)
+  }
+}
+
+// Return the byte length of the UTF-8 sequence starting at `pos`.
+fn cp_len(s: String, pos: Int) Int {
+  lead := Byte.to_int(s[pos])
+  if lead < 0x80 { 1 }
+  else if lead < 0xE0 { 2 }
+  else if lead < 0xF0 { 3 }
+  else { 4 }
+}
+
+// UAX #29 Grapheme_Cluster_Break=Extend property (commonly needed ranges).
+fn is_gcb_extend(cp: Int) Bool {
+  // Combining Diacritical Marks
+  (cp >= 0x0300 and cp <= 0x036F) or
+  // Combining Diacritical Marks Extended
+  (cp >= 0x1AB0 and cp <= 0x1AFF) or
+  // Combining Diacritical Marks Supplement
+  (cp >= 0x1DC0 and cp <= 0x1DFF) or
+  // Combining Diacritical Marks for Symbols
+  (cp >= 0x20D0 and cp <= 0x20FF) or
+  // Combining Half Marks
+  (cp >= 0xFE20 and cp <= 0xFE2F) or
+  // Variation Selectors
+  (cp >= 0xFE00 and cp <= 0xFE0F) or
+  // Cyrillic combining marks
+  (cp >= 0x0483 and cp <= 0x0489) or
+  // Hebrew combining marks
+  (cp >= 0x0591 and cp <= 0x05BD) or
+  cp == 0x05BF or
+  (cp >= 0x05C1 and cp <= 0x05C2) or
+  (cp >= 0x05C4 and cp <= 0x05C5) or
+  cp == 0x05C7 or
+  // Arabic combining marks
+  (cp >= 0x0610 and cp <= 0x061A) or
+  (cp >= 0x064B and cp <= 0x065F) or
+  cp == 0x0670 or
+  (cp >= 0x06D6 and cp <= 0x06DC) or
+  (cp >= 0x06DF and cp <= 0x06E4) or
+  (cp >= 0x06E7 and cp <= 0x06E8) or
+  (cp >= 0x06EA and cp <= 0x06ED) or
+  // Devanagari / Indic combining marks
+  (cp >= 0x0900 and cp <= 0x0903) or
+  (cp >= 0x093A and cp <= 0x094F) or
+  (cp >= 0x0951 and cp <= 0x0957) or
+  (cp >= 0x0962 and cp <= 0x0963) or
+  // Thai / Lao combining marks
+  (cp >= 0x0E31 and cp <= 0x0E3A) or
+  (cp >= 0x0E47 and cp <= 0x0E4E) or
+  (cp >= 0x0EB1 and cp <= 0x0EBC) or
+  (cp >= 0x0EC8 and cp <= 0x0ECE) or
+  // Zero-Width Non-Joiner
+  cp == 0x200C or
+  // Emoji Modifiers (skin tones) — GCB=Extend
+  (cp >= 0x1F3FB and cp <= 0x1F3FF) or
+  // Tags (includes U+E007F TAG CANCEL)
+  (cp >= 0xE0020 and cp <= 0xE007F) or
+  // Variation Selectors Supplement
+  (cp >= 0xE0100 and cp <= 0xE01EF) or
+  // Hangul Jungseong (V) and Jongseong (T) — GCB=V/T, treated as
+  // non-breaking here for simplified Hangul syllable clustering
+  (cp >= 0x1160 and cp <= 0x11FF) or
+  // General combining marks (Mn/Me categories, additional ranges)
+  (cp >= 0x0730 and cp <= 0x074A) or
+  (cp >= 0x07A6 and cp <= 0x07B0) or
+  (cp >= 0x0816 and cp <= 0x0823) or
+  (cp >= 0x0825 and cp <= 0x0827) or
+  (cp >= 0x0829 and cp <= 0x082D) or
+  // Myanmar
+  (cp >= 0x1032 and cp <= 0x1037) or
+  (cp >= 0x1039 and cp <= 0x103A) or
+  (cp >= 0x103D and cp <= 0x103E) or
+  (cp >= 0x1058 and cp <= 0x1059) or
+  // Mongolian Free Variation Selectors
+  (cp >= 0x180B and cp <= 0x180D) or
+  cp == 0x180F
+}
+
+// Regional Indicator: U+1F1E6..U+1F1FF
+fn is_regional_indicator(cp: Int) Bool {
+  cp >= 0x1F1E6 and cp <= 0x1F1FF
+}
+
+// Extended_Pictographic: simplified check covering the major emoji blocks.
+fn is_extended_pictographic(cp: Int) Bool {
+  // Misc Symbols and Pictographs
+  (cp >= 0x1F300 and cp <= 0x1F5FF) or
+  // Emoticons
+  (cp >= 0x1F600 and cp <= 0x1F64F) or
+  // Transport and Map Symbols
+  (cp >= 0x1F680 and cp <= 0x1F6FF) or
+  // Supplemental Symbols and Pictographs
+  (cp >= 0x1F900 and cp <= 0x1F9FF) or
+  // Symbols and Pictographs Extended-A
+  (cp >= 0x1FA00 and cp <= 0x1FA6F) or
+  (cp >= 0x1FA70 and cp <= 0x1FAFF) or
+  // Dingbats
+  (cp >= 0x2702 and cp <= 0x27B0) or
+  // Misc symbols
+  cp == 0x00A9 or cp == 0x00AE or
+  (cp >= 0x2600 and cp <= 0x26FF) or
+  (cp >= 0x2300 and cp <= 0x23FF) or
+  // Regional indicators (also pictographic)
+  (cp >= 0x1F1E6 and cp <= 0x1F1FF)
+}
+
+// Find the end byte offset of the extended grapheme cluster starting at `pos`.
+// Implements a simplified UAX #29 state machine covering:
+//   GB3 (CR×LF), GB9 (×Extend|ZWJ), GB9a (×SpacingMark),
+//   GB11 (ExtPict Extend* ZWJ × ExtPict), GB12/13 (RI pairs).
+fn next_grapheme_end(s: String, pos: Int) Int {
+  len := s.len()
+  cp := decode_cp(s, pos)
+  next := pos + cp_len(s, pos)
+  if next >= len { return next }
+
+  // GB3: CR × LF
+  if cp == 0x0D {
+    next_cp := decode_cp(s, next)
+    if next_cp == 0x0A {
+      return next + 1
+    }
+    return next
+  }
+
+  // GB4: Control / LF breaks after
+  if cp == 0x0A or (cp >= 0x00 and cp <= 0x1F and cp != 0x0D) or (cp >= 0x7F and cp <= 0x9F) or cp == 0x2028 or cp == 0x2029 {
+    return next
+  }
+
+  // Track whether base context is Extended_Pictographic (for GB11)
+  saw_extpict := is_extended_pictographic(cp)
+
+  // GB12/13: Regional Indicator — consume exactly one pair
+  if is_regional_indicator(cp) {
+    next_cp := decode_cp(s, next)
+    if is_regional_indicator(next_cp) {
+      next = next + cp_len(s, next)
+    }
+    // Fall through to extend loop
+  }
+
+  // GB9/GB9a/GB11: consume Extend, ZWJ sequences
+  for next < len {
+    next_cp := decode_cp(s, next)
+
+    // GB5: break before Control/CR/LF
+    if next_cp == 0x0A or next_cp == 0x0D or (next_cp >= 0x00 and next_cp <= 0x1F) or (next_cp >= 0x7F and next_cp <= 0x9F) or next_cp == 0x2028 or next_cp == 0x2029 {
+      break
+    }
+
+    // GB9: × Extend
+    if is_gcb_extend(next_cp) {
+      next = next + cp_len(s, next)
+    } else if next_cp == 0x200D {
+      // GB9: × ZWJ
+      next = next + cp_len(s, next)
+      // GB11: ExtPict Extend* ZWJ × ExtPict — only if base context is ExtPict
+      if saw_extpict and next < len {
+        after_zwj := decode_cp(s, next)
+        if is_extended_pictographic(after_zwj) {
+          next = next + cp_len(s, next)
+          saw_extpict = true
+        }
+      }
+    } else {
+      break
+    }
+  }
+
+  next
+}
+
+pub fn graphemes(s: String) Iterator<String> {
+  Iterator.unfold(0, fn(pos: Int) {
+    if pos >= s.len() {
+      UnfoldStep.Done
+    } else {
+      next := next_grapheme_end(s, pos)
+      UnfoldStep.Yield(s.slice(pos, next), next)
+    }
+  })
+}
+
 pub fn chars(s: String) Iterator<String> {
   Iterator.unfold(0, fn(pos: Int) {
     if pos >= s.len() {

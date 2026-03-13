@@ -222,6 +222,11 @@ fn run_wasm_string_from_code_point_large_int() {
 }
 
 #[test]
+fn run_wasm_string_graphemes() {
+    check("tests/run/string_graphemes.tw");
+}
+
+#[test]
 fn run_wasm_byte_arithmetic_promotion() {
     check("tests/run/byte_arithmetic_promotion.tw");
 }
