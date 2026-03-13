@@ -40,20 +40,54 @@ Storage shape (suggested):
 
 * Add `doc: Option<String>` on top-level declaration AST nodes (or an equivalent side table keyed by declaration span).
 
+### Builtin & Inherent Method Docs
+
+`///` only works for `.tw` source files. Builtins and Rust-implemented inherent methods
+have no `.tw` source to attach comments to, so they need a separate mechanism.
+
+**Three categories need coverage:**
+
+1. **Pure builtins** — `println`, `error`, `range`, `Cell.new`, etc. Registered directly
+   in `ValueEnv::new()` / `TypeEnv::new()` (Rust code). No `.tw` source at all.
+
+2. **Intrinsic methods** — `String.len`, `String.slice`, `Vector.push`, etc. Signatures
+   loaded from embedded `prelude/signatures/*.tw` files via `signatures.rs`, but bodies
+   are stubs. The `.tw` files could carry `///` docs, but the signatures are parsed by
+   a special pipeline that doesn't preserve comments.
+
+3. **Prelude methods** — functions in `prelude/*.tw` (e.g., `string.tw`, `vector.tw`).
+   These are real `.tw` source and *can* carry `///` docs once the parser supports it.
+   However, they are auto-imported under internal `__prelude_*` aliases and their
+   functions are re-registered under canonical builtin aliases (e.g., `Vector.map`),
+   so doc lookup must follow that indirection.
+
+**Approach: `doc` field on `FunctionSignature`**
+
+Add `doc: Option<String>` to `FunctionSignature` in `src/types/ty.rs`. Populate it from:
+
+* **Rust code** — hard-coded doc strings passed alongside builtin registration in
+  `ValueEnv::new()` and `TypeEnv::new()`.
+* **`///` in `.tw` source** — once parser support lands, extract docs during parsing and
+  thread them through resolve → `FunctionSignature`. This covers both prelude `.tw` files
+  and user-defined functions.
+
+This single field is then available to hover and completion without separate lookup tables.
+
 ---
 
 ## Scope
 
 **In scope:**
 
-* publish diagnostics on `didOpen`/`didChange`/`didSave` (or immediate on change for now)
-* clear diagnostics on `didClose`
+* publish diagnostics on `didOpen`/`didChange`/`didSave` (or immediate on change for now)  ✅ D1+D2 done
+* clear diagnostics on `didClose`  ✅ D2 done
 * completion in common contexts:
   * local identifiers in scope
   * top-level values/functions/types
   * import-qualified names (`alias.<...>`)
   * method names after `expr.`
 * attach basic type/signature/doc detail to completion items when available
+* doc strings for builtins and inherent methods via `FunctionSignature.doc`
 
 **Out of scope:**
 
@@ -112,39 +146,35 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 
 ## Milestones
 
-### D1 — Diagnostics API + LSP Mapping
+### D1 — Diagnostics API + LSP Mapping  ✅
+
+* `src/lsp/diagnostics.rs` — `QueryDiagnostic` → `LspDiagnostic` conversion (UTF-16 ranges, `E_`/`W_` severity).
+* `src/module/mod.rs` — resilient analysis pipeline: errors recorded as structured diagnostics instead of aborting.
+* `WorkspaceAnalysis.file_registries` — fallback registries for modules that failed resolve/typecheck.
+
+### D2 — Publish Diagnostics Loop  ✅
+
+* `src/lsp/session.rs` — `diagnostics()` and `all_diagnostics()` methods.
+* `src/cli/lsp.rs` — `didOpen`/`didChange` push `publishDiagnostics`; `didClose` clears.
+* Tests: `tests/lsp_diagnostics_test.rs` (7 tests).
+
+### B1 — Builtin Doc Strings
 
 **Code changes:**
 
-* Add `analyze_workspace_with_diagnostics(...)` result shape (or extend Phase 1 analysis API).
-* Implement internal diagnostic -> LSP diagnostic mapping helpers.
+* Add `doc: Option<String>` to `FunctionSignature`.
+* Populate doc strings for builtins registered in `ValueEnv::new()`.
+* Surface docs in hover (append doc below type signature).
 
 **Likely files:**
 
-* `src/query/api.rs`
-* `src/module/mod.rs`
-* `src/lsp/diagnostics.rs` (new)
-* `src/lsp/position.rs`
+* `src/types/ty.rs` — `FunctionSignature` struct
+* `src/types/env.rs` — builtin registration with doc strings
+* `src/lsp/mod.rs` — hover formatting to include docs
 
 **Acceptance:**
 
-* diagnostics available per module path with stable ordering and codes.
-
-### D2 — Publish Diagnostics Loop
-
-**Code changes:**
-
-* On `didOpen`/`didChange`: re-analyze impacted graph and push diagnostics.
-* On `didClose`: clear diagnostics for that URI.
-
-**Likely files:**
-
-* `src/lsp/session.rs`
-* `src/cli/lsp.rs`
-
-**Acceptance:**
-
-* editor shows and clears errors correctly across edits and close events.
+* Hovering over `println`, `range`, `Cell.new`, `String.len`, etc. shows a doc string alongside the type.
 
 ### C1 — Completion Core (No Docs Yet)
 
@@ -166,7 +196,8 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 
 **Code changes:**
 
-* Preserve and attach `///` docs to declarations.
+* Preserve and attach `///` docs to declarations in the parser.
+* Thread parsed docs into `FunctionSignature.doc` during resolve/typecheck (same field used by B1 for builtins).
 * Surface docs in completion item documentation and hover supplementary text.
 
 **Likely files:**
@@ -176,12 +207,13 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 * `src/syntax/parser.rs`
 * `src/syntax/ast.rs`
 * `src/lsp/completion.rs`
-* `src/lsp/hover.rs`
+* `src/lsp/mod.rs` (hover)
 
 **Acceptance:**
 
 * `///` comments appear for documented declarations in completion/hover.
-* non-doc comments remain ignored for docs.
+* Non-doc comments remain ignored for docs.
+* Prelude `.tw` files with `///` docs surface through hover/completion.
 
 ---
 
@@ -190,14 +222,16 @@ Preserve doc comments through lex/parse and expose them in query artifacts used 
 ### Unit tests
 
 * `///` attachment rules (blank-line break, contiguous blocks).
-* diagnostics range conversion (including Unicode).
+* diagnostics range conversion (including Unicode).  ✅
 * completion context classifier.
+* builtin doc strings populated on `FunctionSignature`.
 
 ### Integration tests
 
-* publish diagnostics after invalid edit, then clear after fix.
+* publish diagnostics after invalid edit, then clear after fix.  ✅
 * completion for locals/import aliases/methods.
 * completion docs populated from `///`.
+* hover shows doc string for builtins (`println`, `String.len`, etc.).
 
 ### Protocol smoke tests
 

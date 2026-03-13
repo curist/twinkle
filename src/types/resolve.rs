@@ -294,6 +294,7 @@ impl Resolver {
             type_params,
             params,
             ret,
+            doc: None,
         })
     }
 

@@ -339,3 +339,82 @@ fn hover_on_result_case_arm_variants_shows_result_constructors() {
     let err_hover = hover_at_module(main, err_pos);
     assert_eq!(err_hover.as_deref(), Some("Result.Err(String)"));
 }
+
+#[test]
+fn hover_on_builtin_function_shows_doc_string() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_builtin_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = "x := range(10)\n";
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    // Hover on "range" — should show signature + doc
+    let byte_offset = source.find("range").expect("range call");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    // Should contain both the type and the doc string
+    assert!(
+        hover.contains("fn("),
+        "should contain function signature, got: {hover}"
+    );
+    assert!(
+        hover.contains('\n'),
+        "should have doc on a separate line, got: {hover}"
+    );
+}
+
+#[test]
+fn hover_on_method_call_shows_doc_string() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_method_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"xs := [1, 2, 3]
+n := xs.len()
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    // Hover on ".len" — should show signature + doc
+    let byte_offset = source.find("len").expect("len method");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("fn("),
+        "should contain function signature, got: {hover}"
+    );
+    assert!(
+        hover.contains('\n'),
+        "should have doc on a separate line, got: {hover}"
+    );
+}

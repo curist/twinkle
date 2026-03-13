@@ -1261,6 +1261,7 @@ fn register_inherent_methods(
                                 type_params: sig.type_params.clone(),
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
+                                doc: sig.doc.clone(),
                             };
                             let builtin_sig = builtin_method_alias(type_id).map(|builtin_alias| {
                                 FunctionSignature {
@@ -1268,6 +1269,7 @@ fn register_inherent_methods(
                                     type_params: sig.type_params.clone(),
                                     params: sig.params.clone(),
                                     ret: sig.ret.clone(),
+                                    doc: sig.doc.clone(),
                                 }
                             });
                             return Some((type_id, decl.name.clone(), method_sig, builtin_sig));

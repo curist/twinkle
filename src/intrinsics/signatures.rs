@@ -630,16 +630,94 @@ pub fn function_signatures() -> Vec<FunctionSignature> {
                 .map(|func_id| {
                     let spec = registry::spec(*func_id)
                         .expect("missing registry spec for signature FuncId");
-                    by_name.get(spec.twinkle_name).cloned().unwrap_or_else(|| {
+                    let mut sig = by_name.get(spec.twinkle_name).cloned().unwrap_or_else(|| {
                         panic!(
                             "intrinsic signature '{}' missing from .tw signature sources",
                             spec.twinkle_name
                         )
-                    })
+                    });
+                    sig.doc = builtin_doc(spec.twinkle_name).map(str::to_string);
+                    sig
                 })
                 .collect()
         })
         .clone()
+}
+
+/// Hard-coded doc strings for builtin and intrinsic functions.
+fn builtin_doc(name: &str) -> Option<&'static str> {
+    Some(match name {
+        // Int
+        "Int.to_string" => "Convert an integer to its string representation.",
+        "Int.abs" => "Return the absolute value.",
+        "Int.min" => "Return the smaller of two integers.",
+        "Int.max" => "Return the larger of two integers.",
+        "Int.parse" => "Parse a string as an integer. Returns `Int?`.",
+
+        // Float
+        "Float.to_string" => "Convert a float to its string representation.",
+        "Float.floor" => "Round toward negative infinity.",
+        "Float.ceil" => "Round toward positive infinity.",
+        "Float.round" => "Round to the nearest integer.",
+        "Float.abs" => "Return the absolute value.",
+        "Float.parse" => "Parse a string as a float. Returns `Float?`.",
+        "Float.from_int" => "Convert an integer to a float.",
+        "Float.min" => "Return the smaller of two floats.",
+        "Float.max" => "Return the larger of two floats.",
+
+        // Bool
+        "Bool.to_string" => "Convert a boolean to \"true\" or \"false\".",
+
+        // String
+        "String.len" => "Return the byte length of the string.",
+        "String.concat" => "Concatenate two strings.",
+        "String.to_string" => "Return the string unchanged (identity).",
+        "String.get" => "Return the byte at the given index, or `None` if out of bounds.",
+        "String.slice" => "Return a substring by byte offsets. Traps on invalid UTF-8 boundary.",
+        "String.substring" => "Return a substring by byte offsets (no boundary check).",
+        "String.utf8_bytes" => "Copy the string's UTF-8 bytes into a `Vector<Byte>`.",
+        "String.from_utf8" => "Validate UTF-8 bytes and create a string. Returns `String?`.",
+        "String.from_code_point" => "Create a string from a Unicode code point. Returns `String?`.",
+
+        // Byte
+        "Byte.to_int" => "Convert a byte to its integer value (0–255).",
+        "Byte.from_int" => "Create a byte from an integer (mod 256). Returns `Byte?`.",
+        "Byte.to_string" => "Convert a byte to its string representation.",
+
+        // Vector
+        "Vector.len" => "Return the number of elements.",
+        "Vector.push" => "Return a new vector with the element appended.",
+        "Vector.concat" => "Return a new vector with all elements from both vectors.",
+        "Vector.slice" => "Return a sub-vector from start (inclusive) to end (exclusive).",
+        "Vector.get" => "Return the element at the given index, or `None` if out of bounds.",
+        "Vector.set" => "Return a new vector with the element at the given index replaced.",
+        "Vector.make" => "Create a vector of `n` copies of a value.",
+
+        // Dict
+        "Dict.new" => "Create an empty dictionary.",
+        "Dict.set" => "Return a new dict with the key-value pair inserted or updated.",
+        "Dict.keys" => "Return a vector of all keys.",
+        "Dict.len" => "Return the number of key-value pairs.",
+        "Dict.has" => "Return whether the key exists.",
+        "Dict.remove" => "Return a new dict with the key removed.",
+
+        // Cell
+        "Cell.new" => "Create a mutable cell containing a value.",
+        "Cell.get" => "Read the current value in the cell.",
+        "Cell.set" => "Replace the value in the cell.",
+        "Cell.update" => "Apply a function to the cell's value and store the result.",
+
+        // Range
+        "range" => "Create a range from 0 to `n` (exclusive).",
+        "range_from" => "Create a range from `start` to `end` (exclusive).",
+        "range_step" => "Create a range from `start` to `end` with a custom step.",
+
+        // Iterator
+        "Iterator.next" => "Advance the iterator and return the next value, or `None`.",
+        "Iterator.unfold" => "Create an iterator from a seed and step function.",
+
+        _ => return None,
+    })
 }
 
 fn ty_var(name: &str) -> MonoType {

@@ -48,12 +48,46 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
     let index = ExprSpanIndex::build(&module.ast);
     for entry in index.find_containing(file_id, byte_offset) {
         if let Some(ty) = module.typed.type_map.get_expr_type(entry.expr_id) {
-            return Some(ty.format_with_names(&module.typed.type_env));
+            let type_str = ty.format_with_names(&module.typed.type_env);
+            // If this expression is an identifier referring to a function with docs,
+            // append the doc string below the type.
+            if let Some(doc) = find_expr_doc(module, &entry) {
+                return Some(format!("{type_str}\n\n{doc}"));
+            }
+            return Some(type_str);
         }
     }
 
     let type_node = find_smallest_type_at_offset(&module.ast, file_id, byte_offset)?;
     Some(format_type_hover(module, type_node))
+}
+
+/// Look up doc string for an expression that references a named function.
+/// Uses the source span to extract the identifier text and look up the function signature.
+fn find_expr_doc(module: &AnalyzedModule, entry: &index::ExprSpanEntry) -> Option<String> {
+    let snippet = module.file_registry.snippet(entry.span)?;
+    // Only look up docs for simple identifiers (no dots, no operators)
+    if snippet.contains('.') || snippet.contains(' ') || snippet.contains('(') {
+        return None;
+    }
+    // Check function signatures first (intrinsic signatures with docs)
+    if let Some(sig) = module.typed.value_env.get_function(snippet) {
+        return sig.doc.clone();
+    }
+    // Check builtin functions (println, error, range, etc.)
+    builtin_value_doc(snippet).map(str::to_string)
+}
+
+/// Hard-coded doc strings for builtin values registered in ValueEnv::builtins.
+fn builtin_value_doc(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "println" => "Print a string to stdout followed by a newline.",
+        "print" => "Print a string to stdout without a trailing newline.",
+        "eprintln" => "Print a string to stderr followed by a newline.",
+        "eprint" => "Print a string to stderr without a trailing newline.",
+        "error" => "Abort execution with an error message (trap).",
+        _ => return None,
+    })
 }
 
 fn format_type_hover(module: &AnalyzedModule, ty: &Type) -> String {
@@ -124,7 +158,11 @@ fn format_function_signature(
         .collect::<Vec<_>>()
         .join(", ");
     let ret = sig.ret.clone().unwrap_or(MonoType::Void);
-    format!("fn({params}) {}", ret.format_with_names(type_env))
+    let type_str = format!("fn({params}) {}", ret.format_with_names(type_env));
+    match &sig.doc {
+        Some(doc) => format!("{type_str}\n\n{doc}"),
+        None => type_str,
+    }
 }
 
 fn hover_definition_at_offset(

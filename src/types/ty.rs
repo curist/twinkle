@@ -320,6 +320,7 @@ pub struct FunctionSignature {
     pub type_params: Vec<String>, // generic type parameter names (e.g. ["A", "B"])
     pub params: Vec<MonoType>,
     pub ret: Option<MonoType>, // None means infer from body
+    pub doc: Option<String>,
 }
 
 /// Apply meta-variable substitution to a type (zonking).
