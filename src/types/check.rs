@@ -619,6 +619,27 @@ impl TypeChecker {
                         // try Result<T,E> → extracts T; propagates Err(E) via early return
                         Ok(args.first().cloned().unwrap_or(MonoType::Void))
                     }
+                    MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID => {
+                        // try Option<T> → extracts T; propagates None via early return
+                        // Only valid in functions returning Option<U>
+                        let in_option_ctx = matches!(
+                            &self.current_function_ret,
+                            Some(MonoType::Named { type_id, .. }) if *type_id == OPTION_TYPE_ID
+                        );
+                        if in_option_ctx {
+                            Ok(args.first().cloned().unwrap_or(MonoType::Void))
+                        } else {
+                            self.errors.push(TypeError::UnsupportedFeature {
+                                feature: "try on Option",
+                                span: expr.span,
+                                note: "`try` on Option is only allowed in functions \
+                                       returning Option; use `.ok_or(err)` to convert \
+                                       to Result first"
+                                    .to_string(),
+                            });
+                            Err(())
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::TypeMismatch {
                             expected: MonoType::Named {

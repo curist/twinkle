@@ -103,6 +103,13 @@ case x {
 }
 ```
 
+**Option → Result bridge:**
+
+```tw
+opt.ok_or("missing")         // Some(v) → Ok(v), None → Err("missing")
+opt.ok_or_else(fn() { ... }) // lazy — closure called only on None
+```
+
 `T?` composes with `!E` (see §18):
 
 ```
@@ -1419,11 +1426,18 @@ fn find(xs: Vector<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, Str
 try expr
 ```
 
-* Only for `Result<T,E>`.
-* Returns early with `Err(e)` on error.
+**On `Result<T,E>`:**
+* Returns early with `Err(e)` on error, extracts `Ok(v)` on success.
 * For `Result<Void,E>` the `Ok` branch carries no value.
 * `.Ok({})` is the way to present `Void` return for `Result`, as `{}` evals to `Void`.
-* Cannot be applied to non-Result types (compile-time error).
+
+**On `Option<T>`:**
+* Returns early with `None` when the value is absent, extracts `Some(v)` on success.
+* Only valid in functions returning `Option<U>` (compile-time error otherwise).
+* To use `try` on an Option in a Result-returning function, bridge first:
+  `x := try opt.ok_or("missing")`
+
+**Not valid on other types** (compile-time error).
 
 ---
 

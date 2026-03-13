@@ -1,0 +1,16 @@
+/// Convert Option to Result: Some(v) → Ok(v), None → Err(err).
+pub fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
+  case opt {
+    .Some(v) => .Ok(v),
+    .None => .Err(err),
+  }
+}
+
+/// Convert Option to Result lazily: Some(v) → Ok(v), None → Err(mk_err()).
+/// mk_err is only called when opt is None.
+pub fn ok_or_else<T, E>(opt: T?, mk_err: fn() E) Result<T, E> {
+  case opt {
+    .Some(v) => .Ok(v),
+    .None => .Err(mk_err()),
+  }
+}

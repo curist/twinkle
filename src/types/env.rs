@@ -291,6 +291,18 @@ impl TypeEnv {
             "Iterator.next".to_string(),
         );
 
+        // Option methods
+        env.add_method(
+            OPTION_TYPE_ID,
+            "ok_or".to_string(),
+            "Option.ok_or".to_string(),
+        );
+        env.add_method(
+            OPTION_TYPE_ID,
+            "ok_or_else".to_string(),
+            "Option.ok_or_else".to_string(),
+        );
+
         // Primitive methods
         env.add_method(
             BUILTIN_INT_TYPE_ID,

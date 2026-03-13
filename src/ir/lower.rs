@@ -219,6 +219,8 @@ pub struct Lowerer {
     /// True while lowering __init__ top-level statements; lets lowerer reuse pre-assigned
     /// module global LocalIds instead of allocating new ones.
     in_init_context: bool,
+    /// Return type of the function currently being lowered (for `try Option` desugaring).
+    current_fn_return_type: Option<MonoType>,
 }
 
 const EXTERNAL_FUNC_ID_START: u32 = 1_000_000_000;
@@ -260,6 +262,7 @@ impl Lowerer {
             external_func_ref_ids: HashMap::new(),
             next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
+            current_fn_return_type: None,
         }
     }
 
@@ -284,6 +287,7 @@ impl Lowerer {
             external_func_ref_ids: HashMap::new(),
             next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
+            current_fn_return_type: None,
         }
     }
 
@@ -528,6 +532,12 @@ impl Lowerer {
             .get_function(&decl.name)
             .map(|sig| sig.params.clone())
             .unwrap_or_default();
+
+        // Track the return type for `try Option` desugaring
+        self.current_fn_return_type = self
+            .value_env
+            .get_function(&decl.name)
+            .and_then(|sig| sig.ret.clone());
 
         let body = self.lower_block(&decl.body)?;
         // When the body ends with a `return` (type Never) or is Void but the
@@ -2370,7 +2380,17 @@ impl Lowerer {
                     .map(|p| self.local_allocator.alloc_and_bind(p.name.clone()))
                     .collect();
 
+                // Save/restore current_fn_return_type for the lambda scope
+                let saved_ret = self.current_fn_return_type.take();
+                let lambda_ret = if let MonoType::Function { ret, .. } = ty {
+                    Some(ret.as_ref().clone())
+                } else {
+                    None
+                };
+                self.current_fn_return_type = lambda_ret;
+
                 let body = self.lower_expr(&fe.body)?;
+                self.current_fn_return_type = saved_ret;
                 self.local_allocator.pop_scope();
 
                 // Collect free variables: Local(id) refs not in lambda params
@@ -2401,97 +2421,189 @@ impl Lowerer {
 
             // --- Try (deferred until generics) ---
             ExprKind::Try { expr: inner_expr } => {
-                // try expr  desugas to:
-                //   let tmp = expr
-                //   match tmp {
-                //     .Ok(v)  => v,
-                //     .Err(e) => return .Err(e),
-                //   }
                 let inner = self.lower_expr(inner_expr)?;
                 let inner_ty = inner.ty.clone();
 
-                let tmp_local = self.local_allocator.alloc();
-                let v_local = self.local_allocator.alloc();
-                let e_local = self.local_allocator.alloc();
+                let is_option = matches!(
+                    &inner_ty,
+                    MonoType::Named { type_id, .. } if *type_id == OPTION_TYPE_ID
+                );
 
-                // Determine the Ok payload type from the inner type
-                let ok_ty = match &inner_ty {
-                    MonoType::Named { args, .. } => args.first().cloned().unwrap_or(MonoType::Void),
-                    _ => MonoType::Void,
-                };
-                let err_ty = match &inner_ty {
-                    MonoType::Named { args, .. } => args.get(1).cloned().unwrap_or(MonoType::Void),
-                    _ => MonoType::Void,
-                };
+                if is_option {
+                    // try Option<T> desugars to:
+                    //   let tmp = expr
+                    //   match tmp {
+                    //     .Some(v) => v,
+                    //     .None    => return .None,
+                    //   }
+                    let tmp_local = self.local_allocator.alloc();
+                    let v_local = self.local_allocator.alloc();
 
-                // Ok arm: bind v_local, return it
-                let ok_pattern = CorePattern::Variant {
-                    type_id: RESULT_TYPE_ID,
-                    variant: VariantId(0),
-                    fields: vec![CorePattern::Var(v_local)],
-                };
-                let ok_body = CoreExpr {
-                    kind: CoreExprKind::Local(v_local),
-                    ty: ok_ty.clone(),
-                    span,
-                };
+                    let payload_ty = match &inner_ty {
+                        MonoType::Named { args, .. } => {
+                            args.first().cloned().unwrap_or(MonoType::Void)
+                        }
+                        _ => MonoType::Void,
+                    };
 
-                // Err arm: bind e_local, return Err(e_local)
-                let err_payload = CoreExpr {
-                    kind: CoreExprKind::Local(e_local),
-                    ty: err_ty.clone(),
-                    span,
-                };
-                let err_variant = CoreExpr {
-                    kind: CoreExprKind::Variant {
+                    // Some arm: extract payload (Some = VariantId(1))
+                    let some_pattern = CorePattern::Variant {
+                        type_id: OPTION_TYPE_ID,
+                        variant: VariantId(1),
+                        fields: vec![CorePattern::Var(v_local)],
+                    };
+                    let some_body = CoreExpr {
+                        kind: CoreExprKind::Local(v_local),
+                        ty: payload_ty.clone(),
+                        span,
+                    };
+
+                    // None arm: return None
+                    // Use the enclosing function's return type for the None variant
+                    let ret_ty = self
+                        .current_fn_return_type
+                        .clone()
+                        .unwrap_or(inner_ty.clone());
+                    let none_variant = CoreExpr {
+                        kind: CoreExprKind::Variant {
+                            type_id: OPTION_TYPE_ID,
+                            variant: VariantId(0), // None = VariantId(0)
+                            args: vec![],
+                        },
+                        ty: ret_ty,
+                        span,
+                    };
+                    let none_body = CoreExpr {
+                        kind: CoreExprKind::Return {
+                            value: Some(Box::new(none_variant)),
+                        },
+                        ty: MonoType::Never,
+                        span,
+                    };
+                    let none_pattern = CorePattern::Variant {
+                        type_id: OPTION_TYPE_ID,
+                        variant: VariantId(0), // None = VariantId(0)
+                        fields: vec![],
+                    };
+
+                    let match_expr = CoreExpr {
+                        kind: CoreExprKind::Match {
+                            scrutinee: Box::new(CoreExpr {
+                                kind: CoreExprKind::Local(tmp_local),
+                                ty: inner_ty.clone(),
+                                span,
+                            }),
+                            arms: vec![
+                                MatchArm {
+                                    pattern: some_pattern,
+                                    body: some_body,
+                                },
+                                MatchArm {
+                                    pattern: none_pattern,
+                                    body: none_body,
+                                },
+                            ],
+                        },
+                        ty: payload_ty,
+                        span,
+                    };
+
+                    Some(CoreExprKind::Let {
+                        local: tmp_local,
+                        value: Box::new(inner),
+                        body: Box::new(match_expr),
+                    })
+                } else {
+                    // try Result<T,E> desugars to:
+                    //   let tmp = expr
+                    //   match tmp {
+                    //     .Ok(v)  => v,
+                    //     .Err(e) => return .Err(e),
+                    //   }
+                    let tmp_local = self.local_allocator.alloc();
+                    let v_local = self.local_allocator.alloc();
+                    let e_local = self.local_allocator.alloc();
+
+                    let ok_ty = match &inner_ty {
+                        MonoType::Named { args, .. } => {
+                            args.first().cloned().unwrap_or(MonoType::Void)
+                        }
+                        _ => MonoType::Void,
+                    };
+                    let err_ty = match &inner_ty {
+                        MonoType::Named { args, .. } => {
+                            args.get(1).cloned().unwrap_or(MonoType::Void)
+                        }
+                        _ => MonoType::Void,
+                    };
+
+                    let ok_pattern = CorePattern::Variant {
+                        type_id: RESULT_TYPE_ID,
+                        variant: VariantId(0),
+                        fields: vec![CorePattern::Var(v_local)],
+                    };
+                    let ok_body = CoreExpr {
+                        kind: CoreExprKind::Local(v_local),
+                        ty: ok_ty.clone(),
+                        span,
+                    };
+
+                    let err_payload = CoreExpr {
+                        kind: CoreExprKind::Local(e_local),
+                        ty: err_ty.clone(),
+                        span,
+                    };
+                    let err_variant = CoreExpr {
+                        kind: CoreExprKind::Variant {
+                            type_id: RESULT_TYPE_ID,
+                            variant: VariantId(1),
+                            args: vec![err_payload],
+                        },
+                        ty: inner_ty.clone(),
+                        span,
+                    };
+                    let err_body = CoreExpr {
+                        kind: CoreExprKind::Return {
+                            value: Some(Box::new(err_variant)),
+                        },
+                        ty: MonoType::Never,
+                        span,
+                    };
+
+                    let err_pattern = CorePattern::Variant {
                         type_id: RESULT_TYPE_ID,
                         variant: VariantId(1),
-                        args: vec![err_payload],
-                    },
-                    ty: inner_ty.clone(),
-                    span,
-                };
-                let err_body = CoreExpr {
-                    kind: CoreExprKind::Return {
-                        value: Some(Box::new(err_variant)),
-                    },
-                    ty: MonoType::Never,
-                    span,
-                };
+                        fields: vec![CorePattern::Var(e_local)],
+                    };
 
-                let err_pattern = CorePattern::Variant {
-                    type_id: RESULT_TYPE_ID,
-                    variant: VariantId(1),
-                    fields: vec![CorePattern::Var(e_local)],
-                };
+                    let match_expr = CoreExpr {
+                        kind: CoreExprKind::Match {
+                            scrutinee: Box::new(CoreExpr {
+                                kind: CoreExprKind::Local(tmp_local),
+                                ty: inner_ty.clone(),
+                                span,
+                            }),
+                            arms: vec![
+                                MatchArm {
+                                    pattern: ok_pattern,
+                                    body: ok_body,
+                                },
+                                MatchArm {
+                                    pattern: err_pattern,
+                                    body: err_body,
+                                },
+                            ],
+                        },
+                        ty: ok_ty,
+                        span,
+                    };
 
-                let match_expr = CoreExpr {
-                    kind: CoreExprKind::Match {
-                        scrutinee: Box::new(CoreExpr {
-                            kind: CoreExprKind::Local(tmp_local),
-                            ty: inner_ty.clone(),
-                            span,
-                        }),
-                        arms: vec![
-                            MatchArm {
-                                pattern: ok_pattern,
-                                body: ok_body,
-                            },
-                            MatchArm {
-                                pattern: err_pattern,
-                                body: err_body,
-                            },
-                        ],
-                    },
-                    ty: ok_ty,
-                    span,
-                };
-
-                Some(CoreExprKind::Let {
-                    local: tmp_local,
-                    value: Box::new(inner),
-                    body: Box::new(match_expr),
-                })
+                    Some(CoreExprKind::Let {
+                        local: tmp_local,
+                        value: Box::new(inner),
+                        body: Box::new(match_expr),
+                    })
+                }
             }
         }
     }

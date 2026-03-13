@@ -15,6 +15,17 @@ fn try_both(a: Int, b: Int, c: Int) Result<Int, String> {
   .Ok(y)
 }
 
+fn ok_or_try_helper(opt: Int?) Result<Int, String> {
+  x := try opt.ok_or("was none")
+  .Ok(x)
+}
+
+fn first_some(a: Int?, b: Int?) Int? {
+  x := try a
+  y := try b
+  .Some(x + y)
+}
+
 fn find_positive(xs: Vector<Int>) Int? {
   for x in xs {
     if x > 0 {
@@ -125,6 +136,96 @@ pub fn suite() runner.Suite {
         .None => -999,
       }
       try assert.int_eq(val, 3)
+      .Ok({})
+    })
+    .test("ok_or converts Some to Ok", fn() {
+      opt: Int? = .Some(42)
+      result := opt.ok_or("missing")
+      try assert.is_ok(result)
+      val := case result {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 42)
+      .Ok({})
+    })
+    .test("ok_or converts None to Err", fn() {
+      opt: Int? = .None
+      result := opt.ok_or("missing")
+      try assert.is_err(result)
+      try assert.err_eq(result, "missing")
+      .Ok({})
+    })
+    .test("ok_or with try in Result function", fn() {
+      opt: Int? = .Some(10)
+      x := try opt.ok_or("no value")
+      try assert.int_eq(x, 10)
+      .Ok({})
+    })
+    .test("ok_or None with try propagates Err", fn() {
+      opt: Int? = .None
+      r: Result<Int, String> = ok_or_try_helper(opt)
+      try assert.is_err(r)
+      try assert.err_eq(r, "was none")
+      .Ok({})
+    })
+    .test("ok_or_else converts Some to Ok without calling closure", fn() {
+      counter := Cell.new(0)
+      opt: Int? = .Some(7)
+      result := opt.ok_or_else(fn() String {
+        counter.set(counter.get() + 1)
+        "fail"
+      })
+      try assert.is_ok(result)
+      val := case result {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 7)
+      try assert.int_eq(counter.get(), 0)
+      .Ok({})
+    })
+    .test("ok_or_else converts None to Err and calls closure once", fn() {
+      counter := Cell.new(0)
+      opt: Int? = .None
+      result := opt.ok_or_else(fn() String {
+        counter.set(counter.get() + 1)
+        "computed error"
+      })
+      try assert.is_err(result)
+      try assert.err_eq(result, "computed error")
+      try assert.int_eq(counter.get(), 1)
+      .Ok({})
+    })
+    .test("ok_or_else with try in Result function", fn() {
+      opt: Int? = .Some(99)
+      x := try opt.ok_or_else(fn() String { "lazy err" })
+      try assert.int_eq(x, 99)
+      .Ok({})
+    })
+    .test("try Option extracts Some value", fn() {
+      result := first_some(.Some(3), .Some(7))
+      try assert.is_some(result)
+      val := case result {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(val, 10)
+      .Ok({})
+    })
+    .test("try Option propagates None on first arg", fn() {
+      result := first_some(.None, .Some(7))
+      try assert.is_none(result)
+      .Ok({})
+    })
+    .test("try Option propagates None on second arg", fn() {
+      result := first_some(.Some(3), .None)
+      try assert.is_none(result)
+      .Ok({})
+    })
+    .test("try Option both None propagates None", fn() {
+      result := first_some(.None, .None)
+      try assert.is_none(result)
       .Ok({})
     })
 }

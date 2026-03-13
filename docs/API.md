@@ -18,6 +18,22 @@ type Option<T> = { None, Some(T) }
 ```
 Shorthand: `T?` is equivalent to `Option<T>`.
 
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
+| `.ok_or_else(f)` | `fn<T, E>(opt: T?, f: fn() E) Result<T, E>` | Lazy variant — `f()` is only called when `opt` is `None` |
+
+`try` on Option: `try opt` extracts the `Some` value or propagates `None` via early return.
+Only valid in functions returning `Option<U>`. Use `.ok_or(err)` to bridge to `Result` contexts.
+
+```tw
+fn first_valid(a: Int?, b: Int?) Int? {
+  x := try a       // returns None if a is None
+  y := try b
+  .Some(x + y)
+}
+```
+
 ### `Result<T, E>`
 ```tw
 type Result<T, E> = { Ok(T), Err(E) }
