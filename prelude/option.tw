@@ -14,3 +14,15 @@ pub fn ok_or_else<T, E>(opt: T?, mk_err: fn() E) Result<T, E> {
     .None => .Err(mk_err()),
   }
 }
+
+/// Transpose Option<Result<T, E>> into Result<Option<T>, E>.
+/// None => Ok(None), Some(Ok(v)) => Ok(Some(v)), Some(Err(e)) => Err(e).
+pub fn transpose<T, E>(opt: Option<Result<T, E>>) Result<T?, E> {
+  case opt {
+    .None => .Ok(.None),
+    .Some(inner) => case inner {
+      .Ok(v) => .Ok(.Some(v)),
+      .Err(e) => .Err(e),
+    },
+  }
+}

@@ -64,6 +64,7 @@ pub fn builtin_method_alias(type_id: TypeId) -> Option<&'static str> {
         BUILTIN_BYTE_TYPE_ID => Some("Byte"),
         ITERATOR_TYPE_ID => Some("Iterator"),
         OPTION_TYPE_ID => Some("Option"),
+        RESULT_TYPE_ID => Some("Result"),
         _ => None,
     }
 }

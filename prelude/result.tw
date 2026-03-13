@@ -1,0 +1,11 @@
+/// Transpose Result<Option<T>, E> into Option<Result<T, E>>.
+/// Err(e) => Some(Err(e)), Ok(None) => None, Ok(Some(v)) => Some(Ok(v)).
+pub fn transpose<T, E>(res: Result<T?, E>) Option<Result<T, E>> {
+  case res {
+    .Err(e) => .Some(.Err(e)),
+    .Ok(inner) => case inner {
+      .None => .None,
+      .Some(v) => .Some(.Ok(v)),
+    },
+  }
+}
