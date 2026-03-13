@@ -1212,6 +1212,14 @@ fn emit_match_arm_chain(
         scrutinee_typed_option,
         ctx,
     );
+    let mut mono_restores = Vec::new();
+    push_pattern_mono_bindings(
+        &head.pattern,
+        scrutinee_mono,
+        scrutinee_iter_option,
+        ctx,
+        &mut mono_restores,
+    );
     let expected_ty = if preserve_typed_sum {
         None
     } else {
@@ -1223,6 +1231,9 @@ fn emit_match_arm_chain(
         fn_return_ty,
         ctx,
     ));
+    while let Some((local_id, prev)) = mono_restores.pop() {
+        ctx.restore_flow_mono_binding(local_id, prev);
+    }
     let tail_diverges = match_chain_always_diverges(&arms[1..]);
     let mut else_body = emit_match_arm_chain(
         scrutinee_anyref,
@@ -1250,6 +1261,53 @@ fn emit_match_arm_chain(
         else_body,
     });
     instrs
+}
+
+fn push_pattern_mono_bindings(
+    pattern: &CorePattern,
+    expected_mono: Option<&MonoType>,
+    option_iter_item_state: Option<&IteratorStateInfo>,
+    ctx: &mut EmitCtx<'_>,
+    restores: &mut Vec<(crate::ir::LocalId, Option<MonoType>)>,
+) {
+    match pattern {
+        CorePattern::Wildcard
+        | CorePattern::LitInt(_)
+        | CorePattern::LitBool(_)
+        | CorePattern::LitStr(_) => {}
+        CorePattern::Var(local_id) => {
+            ctx.push_flow_mono_binding(*local_id, expected_mono.cloned(), restores);
+        }
+        CorePattern::Variant {
+            type_id,
+            variant,
+            fields,
+        } => {
+            let typed_iter_option_fields = typed_iter_option_pattern_info(
+                *type_id,
+                expected_mono,
+                option_iter_item_state,
+                ctx,
+            )
+            .map(|(_, field_monos)| field_monos);
+            for (idx, field_pat) in fields.iter().enumerate() {
+                let field_expected = typed_iter_option_fields
+                    .as_ref()
+                    .and_then(|field_monos| field_monos.get(idx))
+                    .or_else(|| {
+                        expected_mono
+                            .and_then(|mono| pattern_variant_field_mono(mono, *variant, idx))
+                    });
+                push_pattern_mono_bindings(
+                    field_pat,
+                    field_expected,
+                    option_iter_item_state,
+                    ctx,
+                    restores,
+                );
+            }
+        }
+    }
 }
 
 fn match_chain_always_diverges(arms: &[AnfMatchArm]) -> bool {
@@ -1632,7 +1690,10 @@ fn emit_pattern_bindings(
                 let field_expected = typed_iter_option_fields
                     .as_ref()
                     .and_then(|field_monos| field_monos.get(idx))
-                    .or_else(|| expected_mono.and_then(|mono| variant_field_mono(mono, idx)));
+                    .or_else(|| {
+                        expected_mono
+                            .and_then(|mono| pattern_variant_field_mono(mono, *variant, idx))
+                    });
                 let field_anyref = emit_variant_field_anyref(
                     value_anyref_instrs,
                     expected_mono,
@@ -1920,6 +1981,15 @@ fn variant_field_mono(expected_mono: &MonoType, field_idx: usize) -> Option<&Mon
         },
         _ => None,
     }
+}
+
+fn pattern_variant_field_mono(
+    expected_mono: &MonoType,
+    variant: crate::ir::VariantId,
+    field_idx: usize,
+) -> Option<&MonoType> {
+    variant_field_mono_for_typed_sum(expected_mono, variant, field_idx)
+        .or_else(|| variant_field_mono(expected_mono, field_idx))
 }
 
 fn pattern_is_trivially_true(pattern: &CorePattern) -> bool {
@@ -2368,6 +2438,14 @@ fn emit_sum_local_to_erased(
                     mono,
                     ctx.infer_atom_mono(&Atom::ALocal(local_id)),
                 );
+                // Anyref locals can end up carrying mixed typed/erased sum values
+                // across branch joins. Use runtime dispatch to avoid trapping on
+                // a direct typed ref.cast when the value is already erased.
+                if *local_ty == ValType::Anyref {
+                    return Some(emit_anyref_option_or_variant_local_to_variant(
+                        local_idx, mono, target, ctx,
+                    ));
+                }
                 return Some(emit_typed_general_option_local_to_variant(
                     local_idx, mono, target, ctx,
                 ));
@@ -9208,14 +9286,14 @@ mod tests {
             observed_sum_repr
         );
         assert!(
-            !instr_tree_any(&body_instrs, &|i| matches!(
+            instr_tree_any(&body_instrs, &|i| matches!(
                 i,
                 Instr::RefTest {
                     nullable: true,
                     heap: HeapType::Named(name),
                 } if name == T_VARIANT
             )),
-            "typed AMatch local should lower to direct typed->erased conversion without runtime ref.test dispatch: {:?}",
+            "anyref AMatch typed-sum local should runtime-dispatch between erased Variant and typed Option reprs: {:?}",
             body_instrs
         );
     }

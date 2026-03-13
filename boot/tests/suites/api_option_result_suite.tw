@@ -291,7 +291,21 @@ pub fn suite() runner.Suite {
       try assert.is_none(result)
       .Ok({})
     })
-    // TODO: Result.transpose Ok(Some(v)) test skipped — hits nested typed sum
-    // codegen bug (cast failure) in multi-module wasm builds. Works in
-    // interpreter and standalone wasm. Unblock once codegen is fixed.
+    .test("Result.transpose Ok(Some(v)) becomes Some(Ok(v))", fn() {
+      inner: Int? = .Some(42)
+      res: Result<Int?, String> = .Ok(inner)
+      result := res.transpose()
+      try assert.is_some(result)
+      inner_result: Result<Int, String> = case result {
+        .Some(v) => v,
+        .None => .Err("missing"),
+      }
+      try assert.is_ok(inner_result)
+      val: Int = case inner_result {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 42)
+      .Ok({})
+    })
 }
