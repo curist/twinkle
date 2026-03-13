@@ -380,6 +380,43 @@ fn hover_on_builtin_function_shows_doc_string() {
 }
 
 #[test]
+fn hover_on_builtin_function_shows_doc_string_after_multibyte_line() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_builtin_doc_multibyte");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = "// ASCII \u{2014} each character is its own grapheme\nprintln(\"foo bar\")\n";
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = source.find("println").expect("println call");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("fn(String) Void"),
+        "should contain function signature, got: {hover}"
+    );
+    assert!(
+        hover.contains("Print a string to stdout followed by a newline."),
+        "should include builtin doc string, got: {hover}"
+    );
+}
+
+#[test]
 fn hover_on_method_call_shows_doc_string() {
     reset_global_cache();
 

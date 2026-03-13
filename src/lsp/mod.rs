@@ -71,7 +71,10 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
 /// Look up doc string for an expression that references a named function.
 /// Uses the source span to extract the identifier text and look up the function signature.
 fn find_expr_doc(module: &AnalyzedModule, entry: &index::ExprSpanEntry) -> Option<String> {
-    let snippet = module.file_registry.snippet(entry.span)?;
+    let source = module.file_registry.source(entry.span.file_id)?;
+    let start = span_offset_to_byte_offset(source, entry.span.start)?;
+    let end = span_offset_to_byte_offset(source, entry.span.end)?;
+    let snippet = source.get(start..end)?;
     // Only look up docs for simple identifiers (no dots, no operators)
     if snippet.contains('.') || snippet.contains(' ') || snippet.contains('(') {
         return None;
@@ -82,6 +85,24 @@ fn find_expr_doc(module: &AnalyzedModule, entry: &index::ExprSpanEntry) -> Optio
     }
     // Check builtin functions (println, error, range, etc.)
     builtin_value_doc(snippet).map(str::to_string)
+}
+
+fn span_offset_to_byte_offset(source: &str, span_offset: u32) -> Option<usize> {
+    if span_offset == 0 {
+        return Some(0);
+    }
+    let mut chars_seen = 0u32;
+    for (idx, _) in source.char_indices() {
+        if chars_seen == span_offset {
+            return Some(idx);
+        }
+        chars_seen += 1;
+    }
+    if chars_seen == span_offset {
+        Some(source.len())
+    } else {
+        None
+    }
 }
 
 /// Hard-coded doc strings for builtin values registered in ValueEnv::builtins.
