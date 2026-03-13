@@ -94,7 +94,14 @@ fn builtin_value_doc(name: &str) -> Option<&'static str> {
 fn format_type_hover(module: &AnalyzedModule, ty: &Type) -> String {
     let mut errors: Vec<TypeError> = Vec::new();
     if let Ok(mono) = module.typed.type_env.resolve_type(ty, &mut errors) {
-        return mono.format_with_names(&module.typed.type_env);
+        let type_str = mono.format_with_names(&module.typed.type_env);
+        if let MonoType::Named { type_id, .. } = mono
+            && let Some(def) = module.typed.type_env.get_def(type_id)
+            && let Some(doc) = def.doc()
+        {
+            return format!("{type_str}\n\n{doc}");
+        }
+        return type_str;
     }
     format_ast_type(ty)
 }
@@ -190,7 +197,10 @@ fn hover_definition_at_offset(
                     continue;
                 };
                 if name_span.file_id == file_id && name_span.contains(byte_offset) {
-                    return Some(decl.name.clone());
+                    return Some(match &decl.doc {
+                        Some(doc) => format!("{}\n\n{}", decl.name, doc),
+                        None => decl.name.clone(),
+                    });
                 }
             }
             Item::Stmt(Stmt::Let {
@@ -292,6 +302,7 @@ fn hover_case_pattern_variant_at_offset(
         name,
         type_params,
         variants,
+        ..
     } = def
     else {
         return None;

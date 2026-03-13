@@ -254,18 +254,21 @@ pub enum TypeDef {
         name: String,
         type_params: Vec<String>,
         fields: Vec<RecordField>,
+        doc: Option<String>,
     },
     /// Sum type: nominal enum with named variants
     Sum {
         name: String,
         type_params: Vec<String>,
         variants: Vec<Variant>,
+        doc: Option<String>,
     },
     /// Type alias: transparent alias to another type
     Alias {
         name: String,
         type_params: Vec<String>,
         target: MonoType,
+        doc: Option<String>,
     },
 }
 
@@ -296,6 +299,15 @@ impl TypeDef {
     /// Check if this is a record type
     pub fn is_record(&self) -> bool {
         matches!(self, TypeDef::Record { .. })
+    }
+
+    /// Get the doc comment attached to this type, if any.
+    pub fn doc(&self) -> Option<&str> {
+        match self {
+            TypeDef::Record { doc, .. } | TypeDef::Sum { doc, .. } | TypeDef::Alias { doc, .. } => {
+                doc.as_deref()
+            }
+        }
     }
 }
 

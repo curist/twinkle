@@ -333,7 +333,8 @@ fn identifier_completions(
             continue;
         }
         if matches_prefix(name, prefix) && seen.insert(name.to_string()) {
-            let kind = match module.typed.type_env.get_def(type_id) {
+            let def = module.typed.type_env.get_def(type_id);
+            let kind = match def {
                 Some(TypeDef::Sum { .. }) => CompletionKind::Struct,
                 Some(TypeDef::Record { .. }) => CompletionKind::Struct,
                 _ => CompletionKind::Struct,
@@ -342,7 +343,7 @@ fn identifier_completions(
                 label: name.to_string(),
                 kind,
                 detail: None,
-                documentation: None,
+                documentation: def.and_then(|d| d.doc().map(str::to_string)),
             });
         }
     }

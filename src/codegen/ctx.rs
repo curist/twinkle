@@ -2808,6 +2808,7 @@ mod tests {
                     fields: vec![MonoType::Int],
                 },
             ],
+            doc: None,
         });
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();

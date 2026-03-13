@@ -491,3 +491,74 @@ fn hover_on_builtin_qualified_function_shows_doc_comment() {
         "expected hover to include builtin qualified docs, got: {hover}"
     );
 }
+
+#[test]
+fn hover_on_builtin_type_annotation_shows_type_doc() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_builtin_type_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"fn keep(x: Option<Int>) Option<Int> {
+  x
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = source.find("Option<Int>").expect("Option type annotation");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("Optional value: None or Some(T)."),
+        "expected hover to include builtin type docs, got: {hover}"
+    );
+}
+
+#[test]
+fn hover_on_user_type_definition_name_shows_doc_comment() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_user_type_doc");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"/// RGB color value.
+type Color = .{ r: Int, g: Int, b: Int }
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = source.find("Color").expect("type definition name");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("RGB color value."),
+        "expected hover on type definition to include /// docs, got: {hover}"
+    );
+}

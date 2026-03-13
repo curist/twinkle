@@ -141,16 +141,19 @@ impl Resolver {
                     name: name.clone(),
                     type_params: decl.type_params.clone(),
                     fields: Vec::new(),
+                    doc: decl.doc.clone(),
                 },
                 AstTypeDef::Sum { .. } => TypeDef::Sum {
                     name: name.clone(),
                     type_params: decl.type_params.clone(),
                     variants: Vec::new(),
+                    doc: decl.doc.clone(),
                 },
                 AstTypeDef::Alias { .. } => TypeDef::Alias {
                     name: name.clone(),
                     type_params: decl.type_params.clone(),
                     target: MonoType::Void,
+                    doc: decl.doc.clone(),
                 },
             };
             let type_id = self.type_env.add_type(placeholder);
@@ -198,6 +201,7 @@ impl Resolver {
                     name: decl.name.clone(),
                     type_params: type_params.clone(),
                     fields: resolved_fields,
+                    doc: decl.doc.clone(),
                 }
             }
             AstTypeDef::Sum { variants } => {
@@ -221,6 +225,7 @@ impl Resolver {
                     name: decl.name.clone(),
                     type_params: type_params.clone(),
                     variants: resolved_variants,
+                    doc: decl.doc.clone(),
                 }
             }
             AstTypeDef::Alias { ty } => {
@@ -229,6 +234,7 @@ impl Resolver {
                     name: decl.name.clone(),
                     type_params: type_params.clone(),
                     target,
+                    doc: decl.doc.clone(),
                 }
             }
         };

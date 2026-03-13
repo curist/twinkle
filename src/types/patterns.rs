@@ -339,6 +339,7 @@ mod tests {
                     fields: vec![MonoType::Int],
                 },
             ],
+            doc: None,
         });
 
         let scrut_ty = MonoType::named(type_id);
@@ -381,6 +382,7 @@ mod tests {
                     fields: vec![MonoType::Int],
                 },
             ],
+            doc: None,
         });
 
         let scrut_ty = MonoType::named(type_id);

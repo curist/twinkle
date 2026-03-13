@@ -64,6 +64,7 @@ impl TypeEnv {
                         fields: vec![MonoType::Void]
                     },
                 ],
+                doc: Some("Optional value: None or Some(T).".to_string()),
             }),
             OPTION_TYPE_ID,
         );
@@ -81,6 +82,7 @@ impl TypeEnv {
                         fields: vec![MonoType::Void]
                     },
                 ],
+                doc: Some("Result value: Ok(T) or Err(E).".to_string()),
             }),
             RESULT_TYPE_ID,
         );
@@ -89,6 +91,7 @@ impl TypeEnv {
                 name: "Cell".to_string(),
                 type_params: vec![],
                 fields: vec![],
+                doc: Some("Mutable reference cell for imperative state.".to_string()),
             }),
             CELL_TYPE_ID,
         );
@@ -110,6 +113,7 @@ impl TypeEnv {
                         ty: MonoType::Int
                     },
                 ],
+                doc: Some("Range record { start, end, step } used by for loops.".to_string()),
             }),
             RANGE_TYPE_ID,
         );
@@ -119,6 +123,7 @@ impl TypeEnv {
                 name: "Iterator".to_string(),
                 type_params: vec!["T".to_string()],
                 fields: vec![],
+                doc: Some("Lazy iterator type.".to_string()),
             }),
             ITERATOR_TYPE_ID,
         );
@@ -140,6 +145,7 @@ impl TypeEnv {
                         },
                     },
                 ],
+                doc: Some("Item returned by Iterator.next: value and rest iterator.".to_string()),
             }),
             ITER_ITEM_TYPE_ID,
         );
@@ -162,6 +168,9 @@ impl TypeEnv {
                         ],
                     },
                 ],
+                doc: Some(
+                    "Step result for Iterator.unfold: Done or Yield(value, state).".to_string()
+                ),
             }),
             UNFOLD_STEP_TYPE_ID,
         );
