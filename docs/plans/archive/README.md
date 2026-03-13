@@ -69,3 +69,4 @@ Related historical context outside this folder:
 | [string-graphemes.md](string-graphemes.md) | `String.graphemes()` for extended grapheme cluster iteration (UAX #29) |
 | [iterator-to-vector.md](iterator-to-vector.md) | `Iterator.to_vector()` method-form materialization equivalent to `collect` |
 | [module-relative-imports.md](module-relative-imports.md) | Explicit relative module imports via `use .foo` syntax |
+| [option-result-ergonomics.md](option-result-ergonomics.md) | `Option.ok_or` / `Option.ok_or_else` and `try Option` support |
