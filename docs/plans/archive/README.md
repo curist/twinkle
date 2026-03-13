@@ -68,3 +68,4 @@ Related historical context outside this folder:
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Twinkle-native test runner and suite infrastructure in `boot/tests/` |
 | [string-graphemes.md](string-graphemes.md) | `String.graphemes()` for extended grapheme cluster iteration (UAX #29) |
 | [iterator-to-vector.md](iterator-to-vector.md) | `Iterator.to_vector()` method-form materialization equivalent to `collect` |
+| [module-relative-imports.md](module-relative-imports.md) | Explicit relative module imports via `use .foo` syntax |

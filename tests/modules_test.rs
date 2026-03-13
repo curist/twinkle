@@ -203,6 +203,48 @@ fn test_module_multiseg_lower() {
     );
 }
 
+/// relative import: `use .helper` resolves to sibling module
+#[test]
+fn test_module_relative_import_check() {
+    let result = check("relative/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected relative import to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_relative_import_lower() {
+    let result = lower("relative/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected relative import lower to pass: {:?}",
+        result.err()
+    );
+}
+
+/// relative import with alias: `use .helper as h`
+#[test]
+fn test_module_relative_import_alias_check() {
+    let result = check("relative_alias/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected relative import with alias to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_relative_import_alias_lower() {
+    let result = lower("relative_alias/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected relative import with alias lower to pass: {:?}",
+        result.err()
+    );
+}
+
 /// cross-module method value reference extraction
 #[test]
 fn test_module_method_value_ref_check() {

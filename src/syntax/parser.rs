@@ -229,6 +229,14 @@ impl Parser {
             false
         };
 
+        // Optional leading dot for relative import: `use .foo`
+        let is_relative = if !is_stdlib && self.peek_is(TokenKind::Dot) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         // Parse dot-separated path: foo.bar.baz
         let first = self.expect(TokenKind::Ident)?;
         let mut module_path = vec![first.text.clone()];
@@ -263,6 +271,7 @@ impl Parser {
         Ok(ImportDecl {
             module_path,
             is_stdlib,
+            is_relative,
             alias,
             span,
         })
@@ -1888,5 +1897,74 @@ mod tests {
             ExprKind::Array { elements } => assert_eq!(elements.len(), 3),
             _ => panic!("Expected array literal"),
         }
+    }
+
+    fn parse_source(source: &str) -> ParseResult<SourceFile> {
+        let file_id = FileId(0);
+        let tokens = Lexer::lex(source, file_id).unwrap();
+        let mut parser = Parser::new(tokens, file_id);
+        parser.parse_source_file()
+    }
+
+    fn get_import(source: &str) -> ImportDecl {
+        let sf = parse_source(source).unwrap();
+        match &sf.items[0] {
+            Item::Import(decl) => decl.clone(),
+            other => panic!("Expected Import, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_relative_import_single() {
+        let decl = get_import("use .foo");
+        assert!(decl.is_relative);
+        assert!(!decl.is_stdlib);
+        assert_eq!(decl.module_path, vec!["foo"]);
+        assert_eq!(decl.alias, None);
+    }
+
+    #[test]
+    fn test_parse_relative_import_nested() {
+        let decl = get_import("use .foo.bar");
+        assert!(decl.is_relative);
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn test_parse_relative_import_with_alias() {
+        let decl = get_import("use .foo as f");
+        assert!(decl.is_relative);
+        assert_eq!(decl.module_path, vec!["foo"]);
+        assert_eq!(decl.alias, Some("f".to_string()));
+    }
+
+    #[test]
+    fn test_parse_relative_import_does_not_affect_absolute() {
+        let decl = get_import("use foo.bar");
+        assert!(!decl.is_relative);
+        assert!(!decl.is_stdlib);
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn test_parse_relative_import_does_not_affect_stdlib() {
+        let decl = get_import("use @std.fs");
+        assert!(!decl.is_relative);
+        assert!(decl.is_stdlib);
+        assert_eq!(decl.module_path, vec!["std", "fs"]);
+    }
+
+    #[test]
+    fn test_parse_relative_import_reject_bare_dot() {
+        // `use .` with no identifier should fail
+        let result = parse_source("use .");
+        assert!(result.is_err(), "Expected parse error for `use .`");
+    }
+
+    #[test]
+    fn test_parse_relative_import_reject_double_dot() {
+        // `use ..foo` — parent traversal not supported in MVP
+        let result = parse_source("use ..foo");
+        assert!(result.is_err(), "Expected parse error for `use ..foo`");
     }
 }

@@ -1,6 +1,6 @@
-use lib.argparse.arg
-use lib.argparse.command
-use lib.argparse.style
+use .arg
+use .command
+use .style
 
 pub type App = .{
   name: String,

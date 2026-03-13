@@ -65,6 +65,21 @@ pub fn resolve_stdlib_module_path_from_root(stdlib_root: &Path, module_path: &[S
     path
 }
 
+/// Resolve a relative import path.
+/// Uses the importing file's parent directory as the namespace base
+/// and appends `module_path` segments.
+/// e.g. importing_file = root/lib/argparse/app.tw, module_path = ["helper"]
+///   → root/lib/argparse/helper.tw
+pub fn resolve_relative_module_path(importing_file: &Path, module_path: &[String]) -> PathBuf {
+    let parent_dir = importing_file.parent().unwrap_or(Path::new("."));
+    let mut path = parent_dir.to_path_buf();
+    for segment in module_path {
+        path.push(segment);
+    }
+    path.set_extension("tw");
+    path
+}
+
 /// List all prelude module paths from the given prelude root.
 /// Returns paths to `prelude/*.tw` files in sorted order.
 pub fn list_prelude_modules(prelude_root: &Path) -> Vec<PathBuf> {

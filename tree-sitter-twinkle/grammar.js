@@ -40,10 +40,13 @@ module.exports = grammar({
       optional(seq('as', field('alias', $.identifier))),
     ),
 
-    module_path: $ => prec.right(seq(
-      optional('@'),
-      $.identifier,
-      repeat(seq('.', $.identifier)),
+    module_path: $ => prec.right(choice(
+      // stdlib: @std.fs
+      seq('@', $.identifier, repeat(seq('.', $.identifier))),
+      // relative: .helper, .sub.mod
+      seq('.', $.identifier, repeat(seq('.', $.identifier))),
+      // absolute: foo.bar, utils
+      seq($.identifier, repeat(seq('.', $.identifier))),
     )),
 
     _top_level_statement: $ => choice(

@@ -1,0 +1,6 @@
+use lib.app
+
+fn main() {
+    result := app.run()
+    println(result)
+}

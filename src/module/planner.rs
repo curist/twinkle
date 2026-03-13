@@ -44,6 +44,8 @@ pub(super) fn plan_module_dependencies<A: ModuleSourceAdapter>(
                     "Cannot resolve module '{}': expected file '{}'",
                     if import.is_stdlib {
                         format!("@{}", import.module_path.join("."))
+                    } else if import.is_relative {
+                        format!(".{}", import.module_path.join("."))
                     } else {
                         import.module_path.join(".")
                     },
@@ -158,9 +160,14 @@ mod tests {
             self.existing.contains(path)
         }
 
-        fn resolve_import_path(&self, _importing_file: &Path, import: &ImportDecl) -> PathBuf {
+        fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf {
             if import.is_stdlib {
                 self.resolve_std_import(import)
+            } else if import.is_relative {
+                crate::module::loader::resolve_relative_module_path(
+                    importing_file,
+                    &import.module_path,
+                )
             } else {
                 self.resolve_non_std_import(import)
             }

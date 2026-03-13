@@ -414,3 +414,155 @@ pub fn bad<T>(value: T) Cell<T> {
     let output = String::from_utf8(interp.into_output()).expect("utf8 output");
     assert_eq!(output, "ok\n");
 }
+
+#[test]
+fn compile_entry_from_source_map_relative_import_nested_module() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/relative_nested");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let app = project_root.join("lib").join("app.tw");
+    let helper = project_root.join("lib").join("helper.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        entry.clone(),
+        r#"
+use lib.app
+
+println(app.run())
+"#
+        .to_string(),
+    );
+    sources.insert(
+        app,
+        r#"
+use .helper
+
+pub fn run() String {
+    helper.greet("world")
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        helper,
+        r#"
+pub fn greet(name: String) String {
+    "hello ${name}"
+}
+"#
+        .to_string(),
+    );
+
+    let (core_module, _registry) = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("relative import from nested module should compile");
+
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("compiled module should run");
+    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    assert_eq!(output, "hello world\n");
+}
+
+#[test]
+fn compile_entry_from_source_map_relative_import_from_root_module() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/relative_root");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let util = project_root.join("util.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        entry.clone(),
+        r#"
+use .util
+
+println("${util.double(21)}")
+"#
+        .to_string(),
+    );
+    sources.insert(
+        util,
+        r#"
+pub fn double(x: Int) Int {
+    x * 2
+}
+"#
+        .to_string(),
+    );
+
+    let (core_module, _registry) = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("relative import from root module should compile");
+
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("compiled module should run");
+    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    assert_eq!(output, "42\n");
+}
+
+#[test]
+fn compile_entry_from_source_map_relative_and_stdlib_imports_coexist() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/relative_stdlib");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("lib").join("app.tw");
+    let helper = project_root.join("lib").join("helper.tw");
+    let stdlib_proc = stdlib_root.join("proc.tw");
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        entry.clone(),
+        r#"
+use .helper
+use @std.proc
+
+println(helper.greet("relative"))
+"#
+        .to_string(),
+    );
+    sources.insert(
+        helper,
+        r#"
+pub fn greet(name: String) String {
+    "hi ${name}"
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        stdlib_proc,
+        r#"
+pub fn args() Vector<String> {
+    []
+}
+"#
+        .to_string(),
+    );
+
+    let (core_module, _registry) = twinkle::module::compile_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("relative + stdlib imports should coexist");
+
+    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
+    interp.run().expect("compiled module should run");
+    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    assert_eq!(output, "hi relative\n");
+}

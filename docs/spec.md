@@ -581,14 +581,21 @@ The host can then call `run()` again on demand via the Wasm export.
 use foo.bar           // import foo/bar.tw, bound as "bar"
 use foo.bar as baz    // import foo/bar.tw, bound as "baz"
 use utils             // import utils.tw at project root
+use .helper           // relative import: sibling module in same directory
+use .sub.mod          // relative import: nested path from same directory
+use .helper as h      // relative import with alias
 use @array            // stdlib module, bound as "array"
 use @std.json as json // stdlib module with alias
 ```
 
 #### Filesystem mapping
 
-A dot-separated path `a.b.c` maps to `<root>/a/b/c.tw`. The module identifier is
-the last segment (`c`), or the alias if `as name` is provided.
+An absolute dot-separated path `a.b.c` maps to `<root>/a/b/c.tw`. The module
+identifier is the last segment (`c`), or the alias if `as name` is provided.
+
+A relative import (leading dot) resolves from the importing file's parent
+directory. For example, `use .helper` in `<root>/lib/app.tw` resolves to
+`<root>/lib/helper.tw`.
 
 #### Project root resolution
 

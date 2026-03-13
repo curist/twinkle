@@ -25,6 +25,7 @@ pub enum Item {
 pub struct ImportDecl {
     pub module_path: Vec<String>, // ["foo", "bar"] from `use foo.bar`
     pub is_stdlib: bool,          // true if @ prefix
+    pub is_relative: bool,        // true if leading dot: `use .foo`
     pub alias: Option<String>,    // Some("baz") from `use foo.bar as baz`
     pub span: Span,
 }

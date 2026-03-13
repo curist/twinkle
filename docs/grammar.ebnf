@@ -38,12 +38,17 @@ ImportDecl =
 
 ModulePath =
       "@" Identifier { "." Identifier }   (* stdlib module: @array, @std.json *)
-    | Identifier { "." Identifier } ;     (* user module:   foo.bar, utils *)
+    | "." Identifier { "." Identifier }   (* relative module: .helper, .sub.mod *)
+    | Identifier { "." Identifier } ;     (* absolute user module: foo.bar, utils *)
 (* Implementation note:
    - `use foo.bar`        → loads <root>/foo/bar.tw, bound as "bar"
    - `use foo.bar as baz` → same file, bound as "baz"
+   - `use .helper`        → relative import, loads sibling helper.tw
+   - `use .sub.mod`       → relative import, loads sub/mod.tw from same dir
    - `use @array`         → stdlib module, bound as "array"
    - `use utils`          → loads <root>/utils.tw, bound as "utils"
+   - Relative imports resolve from the importing file's parent directory.
+   - Parent traversal (`..foo`) is not supported in MVP.
    - Project root: nearest ancestor directory containing twinkle.toml;
      overridable via TWINKLE_ROOT env var.
    - No wildcard or destructuring in MVP (see docs/design/module.md "No Destructuring Imports"). *)

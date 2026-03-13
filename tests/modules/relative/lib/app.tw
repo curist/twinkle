@@ -1,0 +1,5 @@
+use .helper
+
+pub fn run() String {
+    helper.greet("world")
+}

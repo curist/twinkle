@@ -18,6 +18,8 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
         Item::Import(decl) => {
             let path = if decl.is_stdlib {
                 format!("@{}", decl.module_path.join("."))
+            } else if decl.is_relative {
+                format!(".{}", decl.module_path.join("."))
             } else {
                 decl.module_path.join(".")
             };

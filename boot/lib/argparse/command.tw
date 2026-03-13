@@ -1,4 +1,4 @@
-use lib.argparse.arg
+use .arg
 
 pub type Command = .{
   name: String,

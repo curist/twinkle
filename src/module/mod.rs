@@ -70,6 +70,8 @@ impl ModuleSourceAdapter for FsModuleSourceAdapter {
     fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf {
         if import.is_stdlib {
             resolve_stdlib_module_path(&import.module_path)
+        } else if import.is_relative {
+            loader::resolve_relative_module_path(importing_file, &import.module_path)
         } else {
             let root = find_project_root(importing_file.parent().unwrap_or(Path::new(".")));
             resolve_module_path(&root, &import.module_path)
@@ -140,9 +142,11 @@ impl ModuleSourceAdapter for SourceMapModuleAdapter {
         self.sources.contains_key(&canonical)
     }
 
-    fn resolve_import_path(&self, _importing_file: &Path, import: &ImportDecl) -> PathBuf {
+    fn resolve_import_path(&self, importing_file: &Path, import: &ImportDecl) -> PathBuf {
         if import.is_stdlib {
             resolve_stdlib_module_path_from_root(&self.stdlib_root, &import.module_path)
+        } else if import.is_relative {
+            loader::resolve_relative_module_path(importing_file, &import.module_path)
         } else {
             resolve_module_path(&self.project_root, &import.module_path)
         }
