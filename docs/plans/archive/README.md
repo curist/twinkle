@@ -63,6 +63,7 @@ Related historical context outside this folder:
 | [string-escape-sequences.md](string-escape-sequences.md) | Add ergonomic string escapes (`\xNN`, `\e`, `\u{...}`) with lexer diagnostics and runtime coverage |
 | [anf-verifier-pass.md](anf-verifier-pass.md) | ANF invariant verifier pass for control-flow, local binding, representation, and codegen metadata consistency |
 | [first-class-inherent-methods.md](first-class-inherent-methods.md) | First-class inherent method values (`receiver.method` → closure) |
+| [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Twinkle-native test runner and suite infrastructure in `boot/tests/` |
 | [string-graphemes.md](string-graphemes.md) | `String.graphemes()` for extended grapheme cluster iteration (UAX #29) |
 | [iterator-to-vector.md](iterator-to-vector.md) | `Iterator.to_vector()` method-form materialization equivalent to `collect` |
