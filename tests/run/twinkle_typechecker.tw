@@ -271,9 +271,9 @@ fn check_ty_defined(ctx: CheckCtx, ty: Ty) !String {
         .TBool => .Ok({}),
         .TString => .Ok({}),
         .TVoid => .Ok({}),
-        .TNamed(name) => case find_type(ctx.types, name, 0) {
-            .Some(_) => .Ok({}),
-            .None => .Err("unknown type: ${name}"),
+        .TNamed(name) => {
+            try find_type(ctx.types, name, 0).ok_or("unknown type: ${name}")
+            .Ok({})
         },
         .TFunc(params, ret) => {
             try check_ty_list_defined(ctx, params, 0)
@@ -335,10 +335,8 @@ fn check_fn_sigs_types_defined(ctx: CheckCtx, i: Int) !String {
 }
 
 fn lookup_value(ctx: CheckCtx, env: Vector<Binding>, name: String) Ty!String {
-    case find_binding(env, name, 0) {
-        .Some(b) => .Ok(b.ty),
-        .None => .Err("undefined value: ${name}"),
-    }
+    b := try find_binding(env, name, 0).ok_or("undefined value: ${name}")
+    .Ok(b.ty)
 }
 
 fn check_call_args(ctx: CheckCtx, env: Vector<Binding>, args: Vector<Expr>, params: Vector<Binding>, i: Int) !String {
@@ -383,25 +381,18 @@ fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Vector<Binding>)
         .PWildcard => .Ok(env),
         .PBind(name) => .Ok(env.push(.{ name: name, ty: expected })),
         .PVariant(variant_name, fields) => {
-            case expected {
-                .TNamed(type_name) => {
-                    case find_type(ctx.types, type_name, 0) {
-                        .None => .Err("unknown type in pattern: ${type_name}"),
-                        .Some(type_decl) => {
-                            case find_variant(type_decl.variants, variant_name, 0) {
-                                .None => .Err("unknown variant ${variant_name} for type ${type_name}"),
-                                .Some(vd) => {
-                                    if fields.len() != vd.fields.len() {
-                                        .Err("pattern arity mismatch for ${variant_name}")
-                                    } else {
-                                        bind_pattern_fields(ctx, fields, vd.fields, 0, env)
-                                    }
-                                },
-                            }
-                        },
-                    }
-                },
-                _ => .Err("variant pattern requires a named type"),
+            type_name := case expected {
+                .TNamed(n) => n,
+                _ => { return .Err("variant pattern requires a named type") },
+            }
+            type_decl := try find_type(ctx.types, type_name, 0)
+                .ok_or("unknown type in pattern: ${type_name}")
+            vd := try find_variant(type_decl.variants, variant_name, 0)
+                .ok_or("unknown variant ${variant_name} for type ${type_name}")
+            if fields.len() != vd.fields.len() {
+                .Err("pattern arity mismatch for ${variant_name}")
+            } else {
+                bind_pattern_fields(ctx, fields, vd.fields, 0, env)
             }
         },
     }
@@ -497,35 +488,26 @@ fn check_expr(ctx: CheckCtx, env: Vector<Binding>, expr: Expr) Ty!String {
         },
 
         .Call(name, args) => {
-            case find_fn_sig(ctx.fns, name, 0) {
-                .None => .Err("undefined function: ${name}"),
-                .Some(sig) => {
-                    if args.len() != sig.params.len() {
-                        .Err("wrong arity for ${name}: expected ${sig.params.len()}, got ${args.len()}")
-                    } else {
-                        try check_call_args(ctx, env, args, sig.params, 0)
-                        .Ok(sig.ret)
-                    }
-                },
+            sig := try find_fn_sig(ctx.fns, name, 0)
+                .ok_or("undefined function: ${name}")
+            if args.len() != sig.params.len() {
+                .Err("wrong arity for ${name}: expected ${sig.params.len()}, got ${args.len()}")
+            } else {
+                try check_call_args(ctx, env, args, sig.params, 0)
+                .Ok(sig.ret)
             }
         },
 
         .VariantLit(type_name, variant_name, args) => {
-            case find_type(ctx.types, type_name, 0) {
-                .None => .Err("unknown type in variant literal: ${type_name}"),
-                .Some(type_decl) => {
-                    case find_variant(type_decl.variants, variant_name, 0) {
-                        .None => .Err("unknown variant ${variant_name} for type ${type_name}"),
-                        .Some(vd) => {
-                            if args.len() != vd.fields.len() {
-                                .Err("wrong variant arity for ${type_name}.${variant_name}")
-                            } else {
-                                try check_variant_args(ctx, env, args, vd.fields, 0)
-                                .Ok(.TNamed(type_name))
-                            }
-                        },
-                    }
-                },
+            type_decl := try find_type(ctx.types, type_name, 0)
+                .ok_or("unknown type in variant literal: ${type_name}")
+            vd := try find_variant(type_decl.variants, variant_name, 0)
+                .ok_or("unknown variant ${variant_name} for type ${type_name}")
+            if args.len() != vd.fields.len() {
+                .Err("wrong variant arity for ${type_name}.${variant_name}")
+            } else {
+                try check_variant_args(ctx, env, args, vd.fields, 0)
+                .Ok(.TNamed(type_name))
             }
         },
 
