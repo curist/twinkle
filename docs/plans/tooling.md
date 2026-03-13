@@ -1,6 +1,10 @@
 # Later Stages — Tooling & Ecosystem
 
 > **Full design:** See [docs/internals/tooling.md](../internals/tooling.md).
+>
+> **Phase 1 LSP execution plan:** See [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md).
+>
+> **Phase 2 LSP execution plan:** See [lsp-diagnostics-completion.md](lsp-diagnostics-completion.md).
 
 **Prerequisites before tooling:**
 
