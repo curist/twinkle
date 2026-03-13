@@ -193,3 +193,4 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
 | [option-result-transpose.md](option-result-transpose.md) | Add symmetric `Option.transpose` / `Result.transpose` conversions for nested `Option<Result<...>>` and `Result<Option<...>>` |
 | [record-constructor-aliases.md](record-constructor-aliases.md) | Close the `P.{ ... }` gap by resolving record constructor targets through transparent type aliases |
+| [byte-contextual-int-literals.md](byte-contextual-int-literals.md) | Allow in-range integer literals to satisfy `Byte` in expected-type contexts without enabling general implicit narrowing |
