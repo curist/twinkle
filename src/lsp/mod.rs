@@ -4,11 +4,15 @@ pub mod position;
 pub mod session;
 pub mod type_index;
 
+use std::collections::HashMap;
+
 use crate::module::AnalyzedModule;
 use crate::syntax::ast::{Expr, ExprId, ExprKind, Item, Pattern, Stmt, Type};
 use crate::syntax::span::{FileId, Span};
 use crate::types::error::TypeError;
-use crate::types::ty::{FunctionSignature, MonoType, method_receiver_type_id};
+use crate::types::ty::{
+    FunctionSignature, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, method_receiver_type_id,
+};
 
 use index::ExprSpanIndex;
 use position::{PositionUtf16, file_position_utf16_to_byte_offset};
@@ -33,6 +37,11 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
 
     if let Some(definition_hover) = hover_definition_at_offset(module, file_id, byte_offset) {
         return Some(definition_hover);
+    }
+
+    if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, byte_offset)
+    {
+        return Some(variant_hover);
     }
 
     let index = ExprSpanIndex::build(&module.ast);
@@ -216,6 +225,357 @@ fn find_word(text: &str, word: &str) -> Option<usize> {
 
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+#[derive(Clone, Copy)]
+struct CasePatternVariantCandidate<'a> {
+    pattern_span: Span,
+    variant_name: &'a str,
+    scrutinee_expr_id: ExprId,
+}
+
+fn hover_case_pattern_variant_at_offset(
+    module: &AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+) -> Option<String> {
+    let candidate = find_smallest_case_pattern_variant_at_offset(module, file_id, byte_offset)?;
+    let scrutinee_ty = module
+        .typed
+        .type_map
+        .get_expr_type(candidate.scrutinee_expr_id)?;
+    let MonoType::Named { type_id, args } = scrutinee_ty else {
+        return None;
+    };
+    let def = module.typed.type_env.get_def(*type_id)?;
+    let TypeDef::Sum {
+        name,
+        type_params,
+        variants,
+    } = def
+    else {
+        return None;
+    };
+    let variant = variants.iter().find(|v| v.name == candidate.variant_name)?;
+    let field_types = instantiate_variant_field_types(
+        *type_id,
+        args,
+        type_params,
+        &variant.fields,
+        candidate.variant_name,
+    );
+    if field_types.is_empty() {
+        Some(format!("{name}.{}", candidate.variant_name))
+    } else {
+        let payload = field_types
+            .iter()
+            .map(|t| t.format_with_names(&module.typed.type_env))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{name}.{}({payload})", candidate.variant_name))
+    }
+}
+
+fn instantiate_variant_field_types(
+    type_id: crate::types::ty::TypeId,
+    args: &[MonoType],
+    type_params: &[String],
+    fields: &[MonoType],
+    variant_name: &str,
+) -> Vec<MonoType> {
+    if type_id == OPTION_TYPE_ID {
+        return match variant_name {
+            "None" => vec![],
+            "Some" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+            _ => fields.to_vec(),
+        };
+    }
+    if type_id == RESULT_TYPE_ID {
+        return match variant_name {
+            "Ok" => vec![args.first().cloned().unwrap_or(MonoType::Void)],
+            "Err" => vec![args.get(1).cloned().unwrap_or(MonoType::Void)],
+            _ => fields.to_vec(),
+        };
+    }
+    if args.is_empty() || type_params.is_empty() {
+        return fields.to_vec();
+    }
+
+    let subst: HashMap<&str, MonoType> = type_params
+        .iter()
+        .zip(args.iter().cloned())
+        .map(|(name, ty)| (name.as_str(), ty))
+        .collect();
+    fields
+        .iter()
+        .map(|field| substitute_type_vars(field, &subst))
+        .collect()
+}
+
+fn substitute_type_vars(ty: &MonoType, subst: &HashMap<&str, MonoType>) -> MonoType {
+    match ty {
+        MonoType::Var(name) => subst
+            .get(name.as_str())
+            .cloned()
+            .unwrap_or_else(|| MonoType::Var(name.clone())),
+        MonoType::Vector(elem) => MonoType::Vector(Box::new(substitute_type_vars(elem, subst))),
+        MonoType::Dict(k, v) => MonoType::Dict(
+            Box::new(substitute_type_vars(k, subst)),
+            Box::new(substitute_type_vars(v, subst)),
+        ),
+        MonoType::Function { params, ret } => MonoType::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type_vars(param, subst))
+                .collect(),
+            ret: Box::new(substitute_type_vars(ret, subst)),
+        },
+        MonoType::Named { type_id, args } => MonoType::Named {
+            type_id: *type_id,
+            args: args
+                .iter()
+                .map(|arg| substitute_type_vars(arg, subst))
+                .collect(),
+        },
+        _ => ty.clone(),
+    }
+}
+
+fn find_smallest_case_pattern_variant_at_offset<'a>(
+    module: &'a AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+) -> Option<CasePatternVariantCandidate<'a>> {
+    let mut best = None;
+    for item in &module.ast.items {
+        visit_item_case_pattern_variant(item, module, file_id, byte_offset, &mut best);
+    }
+    best
+}
+
+fn visit_item_case_pattern_variant<'a>(
+    item: &'a Item,
+    module: &'a AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+    best: &mut Option<CasePatternVariantCandidate<'a>>,
+) {
+    match item {
+        Item::Import(_) | Item::TypeDecl(_) => {}
+        Item::Function(decl) => {
+            for stmt in &decl.body.stmts {
+                visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
+            }
+        }
+        Item::Stmt(stmt) => {
+            visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best)
+        }
+    }
+}
+
+fn visit_stmt_case_pattern_variant<'a>(
+    stmt: &'a Stmt,
+    module: &'a AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+    best: &mut Option<CasePatternVariantCandidate<'a>>,
+) {
+    match stmt {
+        Stmt::Let { value, .. } => {
+            visit_expr_case_pattern_variant(value, module, file_id, byte_offset, best)
+        }
+        Stmt::For { iter, body, .. } => {
+            visit_expr_case_pattern_variant(iter, module, file_id, byte_offset, best);
+            for stmt in &body.stmts {
+                visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
+            }
+        }
+        Stmt::ForCond { cond, body, .. } => {
+            visit_expr_case_pattern_variant(cond, module, file_id, byte_offset, best);
+            for stmt in &body.stmts {
+                visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
+            }
+        }
+        Stmt::Expr(expr) => {
+            visit_expr_case_pattern_variant(expr, module, file_id, byte_offset, best)
+        }
+        Stmt::Break { value, .. } | Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                visit_expr_case_pattern_variant(value, module, file_id, byte_offset, best);
+            }
+        }
+        Stmt::Continue { .. } => {}
+        Stmt::Defer { expr, .. } => {
+            visit_expr_case_pattern_variant(expr, module, file_id, byte_offset, best)
+        }
+    }
+}
+
+fn visit_expr_case_pattern_variant<'a>(
+    expr: &'a Expr,
+    module: &'a AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+    best: &mut Option<CasePatternVariantCandidate<'a>>,
+) {
+    if expr.span.file_id != file_id || !expr.span.contains(byte_offset) {
+        return;
+    }
+
+    match &expr.kind {
+        ExprKind::Literal(_) | ExprKind::Ident(_) => {}
+        ExprKind::Binary { left, right, .. } => {
+            visit_expr_case_pattern_variant(left, module, file_id, byte_offset, best);
+            visit_expr_case_pattern_variant(right, module, file_id, byte_offset, best);
+        }
+        ExprKind::Unary { expr, .. } => {
+            visit_expr_case_pattern_variant(expr, module, file_id, byte_offset, best)
+        }
+        ExprKind::Call { callee, args } => {
+            visit_expr_case_pattern_variant(callee, module, file_id, byte_offset, best);
+            for arg in args {
+                visit_expr_case_pattern_variant(arg, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::FieldAccess { base, .. } => {
+            visit_expr_case_pattern_variant(base, module, file_id, byte_offset, best)
+        }
+        ExprKind::Index { base, index } => {
+            visit_expr_case_pattern_variant(base, module, file_id, byte_offset, best);
+            visit_expr_case_pattern_variant(index, module, file_id, byte_offset, best);
+        }
+        ExprKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            visit_expr_case_pattern_variant(cond, module, file_id, byte_offset, best);
+            visit_expr_case_pattern_variant(then_branch, module, file_id, byte_offset, best);
+            if let Some(else_branch) = else_branch {
+                visit_expr_case_pattern_variant(else_branch, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::Case { scrutinee, arms } => {
+            for arm in arms {
+                visit_pattern_case_variant(
+                    &arm.pattern,
+                    scrutinee.id,
+                    module,
+                    file_id,
+                    byte_offset,
+                    best,
+                );
+            }
+            visit_expr_case_pattern_variant(scrutinee, module, file_id, byte_offset, best);
+            for arm in arms {
+                visit_expr_case_pattern_variant(&arm.body, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::Block(block) => {
+            for stmt in &block.stmts {
+                visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::Array { elements } => {
+            for element in elements {
+                visit_expr_case_pattern_variant(element, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for (_, value) in fields {
+                visit_expr_case_pattern_variant(value, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::VariantLit { fields, .. } => {
+            for field in fields {
+                visit_expr_case_pattern_variant(field, module, file_id, byte_offset, best);
+            }
+        }
+        ExprKind::Function(func) => {
+            visit_expr_case_pattern_variant(&func.body, module, file_id, byte_offset, best)
+        }
+        ExprKind::Collect { iter, body, .. } => {
+            visit_expr_case_pattern_variant(iter, module, file_id, byte_offset, best);
+            visit_expr_case_pattern_variant(body, module, file_id, byte_offset, best);
+        }
+        ExprKind::CollectWhile { cond, body } => {
+            visit_expr_case_pattern_variant(cond, module, file_id, byte_offset, best);
+            visit_expr_case_pattern_variant(body, module, file_id, byte_offset, best);
+        }
+        ExprKind::Try { expr } => {
+            visit_expr_case_pattern_variant(expr, module, file_id, byte_offset, best)
+        }
+        ExprKind::StringInterpolation { parts } => {
+            for part in parts {
+                if let crate::syntax::ast::StringPart::Interpolation(expr) = part {
+                    visit_expr_case_pattern_variant(expr, module, file_id, byte_offset, best);
+                }
+            }
+        }
+    }
+}
+
+fn visit_pattern_case_variant<'a>(
+    pattern: &'a Pattern,
+    scrutinee_expr_id: ExprId,
+    module: &'a AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+    best: &mut Option<CasePatternVariantCandidate<'a>>,
+) {
+    match pattern {
+        Pattern::Variant {
+            name, fields, span, ..
+        } => {
+            if span.file_id == file_id && span.contains(byte_offset) {
+                let on_variant_name = find_identifier_span_within_span(module, *span, name)
+                    .is_some_and(|name_span| name_span.contains(byte_offset));
+                if on_variant_name {
+                    let is_better = best.as_ref().is_none_or(|current| {
+                        span.len() < current.pattern_span.len()
+                            || (span.len() == current.pattern_span.len()
+                                && span.start > current.pattern_span.start)
+                    });
+                    if is_better {
+                        *best = Some(CasePatternVariantCandidate {
+                            pattern_span: *span,
+                            variant_name: name,
+                            scrutinee_expr_id,
+                        });
+                    }
+                }
+            }
+            for field in fields {
+                visit_pattern_case_variant(
+                    field,
+                    scrutinee_expr_id,
+                    module,
+                    file_id,
+                    byte_offset,
+                    best,
+                );
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Ident(_, _) | Pattern::Literal(_, _) => {}
+    }
+}
+
+fn find_identifier_span_within_span(
+    module: &AnalyzedModule,
+    containing_span: Span,
+    identifier: &str,
+) -> Option<Span> {
+    let text = module.file_registry.snippet(containing_span)?;
+    let idx = find_word(text, identifier)?;
+    let start = containing_span
+        .start
+        .checked_add(u32::try_from(idx).ok()?)?;
+    let end = start.checked_add(u32::try_from(identifier.len()).ok()?)?;
+    Some(Span {
+        file_id: containing_span.file_id,
+        start,
+        end,
+    })
 }
 
 struct FieldAccessCandidate<'a> {

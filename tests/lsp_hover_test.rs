@@ -244,3 +244,98 @@ fn hover_on_top_level_binding_name_shows_inferred_type() {
     let hover = hover_at_module(main, pos);
     assert_eq!(hover.as_deref(), Some("Int"));
 }
+
+#[test]
+fn hover_on_case_arm_variant_name_shows_source_variant_constructor() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_case_pattern_variant");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let app = project_root.join("app.tw");
+    let main_source = r#"use app
+
+fn main() String {
+  err := app.parse()
+  case err {
+    .HelpRequested(msg) => msg,
+    .Other => "",
+  }
+}
+"#;
+    let app_source = r#"pub type ParseError = {
+  HelpRequested(String),
+  Other,
+}
+
+pub fn parse() ParseError {
+  .HelpRequested("help")
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), main_source.to_string());
+    sources.insert(app, app_source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = main_source
+        .find(".HelpRequested(msg)")
+        .expect("case arm variant")
+        + 1;
+    let pos = byte_offset_to_position_utf16(main_source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos);
+    assert_eq!(hover.as_deref(), Some("ParseError.HelpRequested(String)"));
+}
+
+#[test]
+fn hover_on_result_case_arm_variants_shows_result_constructors() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_result_case_variant");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"fn main() Int {
+  r: Int!String = .Ok(1)
+  case r {
+    .Ok(v) => v,
+    .Err(_) => 0,
+  }
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let ok_offset = source.find(".Ok(v)").expect("ok arm") + 1;
+    let ok_pos = byte_offset_to_position_utf16(source, ok_offset).expect("position");
+    let ok_hover = hover_at_module(main, ok_pos);
+    assert_eq!(ok_hover.as_deref(), Some("Result.Ok(Int)"));
+
+    let err_offset = source.find(".Err(_)").expect("err arm") + 1;
+    let err_pos = byte_offset_to_position_utf16(source, err_offset).expect("position");
+    let err_hover = hover_at_module(main, err_pos);
+    assert_eq!(err_hover.as_deref(), Some("Result.Err(String)"));
+}
