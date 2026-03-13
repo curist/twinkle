@@ -7,19 +7,90 @@ imported, resolved, named, and composed.
 
 ## Import Syntax
 
-Modules are imported with `use` followed by a dot-separated identifier path:
+Modules are imported with `use` followed by either:
+
+- an absolute dot-separated identifier path (`foo.bar`)
+- a relative path with a leading dot (`.foo`, `.foo.bar`)
+
+Examples:
 
 ```tw
 use foo.bar
+use .arg
 ```
 
-The dot path maps directly to the filesystem: `foo.bar` → `<root>/foo/bar.tw`.
-Single-segment imports are valid: `use utils` → `<root>/utils.tw`.
+Absolute paths map from project root: `foo.bar` → `<root>/foo/bar.tw`.
+Single-segment absolute imports are valid: `use utils` → `<root>/utils.tw`.
 
 The `use` keyword was chosen over `import` because it is shorter and because
 `import` in other languages (Python, JS) often implies bringing names directly
 into scope, which is not what Twinkle does — imported modules are always accessed
 through qualified names (`bar.fn`).
+
+---
+
+## Relative Imports (Submodules)
+
+Relative imports are for sibling/submodule access inside a namespace. A leading
+dot means "resolve from the current module's parent namespace" (not from project
+root).
+
+Example with file `<root>/lib/argparse/app.tw` (module `lib.argparse.app`):
+
+```tw
+use .arg      // => lib.argparse.arg
+use .command  // => lib.argparse.command
+use .style    // => lib.argparse.style
+```
+
+Relative imports avoid repeating long namespace prefixes while keeping canonical
+module identity rooted at project root.
+
+Rules:
+
+- `use foo` is always absolute (root-relative).
+- `use .foo` is always relative to the importing module's parent namespace.
+- Relative import paths are lexical; no fallback probing between relative and
+  absolute resolution.
+- `use @std.*` is unchanged and is never relative.
+
+Nested module structure is still fully supported. Relative imports are intended
+for local namespace access; absolute imports are used when jumping to a
+different namespace.
+
+Example project layout:
+
+```text
+<root>/
+  lib/
+    argparse/
+      app.tw
+      arg.tw
+      command.tw
+      style.tw
+      parser/
+        token.tw
+        reader.tw
+```
+
+Example imports from `lib/argparse/app.tw`:
+
+```tw
+use .arg
+use .command
+use .parser.token
+use lib.argparse.style  // explicit absolute import also valid
+```
+
+Example imports from `lib/argparse/parser/reader.tw`:
+
+```tw
+use .token              // => lib.argparse.parser.token
+use lib.argparse.style  // cross-namespace jump stays absolute
+```
+
+MVP scope: only single leading-dot relative imports are supported (`.foo`,
+`.foo.bar`). Parent traversal (`..foo`) is not part of MVP.
 
 ---
 
