@@ -143,6 +143,7 @@ impl CompileState {
             let qualified_sig = FunctionSignature {
                 name: qualified_name.clone(),
                 type_params: sig.type_params.clone(),
+                param_names: sig.param_names.clone(),
                 params: sig.params.clone(),
                 ret: sig.ret.clone(),
                 doc: sig.doc.clone(),
@@ -178,6 +179,7 @@ impl CompileState {
                         let builtin_sig = FunctionSignature {
                             name: builtin_name.clone(),
                             type_params: sig.type_params.clone(),
+                            param_names: sig.param_names.clone(),
                             params: sig.params.clone(),
                             ret: sig.ret.clone(),
                             doc: sig.doc.clone(),
@@ -233,6 +235,7 @@ impl CompileState {
             let builtin_sig = FunctionSignature {
                 name: builtin_name.clone(),
                 type_params: sig.type_params.clone(),
+                param_names: sig.param_names.clone(),
                 params: sig.params.clone(),
                 ret: sig.ret.clone(),
                 doc: sig.doc.clone(),

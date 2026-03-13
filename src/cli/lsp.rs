@@ -698,6 +698,10 @@ mod tests {
             .as_str()
             .expect("hover markdown value");
         assert!(
+            value.contains("fn(text: String) Void"),
+            "expected named builtin parameter in hover markdown, got: {value}"
+        );
+        assert!(
             value.contains("Print a string to stdout followed by a newline."),
             "expected builtin doc text in hover markdown, got: {value}"
         );
@@ -743,6 +747,10 @@ mod tests {
         let value = response["result"]["contents"]["value"]
             .as_str()
             .expect("hover markdown value");
+        assert!(
+            value.contains("fn(text: String) Void"),
+            "expected named builtin parameter in hover markdown, got: {value}"
+        );
         assert!(
             value.contains("Print a string to stdout followed by a newline."),
             "expected builtin doc text in hover markdown, got: {value}"

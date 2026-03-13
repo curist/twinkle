@@ -1259,6 +1259,7 @@ fn register_inherent_methods(
                             let method_sig = FunctionSignature {
                                 name: method_qname,
                                 type_params: sig.type_params.clone(),
+                                param_names: sig.param_names.clone(),
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
                                 doc: sig.doc.clone(),
@@ -1267,6 +1268,7 @@ fn register_inherent_methods(
                                 FunctionSignature {
                                     name: format!("{}.{}", builtin_alias, &decl.name),
                                     type_params: sig.type_params.clone(),
+                                    param_names: sig.param_names.clone(),
                                     params: sig.params.clone(),
                                     ret: sig.ret.clone(),
                                     doc: sig.doc.clone(),

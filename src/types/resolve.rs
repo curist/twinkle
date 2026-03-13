@@ -298,6 +298,7 @@ impl Resolver {
         Ok(FunctionSignature {
             name: decl.name.clone(),
             type_params,
+            param_names: decl.params.iter().map(|param| param.name.clone()).collect(),
             params,
             ret,
             doc: decl.doc.clone(),

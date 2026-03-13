@@ -54,12 +54,10 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
     let index = ExprSpanIndex::build(&module.ast);
     for entry in index.find_containing(file_id, span_offset) {
         if let Some(ty) = module.typed.type_map.get_expr_type(entry.expr_id) {
-            let type_str = ty.format_with_names(&module.typed.type_env);
-            // If this expression is an identifier referring to a function with docs,
-            // append the doc string below the type.
-            if let Some(doc) = find_expr_doc(module, &entry) {
-                return Some(format!("{type_str}\n\n{doc}"));
+            if let Some(sig) = find_expr_function_signature(module, &entry) {
+                return Some(format_function_signature(&sig, &module.typed.type_env));
             }
+            let type_str = ty.format_with_names(&module.typed.type_env);
             return Some(type_str);
         }
     }
@@ -68,23 +66,32 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
     Some(format_type_hover(module, type_node))
 }
 
-/// Look up doc string for an expression that references a named function.
-/// Uses the source span to extract the identifier text and look up the function signature.
-fn find_expr_doc(module: &AnalyzedModule, entry: &index::ExprSpanEntry) -> Option<String> {
+fn find_expr_function_signature(
+    module: &AnalyzedModule,
+    entry: &index::ExprSpanEntry,
+) -> Option<FunctionSignature> {
+    let snippet = identifier_snippet(module, entry)?;
+    module
+        .typed
+        .value_env
+        .get_function(snippet)
+        .cloned()
+        .or_else(|| builtin_value_signature(snippet))
+}
+
+fn identifier_snippet<'a>(
+    module: &'a AnalyzedModule,
+    entry: &index::ExprSpanEntry,
+) -> Option<&'a str> {
     let source = module.file_registry.source(entry.span.file_id)?;
     let start = span_offset_to_byte_offset(source, entry.span.start)?;
     let end = span_offset_to_byte_offset(source, entry.span.end)?;
     let snippet = source.get(start..end)?;
-    // Only look up docs for simple identifiers (no dots, no operators)
+    // Only look up metadata for simple identifiers (no dots, no operators)
     if snippet.contains('.') || snippet.contains(' ') || snippet.contains('(') {
         return None;
     }
-    // Check function signatures first (intrinsic signatures with docs)
-    if let Some(sig) = module.typed.value_env.get_function(snippet) {
-        return sig.doc.clone();
-    }
-    // Check builtin functions (println, error, range, etc.)
-    builtin_value_doc(snippet).map(str::to_string)
+    Some(snippet)
 }
 
 fn span_offset_to_byte_offset(source: &str, span_offset: u32) -> Option<usize> {
@@ -105,14 +112,48 @@ fn span_offset_to_byte_offset(source: &str, span_offset: u32) -> Option<usize> {
     }
 }
 
-/// Hard-coded doc strings for builtin values registered in ValueEnv::builtins.
-fn builtin_value_doc(name: &str) -> Option<&'static str> {
+fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
     Some(match name {
-        "println" => "Print a string to stdout followed by a newline.",
-        "print" => "Print a string to stdout without a trailing newline.",
-        "eprintln" => "Print a string to stderr followed by a newline.",
-        "eprint" => "Print a string to stderr without a trailing newline.",
-        "error" => "Abort execution with an error message (trap).",
+        "println" => FunctionSignature {
+            name: "println".to_string(),
+            type_params: vec![],
+            param_names: vec!["text".to_string()],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Void),
+            doc: Some("Print a string to stdout followed by a newline.".to_string()),
+        },
+        "print" => FunctionSignature {
+            name: "print".to_string(),
+            type_params: vec![],
+            param_names: vec!["text".to_string()],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Void),
+            doc: Some("Print a string to stdout without a trailing newline.".to_string()),
+        },
+        "eprintln" => FunctionSignature {
+            name: "eprintln".to_string(),
+            type_params: vec![],
+            param_names: vec!["text".to_string()],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Void),
+            doc: Some("Print a string to stderr followed by a newline.".to_string()),
+        },
+        "eprint" => FunctionSignature {
+            name: "eprint".to_string(),
+            type_params: vec![],
+            param_names: vec!["text".to_string()],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Void),
+            doc: Some("Print a string to stderr without a trailing newline.".to_string()),
+        },
+        "error" => FunctionSignature {
+            name: "error".to_string(),
+            type_params: vec![],
+            param_names: vec!["message".to_string()],
+            params: vec![MonoType::String],
+            ret: Some(MonoType::Void),
+            doc: Some("Abort execution with an error message (trap).".to_string()),
+        },
         _ => return None,
     })
 }
@@ -200,7 +241,14 @@ fn format_function_signature(
     let params = sig
         .params
         .iter()
-        .map(|p| p.format_with_names(type_env))
+        .enumerate()
+        .map(|(idx, p)| {
+            let rendered = p.format_with_names(type_env);
+            match sig.param_names.get(idx) {
+                Some(name) if !name.is_empty() => format!("{name}: {rendered}"),
+                _ => rendered,
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let ret = sig.ret.clone().unwrap_or(MonoType::Void);
@@ -256,6 +304,10 @@ fn hover_definition_at_offset(
 }
 
 fn hover_named_value(module: &AnalyzedModule, name: &str) -> Option<String> {
+    if let Some(sig) = module.typed.value_env.get_function(name) {
+        return Some(format_function_signature(sig, &module.typed.type_env));
+    }
+
     if let Some(ty) = module.typed.value_env.lookup(name) {
         return Some(ty.format_with_names(&module.typed.type_env));
     }
@@ -263,6 +315,9 @@ fn hover_named_value(module: &AnalyzedModule, name: &str) -> Option<String> {
     let file_name = module.file_registry.file_name(module.ast.span.file_id)?;
     let module_name = std::path::Path::new(file_name).file_stem()?.to_str()?;
     let qualified = format!("{module_name}.{name}");
+    if let Some(sig) = module.typed.value_env.get_function(&qualified) {
+        return Some(format_function_signature(sig, &module.typed.type_env));
+    }
     let ty = module.typed.value_env.lookup(&qualified)?;
     Some(ty.format_with_names(&module.typed.type_env))
 }

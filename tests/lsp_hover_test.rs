@@ -147,7 +147,7 @@ value := n.inc()
     let byte_offset = main_source.find("inc()").expect("method call") + 1;
     let pos = byte_offset_to_position_utf16(main_source, byte_offset).expect("position");
     let hover = hover_at_module(main, pos);
-    assert_eq!(hover.as_deref(), Some("fn(Int) Int"));
+    assert_eq!(hover.as_deref(), Some("fn(x: Int) Int"));
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn hover_on_function_definition_name_shows_function_type() {
     let byte_offset = source.find("make(").expect("function name") + 1;
     let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
     let hover = hover_at_module(main, pos);
-    assert_eq!(hover.as_deref(), Some("fn(Int) Int"));
+    assert_eq!(hover.as_deref(), Some("fn(x: Int) Int"));
 }
 
 #[test]
@@ -407,7 +407,7 @@ fn hover_on_builtin_function_shows_doc_string_after_multibyte_line() {
     let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
     let hover = hover_at_module(main, pos).expect("should have hover");
     assert!(
-        hover.contains("fn(String) Void"),
+        hover.contains("fn(text: String) Void"),
         "should contain function signature, got: {hover}"
     );
     assert!(
@@ -490,8 +490,46 @@ value := add_one(1)
     let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
     let hover = hover_at_module(main, pos).expect("should have hover");
     assert!(
+        hover.contains("fn(x: Int) Int"),
+        "expected hover to include named parameter signature, got: {hover}"
+    );
+    assert!(
         hover.contains("Add one to x."),
         "expected hover to include parsed /// docs, got: {hover}"
+    );
+}
+
+#[test]
+fn hover_on_builtin_function_call_includes_parameter_name() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_hover_builtin_param_names");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"println("hello")
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+    let main = analysis
+        .modules
+        .get(&analysis.entry_path)
+        .expect("entry module should exist");
+
+    let byte_offset = source.find("println").expect("println call");
+    let pos = byte_offset_to_position_utf16(source, byte_offset).expect("position");
+    let hover = hover_at_module(main, pos).expect("should have hover");
+    assert!(
+        hover.contains("fn(text: String) Void"),
+        "expected named builtin parameter in hover, got: {hover}"
     );
 }
 
@@ -650,11 +688,11 @@ gs := "hello".graphemes().to_vector()
     let e_hover = hover_at_module(main, e_pos).expect("hover on second e");
 
     assert!(
-        g_hover.contains("fn(String) Iterator<String>"),
+        g_hover.contains("fn(s: String) Iterator<String>"),
         "expected graphemes signature on g, got: {g_hover}"
     );
     assert!(
-        e_hover.contains("fn(String) Iterator<String>"),
+        e_hover.contains("fn(s: String) Iterator<String>"),
         "expected graphemes signature on second e, got: {e_hover}"
     );
 }
@@ -710,11 +748,11 @@ gs := "hello".graphemes().to_vector()
     let e_hover = hover_at_module(main, e_pos).expect("hover on second e");
 
     assert!(
-        g_hover.contains("fn(String) Iterator<String>"),
+        g_hover.contains("fn(s: String) Iterator<String>"),
         "expected graphemes signature on g, got: {g_hover}"
     );
     assert!(
-        e_hover.contains("fn(String) Iterator<String>"),
+        e_hover.contains("fn(s: String) Iterator<String>"),
         "expected graphemes signature on second e, got: {e_hover}"
     );
 }
