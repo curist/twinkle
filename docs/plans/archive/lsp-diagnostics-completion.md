@@ -105,6 +105,36 @@ This single field is then available to hover and completion without separate loo
 * No parser recovery yet; parse errors still hard-fail.
 * Comments are not preserved as doc trivia in a tool-friendly way yet.
 
+### Known Pitfall (Current Behavior)
+
+Completion currently depends on a successfully analyzed module in
+`WorkspaceAnalysis.modules`. During partial edits, if the current module fails
+parse/resolve/typecheck, it is omitted from `modules`, so
+`textDocument/completion` for that file can return an empty item list even
+though diagnostics are available.
+
+This is expected with the current pipeline and is the main remaining gap for
+"completion while actively editing broken code".
+
+Common transient edit patterns that surface this:
+
+* **Dot-chaining while editing between lines** — typing or moving `.` across
+  lines (for example `foo.` on one line while the next token is still being
+  edited) can be parsed as an incomplete/ambiguous chain, so semantic
+  completion may drop to empty.
+* **Half-written delimiters** — temporary states like unmatched `(`, `{`, `[`
+  or unfinished argument lists can block resolve/typecheck for the current
+  snapshot.
+* **Incomplete case/type arms** — while adding a new `case` arm or sum variant
+  (missing `=>`, payload, comma, etc.), the module can fail analysis.
+* **Mid-rename/mid-extract states** — transient unresolved identifiers or
+  temporarily missing bindings can invalidate current semantic results.
+
+All of the above are normal during editing. The intended UX is to continue
+serving completion/hover/definition from the **last successful semantic
+state** while still publishing diagnostics from the latest (possibly broken)
+snapshot.
+
 ---
 
 ## Architecture Direction
