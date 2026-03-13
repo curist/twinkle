@@ -1,0 +1,3 @@
+pub fn to_vector<T>(it: Iterator<T>) Vector<T> {
+  collect x in it { x }
+}

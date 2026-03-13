@@ -117,6 +117,11 @@ fn run_wasm_iterator_unfold_collect_len() {
 }
 
 #[test]
+fn run_wasm_iterator_to_vector() {
+    check("tests/run/iterator_to_vector.tw");
+}
+
+#[test]
 fn run_wasm_iterator_unfold_callback_typing() {
     check("tests/run/iterator_unfold_callback_typing.tw");
 }

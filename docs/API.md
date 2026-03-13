@@ -52,6 +52,7 @@ Lazy iterator type.
 |----------|-----------|-------------|
 | `Iterator.next` | `fn<T>(it: Iterator<T>) Option<IterItem<T>>` | Advance iterator |
 | `Iterator.unfold` | `fn<T,S>(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>` | Build iterator from seed + step function |
+| `Iterator.to_vector` | `fn<T>(it: Iterator<T>) Vector<T>` | Materialize iterator into a vector. Equivalent to `collect x in it { x }`. Traverses the full iterator — infinite iterators will not terminate. O(n) memory. The iterator itself is persistent and can be reused. |
 
 Supporting types:
 ```tw

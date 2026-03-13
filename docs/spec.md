@@ -1431,7 +1431,7 @@ Includes:
 * cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
 * string module: `String.concat`, `String.slice`, `String.get`, `String.char_code_at`, `String.from_char_code`, `String.to_string`, etc.
 * byte module: `Byte.to_int`, `Byte.from_int`, `Byte.to_string`
-* iterator module: `Iterator.next`, `Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md))
+* iterator module: `Iterator.next`, `Iterator.unfold`, `Iterator.to_vector` (see [docs/design/iterator.md](design/iterator.md)). `to_vector` materializes the full iterator into a `Vector<T>` (equivalent to `collect x in it { x }`). Infinite iterators will not terminate; O(n) memory.
 * naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
 
 ---

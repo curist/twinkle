@@ -1,0 +1,45 @@
+// Expected output:
+//   empty: 0
+//   five: 0 1 2 3 4
+//   method: 0 1 2 3 4
+//   parity: true
+//   done
+
+fn counter(n: Int) Iterator<Int> {
+  Iterator.unfold(0, fn(s: Int) {
+    if s >= n { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+  })
+}
+
+// empty iterator
+empty := counter(0).to_vector()
+println("empty: ${empty.len()}")
+
+// finite iterator — module-qualified form
+five := Iterator.to_vector(counter(5))
+print("five:")
+for x in five {
+  print(" ${x}")
+}
+println("")
+
+// method call form
+method := counter(5).to_vector()
+print("method:")
+for x in method {
+  print(" ${x}")
+}
+println("")
+
+// parity: to_vector must equal collect x in it { x }
+collected := collect x in counter(5) { x }
+vec := counter(5).to_vector()
+match := collected.len() == vec.len()
+for i in range(collected.len()) {
+  if collected[i] != vec[i] {
+    match = false
+  }
+}
+println("parity: ${match}")
+
+println("done")

@@ -121,6 +121,34 @@ pub fn suite() runner.Suite {
       try assert.int_eq(first[0], second[0])
       .Ok({})
     })
+    .test("to_vector materializes iterator", fn() {
+      it := Iterator.unfold(0, fn(s: Int) {
+        if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 2, s + 1) }
+      })
+      v := it.to_vector()
+      try assert.int_eq(v.len(), 5)
+      try assert.int_eq(v[0], 0)
+      try assert.int_eq(v[2], 4)
+      try assert.int_eq(v[4], 8)
+      .Ok({})
+    })
+    .test("to_vector on empty iterator returns empty vector", fn() {
+      it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
+      v := it.to_vector()
+      try assert.int_eq(v.len(), 0)
+      .Ok({})
+    })
+    .test("to_vector equals collect identity", fn() {
+      it := Iterator.unfold(1, fn(s: Int) {
+        if s > 4 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+      })
+      via_collect := collect x in it { x }
+      via_method := it.to_vector()
+      try assert.int_eq(via_collect.len(), via_method.len())
+      try assert.int_eq(via_collect[0], via_method[0])
+      try assert.int_eq(via_collect[3], via_method[3])
+      .Ok({})
+    })
     .test("string chars returns iterator", fn() {
       chars := collect c in "abc".chars() { c }
       try assert.int_eq(chars.len(), 3)
