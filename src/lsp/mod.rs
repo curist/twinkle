@@ -13,7 +13,8 @@ use crate::syntax::ast::{Expr, ExprId, ExprKind, Item, Pattern, Stmt, Type};
 use crate::syntax::span::{FileId, Span};
 use crate::types::error::TypeError;
 use crate::types::ty::{
-    FunctionSignature, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, method_receiver_type_id,
+    FunctionSignature, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TypeDef, builtin_method_alias,
+    method_receiver_type_id,
 };
 
 use index::ExprSpanIndex;
@@ -23,31 +24,35 @@ use type_index::find_smallest_type_at_offset;
 pub fn expr_id_at_position(module: &AnalyzedModule, position: PositionUtf16) -> Option<ExprId> {
     let file_id = module.ast.span.file_id;
     let byte_offset = file_position_utf16_to_byte_offset(&module.file_registry, file_id, position)?;
+    let source = module.file_registry.source(file_id)?;
+    let span_offset = u32::try_from(source[..byte_offset as usize].chars().count()).ok()?;
     let index = ExprSpanIndex::build(&module.ast);
     index
-        .find_smallest_containing(file_id, byte_offset)
+        .find_smallest_containing(file_id, span_offset)
         .map(|entry| entry.expr_id)
 }
 
 pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Option<String> {
     let file_id = module.ast.span.file_id;
     let byte_offset = file_position_utf16_to_byte_offset(&module.file_registry, file_id, position)?;
+    let source = module.file_registry.source(file_id)?;
+    let span_offset = u32::try_from(source[..byte_offset as usize].chars().count()).ok()?;
 
-    if let Some(function_type) = hover_function_signature_at_offset(module, file_id, byte_offset) {
+    if let Some(function_type) = hover_function_signature_at_offset(module, file_id, span_offset) {
         return Some(function_type);
     }
 
-    if let Some(definition_hover) = hover_definition_at_offset(module, file_id, byte_offset) {
+    if let Some(definition_hover) = hover_definition_at_offset(module, file_id, span_offset) {
         return Some(definition_hover);
     }
 
-    if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, byte_offset)
+    if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, span_offset)
     {
         return Some(variant_hover);
     }
 
     let index = ExprSpanIndex::build(&module.ast);
-    for entry in index.find_containing(file_id, byte_offset) {
+    for entry in index.find_containing(file_id, span_offset) {
         if let Some(ty) = module.typed.type_map.get_expr_type(entry.expr_id) {
             let type_str = ty.format_with_names(&module.typed.type_env);
             // If this expression is an identifier referring to a function with docs,
@@ -59,7 +64,7 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
         }
     }
 
-    let type_node = find_smallest_type_at_offset(&module.ast, file_id, byte_offset)?;
+    let type_node = find_smallest_type_at_offset(&module.ast, file_id, span_offset)?;
     Some(format_type_hover(module, type_node))
 }
 
@@ -140,18 +145,30 @@ fn hover_function_signature_at_offset(
 
     if let ExprKind::Ident(alias) = &candidate.base.kind {
         let qualified = format!("{}.{}", alias, candidate.field);
-        if let Some(sig) = module.typed.value_env.get_function(&qualified) {
+        let sig = module
+            .typed
+            .value_env
+            .get_function(&qualified)
+            .or_else(|| module.typed.value_env.get_function(&candidate.field));
+        if let Some(sig) = sig {
             return Some(format_function_signature(sig, &module.typed.type_env));
         }
     }
 
     let base_ty = module.typed.type_map.get_expr_type(candidate.base.id)?;
     let receiver_type_id = method_receiver_type_id(base_ty)?;
-    let qualified = module
+    let sig = module
         .typed
         .type_env
-        .get_method_function(receiver_type_id, &candidate.field)?;
-    let sig = module.typed.value_env.get_function(qualified)?;
+        .get_method_function(receiver_type_id, &candidate.field)
+        .and_then(|name| module.typed.value_env.get_function(name))
+        .or_else(|| module.typed.value_env.get_function(&candidate.field))
+        .or_else(|| {
+            builtin_method_alias(receiver_type_id).and_then(|alias| {
+                let name = format!("{alias}.{}", candidate.field);
+                module.typed.value_env.get_function(&name)
+            })
+        })?;
     Some(format_function_signature(sig, &module.typed.type_env))
 }
 
