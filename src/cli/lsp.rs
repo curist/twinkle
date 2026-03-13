@@ -658,6 +658,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hover_request_includes_builtin_doc_markdown() {
+        reset_global_cache();
+
+        let project_root = PathBuf::from("/virtual/lsp_cli_hover_builtin_doc");
+        let stdlib_root = project_root.join("stdlib");
+        let entry = project_root.join("main.tw");
+        let source = "println(\"hi\")\n";
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(entry.clone(), source.to_string());
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+        };
+
+        let pos = byte_offset_to_position_utf16(source, 0).expect("position");
+        let uri = path_to_file_uri(&entry).expect("uri");
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": pos.line, "character": pos.character }
+            }
+        });
+
+        let mut writer = Vec::new();
+        let should_exit = handle_lsp_message(&mut state, &payload, &mut writer).expect("handle");
+        assert!(!should_exit, "hover request should not exit");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["id"], json!(3));
+        let value = response["result"]["contents"]["value"]
+            .as_str()
+            .expect("hover markdown value");
+        assert!(
+            value.contains("Print a string to stdout followed by a newline."),
+            "expected builtin doc text in hover markdown, got: {value}"
+        );
+    }
+
     fn decode_lsp_body(buffer: &[u8]) -> Value {
         let raw = std::str::from_utf8(buffer).expect("utf8 response");
         let (_, body) = raw.split_once("\r\n\r\n").expect("header/body split");
