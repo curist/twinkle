@@ -58,6 +58,4 @@ from stage0, bootstrapping sequence)
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [order-comparator-api.md](order-comparator-api.md) | Introduce `Order`, default primitive `compare` methods, and migrate `Vector.sort_by` to `Order` comparators |
-| [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a supported `Dict` key type with interpreter/Wasm parity coverage |
 | [dict-key-projection-adapters.md](dict-key-projection-adapters.md) | Add ergonomic `Dict.by_string/by_int/by_byte` projection adapters for domain keys without traits |

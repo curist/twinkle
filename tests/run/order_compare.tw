@@ -1,0 +1,84 @@
+// Expected output:
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+//   [1, 2, 3, 4, 5]
+//   [5, 4, 3, 2, 1]
+//   [apple, banana, cherry]
+//   Gt
+//   Lt
+//   Eq
+
+fn show_order(o: Order) String {
+  case o {
+    .Lt => "Lt",
+    .Eq => "Eq",
+    .Gt => "Gt",
+  }
+}
+
+fn show_vec(xs: Vector<Int>) String {
+  "[${xs.map(Int.to_string).join(", ")}]"
+}
+
+// Int.compare
+println(show_order(Int.compare(1, 2)))    // Lt
+println(show_order(Int.compare(3, 3)))    // Eq
+println(show_order(Int.compare(5, 1)))    // Gt
+
+// Float.compare
+println(show_order(Float.compare(1.0, 2.0)))  // Lt
+println(show_order(Float.compare(3.0, 3.0)))  // Eq
+println(show_order(Float.compare(5.0, 1.0)))  // Gt
+
+// String.compare
+println(show_order(String.compare("apple", "banana")))  // Lt
+println(show_order(String.compare("hello", "hello")))    // Eq
+println(show_order(String.compare("z", "a")))            // Gt
+
+// Byte.compare
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => "x"[0],
+  }
+}
+b1 := byte(10)
+b2 := byte(20)
+b3 := byte(10)
+println(show_order(Byte.compare(b1, b2)))  // Lt
+println(show_order(Byte.compare(b1, b3)))  // Eq
+println(show_order(Byte.compare(b2, b1)))  // Gt
+
+// sort_by with Order comparators
+nums := [5, 1, 4, 2, 3]
+asc := nums.sort_by(Int.compare)
+desc := nums.sort_by(fn(a, b) {
+  case Int.compare(a, b) {
+    .Lt => .Gt,
+    .Eq => .Eq,
+    .Gt => .Lt,
+  }
+})
+println(show_vec(asc))   // [1, 2, 3, 4, 5]
+println(show_vec(desc))  // [5, 4, 3, 2, 1]
+
+// sort_by with String.compare
+names := ["cherry", "apple", "banana"]
+sorted := names.sort_by(String.compare)
+println("[${sorted.join(", ")}]")  // [apple, banana, cherry]
+
+// Float.compare NaN handling
+nan := 0.0 / 0.0
+println(show_order(Float.compare(nan, 1.0)))   // Gt  (NaN > everything)
+println(show_order(Float.compare(1.0, nan)))   // Lt  (everything < NaN)
+println(show_order(Float.compare(nan, nan)))   // Eq  (NaN == NaN for sorting)

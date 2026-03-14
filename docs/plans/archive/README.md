@@ -76,3 +76,5 @@ Related historical context outside this folder:
 | [record-constructor-aliases.md](record-constructor-aliases.md) | Alias-based record constructors (`P.{ ... }` where `type P = Point`) |
 | [resolver-alias-ordering.md](resolver-alias-ordering.md) | Topological sort for alias resolution ordering to fix alias chain resolution |
 | [deterministic-wat-output.md](deterministic-wat-output.md) | Stabilize resolver declaration ordering so emitted WAT snapshots are deterministic across runs |
+| [order-comparator-api.md](order-comparator-api.md) | `Order` type, primitive `compare` methods, `Vector.sort_by` migration to `Order` comparators |
+| [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a `Dict` key type alongside `Int` and `String` |

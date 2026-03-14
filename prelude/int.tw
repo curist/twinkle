@@ -1,3 +1,8 @@
+/// Compare two Ints.
+pub fn compare(a: Int, b: Int) Order {
+  if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+}
+
 /// Convert Int to Float.
 pub fn to_float(n: Int) Float {
   case Float.from_string(n.to_string()) {

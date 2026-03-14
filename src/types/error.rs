@@ -288,7 +288,7 @@ impl TypeError {
                 *span,
                 "Invalid Dict key type",
                 Some(&format!(
-                    "Dict key must be Int or String, but got: {}\nBool, Float, and compound types are not allowed as Dict keys.",
+                    "Dict key must be Int, String, or Byte, but got: {}\nBool, Float, and compound types are not allowed as Dict keys.",
                     fmt_type(key_type)
                 )),
             ),

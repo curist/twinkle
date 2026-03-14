@@ -88,6 +88,25 @@ type IterItem<T> = .{ value: T, rest: Iterator<T> }
 type UnfoldStep<T, S> = { Done, Yield(T, S) }
 ```
 
+### `Order`
+```tw
+type Order = { Lt, Eq, Gt }
+```
+Comparison result type used by `sort_by` and primitive comparators.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Int.compare` | `fn(a: Int, b: Int) Order` | Compare two integers |
+| `Float.compare` | `fn(a: Float, b: Float) Order` | Compare two floats |
+| `String.compare` | `fn(a: String, b: String) Order` | Lexicographic byte-order comparison |
+| `Byte.compare` | `fn(a: Byte, b: Byte) Order` | Compare two bytes by numeric value |
+
+Comparators can be passed directly as function references:
+```tw
+nums.sort_by(Int.compare)
+names.sort_by(String.compare)
+```
+
 ## I/O
 
 | Function | Signature | Description |
@@ -124,6 +143,7 @@ Primitive type representing a single byte (0–255). Returned by string indexing
 | `Byte.to_int` | `fn(b: Byte) Int` | Convert byte to integer |
 | `Byte.from_int` | `fn(n: Int) Option<Byte>` | Convert integer in range 0..255 to `Byte` |
 | `Byte.to_string` | `fn(b: Byte) String` | Convert byte to string representation |
+| `Byte.compare` | `fn(a: Byte, b: Byte) Order` | Compare two bytes by numeric value |
 
 ## String
 
@@ -188,7 +208,7 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
 | `.contains(elem)` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
-| `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Int) Vector<T>` | Return a new vector sorted by comparator (`cmp < 0` before, `cmp == 0` equal, `cmp > 0` after) |
+| `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Vector<T>` | Return a new sorted vector using comparator (e.g. `xs.sort_by(Int.compare)`) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
 
@@ -201,7 +221,7 @@ Qualified forms (`Vector.map`, `Vector.filter`, etc.) also work.
 
 ## Dict\<K, V\>
 
-Persistent hash map. Keys must be `Int` or `String`.
+Persistent hash map. Keys must be `Int`, `String`, or `Byte`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

@@ -581,3 +581,13 @@ fn record_constructor_alias() {
 fn alias_chain_depth3() {
     check("tests/run/alias_chain_depth3.tw");
 }
+
+#[test]
+fn order_compare() {
+    check("tests/run/order_compare.tw");
+}
+
+#[test]
+fn dict_byte_keys() {
+    check("tests/run/dict_byte_keys.tw");
+}

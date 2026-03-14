@@ -5,7 +5,8 @@ use super::ty::{
     BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId,
+    UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -173,6 +174,30 @@ impl TypeEnv {
                 ),
             }),
             UNFOLD_STEP_TYPE_ID,
+        );
+
+        // TypeId(7) = Order — comparison result: Lt, Eq, Gt
+        assert_eq!(
+            env.add_type(TypeDef::Sum {
+                name: "Order".to_string(),
+                type_params: vec![],
+                variants: vec![
+                    Variant {
+                        name: "Lt".to_string(),
+                        fields: vec![],
+                    },
+                    Variant {
+                        name: "Eq".to_string(),
+                        fields: vec![],
+                    },
+                    Variant {
+                        name: "Gt".to_string(),
+                        fields: vec![],
+                    },
+                ],
+                doc: Some("Comparison result: Lt, Eq, or Gt.".to_string()),
+            }),
+            ORDER_TYPE_ID,
         );
 
         // Register all builtin method mappings.
@@ -579,7 +604,7 @@ impl TypeEnv {
                         }
                         let k_ty = self.resolve_type(&args[0], errors)?;
                         match &k_ty {
-                            MonoType::Int | MonoType::String => {}
+                            MonoType::Int | MonoType::String | MonoType::Byte => {}
                             _ => {
                                 errors.push(TypeError::InvalidDictKey {
                                     key_type: k_ty.clone(),

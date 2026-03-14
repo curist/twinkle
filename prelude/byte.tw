@@ -1,0 +1,6 @@
+/// Compare two Bytes.
+pub fn compare(a: Byte, b: Byte) Order {
+  ai := Byte.to_int(a)
+  bi := Byte.to_int(b)
+  if ai < bi { .Lt } else if ai > bi { .Gt } else { .Eq }
+}

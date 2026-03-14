@@ -1,3 +1,19 @@
+/// Lexicographic byte-order comparison.
+pub fn compare(a: String, b: String) Order {
+  la := a.len()
+  lb := b.len()
+  min_len := if la < lb { la } else { lb }
+  i := 0
+  for i < min_len {
+    ba := Byte.to_int(a[i])
+    bb := Byte.to_int(b[i])
+    if ba < bb { return .Lt }
+    if ba > bb { return .Gt }
+    i = i + 1
+  }
+  if la < lb { .Lt } else if la > lb { .Gt } else { .Eq }
+}
+
 // Decode the code point at byte position `pos` in string `s`.
 fn decode_cp(s: String, pos: Int) Int {
   lead := Byte.to_int(s[pos])

@@ -1,0 +1,45 @@
+// Expected output:
+//   42
+//   true
+//   false
+//   2
+//   99
+//   1
+//   true
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => "x"[0],
+  }
+}
+
+// Basic Dict<Byte, Int> operations
+m: Dict<Byte, Int> = Dict.new()
+b1 := byte(65)
+b2 := byte(66)
+
+m[b1] = 42
+m[b2] = 99
+
+// get
+v := case m[b1] { .Some(x) => x, .None => -1 }
+println("${v}")              // 42
+
+// has
+println("${m.has(b1)}")     // true
+b3 := byte(67)
+println("${m.has(b3)}")     // false
+
+// len
+println("${m.len()}")       // 2
+
+// overwrite same key
+m[b1] = 99
+v2 := case m[b1] { .Some(x) => x, .None => -1 }
+println("${v2}")             // 99
+
+// remove
+m2 := m.remove(b1)
+println("${m2.len()}")      // 1
+println("${m2.has(b2)}")    // true
