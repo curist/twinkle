@@ -55,7 +55,7 @@ from stage0, bootstrapping sequence)
 
 | Plan | Description |
 |------|-------------|
-| [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
+| [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [dict-key-projection-adapters.md](dict-key-projection-adapters.md) | Add ergonomic `Dict.by_string/by_int/by_byte` projection adapters for domain keys without traits |

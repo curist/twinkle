@@ -7,16 +7,24 @@ Reduce allocation and repeated byte-comparison cost for `String` values in the W
 ## Current State
 
 - `String` is represented as `rt_types__String` (`array (mut i8)`).
-- String literals are emitted as fresh `array.new_fixed` at each use site.
+- Compile-time literal interning is implemented in codegen:
+  - identical UTF-8 literal bytes are pooled per emitted module,
+  - one mutable global + getter function are emitted per pooled literal,
+  - use sites call the getter instead of materializing inline each time.
 - Equality is pointer fast-path plus byte-by-byte fallback (`rt.core.eq` -> `rt.str.eq`).
-- There is no global or runtime string interning table.
+- There is still no runtime intern table for dynamically produced strings.
+
+## Status Snapshot
+
+- Phase 1 (compile-time literal interning): landed.
+- Phase 2 (runtime interning): not started, still optional.
 
 ## Scope
 
 This plan has two deliverables:
 
-1. Compile-time literal interning (required)
-2. Runtime interning for dynamically produced strings (optional follow-up)
+1. Compile-time literal interning (required, complete)
+2. Runtime interning for dynamically produced strings (optional follow-up, pending)
 
 ## Non-Goals
 
@@ -30,12 +38,13 @@ This plan has two deliverables:
 
 Intern all identical string literals per linked module and emit one allocation site per unique literal.
 
-- Add a literal pool in codegen that assigns stable symbols to unique byte sequences.
-- Emit one internal helper/global per pooled literal.
-- Replace inline literal materialization with a load/call to the pooled symbol.
-- Keep runtime representation unchanged (`array<i8>`).
+- Implemented:
+  - codegen literal pool with stable symbol suffixes derived from UTF-8 bytes,
+  - one helper global/getter per pooled literal,
+  - use-site lowering to pooled getter calls,
+  - unchanged runtime `String` representation (`array<i8>`).
 
-Expected impact:
+Observed/expected impact:
 
 - Fewer allocations for repeated literals.
 - More pointer-equality hits before byte compare.
@@ -58,21 +67,24 @@ Expected impact:
 
 ### Task A: Literal Pool in Codegen
 
-- Update `src/codegen/emit.rs`:
-  - Introduce a module-level string-literal pool.
-  - Replace `emit_string_literal_atom` direct emission at use sites with pooled reference materialization.
-  - Ensure deterministic symbol naming/order for snapshot stability.
-- Add/adjust tests near existing literal-emission tests in `emit.rs`.
+- Status: complete.
+- Landed in:
+  - `src/codegen/ctx.rs` (literal pool bookkeeping + deterministic symbol suffixes),
+  - `src/codegen/emit.rs` (pooled getter emission and use-site lowering).
+- Unit tests exist in `src/codegen/emit.rs` for:
+  - UTF-8 byte emission,
+  - literal dedup through pooled getters,
+  - lazy global initialization in pooled getters.
 
 ### Task B: Link/Emit Stability
 
-- Verify linker and emitter handle added literal helper globals/functions deterministically.
-- Update snapshots in:
-  - `tests/snapshots/build/*.wat`
-  - `tests/snapshots/runtime_dump_test__*.snap`
+- Status: complete for current pipeline.
+- Snapshots include pooled literal globals/getters (for example in `tests/snapshots/build/*.wat`).
+- Deterministic ordering is maintained via map ordering in emission.
 
 ### Task C: Runtime Interning API (Follow-Up)
 
+- Status: pending.
 - Add intern-table representation in runtime (likely in `rt.str`, or shared with a small hash map helper).
 - Add `intern` entry to:
   - `src/runtime/str.rs`
@@ -81,14 +93,17 @@ Expected impact:
 
 ## Validation
 
-- Functional parity tests pass (`run`, `run_wasm`, snapshots).
-- New tests:
-  - Repeated identical literals produce shared instance behavior (observable via equality fast-path proxies).
-  - Unicode literals still round-trip as UTF-8 bytes.
-  - No regressions in host decode/encode paths.
+- Current validation for landed Phase 1:
+  - Existing `run` / `run_wasm` / snapshot suites continue to pass.
+  - Emitter tests cover literal pooling mechanics and UTF-8 byte handling.
+  - Build snapshots show pooled-literal globals/getters.
+- Remaining validation to add only if/when Phase 2 is implemented:
+  - Dynamic-string canonicalization behavior checks.
+  - Intern-table performance/overhead characterization.
+  - Regression checks around host decode/encode paths with interning enabled.
 
 ## Rollout
 
-1. Land Phase 1 (literal interning) behind no feature flag.
-2. Measure allocation and equality-heavy workloads.
-3. Decide on Phase 2 based on measured wins vs added runtime complexity.
+1. Keep Phase 1 as default behavior (no feature flag).
+2. Measure allocation/equality-heavy workloads to quantify additional upside from Phase 2.
+3. Decide whether to implement Phase 2 based on measured wins vs runtime complexity/memory cost.
