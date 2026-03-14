@@ -1,0 +1,20 @@
+// Expected output:
+//   10
+//   65
+//   66
+//   67
+//   10
+
+b: Byte = 10
+println("${b.to_int()}")
+
+fn print_byte(n: Byte) {
+  println("${n.to_int()}")
+}
+
+print_byte(65)
+
+bytes: Vector<Byte> = [66, 67]
+println("${bytes[0].to_int()}")
+println("${bytes[1].to_int()}")
+println(b.to_string())

@@ -1120,7 +1120,11 @@ fn emit_let_binding(
             instrs
         }
         AnfOp::AArrayLit(elems) => {
-            let mut instrs = emit_array_literal(elems, &bind_ty, ctx);
+            let elem_mono = ctx.local_mono.get(&local).and_then(|mono| match mono {
+                MonoType::Vector(elem) => Some(elem.as_ref().clone()),
+                _ => None,
+            });
+            let mut instrs = emit_array_literal(elems, &bind_ty, elem_mono.as_ref(), ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             instrs
         }
@@ -3883,10 +3887,22 @@ fn emit_default_value(ty: &ValType) -> Vec<Instr> {
     }
 }
 
-fn emit_array_literal(elems: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+fn emit_array_literal(
+    elems: &[Atom],
+    bind_ty: &ValType,
+    elem_mono: Option<&MonoType>,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
     let mut instrs = Vec::new();
+    let elem_val_ty = elem_mono
+        .map(|mono| mono_to_valtype_specialized(mono, ctx.type_env, &ctx.concrete_func_sigs));
     for elem in elems {
-        instrs.extend(emit_atom(elem, Some(&ValType::Anyref), ctx));
+        if let Some(elem_ty) = elem_val_ty.as_ref() {
+            instrs.extend(emit_atom(elem, Some(elem_ty), ctx));
+            instrs.extend(emit_coerce_stack(elem_ty, &ValType::Anyref));
+        } else {
+            instrs.extend(emit_atom(elem, Some(&ValType::Anyref), ctx));
+        }
     }
     instrs.push(Instr::ArrayNewFixed(
         T_ARRAY.to_string(),

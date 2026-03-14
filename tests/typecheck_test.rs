@@ -291,6 +291,19 @@ println("${t}")
     );
 }
 
+#[test]
+fn test_byte_literal_out_of_range_reports_note() {
+    let src = "b: Byte = 256";
+    let errors = check_errors(src);
+    assert!(!errors.is_empty(), "expected a type error");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("out of range for Byte (0..255)"),
+        "expected byte range note in error:\n{}",
+        joined
+    );
+}
+
 // Closure capture-by-value semantics (spec §7.7).
 // A closure must capture the value at definition time; later rebinding of
 // the source variable must not affect the captured value.

@@ -488,6 +488,11 @@ fn byte_arithmetic_promotion() {
 }
 
 #[test]
+fn byte_contextual_literals() {
+    check("tests/run/byte_contextual_literals.tw");
+}
+
+#[test]
 fn string_chars() {
     check("tests/run/string_chars.tw");
 }

@@ -1,0 +1,11 @@
+// Integer literals should contextually type-check as Byte when expected.
+
+b: Byte = 10
+
+fn takes_byte(x: Byte) Int {
+  x.to_int()
+}
+
+n: Int = takes_byte(10)
+
+bytes: Vector<Byte> = [65, 66, 67]

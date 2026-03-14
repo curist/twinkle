@@ -237,6 +237,11 @@ fn run_wasm_byte_arithmetic_promotion() {
 }
 
 #[test]
+fn run_wasm_byte_contextual_literals() {
+    check("tests/run/byte_contextual_literals.tw");
+}
+
+#[test]
 fn run_wasm_bitwise_ops() {
     check("tests/run/bitwise_ops.tw");
 }

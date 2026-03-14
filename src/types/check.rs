@@ -662,6 +662,28 @@ impl TypeChecker {
     //
 
     fn check_expr(&mut self, expr: &Expr, expected: &MonoType) -> Result<(), ()> {
+        // Contextual literal narrowing: integer literals can satisfy Byte
+        // expectations when they are in range.
+        if let ExprKind::Literal(Literal::Int(n)) = &expr.kind {
+            if self.zonk(expected) == MonoType::Byte {
+                if (0..=255).contains(n) {
+                    self.type_map.set_expr_type(expr.id, MonoType::Byte);
+                    return Ok(());
+                }
+
+                self.errors.push(TypeError::TypeMismatch {
+                    expected: MonoType::Byte,
+                    actual: MonoType::Int,
+                    span: expr.span,
+                    note: Some(format!(
+                        "integer literal {} is out of range for Byte (0..255)",
+                        n
+                    )),
+                });
+                return Err(());
+            }
+        }
+
         let result = match &expr.kind {
             // Anonymous record literals REQUIRE checking mode
             ExprKind::RecordLit { name: None, fields } => {

@@ -13,7 +13,7 @@ use crate::ir::lower::prelude as prelude_ids;
 use crate::syntax::ast::BinOp;
 use crate::syntax::ast::UnOp as AstUnOp;
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    ITER_ITEM_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 use super::value::Value;
@@ -214,7 +214,17 @@ impl<W: Write> Interpreter<W> {
     fn eval(&mut self, expr: &CoreExpr, frame: &mut Frame) -> EvalResult {
         use CoreExprKind::*;
         match &expr.kind.clone() {
-            LitInt(n) => Ok(Value::Int(*n)),
+            LitInt(n) => match expr.ty {
+                MonoType::Byte => {
+                    debug_assert!(
+                        (0..=255).contains(n),
+                        "typechecker allowed out-of-range Byte literal: {}",
+                        n
+                    );
+                    Ok(Value::Byte(*n as u8))
+                }
+                _ => Ok(Value::Int(*n)),
+            },
             LitFloat(f) => Ok(Value::Float(*f)),
             LitBool(b) => Ok(Value::Bool(*b)),
             LitStr(s) => Ok(Value::Str(s.clone())),

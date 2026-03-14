@@ -128,18 +128,6 @@ fn push_accum_op(
     op_result_mono.insert(local, result_ty.clone());
 }
 
-fn atom_result_mono(atom: &Atom, op_result_mono: &HashMap<LocalId, MonoType>) -> Option<MonoType> {
-    match atom {
-        Atom::ALocal(local) => op_result_mono.get(local).cloned(),
-        Atom::ALitInt(_) => Some(MonoType::Int),
-        Atom::ALitFloat(_) => Some(MonoType::Float),
-        Atom::ALitBool(_) => Some(MonoType::Bool),
-        Atom::ALitStr(_) => Some(MonoType::String),
-        Atom::ALitVoid => Some(MonoType::Void),
-        Atom::AGlobalFunc(_) => None,
-    }
-}
-
 /// Lower a `CoreExpr` to a full `AnfExpr`.
 ///
 /// This is the top-level entry: it processes the expression, collecting intermediate
@@ -393,8 +381,7 @@ fn lower_expr(
                     accum.extend(value_accum);
                     // Value reduced to an atom — initialize orig_local with it.
                     // AInit marks this as a new binding (distinct from AAssign mutation).
-                    let init_ty =
-                        atom_result_mono(&atom, op_result_mono).unwrap_or_else(|| value.ty.clone());
+                    let init_ty = value.ty.clone();
                     accum.push((orig_local, AnfOp::AInit { value: atom }));
                     op_result_mono.insert(orig_local, init_ty);
                 }

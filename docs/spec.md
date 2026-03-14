@@ -1541,6 +1541,9 @@ Expressions that require contextual type information:
 * **Anonymous record literals** (`.{ ... }`) — the expected record type must be known from the surrounding context.
 * **Annotated bindings** (`x: T = e`) — `e` is checked against `T` rather than synthesized.
 * **Function arguments** — the argument is checked against the declared parameter type.
+* **Integer literals in `Byte` contexts** — a literal like `10` is accepted as
+  `Byte` only when an expected `Byte` type is present, and only if the value is
+  in range `0..255`.
 
 This is the same approach used by Gleam, Elm, and modern OCaml. The type system (what is typable) is unchanged from Damas–Milner; only the inference procedure is bidirectional rather than pure Algorithm W.
 
@@ -1594,6 +1597,10 @@ Shift semantics:
 * `>>` is arithmetic right shift (sign-preserving).
 
 No implicit narrowing conversion exists from `Int` to `Byte`; use `Byte.from_int`.
+The only exception is contextual typing of integer literals: when an expected
+type is `Byte`, an integer literal is accepted if and only if it is in range
+`0..255` (for example `b: Byte = 10` and `f(10)` where `f` expects `Byte`).
+This exception does not apply to non-literal `Int` values.
 There is no implicit mixing between `Byte` and `Float`.
 
 Comparison operators require both operands to have the same type; result is `Bool`.
