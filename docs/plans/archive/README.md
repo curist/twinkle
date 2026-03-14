@@ -75,3 +75,4 @@ Related historical context outside this folder:
 | [api-ergonomics-minimal.md](api-ergonomics-minimal.md) | Minimal ergonomic APIs: `Vector.sort_by`, lazy `Iterator.map/filter/take`, and `Option/Result map/and_then` |
 | [record-constructor-aliases.md](record-constructor-aliases.md) | Alias-based record constructors (`P.{ ... }` where `type P = Point`) |
 | [resolver-alias-ordering.md](resolver-alias-ordering.md) | Topological sort for alias resolution ordering to fix alias chain resolution |
+| [deterministic-wat-output.md](deterministic-wat-output.md) | Stabilize resolver declaration ordering so emitted WAT snapshots are deterministic across runs |
