@@ -10,6 +10,7 @@
 Language design notes, rationale, and open questions.
 
 - [module.md](design/module.md) — Module system design (imports, resolution, aliasing, re-exports)
+- [compiler-architecture.md](design/compiler-architecture.md) — Compiler pipeline, architecture principles, and repository layout
 - [records.md](design/records.md) — Nominal record types
 - [traits.md](design/traits.md) — Why no traits; records-of-functions instead
 - [iterator.md](design/iterator.md) — Iterator design
