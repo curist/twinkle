@@ -558,6 +558,11 @@ impl Parser {
                 if op_kind == TokenKind::Dot {
                     let dot_tok = self.tokens.get(self.pos).unwrap();
                     if let Some(next_tok) = self.tokens.get(self.pos + 1) {
+                        // `.{` on a new line — break so it parses as a new
+                        // statement (anonymous record literal in prefix position).
+                        if next_tok.kind == TokenKind::LBrace && dot_tok.preceded_by_newline {
+                            break;
+                        }
                         if next_tok.kind == TokenKind::Ident
                             && next_tok.text.starts_with(|c: char| c.is_uppercase())
                         {
