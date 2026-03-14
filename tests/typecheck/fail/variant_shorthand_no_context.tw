@@ -1,0 +1,7 @@
+// Variant shorthand without any type context should still fail.
+type MyError = { NotFound(String), BadInput }
+
+fn test() {
+  // No type annotation, no expected type — cannot infer which sum type
+  x := .NotFound("missing")
+}

@@ -1,0 +1,59 @@
+// Contextual inference: expected return type flows into generic call arguments.
+
+type MyError = { NotFound(String), InvalidInput(String) }
+
+fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
+  case opt {
+    .Some(v) => .Ok(v),
+    .None => .Err(err),
+  }
+}
+
+// Gap A: variant shorthand against a generic param solved by return-type context.
+// The annotated binding provides Result<Int, MyError>, which solves E = MyError
+// before checking the second argument.
+fn test_ok_or_annotated(opt: Int?) Result<Int, MyError> {
+  r: Result<Int, MyError> = ok_or(opt, .NotFound("missing"))
+  r
+}
+
+// Gap A via try: function return type Result<Int, MyError> constrains
+// the try-expression to return Result<_, MyError>, solving E.
+fn test_ok_or_try(opt: Int?) Result<Int, MyError> {
+  x := try ok_or(opt, .NotFound("missing"))
+  .Ok(x)
+}
+
+// Gap B: unannotated closure param inferred from generic callback position.
+type Item = .{ name: String, value: Int }
+
+fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
+  .None
+}
+
+fn test_closure_param(items: Vector<Item>) Item? {
+  // The expected type of f is fn(Item) Bool — A is solved from xs first,
+  // then the closure param a gets type Item without annotation.
+  find(items, fn(a) { a.name == "x" })
+}
+
+// Gap A via method call: opt.ok_or(.Variant(...)) with annotated binding.
+fn test_ok_or_method_annotated(opt: Int?) Result<Int, MyError> {
+  r: Result<Int, MyError> = opt.ok_or(.InvalidInput("bad"))
+  r
+}
+
+// Gap A via try + method call chain.
+fn test_ok_or_method_try(opt: Int?) Result<Int, MyError> {
+  x := try opt.ok_or(.NotFound("missing"))
+  .Ok(x)
+}
+
+// Gap B via method call: items.find(fn(a) { ... }) with unannotated closure.
+fn filter<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A> {
+  xs
+}
+
+fn test_closure_method_style(items: Vector<Item>) Vector<Item> {
+  filter(items, fn(item) { item.value > 0 })
+}

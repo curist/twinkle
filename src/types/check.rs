@@ -40,6 +40,11 @@ pub struct TypeChecker {
     next_meta: u32,
     meta_subst: HashMap<u32, MonoType>,
 
+    /// When check_expr dispatches a Call to synth_call, this carries the
+    /// expected return type so that generic instantiation can pre-unify the
+    /// return type *before* checking arguments, solving MetaVars earlier.
+    call_expected_ret: Option<MonoType>,
+
     // Internal host intrinsics are only callable from stdlib/prelude modules.
     allow_internal_host_builtins: bool,
 }
@@ -79,6 +84,7 @@ impl TypeChecker {
             at_module_scope: true,
             next_meta: 0,
             meta_subst: HashMap::new(),
+            call_expected_ret: None,
             allow_internal_host_builtins,
         };
 
@@ -613,7 +619,30 @@ impl TypeChecker {
             }
 
             ExprKind::Try { expr: inner } => {
-                let inner_ty = self.synth_expr(inner)?;
+                // Derive expected inner type from the enclosing function's return type
+                // so that generic MetaVars in the inner call get solved earlier.
+                // e.g. function returns Result<X, ParseError> → inner expected is
+                // Result<fresh_meta, ParseError>, solving E before checking args.
+                let inner_ty = if let Some(MonoType::Named {
+                    type_id,
+                    args: ret_args,
+                }) = &self.current_function_ret.clone()
+                {
+                    if *type_id == RESULT_TYPE_ID {
+                        let ok_meta = self.fresh_meta();
+                        let err_ty = ret_args.get(1).cloned().unwrap_or(MonoType::Void);
+                        let expected_inner = MonoType::Named {
+                            type_id: RESULT_TYPE_ID,
+                            args: vec![ok_meta, err_ty],
+                        };
+                        self.check_expr(inner, &expected_inner)?;
+                        self.zonk(&expected_inner)
+                    } else {
+                        self.synth_expr(inner)?
+                    }
+                } else {
+                    self.synth_expr(inner)?
+                };
                 match &inner_ty {
                     MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID => {
                         // try Result<T,E> → extracts T; propagates Err(E) via early return
@@ -662,10 +691,15 @@ impl TypeChecker {
     //
 
     fn check_expr(&mut self, expr: &Expr, expected: &MonoType) -> Result<(), ()> {
+        // Zonk expected type so solved MetaVars are visible to all branches
+        // (e.g. check_variant_lit needs a concrete Named type, not a MetaVar).
+        let expected_z = self.zonk(expected);
+        let expected = &expected_z;
+
         // Contextual literal narrowing: integer literals can satisfy Byte
         // expectations when they are in range.
         if let ExprKind::Literal(Literal::Int(n)) = &expr.kind {
-            if self.zonk(expected) == MonoType::Byte {
+            if *expected == MonoType::Byte {
                 if (0..=255).contains(n) {
                     self.type_map.set_expr_type(expr.id, MonoType::Byte);
                     return Ok(());
@@ -775,7 +809,7 @@ impl TypeChecker {
                                 self.unify(&ann_ty, exp_ty, p.span)?;
                                 param_types.push(self.zonk(exp_ty));
                             }
-                            None => param_types.push(exp_ty.clone()),
+                            None => param_types.push(self.zonk(exp_ty)),
                         }
                     }
                     let ret_ty = match &fe.return_type {
@@ -784,7 +818,7 @@ impl TypeChecker {
                             self.unify(&ann_ret, expected_ret.as_ref(), ann.span())?;
                             self.zonk(expected_ret.as_ref())
                         }
-                        None => expected_ret.as_ref().clone(),
+                        None => self.zonk(expected_ret.as_ref()),
                     };
                     self.local_env.push_scope();
                     for (p, ty) in fe.params.iter().zip(&param_types) {
@@ -847,6 +881,15 @@ impl TypeChecker {
                     }
                 }
                 let actual = self.synth_expr(expr)?;
+                self.unify(&actual, expected, expr.span)
+            }
+
+            // Calls: propagate expected return type into generic instantiation
+            // so MetaVars are solved before checking arguments.
+            ExprKind::Call { callee, args } => {
+                self.call_expected_ret = Some(expected.clone());
+                let actual = self.synth_call(callee, args, expr.span)?;
+                self.call_expected_ret = None;
                 self.unify(&actual, expected, expr.span)
             }
 
@@ -1058,6 +1101,11 @@ impl TypeChecker {
     //
 
     fn synth_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Result<MonoType, ()> {
+        // Capture and clear expected return type so it doesn't leak into
+        // nested synth_expr calls (e.g. synthesising the callee/base).
+        // The value is used once for pre-unification at the right level.
+        let call_expected = self.call_expected_ret.take();
+
         // Special case: field-access calls — handles both module-qualified
         // calls (module.func(args)) and method calls (receiver.method(args)).
         if let ExprKind::FieldAccess {
@@ -1071,6 +1119,7 @@ impl TypeChecker {
                     let alias = alias.clone();
                     let method_name = method_name.clone();
                     let callee_id = callee.id;
+                    self.call_expected_ret = call_expected;
                     return self.synth_module_call(&alias, &method_name, args, span, callee_id);
                 }
 
@@ -1144,8 +1193,11 @@ impl TypeChecker {
                 }
             }
 
-            // Method call on a value: synthesise base type, then dispatch
+            // Method call on a value: synthesise base type, then dispatch.
+            // Base synthesis is done first (no call_expected_ret visible to nested
+            // calls), then restore expected for the actual method dispatch.
             let base_ty = self.synth_expr(base)?;
+            self.call_expected_ret = call_expected;
             let method_name = method_name.clone();
             let callee_id = callee.id;
             return self.synth_method_call(base, base_ty, &method_name, args, span, callee_id);
@@ -1164,6 +1216,14 @@ impl TypeChecker {
                         span,
                     });
                     return Err(());
+                }
+
+                // Best-effort pre-unify: solve generic MetaVars from expected
+                // return type before checking arguments. Errors are deliberately
+                // ignored — the outer unify in check_expr will re-report any
+                // real mismatch.
+                if let Some(expected_ret) = call_expected {
+                    let _ = self.unify(&ret, &expected_ret, span);
                 }
 
                 // Check each argument; MetaVar params are solved by unify inside check_expr.
@@ -1227,6 +1287,10 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> Result<MonoType, ()> {
+        // Capture expected return type up front so it cannot leak on early-exit
+        // paths (e.g. arity mismatch).
+        let call_expected = self.call_expected_ret.take();
+
         let qualified = format!("{}.{}", alias, func_name);
         // Look up full function signature for proper MetaVar instantiation of generics.
         if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
@@ -1247,6 +1311,12 @@ impl TypeChecker {
                 MonoType::Function { params, ret } => (params, *ret),
                 _ => unreachable!(),
             };
+            // Best-effort pre-unify: solve generic MetaVars from expected return
+            // type before checking arguments. Errors are deliberately ignored —
+            // the outer unify in check_expr will re-report any real mismatch.
+            if let Some(expected_ret) = call_expected {
+                let _ = self.unify(&inst_ret, &expected_ret, span);
+            }
             for (arg, expected_ty) in args.iter().zip(inst_params.iter()) {
                 self.check_expr(arg, expected_ty)?;
             }
@@ -1405,9 +1475,15 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> Result<Option<MonoType>, ()> {
+        // Capture expected return type up front so it cannot leak on early-exit
+        // paths (e.g. method not found, arity mismatch).
+        let call_expected = self.call_expected_ret.take();
+
         let receiver_type_id = if let Some(type_id) = method_receiver_type_id(base_ty) {
             type_id
         } else {
+            // Not a method receiver — put expected back for fallback dispatch
+            self.call_expected_ret = call_expected;
             return Ok(None);
         };
         let func_name = if let Some(name) = self
@@ -1417,11 +1493,13 @@ impl TypeChecker {
         {
             name
         } else {
+            self.call_expected_ret = call_expected;
             return Ok(None);
         };
         let sig = if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
             sig
         } else {
+            self.call_expected_ret = call_expected;
             return Ok(None);
         };
         let explicit_count = args.len();
@@ -1443,6 +1521,12 @@ impl TypeChecker {
             MonoType::Function { params, ret } => (params, *ret),
             _ => unreachable!(),
         };
+        // Best-effort pre-unify: solve generic MetaVars from expected return
+        // type before checking arguments. Errors are deliberately ignored —
+        // the outer unify in check_expr will re-report any real mismatch.
+        if let Some(expected_ret) = call_expected {
+            let _ = self.unify(&inst_ret, &expected_ret, span);
+        }
         if let Some(recv_ty) = inst_params.first() {
             self.unify(base_ty, recv_ty, base.span)?;
         }
