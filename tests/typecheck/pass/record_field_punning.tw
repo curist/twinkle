@@ -1,0 +1,15 @@
+type User = .{ name: String, age: Int }
+
+fn mk_user(name: String, age: Int) User {
+  User.{ name, age }
+}
+
+fn birthday(u: User) User {
+  name := u.name
+  age := u.age + 1
+  .{ name, age }
+}
+
+user := mk_user("Ada", 30)
+older := birthday(user)
+ok := older.age == 31

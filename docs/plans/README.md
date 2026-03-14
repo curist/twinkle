@@ -57,4 +57,3 @@ from stage0, bootstrapping sequence)
 | [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [record-field-punning.md](record-field-punning.md) | Add record literal shorthand `.{ x }` for `.{ x: x }` in named/anonymous forms |

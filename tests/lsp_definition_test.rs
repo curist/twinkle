@@ -293,6 +293,88 @@ value := math.answer()
     assert_eq!(target.path, math);
 }
 
+#[test]
+fn definition_resolves_shorthand_record_field_value_to_parameter_anonymous() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_definition_record_punning_anon");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"type Pair = .{ x: Int, y: Int }
+
+fn mk(x: Int, y: Int) Pair {
+  .{ x, y }
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+
+    let pos = position_of(source, ".{ x, y }", 3);
+    let target =
+        definition_at_workspace(&analysis, &entry, pos).expect("definition should resolve");
+    assert_eq!(target.path, entry);
+
+    let module = analysis.modules.get(&target.path).expect("module");
+    let snippet = module
+        .file_registry
+        .snippet(target.span)
+        .expect("definition snippet");
+    assert!(
+        snippet.contains("x"),
+        "expected snippet to contain parameter name, got: {snippet}"
+    );
+}
+
+#[test]
+fn definition_resolves_shorthand_record_field_value_to_parameter_named() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_definition_record_punning_named");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    let source = r#"type Pair = .{ x: Int, y: Int }
+
+fn mk(x: Int, y: Int) Pair {
+  Pair.{ x, y }
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+
+    let pos = position_of(source, "Pair.{ x, y }", 7);
+    let target =
+        definition_at_workspace(&analysis, &entry, pos).expect("definition should resolve");
+    assert_eq!(target.path, entry);
+
+    let module = analysis.modules.get(&target.path).expect("module");
+    let snippet = module
+        .file_registry
+        .snippet(target.span)
+        .expect("definition snippet");
+    assert!(
+        snippet.contains("x"),
+        "expected snippet to contain parameter name, got: {snippet}"
+    );
+}
+
 fn position_of(source: &str, needle: &str, relative_offset: usize) -> PositionUtf16 {
     let start = source.find(needle).expect("needle should be present");
     byte_offset_to_position_utf16(source, start + relative_offset).expect("position should convert")

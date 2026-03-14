@@ -61,6 +61,11 @@ fn records() {
 }
 
 #[test]
+fn record_field_punning() {
+    check("tests/run/record_field_punning.tw");
+}
+
+#[test]
 fn vectors() {
     check("tests/run/vectors.tw");
 }

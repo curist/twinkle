@@ -354,7 +354,10 @@ RecordFields =
     RecordField { "," RecordField } [ "," ] ;
 
 RecordField =
-    Identifier ":" Expr ;
+    Identifier [ ":" Expr ] ;
+(* Implementation note:
+   - `.{ x }` desugars to `.{ x: x }`.
+   - Mixed fields are allowed: `.{ x, y: 2 }`. *)
 
 (* ===== Array Literals ===== *)
 

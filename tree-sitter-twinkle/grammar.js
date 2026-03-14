@@ -485,8 +485,10 @@ module.exports = grammar({
 
     record_field: $ => seq(
       field('name', $.identifier),
-      ':',
-      field('value', $._expression),
+      optional(seq(
+        ':',
+        field('value', $._expression),
+      )),
     ),
 
     array_literal: $ => seq(

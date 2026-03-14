@@ -1005,8 +1005,15 @@ impl Parser {
 
         while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
             let field_name = self.expect(TokenKind::Ident)?;
-            self.expect(TokenKind::Colon)?;
-            let value = self.parse_expr()?;
+            let value = if self.consume_if(TokenKind::Colon) {
+                self.parse_expr()?
+            } else {
+                Expr::new(
+                    self.alloc_expr_id(),
+                    ExprKind::Ident(field_name.text.clone()),
+                    field_name.span,
+                )
+            };
 
             fields.push((field_name.text.clone(), value));
 
@@ -1901,6 +1908,41 @@ mod tests {
         match expr.kind {
             ExprKind::Array { elements } => assert_eq!(elements.len(), 3),
             _ => panic!("Expected array literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_record_literal_field_punning_anonymous() {
+        let expr = parse_expr(".{ x, y: 2 }").unwrap();
+        match expr.kind {
+            ExprKind::RecordLit { name, fields } => {
+                assert_eq!(name, None);
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "x");
+                assert!(matches!(fields[0].1.kind, ExprKind::Ident(ref ident) if ident == "x"));
+                assert_eq!(fields[1].0, "y");
+                assert!(matches!(
+                    fields[1].1.kind,
+                    ExprKind::Literal(Literal::Int(2))
+                ));
+            }
+            _ => panic!("Expected record literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_record_literal_field_punning_named_with_trailing_comma() {
+        let expr = parse_expr("Point.{ x, y, }").unwrap();
+        match expr.kind {
+            ExprKind::RecordLit { name, fields } => {
+                assert_eq!(name, Some("Point".to_string()));
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "x");
+                assert!(matches!(fields[0].1.kind, ExprKind::Ident(ref ident) if ident == "x"));
+                assert_eq!(fields[1].0, "y");
+                assert!(matches!(fields[1].1.kind, ExprKind::Ident(ref ident) if ident == "y"));
+            }
+            _ => panic!("Expected record literal"),
         }
     }
 

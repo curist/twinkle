@@ -166,6 +166,10 @@ p: Point = .{ x: 10, y: 20 }
 
 // Named constructor (explicit type)
 p := Point.{ x: 10, y: 20 }
+
+// Field punning shorthand
+p2 := Point.{ x, y }      // equivalent to Point.{ x: x, y: y }
+p3: Point = .{ x, y: 99 } // mixed shorthand + explicit field value
 ```
 
 Field access: `p.x`

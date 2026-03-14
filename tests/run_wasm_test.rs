@@ -87,6 +87,11 @@ fn run_wasm_capability_records() {
 }
 
 #[test]
+fn run_wasm_record_field_punning() {
+    check("tests/run/record_field_punning.tw");
+}
+
+#[test]
 fn run_wasm_iterator_direct_next() {
     check("tests/run/iterator_direct_next.tw");
 }

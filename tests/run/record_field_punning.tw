@@ -1,0 +1,25 @@
+// Expected output:
+//   Ada
+//   30
+//   Ada
+//   31
+
+type Person = .{ name: String, age: Int }
+
+fn make_person(name: String, age: Int) Person {
+  Person.{ name, age }
+}
+
+fn birthday(p: Person) Person {
+  name := p.name
+  age := p.age + 1
+  .{ name, age }
+}
+
+p := make_person("Ada", 30)
+q := birthday(p)
+
+println(p.name)
+println("${p.age}")
+println(q.name)
+println("${q.age}")

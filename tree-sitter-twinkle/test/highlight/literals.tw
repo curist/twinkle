@@ -54,3 +54,6 @@ point := Point.{ x: 10, y: 20 }
 //       ^^^^^ type
 //                  ^^ number
 //                          ^^ number
+
+point2 := Point.{ x, y: 20 }
+//        ^^^^^ type
