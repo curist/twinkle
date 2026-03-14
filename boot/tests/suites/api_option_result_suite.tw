@@ -308,4 +308,104 @@ pub fn suite() runner.Suite {
       try assert.int_eq(val, 42)
       .Ok({})
     })
+    .test("Option.map transforms Some and passes through None", fn() {
+      some: Int? = .Some(10)
+      none: Int? = .None
+      mapped_some := some.map(fn(x: Int) { x * 3 })
+      mapped_none := none.map(fn(x: Int) { x * 3 })
+      try assert.is_some(mapped_some)
+      try assert.is_none(mapped_none)
+      val := case mapped_some {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(val, 30)
+      .Ok({})
+    })
+    .test("Option.and_then chains without nesting", fn() {
+      start: Int? = .Some(5)
+      chained := start
+        .and_then(fn(x: Int) {
+          if x > 0 { .Some(x + 1) } else { .None }
+        })
+        .and_then(fn(x: Int) {
+          if x % 2 == 0 { .Some(x * 2) } else { .None }
+        })
+      try assert.is_some(chained)
+      val := case chained {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(val, 12)
+      .Ok({})
+    })
+    .test("Option.and_then passes through None", fn() {
+      start: Int? = .None
+      out := start.and_then(fn(x: Int) { .Some(x + 1) })
+      try assert.is_none(out)
+      .Ok({})
+    })
+    .test("Result.map transforms Ok and passes through Err", fn() {
+      ok: Result<Int, String> = .Ok(7)
+      err: Result<Int, String> = .Err("bad")
+      mapped_ok := ok.map(fn(x: Int) { x + 5 })
+      mapped_err := err.map(fn(x: Int) { x + 5 })
+      try assert.is_ok(mapped_ok)
+      try assert.is_err(mapped_err)
+      val := case mapped_ok {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 12)
+      try assert.err_eq(mapped_err, "bad")
+      .Ok({})
+    })
+    .test("Result.and_then chains and passes through Err", fn() {
+      start: Result<Int, String> = .Ok(20)
+      out := start
+        .and_then(fn(x: Int) {
+          if x % 2 == 0 { .Ok(x / 2) } else { .Err("not even") }
+        })
+        .and_then(fn(x: Int) {
+          if x > 5 { .Ok(x - 1) } else { .Err("too small") }
+        })
+      try assert.is_ok(out)
+      val := case out {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(val, 9)
+
+      failed: Result<Int, String> = .Err("boom")
+      still_failed := failed.and_then(fn(x: Int) { .Ok(x + 1) })
+      try assert.is_err(still_failed)
+      try assert.err_eq(still_failed, "boom")
+      .Ok({})
+    })
+    .test("Option and Result combinators support qualified calls", fn() {
+      o: Int? = .Some(3)
+      om := Option.map(o, fn(x: Int) { x + 2 })
+      oa := Option.and_then(om, fn(x: Int) {
+        if x > 0 { .Some(x * 2) } else { .None }
+      })
+      try assert.is_some(oa)
+      oval := case oa {
+        .Some(v) => v,
+        .None => -1,
+      }
+      try assert.int_eq(oval, 10)
+
+      r: Result<Int, String> = .Ok(4)
+      rm := Result.map(r, fn(x: Int) { x + 1 })
+      ra := Result.and_then(rm, fn(x: Int) {
+        if x < 10 { .Ok(x * 3) } else { .Err("too big") }
+      })
+      try assert.is_ok(ra)
+      rval := case ra {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
+      try assert.int_eq(rval, 15)
+      .Ok({})
+    })
 }

@@ -90,3 +90,24 @@ pub fn join(xs: Vector<String>, sep: String) String {
   }
   out
 }
+
+/// Return a new vector sorted by comparator cmp.
+pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Int) Vector<T> {
+  out := xs.slice(0, 0)
+  for x in xs {
+    inserted := false
+    next := out.slice(0, 0)
+    for y in out {
+      if !inserted and cmp(x, y) < 0 {
+        next = next.push(x)
+        inserted = true
+      }
+      next = next.push(y)
+    }
+    if !inserted {
+      next = next.push(x)
+    }
+    out = next
+  }
+  out
+}

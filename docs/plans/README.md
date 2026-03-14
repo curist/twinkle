@@ -48,4 +48,3 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
 | [boot-foundation-libs.md](boot-foundation-libs.md) | Stage 10 support libs in `boot/lib` (`source`, `module`, `graph`, `query`) |
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
-| [api-ergonomics-minimal.md](api-ergonomics-minimal.md) | Minimal ergonomic API additions: `Vector.sort_by`, lazy `Iterator.map/filter/take`, and `Option/Result map/and_then` |

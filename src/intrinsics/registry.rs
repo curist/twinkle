@@ -410,7 +410,8 @@ pub fn populate_func_table(
 
 pub fn builtin_module_aliases() -> &'static [&'static str] {
     &[
-        "Cell", "Dict", "Iterator", "Vector", "String", "Int", "Float", "Bool", "Byte",
+        "Cell", "Dict", "Iterator", "Option", "Result", "Vector", "String", "Int", "Float", "Bool",
+        "Byte",
     ]
 }
 

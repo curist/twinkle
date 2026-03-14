@@ -157,4 +157,118 @@ pub fn suite() runner.Suite {
       try assert.str_eq(chars[2], "c")
       .Ok({})
     })
+    .test("iterator map transforms lazily when consumed", fn() {
+      seen := Cell.new(0)
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      mapped := base.map(fn(x: Int) {
+        seen.set(seen.get() + 1)
+        x * 10
+      })
+      try assert.int_eq(seen.get(), 0)
+      vals := mapped.take(2).to_vector()
+      try assert.int_eq(vals.len(), 2)
+      try assert.int_eq(vals[0], 0)
+      try assert.int_eq(vals[1], 10)
+      try assert.int_eq(seen.get(), 2)
+      .Ok({})
+    })
+    .test("iterator filter keeps matching values", fn() {
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 8 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      evens := base.filter(fn(x: Int) { x % 2 == 0 }).to_vector()
+      try assert.int_eq(evens.len(), 4)
+      try assert.int_eq(evens[0], 0)
+      try assert.int_eq(evens[1], 2)
+      try assert.int_eq(evens[2], 4)
+      try assert.int_eq(evens[3], 6)
+      .Ok({})
+    })
+    .test("iterator filter handles long reject runs", fn() {
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 50000 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      out := base.filter(fn(x: Int) { x == 49999 }).to_vector()
+      try assert.int_eq(out.len(), 1)
+      try assert.int_eq(out[0], 49999)
+      .Ok({})
+    })
+    .test("iterator take limits traversal and handles non-positive n", fn() {
+      seen := Cell.new(0)
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      out := base
+        .map(fn(x: Int) {
+          seen.set(seen.get() + 1)
+          x
+        })
+        .take(3)
+        .to_vector()
+      try assert.int_eq(out.len(), 3)
+      try assert.int_eq(out[0], 0)
+      try assert.int_eq(out[2], 2)
+      try assert.int_eq(seen.get(), 3)
+
+      none_a := base.take(0).to_vector()
+      none_b := base.take(-4).to_vector()
+      try assert.int_eq(none_a.len(), 0)
+      try assert.int_eq(none_b.len(), 0)
+      .Ok({})
+    })
+    .test("iterator map filter take compose and match collect parity", fn() {
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 20 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      piped := base
+        .map(fn(x: Int) { x + 1 })
+        .filter(fn(x: Int) { x % 3 == 0 })
+        .take(4)
+        .to_vector()
+      via_collect := collect x in range(20) {
+        y := x + 1
+        if y % 3 == 0 and y <= 12 { y } else { continue }
+      }
+      try assert.int_eq(piped.len(), via_collect.len())
+      try assert.int_eq(piped[0], via_collect[0])
+      try assert.int_eq(piped[1], via_collect[1])
+      try assert.int_eq(piped[2], via_collect[2])
+      try assert.int_eq(piped[3], via_collect[3])
+      .Ok({})
+    })
+    .test("iterator combinators preserve persistence", fn() {
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 6 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      adapted := base
+        .map(fn(x: Int) { x + 1 })
+        .filter(fn(x: Int) { x % 2 == 0 })
+        .take(2)
+      first := adapted.to_vector()
+      second := adapted.to_vector()
+      try assert.int_eq(first.len(), 2)
+      try assert.int_eq(second.len(), 2)
+      try assert.int_eq(first[0], second[0])
+      try assert.int_eq(first[1], second[1])
+      .Ok({})
+    })
+    .test("iterator combinators support qualified calls", fn() {
+      base := Iterator.unfold(0, fn(i: Int) {
+        if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+      })
+      out := Iterator.take(
+        Iterator.filter(
+          Iterator.map(base, fn(x: Int) { x + 1 }),
+          fn(x: Int) { x % 2 == 0 }
+        ),
+        3
+      ).to_vector()
+      try assert.int_eq(out.len(), 3)
+      try assert.int_eq(out[0], 2)
+      try assert.int_eq(out[1], 4)
+      try assert.int_eq(out[2], 6)
+      .Ok({})
+    })
 }

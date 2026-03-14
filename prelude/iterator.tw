@@ -2,3 +2,61 @@
 pub fn to_vector<T>(it: Iterator<T>) Vector<T> {
   collect x in it { x }
 }
+
+type MapState<T, U> = .{ it: Iterator<T>, f: fn(T) U }
+type FilterState<T> = .{ it: Iterator<T>, pred: fn(T) Bool }
+type TakeState<T> = .{ it: Iterator<T>, remaining: Int }
+
+fn map_step<T, U>(state: MapState<T, U>) UnfoldStep<U, MapState<T, U>> {
+  case Iterator.next(state.it) {
+    .Some(item) => UnfoldStep.Yield(state.f(item.value), MapState.{ it: item.rest, f: state.f }),
+    .None => UnfoldStep.Done,
+  }
+}
+
+fn filter_step<T>(state: FilterState<T>) UnfoldStep<T, FilterState<T>> {
+  current := state.it
+  for true {
+    case Iterator.next(current) {
+      .Some(item) => {
+        if state.pred(item.value) {
+          return UnfoldStep.Yield(item.value, FilterState.{ it: item.rest, pred: state.pred })
+        }
+        current = item.rest
+      },
+      .None => {
+        return UnfoldStep.Done
+      },
+    }
+  }
+  UnfoldStep.Done
+}
+
+fn take_step<T>(state: TakeState<T>) UnfoldStep<T, TakeState<T>> {
+  if state.remaining <= 0 {
+    UnfoldStep.Done
+  } else {
+    case Iterator.next(state.it) {
+      .Some(item) => UnfoldStep.Yield(item.value, TakeState.{
+        it: item.rest,
+        remaining: state.remaining - 1,
+      }),
+      .None => UnfoldStep.Done,
+    }
+  }
+}
+
+/// Lazily transform each yielded value.
+pub fn map<T, U>(it: Iterator<T>, f: fn(T) U) Iterator<U> {
+  Iterator.unfold(MapState.{ it: it, f: f }, map_step)
+}
+
+/// Lazily keep only values where pred returns true.
+pub fn filter<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T> {
+  Iterator.unfold(FilterState.{ it: it, pred: pred }, filter_step)
+}
+
+/// Lazily yield at most n values from the iterator.
+pub fn take<T>(it: Iterator<T>, n: Int) Iterator<T> {
+  Iterator.unfold(TakeState.{ it: it, remaining: n }, take_step)
+}

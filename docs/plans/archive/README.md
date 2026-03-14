@@ -72,5 +72,6 @@ Related historical context outside this folder:
 | [module-relative-imports.md](module-relative-imports.md) | Explicit relative module imports via `use .foo` syntax |
 | [option-result-ergonomics.md](option-result-ergonomics.md) | `Option.ok_or` / `Option.ok_or_else` and `try Option` support |
 | [option-result-transpose.md](option-result-transpose.md) | Symmetric `Option.transpose` / `Result.transpose` conversions |
+| [api-ergonomics-minimal.md](api-ergonomics-minimal.md) | Minimal ergonomic APIs: `Vector.sort_by`, lazy `Iterator.map/filter/take`, and `Option/Result map/and_then` |
 | [record-constructor-aliases.md](record-constructor-aliases.md) | Alias-based record constructors (`P.{ ... }` where `type P = Point`) |
 | [resolver-alias-ordering.md](resolver-alias-ordering.md) | Topological sort for alias resolution ordering to fix alias chain resolution |

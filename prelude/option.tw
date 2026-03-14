@@ -6,6 +6,22 @@ pub fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
   }
 }
 
+/// Transform the Some payload.
+pub fn map<T, U>(opt: Option<T>, f: fn(T) U) Option<U> {
+  case opt {
+    .Some(v) => .Some(f(v)),
+    .None => .None,
+  }
+}
+
+/// Chain Option-producing operations.
+pub fn and_then<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U> {
+  case opt {
+    .Some(v) => f(v),
+    .None => .None,
+  }
+}
+
 /// Convert Option to Result lazily: Some(v) → Ok(v), None → Err(mk_err()).
 /// mk_err is only called when opt is None.
 pub fn ok_or_else<T, E>(opt: T?, mk_err: fn() E) Result<T, E> {

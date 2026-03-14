@@ -20,6 +20,8 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `.map(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) U) Option<U>` | Transform `Some(v)` into `Some(f(v))`; leaves `None` unchanged |
+| `.and_then(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U>` | Chain Option-producing steps without nesting |
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
 | `.ok_or_else(f)` | `fn<T, E>(opt: T?, f: fn() E) Result<T, E>` | Lazy variant — `f()` is only called when `opt` is `None` |
 | `.transpose()` | `fn<T, E>(opt: Option<Result<T, E>>) Result<Option<T>, E>` | Convert `Option<Result<T,E>>` into `Result<Option<T>,E>` |
@@ -45,6 +47,8 @@ Supports `try` sugar — `v := try expr` extracts the `Ok` value or propagates t
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `.map(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) U) Result<U, E>` | Transform `Ok(v)` into `Ok(f(v))`; leaves `Err(e)` unchanged |
+| `.and_then(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) Result<U, E>) Result<U, E>` | Chain Result-producing steps without nested Results |
 | `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T,E>>` into `Option<Result<T,E>>` |
 
 ### `Cell<T>`
@@ -73,6 +77,9 @@ Lazy iterator type.
 |----------|-----------|-------------|
 | `Iterator.next` | `fn<T>(it: Iterator<T>) Option<IterItem<T>>` | Advance iterator |
 | `Iterator.unfold` | `fn<T,S>(seed: S, step: fn(S) UnfoldStep<T,S>) Iterator<T>` | Build iterator from seed + step function |
+| `Iterator.map` | `fn<T,U>(it: Iterator<T>, f: fn(T) U) Iterator<U>` | Lazy adapter that transforms each yielded value |
+| `Iterator.filter` | `fn<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T>` | Lazy adapter that yields only matching values |
+| `Iterator.take` | `fn<T>(it: Iterator<T>, n: Int) Iterator<T>` | Lazy adapter that yields at most `n` values (`n <= 0` yields empty) |
 | `Iterator.to_vector` | `fn<T>(it: Iterator<T>) Vector<T>` | Materialize iterator into a vector. Equivalent to `collect x in it { x }`. Traverses the full iterator — infinite iterators will not terminate. O(n) memory. The iterator itself is persistent and can be reused. |
 
 Supporting types:
@@ -181,6 +188,7 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
 | `.contains(elem)` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
+| `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Int) Vector<T>` | Return a new vector sorted by comparator (`cmp < 0` before, `cmp == 0` equal, `cmp > 0` after) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
 

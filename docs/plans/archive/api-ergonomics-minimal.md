@@ -116,7 +116,7 @@ Docs:
 
 - Add methods to `docs/API.md` `Iterator<T>` section with lazy behavior note.
 
-### Milestone 3 — Option/Result `map/and_then` (can be deferred)
+### Milestone 3 — Option/Result `map/and_then`
 
 Implementation sketch:
 
@@ -150,6 +150,6 @@ Docs:
 
 This plan is complete when:
 
-1. All three API groups are implemented (or Milestone 3 is explicitly deferred).
+1. All three API groups are implemented.
 2. Related boot suites are updated and passing in interpreter and Wasm backends.
 3. `docs/API.md` includes all new signatures and semantics notes.
