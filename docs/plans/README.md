@@ -31,12 +31,25 @@ To keep this directory actionable:
 
 Historical/completed indexes are in [archive/README.md](archive/README.md).
 
-### Stage-aligned active plans
+### Self-Hosted Compiler
 
-| Stage | Description | Status | Details |
-|-------|-------------|--------|---------|
-| 10 | Self-Hosted Compiler (`boot/`) | In Progress | [self-hosting.md](self-hosting.md) |
-| Later | Tooling & Ecosystem | Planned | [tooling.md](tooling.md) |
+Overall plan: [self-hosting.md](self-hosting.md) (design principles, lessons
+from stage0, bootstrapping sequence)
+
+| Area | Description | Status | Details |
+|------|-------------|--------|---------|
+| Foundation libs | `boot/lib` support libraries (`source`, `module`, `graph`, `query`) | In Progress | [boot-foundation-libs.md](boot-foundation-libs.md) |
+| Stage0 cleanup | Refactoring before self-hosting | In Progress | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) |
+| Frontend | Lexer, parser, resolver, type checker | Planned | — |
+| Backend | Core IR, ANF, optimizer, codegen, linker | Planned | — |
+| Integration | Multi-module, CLI, compatibility suite | Planned | — |
+
+### Later — Tooling & Ecosystem
+
+| Area | Description | Status | Details |
+|------|-------------|--------|---------|
+| Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
+| LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
 
 ### Active cross-cutting plans
 
@@ -45,9 +58,6 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [string-interning.md](string-interning.md) | Reduce duplicate string allocations with literal/runtime interning |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
-| [boot-foundation-libs.md](boot-foundation-libs.md) | Stage 10 support libs in `boot/lib` (`source`, `module`, `graph`, `query`) |
-| [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
 | [order-comparator-api.md](order-comparator-api.md) | Introduce `Order`, default primitive `compare` methods, and migrate `Vector.sort_by` to `Order` comparators |
 | [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a supported `Dict` key type with interpreter/Wasm parity coverage |
 | [dict-key-projection-adapters.md](dict-key-projection-adapters.md) | Add ergonomic `Dict.by_string/by_int/by_byte` projection adapters for domain keys without traits |
