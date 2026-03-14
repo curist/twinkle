@@ -134,6 +134,38 @@ pub fn suite() runner.Suite {
         .None => assert.fail("expected Some"),
       }
     })
+    .test("line_col counts characters not bytes for column", fn() {
+      reg := registry.empty()
+      // "café x" — 'é' is 2 bytes, so 'x' is at byte offset 6 but character column 6
+      r := registry.add_file(reg, "test.tw", "café x")
+      // byte offset of 'x' is 6 (c=1, a=1, f=1, é=2, space=1)
+      s := span.new(r.file_id, 6, 7)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 1)
+          // character column should be 6, not 7
+          try assert.int_eq(pos.column, 6)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
+    .test("line_col with CJK characters", fn() {
+      reg := registry.empty()
+      // "你好x" — each CJK char is 3 bytes, 'x' at byte offset 6 but char column 3
+      r := registry.add_file(reg, "test.tw", "你好x")
+      s := span.new(r.file_id, 6, 7)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 1)
+          try assert.int_eq(pos.column, 3)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
     .test("line_text returns full line", fn() {
       reg := registry.empty()
       r := registry.add_file(reg, "test.tw", "line 1\nline 2\nline 3")

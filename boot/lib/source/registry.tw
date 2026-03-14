@@ -83,7 +83,8 @@ pub fn line_col(reg: FileRegistry, s: span.Span) LineCol? {
   line_index := find_line_index(f.line_starts, s.start)
   line := line_index + 1
   line_start := f.line_starts[line_index]
-  column := s.start - line_start + 1
+  prefix := f.source.slice(line_start, s.start)
+  column := prefix.char_len() + 1
   .Some(.{ line: line, column: column })
 }
 
