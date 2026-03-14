@@ -22,10 +22,12 @@ pub struct Resolver {
     // Track type declarations for Pass 2
     type_decls: HashMap<String, TypeDecl>,
     type_spans: HashMap<String, Span>,
+    type_decl_order: Vec<String>,
 
     // Track function declarations for Pass 2
     function_decls: HashMap<String, FunctionDecl>,
     function_spans: HashMap<String, Span>,
+    function_decl_order: Vec<String>,
 }
 
 impl Resolver {
@@ -45,8 +47,10 @@ impl Resolver {
             errors: Vec::new(),
             type_decls: HashMap::new(),
             type_spans: HashMap::new(),
+            type_decl_order: Vec::new(),
             function_decls: HashMap::new(),
             function_spans: HashMap::new(),
+            function_decl_order: Vec::new(),
         };
 
         // Pass 1: Collect this module's declarations; imports are no-ops (already compiled)
@@ -103,6 +107,7 @@ impl Resolver {
         // Store the declaration for Pass 2
         self.type_spans.insert(decl.name.clone(), decl.span);
         self.type_decls.insert(decl.name.clone(), decl.clone());
+        self.type_decl_order.push(decl.name.clone());
     }
 
     fn collect_function_decl(&mut self, decl: &FunctionDecl) {
@@ -119,6 +124,7 @@ impl Resolver {
         // Store the declaration for Pass 2
         self.function_spans.insert(decl.name.clone(), decl.span);
         self.function_decls.insert(decl.name.clone(), decl.clone());
+        self.function_decl_order.push(decl.name.clone());
     }
 
     //
@@ -127,13 +133,18 @@ impl Resolver {
 
     fn resolve_type_references(&mut self) {
         // Build TypeDefs for all declarations and add to TypeEnv
-        // We need to process in dependency order, but for now we'll just iterate
-        // and rely on the type lookup to work for forward references
+        // Preserve source declaration order so TypeId assignment is stable.
+        let decls: Vec<TypeDecl> = self
+            .type_decl_order
+            .iter()
+            .filter_map(|name| self.type_decls.get(name).cloned())
+            .collect();
 
         // Pass 2a: Collect all type names first (register them with TypeEnv)
         // Store the mapping of name -> TypeId for later updates
         let mut type_ids: HashMap<String, TypeId> = HashMap::new();
-        for (name, decl) in &self.type_decls {
+        for decl in &decls {
+            let name = &decl.name;
             // Create a placeholder TypeDef based on the variant
             // Include type_params so arity checks work during Pass 2b resolution
             let placeholder = match &decl.definition {
@@ -167,8 +178,6 @@ impl Resolver {
         // ordering dependencies. Aliases are then resolved in topological order
         // so that alias chains (e.g. A -> B -> C -> Record) work regardless of
         // declaration order.
-        let decls: Vec<TypeDecl> = self.type_decls.values().cloned().collect();
-
         let (alias_decls, non_alias_decls): (Vec<&TypeDecl>, Vec<&TypeDecl>) = decls
             .iter()
             .partition(|d| matches!(d.definition, AstTypeDef::Alias { .. }));
@@ -269,8 +278,12 @@ impl Resolver {
     }
 
     fn resolve_function_signatures(&mut self) {
-        // Collect decls into a Vec to avoid borrowing issues
-        let decls: Vec<FunctionDecl> = self.function_decls.values().cloned().collect();
+        // Collect decls in source order to keep signature registration deterministic.
+        let decls: Vec<FunctionDecl> = self
+            .function_decl_order
+            .iter()
+            .filter_map(|name| self.function_decls.get(name).cloned())
+            .collect();
 
         for decl in &decls {
             match self.resolve_function_sig(decl) {
