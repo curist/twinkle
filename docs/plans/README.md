@@ -48,3 +48,5 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Refactoring and cleanup before Stage 10 self-hosting |
 | [boot-foundation-libs.md](boot-foundation-libs.md) | Stage 10 support libs in `boot/lib` (`source`, `module`, `graph`, `query`) |
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
+| [order-comparator-api.md](order-comparator-api.md) | Introduce `Order`, default primitive `compare` methods, and migrate `Vector.sort_by` to `Order` comparators |
+| [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a supported `Dict` key type with interpreter/Wasm parity coverage |
