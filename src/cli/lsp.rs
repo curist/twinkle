@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::lsp::completion::CompletionItem;
 use crate::lsp::definition::definition_at_workspace;
-use crate::lsp::diagnostics::LspDiagnostic;
+use crate::lsp::diagnostics::{LspDiagnostic, LspRange, LspSeverity};
 use crate::lsp::position::{PositionUtf16, file_byte_offset_to_position_utf16};
 use crate::lsp::session::AnalysisSession;
 
@@ -465,7 +465,20 @@ fn publish_diagnostics_for_file(
     path: &Path,
     writer: &mut impl Write,
 ) -> Result<()> {
-    let diags = session.diagnostics(path, path).unwrap_or_default();
+    let diags = match session.diagnostics(path, path) {
+        Ok(diags) => diags,
+        Err(err) => vec![LspDiagnostic {
+            range: LspRange {
+                start_line: 0,
+                start_character: 0,
+                end_line: 0,
+                end_character: 0,
+            },
+            severity: LspSeverity::Error,
+            code: "E_ANALYSIS".to_string(),
+            message: format!("analysis failed: {err}"),
+        }],
+    };
     let uri = path_to_file_uri(path)?;
     let lsp_diags: Vec<Value> = diags.iter().map(lsp_diagnostic_to_json).collect();
     write_notification(
@@ -754,6 +767,38 @@ mod tests {
         assert!(
             value.contains("Print a string to stdout followed by a newline."),
             "expected builtin doc text in hover markdown, got: {value}"
+        );
+    }
+
+    #[test]
+    fn publish_diagnostics_reports_analysis_errors_instead_of_silently_clearing() {
+        reset_global_cache();
+
+        let project_root = PathBuf::from("/virtual/lsp_cli_diag_error");
+        let stdlib_root = project_root.join("stdlib");
+        let path = project_root.join("missing.tw");
+        let session = AnalysisSession::new(&project_root, &stdlib_root, HashMap::new());
+
+        let mut writer = Vec::new();
+        publish_diagnostics_for_file(&session, &path, &mut writer).expect("publish diagnostics");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["method"], json!("textDocument/publishDiagnostics"));
+        let diagnostics = response["params"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics array");
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "should publish synthetic analysis error"
+        );
+        assert_eq!(diagnostics[0]["code"], json!("E_ANALYSIS"));
+        let message = diagnostics[0]["message"]
+            .as_str()
+            .expect("diagnostic message");
+        assert!(
+            message.contains("analysis failed"),
+            "expected analysis failure message, got: {message}"
         );
     }
 

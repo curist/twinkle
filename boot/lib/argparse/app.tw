@@ -77,6 +77,13 @@ fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
   })
 }
 
+fn expect_some<T>(opt: T?, err: ParseError) T!ParseError {
+  case opt {
+    .Some(v) => .Ok(v),
+    .None => .Err(err),
+  }
+}
+
 fn pad(s: String, width: Int) String {
   n := width - s.len()
   if n < 2 { n = 2 }
@@ -210,9 +217,10 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     if first == "--help" or first == "-h" {
       return .Err(.HelpRequested(format_help(a, .None)))
     }
-    c := try a.commands
-      .find(fn(c: command.Command) Bool { c.name == first })
-      .ok_or(.UnknownCommand(first))
+    c := try expect_some(
+      a.commands.find(fn(c: command.Command) Bool { c.name == first }),
+      .UnknownCommand(first),
+    )
     cmd_name = .Some(first)
     active_args = c.args
     i = i + 1
@@ -244,16 +252,20 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
         .Some(eq) => {
           key := name.slice(0, eq)
           val := name.slice(eq + 1, name.len())
-          def := try find_by_long(active_args, key)
-            .ok_or(.UnknownFlag("--${key}"))
+          def := try expect_some(
+            find_by_long(active_args, key),
+            .UnknownFlag("--${key}"),
+          )
           case def.kind {
             .Opt => options[key] = val,
             _ => { return .Err(.UnknownFlag("--${key}")) },
           }
         },
         .None => {
-          def := try find_by_long(active_args, name)
-            .ok_or(.UnknownFlag("--${name}"))
+          def := try expect_some(
+            find_by_long(active_args, name),
+            .UnknownFlag("--${name}"),
+          )
           case def.kind {
             .Flag => flags[name] = true,
             .Opt => {
@@ -269,8 +281,10 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       }
     } else if current.starts_with("-") and current.len() > 1 {
       s := current.slice(1, current.len())
-      def := try find_by_short(active_args, s)
-        .ok_or(.UnknownFlag("-${s}"))
+      def := try expect_some(
+        find_by_short(active_args, s),
+        .UnknownFlag("-${s}"),
+      )
       case def.kind {
         .Flag => flags[def.name] = true,
         .Opt => {

@@ -159,11 +159,12 @@ impl AnalysisSession {
     }
 
     fn normalize_path(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() {
+        let normalized = if path.is_absolute() {
             path.to_path_buf()
         } else {
             self.project_root.join(path)
-        }
+        };
+        normalized.canonicalize().unwrap_or(normalized)
     }
 }
 
