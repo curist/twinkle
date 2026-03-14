@@ -1,0 +1,20 @@
+// Alias chain of depth 3: A -> B -> C -> record
+
+type Coord = .{ x: Int, y: Int }
+type C = Coord
+type B = C
+type A = B
+
+fn accept_coord(c: Coord) Int {
+    c.x + c.y
+}
+
+fn main() {
+    a: Coord = A.{ x: 1, y: 2 }
+    b: Coord = B.{ x: 3, y: 4 }
+    c: Coord = C.{ x: 5, y: 6 }
+
+    accept_coord(a)
+    accept_coord(b)
+    accept_coord(c)
+}

@@ -162,18 +162,39 @@ impl Resolver {
 
         // Pass 2b: Resolve each type definition fully and UPDATE in place
         // This preserves TypeIds embedded in resolved MonoTypes
+        //
+        // Non-alias types (records, sums) are resolved first since they have no
+        // ordering dependencies. Aliases are then resolved in topological order
+        // so that alias chains (e.g. A -> B -> C -> Record) work regardless of
+        // declaration order.
         let decls: Vec<TypeDecl> = self.type_decls.values().cloned().collect();
 
-        for decl in &decls {
+        let (alias_decls, non_alias_decls): (Vec<&TypeDecl>, Vec<&TypeDecl>) = decls
+            .iter()
+            .partition(|d| matches!(d.definition, AstTypeDef::Alias { .. }));
+
+        // First: resolve records and sums
+        for decl in &non_alias_decls {
             if let Some(&type_id) = type_ids.get(&decl.name) {
                 match self.resolve_type_def(decl) {
                     Ok(def) => {
-                        // Update the existing TypeDef (preserves TypeId)
                         self.type_env.update_type(type_id, def);
                     }
-                    Err(()) => {
-                        // Errors already recorded in resolve_type_def
+                    Err(()) => {}
+                }
+            }
+        }
+
+        // Then: resolve aliases in topological (dependency) order
+        let alias_names: HashSet<&str> = alias_decls.iter().map(|d| d.name.as_str()).collect();
+        let sorted_aliases = topo_sort_aliases(&alias_decls, &alias_names);
+        for decl in sorted_aliases {
+            if let Some(&type_id) = type_ids.get(&decl.name) {
+                match self.resolve_type_def(decl) {
+                    Ok(def) => {
+                        self.type_env.update_type(type_id, def);
                     }
+                    Err(()) => {}
                 }
             }
         }
@@ -469,4 +490,98 @@ impl Resolver {
             _ => false, // Not an alias
         }
     }
+}
+
+/// Collect all type names referenced by an AST type annotation.
+fn collect_type_refs<'a>(ty: &'a AstType, out: &mut Vec<&'a str>) {
+    match ty {
+        AstType::Named { name, args, .. } => {
+            out.push(name.as_str());
+            for arg in args {
+                collect_type_refs(arg, out);
+            }
+        }
+        AstType::Function { params, ret, .. } => {
+            for p in params {
+                collect_type_refs(p, out);
+            }
+            collect_type_refs(ret, out);
+        }
+    }
+}
+
+/// Topological sort of alias declarations by their dependencies on other aliases.
+/// Circular aliases are already rejected by `detect_circular_aliases`, so this is a DAG.
+fn topo_sort_aliases<'a>(
+    alias_decls: &[&'a TypeDecl],
+    alias_names: &HashSet<&str>,
+) -> Vec<&'a TypeDecl> {
+    // Build adjacency: alias name -> set of alias names it depends on
+    let mut deps: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut decl_map: HashMap<&str, &'a TypeDecl> = HashMap::new();
+
+    for decl in alias_decls {
+        decl_map.insert(decl.name.as_str(), decl);
+        if let AstTypeDef::Alias { ty } = &decl.definition {
+            let mut refs = Vec::new();
+            collect_type_refs(ty, &mut refs);
+            let alias_deps: Vec<&str> = refs
+                .into_iter()
+                .filter(|r| alias_names.contains(r) && *r != decl.name.as_str())
+                .collect();
+            deps.insert(decl.name.as_str(), alias_deps);
+        }
+    }
+
+    // Kahn's algorithm
+    let mut in_degree: HashMap<&str, usize> =
+        alias_decls.iter().map(|d| (d.name.as_str(), 0)).collect();
+    for (_, dep_list) in &deps {
+        for dep in dep_list {
+            if let Some(count) = in_degree.get_mut(dep) {
+                *count += 1;
+            }
+        }
+    }
+
+    // Note: edges point from dependency TO dependent (dep_list are prerequisites),
+    // but in_degree counts how many times a node appears as a dependency.
+    // We need reverse adjacency: for each dep, which aliases depend on it.
+    let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (alias, dep_list) in &deps {
+        for dep in dep_list {
+            reverse.entry(*dep).or_default().push(*alias);
+        }
+    }
+
+    // Recompute in_degree correctly: count prerequisites
+    for (name, _) in &decl_map {
+        in_degree.insert(*name, deps.get(name).map_or(0, |d| d.len()));
+    }
+
+    let mut queue: Vec<&str> = in_degree
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(&name, _)| name)
+        .collect();
+    queue.sort(); // deterministic order for aliases with no deps
+
+    let mut result: Vec<&'a TypeDecl> = Vec::with_capacity(alias_decls.len());
+    while let Some(name) = queue.pop() {
+        if let Some(decl) = decl_map.get(name) {
+            result.push(decl);
+        }
+        if let Some(dependents) = reverse.get(name) {
+            for dependent in dependents {
+                if let Some(count) = in_degree.get_mut(dependent) {
+                    *count -= 1;
+                    if *count == 0 {
+                        queue.push(dependent);
+                    }
+                }
+            }
+        }
+    }
+
+    result
 }

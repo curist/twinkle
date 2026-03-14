@@ -1,0 +1,23 @@
+// Expected output:
+//   1 2
+//   3 4
+//   5 6
+//   42
+
+type Point = .{ x: Int, y: Int }
+type P = Point
+type Q = P
+
+a := Point.{ x: 1, y: 2 }
+b := P.{ x: 3, y: 4 }
+c := Q.{ x: 5, y: 6 }
+
+println("${a.x} ${a.y}")
+println("${b.x} ${b.y}")
+println("${c.x} ${c.y}")
+
+type Box<T> = .{ value: T }
+type IntBox = Box<Int>
+
+d := IntBox.{ value: 42 }
+println("${d.value}")

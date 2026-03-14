@@ -1,0 +1,37 @@
+// Aliases to record types should work as named constructors
+
+type Point = .{ x: Int, y: Int }
+type P = Point
+
+// Simple alias constructor
+fn make_p() P {
+    P.{ x: 10, y: 20 }
+}
+
+// Direct constructor still works
+fn make_point() Point {
+    Point.{ x: 1, y: 2 }
+}
+
+// Alias chain: Q -> P -> Point
+type Q = P
+
+fn make_q() Q {
+    Q.{ x: 30, y: 40 }
+}
+
+// Alias and direct constructors unify (both produce Point)
+fn accept_point(p: Point) Int {
+    p.x + p.y
+}
+
+fn main() {
+    a: Point = Point.{ x: 1, y: 2 }
+    b: Point = P.{ x: 3, y: 4 }
+    c: Point = Q.{ x: 5, y: 6 }
+
+    // All three unify with Point
+    accept_point(a)
+    accept_point(b)
+    accept_point(c)
+}

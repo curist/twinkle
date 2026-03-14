@@ -1,0 +1,10 @@
+// Alias chain with generics: IntW -> W -> Wrapper<Int>
+
+type Wrapper<T> = .{ value: T }
+type W = Wrapper<Int>
+type IntW = W
+
+fn main() {
+    a: Wrapper<Int> = IntW.{ value: 42 }
+    _v: Int = a.value
+}

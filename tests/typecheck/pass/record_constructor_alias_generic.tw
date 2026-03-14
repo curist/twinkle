@@ -1,0 +1,14 @@
+// Concrete alias to generic record should work as constructor
+
+type Box<T> = .{ value: T }
+type IntBox = Box<Int>
+type StringBox = Box<String>
+
+fn main() {
+    a: Box<Int> = IntBox.{ value: 42 }
+    b: Box<String> = StringBox.{ value: "hello" }
+
+    // Verify field types are correctly substituted
+    _v: Int = a.value
+    _w: String = b.value
+}

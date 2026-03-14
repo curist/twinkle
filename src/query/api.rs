@@ -358,6 +358,7 @@ fn type_error_primary_span(err: &TypeError) -> Span {
         TypeError::ModuleScopeRebinding { span, .. } => *span,
         TypeError::OccursCheckFailed { span } => *span,
         TypeError::AmbiguousType { span, .. } => *span,
+        TypeError::NotARecordConstructor { span, .. } => *span,
     }
 }
 
@@ -383,6 +384,7 @@ fn type_error_code(err: &TypeError) -> &'static str {
         TypeError::ModuleScopeRebinding { .. } => "E_MODULE_SCOPE_REBINDING",
         TypeError::OccursCheckFailed { .. } => "E_OCCURS_CHECK_FAILED",
         TypeError::AmbiguousType { .. } => "E_AMBIGUOUS_TYPE",
+        TypeError::NotARecordConstructor { .. } => "E_NOT_RECORD_CONSTRUCTOR",
     }
 }
 

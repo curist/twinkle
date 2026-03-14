@@ -2,7 +2,7 @@ use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
-    ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, TypeId,
+    ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId,
     builtin_method_alias, contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
@@ -2107,6 +2107,7 @@ impl TypeChecker {
     ) -> Result<MonoType, ()> {
         if let Some(type_name) = name {
             // Named record literal: Point.{ x: 1, y: 2 }
+            // Also supports alias constructors: type P = Point; P.{ x: 1, y: 2 }
             let type_id = match self.type_env.lookup_type(type_name) {
                 Some(id) => id,
                 None => {
@@ -2118,16 +2119,27 @@ impl TypeChecker {
                 }
             };
 
+            // Follow alias chains to find the canonical record type
+            let (type_id, alias_args) =
+                self.canonicalize_record_constructor(type_id, type_name, span)?;
+
             let type_params = self
                 .type_env
                 .get_def(type_id)
                 .map(|d| d.type_params().to_vec())
                 .unwrap_or_default();
 
-            if type_params.is_empty() {
-                // Non-generic: check fields directly
-                self.check_record_lit_fields(type_id, &[], fields, span)?;
-                Ok(MonoType::named(type_id))
+            if type_params.is_empty() || alias_args.len() == type_params.len() {
+                // Non-generic, or alias already provides all type args (e.g. IntBox = Box<Int>)
+                self.check_record_lit_fields(type_id, &alias_args, fields, span)?;
+                if alias_args.is_empty() {
+                    Ok(MonoType::named(type_id))
+                } else {
+                    Ok(MonoType::Named {
+                        type_id,
+                        args: alias_args,
+                    })
+                }
             } else {
                 // Generic: instantiate type params with MetaVars, then synth each field
                 // and unify against the instantiated declared type to solve the MetaVars.
@@ -2227,6 +2239,55 @@ impl TypeChecker {
             self.errors
                 .push(TypeError::AnonymousRecordWithoutContext { span });
             Err(())
+        }
+    }
+
+    /// Follow alias chains from a constructor name to find the canonical record TypeId.
+    /// Returns `(record_type_id, concrete_type_args)` or errors if the target is not a record.
+    fn canonicalize_record_constructor(
+        &mut self,
+        mut type_id: TypeId,
+        type_name: &str,
+        span: Span,
+    ) -> Result<(TypeId, Vec<MonoType>), ()> {
+        let mut args: Vec<MonoType> = Vec::new();
+        loop {
+            match self.type_env.get_def(type_id) {
+                Some(TypeDef::Record { .. }) => return Ok((type_id, args)),
+                Some(TypeDef::Alias { target, .. }) => match target {
+                    MonoType::Named {
+                        type_id: target_id,
+                        args: target_args,
+                    } => {
+                        args = target_args.clone();
+                        type_id = *target_id;
+                    }
+                    other => {
+                        self.errors.push(TypeError::NotARecordConstructor {
+                            name: type_name.to_string(),
+                            resolved: format!("{}", other),
+                            span,
+                        });
+                        return Err(());
+                    }
+                },
+                Some(TypeDef::Sum { name: sum_name, .. }) => {
+                    self.errors.push(TypeError::NotARecordConstructor {
+                        name: type_name.to_string(),
+                        resolved: sum_name.clone(),
+                        span,
+                    });
+                    return Err(());
+                }
+                _ => {
+                    self.errors.push(TypeError::NotARecordConstructor {
+                        name: type_name.to_string(),
+                        resolved: type_name.to_string(),
+                        span,
+                    });
+                    return Err(());
+                }
+            }
         }
     }
 

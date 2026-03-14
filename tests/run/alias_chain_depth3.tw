@@ -1,0 +1,17 @@
+// Expected output:
+//   1 2
+//   3 4
+//   5 6
+
+type Coord = .{ x: Int, y: Int }
+type C = Coord
+type B = C
+type A = B
+
+a := A.{ x: 1, y: 2 }
+b := B.{ x: 3, y: 4 }
+c := C.{ x: 5, y: 6 }
+
+println("${a.x} ${a.y}")
+println("${b.x} ${b.y}")
+println("${c.x} ${c.y}")

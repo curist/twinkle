@@ -95,6 +95,13 @@ pub enum TypeError {
     /// Occurs check failed: infinite type would be created
     OccursCheckFailed { span: Span },
 
+    /// Named record constructor target is not a record type
+    NotARecordConstructor {
+        name: String,
+        resolved: String,
+        span: Span,
+    },
+
     /// Binding type is ambiguous (contains unsolved MetaVars after checking)
     AmbiguousType {
         name: String,
@@ -296,6 +303,12 @@ impl TypeError {
                 *span,
                 &format!("Ambiguous type for '{}'", name),
                 Some(note),
+            ),
+            TypeError::NotARecordConstructor { name, resolved, span } => self.format_error(
+                registry,
+                *span,
+                &format!("'{}' is not a record constructor", name),
+                Some(&format!("'{}' resolves to {}, which is not a record type", name, resolved)),
             ),
         }
     }

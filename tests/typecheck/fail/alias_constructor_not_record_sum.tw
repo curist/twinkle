@@ -1,0 +1,6 @@
+// Alias to a sum type cannot be used as record constructor
+type MaybeInt = Option<Int>
+
+fn main() {
+    x := MaybeInt.{ value: 1 }
+}

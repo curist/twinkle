@@ -1,0 +1,6 @@
+// Alias to a primitive type cannot be used as record constructor
+type MyInt = Int
+
+fn main() {
+    x := MyInt.{ value: 1 }
+}

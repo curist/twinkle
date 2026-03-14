@@ -566,3 +566,13 @@ fn stdlib_callable_shape_characterization() {
 fn first_class_method_cross_module() {
     check("tests/modules/method_value_ref/main.tw");
 }
+
+#[test]
+fn record_constructor_alias() {
+    check("tests/run/record_constructor_alias.tw");
+}
+
+#[test]
+fn alias_chain_depth3() {
+    check("tests/run/alias_chain_depth3.tw");
+}
