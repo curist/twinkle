@@ -39,7 +39,6 @@ from stage0, bootstrapping sequence)
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Foundation libs | `boot/lib` support libraries (`source`, `module`, `graph`, `query`) | In Progress | [boot-foundation-libs.md](boot-foundation-libs.md) |
-| Stage0 cleanup | Refactoring before self-hosting | In Progress | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) |
 | Frontend | Lexer, parser, resolver, type checker | Planned | — |
 | Backend | Core IR, ANF, optimizer, codegen, linker | Planned | — |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |

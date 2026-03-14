@@ -78,3 +78,4 @@ Related historical context outside this folder:
 | [deterministic-wat-output.md](deterministic-wat-output.md) | Stabilize resolver declaration ordering so emitted WAT snapshots are deterministic across runs |
 | [order-comparator-api.md](order-comparator-api.md) | `Order` type, primitive `compare` methods, `Vector.sort_by` migration to `Order` comparators |
 | [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a `Dict` key type alongside `Int` and `String` |
+| [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Pre-self-hosting stage0 cleanup tasks — remaining items superseded by self-hosting redesign |
