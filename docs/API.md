@@ -22,6 +22,7 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 |----------|-----------|-------------|
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
 | `.ok_or_else(f)` | `fn<T, E>(opt: T?, f: fn() E) Result<T, E>` | Lazy variant — `f()` is only called when `opt` is `None` |
+| `.transpose()` | `fn<T, E>(opt: Option<Result<T, E>>) Result<Option<T>, E>` | Convert `Option<Result<T,E>>` into `Result<Option<T>,E>` |
 
 `try` on Option: `try opt` extracts the `Some` value or propagates `None` via early return.
 Only valid in functions returning `Option<U>`. Use `.ok_or(err)` to bridge to `Result` contexts.
@@ -41,6 +42,10 @@ type Result<T, E> = { Ok(T), Err(E) }
 Shorthand: `T!E` is equivalent to `Result<T, E>`.
 
 Supports `try` sugar — `v := try expr` extracts the `Ok` value or propagates the `Err`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T,E>>` into `Option<Result<T,E>>` |
 
 ### `Cell<T>`
 Mutable reference cell for imperative state.
@@ -110,6 +115,7 @@ Primitive type representing a single byte (0–255). Returned by string indexing
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `Byte.to_int` | `fn(b: Byte) Int` | Convert byte to integer |
+| `Byte.from_int` | `fn(n: Int) Option<Byte>` | Convert integer in range 0..255 to `Byte` |
 | `Byte.to_string` | `fn(b: Byte) String` | Convert byte to string representation |
 
 ## String
@@ -192,6 +198,7 @@ Persistent hash map. Keys must be `Int` or `String`.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Dict.new()` | `fn<K,V>() Dict<K,V>` | Create empty dict |
+| `.set(key, value)` | `fn<K,V>(d: Dict<K,V>, key: K, value: V) Dict<K,V>` | Insert/replace key-value pair, return new dict |
 | `.len()` | `fn<K,V>(d: Dict<K,V>) Int` | Number of entries |
 | `.has(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Bool` | Check if key exists |
 | `.keys()` | `fn<K,V>(d: Dict<K,V>) Vector<K>` | All keys as a vector |

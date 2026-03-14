@@ -1,7 +1,9 @@
+/// Return the current process argument vector.
 pub fn args() Vector<String> {
   __host_args()
 }
 
+/// Return the environment variable value when present.
 pub fn env(name: String) String? {
   values := __host_env(name)
   if values.len() == 0 {
@@ -11,10 +13,12 @@ pub fn env(name: String) String? {
   }
 }
 
+/// Return the current working directory.
 pub fn cwd() String {
   __host_cwd()
 }
 
+/// Exit the current process with status code.
 pub fn exit(code: Int) {
   __host_exit(code)
 }
