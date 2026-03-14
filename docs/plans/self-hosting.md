@@ -52,9 +52,10 @@ type StageResult<T> = .{ value: T, diagnostics: Vector<Diagnostic> }
 - The type checker produces a TypeMap with `Unknown` types for unresolved
   expressions — hover still works for the resolved portions.
 
-Stages never short-circuit the pipeline. A file with 3 parse errors and 2 type
-errors produces all 5 diagnostics in one pass, plus a partial typed AST that
-the LSP can query.
+Frontend stages never short-circuit the pipeline. A file with 3 parse errors
+and 2 type errors produces all 5 diagnostics in one pass, plus a partial typed
+AST that the LSP can query. Backend stages (lower through emit) only run when
+the frontend reports zero errors — they are not designed for partial inputs.
 
 ### 3. Unified Diagnostic Type
 
@@ -215,18 +216,21 @@ mapping to Wasm.
    in sync, but there's no structural guarantee they do — only runtime debug
    assertions.
 
-3. **Six parallel flow metadata channels.** Every `Let` binding in the emitter
-   must push/restore metadata across six independent channels:
+3. **Multiple parallel flow metadata channels.** Every `Let` binding in
+   `emit_let_expr` must push/restore metadata across four independent channels:
    - `push_flow_mono_binding` (MonoType)
    - `push_flow_value_repr_binding` (ValueRepr — closure info)
    - `push_flow_iterator_binding` (IteratorStateInfo)
-   - `push_flow_iterator_next_binding` (IteratorStateInfo)
-   - `push_flow_sum_repr_binding` (SumRepr)
-   - `push_flow_typed_option_binding` (wrapper delegating to sum_repr)
+   - `push_flow_typed_option_binding` (SumRepr — wraps `push_flow_sum_repr_binding`)
 
-   Missing any one of these at a branch point causes miscompilation. The
-   channels grew incrementally — each specialization feature added its own
-   metadata tracking, and they must all be kept in lockstep.
+   A fifth channel (`push_flow_iterator_next_binding`) exists in `ctx.rs` for
+   branch analysis. The system also has `push_flow_sum_repr_binding` as the
+   underlying mechanism behind `push_flow_typed_option_binding` — these are
+   the same channel with a compatibility alias, not truly independent.
+
+   Missing any channel at a branch point causes miscompilation. The channels
+   grew incrementally — each specialization feature added its own metadata
+   tracking, and they must all be kept in lockstep.
 
 4. **Boundary conversions were ad hoc.** Converting typed → erased (or vice
    versa) was initially done inline at each call site. This led to duplicated
@@ -236,13 +240,16 @@ mapping to Wasm.
    a fallback for `anyref` locals where it re-infers the type from mono —
    which means the "single source of truth" still has a backup heuristic.
 
-5. **Runtime dispatch to paper over metadata gaps.**
+5. **Runtime dispatch as a deliberate safety net.**
    `emit_anyref_option_or_variant_local_to_variant` emits a `ref.test` /
    `ref.cast` branch at runtime to handle locals that might hold either a
    typed option struct or an erased Variant. This exists because `anyref`
    locals can carry mixed representations across branch joins — the compiler
-   doesn't know which form the value is in, so it checks at runtime. This is
-   a runtime cost to compensate for a compile-time information loss.
+   doesn't know which form the value is in, so it checks at runtime. The
+   sum-representation-boundary-unification work deliberately preserved this
+   as an accepted residual (Phase 5 cleanup found "no obsolete guards"). It
+   is a runtime cost accepted in stage0 to avoid a deeper redesign — exactly
+   the kind of thing the self-hosted compiler should eliminate structurally.
 
 6. **Seven categories of on-demand type registration.** During emission, the
    emitter calls `request_typed_*` to register struct types it discovers it
@@ -290,9 +297,11 @@ fn layout_of(ty: MonoType, type_env: TypeEnv) -> WasmLayout
 ```
 
 There is no "erased fallback" at the layout level. If a type is concrete
-(which it always is after monomorphization), it gets a concrete layout. The
-universal `anyref` path exists only for the runtime's own internal plumbing,
-not as a backend fallback.
+(which it always is after monomorphization), it gets a concrete layout.
+`anyref` still exists at the Wasm runtime ABI boundary — calls into runtime
+helpers (`rt.arr`, `rt.str`, etc.) require boxing/unboxing — but this is
+handled by explicit boundary nodes (Rule 3), not by falling back to an
+erased layout for the value itself.
 
 #### Rule 2: No Shadow Type System
 
@@ -307,17 +316,26 @@ actual type.
 #### Rule 3: Boundary Conversions Are Explicit in the IR
 
 When a value must cross a representation boundary (e.g., passed to a runtime
-helper that expects `anyref`), the conversion should be an explicit IR node
-inserted during ANF lowering, not an implicit coercion during emission.
+helper that expects `anyref`), the conversion should be an explicit IR node,
+not an implicit coercion during emission.
 
 ```tw
-// In ANF, before codegen sees it:
+// In ANF, after boundary insertion:
 let boxed = WrapAnyref(typed_value)     // typed → anyref
 let typed = UnwrapAnyref(anyref_value, target_type)  // anyref → typed
 ```
 
 This makes boundary crossings visible, auditable, and optimizable. The emitter
 never guesses — it just emits what the IR says.
+
+**Pipeline ordering note:** inserting these nodes requires knowing which values
+need wrapping, which depends on Wasm layout decisions. Therefore boundary
+insertion runs as a dedicated pass *after* `plan_wasm_types` computes the
+layout registry, not during `to_anf`. The pipeline becomes:
+
+```
+to_anf → optimize → plan_wasm_types → insert_boundaries → emit
+```
 
 #### Rule 4: Layout Registry, Not On-Demand Generation
 
@@ -348,7 +366,7 @@ different representations go through explicit IR conversion nodes.
 
 #### Rule 6: One Metadata Channel, Not Six
 
-Stage0's six parallel push/restore channels exist because each specialization
+Stage0's multiple parallel push/restore channels exist because each specialization
 feature tracks its own metadata independently. In the self-hosted compiler,
 a local's backend info is fully determined by its type + the layout registry.
 There is no per-local metadata to push/restore — the emitter is stateless
@@ -364,7 +382,7 @@ that is saved/restored once per branch, not N independent channels.
 |---|---|
 | Layout discovered ad hoc during emission | `layout_of(type)` computed once before emission |
 | `SumRepr` / `LocalBackendInfo` shadow type system | No shadow metadata — layout derived from `MonoType` |
-| Six parallel flow metadata channels | Zero or one unified `BranchFacts` channel |
+| Four+ parallel flow metadata channels | Zero or one unified `BranchFacts` channel |
 | Inline boundary conversions that diverge | Explicit `WrapAnyref` / `UnwrapAnyref` IR nodes |
 | Seven categories of `request_typed_*` | Pre-computed `WasmTypeRegistry` from type scan |
 | `emit_anyref_option_or_variant` runtime dispatch | No mixed representations — layout is always known |
@@ -377,7 +395,10 @@ that is saved/restored once per branch, not N independent channels.
    - Entry point: `boot/main.tw`
    - Shared libraries: `boot/lib/` (source, module, graph, query, argparse)
 2. Stage0 Rust: `twk build boot/main.tw -o twc.wasm`.
-3. Verify: run `twc.wasm` on `hello.tw`; output must match stage0 output.
+3. Verify: run `twc.wasm` to compile `hello.tw`, then execute the resulting
+   Wasm; execution output must match stage0-compiled execution output. (WAT
+   text is not expected to be identical — symbol names and emission order will
+   differ.)
 4. Self-hosting round: compile `boot/main.tw` with `twc.wasm` → new `twc.wasm`;
    verify the two are behaviorally equivalent on the compatibility suite.
 
