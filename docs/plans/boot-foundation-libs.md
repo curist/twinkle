@@ -1,93 +1,24 @@
-# Stage 10 Support Plan — `boot/lib` Foundation Libraries
+# Phase E Foundation Libraries — module, graph, query
 
-## Goal
+These libraries support multi-module compilation and incremental caching in
+Phase E (Integration + Self-Hosting) of the [self-hosting plan](self-hosting.md).
 
-Define and land four foundational Twinkle libraries under `boot/lib/` that unblock the self-hosted compiler implementation:
+**`boot/lib/source`** was split into its own plan: [boot-source-lib.md](boot-source-lib.md)
+(immediate prerequisite for Phase A Frontend).
 
-1. `boot/lib/source` — spans, source files, file registry, line/col, snippets, diagnostics helpers.
-2. `boot/lib/module` — project-root detection, module path resolution, stdlib/prelude discovery.
-3. `boot/lib/graph` — dependency graph, reverse dependents, topo ordering, cycle checks.
-4. `boot/lib/query` — deterministic cache keys and stage cache (later milestone).
+## Why Deferred
 
-This mirrors the Rust stage0 architecture while staying Twinkle-native:
+These libraries have no consumer until Phase E:
 
-- `src/syntax/span.rs`
-- `src/module/loader.rs`
-- `src/query/graph.rs`
-- `src/query/keys.rs`
-- `src/query/cache.rs`
+- **module** — single-source compilation in Phases A-D works with source strings
+  passed directly; path resolution and project-root detection are only needed
+  when wiring up multi-module compilation.
+- **graph** — dependency ordering and invalidation serve `ProjectState`, which
+  is a Phase E concern.
+- **query** — stage caching requires stable stage artifacts to exist first.
 
-## Why This Plan
-
-`boot/` currently has test infrastructure and `lib/argparse`, but the self-hosted compiler still needs reusable infrastructure for source mapping, module loading, dependency orchestration, and incremental stage caching.
-
-Without these libraries, compiler stages in `boot/` will either duplicate logic or hard-code behavior that later blocks incremental and multi-module compilation.
-
-## Scope
-
-In scope:
-
-- API design and implementation plan for all four libraries.
-- Delivery order with explicit dependencies.
-- Test strategy in `boot/tests/suites/`.
-- Determinism and portability constraints.
-
-Out of scope:
-
-- Full self-hosted compiler implementation (`boot/main.tw`, parser, checker, backend).
-- LSP/editor features.
-- Persistent on-disk cache format.
-
-## Delivery Order
-
-1. `boot/lib/source`
-2. `boot/lib/module`
-3. `boot/lib/graph`
-4. `boot/lib/query` (after parser/resolve/typecheck artifacts exist)
-
-Rationale:
-
-- `source` and `module` are immediate prerequisites for parsing and file discovery.
-- `graph` enables correct multi-module compile order and invalidation.
-- `query` depends on stage artifacts and graph behavior, so it should land after early compiler stages exist.
-
-## Milestone A — `boot/lib/source`
-
-Reference: `src/syntax/span.rs`.
-
-### Responsibilities
-
-- Represent `FileId` and `Span`.
-- Span utilities: merge, contains, length, empty check.
-- File registry with file text and line start offsets.
-- Lookup helpers: file name, source text, snippet by span, line/col conversion, full line text.
-- Diagnostics helpers that convert spans into stable human-readable location data.
-
-### Target API Shape (Twinkle)
-
-- `type FileId = Int`
-- `type Span = .{ file_id: FileId, start: Int, end: Int }`
-- `type FileRegistry = ...`
-- `fn span_merge(a: Span, b: Span) Span`
-- `fn span_contains(s: Span, offset: Int) Bool`
-- `fn span_len(s: Span) Int`
-- `fn span_is_empty(s: Span) Bool`
-- `fn add_file(reg: FileRegistry, name: String, source: String) AddFileResult`
-- `fn snippet(reg: FileRegistry, span: Span) String?`
-- `fn line_col(reg: FileRegistry, span: Span) .{ line: Int, column: Int }?`
-- `fn line_text(reg: FileRegistry, span: Span) String?`
-
-### Tests
-
-- New suite: `boot/tests/suites/source_suite.tw`.
-- Cover line start computation, line/col boundaries, multi-line snippets, empty spans, and out-of-bounds behavior.
-- Run in both backends: `run -i` and `run`.
-
-### Done Criteria
-
-- API supports parser/typechecker diagnostic formatting needs.
-- Deterministic outputs for same input text.
-- No host interaction required.
+Building them before their consumers exist risks designing APIs against
+assumptions that won't survive contact with the actual compiler stages.
 
 ## Milestone B — `boot/lib/module`
 

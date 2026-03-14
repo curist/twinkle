@@ -38,9 +38,10 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Foundation libs | `boot/lib` support libraries (`source`, `module`, `graph`, `query`) | In Progress | [boot-foundation-libs.md](boot-foundation-libs.md) |
+| Source lib | `boot/lib/source` — spans, file registry, diagnostics | Planned | [boot-source-lib.md](boot-source-lib.md) |
 | Frontend | Lexer, parser, resolver, type checker | Planned | — |
 | Backend | Core IR, ANF, optimizer, codegen, linker | Planned | — |
+| Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
 
 ### Later — Tooling & Ecosystem

@@ -406,6 +406,9 @@ that is saved/restored once per branch, not N independent channels.
 
 ### Phase A — Frontend (Lexer + Parser + Resolver + Type Checker)
 
+Prerequisite: [boot-source-lib.md](boot-source-lib.md) (`boot/lib/source` —
+spans, file registry, diagnostics, `StageResult<T>`).
+
 Cleanest data structures, minimal state. The frontend is the most important
 piece because it's what the LSP uses. Build it first with LSP in mind:
 
@@ -439,6 +442,9 @@ Most complex stage. Build last so the other phases are stable:
 - Linker is mechanical: namespace prefixing + symbol resolution
 
 ### Phase E — Integration + Self-Hosting
+
+Prerequisite: [boot-foundation-libs.md](boot-foundation-libs.md) (`boot/lib/`
+module, graph, query — deferred until this phase).
 
 - Wire up multi-module compilation with `SourceAdapter` capability
 - Implement `ProjectState` + dependency graph for incremental
