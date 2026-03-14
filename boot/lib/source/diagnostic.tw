@@ -15,14 +15,14 @@ pub type Diagnostic = .{
 
 pub type StageResult<T> = .{ value: T, diagnostics: Vector<Diagnostic> }
 
-pub fn error(s: span.Span, message: String) Diagnostic {
-  .{ span: s, severity: .Error, message: message, related: [] }
+pub fn error(span: span.Span, message: String) Diagnostic {
+  .{ span, severity: .Error, message: message, related: [] }
 }
 
-pub fn warning(s: span.Span, message: String) Diagnostic {
-  .{ span: s, severity: .Warning, message: message, related: [] }
+pub fn warning(span: span.Span, message: String) Diagnostic {
+  .{ span, severity: .Warning, message, related: [] }
 }
 
 pub fn stage_result<T>(value: T, diagnostics: Vector<Diagnostic>) StageResult<T> {
-  .{ value: value, diagnostics: diagnostics }
+  .{ value, diagnostics }
 }

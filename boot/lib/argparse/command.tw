@@ -7,7 +7,7 @@ pub type Command = .{
 }
 
 pub fn make(name: String, help: String) Command {
-  Command.{ name: name, help: help, args: [] }
+  Command.{ name, help, args: [] }
 }
 
 pub fn add_arg(cmd: Command, a: arg.Arg) Command {

@@ -65,6 +65,11 @@ fn analysis_collects_parse_error_diagnostics() {
         !diags.is_empty(),
         "should have at least one parse diagnostic"
     );
+    assert_eq!(diags[0].code, "E_PARSE");
+    assert!(
+        diags[0].span.is_some(),
+        "parse diagnostics should carry spans for LSP positioning"
+    );
 }
 
 #[test]
@@ -218,4 +223,9 @@ fn session_diagnostics_returns_parse_errors_as_lsp_diagnostics() {
         .expect("diagnostics should succeed");
     assert!(!diags.is_empty(), "should have parse error diagnostics");
     assert_eq!(diags[0].severity, LspSeverity::Error);
+    assert_eq!(diags[0].code, "E_PARSE");
+    assert!(
+        diags[0].range.start_character > 0 || diags[0].range.start_line > 0,
+        "parse error diagnostic should not default to 0:0 when span is known"
+    );
 }

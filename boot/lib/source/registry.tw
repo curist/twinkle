@@ -21,7 +21,7 @@ pub type AddFileResult = .{ file_id: Int }
 
 pub fn empty() FileRegistry {
   files: Dict<Int, SourceFile> = Dict.new()
-  .{ data: Cell.new(RegistryData.{ files: files, count: 0 }) }
+  .{ data: Cell.new(RegistryData.{ files, count: 0 }) }
 }
 
 fn compute_line_starts(source: String) Vector<Int> {
@@ -38,11 +38,11 @@ pub fn add_file(reg: FileRegistry, name: String, source: String) AddFileResult {
   d := reg.data.get()
   file_id := d.count
   line_starts := compute_line_starts(source)
-  sf := SourceFile.{ name: name, source: source, line_starts: line_starts }
+  sf := SourceFile.{ name, source, line_starts }
   new_files := d.files
   new_files[file_id] = sf
   reg.data.set(.{ files: new_files, count: file_id + 1 })
-  .{ file_id: file_id }
+  .{ file_id }
 }
 
 fn get_file(reg: FileRegistry, file_id: Int) SourceFile? {
@@ -85,7 +85,7 @@ pub fn line_col(reg: FileRegistry, s: span.Span) LineCol? {
   line_start := f.line_starts[line_index]
   prefix := f.source.slice(line_start, s.start)
   column := prefix.char_len() + 1
-  .Some(.{ line: line, column: column })
+  .Some(.{ line, column })
 }
 
 pub fn line_text(reg: FileRegistry, s: span.Span) String? {

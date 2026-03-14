@@ -3,13 +3,13 @@
 pub type Span = .{ file_id: Int, start: Int, end: Int }
 
 pub fn new(file_id: Int, start: Int, end: Int) Span {
-  .{ file_id: file_id, start: start, end: end }
+  .{ file_id, start, end }
 }
 
 pub fn span_merge(a: Span, b: Span) Span {
   start := if a.start < b.start { a.start } else { b.start }
   end := if a.end > b.end { a.end } else { b.end }
-  .{ file_id: a.file_id, start: start, end: end }
+  .{ file_id: a.file_id, start, end }
 }
 
 pub fn span_contains(s: Span, offset: Int) Bool {

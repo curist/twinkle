@@ -17,7 +17,7 @@ use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
-    QueryDiagnostic, preassign_module_function_ids, resolve_stage_with_diagnostics,
+    QueryDiagnostic, QuerySpan, preassign_module_function_ids, resolve_stage_with_diagnostics,
     typecheck_stage_with_diagnostics_and_options,
 };
 use crate::query::cache::with_global_cache;
@@ -292,16 +292,29 @@ impl AnalysisCollector {
             .extend(diags);
     }
 
-    fn record_parse_error(&mut self, module_path: &Path, err: &anyhow::Error) {
+    fn record_parse_error(&mut self, module_path: &Path, source: &str, err: &anyhow::Error) {
         if !self.enabled {
             return;
         }
+
+        let message = err.to_string();
+        if let Some((diag, registry)) =
+            parse_failure_diagnostic_from_source(module_path, source, &message)
+        {
+            self.record_file_registry(module_path, registry);
+            self.diagnostics
+                .entry(module_path.to_path_buf())
+                .or_default()
+                .push(diag);
+            return;
+        }
+
         self.diagnostics
             .entry(module_path.to_path_buf())
             .or_default()
             .push(QueryDiagnostic {
                 code: "E_PARSE",
-                message: err.to_string(),
+                message,
                 span: None,
             });
     }
@@ -322,6 +335,46 @@ impl AnalysisCollector {
             file_registries: self.file_registries,
         }
     }
+}
+
+fn parse_failure_diagnostic_from_source(
+    module_path: &Path,
+    source: &str,
+    message: &str,
+) -> Option<(QueryDiagnostic, FileRegistry)> {
+    let mut registry = FileRegistry::new();
+    let file_id = registry.add_file(
+        module_path.to_string_lossy().to_string(),
+        source.to_string(),
+    );
+
+    let span = match crate::syntax::lexer::Lexer::lex(source, file_id) {
+        Ok(tokens) => {
+            let mut parser = crate::syntax::parser::Parser::new(tokens, file_id);
+            match parser.parse_source_file() {
+                Ok(_) => return None,
+                Err(parse_err) => parse_err.span,
+            }
+        }
+        Err(lex_err) => lex_err.span,
+    };
+
+    let query_span = registry.line_col(span).map(|(line, column)| QuerySpan {
+        file_id: span.file_id.0,
+        line,
+        column,
+        start: span.start,
+        end: span.end,
+    });
+
+    Some((
+        QueryDiagnostic {
+            code: "E_PARSE",
+            message: message.to_string(),
+            span: query_span,
+        },
+        registry,
+    ))
 }
 
 fn record_stage_trace(
@@ -400,7 +453,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let parsed_result = match parsed_stage_runner.parse(&source) {
         Ok(result) => result,
         Err(err) => {
-            analysis_collector.record_parse_error(&canonical, &err);
+            analysis_collector.record_parse_error(&canonical, &source, &err);
             return Err(err);
         }
     };

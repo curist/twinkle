@@ -25,7 +25,7 @@ pub type ParseError = {
 }
 
 pub fn make(name: String, help: String) App {
-  App.{ name: name, help: help, commands: [], args: [] }
+  .{ name, help, commands: [], args: [] }
 }
 
 pub fn add_command(a: App, cmd: command.Command) App {
@@ -328,5 +328,5 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     }
   }
 
-  .Ok(.{ command: cmd_name, flags: flags, options: options, positional: pos })
+  .Ok(.{ command: cmd_name, flags, options, positional: pos })
 }
