@@ -50,3 +50,4 @@ Historical/completed indexes are in [archive/README.md](archive/README.md).
 | [lsp-completion.md](lsp-completion.md) | LSP completion follow-up plan focused on reliability during partial/broken edits and protocol coverage |
 | [order-comparator-api.md](order-comparator-api.md) | Introduce `Order`, default primitive `compare` methods, and migrate `Vector.sort_by` to `Order` comparators |
 | [dict-byte-keys.md](dict-byte-keys.md) | Allow `Byte` as a supported `Dict` key type with interpreter/Wasm parity coverage |
+| [dict-key-projection-adapters.md](dict-key-projection-adapters.md) | Add ergonomic `Dict.by_string/by_int/by_byte` projection adapters for domain keys without traits |
