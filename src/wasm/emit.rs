@@ -369,7 +369,19 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
 
         Instr::I32Const(v) => format!("{pad}i32.const {v}"),
         Instr::I64Const(v) => format!("{pad}i64.const {v}"),
-        Instr::F64Const(v) => format!("{pad}f64.const {v}"),
+        Instr::F64Const(v) => {
+            if v.is_nan() {
+                format!("{pad}f64.const nan")
+            } else if v.is_infinite() {
+                if v.is_sign_positive() {
+                    format!("{pad}f64.const inf")
+                } else {
+                    format!("{pad}f64.const -inf")
+                }
+            } else {
+                format!("{pad}f64.const {v}")
+            }
+        }
 
         Instr::I32Add => format!("{pad}i32.add"),
         Instr::I32Sub => format!("{pad}i32.sub"),
