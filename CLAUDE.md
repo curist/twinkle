@@ -128,6 +128,28 @@ Variant names must be `PascalCase`. Pattern matching must be exhaustive unless u
 - No exceptions
 - Unrecoverable errors trap: OOB access, division by zero, explicit `error("msg")`
 - Recoverable via `Result<T,E>` with `try` sugar
+- `try` works with both `Result` and `Option`: early-returns `.Err(e)` or `.None` respectively
+- `opt.ok_or(err)` converts `Option<T>` to `Result<T, E>` for use with `try` in Result-returning functions
+
+```tw
+// try with Option — early-returns .None
+fn find(items: Vector<Item>, id: Int) Item? {
+  index := try items.position(id)   // returns .None if position returns .None
+  .Some(items[index])
+}
+
+// try with Result — early-returns .Err
+fn parse(input: String) Result<Ast, String> {
+  token := try tokenize(input)       // returns .Err(e) if tokenize fails
+  .Ok(build_ast(token))
+}
+
+// .ok_or bridges Option into Result
+fn lookup(reg: Registry, id: Int) Result<Entry, String> {
+  entry := try reg.find(id).ok_or("not found")
+  .Ok(entry)
+}
+```
 
 ### Control Flow
 - `if` expressions: `if cond { a } else { b }`

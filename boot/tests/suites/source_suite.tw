@@ -1,0 +1,193 @@
+use tests.runner
+use tests.assert
+use lib.source.span
+use lib.source.registry
+use lib.source.diagnostic
+
+pub fn suite() runner.Suite {
+  runner.suite("source")
+    // ── Span utilities ──
+    .test("span_len computes byte length", fn() {
+      s := span.new(0, 10, 20)
+      try assert.int_eq(span.span_len(s), 10)
+      .Ok({})
+    })
+    .test("span_is_empty for zero-width span", fn() {
+      s := span.new(0, 5, 5)
+      try assert.is_true(span.span_is_empty(s))
+      .Ok({})
+    })
+    .test("span_is_empty for non-empty span", fn() {
+      s := span.new(0, 5, 10)
+      try assert.is_false(span.span_is_empty(s))
+      .Ok({})
+    })
+    .test("span_contains inside", fn() {
+      s := span.new(0, 10, 20)
+      try assert.is_true(span.span_contains(s, 10))
+      try assert.is_true(span.span_contains(s, 15))
+      try assert.is_true(span.span_contains(s, 19))
+      .Ok({})
+    })
+    .test("span_contains outside", fn() {
+      s := span.new(0, 10, 20)
+      try assert.is_false(span.span_contains(s, 9))
+      try assert.is_false(span.span_contains(s, 20))
+      .Ok({})
+    })
+    .test("span_merge covers both spans", fn() {
+      a := span.new(0, 10, 20)
+      b := span.new(0, 15, 25)
+      m := span.span_merge(a, b)
+      try assert.int_eq(m.start, 10)
+      try assert.int_eq(m.end, 25)
+      .Ok({})
+    })
+    .test("span_merge reversed order", fn() {
+      a := span.new(0, 15, 25)
+      b := span.new(0, 10, 20)
+      m := span.span_merge(a, b)
+      try assert.int_eq(m.start, 10)
+      try assert.int_eq(m.end, 25)
+      .Ok({})
+    })
+
+    // ── File registry ──
+    .test("add_file returns sequential file ids", fn() {
+      reg := registry.empty()
+      r1 := registry.add_file(reg, "a.tw", "hello")
+      r2 := registry.add_file(reg, "b.tw", "world")
+      try assert.int_eq(r1.file_id, 0)
+      try assert.int_eq(r2.file_id, 1)
+      .Ok({})
+    })
+    .test("snippet extracts text by span", fn() {
+      reg := registry.empty()
+      r := registry.add_file(reg, "test.tw", "hello world")
+      s := span.new(r.file_id, 6, 11)
+      snip := case registry.snippet(reg, s) { .Some(x) => x, .None => "NONE" }
+      try assert.str_eq(snip, "world")
+      .Ok({})
+    })
+    .test("snippet returns None for invalid file_id", fn() {
+      reg := registry.empty()
+      s := span.new(99, 0, 5)
+      try assert.is_none(registry.snippet(reg, s))
+      .Ok({})
+    })
+    .test("line_col single line", fn() {
+      reg := registry.empty()
+      r := registry.add_file(reg, "test.tw", "hello")
+      s := span.new(r.file_id, 0, 5)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 1)
+          try assert.int_eq(pos.column, 1)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
+    .test("line_col second line", fn() {
+      reg := registry.empty()
+      // "line 1\nline 2" — 'l' of "line 2" is at offset 7
+      r := registry.add_file(reg, "test.tw", "line 1\nline 2")
+      s := span.new(r.file_id, 7, 13)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 2)
+          try assert.int_eq(pos.column, 1)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
+    .test("line_col mid-line offset", fn() {
+      reg := registry.empty()
+      // offset 3 in "hello" → line 1, column 4
+      r := registry.add_file(reg, "test.tw", "hello")
+      s := span.new(r.file_id, 3, 5)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 1)
+          try assert.int_eq(pos.column, 4)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
+    .test("line_col third line", fn() {
+      reg := registry.empty()
+      r := registry.add_file(reg, "test.tw", "aaa\nbbb\nccc")
+      // "ccc" starts at offset 8
+      s := span.new(r.file_id, 9, 10)
+      lc := registry.line_col(reg, s)
+      case lc {
+        .Some(pos) => {
+          try assert.int_eq(pos.line, 3)
+          try assert.int_eq(pos.column, 2)
+          .Ok({})
+        },
+        .None => assert.fail("expected Some"),
+      }
+    })
+    .test("line_text returns full line", fn() {
+      reg := registry.empty()
+      r := registry.add_file(reg, "test.tw", "line 1\nline 2\nline 3")
+      s := span.new(r.file_id, 7, 13)
+      lt := registry.line_text(reg, s)
+      // line_text includes the newline
+      text := case lt { .Some(x) => x, .None => "NONE" }
+      try assert.str_eq(text, "line 2\n")
+      .Ok({})
+    })
+    .test("line_text last line no trailing newline", fn() {
+      reg := registry.empty()
+      r := registry.add_file(reg, "test.tw", "aaa\nbbb")
+      s := span.new(r.file_id, 4, 7)
+      lt := registry.line_text(reg, s)
+      text := case lt { .Some(x) => x, .None => "NONE" }
+      try assert.str_eq(text, "bbb")
+      .Ok({})
+    })
+    .test("line_col returns None for invalid file_id", fn() {
+      reg := registry.empty()
+      s := span.new(99, 0, 1)
+      try assert.is_none(registry.line_col(reg, s))
+      .Ok({})
+    })
+    .test("line_col returns None for negative offset", fn() {
+      reg := registry.empty()
+      registry.add_file(reg, "test.tw", "hello")
+      s := span.new(0, -1, 5)
+      try assert.is_none(registry.line_col(reg, s))
+      .Ok({})
+    })
+    .test("line_text returns None for negative offset", fn() {
+      reg := registry.empty()
+      registry.add_file(reg, "test.tw", "hello")
+      s := span.new(0, -1, 5)
+      try assert.is_none(registry.line_text(reg, s))
+      .Ok({})
+    })
+
+    // ── Diagnostics ──
+    .test("diagnostic construction", fn() {
+      s := span.new(0, 0, 5)
+      d := diagnostic.error(s, "something went wrong")
+      try assert.str_eq(d.message, "something went wrong")
+      try assert.int_eq(d.span.start, 0)
+      try assert.int_eq(d.span.end, 5)
+      .Ok({})
+    })
+    .test("stage_result holds value and diagnostics", fn() {
+      d := diagnostic.error(span.new(0, 0, 1), "warn")
+      sr := diagnostic.stage_result(42, [d])
+      try assert.int_eq(sr.value, 42)
+      try assert.int_eq(sr.diagnostics.len(), 1)
+      .Ok({})
+    })
+}

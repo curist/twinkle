@@ -11,6 +11,7 @@ use tests.suites.api_dict_suite
 use tests.suites.api_range_iterator_suite
 use tests.suites.stdlib_path_suite
 use tests.suites.stdlib_host_suite
+use tests.suites.source_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -25,4 +26,5 @@ runner.run_all([
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
   stdlib_host_suite.suite(),
+  source_suite.suite(),
 ])
