@@ -199,4 +199,131 @@ mod tests {
             .expect("hover after close");
         assert_eq!(reverted.as_deref(), Some("Int"));
     }
+
+    #[test]
+    fn hover_works_with_destructuring_imports() {
+        let project_root = PathBuf::from("/virtual/destructure_test");
+        let stdlib_root = project_root.join("stdlib");
+        let main_path = project_root.join("main.tw");
+        let math_path = project_root.join("math.tw");
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(
+            math_path.clone(),
+            r#"pub type Vec2 = .{ x: Int, y: Int }
+pub fn add(a: Int, b: Int) Int { a + b }
+pub fn make_vec(x: Int, y: Int) Vec2 { Vec2.{ x: x, y: y } }
+"#
+            .to_string(),
+        );
+        base_sources.insert(
+            main_path.clone(),
+            r#"use math.{add, make_vec, type Vec2}
+
+fn main() {
+    result := add(1, 2)
+    v: Vec2 = make_vec(10, 20)
+    println("${result}")
+    println("${v.x}")
+}
+"#
+            .to_string(),
+        );
+
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+        // Check diagnostics first
+        let diags = session
+            .diagnostics(&main_path, &main_path)
+            .expect("diagnostics should not error");
+        for d in &diags {
+            eprintln!("  diag: {:?}", d);
+        }
+        assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
+
+        // Hover over `add` in `result := add(1, 2)` — line 3, col 14
+        let hover_add = session
+            .hover(&main_path, &main_path, PositionUtf16::new(3, 14))
+            .expect("hover should not error");
+        eprintln!("hover_add = {:?}", hover_add);
+        assert!(
+            hover_add.is_some(),
+            "Expected hover on `add` to return a type"
+        );
+
+        // Hover over `Vec2` in the type annotation `v: Vec2 = ...` — line 4
+        let hover_vec2 = session
+            .hover(&main_path, &main_path, PositionUtf16::new(4, 7))
+            .expect("hover should not error");
+        eprintln!("hover_vec2 = {:?}", hover_vec2);
+
+        // Hover on import line items
+        // `use math.{add, make_vec, type Vec2}` — line 0
+        let hover_import_add = session
+            .hover(&main_path, &main_path, PositionUtf16::new(0, 11))
+            .expect("hover should not error");
+        eprintln!("hover_import_add (line 0, col 11) = {:?}", hover_import_add);
+        assert!(
+            hover_import_add.is_some(),
+            "hover on `add` in import list should return type info"
+        );
+        assert!(
+            hover_import_add.as_deref().unwrap().contains("fn("),
+            "hover on `add` should show function signature"
+        );
+
+        let hover_import_vec2 = session
+            .hover(&main_path, &main_path, PositionUtf16::new(0, 31))
+            .expect("hover should not error");
+        eprintln!(
+            "hover_import_vec2 (line 0, col 31) = {:?}",
+            hover_import_vec2
+        );
+        assert!(
+            hover_import_vec2.is_some(),
+            "hover on `Vec2` in import list should return type info"
+        );
+
+        // Goto definition on `add` call — line 3, col 14
+        let def_add = session
+            .definition(&main_path, &main_path, PositionUtf16::new(3, 14))
+            .expect("definition should not error");
+        eprintln!("def_add = {:?}", def_add);
+
+        // Goto definition on `make_vec` call — line 4, col 16
+        let def_make_vec = session
+            .definition(&main_path, &main_path, PositionUtf16::new(4, 16))
+            .expect("definition should not error");
+        eprintln!("def_make_vec = {:?}", def_make_vec);
+
+        // Goto definition on import line — line 0, col 4 (on `math`)
+        let def_import = session
+            .definition(&main_path, &main_path, PositionUtf16::new(0, 4))
+            .expect("definition should not error");
+        eprintln!("def_import (math) = {:?}", def_import);
+
+        assert!(def_add.is_some(), "goto-def on `add` call should resolve");
+        assert_eq!(def_add.as_ref().unwrap().path, math_path);
+        assert!(
+            def_make_vec.is_some(),
+            "goto-def on `make_vec` call should resolve"
+        );
+        assert_eq!(def_make_vec.as_ref().unwrap().path, math_path);
+        assert!(
+            def_import.is_some(),
+            "goto-def on `math` module should resolve"
+        );
+
+        // Goto definition from import line items
+        // `use math.{add, make_vec, type Vec2}` — `add` starts at col 10
+        let def_import_add = session
+            .definition(&main_path, &main_path, PositionUtf16::new(0, 11))
+            .expect("definition should not error");
+        eprintln!("def_import_add = {:?}", def_import_add);
+        assert!(
+            def_import_add.is_some(),
+            "goto-def on `add` in import line should resolve"
+        );
+        assert_eq!(def_import_add.as_ref().unwrap().path, math_path);
+    }
 }

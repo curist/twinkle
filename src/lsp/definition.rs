@@ -43,11 +43,18 @@ pub fn definition_at_workspace(
         if let Some(expr) = find_expr_by_id(&module.ast, entry.expr_id) {
             match &expr.kind {
                 ExprKind::Ident(name) => {
-                    let span = resolve_ident_binding_span(module, entry.expr_id, name)?;
-                    return Some(DefinitionTarget {
-                        path: module_path.to_path_buf(),
-                        span,
-                    });
+                    if let Some(span) = resolve_ident_binding_span(module, entry.expr_id, name) {
+                        return Some(DefinitionTarget {
+                            path: module_path.to_path_buf(),
+                            span,
+                        });
+                    }
+                    // Fall through: check if the name came from a destructuring import
+                    if let Some(target) =
+                        resolve_destructured_import_target(workspace, module, name)
+                    {
+                        return Some(target);
+                    }
                 }
                 ExprKind::FieldAccess { base, field } => {
                     if !is_offset_on_field(base, expr.span, byte_offset) {
@@ -90,11 +97,72 @@ fn resolve_import_module_target(
         }
         let alias = decl.module_name();
         let import = module.imports.iter().find(|entry| entry.alias == alias)?;
+
+        // Check if cursor is on a specific item in a destructuring import
+        if let Some(items) = &decl.items {
+            for import_item in items {
+                let item_span = import_item.span();
+                if item_span.file_id == file_id && item_span.contains(byte_offset) {
+                    let item_name = match import_item {
+                        crate::syntax::ast::ImportItem::Value { name, .. } => name,
+                        crate::syntax::ast::ImportItem::Type { name, .. } => name,
+                    };
+                    if let Some(span) =
+                        find_top_level_any_named_span(workspace, &import.canonical_path, item_name)
+                    {
+                        return Some(DefinitionTarget {
+                            path: import.canonical_path.clone(),
+                            span,
+                        });
+                    }
+                }
+            }
+        }
+
         let target_module = workspace.modules.get(&import.canonical_path)?;
         return Some(DefinitionTarget {
             path: import.canonical_path.clone(),
             span: target_module.ast.span,
         });
+    }
+    None
+}
+
+fn resolve_destructured_import_target(
+    workspace: &WorkspaceAnalysis,
+    module: &AnalyzedModule,
+    name: &str,
+) -> Option<DefinitionTarget> {
+    for item in &module.ast.items {
+        let Item::Import(decl) = item else {
+            continue;
+        };
+        let Some(items) = &decl.items else {
+            continue;
+        };
+        let alias = decl.module_name();
+        let Some(import) = module.imports.iter().find(|entry| entry.alias == alias) else {
+            continue;
+        };
+
+        for import_item in items {
+            let (item_name, effective_name) = match import_item {
+                crate::syntax::ast::ImportItem::Value {
+                    name: n, alias: a, ..
+                } => (n.as_str(), a.as_deref().unwrap_or(n.as_str())),
+                crate::syntax::ast::ImportItem::Type {
+                    name: n, alias: a, ..
+                } => (n.as_str(), a.as_deref().unwrap_or(n.as_str())),
+            };
+            if effective_name == name {
+                let span =
+                    find_top_level_any_named_span(workspace, &import.canonical_path, item_name)?;
+                return Some(DefinitionTarget {
+                    path: import.canonical_path.clone(),
+                    span,
+                });
+            }
+        }
     }
     None
 }

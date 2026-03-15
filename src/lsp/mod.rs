@@ -46,6 +46,10 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
         return Some(definition_hover);
     }
 
+    if let Some(import_hover) = hover_import_item_at_offset(module, file_id, span_offset) {
+        return Some(import_hover);
+    }
+
     if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, span_offset)
     {
         return Some(variant_hover);
@@ -64,6 +68,56 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
 
     let type_node = find_smallest_type_at_offset(&module.ast, file_id, span_offset)?;
     Some(format_type_hover(module, type_node))
+}
+
+fn hover_import_item_at_offset(
+    module: &AnalyzedModule,
+    file_id: FileId,
+    byte_offset: u32,
+) -> Option<String> {
+    use crate::syntax::ast::ImportItem;
+
+    for item in &module.ast.items {
+        let Item::Import(decl) = item else {
+            continue;
+        };
+        let Some(items) = &decl.items else {
+            continue;
+        };
+        if decl.span.file_id != file_id || !decl.span.contains(byte_offset) {
+            continue;
+        }
+        for import_item in items {
+            let item_span = import_item.span();
+            if item_span.file_id != file_id || !item_span.contains(byte_offset) {
+                continue;
+            }
+            match import_item {
+                ImportItem::Value { name, alias, .. } => {
+                    let effective = alias.as_deref().unwrap_or(name.as_str());
+                    if let Some(sig) = module.typed.value_env.get_function(effective) {
+                        return Some(format_function_signature(sig, &module.typed.type_env));
+                    }
+                    if let Some(ty) = module.typed.value_env.lookup(effective) {
+                        return Some(ty.format_with_names(&module.typed.type_env));
+                    }
+                }
+                ImportItem::Type { name, alias, .. } => {
+                    let effective = alias.as_deref().unwrap_or(name.as_str());
+                    if let Some(type_id) = module.typed.type_env.lookup_type(effective) {
+                        if let Some(def) = module.typed.type_env.get_def(type_id) {
+                            let type_str = def.name().to_string();
+                            return Some(match def.doc() {
+                                Some(doc) => format!("{type_str}\n\n{doc}"),
+                                None => type_str,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn find_expr_function_signature(
