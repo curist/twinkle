@@ -3,15 +3,15 @@
 //   hello world
 //   3
 
-PI := 3
-GREETING := "hello"
+pi := 3
+greeting := "hello"
 
 fn double_pi() Int {
-    PI * 2 * 13
+    pi * 2 * 13
 }
 
 fn make_greeting(suffix: String) String {
-    "${GREETING} ${suffix}"
+    "${greeting} ${suffix}"
 }
 
 fn count_items() Int {

@@ -177,6 +177,84 @@ fn test_stage0_skeleton() {
 }
 
 #[test]
+fn test_naming_case_enforcement() {
+    // All value-binding sites must reject uppercase-initial names
+    let cases_reject = vec![
+        // Top-level declarations
+        ("fn Foo() Int { 1 }", "uppercase function name"),
+        ("X := 42", "uppercase let binding"),
+        ("PI := 3", "uppercase constant binding"),
+        ("type point = { A }", "lowercase type name"),
+        ("type foo<T> = .{ x: Int }", "lowercase record type name"),
+        // Parameters
+        ("fn foo(X: Int) Int { X }", "uppercase parameter name"),
+        (
+            "fn bar(a: Int, B: Int) Int { a }",
+            "uppercase second parameter",
+        ),
+        // Record field declarations
+        ("type R = .{ Name: String }", "uppercase record field name"),
+        // Module alias and module name
+        ("use foo as Bar", "uppercase module alias"),
+        ("use Foo", "uppercase module name"),
+    ];
+    for (source, description) in cases_reject {
+        let result = twinkle::syntax::parse_source(source, "test.tw");
+        assert!(
+            result.is_err(),
+            "{}: should be rejected, but parsed successfully",
+            description
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("must start with"),
+            "{}: expected case enforcement error, got: {}",
+            description,
+            err_msg
+        );
+    }
+
+    // Pattern binders (in case arms, for loops, etc.) must reject uppercase
+    let pattern_reject = vec![
+        (
+            "fn f() Int { case 1 { X => X } }",
+            "uppercase case pattern binder",
+        ),
+        ("fn f() { for X in [1] { } }", "uppercase for loop binder"),
+    ];
+    for (source, description) in pattern_reject {
+        let result = twinkle::syntax::parse_source(source, "test.tw");
+        assert!(
+            result.is_err(),
+            "{}: should be rejected, but parsed successfully",
+            description
+        );
+    }
+
+    // These should still parse fine
+    let cases_accept = vec![
+        ("fn foo() Int { 1 }", "lowercase function name"),
+        ("x := 42", "lowercase let binding"),
+        ("type Point = { A }", "uppercase type name"),
+        ("type Rec = .{ x: Int }", "uppercase record type name"),
+        ("fn foo(x: Int) Int { x }", "lowercase parameter name"),
+        (
+            "fn f() Int { case 1 { x => x } }",
+            "lowercase case pattern binder",
+        ),
+    ];
+    for (source, description) in cases_accept {
+        let result = twinkle::syntax::parse_source(source, "test.tw");
+        assert!(
+            result.is_ok(),
+            "{}: should parse successfully, got: {:?}",
+            description,
+            result.err()
+        );
+    }
+}
+
+#[test]
 fn test_value_postfix_constructor_still_rejected() {
     // `x.Variant` where x is a value (lowercase chain) must remain a parse error
     let cases = vec![

@@ -29,6 +29,12 @@ pub enum ParseErrorKind {
     LowercaseVariant {
         name: String,
     },
+    /// A declaration name violates initial-case rules.
+    CaseViolation {
+        kind: &'static str,
+        name: String,
+        expected: &'static str,
+    },
 }
 
 impl ParseError {
@@ -260,11 +266,37 @@ impl Parser {
         let alias = if self.peek_is(TokenKind::As) {
             self.advance(); // consume 'as'
             let alias_tok = self.expect(TokenKind::Ident)?;
+            if alias_tok.text.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "module alias",
+                        name: alias_tok.text.clone(),
+                        expected: "a lowercase",
+                    },
+                    alias_tok.span,
+                ));
+            }
             last_span = alias_tok.span;
             Some(alias_tok.text.clone())
         } else {
             None
         };
+
+        // Enforce lowercase for the effective module identifier
+        // (either the explicit alias or the last path segment)
+        if alias.is_none() {
+            let module_name = module_path.last().unwrap();
+            if module_name.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "module name",
+                        name: module_name.clone(),
+                        expected: "a lowercase",
+                    },
+                    last_span,
+                ));
+            }
+        }
 
         let span = start.span.merge(&last_span);
 
@@ -281,6 +313,17 @@ impl Parser {
         let start = self.expect(TokenKind::Type)?;
         let name_token = self.expect(TokenKind::Ident)?;
         let name = name_token.text.clone();
+
+        if name.starts_with(|c: char| c.is_lowercase()) {
+            return Err(ParseError::new(
+                ParseErrorKind::CaseViolation {
+                    kind: "type name",
+                    name,
+                    expected: "an uppercase",
+                },
+                name_token.span,
+            ));
+        }
 
         // Optional type parameters: <T, U>
         let type_params = if self.peek_is(TokenKind::Lt) {
@@ -314,6 +357,18 @@ impl Parser {
             while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
                 let field_start = self.expect(TokenKind::Ident)?;
                 let field_name = field_start.text.clone();
+
+                if field_name.starts_with(|c: char| c.is_uppercase()) {
+                    return Err(ParseError::new(
+                        ParseErrorKind::CaseViolation {
+                            kind: "record field name",
+                            name: field_name,
+                            expected: "a lowercase",
+                        },
+                        field_start.span,
+                    ));
+                }
+
                 self.expect(TokenKind::Colon)?;
                 let field_ty = self.parse_type()?;
                 let field_span = field_start.span.merge(&field_ty.span());
@@ -406,6 +461,17 @@ impl Parser {
         let start = self.expect(TokenKind::Fn)?;
         let name_token = self.expect(TokenKind::Ident)?;
         let name = name_token.text.clone();
+
+        if name.starts_with(|c: char| c.is_uppercase()) {
+            return Err(ParseError::new(
+                ParseErrorKind::CaseViolation {
+                    kind: "function name",
+                    name,
+                    expected: "a lowercase",
+                },
+                name_token.span,
+            ));
+        }
 
         // Optional type parameters: <T, U>
         let type_params = if self.peek_is(TokenKind::Lt) {
@@ -1293,6 +1359,15 @@ impl Parser {
                         fields,
                         span,
                     })
+                } else if token.text.starts_with(|c: char| c.is_uppercase()) {
+                    return Err(ParseError::new(
+                        ParseErrorKind::CaseViolation {
+                            kind: "binding name",
+                            name: token.text.clone(),
+                            expected: "a lowercase",
+                        },
+                        token.span,
+                    ));
                 } else {
                     Ok(Pattern::Ident(token.text.clone(), token.span))
                 }
@@ -1389,6 +1464,20 @@ impl Parser {
 
     fn parse_let_stmt(&mut self, is_pub: bool) -> ParseResult<Stmt> {
         let pattern = self.parse_pattern()?;
+
+        // Enforce lowercase-initial for value binding identifiers
+        if let Pattern::Ident(ref name, span) = pattern {
+            if name.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "value binding",
+                        name: name.clone(),
+                        expected: "a lowercase",
+                    },
+                    span,
+                ));
+            }
+        }
 
         let (ty, value) = if self.peek_is(TokenKind::ColonEq) {
             // x := expr (type inferred)
@@ -1670,6 +1759,17 @@ impl Parser {
         let name_token = self.expect(TokenKind::Ident)?;
         let name = name_token.text.clone();
         let start_span = name_token.span;
+
+        if name.starts_with(|c: char| c.is_uppercase()) {
+            return Err(ParseError::new(
+                ParseErrorKind::CaseViolation {
+                    kind: "parameter name",
+                    name,
+                    expected: "a lowercase",
+                },
+                start_span,
+            ));
+        }
 
         // Optional type annotation
         let ty = if self.peek_is(TokenKind::Colon) {

@@ -138,7 +138,7 @@ fn query_symbols_stage_returns_types_functions_and_values() {
     });
     let has_pi_value = symbols
         .iter()
-        .any(|s| s.name == "PI" && s.kind == QuerySymbolKind::Value && s.detail.contains("Int"));
+        .any(|s| s.name == "pi" && s.kind == QuerySymbolKind::Value && s.detail.contains("Int"));
 
     assert!(has_double_pi);
     assert!(has_pi_value);

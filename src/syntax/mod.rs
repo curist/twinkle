@@ -287,6 +287,16 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
                     file_name, line, col, name
                 )
             }
+            parser::ParseErrorKind::CaseViolation {
+                kind,
+                name,
+                expected,
+            } => {
+                format!(
+                    "{}:{}:{}: {} '{}' must start with {} letter",
+                    file_name, line, col, kind, name, expected
+                )
+            }
         };
 
         // Add source context
