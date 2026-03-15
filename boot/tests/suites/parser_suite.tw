@@ -7,7 +7,7 @@ use compiler.ast
 
 fn expr_is_add_binary(expr: ast.Expr) Bool {
   case expr.kind {
-    .Binary(op, _, _) => op == ast.BinOp.Add,
+    .Binary(op, _, _) => op == .Add,
     _ => false,
   }
 }
@@ -39,7 +39,7 @@ pub fn suite() runner.Suite {
       lexed := lexer.lex(src, 0)
       try assert.int_eq(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value.len() >= 4)
-      try assert.is_true(lexed.value[2].kind == tokens.TokenKind.Fn)
+      try assert.is_true(lexed.value[2].kind == .Fn)
       try assert.is_true(lexed.value[2].preceded_by_newline)
       .Ok({})
     })
@@ -48,21 +48,21 @@ pub fn suite() runner.Suite {
       src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
       lexed := lexer.lex(src, 0)
       try assert.int_eq(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value[0].kind == tokens.TokenKind.FloatLit)
-      try assert.is_true(lexed.value[1].kind == tokens.TokenKind.EqEq)
-      try assert.is_true(lexed.value[3].kind == tokens.TokenKind.AmpAmp)
-      try assert.is_true(lexed.value[5].kind == tokens.TokenKind.BangEq)
-      try assert.is_true(lexed.value[7].kind == tokens.TokenKind.PipePipe)
-      try assert.is_true(lexed.value[9].kind == tokens.TokenKind.LtEq)
-      try assert.is_true(lexed.value[11].kind == tokens.TokenKind.GtEq)
-      try assert.is_true(lexed.value[13].kind == tokens.TokenKind.DotDot)
+      try assert.is_true(lexed.value[0].kind == .FloatLit)
+      try assert.is_true(lexed.value[1].kind == .EqEq)
+      try assert.is_true(lexed.value[3].kind == .AmpAmp)
+      try assert.is_true(lexed.value[5].kind == .BangEq)
+      try assert.is_true(lexed.value[7].kind == .PipePipe)
+      try assert.is_true(lexed.value[9].kind == .LtEq)
+      try assert.is_true(lexed.value[11].kind == .GtEq)
+      try assert.is_true(lexed.value[13].kind == .DotDot)
 
       // interpolation token triplet with expression tokens in-between
-      try assert.is_true(lexed.value[15].kind == tokens.TokenKind.StringStart)
-      try assert.is_true(lexed.value[16].kind == tokens.TokenKind.Ident)
-      try assert.is_true(lexed.value[17].kind == tokens.TokenKind.Plus)
-      try assert.is_true(lexed.value[18].kind == tokens.TokenKind.IntLit)
-      try assert.is_true(lexed.value[19].kind == tokens.TokenKind.StringEnd)
+      try assert.is_true(lexed.value[15].kind == .StringStart)
+      try assert.is_true(lexed.value[16].kind == .Ident)
+      try assert.is_true(lexed.value[17].kind == .Plus)
+      try assert.is_true(lexed.value[18].kind == .IntLit)
+      try assert.is_true(lexed.value[19].kind == .StringEnd)
       .Ok({})
     })
     .test("parser handles destructuring use declaration", fn() {

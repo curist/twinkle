@@ -152,7 +152,7 @@ fn severity_name(sev: Severity) String {
 fn diagnostics_have_errors(diags: Vector<Diagnostic>) Bool {
   has_error := false
   for d in diags {
-    if d.severity == Severity.Error {
+    if d.severity == .Error {
       has_error = true
       break
     }

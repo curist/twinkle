@@ -165,9 +165,9 @@ fn is_stmt_leader(tokens_in: Vector<Token>, idx: Int) Bool {
     .Continue => true,
     .Defer => true,
     _ => {
-      if k == TokenKind.Ident {
+      if k == .Ident {
         k1 := token_kind_at(tokens_in, idx + 1)
-        if k1 == TokenKind.ColonEq or k1 == TokenKind.Eq or k1 == TokenKind.Colon {
+        if k1 == .ColonEq or k1 == .Eq or k1 == .Colon {
           true
         } else {
           false
@@ -198,7 +198,7 @@ fn recover_to_next_item(tokens_in: Vector<Token>, from: Int) Int {
       if t.preceded_by_newline and is_item_start(k) {
         return i
       }
-      if k == TokenKind.Semi {
+      if k == .Semi {
         return i + 1
       }
     }
@@ -246,7 +246,7 @@ fn parse_type_params(tokens_in: Vector<Token>, start: Int) TypeParamsParse {
   params: Vector<String> = []
   i := start
 
-  if token_kind_at(tokens_in, i) != TokenKind.Lt {
+  if token_kind_at(tokens_in, i) != .Lt {
     return .{ params, next_index: i, diagnostics: diagnostics_out }
   }
 
@@ -255,13 +255,13 @@ fn parse_type_params(tokens_in: Vector<Token>, start: Int) TypeParamsParse {
 
   for i < tokens_in.len() {
     k := token_kind_at(tokens_in, i)
-    if k == TokenKind.Gt {
+    if k == .Gt {
       i = i + 1
       break
     }
 
     if expect_ident {
-      if k == TokenKind.Ident {
+      if k == .Ident {
         params = params.push(token_text_at(tokens_in, i))
         i = i + 1
         expect_ident = false
@@ -273,7 +273,7 @@ fn parse_type_params(tokens_in: Vector<Token>, start: Int) TypeParamsParse {
         i = i + 1
       }
     } else {
-      if k == TokenKind.Comma {
+      if k == .Comma {
         i = i + 1
         expect_ident = true
       } else {
@@ -281,7 +281,7 @@ fn parse_type_params(tokens_in: Vector<Token>, start: Int) TypeParamsParse {
           token_span_at(tokens_in, i),
           "expected ',' or '>' in type parameter list",
         ))
-        if token_kind_at(tokens_in, i) == TokenKind.Eof {
+        if token_kind_at(tokens_in, i) == .Eof {
           break
         }
         i = i + 1
@@ -311,7 +311,7 @@ fn parse_type_list_until(tokens_in: Vector<Token>, start: Int, end_kind: TokenKi
     diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
     i = parsed_ty.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       if token_kind_at(tokens_in, i) == end_kind {
         break
@@ -328,7 +328,7 @@ fn parse_type_list_until(tokens_in: Vector<Token>, start: Int, end_kind: TokenKi
       "expected ',' between types",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
 
@@ -344,17 +344,17 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
   i := start
 
   for i < tokens_in.len() {
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
     field_start := i
-    if token_kind_at(tokens_in, i) != TokenKind.Ident {
+    if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected record field name",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
@@ -364,12 +364,12 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
     field_name := token_text_at(tokens_in, i)
     i = i + 1
 
-    if token_kind_at(tokens_in, i) != TokenKind.Colon {
+    if token_kind_at(tokens_in, i) != .Colon {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected ':' after record field name",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
@@ -384,12 +384,12 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
     field_span := span.span_merge(token_span_at(tokens_in, field_start), span_of_type(ty_parsed.ty))
     fields = fields.push(ast.RecordField.{ name: field_name, ty: ty_parsed.ty, span: field_span })
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
@@ -398,7 +398,7 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
       "expected ',' or '}' in record type",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
 
@@ -414,17 +414,17 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
   i := start
 
   for i < tokens_in.len() {
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
     variant_start := i
-    if token_kind_at(tokens_in, i) != TokenKind.Ident {
+    if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected variant name",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
@@ -435,14 +435,14 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
     i = i + 1
     fields: Vector<ast.TypeExpr> = []
 
-    if token_kind_at(tokens_in, i) == TokenKind.LParen {
+    if token_kind_at(tokens_in, i) == .LParen {
       i = i + 1
       parsed_fields := parse_type_list_until(tokens_in, i, TokenKind.RParen)
       fields = parsed_fields.tys
       diagnostics_out = diagnostics_out.concat(parsed_fields.diagnostics)
       i = parsed_fields.next_index
 
-      if token_kind_at(tokens_in, i) == TokenKind.RParen {
+      if token_kind_at(tokens_in, i) == .RParen {
         i = i + 1
       } else {
         diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -459,12 +459,12 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
       span: span.span_merge(token_span_at(tokens_in, variant_start), variant_end_span),
     })
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
@@ -473,7 +473,7 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
       "expected ',' or '}' in sum type",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
     i = i + 1
@@ -484,7 +484,7 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
 
 fn parse_type_expr(tokens_in: Vector<Token>, start: Int) TypeParse {
   parsed := parse_type_expr_base(tokens_in, start)
-  if token_kind_at(tokens_in, parsed.next_index) == TokenKind.Bang {
+  if token_kind_at(tokens_in, parsed.next_index) == .Bang {
     bang_i := parsed.next_index + 1
     err_parsed := parse_type_expr_base(tokens_in, bang_i)
     diagnostics_out := parsed.diagnostics.concat(err_parsed.diagnostics)
@@ -500,10 +500,10 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
   i := start
   k := token_kind_at(tokens_in, i)
 
-  if k == TokenKind.Fn {
+  if k == .Fn {
     fn_start_span := token_span_at(tokens_in, i)
     i = i + 1
-    if token_kind_at(tokens_in, i) != TokenKind.LParen {
+    if token_kind_at(tokens_in, i) != .LParen {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected '(' in function type",
@@ -516,7 +516,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     diagnostics_out = diagnostics_out.concat(params_parsed.diagnostics)
     i = params_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.RParen {
+    if token_kind_at(tokens_in, i) == .RParen {
       i = i + 1
     } else {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -538,14 +538,14 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     return .{ ty, next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.LBrace {
+  if k == .Dot and token_kind_at(tokens_in, i + 1) == .LBrace {
     start_span := token_span_at(tokens_in, i)
     i = i + 2
     fields_parsed := parse_type_record_fields(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(fields_parsed.diagnostics)
     i = fields_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       end_span := token_span_at(tokens_in, i)
       i = i + 1
       ty := ast.TypeExpr.{
@@ -553,7 +553,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
         span: span.span_merge(start_span, end_span),
       }
 
-      if token_kind_at(tokens_in, i) == TokenKind.Question {
+      if token_kind_at(tokens_in, i) == .Question {
         q_span := token_span_at(tokens_in, i)
         i = i + 1
         ty = ast.TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
@@ -570,14 +570,14 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     return .{ ty: error_type(start_span), next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.LBrace {
+  if k == .LBrace {
     start_span := token_span_at(tokens_in, i)
     i = i + 1
     variants_parsed := parse_sum_variants(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(variants_parsed.diagnostics)
     i = variants_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       end_span := token_span_at(tokens_in, i)
       i = i + 1
       ty := ast.TypeExpr.{
@@ -585,7 +585,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
         span: span.span_merge(start_span, end_span),
       }
 
-      if token_kind_at(tokens_in, i) == TokenKind.Question {
+      if token_kind_at(tokens_in, i) == .Question {
         q_span := token_span_at(tokens_in, i)
         i = i + 1
         ty = ast.TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
@@ -602,7 +602,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     return .{ ty: error_type(start_span), next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k != TokenKind.Ident {
+  if k != .Ident {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected type",
@@ -614,7 +614,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
   segments: Vector<String> = [token_text_at(tokens_in, i)]
   i = i + 1
 
-  for token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.Ident {
+  for token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .Ident {
     i = i + 1
     segments = segments.push(token_text_at(tokens_in, i))
     i = i + 1
@@ -624,14 +624,14 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
   path := ast.TypePath.{ segments, span: path_span }
 
   type_args: Vector<ast.TypeExpr> = []
-  if token_kind_at(tokens_in, i) == TokenKind.Lt {
+  if token_kind_at(tokens_in, i) == .Lt {
     i = i + 1
     args_parsed := parse_type_list_until(tokens_in, i, TokenKind.Gt)
     type_args = args_parsed.tys
     diagnostics_out = diagnostics_out.concat(args_parsed.diagnostics)
     i = args_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.Gt {
+    if token_kind_at(tokens_in, i) == .Gt {
       i = i + 1
     } else {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -647,7 +647,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     ast.TypeExpr.{ kind: .Path(path), span: path_span }
   }
 
-  if token_kind_at(tokens_in, i) == TokenKind.Question {
+  if token_kind_at(tokens_in, i) == .Question {
     q_span := token_span_at(tokens_in, i)
     i = i + 1
     ty = ast.TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
@@ -661,7 +661,7 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
   items: Vector<ast.ImportItem> = []
   i := start
 
-  if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+  if token_kind_at(tokens_in, i) == .RBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "import destructuring list cannot be empty",
@@ -670,23 +670,23 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
   }
 
   for i < tokens_in.len() {
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
     item_start := i
     is_type := false
-    if token_kind_at(tokens_in, i) == TokenKind.Type {
+    if token_kind_at(tokens_in, i) == .Type {
       is_type = true
       i = i + 1
     }
 
-    if token_kind_at(tokens_in, i) != TokenKind.Ident {
+    if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected import item name",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
@@ -697,9 +697,9 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
     i = i + 1
     alias: String? = .None
 
-    if token_kind_at(tokens_in, i) == TokenKind.As {
+    if token_kind_at(tokens_in, i) == .As {
       i = i + 1
-      if token_kind_at(tokens_in, i) == TokenKind.Ident {
+      if token_kind_at(tokens_in, i) == .Ident {
         alias = .Some(token_text_at(tokens_in, i))
         i = i + 1
       } else {
@@ -717,12 +717,12 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
       items = items.push(.Value(ast.ImportValueItem.{ name, alias, span: item_span }))
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
@@ -731,7 +731,7 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
       "expected ',' or '}' in import destructuring list",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
 
@@ -748,15 +748,15 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
   is_relative := false
   path: Vector<String> = []
 
-  if token_kind_at(tokens_in, i) == TokenKind.At {
+  if token_kind_at(tokens_in, i) == .At {
     is_stdlib = true
     i = i + 1
-  } else if token_kind_at(tokens_in, i) == TokenKind.Dot {
+  } else if token_kind_at(tokens_in, i) == .Dot {
     is_relative = true
     i = i + 1
   }
 
-  if token_kind_at(tokens_in, i) != TokenKind.Ident {
+  if token_kind_at(tokens_in, i) != .Ident {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, start),
       "expected module name after 'use'",
@@ -771,13 +771,13 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
   path = path.push(token_text_at(tokens_in, i))
   i = i + 1
 
-  for token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.Ident {
+  for token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .Ident {
     i = i + 1
     path = path.push(token_text_at(tokens_in, i))
     i = i + 1
   }
 
-  if token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) != TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) != .LBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected identifier after '.' in module path",
@@ -795,7 +795,7 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
 
   items: Vector<ast.ImportItem>? = .None
   has_items := false
-  if token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .LBrace {
     i = i + 2
     parsed_items := parse_import_items(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_items.diagnostics)
@@ -803,7 +803,7 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
     items = .Some(parsed_items.items)
     has_items = true
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       i = i + 1
     } else {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -814,9 +814,9 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
   }
 
   alias: String? = .None
-  if !has_items and token_kind_at(tokens_in, i) == TokenKind.As {
+  if !has_items and token_kind_at(tokens_in, i) == .As {
     i = i + 1
-    if token_kind_at(tokens_in, i) == TokenKind.Ident {
+    if token_kind_at(tokens_in, i) == .Ident {
       alias = .Some(token_text_at(tokens_in, i))
       i = i + 1
     } else {
@@ -825,7 +825,7 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
         "expected module alias after 'as'",
       ))
     }
-  } else if has_items and token_kind_at(tokens_in, i) == TokenKind.As {
+  } else if has_items and token_kind_at(tokens_in, i) == .As {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "cannot combine import destructuring with module alias",
@@ -850,7 +850,7 @@ fn parse_param(tokens_in: Vector<Token>, start: Int) ParamParse {
   diagnostics_out: Vector<Diagnostic> = []
   i := start
 
-  if token_kind_at(tokens_in, i) != TokenKind.Ident {
+  if token_kind_at(tokens_in, i) != .Ident {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected parameter name",
@@ -864,7 +864,7 @@ fn parse_param(tokens_in: Vector<Token>, start: Int) ParamParse {
   i = i + 1
   ty: ast.TypeExpr? = .None
 
-  if token_kind_at(tokens_in, i) == TokenKind.Colon {
+  if token_kind_at(tokens_in, i) == .Colon {
     i = i + 1
     parsed_ty := parse_type_expr(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
@@ -882,10 +882,10 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   is_pub := false
   fn_index := start
 
-  if token_kind_at(tokens_in, start) == TokenKind.Pub {
+  if token_kind_at(tokens_in, start) == .Pub {
     is_pub = true
     fn_index = start + 1
-    if token_kind_at(tokens_in, fn_index) != TokenKind.Fn {
+    if token_kind_at(tokens_in, fn_index) != .Fn {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, start),
         "expected 'fn' after 'pub'",
@@ -899,7 +899,7 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   }
 
   i := fn_index + 1
-  if token_kind_at(tokens_in, i) != TokenKind.Ident {
+  if token_kind_at(tokens_in, i) != .Ident {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, fn_index),
       "expected function name after 'fn'",
@@ -919,7 +919,7 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   diagnostics_out = diagnostics_out.concat(parsed_type_params.diagnostics)
   i = parsed_type_params.next_index
 
-  if token_kind_at(tokens_in, i) != TokenKind.LParen {
+  if token_kind_at(tokens_in, i) != .LParen {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '(' after function name",
@@ -934,18 +934,18 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   i = i + 1
   params: Vector<Param> = []
 
-  for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
     parsed_param := parse_param(tokens_in, i)
     params = params.push(parsed_param.param)
     diagnostics_out = diagnostics_out.concat(parsed_param.diagnostics)
     i = parsed_param.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RParen {
+    if token_kind_at(tokens_in, i) == .RParen {
       break
     }
 
@@ -954,13 +954,13 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
       "expected ',' or ')' in function parameter list",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
     i = i + 1
   }
 
-  if token_kind_at(tokens_in, i) == TokenKind.RParen {
+  if token_kind_at(tokens_in, i) == .RParen {
     i = i + 1
   } else {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -970,7 +970,7 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   }
 
   return_type: ast.TypeExpr? = .None
-  if token_kind_at(tokens_in, i) != TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) != .LBrace {
     parsed_ret := parse_type_expr(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.ty)
@@ -1001,10 +1001,10 @@ fn parse_type(tokens_in: Vector<Token>, start: Int) ItemParse {
   is_pub := false
   type_index := start
 
-  if token_kind_at(tokens_in, start) == TokenKind.Pub {
+  if token_kind_at(tokens_in, start) == .Pub {
     is_pub = true
     type_index = start + 1
-    if token_kind_at(tokens_in, type_index) != TokenKind.Type {
+    if token_kind_at(tokens_in, type_index) != .Type {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, start),
         "expected 'type' after 'pub'",
@@ -1018,7 +1018,7 @@ fn parse_type(tokens_in: Vector<Token>, start: Int) ItemParse {
   }
 
   i := type_index + 1
-  if token_kind_at(tokens_in, i) != TokenKind.Ident {
+  if token_kind_at(tokens_in, i) != .Ident {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, type_index),
       "expected type name after 'type'",
@@ -1038,7 +1038,7 @@ fn parse_type(tokens_in: Vector<Token>, start: Int) ItemParse {
   diagnostics_out = diagnostics_out.concat(parsed_type_params.diagnostics)
   i = parsed_type_params.next_index
 
-  if token_kind_at(tokens_in, i) != TokenKind.Eq {
+  if token_kind_at(tokens_in, i) != .Eq {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '=' in type declaration",
@@ -1053,13 +1053,13 @@ fn parse_type(tokens_in: Vector<Token>, start: Int) ItemParse {
 
   def: ast.TypeDef = .ErrorDef(token_span_at(tokens_in, i))
 
-  if token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .LBrace {
     i = i + 2
     fields_parsed := parse_type_record_fields(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(fields_parsed.diagnostics)
     i = fields_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       i = i + 1
     } else {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -1069,13 +1069,13 @@ fn parse_type(tokens_in: Vector<Token>, start: Int) ItemParse {
     }
 
     def = .Record(fields_parsed.fields)
-  } else if token_kind_at(tokens_in, i) == TokenKind.LBrace {
+  } else if token_kind_at(tokens_in, i) == .LBrace {
     i = i + 1
     variants_parsed := parse_sum_variants(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(variants_parsed.diagnostics)
     i = variants_parsed.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       i = i + 1
     } else {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -1135,10 +1135,10 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
   i := start
   k := token_kind_at(tokens_in, i)
 
-  if k == TokenKind.Dot {
+  if k == .Dot {
     dot_span := token_span_at(tokens_in, i)
     i = i + 1
-    if token_kind_at(tokens_in, i) != TokenKind.Ident {
+    if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected variant name after '.' in pattern",
@@ -1151,29 +1151,29 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
     i = i + 1
     args: Vector<ast.Pattern> = []
 
-    if token_kind_at(tokens_in, i) == TokenKind.LParen {
+    if token_kind_at(tokens_in, i) == .LParen {
       i = i + 1
-      for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+      for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
         parsed_arg := parse_pattern(tokens_in, i)
         args = args.push(parsed_arg.pattern)
         diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
         i = parsed_arg.next_index
 
-        if token_kind_at(tokens_in, i) == TokenKind.Comma {
+        if token_kind_at(tokens_in, i) == .Comma {
           i = i + 1
-        } else if token_kind_at(tokens_in, i) != TokenKind.RParen {
+        } else if token_kind_at(tokens_in, i) != .RParen {
           diagnostics_out = diagnostics_out.push(diagnostic.error(
             token_span_at(tokens_in, i),
             "expected ',' or ')' in pattern argument list",
           ))
-          if token_kind_at(tokens_in, i) == TokenKind.Eof {
+          if token_kind_at(tokens_in, i) == .Eof {
             break
           }
           i = i + 1
         }
       }
 
-      if token_kind_at(tokens_in, i) == TokenKind.RParen {
+      if token_kind_at(tokens_in, i) == .RParen {
         i = i + 1
       }
     }
@@ -1183,7 +1183,7 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
     return .{ pattern: patt, next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.Ident {
+  if k == .Ident {
     ident := token_text_at(tokens_in, i)
     if ident == "_" {
       patt := ast.Pattern.{ kind: .Wildcard, span: token_span_at(tokens_in, i) }
@@ -1192,7 +1192,7 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
 
     segments: Vector<String> = [ident]
     i = i + 1
-    for token_kind_at(tokens_in, i) == TokenKind.Dot and token_kind_at(tokens_in, i + 1) == TokenKind.Ident {
+    for token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .Ident {
       i = i + 1
       segments = segments.push(token_text_at(tokens_in, i))
       i = i + 1
@@ -1206,29 +1206,29 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
       }
 
       args: Vector<ast.Pattern> = []
-      if token_kind_at(tokens_in, i) == TokenKind.LParen {
+      if token_kind_at(tokens_in, i) == .LParen {
         i = i + 1
-        for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+        for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
           parsed_arg := parse_pattern(tokens_in, i)
           args = args.push(parsed_arg.pattern)
           diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
           i = parsed_arg.next_index
 
-          if token_kind_at(tokens_in, i) == TokenKind.Comma {
+          if token_kind_at(tokens_in, i) == .Comma {
             i = i + 1
-          } else if token_kind_at(tokens_in, i) != TokenKind.RParen {
+          } else if token_kind_at(tokens_in, i) != .RParen {
             diagnostics_out = diagnostics_out.push(diagnostic.error(
               token_span_at(tokens_in, i),
               "expected ',' or ')' in pattern argument list",
             ))
-            if token_kind_at(tokens_in, i) == TokenKind.Eof {
+            if token_kind_at(tokens_in, i) == .Eof {
               break
             }
             i = i + 1
           }
         }
 
-        if token_kind_at(tokens_in, i) == TokenKind.RParen {
+        if token_kind_at(tokens_in, i) == .RParen {
           i = i + 1
         }
       }
@@ -1246,26 +1246,26 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
     return .{ pattern: patt, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.IntLit {
+  if k == .IntLit {
     lit := ast.Expr.{ kind: .IntLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
     patt := ast.Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
     return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.FloatLit {
+  if k == .FloatLit {
     lit := ast.Expr.{ kind: .FloatLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
     patt := ast.Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
     return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.StringLit {
+  if k == .StringLit {
     lit := ast.Expr.{ kind: .StringLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
     patt := ast.Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
     return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.True or k == TokenKind.False {
-    lit := ast.Expr.{ kind: .BoolLit(k == TokenKind.True), span: token_span_at(tokens_in, i) }
+  if k == .True or k == .False {
+    lit := ast.Expr.{ kind: .BoolLit(k == .True), span: token_span_at(tokens_in, i) }
     patt := ast.Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
     return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
   }
@@ -1284,17 +1284,17 @@ fn parse_record_literal(tokens_in: Vector<Token>, start: Int, open_index: Int) E
   fields: Vector<ast.RecordEntry> = []
 
   for i < tokens_in.len() {
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
     field_start := i
-    if token_kind_at(tokens_in, i) != TokenKind.Ident {
+    if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected record field name",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
@@ -1305,7 +1305,7 @@ fn parse_record_literal(tokens_in: Vector<Token>, start: Int, open_index: Int) E
     i = i + 1
     value: ast.Expr? = .None
 
-    if token_kind_at(tokens_in, i) == TokenKind.Colon {
+    if token_kind_at(tokens_in, i) == .Colon {
       i = i + 1
       parsed_value := parse_expr_bp(tokens_in, i, 0)
       diagnostics_out = diagnostics_out.concat(parsed_value.diagnostics)
@@ -1316,12 +1316,12 @@ fn parse_record_literal(tokens_in: Vector<Token>, start: Int, open_index: Int) E
     entry_span := merge_range(tokens_in, field_start, i - 1)
     fields = fields.push(ast.RecordEntry.{ name: field_name, value, span: entry_span })
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, i) == .RBrace {
       break
     }
 
@@ -1330,13 +1330,13 @@ fn parse_record_literal(tokens_in: Vector<Token>, start: Int, open_index: Int) E
       "expected ',' or '}' in record literal",
     ))
 
-    if token_kind_at(tokens_in, i) == TokenKind.Eof {
+    if token_kind_at(tokens_in, i) == .Eof {
       break
     }
     i = i + 1
   }
 
-  if token_kind_at(tokens_in, i) != TokenKind.RBrace {
+  if token_kind_at(tokens_in, i) != .RBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '}' to close record literal",
@@ -1373,15 +1373,15 @@ fn parse_if_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   i = parsed_then.next_index
 
   else_expr: ast.Expr? = .None
-  if token_kind_at(tokens_in, i) == TokenKind.Else {
+  if token_kind_at(tokens_in, i) == .Else {
     i = i + 1
     k := token_kind_at(tokens_in, i)
-    if k == TokenKind.If {
+    if k == .If {
       parsed_else := parse_if_expr(tokens_in, i)
       diagnostics_out = diagnostics_out.concat(parsed_else.diagnostics)
       else_expr = .Some(parsed_else.expr)
       i = parsed_else.next_index
-    } else if k == TokenKind.LBrace {
+    } else if k == .LBrace {
       parsed_else := parse_block_expr(tokens_in, i)
       diagnostics_out = diagnostics_out.concat(parsed_else.diagnostics)
       else_expr = .Some(parsed_else.expr)
@@ -1415,7 +1415,7 @@ fn parse_case_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   scrutinee := parsed_scrutinee.expr
   i = parsed_scrutinee.next_index
 
-  if token_kind_at(tokens_in, i) != TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) != .LBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '{' after case expression",
@@ -1427,18 +1427,18 @@ fn parse_case_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   i = i + 1
   arms: Vector<ast.CaseArm> = []
 
-  for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RBrace {
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RBrace {
     parsed_pattern := parse_pattern(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_pattern.diagnostics)
     patt := parsed_pattern.pattern
     i = parsed_pattern.next_index
 
-    if token_kind_at(tokens_in, i) != TokenKind.FatArrow {
+    if token_kind_at(tokens_in, i) != .FatArrow {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected '=>' in case arm",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
     } else {
@@ -1453,12 +1453,12 @@ fn parse_case_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
     arm_span := span.span_merge(patt.span, arm_expr.span)
     arms = arms.push(ast.CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
     }
   }
 
-  if token_kind_at(tokens_in, i) == TokenKind.RBrace {
+  if token_kind_at(tokens_in, i) == .RBrace {
     expr := ast.Expr.{ kind: .Case(scrutinee, arms), span: merge_range(tokens_in, start, i) }
     return .{ expr, next_index: i + 1, diagnostics: diagnostics_out }
   }
@@ -1475,22 +1475,22 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
   diagnostics_out: Vector<Diagnostic> = []
   k := token_kind_at(tokens_in, start)
 
-  if k == TokenKind.IntLit {
+  if k == .IntLit {
     expr := ast.Expr.{ kind: .IntLit(token_text_at(tokens_in, start)), span: token_span_at(tokens_in, start) }
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.FloatLit {
+  if k == .FloatLit {
     expr := ast.Expr.{ kind: .FloatLit(token_text_at(tokens_in, start)), span: token_span_at(tokens_in, start) }
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.StringLit {
+  if k == .StringLit {
     expr := ast.Expr.{ kind: .StringLit(token_text_at(tokens_in, start)), span: token_span_at(tokens_in, start) }
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.StringStart {
+  if k == .StringStart {
     parts: Vector<ast.StringPart> = []
     parts = parts.push(.Literal(token_text_at(tokens_in, start)))
     i := start + 1
@@ -1503,14 +1503,14 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
       i = parsed_part_expr.next_index
 
       kind_after := token_kind_at(tokens_in, i)
-      if kind_after == TokenKind.StringContinue {
+      if kind_after == .StringContinue {
         parts = parts.push(.Literal(token_text_at(tokens_in, i)))
         last_span = token_span_at(tokens_in, i)
         i = i + 1
         continue
       }
 
-      if kind_after == TokenKind.StringEnd {
+      if kind_after == .StringEnd {
         if token_text_at(tokens_in, i) != "" {
           parts = parts.push(.Literal(token_text_at(tokens_in, i)))
         }
@@ -1534,49 +1534,49 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     return .{ expr, next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.True or k == TokenKind.False {
-    expr := ast.Expr.{ kind: .BoolLit(k == TokenKind.True), span: token_span_at(tokens_in, start) }
+  if k == .True or k == .False {
+    expr := ast.Expr.{ kind: .BoolLit(k == .True), span: token_span_at(tokens_in, start) }
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.Ident {
+  if k == .Ident {
     expr := ast.Expr.{ kind: .Ident(token_text_at(tokens_in, start)), span: token_span_at(tokens_in, start) }
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.Dot {
-    if token_kind_at(tokens_in, start + 1) == TokenKind.LBrace {
+  if k == .Dot {
+    if token_kind_at(tokens_in, start + 1) == .LBrace {
       return parse_record_literal(tokens_in, start, start + 1)
     }
 
-    if token_kind_at(tokens_in, start + 1) == TokenKind.Ident {
+    if token_kind_at(tokens_in, start + 1) == .Ident {
       name := token_text_at(tokens_in, start + 1)
       i := start + 2
       args: Vector<ast.Expr> = []
 
-      if token_kind_at(tokens_in, i) == TokenKind.LParen {
+      if token_kind_at(tokens_in, i) == .LParen {
         i = i + 1
-        for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+        for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
           parsed_arg := parse_expr_bp(tokens_in, i, 0)
           diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
           args = args.push(parsed_arg.expr)
           i = parsed_arg.next_index
 
-          if token_kind_at(tokens_in, i) == TokenKind.Comma {
+          if token_kind_at(tokens_in, i) == .Comma {
             i = i + 1
-          } else if token_kind_at(tokens_in, i) != TokenKind.RParen {
+          } else if token_kind_at(tokens_in, i) != .RParen {
             diagnostics_out = diagnostics_out.push(diagnostic.error(
               token_span_at(tokens_in, i),
               "expected ',' or ')' in variant argument list",
             ))
-            if token_kind_at(tokens_in, i) == TokenKind.Eof {
+            if token_kind_at(tokens_in, i) == .Eof {
               break
             }
             i = i + 1
           }
         }
 
-        if token_kind_at(tokens_in, i) == TokenKind.RParen {
+        if token_kind_at(tokens_in, i) == .RParen {
           i = i + 1
         }
       }
@@ -1593,11 +1593,11 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     return .{ expr, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.LParen {
+  if k == .LParen {
     parsed_inner := parse_expr_bp(tokens_in, start + 1, 0)
     diagnostics_out = diagnostics_out.concat(parsed_inner.diagnostics)
     i := parsed_inner.next_index
-    if token_kind_at(tokens_in, i) == TokenKind.RParen {
+    if token_kind_at(tokens_in, i) == .RParen {
       i = i + 1
       return .{ expr: parsed_inner.expr, next_index: i, diagnostics: diagnostics_out }
     }
@@ -1609,31 +1609,31 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     return .{ expr: parsed_inner.expr, next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.LBracket {
+  if k == .LBracket {
     i := start + 1
     elems: Vector<ast.Expr> = []
 
-    for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RBracket {
+    for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RBracket {
       parsed_elem := parse_expr_bp(tokens_in, i, 0)
       diagnostics_out = diagnostics_out.concat(parsed_elem.diagnostics)
       elems = elems.push(parsed_elem.expr)
       i = parsed_elem.next_index
 
-      if token_kind_at(tokens_in, i) == TokenKind.Comma {
+      if token_kind_at(tokens_in, i) == .Comma {
         i = i + 1
-      } else if token_kind_at(tokens_in, i) != TokenKind.RBracket {
+      } else if token_kind_at(tokens_in, i) != .RBracket {
         diagnostics_out = diagnostics_out.push(diagnostic.error(
           token_span_at(tokens_in, i),
           "expected ',' or ']' in array literal",
         ))
-        if token_kind_at(tokens_in, i) == TokenKind.Eof {
+        if token_kind_at(tokens_in, i) == .Eof {
           break
         }
         i = i + 1
       }
     }
 
-    if token_kind_at(tokens_in, i) == TokenKind.RBracket {
+    if token_kind_at(tokens_in, i) == .RBracket {
       expr := ast.Expr.{ kind: .Array(elems), span: merge_range(tokens_in, start, i) }
       return .{ expr, next_index: i + 1, diagnostics: diagnostics_out }
     }
@@ -1646,19 +1646,19 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     return .{ expr, next_index: i, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.LBrace {
+  if k == .LBrace {
     return parse_block_expr(tokens_in, start)
   }
 
-  if k == TokenKind.If {
+  if k == .If {
     return parse_if_expr(tokens_in, start)
   }
 
-  if k == TokenKind.Case {
+  if k == .Case {
     return parse_case_expr(tokens_in, start)
   }
 
-  if k == TokenKind.Minus or k == TokenKind.Bang or k == TokenKind.Tilde or k == TokenKind.Try {
+  if k == .Minus or k == .Bang or k == .Tilde or k == .Try {
     op := case k {
       .Minus => ast.UnOp.Neg,
       .Bang => ast.UnOp.Not,
@@ -1676,7 +1676,7 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     return .{ expr, next_index: parsed_rhs.next_index, diagnostics: diagnostics_out }
   }
 
-  if k == TokenKind.Fn {
+  if k == .Fn {
     return parse_closure_expr(tokens_in, start)
   }
 
@@ -1692,7 +1692,7 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   diagnostics_out: Vector<Diagnostic> = []
   i := start + 1
 
-  if token_kind_at(tokens_in, i) != TokenKind.LParen {
+  if token_kind_at(tokens_in, i) != .LParen {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '(' after 'fn' in closure expression",
@@ -1703,27 +1703,27 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   i = i + 1
 
   params: Vector<ast.Param> = []
-  for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
     parsed_param := parse_param(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_param.diagnostics)
     params = params.push(parsed_param.param)
     i = parsed_param.next_index
 
-    if token_kind_at(tokens_in, i) == TokenKind.Comma {
+    if token_kind_at(tokens_in, i) == .Comma {
       i = i + 1
-    } else if token_kind_at(tokens_in, i) != TokenKind.RParen {
+    } else if token_kind_at(tokens_in, i) != .RParen {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected ',' or ')' in closure parameter list",
       ))
-      if token_kind_at(tokens_in, i) == TokenKind.Eof {
+      if token_kind_at(tokens_in, i) == .Eof {
         break
       }
       i = i + 1
     }
   }
 
-  if token_kind_at(tokens_in, i) == TokenKind.RParen {
+  if token_kind_at(tokens_in, i) == .RParen {
     i = i + 1
   } else {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -1733,7 +1733,7 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   }
 
   return_type: ast.TypeExpr? = .None
-  if token_kind_at(tokens_in, i) != TokenKind.LBrace {
+  if token_kind_at(tokens_in, i) != .LBrace {
     parsed_ret := parse_type_expr(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.ty)
@@ -1760,30 +1760,30 @@ fn parse_postfix(tokens_in: Vector<Token>, base: ast.Expr, start_index: Int) Exp
   for i < tokens_in.len() {
     k := token_kind_at(tokens_in, i)
 
-    if k == TokenKind.LParen {
+    if k == .LParen {
       i = i + 1
       args: Vector<ast.Expr> = []
-      for i < tokens_in.len() and token_kind_at(tokens_in, i) != TokenKind.RParen {
+      for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
         parsed_arg := parse_expr_bp(tokens_in, i, 0)
         diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
         args = args.push(parsed_arg.expr)
         i = parsed_arg.next_index
 
-        if token_kind_at(tokens_in, i) == TokenKind.Comma {
+        if token_kind_at(tokens_in, i) == .Comma {
           i = i + 1
-        } else if token_kind_at(tokens_in, i) != TokenKind.RParen {
+        } else if token_kind_at(tokens_in, i) != .RParen {
           diagnostics_out = diagnostics_out.push(diagnostic.error(
             token_span_at(tokens_in, i),
             "expected ',' or ')' in call arguments",
           ))
-          if token_kind_at(tokens_in, i) == TokenKind.Eof {
+          if token_kind_at(tokens_in, i) == .Eof {
             break
           }
           i = i + 1
         }
       }
 
-      if token_kind_at(tokens_in, i) == TokenKind.RParen {
+      if token_kind_at(tokens_in, i) == .RParen {
         new_span := span.span_merge(expr.span, token_span_at(tokens_in, i))
         expr = ast.Expr.{ kind: .Call(expr, args), span: new_span }
         i = i + 1
@@ -1797,8 +1797,8 @@ fn parse_postfix(tokens_in: Vector<Token>, base: ast.Expr, start_index: Int) Exp
       break
     }
 
-    if k == TokenKind.Dot {
-      if token_kind_at(tokens_in, i + 1) == TokenKind.LBrace {
+    if k == .Dot {
+      if token_kind_at(tokens_in, i + 1) == .LBrace {
         parsed_record := parse_record_literal(tokens_in, i, i + 1)
         diagnostics_out = diagnostics_out.concat(parsed_record.diagnostics)
         expr = parsed_record.expr
@@ -1806,7 +1806,7 @@ fn parse_postfix(tokens_in: Vector<Token>, base: ast.Expr, start_index: Int) Exp
         continue
       }
 
-      if token_kind_at(tokens_in, i + 1) == TokenKind.Ident {
+      if token_kind_at(tokens_in, i + 1) == .Ident {
         field_name := token_text_at(tokens_in, i + 1)
         new_span := span.span_merge(expr.span, token_span_at(tokens_in, i + 1))
         expr = ast.Expr.{ kind: .Field(expr, field_name), span: new_span }
@@ -1817,13 +1817,13 @@ fn parse_postfix(tokens_in: Vector<Token>, base: ast.Expr, start_index: Int) Exp
       break
     }
 
-    if k == TokenKind.LBracket {
+    if k == .LBracket {
       parsed_index := parse_expr_bp(tokens_in, i + 1, 0)
       diagnostics_out = diagnostics_out.concat(parsed_index.diagnostics)
       idx_expr := parsed_index.expr
       i = parsed_index.next_index
 
-      if token_kind_at(tokens_in, i) != TokenKind.RBracket {
+      if token_kind_at(tokens_in, i) != .RBracket {
         diagnostics_out = diagnostics_out.push(diagnostic.error(
           token_span_at(tokens_in, i),
           "expected ']' after index expression",
@@ -1858,7 +1858,7 @@ fn parse_expr_bp(tokens_in: Vector<Token>, start: Int, min_bp: Int) ExprParse {
     k := token_kind_at(tokens_in, i)
 
     // Hard stop tokens in expression context.
-    if k == TokenKind.Eof or k == TokenKind.RParen or k == TokenKind.RBracket or k == TokenKind.RBrace or k == TokenKind.Comma or k == TokenKind.Semi or k == TokenKind.FatArrow {
+    if k == .Eof or k == .RParen or k == .RBracket or k == .RBrace or k == .Comma or k == .Semi or k == .FatArrow {
       break
     }
 
@@ -1895,7 +1895,7 @@ fn parse_binding_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   diagnostics_out: Vector<Diagnostic> = []
   i := start
 
-  if token_kind_at(tokens_in, i) != TokenKind.Ident {
+  if token_kind_at(tokens_in, i) != .Ident {
     stmt: ast.Stmt = .ErrorStmt(token_span_at(tokens_in, i))
     return .{ stmt, next_index: i + 1, diagnostics: diagnostics_out }
   }
@@ -1906,19 +1906,19 @@ fn parse_binding_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   is_rebind := false
 
   next_kind := token_kind_at(tokens_in, i)
-  if next_kind == TokenKind.ColonEq {
+  if next_kind == .ColonEq {
     i = i + 1
-  } else if next_kind == TokenKind.Eq {
+  } else if next_kind == .Eq {
     is_rebind = true
     i = i + 1
-  } else if next_kind == TokenKind.Colon {
+  } else if next_kind == .Colon {
     i = i + 1
     parsed_ty := parse_type_expr(tokens_in, i)
     diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
     ty = .Some(parsed_ty.ty)
     i = parsed_ty.next_index
 
-    if token_kind_at(tokens_in, i) != TokenKind.Eq {
+    if token_kind_at(tokens_in, i) != .Eq {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, i),
         "expected '=' after typed binding",
@@ -1954,7 +1954,7 @@ fn parse_return_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   value: ast.Expr? = .None
 
   k := token_kind_at(tokens_in, i)
-  if k != TokenKind.Semi and k != TokenKind.RBrace and k != TokenKind.Eof {
+  if k != .Semi and k != .RBrace and k != .Eof {
     parsed := parse_expr_bp(tokens_in, i, 0)
     diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
     value = .Some(parsed.expr)
@@ -1971,7 +1971,7 @@ fn parse_break_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   value: ast.Expr? = .None
 
   k := token_kind_at(tokens_in, i)
-  if k != TokenKind.Semi and k != TokenKind.RBrace and k != TokenKind.Eof {
+  if k != .Semi and k != .RBrace and k != .Eof {
     parsed := parse_expr_bp(tokens_in, i, 0)
     diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
     value = .Some(parsed.expr)
@@ -2006,17 +2006,17 @@ fn parse_for_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   iter: ast.Expr? = .None
   condition: ast.Expr? = .None
 
-  if token_kind_at(tokens_in, i) == TokenKind.Ident {
+  if token_kind_at(tokens_in, i) == .Ident {
     first_name := token_text_at(tokens_in, i)
 
-    if token_kind_at(tokens_in, i + 1) == TokenKind.In {
+    if token_kind_at(tokens_in, i + 1) == .In {
       pattern = .Some(first_name)
       i = i + 2
       parsed_iter := parse_expr_bp(tokens_in, i, 0)
       diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
       iter = .Some(parsed_iter.expr)
       i = parsed_iter.next_index
-    } else if token_kind_at(tokens_in, i + 1) == TokenKind.Comma and token_kind_at(tokens_in, i + 2) == TokenKind.Ident and token_kind_at(tokens_in, i + 3) == TokenKind.In {
+    } else if token_kind_at(tokens_in, i + 1) == .Comma and token_kind_at(tokens_in, i + 2) == .Ident and token_kind_at(tokens_in, i + 3) == .In {
       pattern = .Some(first_name)
       index = .Some(token_text_at(tokens_in, i + 2))
       i = i + 4
@@ -2057,29 +2057,29 @@ fn parse_for_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
 fn parse_stmt(tokens_in: Vector<Token>, start: Int) StmtParse {
   k := token_kind_at(tokens_in, start)
 
-  if k == TokenKind.For {
+  if k == .For {
     return parse_for_stmt(tokens_in, start)
   }
 
-  if k == TokenKind.Return {
+  if k == .Return {
     return parse_return_stmt(tokens_in, start)
   }
 
-  if k == TokenKind.Break {
+  if k == .Break {
     return parse_break_stmt(tokens_in, start)
   }
 
-  if k == TokenKind.Continue {
+  if k == .Continue {
     return parse_continue_stmt(tokens_in, start)
   }
 
-  if k == TokenKind.Defer {
+  if k == .Defer {
     return parse_defer_stmt(tokens_in, start)
   }
 
-  if k == TokenKind.Ident {
+  if k == .Ident {
     k1 := token_kind_at(tokens_in, start + 1)
-    if k1 == TokenKind.ColonEq or k1 == TokenKind.Eq or k1 == TokenKind.Colon {
+    if k1 == .ColonEq or k1 == .Eq or k1 == .Colon {
       parsed_bind := parse_binding_stmt(tokens_in, start)
       case parsed_bind.stmt {
         .ErrorStmt(_) => {},
@@ -2098,7 +2098,7 @@ fn parse_block(tokens_in: Vector<Token>, start: Int) BlockParse {
   stmts: Vector<ast.Stmt> = []
   tail: ast.Expr? = .None
 
-  if token_kind_at(tokens_in, start) != TokenKind.LBrace {
+  if token_kind_at(tokens_in, start) != .LBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, start),
       "expected '{'",
@@ -2111,11 +2111,11 @@ fn parse_block(tokens_in: Vector<Token>, start: Int) BlockParse {
 
   for i < tokens_in.len() {
     k := token_kind_at(tokens_in, i)
-    if k == TokenKind.RBrace or k == TokenKind.Eof {
+    if k == .RBrace or k == .Eof {
       break
     }
 
-    if k == TokenKind.Semi {
+    if k == .Semi {
       i = i + 1
       continue
     }
@@ -2129,7 +2129,7 @@ fn parse_block(tokens_in: Vector<Token>, start: Int) BlockParse {
         next_i = i + 1
       }
       i = next_i
-      if token_kind_at(tokens_in, i) == TokenKind.Semi {
+      if token_kind_at(tokens_in, i) == .Semi {
         i = i + 1
       }
       continue
@@ -2140,13 +2140,13 @@ fn parse_block(tokens_in: Vector<Token>, start: Int) BlockParse {
     expr := parsed_expr.expr
     next_i := parsed_expr.next_index
 
-    if token_kind_at(tokens_in, next_i) == TokenKind.Semi {
+    if token_kind_at(tokens_in, next_i) == .Semi {
       stmts = stmts.push(.Expr(ast.ExprStmt.{ expr, span: expr.span }))
       i = next_i + 1
       continue
     }
 
-    if token_kind_at(tokens_in, next_i) == TokenKind.RBrace {
+    if token_kind_at(tokens_in, next_i) == .RBrace {
       tail = .Some(expr)
       i = next_i
       break
@@ -2162,7 +2162,7 @@ fn parse_block(tokens_in: Vector<Token>, start: Int) BlockParse {
     i = next_i
   }
 
-  if token_kind_at(tokens_in, i) != TokenKind.RBrace {
+  if token_kind_at(tokens_in, i) != .RBrace {
     diagnostics_out = diagnostics_out.push(diagnostic.error(
       token_span_at(tokens_in, i),
       "expected '}' to close block",
@@ -2184,12 +2184,12 @@ fn parse_top_level_stmt(tokens_in: Vector<Token>, start: Int) ItemParse {
     next_index = start + 1
   }
 
-  if token_kind_at(tokens_in, next_index) == TokenKind.Semi {
+  if token_kind_at(tokens_in, next_index) == .Semi {
     next_index = next_index + 1
   }
 
   // If we consumed to EOF or explicit item start boundary, return.
-  if token_kind_at(tokens_in, next_index) == TokenKind.Eof {
+  if token_kind_at(tokens_in, next_index) == .Eof {
     return .{ item: .Stmt(parsed_stmt.stmt), next_index, diagnostics: diagnostics_out }
   }
 
@@ -2209,7 +2209,7 @@ pub fn parse(source: String, file_id: Int) StageResult<Module> {
 
   for i < tokens_in.len() {
     k := token_kind_at(tokens_in, i)
-    if k == TokenKind.Eof {
+    if k == .Eof {
       break
     }
 
@@ -2219,9 +2219,9 @@ pub fn parse(source: String, file_id: Int) StageResult<Module> {
       .Fn => parse_function(tokens_in, i),
       .Pub => {
         k1 := token_kind_at(tokens_in, i + 1)
-        if k1 == TokenKind.Type {
+        if k1 == .Type {
           parse_type(tokens_in, i)
-        } else if k1 == TokenKind.Fn {
+        } else if k1 == .Fn {
           parse_function(tokens_in, i)
         } else {
           parse_top_level_stmt(tokens_in, i)
