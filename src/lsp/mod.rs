@@ -64,6 +64,12 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
             let type_str = ty.format_with_names(&module.typed.type_env);
             return Some(type_str);
         }
+        // Check if this is a module alias identifier
+        if let Some(snippet) = identifier_snippet(module, &entry) {
+            if module.imports.iter().any(|imp| imp.alias == snippet) {
+                return Some(format!("module {snippet}"));
+            }
+        }
     }
 
     let type_node = find_smallest_type_at_offset(&module.ast, file_id, span_offset)?;

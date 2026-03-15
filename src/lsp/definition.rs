@@ -55,6 +55,10 @@ pub fn definition_at_workspace(
                     {
                         return Some(target);
                     }
+                    // Fall through: check if the name is a module alias
+                    if let Some(target) = resolve_module_alias_target(workspace, module, name) {
+                        return Some(target);
+                    }
                 }
                 ExprKind::FieldAccess { base, field } => {
                     if !is_offset_on_field(base, expr.span, byte_offset) {
@@ -126,6 +130,19 @@ fn resolve_import_module_target(
         });
     }
     None
+}
+
+fn resolve_module_alias_target(
+    workspace: &WorkspaceAnalysis,
+    module: &AnalyzedModule,
+    name: &str,
+) -> Option<DefinitionTarget> {
+    let import = module.imports.iter().find(|entry| entry.alias == name)?;
+    let target_module = workspace.modules.get(&import.canonical_path)?;
+    Some(DefinitionTarget {
+        path: import.canonical_path.clone(),
+        span: target_module.ast.span,
+    })
 }
 
 fn resolve_destructured_import_target(

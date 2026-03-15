@@ -225,6 +225,8 @@ fn main() {
     v: Vec2 = make_vec(10, 20)
     println("${result}")
     println("${v.x}")
+    q := math.add(3, 4)
+    println("${q}")
 }
 "#
             .to_string(),
@@ -336,5 +338,29 @@ fn main() {
             "goto-def on `Vec2` type annotation should resolve"
         );
         assert_eq!(def_vec2_type.as_ref().unwrap().path, math_path);
+
+        // Hover and goto-def on `math` in `math.add(3, 4)` — line 7, col 9
+        let hover_math_alias = session
+            .hover(&main_path, &main_path, PositionUtf16::new(7, 9))
+            .expect("hover should not error");
+        eprintln!("hover_math_alias = {:?}", hover_math_alias);
+        assert!(
+            hover_math_alias.is_some(),
+            "hover on `math` module alias should return info"
+        );
+        assert!(
+            hover_math_alias.as_deref().unwrap().contains("math"),
+            "hover on module alias should mention module name"
+        );
+
+        let def_math_alias = session
+            .definition(&main_path, &main_path, PositionUtf16::new(7, 9))
+            .expect("definition should not error");
+        eprintln!("def_math_alias = {:?}", def_math_alias);
+        assert!(
+            def_math_alias.is_some(),
+            "goto-def on `math` module alias should resolve"
+        );
+        assert_eq!(def_math_alias.as_ref().unwrap().path, math_path);
     }
 }
