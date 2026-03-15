@@ -57,3 +57,4 @@ from stage0, bootstrapping sequence)
 | [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
+| [qualified-variant-constructor-paths.md](qualified-variant-constructor-paths.md) | Allow `module.Type.Variant` in expressions while keeping `x.Variant` rejected |
