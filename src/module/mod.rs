@@ -148,7 +148,20 @@ impl ModuleSourceAdapter for SourceMapModuleAdapter {
         } else if import.is_relative {
             loader::resolve_relative_module_path(importing_file, &import.module_path)
         } else {
-            resolve_module_path(&self.project_root, &import.module_path)
+            // Try project root first (matches twinkle.toml-based resolution)
+            let from_root = resolve_module_path(&self.project_root, &import.module_path);
+            if self.sources.contains_key(&from_root) {
+                return from_root;
+            }
+            // Fall back to importing file's directory (matches FsAdapter behavior
+            // when no twinkle.toml is found)
+            if let Some(parent) = importing_file.parent() {
+                let from_parent = resolve_module_path(parent, &import.module_path);
+                if self.sources.contains_key(&from_parent) {
+                    return from_parent;
+                }
+            }
+            from_root
         }
     }
 
