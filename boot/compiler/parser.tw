@@ -2,7 +2,7 @@ use lib.source.span
 use lib.source.diagnostic.{type Diagnostic, type StageResult}
 use .tokens.{type Token, type TokenKind}
 use .lexer
-use .ast.{type Item, type UseDecl, type FunctionDecl, type Param, type TypeDecl, type Module}
+use .ast.{type Item, type UseDecl, type FunctionDecl, type Param, type TypeDecl, type Module, type ImportItem, type ImportValueItem, type ImportTypeItem}
 
 type ItemParse = .{
   item: Item,
@@ -53,7 +53,7 @@ type TypeParamsParse = .{
 }
 
 type ImportItemsParse = .{
-  items: Vector<ast.ImportItem>,
+  items: Vector<ImportItem>,
   next_index: Int,
   diagnostics: Vector<Diagnostic>,
 }
@@ -658,7 +658,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
 
 fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
   diagnostics_out: Vector<Diagnostic> = []
-  items: Vector<ast.ImportItem> = []
+  items: Vector<ImportItem> = []
   i := start
 
   if token_kind_at(tokens_in, i) == .RBrace {
@@ -712,9 +712,9 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
 
     item_span := merge_range(tokens_in, item_start, i - 1)
     if is_type {
-      items = items.push(.Type(ast.ImportTypeItem.{ name, alias, span: item_span }))
+      items = items.push(.Type(ImportTypeItem.{ name, alias, span: item_span }))
     } else {
-      items = items.push(.Value(ast.ImportValueItem.{ name, alias, span: item_span }))
+      items = items.push(.Value(ImportValueItem.{ name, alias, span: item_span }))
     }
 
     if token_kind_at(tokens_in, i) == .Comma {
@@ -793,7 +793,7 @@ fn parse_use(tokens_in: Vector<Token>, start: Int) ItemParse {
     }
   }
 
-  items: Vector<ast.ImportItem>? = .None
+  items: Vector<ImportItem>? = .None
   has_items := false
   if token_kind_at(tokens_in, i) == .Dot and token_kind_at(tokens_in, i + 1) == .LBrace {
     i = i + 2
