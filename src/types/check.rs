@@ -1025,8 +1025,27 @@ impl TypeChecker {
                 }
             }
 
-            // Comparison: T × T → Bool (for primitive types)
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+            // Equality with directional type propagation: try to use
+            // one operand's known type as context for the other, so that
+            // shorthand variants like `kind == .Use` type-check.
+            BinOp::Eq | BinOp::Ne => {
+                // Attempt 1: synth left, check right against left's type
+                if let Some(result) = self.try_eq_directional(left, right) {
+                    return result;
+                }
+                // Attempt 2: synth right, check left against right's type
+                if let Some(result) = self.try_eq_directional(right, left) {
+                    return result;
+                }
+                // Fallback: original synth+synth+unify for diagnostics
+                let left_ty = self.synth_expr(left)?;
+                let right_ty = self.synth_expr(right)?;
+                self.unify(&left_ty, &right_ty, right.span)?;
+                Ok(MonoType::Bool)
+            }
+
+            // Ordered comparison: T × T → Bool (no directional propagation)
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let left_ty = self.synth_expr(left)?;
                 let right_ty = self.synth_expr(right)?;
 
@@ -1043,6 +1062,47 @@ impl TypeChecker {
 
             // Assignment / rebinding operators
             BinOp::Assign => self.synth_assign(left, right, span),
+        }
+    }
+
+    /// Speculatively try: synth `synth_side`, then check `check_side` against
+    /// that type. Returns `Some(Ok(Bool))` on success, `None` if the attempt
+    /// failed (state is rolled back). This avoids emitting misleading diagnostics
+    /// from failed directional attempts.
+    fn try_eq_directional(
+        &mut self,
+        synth_side: &Expr,
+        check_side: &Expr,
+    ) -> Option<Result<MonoType, ()>> {
+        // Save state for rollback
+        let saved_errors_len = self.errors.len();
+        let saved_next_meta = self.next_meta;
+        let saved_meta_subst = self.meta_subst.clone();
+        let saved_type_map = self.type_map.clone();
+        let saved_call_expected_ret = self.call_expected_ret.clone();
+
+        let result = (|| {
+            let ty = self.synth_expr(synth_side)?;
+            let ty = self.zonk(&ty);
+            // Only proceed if we got a concrete type (not an unsolved MetaVar)
+            if matches!(ty, MonoType::MetaVar(_)) {
+                return Err(());
+            }
+            self.check_expr(check_side, &ty)?;
+            Ok(MonoType::Bool)
+        })();
+
+        match result {
+            Ok(ty) => Some(Ok(ty)),
+            Err(()) => {
+                // Roll back all mutable state from the failed attempt
+                self.errors.truncate(saved_errors_len);
+                self.next_meta = saved_next_meta;
+                self.meta_subst = saved_meta_subst;
+                self.type_map = saved_type_map;
+                self.call_expected_ret = saved_call_expected_ret;
+                None
+            }
         }
     }
 

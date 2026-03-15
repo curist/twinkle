@@ -1,0 +1,6 @@
+// Both sides are context-free shorthand variants — should still fail.
+type TokenKind = { Use, Fn, Ident, Eof }
+
+fn test() Bool {
+  .Use == .Fn
+}

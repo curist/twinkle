@@ -58,4 +58,3 @@ from stage0, bootstrapping sequence)
 | [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
-| [eq-ne-type-propagation.md](eq-ne-type-propagation.md) | Propagate known operand type across `==`/`!=` so context-dependent literals (for example `.Use`) can check bidirectionally |

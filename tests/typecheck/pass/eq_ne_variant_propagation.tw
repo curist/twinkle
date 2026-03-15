@@ -1,0 +1,25 @@
+// Eq/Ne should propagate type context across operands so shorthand
+// variants type-check when the other side has a known sum type.
+
+type TokenKind = { Use, Fn, Ident, Eof }
+type Color = { Red, Green, Blue }
+
+fn check_use(kind: TokenKind) Bool {
+  kind == .Use
+}
+
+fn check_not_fn(kind: TokenKind) Bool {
+  kind != .Fn
+}
+
+fn check_variant_lhs(kind: TokenKind) Bool {
+  .Eof == kind
+}
+
+fn check_option(x: Int?) Bool {
+  x == .Some(42)
+}
+
+fn check_option_none(x: Int?) Bool {
+  x == .None
+}

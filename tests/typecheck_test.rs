@@ -375,3 +375,51 @@ main()
         errors
     );
 }
+
+#[test]
+fn test_eq_ne_variant_propagation_no_duplicate_errors() {
+    // `kind == .Use` should type-check cleanly when kind has a known sum type.
+    let src = r#"
+type TokenKind = { Use, Fn, Ident }
+fn check(kind: TokenKind) Bool { kind == .Use }
+"#;
+    let errors = check_errors(src);
+    assert!(
+        errors.is_empty(),
+        "expected no errors for `kind == .Use`, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_eq_both_shorthand_variants_still_fails() {
+    // Both sides context-free should still produce an error, not silently pass.
+    let src = r#"
+type TokenKind = { Use, Fn, Ident }
+fn check() Bool { .Use == .Fn }
+"#;
+    let errors = check_errors(src);
+    assert!(
+        !errors.is_empty(),
+        "expected errors for `.Use == .Fn` without context"
+    );
+    // Should get exactly the right errors, not duplicated cascades
+    assert!(
+        errors.len() <= 2,
+        "expected at most 2 errors (one per side), got {}:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_eq_wrong_variant_payload_fails() {
+    let src = r#"
+fn check(x: Int?) Bool { x == .Some("hello") }
+"#;
+    let errors = check_errors(src);
+    assert!(
+        !errors.is_empty(),
+        "expected type error for wrong payload type in .Some(\"hello\")"
+    );
+}
