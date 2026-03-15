@@ -85,3 +85,4 @@ Related historical context outside this folder:
 | [qualified-variant-constructor-paths.md](qualified-variant-constructor-paths.md) | Allow `module.Type.Variant` in expressions while keeping `x.Variant` rejected |
 | [naming-case-enforcement.md](naming-case-enforcement.md) | Enforce initial-case naming rules in compiler behavior to match spec/grammar |
 | [destructuring-imports.md](destructuring-imports.md) | Add `use module.{...}` for value/type/mixed imports with per-item aliasing (no `self`/wildcard) |
+| [boot-parser-gap-closure.md](boot-parser-gap-closure.md) | Close bootstrap parser gaps: richer token coverage, structural AST, robust recovery, multiline continuity, and destructuring imports |
