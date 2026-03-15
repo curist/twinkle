@@ -1,0 +1,12 @@
+use math.{add, make_vec, type Vec2}
+
+fn main() {
+    result := add(1, 2)
+    v: Vec2 = make_vec(10, 20)
+    println("${result}")
+    println("${v.x}")
+
+    // qualified access should still work
+    q := math.add(3, 4)
+    println("${q}")
+}

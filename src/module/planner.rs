@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use crate::syntax::ast::{Item, SourceFile};
+use crate::syntax::ast::{ImportItem, Item, SourceFile};
 
 use super::ModuleSourceAdapter;
 
@@ -12,14 +12,15 @@ pub(super) enum PlannedDependencyKind {
     Prelude,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct PlannedDependency {
     pub canonical_path: PathBuf,
     pub alias: String,
     pub kind: PlannedDependencyKind,
+    pub items: Option<Vec<ImportItem>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct ModuleDependencyPlan {
     pub dependencies: Vec<PlannedDependency>,
     pub canonical_paths: Vec<PathBuf>,
@@ -58,6 +59,7 @@ pub(super) fn plan_module_dependencies<A: ModuleSourceAdapter>(
                 canonical_path: dep_canonical,
                 alias: import.module_name().to_string(),
                 kind: PlannedDependencyKind::Import,
+                items: import.items.clone(),
             });
         }
     }
@@ -80,6 +82,7 @@ pub(super) fn plan_module_dependencies<A: ModuleSourceAdapter>(
             canonical_paths.push(prelude_canonical.clone());
             dependencies.push(PlannedDependency {
                 canonical_path: prelude_canonical,
+                items: None,
                 alias: format!(
                     "__prelude_{}",
                     prelude_path
@@ -232,21 +235,25 @@ println("ok")
                     canonical_path: dep_b,
                     alias: "dep_b".to_string(),
                     kind: PlannedDependencyKind::Import,
+                    items: None,
                 },
                 PlannedDependency {
                     canonical_path: dep_a,
                     alias: "dep_a".to_string(),
                     kind: PlannedDependencyKind::Import,
+                    items: None,
                 },
                 PlannedDependency {
                     canonical_path: prelude_alpha,
                     alias: "__prelude_alpha".to_string(),
                     kind: PlannedDependencyKind::Prelude,
+                    items: None,
                 },
                 PlannedDependency {
                     canonical_path: PathBuf::from("/virtual/planner_order/prelude/beta.tw"),
                     alias: "__prelude_beta".to_string(),
                     kind: PlannedDependencyKind::Prelude,
+                    items: None,
                 },
             ]
         );
@@ -282,6 +289,7 @@ println("ok")
                 canonical_path: dep.clone(),
                 alias: "dep".to_string(),
                 kind: PlannedDependencyKind::Import,
+                items: None,
             }]
         );
         assert_eq!(plan.canonical_paths, vec![dep]);
@@ -325,11 +333,13 @@ println("ok")
                     canonical_path: prelude_alpha,
                     alias: "alpha".to_string(),
                     kind: PlannedDependencyKind::Import,
+                    items: None,
                 },
                 PlannedDependency {
                     canonical_path: prelude_beta,
                     alias: "__prelude_beta".to_string(),
                     kind: PlannedDependencyKind::Prelude,
+                    items: None,
                 },
             ]
         );

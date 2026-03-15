@@ -297,6 +297,12 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
                     file_name, line, col, kind, name, expected
                 )
             }
+            parser::ParseErrorKind::EmptyImportList => {
+                format!(
+                    "{}:{}:{}: Import list cannot be empty",
+                    file_name, line, col
+                )
+            }
         };
 
         // Add source context

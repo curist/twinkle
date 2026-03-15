@@ -245,6 +245,40 @@ fn test_module_relative_import_alias_lower() {
     );
 }
 
+/// destructuring imports: `use math.{add, make_vec, type Vec2}`
+#[test]
+fn test_module_destructure_check() {
+    let result = check("destructure/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected destructuring import check to pass: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_module_destructure_lower() {
+    let result = lower("destructure/main.tw");
+    assert!(
+        result.is_ok(),
+        "Expected destructuring import lower to pass: {:?}",
+        result.err()
+    );
+}
+
+/// importing a non-existent name should produce a clear error
+#[test]
+fn test_module_destructure_missing_export() {
+    let result = check("destructure/main_bad_import.tw");
+    assert!(result.is_err(), "Expected missing export to fail");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("nonexistent"),
+        "Error should mention the missing name: {}",
+        err
+    );
+}
+
 /// cross-module method value reference extraction
 #[test]
 fn test_module_method_value_ref_check() {

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::intrinsics::registry;
 use crate::ir::core::{FuncId, LocalId};
 use crate::ir::lower::prelude;
+use crate::syntax::ast::ImportItem;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{
     FunctionSignature, MonoType, TypeId, builtin_method_alias, method_receiver_type_id,
@@ -209,6 +210,93 @@ impl CompileState {
 
         self.module_registry
             .insert(alias.to_string(), exports.clone());
+    }
+
+    /// Register unqualified bindings for destructuring import items.
+    ///
+    /// For each `ImportItem`, binds the selected name (or alias) directly
+    /// into the value/type namespace so it can be used without qualification.
+    /// Returns an error listing any names not found in the module's exports.
+    pub fn register_import_items(
+        &mut self,
+        alias: &str,
+        exports: &ModuleExports,
+        items: &[ImportItem],
+    ) -> Result<(), Vec<(String, &'static str)>> {
+        let mut missing = Vec::new();
+
+        for item in items {
+            match item {
+                ImportItem::Value {
+                    name,
+                    alias: item_alias,
+                    ..
+                } => {
+                    let found_func = exports.public_functions.contains_key(name);
+                    let found_value = exports.public_values.contains_key(name);
+
+                    if !found_func && !found_value {
+                        missing.push((name.clone(), "value"));
+                        continue;
+                    }
+
+                    let unqualified = item_alias.as_deref().unwrap_or(name);
+
+                    // Bind function signature under unqualified name
+                    if let Some(sig) = exports.public_functions.get(name) {
+                        let unq_sig = FunctionSignature {
+                            name: unqualified.to_string(),
+                            type_params: sig.type_params.clone(),
+                            param_names: sig.param_names.clone(),
+                            params: sig.params.clone(),
+                            ret: sig.ret.clone(),
+                            doc: sig.doc.clone(),
+                        };
+                        self.value_env.add_function(unq_sig);
+
+                        if let Some(&func_id) = exports.public_func_ids.get(name) {
+                            self.func_table.insert(unqualified.to_string(), func_id);
+                            self.qualified_func_targets.insert(
+                                unqualified.to_string(),
+                                ExternalFuncRef {
+                                    module_path: exports.canonical_path.clone(),
+                                    local_func_id: func_id,
+                                },
+                            );
+                        }
+                    }
+
+                    // Bind value global under unqualified name
+                    if let Some((val_ty, local_id)) = exports.public_values.get(name) {
+                        self.value_env
+                            .add_value(unqualified.to_string(), val_ty.clone());
+                        self.qualified_value_globals
+                            .insert(unqualified.to_string(), *local_id);
+                    }
+                }
+                ImportItem::Type {
+                    name,
+                    alias: item_alias,
+                    ..
+                } => {
+                    if !exports.public_types.contains_key(name) {
+                        missing.push((name.clone(), "type"));
+                        continue;
+                    }
+
+                    let unqualified = item_alias.as_deref().unwrap_or(name);
+                    let &type_id = exports.public_types.get(name).unwrap();
+                    self.type_env
+                        .register_type_alias(unqualified.to_string(), type_id);
+                }
+            }
+        }
+
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
     }
 
     /// Register prelude exports without exposing internal prelude aliases.

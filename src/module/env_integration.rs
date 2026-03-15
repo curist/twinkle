@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::ir::core::{FuncId, LocalId};
 use crate::types::env::{TypeEnvBindingSnapshot, ValueEnvBindingSnapshot};
 
+use crate::syntax::ast::ImportItem;
+
 use super::{CompileState, ExternalFuncRef, ModuleExports};
 
 #[derive(Clone)]
@@ -17,7 +19,10 @@ pub(super) struct CompileEnvSnapshot {
 }
 
 pub(super) enum DependencyProjection<'a> {
-    Import { alias: &'a str },
+    Import {
+        alias: &'a str,
+        items: Option<&'a [ImportItem]>,
+    },
     Prelude,
 }
 
@@ -47,11 +52,27 @@ pub(super) fn project_dependency_exports(
     state: &mut CompileState,
     projection: DependencyProjection<'_>,
     exports: &ModuleExports,
-) {
+) -> anyhow::Result<()> {
     match projection {
-        DependencyProjection::Import { alias } => state.register_module_exports(alias, exports),
+        DependencyProjection::Import { alias, items } => {
+            state.register_module_exports(alias, exports);
+            if let Some(items) = items {
+                if let Err(missing) = state.register_import_items(alias, exports, items) {
+                    let details: Vec<String> = missing
+                        .iter()
+                        .map(|(name, kind)| format!("{} `{}`", kind, name))
+                        .collect();
+                    return Err(anyhow::anyhow!(
+                        "Module '{}' does not export: {}",
+                        alias,
+                        details.join(", ")
+                    ));
+                }
+            }
+        }
         DependencyProjection::Prelude => state.register_prelude_exports(exports),
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -93,9 +114,13 @@ mod tests {
         let exports = sample_exports_with_publics();
         project_dependency_exports(
             &mut state,
-            DependencyProjection::Import { alias: "dep" },
+            DependencyProjection::Import {
+                alias: "dep",
+                items: None,
+            },
             &exports,
-        );
+        )
+        .unwrap();
 
         assert!(state.module_aliases.contains("dep"));
         assert!(state.module_registry.contains_key("dep"));
@@ -117,9 +142,13 @@ mod tests {
         let import_exports = sample_exports_with_publics();
         project_dependency_exports(
             &mut state,
-            DependencyProjection::Import { alias: "math" },
+            DependencyProjection::Import {
+                alias: "math",
+                items: None,
+            },
             &import_exports,
-        );
+        )
+        .unwrap();
 
         let mut prelude_exports = ModuleExports::empty();
         prelude_exports.canonical_path =
@@ -145,7 +174,8 @@ mod tests {
             .public_func_ids
             .insert("map".to_string(), FuncId(10_002));
 
-        project_dependency_exports(&mut state, DependencyProjection::Prelude, &prelude_exports);
+        project_dependency_exports(&mut state, DependencyProjection::Prelude, &prelude_exports)
+            .unwrap();
 
         assert!(state.module_aliases.contains("math"));
         assert!(state.module_registry.contains_key("math"));

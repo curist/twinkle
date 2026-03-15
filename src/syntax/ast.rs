@@ -20,13 +20,39 @@ pub enum Item {
     Stmt(Stmt),
 }
 
+/// A single item in a destructuring import list: `use foo.{x, type T as U}`
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportItem {
+    /// Value/function import: `x` or `x as y`
+    Value {
+        name: String,
+        alias: Option<String>,
+        span: Span,
+    },
+    /// Type import: `type T` or `type T as U`
+    Type {
+        name: String,
+        alias: Option<String>,
+        span: Span,
+    },
+}
+
+impl ImportItem {
+    pub fn span(&self) -> Span {
+        match self {
+            ImportItem::Value { span, .. } | ImportItem::Type { span, .. } => *span,
+        }
+    }
+}
+
 /// Import declaration (use foo.bar [as alias])
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
-    pub module_path: Vec<String>, // ["foo", "bar"] from `use foo.bar`
-    pub is_stdlib: bool,          // true if @ prefix
-    pub is_relative: bool,        // true if leading dot: `use .foo`
-    pub alias: Option<String>,    // Some("baz") from `use foo.bar as baz`
+    pub module_path: Vec<String>,       // ["foo", "bar"] from `use foo.bar`
+    pub is_stdlib: bool,                // true if @ prefix
+    pub is_relative: bool,              // true if leading dot: `use .foo`
+    pub alias: Option<String>,          // Some("baz") from `use foo.bar as baz`
+    pub items: Option<Vec<ImportItem>>, // Some([...]) from `use foo.bar.{x, type T}`
     pub span: Span,
 }
 

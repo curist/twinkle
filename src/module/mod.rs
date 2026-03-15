@@ -704,10 +704,11 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
                 let projection = match dep.kind {
                     PlannedDependencyKind::Import => DependencyProjection::Import {
                         alias: dep.alias.as_str(),
+                        items: dep.items.as_deref(),
                     },
                     PlannedDependencyKind::Prelude => DependencyProjection::Prelude,
                 };
-                project_dependency_exports(state, projection, &dep_exports);
+                project_dependency_exports(state, projection, &dep_exports)?;
             }
             Err(err) => {
                 if analysis_collector.is_enabled() {

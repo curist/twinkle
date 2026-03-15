@@ -84,3 +84,4 @@ Related historical context outside this folder:
 | [inference-contextual-gaps.md](inference-contextual-gaps.md) | Contextual inference for variant shorthand in generic args and unannotated closure callback params |
 | [qualified-variant-constructor-paths.md](qualified-variant-constructor-paths.md) | Allow `module.Type.Variant` in expressions while keeping `x.Variant` rejected |
 | [naming-case-enforcement.md](naming-case-enforcement.md) | Enforce initial-case naming rules in compiler behavior to match spec/grammar |
+| [destructuring-imports.md](destructuring-imports.md) | Add `use module.{...}` for value/type/mixed imports with per-item aliasing (no `self`/wildcard) |

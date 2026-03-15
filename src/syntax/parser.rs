@@ -35,6 +35,8 @@ pub enum ParseErrorKind {
         name: String,
         expected: &'static str,
     },
+    /// Empty destructuring import list: `use foo.{}`
+    EmptyImportList,
 }
 
 impl ParseError {
@@ -247,6 +249,7 @@ impl Parser {
         let first = self.expect(TokenKind::Ident)?;
         let mut module_path = vec![first.text.clone()];
         let mut last_span = first.span;
+        let mut module_name_span = first.span; // span of the last path segment (for diagnostics)
 
         while self.peek_is(TokenKind::Dot) {
             // Peek ahead to see if after the dot there's an Ident (not { or .)
@@ -257,13 +260,31 @@ impl Parser {
                     let seg = self.expect(TokenKind::Ident)?;
                     module_path.push(seg.text.clone());
                     last_span = seg.span;
+                    module_name_span = seg.span;
                 }
                 _ => break,
             }
         }
 
-        // Optional alias: as alias_name
-        let alias = if self.peek_is(TokenKind::As) {
+        // Check for destructuring import: `.{...}`
+        let items = if self.peek_is(TokenKind::Dot) {
+            let next_after_dot = self.tokens.get(self.pos + 1);
+            if matches!(next_after_dot.map(|t| t.kind), Some(TokenKind::LBrace)) {
+                self.advance(); // consume dot
+                self.advance(); // consume {
+                let items = self.parse_import_items()?;
+                let rbrace = self.expect(TokenKind::RBrace)?;
+                last_span = rbrace.span;
+                Some(items)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Optional alias: as alias_name (only if no item list)
+        let alias = if items.is_none() && self.peek_is(TokenKind::As) {
             self.advance(); // consume 'as'
             let alias_tok = self.expect(TokenKind::Ident)?;
             if alias_tok.text.starts_with(|c: char| c.is_uppercase()) {
@@ -277,6 +298,18 @@ impl Parser {
                 ));
             }
             last_span = alias_tok.span;
+
+            // Reject combined alias + destructuring: `use foo as bar.{...}`
+            if self.peek_is(TokenKind::Dot) {
+                let next_after_dot = self.tokens.get(self.pos + 1);
+                if matches!(next_after_dot.map(|t| t.kind), Some(TokenKind::LBrace)) {
+                    return Err(ParseError::unexpected_token(
+                        vec!["end of import"],
+                        &self.tokens[self.pos],
+                    ));
+                }
+            }
+
             Some(alias_tok.text.clone())
         } else {
             None
@@ -293,7 +326,7 @@ impl Parser {
                         name: module_name.clone(),
                         expected: "a lowercase",
                     },
-                    last_span,
+                    module_name_span,
                 ));
             }
         }
@@ -305,8 +338,71 @@ impl Parser {
             is_stdlib,
             is_relative,
             alias,
+            items,
             span,
         })
+    }
+
+    /// Parse comma-separated import items inside `{...}`. Expects `{` already consumed.
+    fn parse_import_items(&mut self) -> ParseResult<Vec<ImportItem>> {
+        let mut items = Vec::new();
+
+        // Reject empty list
+        if self.peek_is(TokenKind::RBrace) {
+            return Err(ParseError::new(
+                ParseErrorKind::EmptyImportList,
+                self.tokens[self.pos].span,
+            ));
+        }
+
+        loop {
+            // Trailing comma: `{x,}` — stop before `}`
+            if self.peek_is(TokenKind::RBrace) {
+                break;
+            }
+
+            if self.peek_is(TokenKind::Type) {
+                // Type import: `type T` or `type T as U`
+                let type_tok = self.advance().unwrap();
+                let name_tok = self.expect(TokenKind::Ident)?;
+                let alias = if self.peek_is(TokenKind::As) {
+                    self.advance();
+                    Some(self.expect(TokenKind::Ident)?.text.clone())
+                } else {
+                    None
+                };
+                let span = type_tok.span.merge(&self.tokens[self.pos - 1].span);
+                items.push(ImportItem::Type {
+                    name: name_tok.text.clone(),
+                    alias,
+                    span,
+                });
+            } else {
+                // Value import: `x` or `x as y`
+                let name_tok = self.expect(TokenKind::Ident)?;
+                let alias = if self.peek_is(TokenKind::As) {
+                    self.advance();
+                    Some(self.expect(TokenKind::Ident)?.text.clone())
+                } else {
+                    None
+                };
+                let span = name_tok.span.merge(&self.tokens[self.pos - 1].span);
+                items.push(ImportItem::Value {
+                    name: name_tok.text.clone(),
+                    alias,
+                    span,
+                });
+            }
+
+            // Expect comma or end
+            if self.peek_is(TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Ok(items)
     }
 
     fn parse_type_decl(&mut self, is_pub: bool) -> ParseResult<TypeDecl> {
@@ -2129,5 +2225,189 @@ mod tests {
         // `use ..foo` — parent traversal not supported in MVP
         let result = parse_source("use ..foo");
         assert!(result.is_err(), "Expected parse error for `use ..foo`");
+    }
+
+    // ── Destructuring import tests ──────────────────────────────────────
+
+    #[test]
+    fn test_parse_destructuring_value_imports() {
+        let decl = get_import("use foo.bar.{translate, scale}");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        assert_eq!(decl.alias, None);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0],
+            ImportItem::Value {
+                name: "translate".into(),
+                alias: None,
+                span: items[0].span()
+            }
+        );
+        assert_eq!(
+            items[1],
+            ImportItem::Value {
+                name: "scale".into(),
+                alias: None,
+                span: items[1].span()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_destructuring_type_imports() {
+        let decl = get_import("use foo.bar.{type Vec2, type Transform}");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0],
+            ImportItem::Type {
+                name: "Vec2".into(),
+                alias: None,
+                span: items[0].span()
+            }
+        );
+        assert_eq!(
+            items[1],
+            ImportItem::Type {
+                name: "Transform".into(),
+                alias: None,
+                span: items[1].span()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_destructuring_mixed_imports() {
+        let decl = get_import("use foo.bar.{translate, type Vec2}");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0],
+            ImportItem::Value {
+                name: "translate".into(),
+                alias: None,
+                span: items[0].span()
+            }
+        );
+        assert_eq!(
+            items[1],
+            ImportItem::Type {
+                name: "Vec2".into(),
+                alias: None,
+                span: items[1].span()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_destructuring_with_aliases() {
+        let decl = get_import("use foo.bar.{translate as tr, type Vec2 as V2}");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0],
+            ImportItem::Value {
+                name: "translate".into(),
+                alias: Some("tr".into()),
+                span: items[0].span(),
+            }
+        );
+        assert_eq!(
+            items[1],
+            ImportItem::Type {
+                name: "Vec2".into(),
+                alias: Some("V2".into()),
+                span: items[1].span(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_destructuring_single_item() {
+        let decl = get_import("use foo.bar.{translate}");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0],
+            ImportItem::Value {
+                name: "translate".into(),
+                alias: None,
+                span: items[0].span()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_destructuring_preserves_module_name() {
+        // module_name() should still return last path segment
+        let decl = get_import("use foo.bar.{translate}");
+        assert_eq!(decl.module_name(), "bar");
+    }
+
+    #[test]
+    fn test_parse_destructuring_with_stdlib() {
+        let decl = get_import("use @std.fs.{read, write}");
+        assert!(decl.is_stdlib);
+        assert_eq!(decl.module_path, vec!["std", "fs"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_destructuring_with_relative() {
+        let decl = get_import("use .foo.{bar}");
+        assert!(decl.is_relative);
+        assert_eq!(decl.module_path, vec!["foo"]);
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_destructuring_reject_combined_alias_and_items() {
+        // `use foo.bar as baz.{x}` is not supported
+        let result = parse_source("use foo.bar as baz.{x}");
+        assert!(
+            result.is_err(),
+            "Expected parse error for combined alias + items"
+        );
+    }
+
+    #[test]
+    fn test_parse_plain_import_still_works() {
+        // Ensure existing forms are unaffected
+        let decl = get_import("use foo.bar");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        assert_eq!(decl.alias, None);
+        assert!(decl.items.is_none());
+    }
+
+    #[test]
+    fn test_parse_alias_import_still_works() {
+        let decl = get_import("use foo.bar as baz");
+        assert_eq!(decl.module_path, vec!["foo", "bar"]);
+        assert_eq!(decl.alias, Some("baz".into()));
+        assert!(decl.items.is_none());
+    }
+
+    #[test]
+    fn test_parse_destructuring_trailing_comma() {
+        // Trailing comma should be accepted
+        let decl = get_import("use foo.bar.{translate, scale,}");
+        let items = decl.items.unwrap();
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_destructuring_reject_empty_braces() {
+        let result = parse_source("use foo.bar.{}");
+        assert!(
+            result.is_err(),
+            "Expected parse error for empty import list"
+        );
     }
 }
