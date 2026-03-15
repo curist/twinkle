@@ -571,13 +571,16 @@ impl Parser {
                                 break;
                             }
                             // Same line: if followed by another `.`, it's an intermediate
-                            // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise it's a
-                            // terminal constructor in postfix, which is a hard error.
+                            // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise check
+                            // if the base is a type path (has an uppercase segment like
+                            // `module.Type`). Type paths may use terminal `.Upper` for
+                            // qualified variant constructors. Pure value paths (`x`, `foo.bar`)
+                            // remain a hard error.
                             let followed_by_dot = matches!(
                                 self.tokens.get(self.pos + 2).map(|t| t.kind),
                                 Some(TokenKind::Dot)
                             );
-                            if !followed_by_dot {
+                            if !followed_by_dot && !expr_chain_has_upper_segment(&lhs) {
                                 let name = next_tok.text.clone();
                                 let span = next_tok.span;
                                 return Err(ParseError::new(
@@ -1745,6 +1748,19 @@ fn postfix_binding_power(op: TokenKind) -> Option<u8> {
 
 fn prefix_binding_power() -> u8 {
     22 // Same as multiplicative, higher than additive
+}
+
+/// Check if an Ident/FieldAccess chain contains at least one PascalCase segment.
+/// Used to distinguish type paths (e.g. `module.Type`) from value paths (`x`, `foo.bar`).
+fn expr_chain_has_upper_segment(expr: &crate::syntax::ast::Expr) -> bool {
+    use crate::syntax::ast::ExprKind;
+    match &expr.kind {
+        ExprKind::Ident(name) => name.starts_with(|c: char| c.is_uppercase()),
+        ExprKind::FieldAccess { base, field } => {
+            field.starts_with(|c: char| c.is_uppercase()) || expr_chain_has_upper_segment(base)
+        }
+        _ => false,
+    }
 }
 
 /// Extract a dotted type name from an expression for use in named record literals.

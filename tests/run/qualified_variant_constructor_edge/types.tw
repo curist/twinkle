@@ -1,0 +1,17 @@
+pub type Status = { Active, Inactive }
+
+pub type Result2<T, E> = { Ok2(T), Err2(E) }
+
+pub fn show_status(s: Status) String {
+  case s {
+    .Active => "active",
+    .Inactive => "inactive",
+  }
+}
+
+pub fn show_result2(r: Result2<Int, String>) String {
+  case r {
+    .Ok2(n) => "ok2:${n}",
+    .Err2(e) => "err2:${e}",
+  }
+}

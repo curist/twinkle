@@ -82,3 +82,4 @@ Related historical context outside this folder:
 | [pre-selfhost-cleanup.md](pre-selfhost-cleanup.md) | Pre-self-hosting stage0 cleanup tasks — remaining items superseded by self-hosting redesign |
 | [boot-source-lib.md](boot-source-lib.md) | `boot/lib/source` — spans, file registry, diagnostics for self-hosted compiler |
 | [inference-contextual-gaps.md](inference-contextual-gaps.md) | Contextual inference for variant shorthand in generic args and unannotated closure callback params |
+| [qualified-variant-constructor-paths.md](qualified-variant-constructor-paths.md) | Allow `module.Type.Variant` in expressions while keeping `x.Variant` rejected |

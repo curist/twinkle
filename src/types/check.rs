@@ -1122,74 +1122,73 @@ impl TypeChecker {
                     self.call_expected_ret = call_expected;
                     return self.synth_module_call(&alias, &method_name, args, span, callee_id);
                 }
+            }
 
-                // TypeName.Variant(args) — variant construction with type prefix
-                if let Some(type_id) = self.type_env.lookup_type(alias) {
-                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name)
-                    {
-                        // Build named_ty with Var args for generic types
-                        let type_var_args: Vec<MonoType> = self
-                            .type_env
-                            .get_def(type_id)
-                            .map(|d| {
-                                d.type_params()
-                                    .iter()
-                                    .map(|p| MonoType::Var(p.clone()))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let named_ty = MonoType::Named {
-                            type_id,
-                            args: type_var_args,
-                        };
-                        self.type_map.set_expr_type(base.id, named_ty.clone());
-                        let variants = self
-                            .type_env
-                            .get_variants(type_id)
-                            .expect("variant exists, variants must exist");
-                        let variant_fields = variants[variant_idx].fields.clone();
-                        // Check arity
-                        if variant_fields.len() != args.len() {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: variant_fields.len(),
-                                actual: args.len(),
-                                span,
-                            });
+            // TypeName.Variant(args) or module.TypeName.Variant(args)
+            if let Some(type_id) = self.try_resolve_type_from_expr(base) {
+                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name) {
+                    // Build named_ty with Var args for generic types
+                    let type_var_args: Vec<MonoType> = self
+                        .type_env
+                        .get_def(type_id)
+                        .map(|d| {
+                            d.type_params()
+                                .iter()
+                                .map(|p| MonoType::Var(p.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let named_ty = MonoType::Named {
+                        type_id,
+                        args: type_var_args,
+                    };
+                    self.type_map.set_expr_type(base.id, named_ty.clone());
+                    let variants = self
+                        .type_env
+                        .get_variants(type_id)
+                        .expect("variant exists, variants must exist");
+                    let variant_fields = variants[variant_idx].fields.clone();
+                    // Check arity
+                    if variant_fields.len() != args.len() {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: variant_fields.len(),
+                            actual: args.len(),
+                            span,
+                        });
+                        return Err(());
+                    }
+                    // Instantiate type params with MetaVars (no-op for non-generic types)
+                    let type_params: Vec<String> = self
+                        .type_env
+                        .get_def(type_id)
+                        .map(|d| d.type_params().to_vec())
+                        .unwrap_or_default();
+                    let inst_map: HashMap<String, MonoType> = type_params
+                        .iter()
+                        .map(|p| (p.clone(), self.fresh_meta()))
+                        .collect();
+                    let inst_fields: Vec<MonoType> = variant_fields
+                        .iter()
+                        .map(|f| apply_subst(f, &inst_map))
+                        .collect();
+                    let inst_named_ty = apply_subst(&named_ty, &inst_map);
+                    // Check each arg against instantiated field type
+                    for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
+                        if let Err(()) = self.check_expr(arg, expected_ty) {
                             return Err(());
                         }
-                        // Instantiate type params with MetaVars (no-op for non-generic types)
-                        let type_params: Vec<String> = self
-                            .type_env
-                            .get_def(type_id)
-                            .map(|d| d.type_params().to_vec())
-                            .unwrap_or_default();
-                        let inst_map: HashMap<String, MonoType> = type_params
-                            .iter()
-                            .map(|p| (p.clone(), self.fresh_meta()))
-                            .collect();
-                        let inst_fields: Vec<MonoType> = variant_fields
-                            .iter()
-                            .map(|f| apply_subst(f, &inst_map))
-                            .collect();
-                        let inst_named_ty = apply_subst(&named_ty, &inst_map);
-                        // Check each arg against instantiated field type
-                        for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
-                            if let Err(()) = self.check_expr(arg, expected_ty) {
-                                return Err(());
-                            }
-                        }
-                        // Record callee type (constructor function) and return
-                        let ctor_ty = if inst_fields.is_empty() {
-                            inst_named_ty.clone()
-                        } else {
-                            MonoType::Function {
-                                params: inst_fields,
-                                ret: Box::new(inst_named_ty.clone()),
-                            }
-                        };
-                        self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
-                        return Ok(self.zonk(&inst_named_ty));
                     }
+                    // Record callee type (constructor function) and return
+                    let ctor_ty = if inst_fields.is_empty() {
+                        inst_named_ty.clone()
+                    } else {
+                        MonoType::Function {
+                            params: inst_fields,
+                            ret: Box::new(inst_named_ty.clone()),
+                        }
+                    };
+                    self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
+                    return Ok(self.zonk(&inst_named_ty));
                 }
             }
 
@@ -1993,57 +1992,63 @@ impl TypeChecker {
         })
     }
 
+    /// Extract a dotted name from an Ident/FieldAccess chain and look it up as a type.
+    /// Handles both `TypeName` (bare Ident) and `module.TypeName` (FieldAccess chain).
+    /// Returns None if the expression is not an identifier chain or does not resolve to a type.
+    fn try_resolve_type_from_expr(&self, expr: &Expr) -> Option<TypeId> {
+        let name = expr_as_dotted_name(expr)?;
+        self.type_env.lookup_type(&name)
+    }
+
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
-        // Check for TypeName.Variant syntax: base is a type name, field is a variant
-        if let ExprKind::Ident(type_name) = &base.kind {
-            if let Some(type_id) = self.type_env.lookup_type(type_name) {
-                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
-                    // Instantiate generic type params with fresh MetaVars so that
-                    // unification (e.g. unifying Done with Yield's type) can solve them.
-                    let type_params: Vec<String> = self
-                        .type_env
-                        .get_def(type_id)
-                        .map(|d| d.type_params().to_vec())
-                        .unwrap_or_default();
-                    let inst_map: HashMap<String, MonoType> = type_params
-                        .iter()
-                        .map(|p| (p.clone(), self.fresh_meta()))
-                        .collect();
-                    let type_var_args: Vec<MonoType> = type_params
-                        .iter()
-                        .map(|p| MonoType::Var(p.clone()))
-                        .collect();
-                    let raw_named = MonoType::Named {
-                        type_id,
-                        args: type_var_args,
-                    };
-                    let named_ty = if inst_map.is_empty() {
-                        raw_named
-                    } else {
-                        apply_subst(&raw_named, &inst_map)
-                    };
-                    // Record type of the type-name base as Named (so lowerer can identify it)
-                    self.type_map.set_expr_type(base.id, named_ty.clone());
-                    let variants = self
-                        .type_env
-                        .get_variants(type_id)
-                        .expect("variant index exists, variants must exist");
-                    let variant_fields_raw = variants[variant_idx].fields.clone();
-                    let variant_fields: Vec<MonoType> = variant_fields_raw
-                        .iter()
-                        .map(|f| apply_subst(f, &inst_map))
-                        .collect();
-                    return if variant_fields.is_empty() {
-                        // Zero-arg variant — directly a value of the named type
-                        Ok(named_ty)
-                    } else {
-                        // Parameterized variant accessed as a value (not called here)
-                        Ok(MonoType::Function {
-                            params: variant_fields,
-                            ret: Box::new(named_ty),
-                        })
-                    };
-                }
+        // Check for TypeName.Variant or module.TypeName.Variant syntax
+        if let Some(type_id) = self.try_resolve_type_from_expr(base) {
+            if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
+                // Instantiate generic type params with fresh MetaVars so that
+                // unification (e.g. unifying Done with Yield's type) can solve them.
+                let type_params: Vec<String> = self
+                    .type_env
+                    .get_def(type_id)
+                    .map(|d| d.type_params().to_vec())
+                    .unwrap_or_default();
+                let inst_map: HashMap<String, MonoType> = type_params
+                    .iter()
+                    .map(|p| (p.clone(), self.fresh_meta()))
+                    .collect();
+                let type_var_args: Vec<MonoType> = type_params
+                    .iter()
+                    .map(|p| MonoType::Var(p.clone()))
+                    .collect();
+                let raw_named = MonoType::Named {
+                    type_id,
+                    args: type_var_args,
+                };
+                let named_ty = if inst_map.is_empty() {
+                    raw_named
+                } else {
+                    apply_subst(&raw_named, &inst_map)
+                };
+                // Record type of the type-name base as Named (so lowerer can identify it)
+                self.type_map.set_expr_type(base.id, named_ty.clone());
+                let variants = self
+                    .type_env
+                    .get_variants(type_id)
+                    .expect("variant index exists, variants must exist");
+                let variant_fields_raw = variants[variant_idx].fields.clone();
+                let variant_fields: Vec<MonoType> = variant_fields_raw
+                    .iter()
+                    .map(|f| apply_subst(f, &inst_map))
+                    .collect();
+                return if variant_fields.is_empty() {
+                    // Zero-arg variant — directly a value of the named type
+                    Ok(named_ty)
+                } else {
+                    // Parameterized variant accessed as a value (not called here)
+                    Ok(MonoType::Function {
+                        params: variant_fields,
+                        ret: Box::new(named_ty),
+                    })
+                };
             }
         }
 
@@ -3268,5 +3273,18 @@ pub fn apply_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType
             args: args.iter().map(|a| apply_subst(a, subst)).collect(),
         },
         other => other.clone(),
+    }
+}
+
+/// Extract a dotted name from an Ident/FieldAccess expression chain.
+/// `Ident("Type")` → `Some("Type")`
+/// `FieldAccess { base: Ident("module"), field: "Type" }` → `Some("module.Type")`
+fn expr_as_dotted_name(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess { base, field } => {
+            expr_as_dotted_name(base).map(|prefix| format!("{}.{}", prefix, field))
+        }
+        _ => None,
     }
 }

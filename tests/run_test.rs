@@ -596,3 +596,13 @@ fn order_compare() {
 fn dict_byte_keys() {
     check("tests/run/dict_byte_keys.tw");
 }
+
+#[test]
+fn qualified_variant_constructor() {
+    check("tests/run/qualified_variant_constructor/main.tw");
+}
+
+#[test]
+fn qualified_variant_constructor_edge() {
+    check("tests/run/qualified_variant_constructor_edge/main.tw");
+}

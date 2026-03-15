@@ -1,0 +1,28 @@
+pub type Color = { Red, Green, Blue }
+
+pub type Shape = { Circle(Float), Rect(Int, Int), UnitSquare }
+
+pub type Wrapper<T> = { Empty, Hold(T) }
+
+pub fn describe_color(c: Color) String {
+  case c {
+    .Red => "red",
+    .Green => "green",
+    .Blue => "blue",
+  }
+}
+
+pub fn describe_shape(s: Shape) String {
+  case s {
+    .Circle(r) => "circle r=${r}",
+    .Rect(w, h) => "rect ${w}x${h}",
+    .UnitSquare => "unit square",
+  }
+}
+
+pub fn describe_wrapper(w: Wrapper<Int>) String {
+  case w {
+    .Empty => "empty",
+    .Hold(n) => "hold ${n}",
+  }
+}

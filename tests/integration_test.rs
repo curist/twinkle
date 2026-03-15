@@ -175,3 +175,47 @@ fn test_stage0_skeleton() {
     // This is a sanity check that the crate compiles
     assert!(true, "Stage 0 skeleton is functional");
 }
+
+#[test]
+fn test_value_postfix_constructor_still_rejected() {
+    // `x.Variant` where x is a value (lowercase chain) must remain a parse error
+    let cases = vec![
+        ("x.Some", "value.Variant"),
+        ("foo.bar.Baz", "lowercase chain ending in uppercase"),
+    ];
+    for (source, description) in cases {
+        let result = twinkle::syntax::parse_source(source, "test.tw");
+        assert!(
+            result.is_err(),
+            "{}: should be rejected as ConstructorInPostfix, but parsed successfully",
+            description
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Constructor") && err_msg.contains("cannot appear after"),
+            "{}: expected ConstructorInPostfix error, got: {}",
+            description,
+            err_msg
+        );
+    }
+}
+
+#[test]
+fn test_type_path_constructor_parses() {
+    // `Type.Variant` and module-qualified `mod.Type.Variant` should parse
+    let cases = vec![
+        ("Type.Variant", "simple type.variant"),
+        ("mod.Type.Variant", "module-qualified constructor"),
+        ("Type.Variant(1, 2)", "constructor call"),
+        ("mod.Type.Variant(1)", "module-qualified constructor call"),
+    ];
+    for (source, description) in cases {
+        let result = twinkle::syntax::parse_source(source, "test.tw");
+        assert!(
+            result.is_ok(),
+            "{}: should parse successfully, but got error: {:?}",
+            description,
+            result.err()
+        );
+    }
+}

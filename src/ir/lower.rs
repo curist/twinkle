@@ -9,7 +9,7 @@ use crate::syntax::span::Span;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{
     ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID,
-    method_receiver_type_id,
+    TypeId, method_receiver_type_id,
 };
 use crate::types::type_map::TypeMap;
 
@@ -420,6 +420,28 @@ impl Lowerer {
         let id = FuncId(self.next_hoisted_id);
         self.next_hoisted_id += 1;
         id
+    }
+
+    /// Extract a dotted name from an Ident/FieldAccess chain and look it up as a type.
+    /// Handles `TypeName` (bare Ident, if not a local/func) and `module.TypeName` (dotted path).
+    fn try_resolve_type_from_expr(&self, expr: &Expr) -> Option<TypeId> {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                // Only treat as type if not shadowed by a local or function
+                if self.local_allocator.lookup(name).is_none()
+                    && !self.func_table.contains_key(name.as_str())
+                {
+                    self.type_env.lookup_type(name)
+                } else {
+                    None
+                }
+            }
+            ExprKind::FieldAccess { .. } => {
+                let dotted = expr_as_dotted_name(expr)?;
+                self.type_env.lookup_type(&dotted)
+            }
+            _ => None,
+        }
     }
 
     fn resolve_named_func_id(&mut self, name: &str, span: Span) -> Option<FuncId> {
@@ -2125,23 +2147,14 @@ impl Lowerer {
                     }
                 }
 
-                // TypeName.Variant (zero-arg variant construction)
-                if let ExprKind::Ident(type_name) = &base.kind {
-                    if self.local_allocator.lookup(type_name).is_none()
-                        && !self.func_table.contains_key(type_name.as_str())
-                    {
-                        // Base is a type name — look for a variant
-                        if let MonoType::Named { type_id, .. } = ty {
-                            if let Some(variant_idx) =
-                                self.type_env.get_variant_index(*type_id, field)
-                            {
-                                return Some(CoreExprKind::Variant {
-                                    type_id: *type_id,
-                                    variant: VariantId(variant_idx),
-                                    args: vec![],
-                                });
-                            }
-                        }
+                // TypeName.Variant or module.TypeName.Variant (zero-arg variant construction)
+                if let Some(type_id) = self.try_resolve_type_from_expr(base) {
+                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
+                        return Some(CoreExprKind::Variant {
+                            type_id,
+                            variant: VariantId(variant_idx),
+                            args: vec![],
+                        });
                     }
                 }
 
@@ -2621,31 +2634,8 @@ impl Lowerer {
     ) -> Option<CoreExprKind> {
         // Field-access calls: module.func(args) or receiver.method(args)
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
-            // TypeName.Variant(args) — parameterized variant construction
-            if let ExprKind::Ident(type_name) = &base.kind {
-                if self.local_allocator.lookup(type_name).is_none()
-                    && !self.func_table.contains_key(type_name.as_str())
-                    && !self.module_aliases.contains(type_name.as_str())
-                {
-                    // Base is a type name — look for a variant with this name
-                    if let MonoType::Named { type_id, .. } = ret_ty {
-                        if let Some(variant_idx) = self.type_env.get_variant_index(*type_id, field)
-                        {
-                            let mut lowered_args = Vec::new();
-                            for a in args {
-                                lowered_args.push(self.lower_expr(a)?);
-                            }
-                            return Some(CoreExprKind::Variant {
-                                type_id: *type_id,
-                                variant: VariantId(variant_idx),
-                                args: lowered_args,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Module-qualified call: alias.func(args)
+            // Module-qualified call: alias.func(args) — check before constructor
+            // to match synth_call resolution order in the type checker.
             if let ExprKind::Ident(alias) = &base.kind {
                 if self.module_aliases.contains(alias.as_str()) {
                     let qualified = format!("{}.{}", alias, field);
@@ -2676,6 +2666,21 @@ impl Lowerer {
                         span,
                     });
                     return None;
+                }
+            }
+
+            // TypeName.Variant(args) or module.TypeName.Variant(args)
+            if let Some(type_id) = self.try_resolve_type_from_expr(base) {
+                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
+                    let mut lowered_args = Vec::new();
+                    for a in args {
+                        lowered_args.push(self.lower_expr(a)?);
+                    }
+                    return Some(CoreExprKind::Variant {
+                        type_id,
+                        variant: VariantId(variant_idx),
+                        args: lowered_args,
+                    });
                 }
             }
 
@@ -5189,5 +5194,16 @@ fn collect_pattern_bound_locals(pattern: &CorePattern, bound: &mut HashSet<Local
             }
         }
         Wildcard | LitInt(_) | LitBool(_) | LitStr(_) => {}
+    }
+}
+
+/// Extract a dotted name from an Ident/FieldAccess expression chain.
+fn expr_as_dotted_name(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess { base, field } => {
+            expr_as_dotted_name(base).map(|prefix| format!("{}.{}", prefix, field))
+        }
+        _ => None,
     }
 }
