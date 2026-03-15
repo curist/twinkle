@@ -87,3 +87,4 @@ Related historical context outside this folder:
 | [destructuring-imports.md](destructuring-imports.md) | Add `use module.{...}` for value/type/mixed imports with per-item aliasing (no `self`/wildcard) |
 | [boot-parser-gap-closure.md](boot-parser-gap-closure.md) | Close bootstrap parser gaps: richer token coverage, structural AST, robust recovery, multiline continuity, and destructuring imports |
 | [eq-ne-type-propagation.md](eq-ne-type-propagation.md) | Propagate known operand type across `==`/`!=` so context-dependent literals type-check bidirectionally |
+| [boot-compiler-refactor.md](boot-compiler-refactor.md) | Reduce duplication in boot compiler parser/lexer via helper extraction and dead code removal |

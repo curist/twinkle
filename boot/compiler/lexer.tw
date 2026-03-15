@@ -60,34 +60,6 @@ fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id:
   tokens.make(kind, text, span.new(file_id, start, end), preceded_by_newline)
 }
 
-fn push_depth(depths: Vector<Int>, depth: Int) Vector<Int> {
-  depths.push(depth)
-}
-
-fn pop_depth(depths: Vector<Int>) Vector<Int> {
-  if depths.len() == 0 {
-    depths
-  } else {
-    depths.slice(0, depths.len() - 1)
-  }
-}
-
-fn top_depth(depths: Vector<Int>) Int {
-  if depths.len() == 0 {
-    0
-  } else {
-    depths[depths.len() - 1]
-  }
-}
-
-fn set_top_depth(depths: Vector<Int>, depth: Int) Vector<Int> {
-  if depths.len() == 0 {
-    depths
-  } else {
-    prefix := depths.slice(0, depths.len() - 1)
-    prefix.push(depth)
-  }
-}
 
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
   i := from
@@ -168,22 +140,22 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     saw_newline = false
 
     if interp_depths.len() > 0 {
-      depth := top_depth(interp_depths)
+      depth := interp_depths[interp_depths.len() - 1]
       if c == 123 {
         i = i + 1
-        interp_depths = set_top_depth(interp_depths, depth + 1)
+        interp_depths = interp_depths.slice(0, interp_depths.len() - 1).push(depth + 1)
         out = out.push(make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline))
         continue
       }
       if c == 125 {
         if depth > 1 {
           i = i + 1
-          interp_depths = set_top_depth(interp_depths, depth - 1)
+          interp_depths = interp_depths.slice(0, interp_depths.len() - 1).push(depth - 1)
           out = out.push(make_token(.RBrace, source, token_start, i, file_id, preceded_by_newline))
           continue
         }
 
-        interp_depths = pop_depth(interp_depths)
+        interp_depths = interp_depths.slice(0, interp_depths.len() - 1)
         i = i + 1
         scanned := scan_string_segment(source, i, i)
         i = scanned.next_index
@@ -197,7 +169,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             file_id,
             preceded_by_newline,
           ))
-          interp_depths = push_depth(interp_depths, 1)
+          interp_depths = interp_depths.push(1)
           continue
         }
 
@@ -268,7 +240,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
           file_id,
           preceded_by_newline,
         ))
-        interp_depths = push_depth(interp_depths, 1)
+        interp_depths = interp_depths.push(1)
         continue
       }
 

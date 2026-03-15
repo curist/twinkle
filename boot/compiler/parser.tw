@@ -83,6 +83,24 @@ type ParamParse = .{
   diagnostics: Vector<Diagnostic>,
 }
 
+type ExprListParse = .{
+  exprs: Vector<Expr>,
+  next_index: Int,
+  diagnostics: Vector<Diagnostic>,
+}
+
+type PatternListParse = .{
+  patterns: Vector<Pattern>,
+  next_index: Int,
+  diagnostics: Vector<Diagnostic>,
+}
+
+type ParamListParse = .{
+  params: Vector<Param>,
+  next_index: Int,
+  diagnostics: Vector<Diagnostic>,
+}
+
 type InfixInfo = .{
   left: Int,
   right: Int,
@@ -132,13 +150,6 @@ fn merge_range(tokens_in: Vector<Token>, start: Int, end_inclusive: Int) span.Sp
   span.span_merge(tokens_in[start].span, tokens_in[end_idx].span)
 }
 
-fn span_of_type(ty: TypeExpr) span.Span {
-  ty.span
-}
-
-fn span_of_expr(expr: Expr) span.Span {
-  expr.span
-}
 
 fn span_of_stmt(stmt: Stmt) span.Span {
   case stmt {
@@ -345,6 +356,90 @@ fn parse_type_list_until(tokens_in: Vector<Token>, start: Int, end_kind: TokenKi
   .{ tys, next_index: i, diagnostics: diagnostics_out }
 }
 
+fn parse_expr_list(tokens_in: Vector<Token>, start: Int, end_kind: TokenKind, error_msg: String) ExprListParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  exprs: Vector<Expr> = []
+  i := start
+
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != end_kind {
+    parsed := parse_expr_bp(tokens_in, i, 0)
+    exprs = exprs.push(parsed.expr)
+    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    i = parsed.next_index
+
+    if token_kind_at(tokens_in, i) == .Comma {
+      i = i + 1
+    } else if token_kind_at(tokens_in, i) != end_kind {
+      diagnostics_out = diagnostics_out.push(diagnostic.error(
+        token_span_at(tokens_in, i),
+        error_msg,
+      ))
+      if token_kind_at(tokens_in, i) == .Eof {
+        break
+      }
+      i = i + 1
+    }
+  }
+
+  .{ exprs, next_index: i, diagnostics: diagnostics_out }
+}
+
+fn parse_pattern_list(tokens_in: Vector<Token>, start: Int, end_kind: TokenKind, error_msg: String) PatternListParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  patterns: Vector<Pattern> = []
+  i := start
+
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != end_kind {
+    parsed := parse_pattern(tokens_in, i)
+    patterns = patterns.push(parsed.pattern)
+    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    i = parsed.next_index
+
+    if token_kind_at(tokens_in, i) == .Comma {
+      i = i + 1
+    } else if token_kind_at(tokens_in, i) != end_kind {
+      diagnostics_out = diagnostics_out.push(diagnostic.error(
+        token_span_at(tokens_in, i),
+        error_msg,
+      ))
+      if token_kind_at(tokens_in, i) == .Eof {
+        break
+      }
+      i = i + 1
+    }
+  }
+
+  .{ patterns, next_index: i, diagnostics: diagnostics_out }
+}
+
+fn parse_param_list(tokens_in: Vector<Token>, start: Int, end_kind: TokenKind, error_msg: String) ParamListParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  params: Vector<Param> = []
+  i := start
+
+  for i < tokens_in.len() and token_kind_at(tokens_in, i) != end_kind {
+    parsed := parse_param(tokens_in, i)
+    params = params.push(parsed.param)
+    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    i = parsed.next_index
+
+    if token_kind_at(tokens_in, i) == .Comma {
+      i = i + 1
+    } else if token_kind_at(tokens_in, i) != end_kind {
+      diagnostics_out = diagnostics_out.push(diagnostic.error(
+        token_span_at(tokens_in, i),
+        error_msg,
+      ))
+      if token_kind_at(tokens_in, i) == .Eof {
+        break
+      }
+      i = i + 1
+    }
+  }
+
+  .{ params, next_index: i, diagnostics: diagnostics_out }
+}
+
 fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsParse {
   diagnostics_out: Vector<Diagnostic> = []
   fields: Vector<RecordField> = []
@@ -388,7 +483,7 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
     diagnostics_out = diagnostics_out.concat(ty_parsed.diagnostics)
     i = ty_parsed.next_index
 
-    field_span := span.span_merge(token_span_at(tokens_in, field_start), span_of_type(ty_parsed.ty))
+    field_span := span.span_merge(token_span_at(tokens_in, field_start), ty_parsed.ty.span)
     fields = fields.push(RecordField.{ name: field_name, ty: ty_parsed.ty, span: field_span })
 
     if token_kind_at(tokens_in, i) == .Comma {
@@ -939,33 +1034,10 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   }
 
   i = i + 1
-  params: Vector<Param> = []
-
-  for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-    parsed_param := parse_param(tokens_in, i)
-    params = params.push(parsed_param.param)
-    diagnostics_out = diagnostics_out.concat(parsed_param.diagnostics)
-    i = parsed_param.next_index
-
-    if token_kind_at(tokens_in, i) == .Comma {
-      i = i + 1
-      continue
-    }
-
-    if token_kind_at(tokens_in, i) == .RParen {
-      break
-    }
-
-    diagnostics_out = diagnostics_out.push(diagnostic.error(
-      token_span_at(tokens_in, i),
-      "expected ',' or ')' in function parameter list",
-    ))
-
-    if token_kind_at(tokens_in, i) == .Eof {
-      break
-    }
-    i = i + 1
-  }
+  parsed_params := parse_param_list(tokens_in, i, TokenKind.RParen, "expected ',' or ')' in function parameter list")
+  params := parsed_params.params
+  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  i = parsed_params.next_index
 
   if token_kind_at(tokens_in, i) == .RParen {
     i = i + 1
@@ -1159,27 +1231,10 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
     args: Vector<Pattern> = []
 
     if token_kind_at(tokens_in, i) == .LParen {
-      i = i + 1
-      for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-        parsed_arg := parse_pattern(tokens_in, i)
-        args = args.push(parsed_arg.pattern)
-        diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
-        i = parsed_arg.next_index
-
-        if token_kind_at(tokens_in, i) == .Comma {
-          i = i + 1
-        } else if token_kind_at(tokens_in, i) != .RParen {
-          diagnostics_out = diagnostics_out.push(diagnostic.error(
-            token_span_at(tokens_in, i),
-            "expected ',' or ')' in pattern argument list",
-          ))
-          if token_kind_at(tokens_in, i) == .Eof {
-            break
-          }
-          i = i + 1
-        }
-      }
-
+      parsed_args := parse_pattern_list(tokens_in, i + 1, TokenKind.RParen, "expected ',' or ')' in pattern argument list")
+      args = parsed_args.patterns
+      diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+      i = parsed_args.next_index
       if token_kind_at(tokens_in, i) == .RParen {
         i = i + 1
       }
@@ -1214,27 +1269,10 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
 
       args: Vector<Pattern> = []
       if token_kind_at(tokens_in, i) == .LParen {
-        i = i + 1
-        for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-          parsed_arg := parse_pattern(tokens_in, i)
-          args = args.push(parsed_arg.pattern)
-          diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
-          i = parsed_arg.next_index
-
-          if token_kind_at(tokens_in, i) == .Comma {
-            i = i + 1
-          } else if token_kind_at(tokens_in, i) != .RParen {
-            diagnostics_out = diagnostics_out.push(diagnostic.error(
-              token_span_at(tokens_in, i),
-              "expected ',' or ')' in pattern argument list",
-            ))
-            if token_kind_at(tokens_in, i) == .Eof {
-              break
-            }
-            i = i + 1
-          }
-        }
-
+        parsed_args := parse_pattern_list(tokens_in, i + 1, TokenKind.RParen, "expected ',' or ')' in pattern argument list")
+        args = parsed_args.patterns
+        diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+        i = parsed_args.next_index
         if token_kind_at(tokens_in, i) == .RParen {
           i = i + 1
         }
@@ -1253,21 +1291,16 @@ fn parse_pattern(tokens_in: Vector<Token>, start: Int) PatternParse {
     return .{ pattern: patt, next_index: start + 1, diagnostics: diagnostics_out }
   }
 
-  if k == .IntLit {
-    lit := Expr.{ kind: .IntLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
-    patt := Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
-    return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
-  }
-
-  if k == .FloatLit {
-    lit := Expr.{ kind: .FloatLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
-    patt := Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
-    return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
-  }
-
-  if k == .StringLit {
-    lit := Expr.{ kind: .StringLit(token_text_at(tokens_in, i)), span: token_span_at(tokens_in, i) }
-    patt := Pattern.{ kind: .Literal(lit), span: token_span_at(tokens_in, i) }
+  if k == .IntLit or k == .FloatLit or k == .StringLit {
+    text := token_text_at(tokens_in, i)
+    expr_kind: ExprKind = case k {
+      .IntLit   => .IntLit(text),
+      .FloatLit => .FloatLit(text),
+      _         => .StringLit(text),
+    }
+    s := token_span_at(tokens_in, i)
+    lit := Expr.{ kind: expr_kind, span: s }
+    patt := Pattern.{ kind: .Literal(lit), span: s }
     return .{ pattern: patt, next_index: i + 1, diagnostics: diagnostics_out }
   }
 
@@ -1478,6 +1511,15 @@ fn parse_case_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   .{ expr, next_index: i, diagnostics: diagnostics_out }
 }
 
+fn parse_unary_op(tokens_in: Vector<Token>, start: Int, op: UnOp) ExprParse {
+  parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
+  expr := Expr.{
+    kind: .Unary(op, parsed_rhs.expr),
+    span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
+  }
+  .{ expr, next_index: parsed_rhs.next_index, diagnostics: parsed_rhs.diagnostics }
+}
+
 fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
   diagnostics_out: Vector<Diagnostic> = []
   k := token_kind_at(tokens_in, start)
@@ -1562,27 +1604,10 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
         args: Vector<Expr> = []
 
         if token_kind_at(tokens_in, i) == .LParen {
-          i = i + 1
-          for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-            parsed_arg := parse_expr_bp(tokens_in, i, 0)
-            diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
-            args = args.push(parsed_arg.expr)
-            i = parsed_arg.next_index
-
-            if token_kind_at(tokens_in, i) == .Comma {
-              i = i + 1
-            } else if token_kind_at(tokens_in, i) != .RParen {
-              diagnostics_out = diagnostics_out.push(diagnostic.error(
-                token_span_at(tokens_in, i),
-                "expected ',' or ')' in variant argument list",
-              ))
-              if token_kind_at(tokens_in, i) == .Eof {
-                break
-              }
-              i = i + 1
-            }
-          }
-
+          parsed_args := parse_expr_list(tokens_in, i + 1, TokenKind.RParen, "expected ',' or ')' in variant argument list")
+          args = parsed_args.exprs
+          diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+          i = parsed_args.next_index
           if token_kind_at(tokens_in, i) == .RParen {
             i = i + 1
           }
@@ -1653,42 +1678,10 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     .LBrace => parse_block_expr(tokens_in, start),
     .If => parse_if_expr(tokens_in, start),
     .Case => parse_case_expr(tokens_in, start),
-    .Minus => {
-      parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
-      diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
-      expr := Expr.{
-        kind: .Unary(UnOp.Neg, parsed_rhs.expr),
-        span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
-      }
-      .{ expr, next_index: parsed_rhs.next_index, diagnostics: diagnostics_out }
-    },
-    .Bang => {
-      parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
-      diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
-      expr := Expr.{
-        kind: .Unary(UnOp.Not, parsed_rhs.expr),
-        span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
-      }
-      .{ expr, next_index: parsed_rhs.next_index, diagnostics: diagnostics_out }
-    },
-    .Tilde => {
-      parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
-      diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
-      expr := Expr.{
-        kind: .Unary(UnOp.BitNot, parsed_rhs.expr),
-        span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
-      }
-      .{ expr, next_index: parsed_rhs.next_index, diagnostics: diagnostics_out }
-    },
-    .Try => {
-      parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
-      diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
-      expr := Expr.{
-        kind: .Unary(UnOp.Try, parsed_rhs.expr),
-        span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
-      }
-      .{ expr, next_index: parsed_rhs.next_index, diagnostics: diagnostics_out }
-    },
+    .Minus => parse_unary_op(tokens_in, start, UnOp.Neg),
+    .Bang  => parse_unary_op(tokens_in, start, UnOp.Not),
+    .Tilde => parse_unary_op(tokens_in, start, UnOp.BitNot),
+    .Try   => parse_unary_op(tokens_in, start, UnOp.Try),
     .Fn => parse_closure_expr(tokens_in, start),
     _ => {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -1715,26 +1708,10 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   }
   i = i + 1
 
-  params: Vector<Param> = []
-  for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-    parsed_param := parse_param(tokens_in, i)
-    diagnostics_out = diagnostics_out.concat(parsed_param.diagnostics)
-    params = params.push(parsed_param.param)
-    i = parsed_param.next_index
-
-    if token_kind_at(tokens_in, i) == .Comma {
-      i = i + 1
-    } else if token_kind_at(tokens_in, i) != .RParen {
-      diagnostics_out = diagnostics_out.push(diagnostic.error(
-        token_span_at(tokens_in, i),
-        "expected ',' or ')' in closure parameter list",
-      ))
-      if token_kind_at(tokens_in, i) == .Eof {
-        break
-      }
-      i = i + 1
-    }
-  }
+  parsed_params := parse_param_list(tokens_in, i, TokenKind.RParen, "expected ',' or ')' in closure parameter list")
+  params := parsed_params.params
+  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  i = parsed_params.next_index
 
   if token_kind_at(tokens_in, i) == .RParen {
     i = i + 1
@@ -1774,27 +1751,10 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
     k := token_kind_at(tokens_in, i)
 
     if k == .LParen {
-      i = i + 1
-      args: Vector<Expr> = []
-      for i < tokens_in.len() and token_kind_at(tokens_in, i) != .RParen {
-        parsed_arg := parse_expr_bp(tokens_in, i, 0)
-        diagnostics_out = diagnostics_out.concat(parsed_arg.diagnostics)
-        args = args.push(parsed_arg.expr)
-        i = parsed_arg.next_index
-
-        if token_kind_at(tokens_in, i) == .Comma {
-          i = i + 1
-        } else if token_kind_at(tokens_in, i) != .RParen {
-          diagnostics_out = diagnostics_out.push(diagnostic.error(
-            token_span_at(tokens_in, i),
-            "expected ',' or ')' in call arguments",
-          ))
-          if token_kind_at(tokens_in, i) == .Eof {
-            break
-          }
-          i = i + 1
-        }
-      }
+      parsed_args := parse_expr_list(tokens_in, i + 1, TokenKind.RParen, "expected ',' or ')' in call arguments")
+      args := parsed_args.exprs
+      diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+      i = parsed_args.next_index
 
       if token_kind_at(tokens_in, i) == .RParen {
         new_span := span.span_merge(expr.span, token_span_at(tokens_in, i))
