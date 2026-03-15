@@ -219,7 +219,7 @@ impl CompileState {
     /// Returns an error listing any names not found in the module's exports.
     pub fn register_import_items(
         &mut self,
-        alias: &str,
+        _alias: &str,
         exports: &ModuleExports,
         items: &[ImportItem],
     ) -> Result<(), Vec<(String, &'static str)>> {
