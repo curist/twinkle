@@ -212,11 +212,15 @@ fn resolve_type_definition_target(
         });
     }
 
-    let span = find_top_level_type_span(workspace, module_path, name)?;
-    Some(DefinitionTarget {
-        path: module_path.to_path_buf(),
-        span,
-    })
+    if let Some(span) = find_top_level_type_span(workspace, module_path, name) {
+        return Some(DefinitionTarget {
+            path: module_path.to_path_buf(),
+            span,
+        });
+    }
+
+    // Check destructuring imports for unqualified type names
+    resolve_destructured_import_target(workspace, module, name)
 }
 
 fn resolve_method_target(

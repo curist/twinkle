@@ -325,5 +325,16 @@ fn main() {
             "goto-def on `add` in import line should resolve"
         );
         assert_eq!(def_import_add.as_ref().unwrap().path, math_path);
+
+        // Goto definition on `Vec2` type annotation — line 4, col 7
+        let def_vec2_type = session
+            .definition(&main_path, &main_path, PositionUtf16::new(4, 7))
+            .expect("definition should not error");
+        eprintln!("def_vec2_type = {:?}", def_vec2_type);
+        assert!(
+            def_vec2_type.is_some(),
+            "goto-def on `Vec2` type annotation should resolve"
+        );
+        assert_eq!(def_vec2_type.as_ref().unwrap().path, math_path);
     }
 }
