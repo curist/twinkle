@@ -140,6 +140,14 @@
   path: (module_path
     (identifier) @module))
 
+; Destructuring import items
+(import_type_item
+  "type" @keyword.type)
+(import_type_item
+  name: (identifier) @type)
+(import_value_item
+  name: (identifier) @function)
+
 ; Punctuation
 [
   "("

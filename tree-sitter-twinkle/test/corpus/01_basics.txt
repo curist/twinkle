@@ -287,6 +287,108 @@ use .helper as h
     alias: (identifier)))
 
 ================================================================================
+Use declaration — destructuring value imports
+================================================================================
+
+use math.vector.{translate, scale}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (module_path
+      (identifier)
+      (identifier)
+      items: (import_item_list
+        (import_item
+          (import_value_item
+            name: (identifier)))
+        (import_item
+          (import_value_item
+            name: (identifier)))))))
+
+================================================================================
+Use declaration — destructuring type imports
+================================================================================
+
+use math.vector.{type Vec2, type Transform}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (module_path
+      (identifier)
+      (identifier)
+      items: (import_item_list
+        (import_item
+          (import_type_item
+            name: (identifier)))
+        (import_item
+          (import_type_item
+            name: (identifier)))))))
+
+================================================================================
+Use declaration — destructuring mixed with aliases
+================================================================================
+
+use math.vector.{translate as tr, type Vec2 as V2}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (module_path
+      (identifier)
+      (identifier)
+      items: (import_item_list
+        (import_item
+          (import_value_item
+            name: (identifier)
+            alias: (identifier)))
+        (import_item
+          (import_type_item
+            name: (identifier)
+            alias: (identifier)))))))
+
+================================================================================
+Use declaration — destructuring single item
+================================================================================
+
+use foo.{bar}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (module_path
+      (identifier)
+      items: (import_item_list
+        (import_item
+          (import_value_item
+            name: (identifier)))))))
+
+================================================================================
+Use declaration — destructuring with trailing comma
+================================================================================
+
+use foo.{bar, baz,}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (module_path
+      (identifier)
+      items: (import_item_list
+        (import_item
+          (import_value_item
+            name: (identifier)))
+        (import_item
+          (import_value_item
+            name: (identifier)))))))
+
+================================================================================
 Pub let binding
 ================================================================================
 

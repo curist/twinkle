@@ -1081,6 +1081,92 @@
     }
   },
   {
+    "type": "import_item",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "import_type_item",
+          "named": true
+        },
+        {
+          "type": "import_value_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "import_item_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "import_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "import_type_item",
+    "named": true,
+    "fields": {
+      "alias": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "import_value_item",
+    "named": true,
+    "fields": {
+      "alias": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "index_access",
     "named": true,
     "fields": {
@@ -1328,7 +1414,18 @@
   {
     "type": "module_path",
     "named": true,
-    "fields": {},
+    "fields": {
+      "items": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "import_item_list",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,

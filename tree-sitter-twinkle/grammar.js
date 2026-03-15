@@ -12,6 +12,8 @@ module.exports = grammar({
 
   externals: $ => [],
 
+  conflicts: $ => [],
+
   extras: $ => [
     /[ \t\r\n]/,
     $.comment,
@@ -40,13 +42,37 @@ module.exports = grammar({
       optional(seq('as', field('alias', $.identifier))),
     ),
 
+    import_item_list: $ => seq(
+      '{',
+      $.import_item,
+      repeat(seq(',', $.import_item)),
+      optional(','),
+      '}',
+    ),
+
+    import_item: $ => choice(
+      $.import_value_item,
+      $.import_type_item,
+    ),
+
+    import_value_item: $ => seq(
+      field('name', $.identifier),
+      optional(seq('as', field('alias', $.identifier))),
+    ),
+
+    import_type_item: $ => seq(
+      'type',
+      field('name', $.identifier),
+      optional(seq('as', field('alias', $.identifier))),
+    ),
+
     module_path: $ => prec.right(choice(
-      // stdlib: @std.fs
-      seq('@', $.identifier, repeat(seq('.', $.identifier))),
-      // relative: .helper, .sub.mod
-      seq('.', $.identifier, repeat(seq('.', $.identifier))),
-      // absolute: foo.bar, utils
-      seq($.identifier, repeat(seq('.', $.identifier))),
+      // stdlib: @std.fs or @std.fs.{...}
+      seq('@', $.identifier, repeat(seq('.', $.identifier)), optional(seq('.', field('items', $.import_item_list)))),
+      // relative: .helper, .sub.mod or .foo.{...}
+      seq('.', $.identifier, repeat(seq('.', $.identifier)), optional(seq('.', field('items', $.import_item_list)))),
+      // absolute: foo.bar, utils or foo.bar.{...}
+      seq($.identifier, repeat(seq('.', $.identifier)), optional(seq('.', field('items', $.import_item_list)))),
     )),
 
     _top_level_statement: $ => choice(
