@@ -2369,6 +2369,16 @@ fn emit_local_atom(
     expected_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    // Locals with semantic type Never are unreachable by construction.
+    // Emitting a local.get/coercion for them can trigger impossible type casts
+    // in diverging branches (e.g. `let x = exit(...); x`).
+    if matches!(
+        ctx.infer_atom_mono(&Atom::ALocal(local_id)),
+        Some(MonoType::Never)
+    ) {
+        return vec![Instr::Unreachable];
+    }
+
     if let Some((idx, local_ty)) = ctx.local(local_id).cloned() {
         // Sum-boundary conversion: when a consumer expects an erased Variant or
         // Anyref, check if this local holds a typed sum value that needs conversion.

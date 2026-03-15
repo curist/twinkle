@@ -2106,6 +2106,11 @@ impl Lowerer {
 
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
+                if let Some(rewritten) =
+                    lower_unit_variant_compare(*op, &self.type_env, &l, &r, span)
+                {
+                    return Some(rewritten);
+                }
                 Some(CoreExprKind::BinOp {
                     op: *op,
                     left: Box::new(l),
@@ -5053,6 +5058,169 @@ fn stmt_span(stmt: &Stmt) -> Span {
         Stmt::Continue { span } => *span,
         Stmt::Return { span, .. } => *span,
         Stmt::Defer { span, .. } => *span,
+    }
+}
+
+/// Lower `x == Type.Variant` / `x != Type.Variant` (unit variants only) into
+/// a `match` so enum comparisons do not flow through primitive binop lowering.
+fn lower_unit_variant_compare(
+    op: BinOp,
+    type_env: &TypeEnv,
+    left: &CoreExpr,
+    right: &CoreExpr,
+    span: Span,
+) -> Option<CoreExprKind> {
+    if !matches!(op, BinOp::Eq | BinOp::Ne) {
+        return None;
+    }
+
+    if let Some((type_id, variant)) = unit_variant_tag(&right) {
+        if matches!(&left.ty, MonoType::Named { type_id: lhs_tid, .. } if *lhs_tid == type_id) {
+            return Some(build_unit_variant_compare(
+                op,
+                left.clone(),
+                type_id,
+                variant,
+                span,
+            ));
+        }
+    }
+    if let Some((type_id, variant)) = unit_variant_tag(&left) {
+        if matches!(&right.ty, MonoType::Named { type_id: rhs_tid, .. } if *rhs_tid == type_id) {
+            return Some(build_unit_variant_compare(
+                op,
+                right.clone(),
+                type_id,
+                variant,
+                span,
+            ));
+        }
+    }
+
+    // Generic unit-enum equality/inequality: lower to a nested match so
+    // named-type comparisons never reach primitive binop lowering.
+    let (left_tid, right_tid) = match (&left.ty, &right.ty) {
+        (
+            MonoType::Named {
+                type_id: left_tid, ..
+            },
+            MonoType::Named {
+                type_id: right_tid, ..
+            },
+        ) if left_tid == right_tid => (*left_tid, *right_tid),
+        _ => return None,
+    };
+    let _ = right_tid;
+    let variant_ids = unit_sum_variant_ids(type_env, left_tid)?;
+    Some(build_unit_sum_compare(
+        op,
+        left.clone(),
+        right.clone(),
+        left_tid,
+        &variant_ids,
+        span,
+    ))
+}
+
+fn unit_sum_variant_ids(type_env: &TypeEnv, type_id: TypeId) -> Option<Vec<VariantId>> {
+    let variants = type_env.get_variants(type_id)?;
+    if variants.iter().any(|v| !v.fields.is_empty()) {
+        return None;
+    }
+    Some((0..variants.len()).map(VariantId).collect())
+}
+
+fn build_unit_sum_compare(
+    op: BinOp,
+    left: CoreExpr,
+    right: CoreExpr,
+    type_id: TypeId,
+    variants: &[VariantId],
+    span: Span,
+) -> CoreExprKind {
+    let mut arms: Vec<MatchArm> = variants
+        .iter()
+        .map(|variant| MatchArm {
+            pattern: CorePattern::Variant {
+                type_id,
+                variant: *variant,
+                fields: vec![],
+            },
+            body: CoreExpr {
+                kind: build_unit_variant_compare(op, right.clone(), type_id, *variant, span),
+                ty: MonoType::Bool,
+                span,
+            },
+        })
+        .collect();
+
+    let fallback = match op {
+        BinOp::Eq => false,
+        BinOp::Ne => true,
+        _ => unreachable!("build_unit_sum_compare only handles Eq/Ne"),
+    };
+    arms.push(MatchArm {
+        pattern: CorePattern::Wildcard,
+        body: CoreExpr {
+            kind: CoreExprKind::LitBool(fallback),
+            ty: MonoType::Bool,
+            span,
+        },
+    });
+
+    CoreExprKind::Match {
+        scrutinee: Box::new(left),
+        arms,
+    }
+}
+
+fn build_unit_variant_compare(
+    op: BinOp,
+    scrutinee: CoreExpr,
+    type_id: TypeId,
+    variant: VariantId,
+    span: Span,
+) -> CoreExprKind {
+    let (on_match, on_other) = match op {
+        BinOp::Eq => (true, false),
+        BinOp::Ne => (false, true),
+        _ => unreachable!("build_unit_variant_compare only handles Eq/Ne"),
+    };
+    CoreExprKind::Match {
+        scrutinee: Box::new(scrutinee),
+        arms: vec![
+            MatchArm {
+                pattern: CorePattern::Variant {
+                    type_id,
+                    variant,
+                    fields: vec![],
+                },
+                body: CoreExpr {
+                    kind: CoreExprKind::LitBool(on_match),
+                    ty: MonoType::Bool,
+                    span,
+                },
+            },
+            MatchArm {
+                pattern: CorePattern::Wildcard,
+                body: CoreExpr {
+                    kind: CoreExprKind::LitBool(on_other),
+                    ty: MonoType::Bool,
+                    span,
+                },
+            },
+        ],
+    }
+}
+
+fn unit_variant_tag(expr: &CoreExpr) -> Option<(TypeId, VariantId)> {
+    match &expr.kind {
+        CoreExprKind::Variant {
+            type_id,
+            variant,
+            args,
+        } if args.is_empty() => Some((*type_id, *variant)),
+        _ => None,
     }
 }
 
