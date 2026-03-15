@@ -1,0 +1,389 @@
+use lib.source.span
+use lib.source.diagnostic.{type Diagnostic, type StageResult}
+use .tokens.{type Token, type TokenKind}
+
+type ScanStringResult = .{
+  next_index: Int,
+  text: String,
+  terminated: Bool,
+  found_interp: Bool,
+}
+
+fn is_space_byte(c: Int) Bool {
+  c == 32 or c == 9 or c == 13 or c == 10
+}
+
+fn is_ident_start_byte(c: Int) Bool {
+  (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+}
+
+fn is_ident_continue_byte(c: Int) Bool {
+  is_ident_start_byte(c) or (c >= 48 and c <= 57)
+}
+
+fn is_digit_byte(c: Int) Bool {
+  c >= 48 and c <= 57
+}
+
+fn keyword_or_ident(text: String) TokenKind {
+  case text {
+    "use" => .Use,
+    "as" => .As,
+    "fn" => .Fn,
+    "pub" => .Pub,
+    "type" => .Type,
+    "if" => .If,
+    "else" => .Else,
+    "case" => .Case,
+    "for" => .For,
+    "in" => .In,
+    "collect" => .Collect,
+    "return" => .Return,
+    "break" => .Break,
+    "continue" => .Continue,
+    "true" => .True,
+    "false" => .False,
+    "try" => .Try,
+    "and" => .And,
+    "or" => .Or,
+    "let" => .Let,
+    "defer" => .Defer,
+    _ => .Ident,
+  }
+}
+
+fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
+  tokens.make(kind, source.slice(start, end), span.new(file_id, start, end), preceded_by_newline)
+}
+
+fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
+  tokens.make(kind, text, span.new(file_id, start, end), preceded_by_newline)
+}
+
+fn push_depth(depths: Vector<Int>, depth: Int) Vector<Int> {
+  depths.push(depth)
+}
+
+fn pop_depth(depths: Vector<Int>) Vector<Int> {
+  if depths.len() == 0 {
+    depths
+  } else {
+    depths.slice(0, depths.len() - 1)
+  }
+}
+
+fn top_depth(depths: Vector<Int>) Int {
+  if depths.len() == 0 {
+    0
+  } else {
+    depths[depths.len() - 1]
+  }
+}
+
+fn set_top_depth(depths: Vector<Int>, depth: Int) Vector<Int> {
+  if depths.len() == 0 {
+    depths
+  } else {
+    prefix := depths.slice(0, depths.len() - 1)
+    prefix.push(depth)
+  }
+}
+
+fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
+  i := from
+  n := source.len()
+  escaped := false
+
+  for i < n {
+    ch := Byte.to_int(source[i])
+    if escaped {
+      escaped = false
+      i = i + 1
+      continue
+    }
+    if ch == 92 {
+      escaped = true
+      i = i + 1
+      continue
+    }
+    if ch == 34 {
+      return .{
+        next_index: i + 1,
+        text: source.slice(content_start, i),
+        terminated: true,
+        found_interp: false,
+      }
+    }
+    if ch == 36 and i + 1 < n and Byte.to_int(source[i + 1]) == 123 {
+      return .{
+        next_index: i + 2,
+        text: source.slice(content_start, i),
+        terminated: false,
+        found_interp: true,
+      }
+    }
+    if ch == 10 {
+      break
+    }
+    i = i + 1
+  }
+
+  .{
+    next_index: i,
+    text: source.slice(content_start, i),
+    terminated: false,
+    found_interp: false,
+  }
+}
+
+pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
+  out: Vector<Token> = []
+  diagnostics_out: Vector<Diagnostic> = []
+  i := 0
+  saw_newline := false
+  n := source.len()
+  interp_depths: Vector<Int> = []
+
+  for i < n {
+    c := Byte.to_int(source[i])
+
+    if is_space_byte(c) {
+      if c == 10 {
+        saw_newline = true
+      }
+      i = i + 1
+      continue
+    }
+
+    if c == 47 and i + 1 < n and Byte.to_int(source[i + 1]) == 47 {
+      i = i + 2
+      for i < n and Byte.to_int(source[i]) != 10 {
+        i = i + 1
+      }
+      continue
+    }
+
+    token_start := i
+    preceded_by_newline := saw_newline
+    saw_newline = false
+
+    if interp_depths.len() > 0 {
+      depth := top_depth(interp_depths)
+      if c == 123 {
+        i = i + 1
+        interp_depths = set_top_depth(interp_depths, depth + 1)
+        out = out.push(make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline))
+        continue
+      }
+      if c == 125 {
+        if depth > 1 {
+          i = i + 1
+          interp_depths = set_top_depth(interp_depths, depth - 1)
+          out = out.push(make_token(.RBrace, source, token_start, i, file_id, preceded_by_newline))
+          continue
+        }
+
+        interp_depths = pop_depth(interp_depths)
+        i = i + 1
+        scanned := scan_string_segment(source, i, i)
+        i = scanned.next_index
+
+        if scanned.found_interp {
+          out = out.push(make_token_text(
+            .StringContinue,
+            scanned.text,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+          ))
+          interp_depths = push_depth(interp_depths, 1)
+          continue
+        }
+
+        if !scanned.terminated {
+          diagnostics_out = diagnostics_out.push(diagnostic.error(
+            span.new(file_id, token_start, i),
+            "unterminated string literal",
+          ))
+        }
+
+        out = out.push(make_token_text(
+          .StringEnd,
+          scanned.text,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+        ))
+        continue
+      }
+    }
+
+    if is_ident_start_byte(c) {
+      i = i + 1
+      for i < n and is_ident_continue_byte(Byte.to_int(source[i])) {
+        i = i + 1
+      }
+      text := source.slice(token_start, i)
+      out = out.push(tokens.make(
+        keyword_or_ident(text),
+        text,
+        span.new(file_id, token_start, i),
+        preceded_by_newline,
+      ))
+      continue
+    }
+
+    if is_digit_byte(c) {
+      i = i + 1
+      for i < n and is_digit_byte(Byte.to_int(source[i])) {
+        i = i + 1
+      }
+
+      kind := TokenKind.IntLit
+      if i + 1 < n and Byte.to_int(source[i]) == 46 and is_digit_byte(Byte.to_int(source[i + 1])) {
+        kind = .FloatLit
+        i = i + 1
+        for i < n and is_digit_byte(Byte.to_int(source[i])) {
+          i = i + 1
+        }
+      }
+
+      out = out.push(make_token(kind, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 34 {
+      i = i + 1
+      scanned := scan_string_segment(source, i, i)
+      i = scanned.next_index
+
+      if scanned.found_interp {
+        out = out.push(make_token_text(
+          .StringStart,
+          scanned.text,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+        ))
+        interp_depths = push_depth(interp_depths, 1)
+        continue
+      }
+
+      if !scanned.terminated {
+        diagnostics_out = diagnostics_out.push(diagnostic.error(
+          span.new(file_id, token_start, i),
+          "unterminated string literal",
+        ))
+      }
+
+      out = out.push(make_token(.StringLit, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 58 and i + 1 < n and Byte.to_int(source[i + 1]) == 61 {
+      i = i + 2
+      out = out.push(make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 61 and i + 1 < n {
+      c1 := Byte.to_int(source[i + 1])
+      if c1 == 61 {
+        i = i + 2
+        out = out.push(make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline))
+        continue
+      }
+      if c1 == 62 {
+        i = i + 2
+        out = out.push(make_token(.FatArrow, source, token_start, i, file_id, preceded_by_newline))
+        continue
+      }
+    }
+
+    if c == 33 and i + 1 < n and Byte.to_int(source[i + 1]) == 61 {
+      i = i + 2
+      out = out.push(make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 60 and i + 1 < n and Byte.to_int(source[i + 1]) == 61 {
+      i = i + 2
+      out = out.push(make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 62 and i + 1 < n and Byte.to_int(source[i + 1]) == 61 {
+      i = i + 2
+      out = out.push(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 38 and i + 1 < n and Byte.to_int(source[i + 1]) == 38 {
+      i = i + 2
+      out = out.push(make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 124 and i + 1 < n and Byte.to_int(source[i + 1]) == 124 {
+      i = i + 2
+      out = out.push(make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    if c == 46 and i + 1 < n and Byte.to_int(source[i + 1]) == 46 {
+      i = i + 2
+      out = out.push(make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
+    kind: TokenKind? = case c {
+      64 => .Some(.At),
+      46 => .Some(.Dot),
+      44 => .Some(.Comma),
+      58 => .Some(.Colon),
+      59 => .Some(.Semi),
+      61 => .Some(.Eq),
+      40 => .Some(.LParen),
+      41 => .Some(.RParen),
+      123 => .Some(.LBrace),
+      125 => .Some(.RBrace),
+      91 => .Some(.LBracket),
+      93 => .Some(.RBracket),
+      60 => .Some(.Lt),
+      62 => .Some(.Gt),
+      43 => .Some(.Plus),
+      45 => .Some(.Minus),
+      42 => .Some(.Star),
+      47 => .Some(.Slash),
+      37 => .Some(.Percent),
+      33 => .Some(.Bang),
+      63 => .Some(.Question),
+      38 => .Some(.Amp),
+      124 => .Some(.Pipe),
+      94 => .Some(.Caret),
+      126 => .Some(.Tilde),
+      _ => .None,
+    }
+
+    case kind {
+      .Some(k) => {
+        i = i + 1
+        out = out.push(make_token(k, source, token_start, i, file_id, preceded_by_newline))
+      },
+      .None => {
+        i = i + 1
+        diagnostics_out = diagnostics_out.push(diagnostic.error(
+          span.new(file_id, token_start, i),
+          "unexpected character in source",
+        ))
+        out = out.push(make_token(.Error, source, token_start, i, file_id, preceded_by_newline))
+      },
+    }
+  }
+
+  out = out.push(tokens.eof(file_id, n, saw_newline))
+  diagnostic.stage_result(out, diagnostics_out)
+}

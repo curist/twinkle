@@ -1,0 +1,248 @@
+use lib.source.span
+
+pub type Module = .{
+  items: Vector<Item>,
+  span: span.Span,
+}
+
+pub type Item = {
+  Use(UseDecl),
+  Type(TypeDecl),
+  Function(FunctionDecl),
+  Stmt(Stmt),
+  ErrorItem(span.Span),
+}
+
+pub type UseDecl = .{
+  is_stdlib: Bool,
+  is_relative: Bool,
+  path: Vector<String>,
+  alias: String?,
+  items: Vector<ImportItem>?,
+  span: span.Span,
+}
+
+pub type ImportItem = {
+  Value(ImportValueItem),
+  Type(ImportTypeItem),
+}
+
+pub type ImportValueItem = .{
+  name: String,
+  alias: String?,
+  span: span.Span,
+}
+
+pub type ImportTypeItem = .{
+  name: String,
+  alias: String?,
+  span: span.Span,
+}
+
+pub type FunctionDecl = .{
+  is_pub: Bool,
+  name: String,
+  type_params: Vector<String>,
+  params: Vector<Param>,
+  return_type: TypeExpr?,
+  body: Block,
+  span: span.Span,
+}
+
+pub type TypeDecl = .{
+  is_pub: Bool,
+  name: String,
+  type_params: Vector<String>,
+  def: TypeDef,
+  span: span.Span,
+}
+
+pub type TypeDef = {
+  Record(Vector<RecordField>),
+  Sum(Vector<VariantDecl>),
+  Alias(TypeExpr),
+  ErrorDef(span.Span),
+}
+
+pub type RecordField = .{
+  name: String,
+  ty: TypeExpr,
+  span: span.Span,
+}
+
+pub type VariantDecl = .{
+  name: String,
+  fields: Vector<TypeExpr>,
+  span: span.Span,
+}
+
+pub type TypePath = .{
+  segments: Vector<String>,
+  span: span.Span,
+}
+
+pub type TypeExpr = .{
+  kind: TypeExprKind,
+  span: span.Span,
+}
+
+pub type TypeExprKind = {
+  Path(TypePath),
+  Applied(TypePath, Vector<TypeExpr>),
+  Function(Vector<TypeExpr>, TypeExpr),
+  Record(Vector<RecordField>),
+  Sum(Vector<VariantDecl>),
+  Optional(TypeExpr),
+  Result(TypeExpr, TypeExpr),
+  ErrorType,
+}
+
+pub type Param = .{
+  name: String,
+  ty: TypeExpr?,
+  span: span.Span,
+}
+
+pub type Block = .{
+  stmts: Vector<Stmt>,
+  tail: Expr?,
+  span: span.Span,
+}
+
+pub type Stmt = {
+  Let(LetStmt),
+  For(ForStmt),
+  Return(ReturnStmt),
+  Break(BreakStmt),
+  Continue(ContinueStmt),
+  Defer(DeferStmt),
+  Expr(ExprStmt),
+  ErrorStmt(span.Span),
+}
+
+pub type LetStmt = .{
+  name: String,
+  ty: TypeExpr?,
+  value: Expr,
+  is_rebind: Bool,
+  span: span.Span,
+}
+
+pub type ForStmt = .{
+  pattern: String?,
+  index: String?,
+  iter: Expr?,
+  condition: Expr?,
+  body: Block,
+  span: span.Span,
+}
+
+pub type ReturnStmt = .{
+  value: Expr?,
+  span: span.Span,
+}
+
+pub type BreakStmt = .{
+  value: Expr?,
+  span: span.Span,
+}
+
+pub type ContinueStmt = .{
+  span: span.Span,
+}
+
+pub type DeferStmt = .{
+  expr: Expr,
+  span: span.Span,
+}
+
+pub type ExprStmt = .{
+  expr: Expr,
+  span: span.Span,
+}
+
+pub type Expr = .{
+  kind: ExprKind,
+  span: span.Span,
+}
+
+pub type ExprKind = {
+  Ident(String),
+  IntLit(String),
+  FloatLit(String),
+  StringLit(String),
+  StringInterp(Vector<StringPart>),
+  BoolLit(Bool),
+  Unary(UnOp, Expr),
+  Binary(BinOp, Expr, Expr),
+  Call(Expr, Vector<Expr>),
+  Field(Expr, String),
+  Index(Expr, Expr),
+  BlockExpr(Block),
+  If(Expr, Block, Expr?),
+  Case(Expr, Vector<CaseArm>),
+  Array(Vector<Expr>),
+  Record(Vector<RecordEntry>),
+  Variant(String, Vector<Expr>),
+  Closure(Vector<Param>, TypeExpr?, Block),
+  ErrorExpr,
+}
+
+pub type StringPart = {
+  Literal(String),
+  Interpolation(Expr),
+}
+
+pub type RecordEntry = .{
+  name: String,
+  value: Expr?,
+  span: span.Span,
+}
+
+pub type CaseArm = .{
+  pattern: Pattern,
+  expr: Expr,
+  span: span.Span,
+}
+
+pub type Pattern = .{
+  kind: PatternKind,
+  span: span.Span,
+}
+
+pub type PatternKind = {
+  Wildcard,
+  Ident(String),
+  Literal(Expr),
+  Variant(String, Vector<Pattern>),
+  QualifiedVariant(Vector<String>, String, Vector<Pattern>),
+  ErrorPattern,
+}
+
+pub type BinOp = {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Eq,
+  Ne,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  LogicalAnd,
+  LogicalOr,
+  BitAnd,
+  BitOr,
+  BitXor,
+  Range,
+  Assign,
+}
+
+pub type UnOp = {
+  Neg,
+  Not,
+  BitNot,
+  Try,
+}

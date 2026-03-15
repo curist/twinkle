@@ -1,0 +1,220 @@
+use tests.runner
+use tests.assert
+use compiler.lexer
+use compiler.parser
+use compiler.tokens
+use compiler.ast
+
+fn expr_is_add_binary(expr: ast.Expr) Bool {
+  case expr.kind {
+    .Binary(op, _, _) => op == ast.BinOp.Add,
+    _ => false,
+  }
+}
+
+fn type_is_path(ty: ast.TypeExpr, expected_last_seg: String) Bool {
+  case ty.kind {
+    .Path(path) => {
+      if path.segments.len() == 0 {
+        false
+      } else {
+        path.segments[path.segments.len() - 1] == expected_last_seg
+      }
+    },
+    .Applied(path, _) => {
+      if path.segments.len() == 0 {
+        false
+      } else {
+        path.segments[path.segments.len() - 1] == expected_last_seg
+      }
+    },
+    _ => false,
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("parser")
+    .test("lexer marks newline boundaries on tokens", fn() {
+      src := "use foo\nfn main() {}"
+      lexed := lexer.lex(src, 0)
+      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.is_true(lexed.value.len() >= 4)
+      try assert.is_true(lexed.value[2].kind == tokens.TokenKind.Fn)
+      try assert.is_true(lexed.value[2].preceded_by_newline)
+      .Ok({})
+    })
+    .test("lexer handles float, multichar operators, and interpolation tokens", fn() {
+      dollar := "$"
+      src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
+      lexed := lexer.lex(src, 0)
+      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.is_true(lexed.value[0].kind == tokens.TokenKind.FloatLit)
+      try assert.is_true(lexed.value[1].kind == tokens.TokenKind.EqEq)
+      try assert.is_true(lexed.value[3].kind == tokens.TokenKind.AmpAmp)
+      try assert.is_true(lexed.value[5].kind == tokens.TokenKind.BangEq)
+      try assert.is_true(lexed.value[7].kind == tokens.TokenKind.PipePipe)
+      try assert.is_true(lexed.value[9].kind == tokens.TokenKind.LtEq)
+      try assert.is_true(lexed.value[11].kind == tokens.TokenKind.GtEq)
+      try assert.is_true(lexed.value[13].kind == tokens.TokenKind.DotDot)
+
+      // interpolation token triplet with expression tokens in-between
+      try assert.is_true(lexed.value[15].kind == tokens.TokenKind.StringStart)
+      try assert.is_true(lexed.value[16].kind == tokens.TokenKind.Ident)
+      try assert.is_true(lexed.value[17].kind == tokens.TokenKind.Plus)
+      try assert.is_true(lexed.value[18].kind == tokens.TokenKind.IntLit)
+      try assert.is_true(lexed.value[19].kind == tokens.TokenKind.StringEnd)
+      .Ok({})
+    })
+    .test("parser handles destructuring use declaration", fn() {
+      src := "use math.vec.{add as plus, type Vec2 as V2}"
+      parsed := parser.parse(src, 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.int_eq(parsed.value.items.len(), 1)
+      case parsed.value.items[0] {
+        .Use(decl) => {
+          try assert.is_false(decl.is_stdlib)
+          try assert.is_false(decl.is_relative)
+          try assert.int_eq(decl.path.len(), 2)
+          try assert.str_eq(decl.path[0], "math")
+          try assert.str_eq(decl.path[1], "vec")
+          case decl.items {
+            .Some(items) => {
+              try assert.int_eq(items.len(), 2)
+              try case items[0] {
+                .Value(v) => {
+                  try assert.str_eq(v.name, "add")
+                  case v.alias {
+                    .Some(a) => assert.str_eq(a, "plus"),
+                    .None => assert.fail("expected alias on value import"),
+                  }
+                },
+                _ => assert.fail("expected first import item to be value import"),
+              }
+              case items[1] {
+                .Type(t) => {
+                  try assert.str_eq(t.name, "Vec2")
+                  case t.alias {
+                    .Some(a) => assert.str_eq(a, "V2"),
+                    .None => assert.fail("expected alias on type import"),
+                  }
+                },
+                _ => assert.fail("expected second import item to be type import"),
+              }
+            },
+            .None => assert.fail("expected destructuring import items"),
+          }
+        },
+        _ => assert.fail("expected first item to be use declaration"),
+      }
+    })
+    .test("parser handles structural function declaration and multiline body expr", fn() {
+      src := "fn add(x: Int, y: Int) Int {\n  x +\n  y\n}"
+      parsed := parser.parse(src, 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.int_eq(parsed.value.items.len(), 1)
+      case parsed.value.items[0] {
+        .Function(fn_decl) => {
+          try assert.str_eq(fn_decl.name, "add")
+          try assert.int_eq(fn_decl.params.len(), 2)
+          case fn_decl.params[0].ty {
+            .Some(ty) => try assert.is_true(type_is_path(ty, "Int")),
+            .None => { return assert.fail("expected type on first parameter") },
+          }
+          case fn_decl.return_type {
+            .Some(rt) => try assert.is_true(type_is_path(rt, "Int")),
+            .None => { return assert.fail("expected function return type") },
+          }
+          case fn_decl.body.tail {
+            .Some(tail_expr) => assert.is_true(expr_is_add_binary(tail_expr)),
+            .None => assert.fail("expected function tail expression"),
+          }
+        },
+        _ => assert.fail("expected first item to be function declaration"),
+      }
+    })
+    .test("parser handles structural type declarations", fn() {
+      src := "type Point<T> = .{ x: T, y: T }\n"
+      src = "${src}type Option<T> = { None, Some(T) }\n"
+      src = "${src}type Id = Int"
+      parsed := parser.parse(src, 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.int_eq(parsed.value.items.len(), 3)
+
+      try case parsed.value.items[0] {
+        .Type(t) => {
+          try assert.str_eq(t.name, "Point")
+          try assert.int_eq(t.type_params.len(), 1)
+          case t.def {
+            .Record(fields) => assert.int_eq(fields.len(), 2),
+            _ => assert.fail("expected record type definition"),
+          }
+        },
+        _ => assert.fail("expected first item to be type declaration"),
+      }
+
+      try case parsed.value.items[1] {
+        .Type(t) => {
+          try assert.str_eq(t.name, "Option")
+          case t.def {
+            .Sum(variants) => assert.int_eq(variants.len(), 2),
+            _ => assert.fail("expected sum type definition"),
+          }
+        },
+        _ => assert.fail("expected second item to be type declaration"),
+      }
+
+      case parsed.value.items[2] {
+        .Type(t) => {
+          try assert.str_eq(t.name, "Id")
+          try case t.def {
+            .Alias(alias_ty) => assert.is_true(type_is_path(alias_ty, "Int")),
+            _ => assert.fail("expected alias type definition"),
+          }
+          .Ok({})
+        },
+        _ => assert.fail("expected third item to be type declaration"),
+      }
+    })
+    .test("parser keeps multiline top-level expression continuity", fn() {
+      src := "x := 1\n"
+      src = "${src}x = x +\n"
+      src = "${src}  2\n"
+      src = "${src}x"
+
+      parsed := parser.parse(src, 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.int_eq(parsed.value.items.len(), 3)
+
+      try case parsed.value.items[1] {
+        .Stmt(stmt) => {
+          case stmt {
+            .Let(bind) => {
+              try assert.is_true(bind.is_rebind)
+              assert.is_true(expr_is_add_binary(bind.value))
+            },
+            _ => assert.fail("expected second item to be let/rebind stmt"),
+          }
+        },
+        _ => assert.fail("expected second item to be stmt"),
+      }
+
+      case parsed.value.items[2] {
+        .Stmt(_) => .Ok({}),
+        _ => assert.fail("expected third item to be stmt"),
+      }
+    })
+    .test("parser recovers from malformed use and continues", fn() {
+      src := "use foo.\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      try assert.int_eq(parsed.value.items.len(), 2)
+      try case parsed.value.items[0] {
+        .ErrorItem(_) => .Ok({}),
+        _ => assert.fail("expected first item to be error node"),
+      }
+      case parsed.value.items[1] {
+        .Function(fn_decl) => assert.str_eq(fn_decl.name, "ok"),
+        _ => assert.fail("expected second item to be parsed function"),
+      }
+    })
+}

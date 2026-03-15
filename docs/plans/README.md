@@ -42,6 +42,7 @@ from stage0, bootstrapping sequence)
 | Backend | Core IR, ANF, optimizer, codegen, linker | Planned | — |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
+| Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
 
 ### Later — Tooling & Ecosystem
 

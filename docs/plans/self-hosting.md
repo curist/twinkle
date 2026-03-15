@@ -4,6 +4,11 @@
 line-by-line port of the Rust stage0. The self-hosted compiler should have a pure,
 composable pipeline with first-class support for LSP and tooling from the start.
 
+## Status Tracking
+
+- Execution status tracker: [self-hosting-status.md](self-hosting-status.md)
+- Frontend gap-closure tracker: [boot-parser-gap-closure.md](boot-parser-gap-closure.md)
+
 ## Design Principles
 
 ### 1. Pure Pipeline
