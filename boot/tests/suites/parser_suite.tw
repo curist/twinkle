@@ -1294,4 +1294,171 @@ pub fn suite() runner.Suite {
         _ => assert.fail("expected function after error"),
       }
     })
+
+    // ── Error Recovery: Functions ─────────────────────────────────
+
+    .test("error recovery: fn missing name recovers to next fn", fn() {
+      src := "fn () {}\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      // should recover and parse the second function
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
+    })
+    .test("error recovery: fn missing opening brace produces diagnostic", fn() {
+      src := "fn bad() Int\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      // Parser should detect the missing brace and report a diagnostic
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      // Should still produce at least one item without crashing
+      assert.is_true(parsed.value.items.len() >= 1)
+    })
+    .test("error recovery: fn missing closing paren in params", fn() {
+      src := "fn bad(x: Int {}\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      // Mismatched paren should produce a diagnostic
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.value.items.len() >= 1)
+    })
+
+    // ── Error Recovery: Type Declarations ─────────────────────────
+
+    .test("error recovery: type missing name", fn() {
+      src := "type = { A, B }\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
+    })
+    .test("error recovery: type missing equals sign", fn() {
+      src := "type Foo { A, B }\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
+    })
+
+    // ── Error Recovery: Expressions ───────────────────────────────
+
+    .test("error recovery: unclosed paren in expression", fn() {
+      parsed := parser.parse("fn f() { (1 + 2 }", 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+    .test("error recovery: unclosed bracket in array", fn() {
+      parsed := parser.parse("fn f() { [1, 2 }", 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+    .test("error recovery: unclosed call args", fn() {
+      parsed := parser.parse("fn f() { foo(1, 2 }", 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+    .test("error recovery: double operator", fn() {
+      parsed := parser.parse("fn f() { 1 + + 2 }", 0)
+      // should produce diagnostics but not crash
+      try assert.is_true(parsed.value.items.len() >= 1)
+      .Ok({})
+    })
+    .test("error recovery: missing case arm body", fn() {
+      src := "fn f() {\n  case x {\n    .A =>,\n    .B => 2,\n  }\n}"
+      parsed := parser.parse(src, 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+
+    // ── Error Recovery: Statements ────────────────────────────────
+
+    .test("error recovery: let missing value", fn() {
+      src := "fn f() { x :=\ny := 1 }"
+      parsed := parser.parse(src, 0)
+      // should produce a diagnostic for the missing value
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+    .test("error recovery: for missing body", fn() {
+      src := "fn f() { for x in items\nreturn 1 }"
+      parsed := parser.parse(src, 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
+
+    // ── Error Recovery: Multiple Errors ───────────────────────────
+
+    .test("error recovery: multiple bad items, all recovered", fn() {
+      src := "use bad.\ntype =\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() >= 2)
+      // parser should still produce items and reach the valid fn
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
+    })
+    .test("error recovery: garbage between valid items", fn() {
+      src := "fn a() {}\n!@#\nfn b() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      fn_names: Vector<String> = []
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            fn_names = fn_names.push(f.name)
+          },
+          _ => {},
+        }
+      }
+      try assert.is_true(fn_names.contains("a"))
+      assert.is_true(fn_names.contains("b"))
+    })
+
+    // ── Error Recovery: Empty / Minimal Input ─────────────────────
+
+    .test("error recovery: empty source", fn() {
+      parsed := parser.parse("", 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      assert.int_eq(parsed.value.items.len(), 0)
+    })
+    .test("error recovery: only whitespace and comments", fn() {
+      parsed := parser.parse("  \n// just a comment\n  ", 0)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      assert.int_eq(parsed.value.items.len(), 0)
+    })
+    .test("error recovery: single unknown token", fn() {
+      parsed := parser.parse("#", 0)
+      assert.is_true(parsed.diagnostics.len() > 0)
+    })
 }
