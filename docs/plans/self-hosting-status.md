@@ -37,6 +37,7 @@ snapshot.
 |------|--------|------|
 | Frontend gap closure | Planned | [boot-parser-gap-closure.md](boot-parser-gap-closure.md) |
 | Resolver fixes | Done | [archive/boot-resolver-fixes.md](archive/boot-resolver-fixes.md) |
+| Type checker | Planned | [boot-type-checker.md](boot-type-checker.md) |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 
 ---
