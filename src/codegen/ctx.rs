@@ -678,8 +678,12 @@ impl<'a> EmitCtx<'a> {
                         .repr_flow
                         .local_value_repr(*local_id)
                         .is_some_and(|r| matches!(r, ValueRepr::TypedCell { .. }));
-                    let has_cell_mono = self.local_mono.get(local_id)
-                        .is_some_and(|m| matches!(m, MonoType::Named { type_id, .. } if *type_id == CELL_TYPE_ID));
+                    let is_cell = |m: &MonoType| matches!(m, MonoType::Named { type_id, .. } if *type_id == CELL_TYPE_ID);
+                    // Check both local_mono and op_result_mono: module globals
+                    // skip local_mono population but retain the Cell mono in
+                    // op_result_mono.
+                    let has_cell_mono = self.local_mono.get(local_id).is_some_and(is_cell)
+                        || self.op_result_mono.get(local_id).is_some_and(is_cell);
                     debug_assert!(
                         has_repr || has_cell_mono,
                         "codegen verify: {func_name} (FuncId({})): L{} has cell ref type {sym} but no TypedCell repr or Cell mono",
