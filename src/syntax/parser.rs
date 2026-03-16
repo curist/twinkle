@@ -37,6 +37,10 @@ pub enum ParseErrorKind {
     },
     /// Empty destructuring import list: `use foo.{}`
     EmptyImportList,
+    /// A statement keyword appeared where an expression is required.
+    StatementInExpression {
+        statement: &'static str,
+    },
 }
 
 impl ParseError {
@@ -807,6 +811,30 @@ impl Parser {
             TokenKind::Fn => self.parse_function_expr(),
             TokenKind::Collect => self.parse_collect(),
             TokenKind::Try => self.parse_try(),
+            TokenKind::Return => Err(ParseError::new(
+                ParseErrorKind::StatementInExpression {
+                    statement: "return",
+                },
+                token.span,
+            )),
+            TokenKind::Break => Err(ParseError::new(
+                ParseErrorKind::StatementInExpression { statement: "break" },
+                token.span,
+            )),
+            TokenKind::Continue => Err(ParseError::new(
+                ParseErrorKind::StatementInExpression {
+                    statement: "continue",
+                },
+                token.span,
+            )),
+            TokenKind::Defer => Err(ParseError::new(
+                ParseErrorKind::StatementInExpression { statement: "defer" },
+                token.span,
+            )),
+            TokenKind::For => Err(ParseError::new(
+                ParseErrorKind::StatementInExpression { statement: "for" },
+                token.span,
+            )),
 
             _ => Err(ParseError::unexpected_token(vec!["expression"], token)),
         }

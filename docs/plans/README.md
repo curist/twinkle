@@ -58,3 +58,4 @@ from stage0, bootstrapping sequence)
 | [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
+| [parser-diagnostic-parity.md](parser-diagnostic-parity.md) | Align parser diagnostic precision and tests between Rust and boot parsers |

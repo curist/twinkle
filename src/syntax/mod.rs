@@ -211,6 +211,30 @@ pub answer := 42
         assert!(*is_pub, "expected pub let");
         assert_eq!(doc.as_deref(), Some("Exported answer."));
     }
+
+    #[test]
+    fn parse_error_reports_statement_in_expression_with_hint() {
+        let source = r#"fn f() Int {
+  case 1 {
+    1 => return 1,
+    _ => 0,
+  }
+}
+"#;
+
+        let err = parse_source(source, "test.tw").expect_err("parse should fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains(
+                "'return' is a statement and cannot be used where an expression is expected"
+            ),
+            "expected clearer statement-vs-expression message, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("hint: wrap it in a block expression"),
+            "expected fix hint in parse error, got: {rendered}"
+        );
+    }
 }
 
 fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {
@@ -301,6 +325,12 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
                 format!(
                     "{}:{}:{}: Import list cannot be empty",
                     file_name, line, col
+                )
+            }
+            parser::ParseErrorKind::StatementInExpression { statement } => {
+                format!(
+                    "{}:{}:{}: '{}' is a statement and cannot be used where an expression is expected\nhint: wrap it in a block expression, e.g. `=> {{ {} ... }}`",
+                    file_name, line, col, statement, statement
                 )
             }
         };
