@@ -1,0 +1,342 @@
+use tests.runner
+use tests.assert
+use compiler.parser
+use compiler.resolver
+use compiler.ast
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+fn resolve_src(src: String) resolver.ResolveResult {
+  parsed := parser.parse(src, 0)
+  resolver.resolve(parsed.value, resolver.empty_env())
+}
+
+fn resolve_ok(src: String) Result<resolver.ResolvedEnv, String> {
+  r := resolve_src(src)
+  if r.diagnostics.len() > 0 {
+    msgs: Vector<String> = []
+    for d in r.diagnostics {
+      msgs = msgs.push(d.message)
+    }
+    return .Err("expected no diagnostics, got: ${msgs[0]}")
+  }
+  .Ok(r.env)
+}
+
+fn resolve_errs(src: String) Result<Vector<String>, String> {
+  r := resolve_src(src)
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+  msgs: Vector<String> = []
+  for d in r.diagnostics {
+    msgs = msgs.push(d.message)
+  }
+  .Ok(msgs)
+}
+
+fn has_type(env: resolver.ResolvedEnv, name: String) Bool {
+  env.types.has(name)
+}
+
+fn has_function(env: resolver.ResolvedEnv, name: String) Bool {
+  env.functions.has(name)
+}
+
+fn type_id_of(env: resolver.ResolvedEnv, name: String) Result<Int, String> {
+  case env.types[name] {
+    .Some(entry) => .Ok(entry.id.id),
+    .None => .Err("type ${name} not found"),
+  }
+}
+
+fn mono_to_string(ty: resolver.MonoType) String {
+  case ty {
+    .Int => "Int",
+    .Float => "Float",
+    .Bool => "Bool",
+    .Byte => "Byte",
+    .String => "String",
+    .Void => "Void",
+    .Var(name) => name,
+    .Named(tid, args) => {
+      if args.len() == 0 {
+        "Named(${tid.id})"
+      } else {
+        arg_strs: Vector<String> = []
+        for a in args {
+          arg_strs = arg_strs.push(mono_to_string(a))
+        }
+        "Named(${tid.id})<${arg_strs[0]}>"
+      }
+    },
+    .Vector(inner) => "Vector<${mono_to_string(inner)}>",
+    .Dict(k, v) => "Dict<${mono_to_string(k)}, ${mono_to_string(v)}>",
+    .Function(params, ret) => {
+      pstrs: Vector<String> = []
+      for p in params {
+        pstrs = pstrs.push(mono_to_string(p))
+      }
+      if pstrs.len() == 0 {
+        "fn() ${mono_to_string(ret)}"
+      } else {
+        "fn(${pstrs[0]}) ${mono_to_string(ret)}"
+      }
+    },
+    .Optional(inner) => "${mono_to_string(inner)}?",
+    .Result(ok, err) => "Result<${mono_to_string(ok)}, ${mono_to_string(err)}>",
+  }
+}
+
+fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: String) Result<String, String> {
+  case env.types[type_name] {
+    .Some(entry) => {
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Record(_, _, fields) => {
+              for f in fields {
+                if f.name == field_name {
+                  return .Ok(mono_to_string(f.ty))
+                }
+              }
+              .Err("field ${field_name} not found in ${type_name}")
+            },
+            _ => .Err("${type_name} is not a record"),
+          }
+        },
+        .None => .Err("${type_name} has no definition"),
+      }
+    },
+    .None => .Err("type ${type_name} not found"),
+  }
+}
+
+fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, String> {
+  case env.types[type_name] {
+    .Some(entry) => {
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Sum(_, _, variants) => .Ok(variants.len()),
+            _ => .Err("${type_name} is not a sum type"),
+          }
+        },
+        .None => .Err("${type_name} has no definition"),
+      }
+    },
+    .None => .Err("type ${type_name} not found"),
+  }
+}
+
+fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<String, String> {
+  case env.functions[fn_name] {
+    .Some(sig) => {
+      if idx >= sig.params.len() {
+        return .Err("param index ${idx} out of range for ${fn_name}")
+      }
+      .Ok(mono_to_string(sig.params[idx]))
+    },
+    .None => .Err("function ${fn_name} not found"),
+  }
+}
+
+fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<String, String> {
+  case env.functions[fn_name] {
+    .Some(sig) => {
+      case sig.ret {
+        .Some(ty) => .Ok(mono_to_string(ty)),
+        .None => .Ok("(none)"),
+      }
+    },
+    .None => .Err("function ${fn_name} not found"),
+  }
+}
+
+// ── Suite ────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("resolver")
+    // ── Type declarations ──
+    .test("resolve empty module", fn() {
+      env := try resolve_ok("")
+      assert.int_eq(env.next_type_id.get(), 0)
+    })
+    .test("resolve record type", fn() {
+      env := try resolve_ok("type Point = .{ x: Int, y: Int }")
+      try assert.is_true(has_type(env, "Point"))
+      try assert.str_eq(try get_field_type(env, "Point", "x"), "Int")
+      try assert.str_eq(try get_field_type(env, "Point", "y"), "Int")
+      .Ok({})
+    })
+    .test("resolve record with various field types", fn() {
+      src := "type Foo = .{ a: Int, b: Float, c: Bool, d: String, e: Byte }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Foo", "a"), "Int")
+      try assert.str_eq(try get_field_type(env, "Foo", "b"), "Float")
+      try assert.str_eq(try get_field_type(env, "Foo", "c"), "Bool")
+      try assert.str_eq(try get_field_type(env, "Foo", "d"), "String")
+      try assert.str_eq(try get_field_type(env, "Foo", "e"), "Byte")
+      .Ok({})
+    })
+    .test("resolve sum type", fn() {
+      src := "type Shape = { Circle(Float), Rect(Float, Float), Unit }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Shape"))
+      try assert.int_eq(try get_variant_count(env, "Shape"), 3)
+      .Ok({})
+    })
+    .test("resolve type alias", fn() {
+      src := "type Name = String"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Name"))
+      .Ok({})
+    })
+    .test("resolve type with type parameters", fn() {
+      src := "type Box<T> = .{ value: T }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Box"))
+      try assert.str_eq(try get_field_type(env, "Box", "value"), "T")
+      .Ok({})
+    })
+    .test("resolve type referencing another type", fn() {
+      src := "type Point = .{ x: Int, y: Int }\ntype Line = .{ start: Point, end: Point }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Point"))
+      try assert.is_true(has_type(env, "Line"))
+      // Line.start should be Named(point_id)
+      start_ty := try get_field_type(env, "Line", "start")
+      try assert.str_eq(start_ty, "Named(0)")
+      .Ok({})
+    })
+    .test("TypeIds are assigned in declaration order", fn() {
+      src := "type A = .{ x: Int }\ntype B = .{ y: Float }\ntype C = .{ z: Bool }"
+      env := try resolve_ok(src)
+      try assert.int_eq(try type_id_of(env, "A"), 0)
+      try assert.int_eq(try type_id_of(env, "B"), 1)
+      try assert.int_eq(try type_id_of(env, "C"), 2)
+      .Ok({})
+    })
+    // ── Builtin generic types ──
+    .test("resolve Vector type", fn() {
+      src := "type Nums = .{ items: Vector<Int> }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Nums", "items"), "Vector<Int>")
+      .Ok({})
+    })
+    .test("resolve Dict type", fn() {
+      src := "type Map = .{ data: Dict<String, Int> }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Map", "data"), "Dict<String, Int>")
+      .Ok({})
+    })
+    .test("resolve Optional type", fn() {
+      src := "type Foo = .{ value: Int? }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Foo", "value"), "Int?")
+      .Ok({})
+    })
+    .test("resolve function type in field", fn() {
+      src := "type Callback = .{ handler: fn(Int) Bool }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Callback", "handler"), "fn(Int) Bool")
+      .Ok({})
+    })
+    // ── Function declarations ──
+    .test("resolve function with typed params", fn() {
+      src := "fn add(a: Int, b: Int) Int { a }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_function(env, "add"))
+      try assert.str_eq(try get_param_type(env, "add", 0), "Int")
+      try assert.str_eq(try get_param_type(env, "add", 1), "Int")
+      try assert.str_eq(try get_return_type(env, "add"), "Int")
+      .Ok({})
+    })
+    .test("resolve function with no return type", fn() {
+      src := "fn greet(name: String) { name }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_return_type(env, "greet"), "(none)")
+      .Ok({})
+    })
+    .test("resolve function with user type params", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn origin() Point { origin }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_return_type(env, "origin"), "Named(0)")
+      .Ok({})
+    })
+    .test("resolve generic function", fn() {
+      src := "fn identity<T>(x: T) T { x }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_param_type(env, "identity", 0), "T")
+      try assert.str_eq(try get_return_type(env, "identity"), "T")
+      .Ok({})
+    })
+    // ── Error cases ──
+    .test("duplicate type names", fn() {
+      src := "type Foo = .{ x: Int }\ntype Foo = .{ y: Int }"
+      msgs := try resolve_errs(src)
+      try assert.str_contains(msgs[0], "duplicate type")
+      .Ok({})
+    })
+    .test("duplicate function names", fn() {
+      src := "fn foo(x: Int) Int { x }\nfn foo(y: Int) Int { y }"
+      msgs := try resolve_errs(src)
+      try assert.str_contains(msgs[0], "duplicate function")
+      .Ok({})
+    })
+    .test("undefined type in field", fn() {
+      src := "type Foo = .{ x: Nonexistent }"
+      msgs := try resolve_errs(src)
+      try assert.str_contains(msgs[0], "undefined type")
+      .Ok({})
+    })
+    .test("undefined type in function param", fn() {
+      src := "fn foo(x: Nonexistent) Int { 0 }"
+      msgs := try resolve_errs(src)
+      try assert.str_contains(msgs[0], "undefined type")
+      .Ok({})
+    })
+    .test("circular type alias", fn() {
+      src := "type A = B\ntype B = A"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("circular") {
+          found = true
+        }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    // ── Result type ──
+    .test("resolve Result type in field", fn() {
+      src := "type Foo = .{ value: Result<Int, String> }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "Foo", "value"), "Result<Int, String>")
+      .Ok({})
+    })
+    // ── Sum with generic payloads ──
+    .test("resolve sum with generic payload", fn() {
+      src := "type Either<A, B> = { Left(A), Right(B) }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Either"))
+      try assert.int_eq(try get_variant_count(env, "Either"), 2)
+      .Ok({})
+    })
+    // ── Multiple functions ──
+    .test("resolve multiple functions", fn() {
+      src := "fn add(a: Int, b: Int) Int { a }\nfn sub(a: Int, b: Int) Int { a }"
+      env := try resolve_ok(src)
+      try assert.is_true(has_function(env, "add"))
+      try assert.is_true(has_function(env, "sub"))
+      .Ok({})
+    })
+    // ── Type alias chain ──
+    .test("resolve alias chain", fn() {
+      src := "type Name = String\ntype Alias = Name"
+      env := try resolve_ok(src)
+      try assert.is_true(has_type(env, "Name"))
+      try assert.is_true(has_type(env, "Alias"))
+      .Ok({})
+    })
+}

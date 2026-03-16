@@ -2739,12 +2739,18 @@ impl TypeChecker {
         )?;
 
         // Type-check first arm to get result type
-        let result_ty = self.synth_case_arm(&arms[0], &scrut_ty)?;
+        let mut result_ty = self.synth_case_arm(&arms[0], &scrut_ty)?;
 
         // Check all other arms match
         for arm in &arms[1..] {
             let arm_ty = self.synth_case_arm(arm, &scrut_ty)?;
             self.unify(&arm_ty, &result_ty, arm.span)?;
+            // If the current result type is Never (diverging arm), prefer
+            // a concrete type from a non-diverging arm — mirrors the
+            // if/else handling where one branch diverges.
+            if result_ty == MonoType::Never && arm_ty != MonoType::Never {
+                result_ty = arm_ty;
+            }
         }
 
         Ok(result_ty)

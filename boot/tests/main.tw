@@ -13,6 +13,7 @@ use tests.suites.stdlib_path_suite
 use tests.suites.stdlib_host_suite
 use tests.suites.source_suite
 use tests.suites.parser_suite
+use tests.suites.resolver_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -29,4 +30,5 @@ runner.run_all([
   stdlib_host_suite.suite(),
   source_suite.suite(),
   parser_suite.suite(),
+  resolver_suite.suite(),
 ])
