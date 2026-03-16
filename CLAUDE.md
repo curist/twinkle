@@ -29,12 +29,8 @@ cargo test
 ```
 
 ### Run Twinkle Programs
-- Twinkle has no `main` function convention — top-level statements execute directly.
-- Module resolution is relative to the file's directory. To run a file from outside
-  the project root (e.g. `/tmp/test.tw`) that imports boot modules, set:
-  ```bash
-  TWINKLE_ROOT=/path/to/boot cargo run -- run /tmp/test.tw
-  ```
+- No `main` function — top-level statements execute directly.
+- `TWINKLE_ROOT` env var overrides project root (see Modules & Imports below).
 
 ## Communication Guidelines
 
@@ -78,9 +74,13 @@ p := Point.{ x: 1, y: 2 }
 
 ### Modules & Imports
 - Last path segment (without extension) is the module identifier
-- No aliasing or destructuring in MVP
+- Aliasing: `use foo.bar as baz`
+- Destructuring: `use foo.bar.{fn1, fn2, type MyType}`
+- Relative imports: `use .sibling` resolves from the importing file's parent namespace
+- Stdlib: `use @std.fs` (prelude modules auto-imported, no `use` needed)
 - Exports accessed as `module.function`, `module.Type`
 - Separate namespaces for values and types
+- Project root: walks up from entry file to find `twinkle.toml`; `TWINKLE_ROOT` env var overrides
 
 ### Inherent Methods (Dot Sugar)
 Dot syntax supports:
