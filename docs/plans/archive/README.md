@@ -89,3 +89,4 @@ Related historical context outside this folder:
 | [eq-ne-type-propagation.md](eq-ne-type-propagation.md) | Propagate known operand type across `==`/`!=` so context-dependent literals type-check bidirectionally |
 | [boot-compiler-refactor.md](boot-compiler-refactor.md) | Reduce duplication in boot compiler parser/lexer via helper extraction and dead code removal |
 | [boot-parser-test-coverage.md](boot-parser-test-coverage.md) | Boot parser test coverage vs grammar; hex literals, void result `!E`, collect, and edge cases |
+| [boot-resolver-fixes.md](boot-resolver-fixes.md) | Boot resolver fixes: arity checks, duplicate fn dedup, TypeEntry spans, error collection, topo-sorted type resolution |

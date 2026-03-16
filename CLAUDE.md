@@ -28,6 +28,14 @@ cargo run
 cargo test
 ```
 
+### Run Twinkle Programs
+- Twinkle has no `main` function convention — top-level statements execute directly.
+- Module resolution is relative to the file's directory. To run a file from outside
+  the project root (e.g. `/tmp/test.tw`) that imports boot modules, set:
+  ```bash
+  TWINKLE_ROOT=/path/to/boot cargo run -- run /tmp/test.tw
+  ```
+
 ## Communication Guidelines
 
 **Focus on substance, not metrics:**

@@ -14,11 +14,7 @@ fn resolve_src(src: String) resolver.ResolveResult {
 fn resolve_ok(src: String) Result<resolver.ResolvedEnv, String> {
   r := resolve_src(src)
   if r.diagnostics.len() > 0 {
-    msgs: Vector<String> = []
-    for d in r.diagnostics {
-      msgs = msgs.push(d.message)
-    }
-    return .Err("expected no diagnostics, got: ${msgs[0]}")
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
   }
   .Ok(r.env)
 }
@@ -35,16 +31,8 @@ fn resolve_errs(src: String) Result<Vector<String>, String> {
   .Ok(msgs)
 }
 
-fn has_type(env: resolver.ResolvedEnv, name: String) Bool {
-  env.types.has(name)
-}
-
-fn has_function(env: resolver.ResolvedEnv, name: String) Bool {
-  env.functions.has(name)
-}
-
 fn type_id_of(env: resolver.ResolvedEnv, name: String) Result<Int, String> {
-  case env.types[name] {
+  case resolver.lookup_type(env, name) {
     .Some(entry) => .Ok(entry.id.id),
     .None => .Err("type ${name} not found"),
   }
@@ -58,30 +46,28 @@ fn mono_to_string(ty: resolver.MonoType) String {
     .Byte => "Byte",
     .String => "String",
     .Void => "Void",
-    .Var(name) => name,
+    .Var(name) => "Var(${name})",
     .Named(tid, args) => {
       if args.len() == 0 {
         "Named(${tid.id})"
       } else {
-        arg_strs: Vector<String> = []
-        for a in args {
-          arg_strs = arg_strs.push(mono_to_string(a))
+        joined := ""
+        for a, i in args {
+          if i > 0 { joined = "${joined}, " }
+          joined = "${joined}${mono_to_string(a)}"
         }
-        "Named(${tid.id})<${arg_strs[0]}>"
+        "Named(${tid.id})<${joined}>"
       }
     },
     .Vector(inner) => "Vector<${mono_to_string(inner)}>",
     .Dict(k, v) => "Dict<${mono_to_string(k)}, ${mono_to_string(v)}>",
     .Function(params, ret) => {
-      pstrs: Vector<String> = []
-      for p in params {
-        pstrs = pstrs.push(mono_to_string(p))
+      joined := ""
+      for p, i in params {
+        if i > 0 { joined = "${joined}, " }
+        joined = "${joined}${mono_to_string(p)}"
       }
-      if pstrs.len() == 0 {
-        "fn() ${mono_to_string(ret)}"
-      } else {
-        "fn(${pstrs[0]}) ${mono_to_string(ret)}"
-      }
+      "fn(${joined}) ${mono_to_string(ret)}"
     },
     .Optional(inner) => "${mono_to_string(inner)}?",
     .Result(ok, err) => "Result<${mono_to_string(ok)}, ${mono_to_string(err)}>",
@@ -89,7 +75,7 @@ fn mono_to_string(ty: resolver.MonoType) String {
 }
 
 fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: String) Result<String, String> {
-  case env.types[type_name] {
+  case resolver.lookup_type(env, type_name) {
     .Some(entry) => {
       case entry.def {
         .Some(def) => {
@@ -113,7 +99,7 @@ fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: Stri
 }
 
 fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, String> {
-  case env.types[type_name] {
+  case resolver.lookup_type(env, type_name) {
     .Some(entry) => {
       case entry.def {
         .Some(def) => {
@@ -130,7 +116,7 @@ fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, S
 }
 
 fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<String, String> {
-  case env.functions[fn_name] {
+  case resolver.lookup_function(env, fn_name) {
     .Some(sig) => {
       if idx >= sig.params.len() {
         return .Err("param index ${idx} out of range for ${fn_name}")
@@ -142,7 +128,7 @@ fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<S
 }
 
 fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<String, String> {
-  case env.functions[fn_name] {
+  case resolver.lookup_function(env, fn_name) {
     .Some(sig) => {
       case sig.ret {
         .Some(ty) => .Ok(mono_to_string(ty)),
@@ -160,11 +146,11 @@ pub fn suite() runner.Suite {
     // ── Type declarations ──
     .test("resolve empty module", fn() {
       env := try resolve_ok("")
-      assert.int_eq(env.next_type_id.get(), 0)
+      assert.int_eq(env.types.len(), 0)
     })
     .test("resolve record type", fn() {
       env := try resolve_ok("type Point = .{ x: Int, y: Int }")
-      try assert.is_true(has_type(env, "Point"))
+      try assert.is_true(resolver.has_type(env, "Point"))
       try assert.str_eq(try get_field_type(env, "Point", "x"), "Int")
       try assert.str_eq(try get_field_type(env, "Point", "y"), "Int")
       .Ok({})
@@ -182,29 +168,28 @@ pub fn suite() runner.Suite {
     .test("resolve sum type", fn() {
       src := "type Shape = { Circle(Float), Rect(Float, Float), Unit }"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Shape"))
+      try assert.is_true(resolver.has_type(env, "Shape"))
       try assert.int_eq(try get_variant_count(env, "Shape"), 3)
       .Ok({})
     })
     .test("resolve type alias", fn() {
       src := "type Name = String"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Name"))
+      try assert.is_true(resolver.has_type(env, "Name"))
       .Ok({})
     })
     .test("resolve type with type parameters", fn() {
       src := "type Box<T> = .{ value: T }"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Box"))
-      try assert.str_eq(try get_field_type(env, "Box", "value"), "T")
+      try assert.is_true(resolver.has_type(env, "Box"))
+      try assert.str_eq(try get_field_type(env, "Box", "value"), "Var(T)")
       .Ok({})
     })
     .test("resolve type referencing another type", fn() {
       src := "type Point = .{ x: Int, y: Int }\ntype Line = .{ start: Point, end: Point }"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Point"))
-      try assert.is_true(has_type(env, "Line"))
-      // Line.start should be Named(point_id)
+      try assert.is_true(resolver.has_type(env, "Point"))
+      try assert.is_true(resolver.has_type(env, "Line"))
       start_ty := try get_field_type(env, "Line", "start")
       try assert.str_eq(start_ty, "Named(0)")
       .Ok({})
@@ -246,7 +231,7 @@ pub fn suite() runner.Suite {
     .test("resolve function with typed params", fn() {
       src := "fn add(a: Int, b: Int) Int { a }"
       env := try resolve_ok(src)
-      try assert.is_true(has_function(env, "add"))
+      try assert.is_true(resolver.has_function(env, "add"))
       try assert.str_eq(try get_param_type(env, "add", 0), "Int")
       try assert.str_eq(try get_param_type(env, "add", 1), "Int")
       try assert.str_eq(try get_return_type(env, "add"), "Int")
@@ -267,8 +252,8 @@ pub fn suite() runner.Suite {
     .test("resolve generic function", fn() {
       src := "fn identity<T>(x: T) T { x }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_param_type(env, "identity", 0), "T")
-      try assert.str_eq(try get_return_type(env, "identity"), "T")
+      try assert.str_eq(try get_param_type(env, "identity", 0), "Var(T)")
+      try assert.str_eq(try get_return_type(env, "identity"), "Var(T)")
       .Ok({})
     })
     // ── Error cases ──
@@ -284,6 +269,11 @@ pub fn suite() runner.Suite {
       try assert.str_contains(msgs[0], "duplicate function")
       .Ok({})
     })
+    .test("duplicate fn produces exactly one env entry", fn() {
+      r := resolve_src("fn foo(x: Int) Int { x }\nfn foo(y: Int) Int { y }")
+      try assert.int_eq(r.env.functions.len(), 1)
+      .Ok({})
+    })
     .test("undefined type in field", fn() {
       src := "type Foo = .{ x: Nonexistent }"
       msgs := try resolve_errs(src)
@@ -294,6 +284,30 @@ pub fn suite() runner.Suite {
       src := "fn foo(x: Nonexistent) Int { 0 }"
       msgs := try resolve_errs(src)
       try assert.str_contains(msgs[0], "undefined type")
+      .Ok({})
+    })
+    .test("multiple type-arg errors collected", fn() {
+      src := "type Foo = .{ x: Dict<Bad1, Bad2> }"
+      msgs := try resolve_errs(src)
+      try assert.int_eq(msgs.len(), 2)
+      try assert.str_contains(msgs[0], "Bad1")
+      try assert.str_contains(msgs[1], "Bad2")
+      .Ok({})
+    })
+    .test("multiple fn param type errors collected", fn() {
+      src := "fn foo(a: Bad1, b: Bad2) Int { 0 }"
+      msgs := try resolve_errs(src)
+      try assert.int_eq(msgs.len(), 2)
+      try assert.str_contains(msgs[0], "Bad1")
+      try assert.str_contains(msgs[1], "Bad2")
+      .Ok({})
+    })
+    .test("fn type errors include return type", fn() {
+      src := "type Foo = .{ f: fn(Bad1) Bad2 }"
+      msgs := try resolve_errs(src)
+      try assert.int_eq(msgs.len(), 2)
+      try assert.str_contains(msgs[0], "Bad1")
+      try assert.str_contains(msgs[1], "Bad2")
       .Ok({})
     })
     .test("circular type alias", fn() {
@@ -308,6 +322,21 @@ pub fn suite() runner.Suite {
       try assert.is_true(found)
       .Ok({})
     })
+    .test("circular alias has non-zero span", fn() {
+      r := resolve_src("type A = B\ntype B = A")
+      found_circular := false
+      for d in r.diagnostics {
+        if d.message.contains("circular") {
+          has_span := d.span.start > 0
+          if !has_span { has_span = d.span.end > 0 }
+          if has_span {
+            found_circular = true
+          }
+        }
+      }
+      try assert.is_true(found_circular)
+      .Ok({})
+    })
     // ── Result type ──
     .test("resolve Result type in field", fn() {
       src := "type Foo = .{ value: Result<Int, String> }"
@@ -319,7 +348,7 @@ pub fn suite() runner.Suite {
     .test("resolve sum with generic payload", fn() {
       src := "type Either<A, B> = { Left(A), Right(B) }"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Either"))
+      try assert.is_true(resolver.has_type(env, "Either"))
       try assert.int_eq(try get_variant_count(env, "Either"), 2)
       .Ok({})
     })
@@ -327,16 +356,99 @@ pub fn suite() runner.Suite {
     .test("resolve multiple functions", fn() {
       src := "fn add(a: Int, b: Int) Int { a }\nfn sub(a: Int, b: Int) Int { a }"
       env := try resolve_ok(src)
-      try assert.is_true(has_function(env, "add"))
-      try assert.is_true(has_function(env, "sub"))
+      try assert.is_true(resolver.has_function(env, "add"))
+      try assert.is_true(resolver.has_function(env, "sub"))
+      .Ok({})
+    })
+    // ── Arity checks ──
+    .test("wrong arity for user-defined generic type", fn() {
+      src := "type Box<T> = .{ value: T }\ntype Foo = .{ x: Box<Int, String> }"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("expects 1 type argument") {
+          found = true
+        }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("zero args for generic type", fn() {
+      src := "type Pair<A, B> = .{ a: A, b: B }\ntype Foo = .{ x: Pair }"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("expects 2 type argument") {
+          found = true
+        }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("forward-ref arity check", fn() {
+      // Foo references Box before it's declared — arity should still be checked
+      src := "type Foo = .{ x: Box<Int, String> }\ntype Box<T> = .{ value: T }"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("expects 1 type argument") {
+          found = true
+        }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("forward-ref field resolves", fn() {
+      // Line references Point declared after it — should resolve correctly
+      src := "type Line = .{ start: Point, end: Point }\ntype Point = .{ x: Int, y: Int }"
+      env := try resolve_ok(src)
+      try assert.is_true(resolver.has_type(env, "Line"))
+      start_ty := try get_field_type(env, "Line", "start")
+      try assert.str_eq(start_ty, "Named(1)")
       .Ok({})
     })
     // ── Type alias chain ──
     .test("resolve alias chain", fn() {
       src := "type Name = String\ntype Alias = Name"
       env := try resolve_ok(src)
-      try assert.is_true(has_type(env, "Name"))
-      try assert.is_true(has_type(env, "Alias"))
+      try assert.is_true(resolver.has_type(env, "Name"))
+      try assert.is_true(resolver.has_type(env, "Alias"))
+      .Ok({})
+    })
+    // ── F5: Additional coverage ──
+    .test("self-alias is circular", fn() {
+      src := "type A = A"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("circular") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("3-node cycle is circular", fn() {
+      src := "type A = B\ntype B = C\ntype C = A"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("circular") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("forward alias chain resolves", fn() {
+      src := "type A = B\ntype B = Int"
+      env := try resolve_ok(src)
+      try assert.is_true(resolver.has_type(env, "A"))
+      try assert.is_true(resolver.has_type(env, "B"))
+      .Ok({})
+    })
+    .test("type var shadows builtin", fn() {
+      // fn f<Int>(x: Int) — the Int here should be Var("Int"), not MonoType.Int
+      src := "fn f<Int>(x: Int) Int { x }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_param_type(env, "f", 0), "Var(Int)")
+      try assert.str_eq(try get_return_type(env, "f"), "Var(Int)")
       .Ok({})
     })
 }
