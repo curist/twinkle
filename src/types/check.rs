@@ -1706,6 +1706,7 @@ impl TypeChecker {
         self.local_env.push_scope();
 
         let mut result_ty = MonoType::Void;
+        let mut had_error = false;
 
         for stmt in &block.stmts {
             match stmt {
@@ -1718,17 +1719,18 @@ impl TypeChecker {
                 } => {
                     self.check_let_stmt(pattern, ty.as_ref(), value);
                 }
-                Stmt::Expr(e) => {
-                    // Expression statement
-                    // If it's the last statement, its type becomes the block's type
-                    result_ty = self.synth_expr(e)?;
-                }
+                Stmt::Expr(e) => match self.synth_expr(e) {
+                    Ok(ty) => result_ty = ty,
+                    Err(()) => had_error = true,
+                },
                 Stmt::Return { value, span } => {
                     if let Some(ret_ty) = self.current_function_ret.clone() {
                         if let Some(val) = value {
-                            self.check_expr(val, &ret_ty)?;
-                        } else {
-                            self.unify(&MonoType::Void, &ret_ty, *span)?;
+                            if self.check_expr(val, &ret_ty).is_err() {
+                                had_error = true;
+                            }
+                        } else if self.unify(&MonoType::Void, &ret_ty, *span).is_err() {
+                            had_error = true;
                         }
                     } else {
                         self.errors.push(TypeError::UnsupportedFeature {
@@ -1764,16 +1766,20 @@ impl TypeChecker {
                     result_ty = MonoType::Never;
                 }
                 Stmt::Defer { expr, span } => {
-                    let deferred_ty = self.synth_expr(expr)?;
-                    if deferred_ty == MonoType::Never {
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "never-typed expression in defer",
-                            span: *span,
-                            note: "A defer body cannot diverge (return, break, continue, or \
-                                   error(...)). These control-flow effects would be ambiguous \
-                                   when executed at scope exit."
-                                .to_string(),
-                        });
+                    match self.synth_expr(expr) {
+                        Ok(deferred_ty) => {
+                            if deferred_ty == MonoType::Never {
+                                self.errors.push(TypeError::UnsupportedFeature {
+                                    feature: "never-typed expression in defer",
+                                    span: *span,
+                                    note: "A defer body cannot diverge (return, break, continue, or \
+                                           error(...)). These control-flow effects would be ambiguous \
+                                           when executed at scope exit."
+                                        .to_string(),
+                                });
+                            }
+                        }
+                        Err(()) => had_error = true,
                     }
                     result_ty = MonoType::Void;
                 }
@@ -1781,7 +1787,7 @@ impl TypeChecker {
         }
 
         self.local_env.pop_scope();
-        Ok(result_ty)
+        if had_error { Err(()) } else { Ok(result_ty) }
     }
 
     /// Bidirectional block check: processes all statements like `synth_block`
@@ -1797,6 +1803,7 @@ impl TypeChecker {
         // Track whether the block ends with a diverging statement (Return/Break/Continue).
         // Diverging blocks have type Never, which unifies with any expected type.
         let mut diverges = false;
+        let mut had_error = false;
 
         for (i, stmt) in block.stmts.iter().enumerate() {
             match stmt {
@@ -1813,7 +1820,9 @@ impl TypeChecker {
                 Stmt::Expr(e) => {
                     if last_expr_idx == Some(i) {
                         // Final expression — check against expected return type
-                        self.check_expr(e, expected_ty)?;
+                        if self.check_expr(e, expected_ty).is_err() {
+                            had_error = true;
+                        }
                     } else {
                         let _ = self.synth_expr(e);
                     }
@@ -1854,16 +1863,20 @@ impl TypeChecker {
                     diverges = true;
                 }
                 Stmt::Defer { expr, span } => {
-                    let deferred_ty = self.synth_expr(expr)?;
-                    if deferred_ty == MonoType::Never {
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "never-typed expression in defer",
-                            span: *span,
-                            note: "A defer body cannot diverge (return, break, continue, or \
-                                   error(...)). These control-flow effects would be ambiguous \
-                                   when executed at scope exit."
-                                .to_string(),
-                        });
+                    match self.synth_expr(expr) {
+                        Ok(deferred_ty) => {
+                            if deferred_ty == MonoType::Never {
+                                self.errors.push(TypeError::UnsupportedFeature {
+                                    feature: "never-typed expression in defer",
+                                    span: *span,
+                                    note: "A defer body cannot diverge (return, break, continue, or \
+                                           error(...)). These control-flow effects would be ambiguous \
+                                           when executed at scope exit."
+                                        .to_string(),
+                                });
+                            }
+                        }
+                        Err(()) => had_error = true,
                     }
                     diverges = false;
                 }
@@ -1883,7 +1896,7 @@ impl TypeChecker {
         }
 
         self.local_env.pop_scope();
-        Ok(())
+        if had_error { Err(()) } else { Ok(()) }
     }
 
     //
@@ -2767,13 +2780,18 @@ impl TypeChecker {
         // Check the pattern and bind variables
         let mut pattern_checker =
             PatternChecker::new(&self.type_env, &mut self.local_env, &mut self.errors);
-        pattern_checker.check_pattern(&arm.pattern, scrut_ty)?;
+        let pat_result = pattern_checker.check_pattern(&arm.pattern, scrut_ty);
+
+        if pat_result.is_err() {
+            self.local_env.pop_scope();
+            return Err(());
+        }
 
         // Type-check the arm body
-        let body_ty = self.synth_expr(&arm.body)?;
+        let body_result = self.synth_expr(&arm.body);
 
         self.local_env.pop_scope();
-        Ok(body_ty)
+        body_result
     }
 
     //
@@ -3134,6 +3152,7 @@ impl TypeChecker {
                     span: iter.span,
                     note: None,
                 });
+                self.local_env.pop_scope();
                 return;
             }
         }
