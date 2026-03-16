@@ -418,6 +418,11 @@ fn parse_param_list(tokens_in: Vector<Token>, start: Int, end_kind: TokenKind, e
   i := start
 
   for i < tokens_in.len() and token_kind_at(tokens_in, i) != end_kind {
+    // Stop at '{' when expecting ')' — the user likely forgot the closing paren
+    if token_kind_at(tokens_in, i) == .LBrace and end_kind == .RParen {
+      break
+    }
+
     parsed := parse_param(tokens_in, i)
     params = params.push(parsed.param)
     diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
@@ -431,6 +436,10 @@ fn parse_param_list(tokens_in: Vector<Token>, start: Int, end_kind: TokenKind, e
         error_msg,
       ))
       if token_kind_at(tokens_in, i) == .Eof {
+        break
+      }
+      // Also stop at '{' during error recovery
+      if token_kind_at(tokens_in, i) == .LBrace and end_kind == .RParen {
         break
       }
       i = i + 1
@@ -1065,6 +1074,20 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
     diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.ty)
     i = parsed_ret.next_index
+  }
+
+  // If still no '{', the function has no body — recover instead of consuming
+  // random tokens as a block
+  if token_kind_at(tokens_in, i) != .LBrace {
+    diagnostics_out = diagnostics_out.push(diagnostic.error(
+      token_span_at(tokens_in, i),
+      "expected '{' for function body",
+    ))
+    next_index := recover_to_next_item(tokens_in, i)
+    if next_index <= start {
+      next_index = start + 1
+    }
+    return .{ item: .ErrorItem(merge_range(tokens_in, start, i - 1)), next_index, diagnostics: diagnostics_out }
   }
 
   parsed_body := parse_block(tokens_in, i)

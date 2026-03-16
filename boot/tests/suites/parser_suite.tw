@@ -1214,12 +1214,14 @@ pub fn suite() runner.Suite {
 
     // ── Pub Top-Level Let ────────────────────────────────────────
 
-    .test("pub let: pub on top-level binding", fn() {
-      // pub x := 42 — the boot parser routes `pub` + non-fn/type to top-level stmt
+    .test("pub let: pub on top-level binding parses as stmt", fn() {
+      // pub x := 42 — boot parser routes `pub` + non-fn/type to top-level stmt
+      // `pub` is consumed as an expression stmt, `x := 42` as a separate let stmt
       parsed := parser.parse("pub x := 42", 0)
-      // Should parse without crashing; `pub` is consumed as a separate stmt
-      try assert.is_true(parsed.value.items.len() >= 1)
-      .Ok({})
+      // `pub` as an expression is not valid, so we expect a diagnostic
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      // Should still produce items without crashing
+      assert.is_true(parsed.value.items.len() >= 1)
     })
 
     // ── Destructuring Import Edge Cases ──────────────────────────
@@ -1315,20 +1317,41 @@ pub fn suite() runner.Suite {
       }
       assert.is_true(found_ok)
     })
-    .test("error recovery: fn missing opening brace produces diagnostic", fn() {
+    .test("error recovery: fn missing opening brace recovers next fn", fn() {
       src := "fn bad() Int\nfn ok() {}"
       parsed := parser.parse(src, 0)
-      // Parser should detect the missing brace and report a diagnostic
       try assert.is_true(parsed.diagnostics.len() > 0)
-      // Should still produce at least one item without crashing
-      assert.is_true(parsed.value.items.len() >= 1)
+      // Parser should recover and find the second valid function
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
     })
-    .test("error recovery: fn missing closing paren in params", fn() {
+    .test("error recovery: fn missing closing paren recovers next fn", fn() {
       src := "fn bad(x: Int {}\nfn ok() {}"
       parsed := parser.parse(src, 0)
-      // Mismatched paren should produce a diagnostic
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.value.items.len() >= 1)
+      // Parser should recover and find the second valid function
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
     })
 
     // ── Error Recovery: Type Declarations ─────────────────────────
@@ -1382,11 +1405,12 @@ pub fn suite() runner.Suite {
       parsed := parser.parse("fn f() { foo(1, 2 }", 0)
       assert.is_true(parsed.diagnostics.len() > 0)
     })
-    .test("error recovery: double operator", fn() {
+    .test("error recovery: double operator produces diagnostic", fn() {
       parsed := parser.parse("fn f() { 1 + + 2 }", 0)
-      // should produce diagnostics but not crash
-      try assert.is_true(parsed.value.items.len() >= 1)
-      .Ok({})
+      // '+' is not a valid prefix operator, so the parser should emit a diagnostic
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      // Should still produce the function item
+      assert.int_eq(parsed.value.items.len(), 1)
     })
     .test("error recovery: missing case arm body", fn() {
       src := "fn f() {\n  case x {\n    .A =>,\n    .B => 2,\n  }\n}"
