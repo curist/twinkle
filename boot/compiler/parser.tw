@@ -8,7 +8,7 @@ use .ast.{
   type Expr, type ExprKind, type Stmt, type Block, type Pattern, type TypeExpr, type TypePath,
   type BinOp, type UnOp, type TypeDef, type CaseArm, type RecordEntry, type RecordField,
   type VariantDecl, type StringPart, type LetStmt, type ForStmt, type ReturnStmt, type BreakStmt,
-  type ContinueStmt, type DeferStmt, type ExprStmt,
+  type ContinueStmt, type DeferStmt, type ExprStmt, type CollectExpr,
 }
 
 type ItemParse = .{
@@ -585,6 +585,17 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
 }
 
 fn parse_type_expr(tokens_in: Vector<Token>, start: Int) TypeParse {
+  // !E shorthand: Result<Void, E>
+  if token_kind_at(tokens_in, start) == .Bang {
+    bang_span := token_span_at(tokens_in, start)
+    err_parsed := parse_type_expr_base(tokens_in, start + 1)
+    diagnostics_out := err_parsed.diagnostics
+    void_ty := TypeExpr.{ kind: .Path(TypePath.{ segments: ["Void"], span: bang_span }), span: bang_span }
+    result_span := span.span_merge(bang_span, err_parsed.ty.span)
+    ty := TypeExpr.{ kind: .Result(void_ty, err_parsed.ty), span: result_span }
+    return .{ ty, next_index: err_parsed.next_index, diagnostics: diagnostics_out }
+  }
+
   parsed := parse_type_expr_base(tokens_in, start)
   if token_kind_at(tokens_in, parsed.next_index) == .Bang {
     bang_i := parsed.next_index + 1
@@ -1683,6 +1694,7 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
     .Tilde => parse_unary_op(tokens_in, start, UnOp.BitNot),
     .Try   => parse_unary_op(tokens_in, start, UnOp.Try),
     .Fn => parse_closure_expr(tokens_in, start),
+    .Collect => parse_collect_expr(tokens_in, start),
     _ => {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
         token_span_at(tokens_in, start),
@@ -1738,6 +1750,57 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   expr := Expr.{
     kind: .Closure(params, return_type, parsed_body.block),
     span: closure_span,
+  }
+  .{ expr, next_index: i, diagnostics: diagnostics_out }
+}
+
+fn parse_collect_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  i := start + 1
+  pattern: String? = .None
+  index: String? = .None
+  iter: Expr? = .None
+  condition: Expr? = .None
+
+  if token_kind_at(tokens_in, i) == .Ident {
+    first_name := token_text_at(tokens_in, i)
+
+    if token_kind_at(tokens_in, i + 1) == .In {
+      pattern = .Some(first_name)
+      i = i + 2
+      parsed_iter := parse_expr_bp(tokens_in, i, 0)
+      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.expr)
+      i = parsed_iter.next_index
+    } else if token_kind_at(tokens_in, i + 1) == .Comma and token_kind_at(tokens_in, i + 2) == .Ident and token_kind_at(tokens_in, i + 3) == .In {
+      pattern = .Some(first_name)
+      index = .Some(token_text_at(tokens_in, i + 2))
+      i = i + 4
+      parsed_iter := parse_expr_bp(tokens_in, i, 0)
+      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.expr)
+      i = parsed_iter.next_index
+    } else {
+      parsed_cond := parse_expr_bp(tokens_in, i, 0)
+      diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+      condition = .Some(parsed_cond.expr)
+      i = parsed_cond.next_index
+    }
+  } else {
+    parsed_cond := parse_expr_bp(tokens_in, i, 0)
+    diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+    condition = .Some(parsed_cond.expr)
+    i = parsed_cond.next_index
+  }
+
+  parsed_body := parse_block(tokens_in, i)
+  diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
+  i = parsed_body.next_index
+
+  collect_span := merge_range(tokens_in, start, i - 1)
+  expr := Expr.{
+    kind: .Collect(CollectExpr.{ pattern, index, iter, condition, body: parsed_body.block }),
+    span: collect_span,
   }
   .{ expr, next_index: i, diagnostics: diagnostics_out }
 }

@@ -25,6 +25,10 @@ fn is_digit_byte(c: Int) Bool {
   c >= 48 and c <= 57
 }
 
+fn is_hex_digit_byte(c: Int) Bool {
+  (c >= 48 and c <= 57) or (c >= 65 and c <= 70) or (c >= 97 and c <= 102)
+}
+
 fn keyword_or_ident(text: String) TokenKind {
   case text {
     "use" => .Use,
@@ -208,6 +212,16 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if is_digit_byte(c) {
+      // Check for hex literal: 0x...
+      if c == 48 and i + 1 < n and Byte.to_int(source[i + 1]) == 120 {
+        i = i + 2
+        for i < n and is_hex_digit_byte(Byte.to_int(source[i])) {
+          i = i + 1
+        }
+        out = out.push(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline))
+        continue
+      }
+
       i = i + 1
       for i < n and is_digit_byte(Byte.to_int(source[i])) {
         i = i + 1

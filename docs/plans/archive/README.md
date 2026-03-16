@@ -88,3 +88,4 @@ Related historical context outside this folder:
 | [boot-parser-gap-closure.md](boot-parser-gap-closure.md) | Close bootstrap parser gaps: richer token coverage, structural AST, robust recovery, multiline continuity, and destructuring imports |
 | [eq-ne-type-propagation.md](eq-ne-type-propagation.md) | Propagate known operand type across `==`/`!=` so context-dependent literals type-check bidirectionally |
 | [boot-compiler-refactor.md](boot-compiler-refactor.md) | Reduce duplication in boot compiler parser/lexer via helper extraction and dead code removal |
+| [boot-parser-test-coverage.md](boot-parser-test-coverage.md) | Boot parser test coverage vs grammar; hex literals, void result `!E`, collect, and edge cases |

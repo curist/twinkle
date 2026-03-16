@@ -185,7 +185,16 @@ pub type ExprKind = {
   Record(Vector<RecordEntry>),
   Variant(String, Vector<Expr>),
   Closure(Vector<Param>, TypeExpr?, Block),
+  Collect(CollectExpr),
   ErrorExpr,
+}
+
+pub type CollectExpr = .{
+  pattern: String?,
+  index: String?,
+  iter: Expr?,
+  condition: Expr?,
+  body: Block,
 }
 
 pub type StringPart = {
