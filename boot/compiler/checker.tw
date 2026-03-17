@@ -185,6 +185,29 @@ fn occurs(id: Int, ty: MonoType, subst: Dict<Int, MonoType>) Bool {
   }
 }
 
+fn contains_meta(ty: MonoType) Bool {
+  case ty {
+    .MetaVar(_) => true,
+    .Vector(inner) => contains_meta(inner),
+    .Dict(k, v) => contains_meta(k) or contains_meta(v),
+    .Function(params, ret) => {
+      for p in params {
+        if contains_meta(p) { return true }
+      }
+      contains_meta(ret)
+    },
+    .Optional(inner) => contains_meta(inner),
+    .Result(ok, err) => contains_meta(ok) or contains_meta(err),
+    .Named(_, args) => {
+      for a in args {
+        if contains_meta(a) { return true }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
 fn unify(a: MonoType, b: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) UnifyOut {
   za := zonk(a, ctx.subst)
   zb := zonk(b, ctx.subst)
@@ -434,6 +457,8 @@ fn synth_inner(expr: Expr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
 
     .Collect(ce) => synth_collect(ce, expr.span, ctx, diags),
 
+    .NamedRecord(type_name, entries) => synth_named_record(type_name, entries, expr.span, ctx, diags),
+
     _ => {
       m := fresh_meta(ctx)
       SynthOut.{
@@ -515,7 +540,24 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, s: span.Span, ctx: Infer
   cur_ctx := callee_r.ctx
   cur_diags := callee_r.diags
 
-  // Synth all args
+  // If callee type is Function(param_tys, ret), check args against param types
+  callee_ty := zonk(callee_r.ty, cur_ctx.subst)
+  case callee_ty {
+    .Function(param_tys, ret_ty) => {
+      if param_tys.len() == args.len() {
+        for i in range(args.len()) {
+          cr := check_expr(args[i], param_tys[i], cur_ctx, cur_diags)
+          cur_ctx = cr.ctx
+          cur_diags = cr.diags
+        }
+        return SynthOut.{ ty: ret_ty, ctx: set_type_map(cur_ctx, s.start, ret_ty), diags: cur_diags }
+      }
+      // Wrong arg count — fall through to synth path for error reporting
+    },
+    _ => {},
+  }
+
+  // Fallback: synth all args and unify callee with fn(arg_tys) -> ?ret
   arg_tys: Vector<MonoType> = []
   for arg in args {
     ar := synth(arg, cur_ctx, cur_diags)
@@ -524,7 +566,6 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, s: span.Span, ctx: Infer
     arg_tys = arg_tys.push(ar.ty)
   }
 
-  // Unify callee with fn(arg_tys) -> ?ret
   ret_m := fresh_meta(cur_ctx)
   cur_ctx = ret_m.ctx
   expected_fn := MonoType.Function(arg_tys, ret_m.ty)
@@ -615,6 +656,42 @@ fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diag
         ty: m.ty,
         ctx: m.ctx,
         diags: br.diags.push(diag.error(s, "cannot access field '${field_name}' on ${ty_to_string(zonked_base)}")),
+      }
+    },
+  }
+}
+
+fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  case resolver.lookup_type(ctx.env, type_name) {
+    .Some(entry) => {
+      // Build type args: fresh MetaVars for generic types
+      cur_ctx := ctx
+      type_args: Vector<MonoType> = []
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Record(_, type_params, _) => {
+              for _ in type_params {
+                m := fresh_meta(cur_ctx)
+                cur_ctx = m.ctx
+                type_args = type_args.push(m.ty)
+              }
+            },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+      expected := MonoType.Named(entry.id, type_args)
+      cr := check_record_lit(entries, expected, s, cur_ctx, diags)
+      SynthOut.{ ty: expected, ctx: set_type_map(cr.ctx, s.start, expected), diags: cr.diags }
+    },
+    .None => {
+      m := fresh_meta(ctx)
+      SynthOut.{
+        ty: m.ty,
+        ctx: m.ctx,
+        diags: diags.push(diag.error(s, "unknown type '${type_name}'")),
       }
     },
   }
@@ -1845,11 +1922,20 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     }
   }
 
-  // Zonk all type_map entries
+  // Zonk all type_map entries and detect unsolved MetaVars
   final_map: Dict<Int, MonoType> = empty_int_mono_dict()
   for key in ctx.type_map.keys() {
     case ctx.type_map[key] {
-      .Some(ty) => { final_map[key] = zonk(ty, ctx.subst) },
+      .Some(ty) => {
+        zonked := zonk(ty, ctx.subst)
+        final_map[key] = zonked
+        if contains_meta(zonked) {
+          cur_diags = cur_diags.push(diag.error(
+            span.Span.{ file_id: 0, start: key, end: key },
+            "cannot infer type for this expression",
+          ))
+        }
+      },
       .None => {},
     }
   }

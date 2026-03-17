@@ -65,6 +65,7 @@ fn expr_kind_name(kind: ast.ExprKind) String {
     .Case(_, _) => "Case",
     .Array(_) => "Array",
     .Record(_) => "Record",
+    .NamedRecord(_, _) => "NamedRecord",
     .Variant(_, _) => "Variant",
     .Closure(_, _, _) => "Closure",
     .Collect(_) => "Collect",
@@ -1178,14 +1179,15 @@ pub fn suite() runner.Suite {
     .test("expr: named record literal Point.{ x: 1, y: 2 }", fn() {
       // Point.{ x: 1, y: 2 } parses as Ident("Point") then postfix .{ record }
       expr := try parse_body_tail("fn f() { Point.{ x: 1, y: 2 } }")
-      // The outer expression should be a Record (via postfix .{ })
+      // The outer expression should be a NamedRecord preserving the type name
       case expr.kind {
-        .Record(entries) => {
+        .NamedRecord(name, entries) => {
+          try assert.str_eq(name, "Point")
           try assert.int_eq(entries.len(), 2)
           try assert.str_eq(entries[0].name, "x")
           assert.str_eq(entries[1].name, "y")
         },
-        _ => assert.fail("expected Record, got ${expr_kind_name(expr.kind)}"),
+        _ => assert.fail("expected NamedRecord, got ${expr_kind_name(expr.kind)}"),
       }
     })
 

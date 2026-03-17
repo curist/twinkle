@@ -662,5 +662,56 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    // ── C5: closure call check mode ──
+    .test("C5 closure call basic", fn() {
+      src := "fn f() Int { g := fn(x: Int) Int { x + 1 }\n g(5) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "g(5)"), "Int")
+      .Ok({})
+    })
+    .test("C5 closure call pushes expected type to record arg", fn() {
+      src := "type Pt = .{ x: Int, y: Int }\nfn f() Int { g := fn(p: Pt) Int { p.x }\n g(.{ x: 1, y: 2 }) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("C5 closure call pushes expected type to variant arg", fn() {
+      src := "fn f() Int { g := fn(o: Int?) Int { case o { .Some(x) => x, .None => 0 } }\n g(.Some(42)) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── C7: named record constructor ──
+    .test("C7 named record constructor synth", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn f() Point { p := Point.{ x: 1, y: 2 }\n p }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("C7 named record missing field", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn f() Point { Point.{ x: 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "missing field 'y'")
+      .Ok({})
+    })
+    .test("C7 named record unknown type", fn() {
+      src := "fn f() Void { Nonexistent.{ x: 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "unknown type")
+      .Ok({})
+    })
+    // ── C8: ambiguous MetaVar detection ──
+    .test("C8 solved MetaVar no diagnostic", fn() {
+      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("C8 unsolved MetaVar produces diagnostic", fn() {
+      src := "fn identity<T>(x: T) T { x }\nfn f() Void { identity(identity(identity([]))) }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("ambiguous") or m.contains("cannot infer") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
     // ── C10: resolver documentation (no behavioral test needed, just smoke) ──
 }

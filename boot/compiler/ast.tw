@@ -183,6 +183,7 @@ pub type ExprKind = {
   Case(Expr, Vector<CaseArm>),
   Array(Vector<Expr>),
   Record(Vector<RecordEntry>),
+  NamedRecord(String, Vector<RecordEntry>),
   Variant(String, Vector<Expr>),
   Closure(Vector<Param>, TypeExpr?, Block),
   Collect(CollectExpr),

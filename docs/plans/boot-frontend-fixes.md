@@ -218,7 +218,7 @@ The `check` entry point only dispatches on `.Function` items; `.Stmt` items are 
 - `x := 42\nprintln(x)` — no error, type map populated
 - `x: Bool = 42` — type mismatch diagnostic
 
-### C5 — `synth_call_general` closure call asymmetry
+### C5 — `synth_call_general` closure call asymmetry ✅
 
 **File:** `checker.tw:514–536`
 
@@ -241,7 +241,7 @@ Currently emits a generic "non-exhaustive match" message without listing which v
 **Tests:**
 - `case shape { .Circle(r) => r }` where Shape has Circle/Rect/UnitSquare → diagnostic mentions `.Rect, .UnitSquare`
 
-### C7 — Named record constructor form (`Point.{ x: 1 }`) in synthesis mode
+### C7 — Named record constructor form (`Point.{ x: 1 }`) in synthesis mode ✅
 
 **File:** `checker.tw:439`
 
@@ -253,7 +253,7 @@ Anonymous `.{ x: 1 }` in synth mode falls through to "cannot synthesize type for
 - `p := Point.{ x: 1, y: 2 }` in synth mode — type is `Named(point_id)`
 - `Point.{ x: 1 }` missing field `y` — diagnostic
 
-### C8 — Ambiguous MetaVar detection (unsolved type variables)
+### C8 — Ambiguous MetaVar detection (unsolved type variables) ✅
 
 The plan (M5) mentions detecting ambiguous types where MetaVars are never resolved. Currently there is no post-function-check pass. `fn f() Void { identity({}) }` would leave an unsolved MetaVar without a diagnostic.
 

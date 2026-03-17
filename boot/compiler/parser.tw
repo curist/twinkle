@@ -1860,7 +1860,18 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
       if token_kind_at(tokens_in, i + 1) == .LBrace {
         parsed_record := parse_record_literal(tokens_in, i, i + 1)
         diagnostics_out = diagnostics_out.concat(parsed_record.diagnostics)
-        expr = parsed_record.expr
+        // If base expr is an Ident (type name), produce NamedRecord
+        case expr.kind {
+          .Ident(name) => {
+            case parsed_record.expr.kind {
+              .Record(entries) => {
+                expr = Expr.{ kind: .NamedRecord(name, entries), span: span.span_merge(expr.span, parsed_record.expr.span) }
+              },
+              _ => { expr = parsed_record.expr },
+            }
+          },
+          _ => { expr = parsed_record.expr },
+        }
         i = parsed_record.next_index
         continue
       }
