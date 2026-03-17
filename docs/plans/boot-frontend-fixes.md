@@ -158,7 +158,7 @@ After a `return` statement, the checker continues type-checking subsequent state
 
 ## Phase 2 — Completeness
 
-### C1 — Type alias expansion in field access and pattern matching
+### C1 — Type alias expansion in field access and pattern matching ✅
 
 **Files:** `checker.tw:557` (synth_field), `checker.tw:785` (check_variant_lit), `checker.tw:1132` (check_variant_pattern)
 
@@ -170,7 +170,7 @@ When a `Named(tid, args)` type resolves to an `Alias`, the checker emits "field 
 - `type Pt = .{ x: Int, y: Int }; type MyPt = Pt` — `p.x` where `p: MyPt` → `Int`
 - `type MaybeInt = Int?` — `case m { .Some(x) => x, .None => 0 }` where `m: MaybeInt` → `Int`
 
-### C2 — `element_type_of` for Iterator and Range
+### C2 — `element_type_of` for Iterator and Range ✅
 
 **File:** `checker.tw:1254–1266`
 
@@ -188,7 +188,7 @@ TypeIds for Range and Iterator are known builtins (Range=TypeId(3), Iterator=Typ
 - `for item in iter` where `iter: Iterator<String>` — `item: String`
 - `for x in 42` — diagnostic
 
-### C3 — `Break`, `Continue`, `Defer`, `Assign` handling in check_stmt
+### C3 — `Break`, `Continue`, `Defer`, `Assign` handling in check_stmt ✅
 
 **File:** `checker.tw:1570`
 
@@ -206,7 +206,7 @@ These are silently dropped by the `_ =>` catch-all. `Break` and `Continue` shoul
 - `x = 42` where `x: Int` — no error
 - `x = "hi"` where `x: Int` — type mismatch diagnostic
 
-### C4 — Top-level statement checking
+### C4 — Top-level statement checking ✅
 
 **File:** `checker.tw:1647–1655`
 
@@ -230,7 +230,7 @@ When the callee is not a direct ident (e.g., a closure stored in a local), args 
 - `f := fn(x: Int) Int { x + 1 }; f(5)` — returns `Int`
 - Closure-as-value passed anonymous record literal — should work with the fix
 
-### C6 — Exhaustiveness: list missing variants in diagnostic
+### C6 — Exhaustiveness: list missing variants in diagnostic ✅
 
 **File:** `checker.tw:1177`
 
@@ -263,7 +263,7 @@ The plan (M5) mentions detecting ambiguous types where MetaVars are never resolv
 - `identity(x)` where `identity<T>` and `x` has no type context — diagnostic
 - `identity(42)` — no diagnostic (MetaVar solved to Int)
 
-### C9 — Latent `Var` hazard in unification
+### C9 — Latent `Var` hazard in unification ✅
 
 **File:** `checker.tw:294–304`
 
@@ -274,7 +274,7 @@ If a raw `Var("T")` reaches `unify` (e.g., from an uninstantiated field type or 
 **Tests:**
 - Ensure no existing tests produce "uninstantiated type variable" errors (regression guard)
 
-### C10 — Resolver: document intentional omissions
+### C10 — Resolver: document intentional omissions ✅
 
 **File:** `resolver.tw`
 

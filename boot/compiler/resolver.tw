@@ -262,6 +262,9 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
           seen_fns = seen_fns.push(decl.name)
         }
       },
+      // Use/Stmt items: imports deferred to multi-module Phase E;
+      // top-level statements don't need name resolution.
+      // Note: seen_fns is local; user functions intentionally shadow prelude functions.
       _ => {},
     }
   }
@@ -280,7 +283,7 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
   for item in module.items {
     case item {
       .Type(decl) => { type_decls = type_decls.push(decl) },
-      _ => {},
+      _ => {},  // Use/Function/Stmt items handled separately
     }
   }
   sorted := topo_sort_type_decls(type_decls)

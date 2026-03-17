@@ -588,4 +588,79 @@ pub fn suite() runner.Suite {
       try assert.is_true(msgs[0].contains("does not match"))
       .Ok({})
     })
+    // ── C1: type alias expansion ──
+    .test("C1 alias field access", fn() {
+      src := "type Pt = .{ x: Int, y: Int }\ntype MyPt = Pt\nfn get_x(p: MyPt) Int { p.x }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "p.x"), "Int")
+      .Ok({})
+    })
+    .test("C1 alias variant pattern match", fn() {
+      src := "type MaybeInt = Int?\nfn unwrap(m: MaybeInt) Int {\ncase m { .Some(x) => x, .None => 0 }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── C2: element_type_of for Iterator and Range ──
+    .test("C2 for over range produces Int", fn() {
+      src := "fn f() Int {\nx := 0\nfor i in range(10) { x = i }\nx\n}"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("C2 for over non-iterable produces diagnostic", fn() {
+      src := "fn f() Void { for x in 42 { x } }"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("cannot iterate"))
+      .Ok({})
+    })
+    // ── C3: break, continue, defer, assign ──
+    .test("C3 break in for loop ok", fn() {
+      src := "fn f() Void {\nfor i in range(10) { if i > 5 { break } }\n}"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("C3 defer synths body", fn() {
+      src := "fn f() Void { defer 42 + true }"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
+    })
+    .test("C3 assign checks type", fn() {
+      src := "fn f() Void {\nx := 42\nx = \"hi\"\n}"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("type mismatch"))
+      .Ok({})
+    })
+    .test("C3 assign matching type ok", fn() {
+      src := "fn f() Void {\nx := 42\nx = 99\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── C4: top-level statement checking ──
+    .test("C4 top-level let populates type map", fn() {
+      src := "x := 42"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      .Ok({})
+    })
+    .test("C4 top-level type mismatch", fn() {
+      src := "x: Bool = 42"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("type mismatch"))
+      .Ok({})
+    })
+    // ── C6: exhaustiveness lists missing variants ──
+    .test("C6 non-exhaustive lists missing variants", fn() {
+      src := "type Shape = { Circle, Rect, UnitSquare }\nfn f(s: Shape) Int {\ncase s { .Circle => 1 }\n}"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("Rect"))
+      .Ok({})
+    })
+    // ── C9: Var in unification ──
+    .test("C9 no uninstantiated Var in existing tests", fn() {
+      // Regression guard: basic generic call should not produce Var errors
+      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── C10: resolver documentation (no behavioral test needed, just smoke) ──
 }
