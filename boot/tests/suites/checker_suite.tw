@@ -24,30 +24,15 @@ fn builtin_sig(name: String, params: Vector<String>, param_tys: Vector<resolver.
 }
 
 fn test_env() resolver.ResolvedEnv {
-  env := resolver.empty_env()
-  // range(n) -> Vector<Int>  (simplified — actually Range, but we treat it as iterable of Int)
-  env.functions = env.functions.push(
-    builtin_sig("range", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int)))
-  )
-  // range_from(start, end) -> Vector<Int>
-  env.functions = env.functions.push(
-    builtin_sig("range_from", ["start", "end"], [resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int)))
-  )
-  // error(msg) -> Never
-  env.functions = env.functions.push(
-    builtin_sig("error", ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never))
-  )
-  // println(s) -> Void
-  env.functions = env.functions.push(
-    builtin_sig("println", ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void))
-  )
-  // int_to_string(n) -> String
-  env.functions = env.functions.push(
-    builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String))
-  )
-  // Register builtin methods for interpolation checking
-  env = resolver.register_builtin_methods(env)
-  env
+  fns: Vector<resolver.FunctionSig> = [
+    builtin_sig("range", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int))),
+    builtin_sig("range_from", ["start", "end"], [resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int))),
+    builtin_sig("error", ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
+    builtin_sig("println", ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
+  ]
+  env := resolver.env_with_functions(resolver.empty_env(), fns)
+  resolver.register_builtin_methods(env)
 }
 
 fn check_src_with_builtins(src: String) checker.CheckResult {

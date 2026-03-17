@@ -9,7 +9,7 @@ use lib.source.diagnostic as diag
 use .resolver.{
   type MonoType, type ResolvedEnv, type FunctionSig, type ResolvedTypeDef,
   type TypeId, type TypeEntry, type ResolvedField, type ResolvedVariant,
-  lookup_method,
+  lookup_method, ty_to_string, find_type_name, lookup_type, lookup_type_def,
 }
 use .ast.{
   type Module, type Item, type FunctionDecl, type Param,
@@ -337,6 +337,14 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
   }
 }
 
+fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+  m: Dict<String, MonoType> = Dict.new()
+  for i in range(type_params.len()) {
+    if i < type_args.len() { m[type_params[i]] = type_args[i] }
+  }
+  m
+}
+
 type InstOut = .{ params: Vector<MonoType>, ret: MonoType, ctx: InferCtx }
 
 fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
@@ -359,44 +367,6 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
   }
 
   InstOut.{ params: inst_params, ret: inst_ret, ctx: cur_ctx }
-}
-
-fn ty_to_string(ty: MonoType) String {
-  case ty {
-    .Int => "Int",
-    .Float => "Float",
-    .Bool => "Bool",
-    .Byte => "Byte",
-    .String => "String",
-    .Void => "Void",
-    .Never => "Never",
-    .Var(n) => n,
-    .MetaVar(id) => "?${id}",
-    .Vector(inner) => "Vector<${ty_to_string(inner)}>",
-    .Dict(k, v) => "Dict<${ty_to_string(k)}, ${ty_to_string(v)}>",
-    .Optional(inner) => "${ty_to_string(inner)}?",
-    .Result(ok, err) => "Result<${ty_to_string(ok)}, ${ty_to_string(err)}>",
-    .Named(tid, args) => {
-      if args.len() == 0 {
-        "Named(${tid.id})"
-      } else {
-        joined := ""
-        for a, i in args {
-          if i > 0 { joined = "${joined}, " }
-          joined = "${joined}${ty_to_string(a)}"
-        }
-        "Named(${tid.id})<${joined}>"
-      }
-    },
-    .Function(params, ret) => {
-      joined := ""
-      for p, i in params {
-        if i > 0 { joined = "${joined}, " }
-        joined = "${joined}${ty_to_string(p)}"
-      }
-      "fn(${joined}) ${ty_to_string(ret)}"
-    },
-  }
 }
 
 // ── Synthesis ───────────────────────────────────────────────────────
@@ -537,13 +507,39 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, s: span.Span, ctx: Infer
 
 // ── Records, Fields, Variants ───────────────────────────────────────
 
-fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
-  for entry in env.types {
-    if entry.id.id == tid.id {
-      return entry.def
-    }
+type VariantInfo = .{
+  field_types: Vector<MonoType>,
+}
+
+// Resolve a variant name against a zonked type, returning substituted field types.
+// Returns .Ok(info) if found, .Err(message) on error, .None if not a Named sum.
+fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
+  case zonked {
+    .Named(tid, type_args) => {
+      case lookup_type_def(env, tid) {
+        .Some(def) => {
+          case def {
+            .Sum(_, type_params, variants) => {
+              var_map := build_var_map(type_params, type_args)
+              for v in variants {
+                if v.name == name {
+                  field_types: Vector<MonoType> = []
+                  for ft in v.fields {
+                    field_types = field_types.push(subst_vars(ft, var_map))
+                  }
+                  return .Some(.Ok(VariantInfo.{ field_types: field_types }))
+                }
+              }
+              .Some(.Err("unknown variant .${name}"))
+            },
+            _ => .None,
+          }
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
   }
-  .None
 }
 
 fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
@@ -556,13 +552,7 @@ fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diag
         .Some(def) => {
           case def {
             .Record(_, type_params, fields) => {
-              // Build var map for generic records
-              var_map: Dict<String, MonoType> = Dict.new()
-              for i in range(type_params.len()) {
-                if i < type_args.len() {
-                  var_map[type_params[i]] = type_args[i]
-                }
-              }
+              var_map := build_var_map(type_params, type_args)
               // Find the field
               for f in fields {
                 if f.name == field_name {
@@ -610,12 +600,7 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Sp
         .Some(def) => {
           case def {
             .Record(_, type_params, fields) => {
-              var_map: Dict<String, MonoType> = Dict.new()
-              for i in range(type_params.len()) {
-                if i < type_args.len() {
-                  var_map[type_params[i]] = type_args[i]
-                }
-              }
+              var_map := build_var_map(type_params, type_args)
               cur_ctx := ctx
               cur_diags := diags
               // Check each provided field
@@ -745,50 +730,32 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
   }
 
   // User-defined sum types
-  case zonked {
-    .Named(tid, type_args) => {
-      case lookup_type_def(ctx.env, tid) {
-        .Some(def) => {
-          case def {
-            .Sum(_, type_params, variants) => {
-              var_map: Dict<String, MonoType> = Dict.new()
-              for i in range(type_params.len()) {
-                if i < type_args.len() {
-                  var_map[type_params[i]] = type_args[i]
-                }
-              }
-              for v in variants {
-                if v.name == name {
-                  if args.len() != v.fields.len() {
-                    return CheckOut.{
-                      ctx: ctx,
-                      diags: diags.push(diag.error(s, ".${name} expects ${v.fields.len()} arguments, got ${args.len()}")),
-                    }
-                  }
-                  cur_ctx := ctx
-                  cur_diags := diags
-                  for i in range(args.len()) {
-                    field_ty := subst_vars(v.fields[i], var_map)
-                    ar := synth(args[i], cur_ctx, cur_diags)
-                    u := unify(ar.ty, field_ty, args[i].span, ar.ctx, ar.diags)
-                    cur_ctx = u.ctx
-                    cur_diags = u.diags
-                  }
-                  return CheckOut.{ ctx: cur_ctx, diags: cur_diags }
-                }
-              }
-              return CheckOut.{
-                ctx: ctx,
-                diags: diags.push(diag.error(s, "unknown variant .${name}")),
-              }
-            },
-            _ => {},
+  case resolve_variant_info(name, zonked, ctx.env) {
+    .Some(result) => {
+      case result {
+        .Ok(info) => {
+          if args.len() != info.field_types.len() {
+            return CheckOut.{
+              ctx: ctx,
+              diags: diags.push(diag.error(s, ".${name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
+            }
           }
+          cur_ctx := ctx
+          cur_diags := diags
+          for i in range(args.len()) {
+            ar := synth(args[i], cur_ctx, cur_diags)
+            u := unify(ar.ty, info.field_types[i], args[i].span, ar.ctx, ar.diags)
+            cur_ctx = u.ctx
+            cur_diags = u.diags
+          }
+          return CheckOut.{ ctx: cur_ctx, diags: cur_diags }
         },
-        .None => {},
+        .Err(msg) => {
+          return CheckOut.{ ctx: ctx, diags: diags.push(diag.error(s, msg)) }
+        },
       }
     },
-    _ => {},
+    .None => {},
   }
 
   CheckOut.{
@@ -1096,46 +1063,31 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
   }
 
   // User-defined sum
-  case zonked {
-    .Named(tid, type_args) => {
-      case lookup_type_def(ctx.env, tid) {
-        .Some(def) => {
-          case def {
-            .Sum(_, type_params, variants) => {
-              var_map: Dict<String, MonoType> = Dict.new()
-              for i in range(type_params.len()) {
-                if i < type_args.len() {
-                  var_map[type_params[i]] = type_args[i]
-                }
-              }
-              for v in variants {
-                if v.name == name {
-                  if sub_pats.len() != v.fields.len() {
-                    return CheckOut.{
-                      ctx: ctx,
-                      diags: diags.push(diag.error(s, ".${name} pattern expects ${v.fields.len()} bindings, got ${sub_pats.len()}")),
-                    }
-                  }
-                  cur_ctx := ctx
-                  cur_diags := diags
-                  for i in range(sub_pats.len()) {
-                    field_ty := subst_vars(v.fields[i], var_map)
-                    pr := check_pattern(sub_pats[i], field_ty, cur_ctx, cur_diags)
-                    cur_ctx = pr.ctx
-                    cur_diags = pr.diags
-                  }
-                  return CheckOut.{ ctx: cur_ctx, diags: cur_diags }
-                }
-              }
-              return CheckOut.{ ctx: ctx, diags: diags.push(diag.error(s, "unknown variant .${name}")) }
-            },
-            _ => {},
+  case resolve_variant_info(name, zonked, ctx.env) {
+    .Some(result) => {
+      case result {
+        .Ok(info) => {
+          if sub_pats.len() != info.field_types.len() {
+            return CheckOut.{
+              ctx: ctx,
+              diags: diags.push(diag.error(s, ".${name} pattern expects ${info.field_types.len()} bindings, got ${sub_pats.len()}")),
+            }
           }
+          cur_ctx := ctx
+          cur_diags := diags
+          for i in range(sub_pats.len()) {
+            pr := check_pattern(sub_pats[i], info.field_types[i], cur_ctx, cur_diags)
+            cur_ctx = pr.ctx
+            cur_diags = pr.diags
+          }
+          return CheckOut.{ ctx: cur_ctx, diags: cur_diags }
         },
-        .None => {},
+        .Err(msg) => {
+          return CheckOut.{ ctx: ctx, diags: diags.push(diag.error(s, msg)) }
+        },
       }
     },
-    _ => {},
+    .None => {},
   }
 
   CheckOut.{ ctx: ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) }
@@ -1309,58 +1261,65 @@ fn is_numeric(ty: MonoType) Bool {
 
 fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   case op {
-    .Assign => {
-      // lhs must be an ident (rebind)
-      lr := synth(lhs, ctx, diags)
-      rr := synth(rhs, lr.ctx, lr.diags)
-      u := unify(rr.ty, lr.ty, s, rr.ctx, rr.diags)
-      SynthOut.{ ty: MonoType.Void, ctx: u.ctx, diags: u.diags }
-    },
+    .Assign => synth_assign_op(lhs, rhs, s, ctx, diags),
     .LogicalAnd => synth_bool_op(lhs, rhs, s, ctx, diags),
     .LogicalOr => synth_bool_op(lhs, rhs, s, ctx, diags),
     .Eq => synth_eq_op(lhs, rhs, s, ctx, diags),
     .Ne => synth_eq_op(lhs, rhs, s, ctx, diags),
-    .Range => {
-      lr := synth(lhs, ctx, diags)
-      u1 := unify(lr.ty, MonoType.Int, lhs.span, lr.ctx, lr.diags)
-      rr := synth(rhs, u1.ctx, u1.diags)
-      u2 := unify(rr.ty, MonoType.Int, rhs.span, rr.ctx, rr.diags)
-      // Range returns a Range type — but for simplicity, use Named with range TypeId
-      // For now just use Vector<Int> as range produces an iterable
-      SynthOut.{ ty: MonoType.Vector(MonoType.Int), ctx: u2.ctx, diags: u2.diags }
-    },
-    _ => {
-      // Arithmetic: Add, Sub, Mul, Div, Mod
-      // Comparison: Lt, Le, Gt, Ge
-      // Bitwise: BitAnd, BitOr, BitXor
-      lr := synth(lhs, ctx, diags)
-      rr := synth(rhs, lr.ctx, lr.diags)
-      u := unify(lr.ty, rr.ty, s, rr.ctx, rr.diags)
-
-      is_comparison := case op {
-        .Lt => true, .Le => true, .Gt => true, .Ge => true,
-        _ => false,
-      }
-
-      result_ty := if is_comparison { MonoType.Bool } else { lr.ty }
-
-      // Check operand types make sense
-      zonked := zonk(lr.ty, u.ctx.subst)
-      err_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
-        u.diags
-      } else {
-        // String supports + (concat)
-        case op {
-          .Add => {
-            case zonked { .String => u.diags, _ => u.diags.push(diag.error(s, "operator not supported for ${ty_to_string(zonked)}")) }
-          },
-          _ => u.diags.push(diag.error(s, "operator not supported for ${ty_to_string(zonked)}")),
-        }
-      }
-
-      SynthOut.{ ty: result_ty, ctx: u.ctx, diags: err_diags }
-    },
+    .Range => synth_range_op(lhs, rhs, s, ctx, diags),
+    .Lt => synth_cmp_op(lhs, rhs, s, ctx, diags),
+    .Le => synth_cmp_op(lhs, rhs, s, ctx, diags),
+    .Gt => synth_cmp_op(lhs, rhs, s, ctx, diags),
+    .Ge => synth_cmp_op(lhs, rhs, s, ctx, diags),
+    _ => synth_arith_op(op, lhs, rhs, s, ctx, diags),
   }
+}
+
+fn synth_assign_op(lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  lr := synth(lhs, ctx, diags)
+  rr := synth(rhs, lr.ctx, lr.diags)
+  u := unify(rr.ty, lr.ty, s, rr.ctx, rr.diags)
+  SynthOut.{ ty: MonoType.Void, ctx: u.ctx, diags: u.diags }
+}
+
+fn synth_range_op(lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  lr := synth(lhs, ctx, diags)
+  u1 := unify(lr.ty, MonoType.Int, lhs.span, lr.ctx, lr.diags)
+  rr := synth(rhs, u1.ctx, u1.diags)
+  u2 := unify(rr.ty, MonoType.Int, rhs.span, rr.ctx, rr.diags)
+  SynthOut.{ ty: MonoType.Vector(MonoType.Int), ctx: u2.ctx, diags: u2.diags }
+}
+
+fn synth_cmp_op(lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  lr := synth(lhs, ctx, diags)
+  rr := synth(rhs, lr.ctx, lr.diags)
+  u := unify(lr.ty, rr.ty, s, rr.ctx, rr.diags)
+  zonked := zonk(lr.ty, u.ctx.subst)
+  err_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
+    u.diags
+  } else {
+    u.diags.push(diag.error(s, "comparison not supported for ${ty_to_string(zonked)}"))
+  }
+  SynthOut.{ ty: MonoType.Bool, ctx: u.ctx, diags: err_diags }
+}
+
+fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  lr := synth(lhs, ctx, diags)
+  rr := synth(rhs, lr.ctx, lr.diags)
+  u := unify(lr.ty, rr.ty, s, rr.ctx, rr.diags)
+  zonked := zonk(lr.ty, u.ctx.subst)
+  err_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
+    u.diags
+  } else {
+    // String supports + (concat)
+    case op {
+      .Add => {
+        case zonked { .String => u.diags, _ => u.diags.push(diag.error(s, "operator not supported for ${ty_to_string(zonked)}")) }
+      },
+      _ => u.diags.push(diag.error(s, "operator not supported for ${ty_to_string(zonked)}")),
+    }
+  }
+  SynthOut.{ ty: lr.ty, ctx: u.ctx, diags: err_diags }
 }
 
 fn synth_bool_op(lhs: Expr, rhs: Expr, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
@@ -1468,7 +1427,7 @@ fn is_interpolatable(ty: MonoType, env: ResolvedEnv) Bool {
     .String => true,
     .Named(tid, _) => {
       // Check if this named type has a to_string method registered
-      case find_type_name_by_id(env, tid) {
+      case find_type_name(env, tid) {
         .Some(name) => {
           case lookup_method(env, name, "to_string") {
             .Some(_) => true,
@@ -1484,14 +1443,6 @@ fn is_interpolatable(ty: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-fn find_type_name_by_id(env: ResolvedEnv, tid: TypeId) String? {
-  for i in range(env.type_names.len()) {
-    if env.types[i].id.id == tid.id {
-      return .Some(env.type_names[i])
-    }
-  }
-  .None
-}
 
 fn synth_string_interp(parts: Vector<StringPart>, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   cur_ctx := ctx

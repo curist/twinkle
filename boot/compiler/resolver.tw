@@ -78,10 +78,12 @@ pub type ResolvedEnv = .{
   type_names: Vector<String>,
   functions: Vector<FunctionSig>,
   methods: Dict<String, Vector<MethodEntry>>,
+  type_index: Dict<String, Int>,
+  func_index: Dict<String, Int>,
 }
 
 pub fn empty_env() ResolvedEnv {
-  ResolvedEnv.{ types: [], type_names: [], functions: [], methods: Dict.new() }
+  ResolvedEnv.{ types: [], type_names: [], functions: [], methods: Dict.new(), type_index: Dict.new(), func_index: Dict.new() }
 }
 
 pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) String? {
@@ -112,6 +114,28 @@ fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: Strin
     .None => { methods[type_name] = entries },
   }
   methods
+}
+
+pub fn env_with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector<String>) ResolvedEnv {
+  // Rebuild type index from scratch
+  idx: Dict<String, Int> = Dict.new()
+  for i in range(type_names.len()) {
+    idx[type_names[i]] = i
+  }
+  ResolvedEnv.{ types: types, type_names: type_names, functions: env.functions, methods: env.methods, type_index: idx, func_index: env.func_index }
+}
+
+pub fn env_with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) ResolvedEnv {
+  // Rebuild func index from scratch
+  idx: Dict<String, Int> = Dict.new()
+  for i in range(functions.len()) {
+    idx[functions[i].name] = i
+  }
+  ResolvedEnv.{ types: env.types, type_names: env.type_names, functions: functions, methods: env.methods, type_index: env.type_index, func_index: idx }
+}
+
+pub fn env_with_methods(env: ResolvedEnv, methods: Dict<String, Vector<MethodEntry>>) ResolvedEnv {
+  ResolvedEnv.{ types: env.types, type_names: env.type_names, functions: env.functions, methods: methods, type_index: env.type_index, func_index: env.func_index }
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
@@ -164,44 +188,29 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("take", "take"), me("to_vector", "to_vector"),
   ])
 
-  ResolvedEnv.{
-    types: env.types,
-    type_names: env.type_names,
-    functions: env.functions,
-    methods: m,
-  }
+  env_with_methods(env, m)
 }
 
 pub fn lookup_type(env: ResolvedEnv, name: String) TypeEntry? {
-  for i in range(env.type_names.len()) {
-    if env.type_names[i] == name {
-      return .Some(env.types[i])
-    }
+  case env.type_index[name] {
+    .Some(i) => .Some(env.types[i]),
+    .None => .None,
   }
-  .None
 }
 
 pub fn lookup_function(env: ResolvedEnv, name: String) FunctionSig? {
-  for f in env.functions {
-    if f.name == name {
-      return .Some(f)
-    }
+  case env.func_index[name] {
+    .Some(i) => .Some(env.functions[i]),
+    .None => .None,
   }
-  .None
 }
 
 pub fn has_type(env: ResolvedEnv, name: String) Bool {
-  for n in env.type_names {
-    if n == name { return true }
-  }
-  false
+  env.type_index.has(name)
 }
 
 pub fn has_function(env: ResolvedEnv, name: String) Bool {
-  for f in env.functions {
-    if f.name == name { return true }
-  }
-  false
+  env.func_index.has(name)
 }
 
 pub type ResolveResult = .{
@@ -239,12 +248,7 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
         } else {
           tid := TypeId.{ id: cur.types.len() }
           entry := TypeEntry.{ id: tid, def: .None, span: decl.span }
-          cur = ResolvedEnv.{
-            types: cur.types.push(entry),
-            type_names: cur.type_names.push(decl.name),
-            functions: cur.functions,
-            methods: cur.methods,
-          }
+          cur = env_with_types(cur, cur.types.push(entry), cur.type_names.push(decl.name))
         }
       },
       .Function(decl) => {
@@ -323,12 +327,7 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
       }
     }
   }
-  ResolvedEnv.{
-    types: env.types,
-    type_names: env.type_names,
-    functions: env.functions,
-    methods: m,
-  }
+  env_with_methods(env, m)
 }
 
 fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
@@ -392,7 +391,7 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
       new_types = new_types.push(env.types[i])
     }
   }
-  ResolvedEnv.{ types: new_types, type_names: env.type_names, functions: env.functions, methods: env.methods }
+  env_with_types(env, new_types, env.type_names)
 }
 
 fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
@@ -436,12 +435,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
     params: param_types,
     ret: ret_ty,
   }
-  new_env := ResolvedEnv.{
-    types: env.types,
-    type_names: env.type_names,
-    functions: env.functions.push(sig),
-    methods: env.methods,
-  }
+  new_env := env_with_functions(env, env.functions.push(sig))
 
   ResolveResult.{ env: new_env, diagnostics: diags }
 }
@@ -710,10 +704,10 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
     .None => {},
   }
 
-  // Already done or in-progress (cycle)
-  if cur_state > 0 {
-    return TopoState.{ state: state, order: order }
-  }
+  // Already visited — no work to do
+  if cur_state == 2 { return TopoState.{ state: state, order: order } }
+  // Cycle detected — bail out; circular aliases reported in Pass 3
+  if cur_state == 1 { return TopoState.{ state: state, order: order } }
 
   // Mark in-progress
   new_state := state
@@ -735,9 +729,14 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
   TopoState.{ state: new_state, order: new_order }
 }
 
+type TypeRefs = .{
+  indices: Vector<Int>,
+  seen: Dict<Int, Bool>,
+}
+
 // Collect indices of type names referenced by a type declaration's definition.
 fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
-  refs: Vector<Int> = []
+  refs := TypeRefs.{ indices: [], seen: Dict.new() }
   case decl.def {
     .Record(fields) => {
       for f in fields {
@@ -756,10 +755,10 @@ fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
     },
     .ErrorDef(_) => {},
   }
-  refs
+  refs.indices
 }
 
-fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, acc: Vector<Int>) Vector<Int> {
+fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, acc: TypeRefs) TypeRefs {
   result := acc
   case ty.kind {
     .Path(path) => {
@@ -805,18 +804,13 @@ fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, acc: Vector<Int>)
   result
 }
 
-fn add_name_index(name: String, names: Vector<String>, acc: Vector<Int>) Vector<Int> {
+fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
   for i in range(names.len()) {
     if names[i] == name {
-      // Check not already in acc
-      already := false
-      for existing in acc {
-        if existing == i { already = true }
-      }
-      if !already {
-        return acc.push(i)
-      }
-      return acc
+      if acc.seen.has(i) { return acc }
+      result := acc
+      result.seen[i] = true
+      return TypeRefs.{ indices: result.indices.push(i), seen: result.seen }
     }
   }
   acc
@@ -831,7 +825,7 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<Diagnostic>) Vector<D
       .Some(def) => {
         case def {
           .Alias(aname, _, _) => {
-            if is_circular_alias(env, aname, []) {
+            if is_circular_alias(env, aname, Dict.new()) {
               result = result.push(diag.error(
                 env.types[i].span,
                 "circular type alias: ${aname}",
@@ -847,11 +841,10 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<Diagnostic>) Vector<D
   result
 }
 
-fn is_circular_alias(env: ResolvedEnv, name: String, visited: Vector<String>) Bool {
-  for v in visited {
-    if v == name { return true }
-  }
-  new_visited := visited.push(name)
+fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>) Bool {
+  if visited.has(name) { return true }
+  new_visited := visited
+  new_visited[name] = true
 
   case lookup_type(env, name) {
     .Some(entry) => {
@@ -879,7 +872,54 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Vector<String>) Bo
   }
 }
 
-fn find_type_name(env: ResolvedEnv, tid: TypeId) String? {
+pub fn ty_to_string(ty: MonoType) String {
+  case ty {
+    .Int => "Int",
+    .Float => "Float",
+    .Bool => "Bool",
+    .Byte => "Byte",
+    .String => "String",
+    .Void => "Void",
+    .Never => "Never",
+    .Var(n) => n,
+    .MetaVar(id) => "?${id}",
+    .Vector(inner) => "Vector<${ty_to_string(inner)}>",
+    .Dict(k, v) => "Dict<${ty_to_string(k)}, ${ty_to_string(v)}>",
+    .Optional(inner) => "${ty_to_string(inner)}?",
+    .Result(ok, err) => "Result<${ty_to_string(ok)}, ${ty_to_string(err)}>",
+    .Named(tid, args) => {
+      if args.len() == 0 {
+        "Named(${tid.id})"
+      } else {
+        joined := ""
+        for a, i in args {
+          if i > 0 { joined = "${joined}, " }
+          joined = "${joined}${ty_to_string(a)}"
+        }
+        "Named(${tid.id})<${joined}>"
+      }
+    },
+    .Function(params, ret) => {
+      joined := ""
+      for p, i in params {
+        if i > 0 { joined = "${joined}, " }
+        joined = "${joined}${ty_to_string(p)}"
+      }
+      "fn(${joined}) ${ty_to_string(ret)}"
+    },
+  }
+}
+
+pub fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
+  for entry in env.types {
+    if entry.id.id == tid.id {
+      return entry.def
+    }
+  }
+  .None
+}
+
+pub fn find_type_name(env: ResolvedEnv, tid: TypeId) String? {
   for i in range(env.type_names.len()) {
     if env.types[i].id.id == tid.id {
       return .Some(env.type_names[i])
