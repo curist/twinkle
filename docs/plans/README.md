@@ -59,3 +59,4 @@ from stage0, bootstrapping sequence)
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [parser-diagnostic-parity.md](parser-diagnostic-parity.md) | Align parser diagnostic precision and tests between Rust and boot parsers |
+| [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
