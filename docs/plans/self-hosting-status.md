@@ -23,7 +23,7 @@ snapshot.
 
 | Phase | Scope | Status | Notes |
 |------|-------|--------|-------|
-| A | Frontend (lexer/parser/resolver/checker) | In Progress | Lexer done. Parser done. Resolver functional with arity checks, topo-sorted type resolution, circular alias detection, and full error collection (`153c0c2`). Type checker not started. |
+| A | Frontend (lexer/parser/resolver/checker) | In Progress | Lexer done. Parser done. Resolver functional with arity checks, topo-sorted type resolution, circular alias detection, and full error collection. Type checker M1–M9 done (59 tests); blocked on resolver method registry for interpolation validation. |
 | B | Core IR lowering + monomorphization | Planned | No committed self-hosted Core IR pipeline yet. |
 | C | ANF lowering + optimization | Planned | No committed self-hosted ANF/opt pipeline yet. |
 | D | Codegen + linker | Planned | Representation/layout redesign is documented in [self-hosting.md](self-hosting.md). |
@@ -37,7 +37,8 @@ snapshot.
 |------|--------|------|
 | Frontend gap closure | Planned | [boot-parser-gap-closure.md](boot-parser-gap-closure.md) |
 | Resolver fixes | Done | [archive/boot-resolver-fixes.md](archive/boot-resolver-fixes.md) |
-| Type checker | Planned | [boot-type-checker.md](boot-type-checker.md) |
+| Type checker | In Progress | [boot-type-checker.md](boot-type-checker.md) — M1–M9 done, interpolation blocked on method registry |
+| Resolver method registry | Planned | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) — needed for interpolation + method call checking |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 
 ---
