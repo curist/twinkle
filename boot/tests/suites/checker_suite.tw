@@ -1,0 +1,497 @@
+use tests.runner
+use tests.assert
+use compiler.parser
+use compiler.resolver
+use compiler.checker
+use tests.suites.resolver_suite as rsuite
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+fn check_src(src: String) checker.CheckResult {
+  parsed := parser.parse(src, 0)
+  resolved := resolver.resolve(parsed.value, resolver.empty_env())
+  checker.check(parsed.value, resolved.env)
+}
+
+fn builtin_sig(name: String, params: Vector<String>, param_tys: Vector<resolver.MonoType>, ret: resolver.MonoType?) resolver.FunctionSig {
+  resolver.FunctionSig.{
+    name: name,
+    type_params: [],
+    param_names: params,
+    params: param_tys,
+    ret: ret,
+  }
+}
+
+fn test_env() resolver.ResolvedEnv {
+  env := resolver.empty_env()
+  // range(n) -> Vector<Int>  (simplified — actually Range, but we treat it as iterable of Int)
+  env.functions = env.functions.push(
+    builtin_sig("range", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int)))
+  )
+  // range_from(start, end) -> Vector<Int>
+  env.functions = env.functions.push(
+    builtin_sig("range_from", ["start", "end"], [resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(resolver.MonoType.Int)))
+  )
+  // error(msg) -> Never
+  env.functions = env.functions.push(
+    builtin_sig("error", ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never))
+  )
+  // println(s) -> Void
+  env.functions = env.functions.push(
+    builtin_sig("println", ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void))
+  )
+  // int_to_string(n) -> String
+  env.functions = env.functions.push(
+    builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String))
+  )
+  // Register builtin methods for interpolation checking
+  env = resolver.register_builtin_methods(env)
+  env
+}
+
+fn check_src_with_builtins(src: String) checker.CheckResult {
+  parsed := parser.parse(src, 0)
+  resolved := resolver.resolve(parsed.value, test_env())
+  checker.check(parsed.value, resolved.env)
+}
+
+fn check_ok_builtins(src: String) Result<checker.CheckResult, String> {
+  r := check_src_with_builtins(src)
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+  }
+  .Ok(r)
+}
+
+fn check_errs_builtins(src: String) Result<Vector<String>, String> {
+  r := check_src_with_builtins(src)
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+  msgs: Vector<String> = []
+  for d in r.diagnostics {
+    msgs = msgs.push(d.message)
+  }
+  .Ok(msgs)
+}
+
+fn check_ok(src: String) Result<checker.CheckResult, String> {
+  r := check_src(src)
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+  }
+  .Ok(r)
+}
+
+fn check_errs(src: String) Result<Vector<String>, String> {
+  r := check_src(src)
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+  msgs: Vector<String> = []
+  for d in r.diagnostics {
+    msgs = msgs.push(d.message)
+  }
+  .Ok(msgs)
+}
+
+fn type_at(result: checker.CheckResult, src: String, needle: String) Result<String, String> {
+  // Find the offset of needle in src, then look it up in type_map
+  offset := find_offset(src, needle)
+  case offset {
+    .Some(off) => {
+      case result.type_map[off] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}'"),
+      }
+    },
+    .None => .Err("'${needle}' not found in source"),
+  }
+}
+
+fn find_offset(src: String, needle: String) Int? {
+  if needle.len() > src.len() { return .None }
+  limit := src.len() - needle.len()
+  for i in range(limit + 1) {
+    if src.slice(i, i + needle.len()) == needle {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+// ── Suite ────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("checker")
+    // ── M1: Literals ──
+    .test("int literal", fn() {
+      src := "fn answer() Int { 42 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      .Ok({})
+    })
+    .test("string literal", fn() {
+      src := "fn greeting() String { \"hello\" }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "\"hello\""), "String")
+      .Ok({})
+    })
+    .test("bool literal", fn() {
+      src := "fn flag() Bool { true }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "true"), "Bool")
+      .Ok({})
+    })
+    .test("float literal", fn() {
+      src := "fn ratio() Float { 3.14 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "3.14"), "Float")
+      .Ok({})
+    })
+    .test("return type mismatch", fn() {
+      src := "fn answer() String { 42 }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // ── M2: Let, Ident, Call ──
+    .test("annotated let", fn() {
+      src := "fn f() Int { x: Int = 5\n x }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "5"), "Int")
+      .Ok({})
+    })
+    .test("inferred let", fn() {
+      src := "fn f() Int { x := 42\n x }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      .Ok({})
+    })
+    .test("annotated let type mismatch", fn() {
+      src := "fn f() Int { x: Bool = 5\n x }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("ident resolves param", fn() {
+      src := "fn f(x: Int) Int { x }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "x }"), "Int")
+      .Ok({})
+    })
+    .test("function call", fn() {
+      src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1, 2) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "add(1"), "Int")
+      .Ok({})
+    })
+    .test("wrong arg count", fn() {
+      src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "expected 2 arguments")
+      .Ok({})
+    })
+    // ── M3: Operators, Indexing ──
+    .test("arithmetic int", fn() {
+      src := "fn f() Int { 1 + 2 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "1 + 2"), "Int")
+      .Ok({})
+    })
+    .test("comparison", fn() {
+      src := "fn f() Bool { 1 < 2 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "1 < 2"), "Bool")
+      .Ok({})
+    })
+    .test("logical and", fn() {
+      src := "fn f() Bool { true && false }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "true && false"), "Bool")
+      .Ok({})
+    })
+    .test("negate int", fn() {
+      src := "fn f() Int { -5 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "-5"), "Int")
+      .Ok({})
+    })
+    .test("not bool", fn() {
+      src := "fn f() Bool { !true }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "!true"), "Bool")
+      .Ok({})
+    })
+    .test("bool plus int error", fn() {
+      src := "fn f() Int { true + 1 }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // string interp test deferred — can't embed ${} in string literals without outer interpolation
+    .test("equality", fn() {
+      src := "fn f() Bool { 1 == 2 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "1 == 2"), "Bool")
+      .Ok({})
+    })
+    // ── M4: Records, Fields, Variants ──
+    .test("record field access", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "p.x"), "Int")
+      .Ok({})
+    })
+    .test("record bad field", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn get_z(p: Point) Int { p.z }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "no field 'z'")
+      .Ok({})
+    })
+    .test("anonymous record lit check mode", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("record missing field", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "missing field 'y'")
+      .Ok({})
+    })
+    .test("option some check", fn() {
+      src := "fn wrap(x: Int) Int? { .Some(x) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("option none check", fn() {
+      src := "fn nothing() Int? { .None }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("result ok check", fn() {
+      src := "fn ok_val(x: Int) Result<Int, String> { .Ok(x) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("result err check", fn() {
+      src := "fn err_val() Result<Int, String> { .Err(\"bad\") }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("array literal", fn() {
+      src := "fn nums() Vector<Int> { [1, 2, 3] }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("array element mismatch", fn() {
+      src := "fn bad() Vector<Int> { [1, \"two\", 3] }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // ── M5: Generics ──
+    .test("generic identity", fn() {
+      src := "fn identity<A>(x: A) A { x }\nfn main() Int { identity(42) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "identity(42)"), "Int")
+      .Ok({})
+    })
+    .test("generic with array", fn() {
+      src := "fn first<T>(xs: Vector<T>) T { xs[0] }\nfn main() Int { first([1, 2, 3]) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "first([1"), "Int")
+      .Ok({})
+    })
+    .test("generic type mismatch", fn() {
+      src := "fn identity<A>(x: A) A { x }\nfn main() String { identity(42) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("generic two params", fn() {
+      src := "fn pair<A, B>(a: A, b: B) A { a }\nfn main() Int { pair(1, \"hi\") }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "pair(1"), "Int")
+      .Ok({})
+    })
+    // ── M6: If, Case, For ──
+    .test("if else unify", fn() {
+      src := "fn abs(x: Int) Int { if x < 0 { -x } else { x } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("if no else is void", fn() {
+      src := "fn f(x: Int) Void { if x > 0 { x } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("if branch mismatch", fn() {
+      src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("case option with wildcard", fn() {
+      src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      .Ok({})
+    })
+    .test("case binds pattern var", fn() {
+      src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("case non-exhaustive", fn() {
+      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "non-exhaustive")
+      .Ok({})
+    })
+    .test("case wildcard exhaustive", fn() {
+      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, _ => 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("for condition", fn() {
+      src := "fn f() Void { x := 0\n for x < 10 { x = x + 1 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("for in vector", fn() {
+      src := "fn sum(xs: Vector<Int>) Int { s := 0\n for x in xs { s = s + x }\n s }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("for with index", fn() {
+      src := "fn f(xs: Vector<Int>) Int { s := 0\n for x, i in xs { s = s + i }\n s }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── M7: Closures, Try ──
+    .test("closure annotated", fn() {
+      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x: Int) Int { x + 1 }, 5) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("closure inferred from context", fn() {
+      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x) { x + 1 }, 5) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("try option", fn() {
+      src := "fn get(o: Int?) Int? {\n  x := try o\n  r: Int? = .Some(x + 1)\n  r\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("try result", fn() {
+      src := "fn inc(r: Result<Int, String>) Result<Int, String> {\n  x := try r\n  out: Result<Int, String> = .Ok(x + 1)\n  out\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("try on non-option", fn() {
+      src := "fn f(x: Int) Int { try x }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "try requires Option or Result")
+      .Ok({})
+    })
+    // ── M8: Collect ──
+    .test("collect", fn() {
+      src := "fn squares(xs: Vector<Int>) Vector<Int> { collect x in xs { x * x } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("empty array annotated", fn() {
+      src := "fn empty() Vector<Int> { [] }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── M9: Integration with builtins ──
+    .test("case option exhaustive without wildcard", fn() {
+      src := "fn unwrap_or(o: Int?, d: Int) Int { case o { .Some(x) => x, .None => d } }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      .Ok({})
+    })
+    .test("case result exhaustive without wildcard", fn() {
+      src := "fn handle(r: Result<Int, String>) Int { case r { .Ok(x) => x, .Err(e) => 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("case diverging arm with error", fn() {
+      src := "fn unwrap(o: Int?) Int { case o { .None => error(\"missing\"), .Some(x) => x } }"
+      r := try check_ok_builtins(src)
+      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      .Ok({})
+    })
+    .test("case all arms diverge is Never", fn() {
+      src := "fn boom(o: Int?) Int { case o { .None => error(\"a\"), .Some(x) => error(\"b\") } }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("collect with range", fn() {
+      src := "fn squares(n: Int) Vector<Int> { collect i in range(n) { i * i } }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("error returns Never", fn() {
+      src := "fn fail() Int { error(\"boom\") }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("call println", fn() {
+      src := "fn greet() Void { println(\"hi\") }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("integration no errors", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn dist(p: Point) Int { p.x + p.y }\nfn main() Int { dist(.{ x: 1, y: 2 }) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "dist(.{"), "Int")
+      .Ok({})
+    })
+    .test("integration partial typemap on error", fn() {
+      src := "fn f() Int { x := 42\n y: Bool = x\n x }"
+      r := check_src(src)
+      // Should have diagnostics (type mismatch) but still have type info for 42
+      if r.diagnostics.len() == 0 {
+        return .Err("expected diagnostics")
+      }
+      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      .Ok({})
+    })
+    // ── String interpolation with method registry ──
+    .test("interpolation of Int is ok", fn() {
+      dollar := "$"
+      src := "fn f(n: Int) String { \"hello ${dollar}{n}\" }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("interpolation of Named without to_string errors", fn() {
+      dollar := "$"
+      src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
+      msgs := try check_errs_builtins(src)
+      found := false
+      for m in msgs {
+        if m.contains("to_string") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("interpolation of Named with to_string registered is ok", fn() {
+      dollar := "$"
+      src := "type Point = .{ x: Int, y: Int }\nfn to_string(p: Point) String { \"\" }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("multifunction program", fn() {
+      src := "fn add(a: Int, b: Int) Int { a + b }\nfn double(x: Int) Int { add(x, x) }\nfn main() Int { double(21) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "double(21)"), "Int")
+      try assert.str_eq(try type_at(r, src, "add(x"), "Int")
+      .Ok({})
+    })
+}

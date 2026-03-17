@@ -32,6 +32,8 @@ pub type MonoType = {
   Function(Vector<MonoType>, MonoType),
   Optional(MonoType),
   Result(MonoType, MonoType),
+  MetaVar(Int),
+  Never,
 }
 
 pub type ResolvedField = .{
@@ -66,14 +68,145 @@ pub type TypeEntry = .{
   span: span.Span,
 }
 
+pub type MethodEntry = .{
+  method_name: String,
+  function_name: String,
+}
+
 pub type ResolvedEnv = .{
   types: Vector<TypeEntry>,
   type_names: Vector<String>,
   functions: Vector<FunctionSig>,
+  methods: Dict<String, Vector<MethodEntry>>,
 }
 
 pub fn empty_env() ResolvedEnv {
-  ResolvedEnv.{ types: [], type_names: [], functions: [] }
+  ResolvedEnv.{ types: [], type_names: [], functions: [], methods: Dict.new() }
+}
+
+pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) String? {
+  case env.methods[type_name] {
+    .Some(entries) => {
+      for e in entries {
+        if e.method_name == method_name {
+          return .Some(e.function_name)
+        }
+      }
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn add_method(methods: Dict<String, Vector<MethodEntry>>, type_name: String, method_name: String, function_name: String) Dict<String, Vector<MethodEntry>> {
+  entry := MethodEntry.{ method_name: method_name, function_name: function_name }
+  case methods[type_name] {
+    .Some(existing) => { methods[type_name] = existing.push(entry) },
+    .None => { methods[type_name] = [entry] },
+  }
+  methods
+}
+
+pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
+  m := env.methods
+
+  // ── String: core builtins ──
+  m = add_method(m, "String", "len", "string_len")
+  m = add_method(m, "String", "get", "string_get")
+  m = add_method(m, "String", "slice", "string_slice")
+  m = add_method(m, "String", "concat", "string_concat")
+  m = add_method(m, "String", "char_code_at", "string_char_code_at")
+  m = add_method(m, "String", "utf8_bytes", "string_utf8_bytes")
+  m = add_method(m, "String", "to_string", "string_to_string")
+  m = add_method(m, "String", "compare", "compare")
+  // ── String: prelude ──
+  m = add_method(m, "String", "index_of", "index_of")
+  m = add_method(m, "String", "contains", "contains")
+  m = add_method(m, "String", "starts_with", "starts_with")
+  m = add_method(m, "String", "ends_with", "ends_with")
+  m = add_method(m, "String", "split", "split")
+  m = add_method(m, "String", "trim", "trim")
+  // ── String: unicode prelude ──
+  m = add_method(m, "String", "chars", "chars")
+  m = add_method(m, "String", "char_len", "char_len")
+  m = add_method(m, "String", "code_point_at", "code_point_at")
+  m = add_method(m, "String", "graphemes", "graphemes")
+
+  // ── Vector ──
+  m = add_method(m, "Vector", "len", "vector_len")
+  m = add_method(m, "Vector", "push", "vector_push")
+  m = add_method(m, "Vector", "get", "vector_get")
+  m = add_method(m, "Vector", "set", "vector_set")
+  m = add_method(m, "Vector", "concat", "vector_concat")
+  m = add_method(m, "Vector", "slice", "vector_slice")
+  m = add_method(m, "Vector", "map", "map")
+  m = add_method(m, "Vector", "filter", "filter")
+  m = add_method(m, "Vector", "fold", "fold")
+  m = add_method(m, "Vector", "find", "find")
+  m = add_method(m, "Vector", "any", "any")
+  m = add_method(m, "Vector", "all", "all")
+  m = add_method(m, "Vector", "contains", "contains")
+  m = add_method(m, "Vector", "reverse", "reverse")
+  m = add_method(m, "Vector", "sort_by", "sort_by")
+  m = add_method(m, "Vector", "join", "join")
+
+  // ── Dict ──
+  m = add_method(m, "Dict", "len", "dict_len")
+  m = add_method(m, "Dict", "has", "dict_has")
+  m = add_method(m, "Dict", "keys", "dict_keys")
+  m = add_method(m, "Dict", "values", "dict_values")
+  m = add_method(m, "Dict", "get", "dict_get")
+  m = add_method(m, "Dict", "set", "dict_set")
+  m = add_method(m, "Dict", "remove", "dict_remove")
+
+  // ── Cell ──
+  m = add_method(m, "Cell", "get", "cell_get")
+  m = add_method(m, "Cell", "set", "cell_set")
+  m = add_method(m, "Cell", "update", "cell_update")
+
+  // ── Int ──
+  m = add_method(m, "Int", "to_string", "int_to_string")
+  m = add_method(m, "Int", "to_float", "int_to_float")
+  m = add_method(m, "Int", "compare", "compare")
+
+  // ── Float ──
+  m = add_method(m, "Float", "to_string", "float_to_string")
+  m = add_method(m, "Float", "to_int", "float_to_int")
+  m = add_method(m, "Float", "compare", "compare")
+
+  // ── Bool ──
+  m = add_method(m, "Bool", "to_string", "bool_to_string")
+
+  // ── Byte ──
+  m = add_method(m, "Byte", "to_string", "byte_to_string")
+  m = add_method(m, "Byte", "to_int", "byte_to_int")
+  m = add_method(m, "Byte", "compare", "compare")
+
+  // ── Option ──
+  m = add_method(m, "Option", "map", "map")
+  m = add_method(m, "Option", "and_then", "and_then")
+  m = add_method(m, "Option", "ok_or", "ok_or")
+  m = add_method(m, "Option", "ok_or_else", "ok_or_else")
+  m = add_method(m, "Option", "transpose", "transpose")
+
+  // ── Result ──
+  m = add_method(m, "Result", "map", "map")
+  m = add_method(m, "Result", "and_then", "and_then")
+  m = add_method(m, "Result", "transpose", "transpose")
+
+  // ── Iterator ──
+  m = add_method(m, "Iterator", "next", "next")
+  m = add_method(m, "Iterator", "map", "map")
+  m = add_method(m, "Iterator", "filter", "filter")
+  m = add_method(m, "Iterator", "take", "take")
+  m = add_method(m, "Iterator", "to_vector", "to_vector")
+
+  ResolvedEnv.{
+    types: env.types,
+    type_names: env.type_names,
+    functions: env.functions,
+    methods: m,
+  }
 }
 
 pub fn lookup_type(env: ResolvedEnv, name: String) TypeEntry? {
@@ -147,6 +280,7 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
             types: cur.types.push(entry),
             type_names: cur.type_names.push(decl.name),
             functions: cur.functions,
+            methods: cur.methods,
           }
         }
       },
@@ -203,7 +337,35 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
     }
   }
 
+  // Auto-detect inherent methods: functions whose first param is a Named type
+  cur = detect_inherent_methods(cur)
+
   ResolveResult.{ env: cur, diagnostics: result_diags }
+}
+
+fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
+  m := env.methods
+  for f in env.functions {
+    if f.params.len() > 0 {
+      case f.params[0] {
+        .Named(tid, _) => {
+          case find_type_name(env, tid) {
+            .Some(type_name) => {
+              m = add_method(m, type_name, f.name, f.name)
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  ResolvedEnv.{
+    types: env.types,
+    type_names: env.type_names,
+    functions: env.functions,
+    methods: m,
+  }
 }
 
 fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
@@ -267,7 +429,7 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
       new_types = new_types.push(env.types[i])
     }
   }
-  ResolvedEnv.{ types: new_types, type_names: env.type_names, functions: env.functions }
+  ResolvedEnv.{ types: new_types, type_names: env.type_names, functions: env.functions, methods: env.methods }
 }
 
 fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
@@ -315,6 +477,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
     types: env.types,
     type_names: env.type_names,
     functions: env.functions.push(sig),
+    methods: env.methods,
   }
 
   ResolveResult.{ env: new_env, diagnostics: diags }
@@ -322,7 +485,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
 
 // ── Type Expression Resolution ──────────────────────────────────────
 
-type TypeResolveResult = .{
+pub type TypeResolveResult = .{
   ty: MonoType?,
   diagnostics: Vector<Diagnostic>,
 }
@@ -335,7 +498,7 @@ fn type_err(d: Diagnostic) TypeResolveResult {
   TypeResolveResult.{ ty: .None, diagnostics: [d] }
 }
 
-fn resolve_type_expr(ty_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+pub fn resolve_type_expr(ty_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
   case ty_expr.kind {
     .Path(path) => resolve_type_path(path, [], type_vars, env),
     .Applied(path, args) => resolve_applied_type(path, args, type_vars, env),

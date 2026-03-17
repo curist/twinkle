@@ -38,7 +38,7 @@ fn type_id_of(env: resolver.ResolvedEnv, name: String) Result<Int, String> {
   }
 }
 
-fn mono_to_string(ty: resolver.MonoType) String {
+pub fn mono_to_string(ty: resolver.MonoType) String {
   case ty {
     .Int => "Int",
     .Float => "Float",
@@ -71,6 +71,8 @@ fn mono_to_string(ty: resolver.MonoType) String {
     },
     .Optional(inner) => "${mono_to_string(inner)}?",
     .Result(ok, err) => "Result<${mono_to_string(ok)}, ${mono_to_string(err)}>",
+    .MetaVar(id) => "?${id}",
+    .Never => "Never",
   }
 }
 
@@ -450,5 +452,96 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try get_param_type(env, "f", 0), "Var(Int)")
       try assert.str_eq(try get_return_type(env, "f"), "Var(Int)")
       .Ok({})
+    })
+    // ── Method registry ──
+    .test("lookup_method on empty env returns None", fn() {
+      env := resolver.empty_env()
+      case resolver.lookup_method(env, "String", "len") {
+        .None => .Ok({}),
+        .Some(_) => .Err("expected None"),
+      }
+    })
+    .test("manual method registration + lookup", fn() {
+      env := resolver.empty_env()
+      entry := resolver.MethodEntry.{ method_name: "len", function_name: "string_len" }
+      env.methods["String"] = [entry]
+      case resolver.lookup_method(env, "String", "len") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "string_len")
+          .Ok({})
+        },
+        .None => .Err("expected Some"),
+      }
+    })
+    .test("builtin method: String.len", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      case resolver.lookup_method(env, "String", "len") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "string_len")
+          .Ok({})
+        },
+        .None => .Err("expected Some"),
+      }
+    })
+    .test("builtin method: Vector.push", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      case resolver.lookup_method(env, "Vector", "push") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "vector_push")
+          .Ok({})
+        },
+        .None => .Err("expected Some"),
+      }
+    })
+    .test("builtin method: Int.to_string", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      case resolver.lookup_method(env, "Int", "to_string") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "int_to_string")
+          .Ok({})
+        },
+        .None => .Err("expected Some"),
+      }
+    })
+    .test("builtin method: Dict.keys", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      case resolver.lookup_method(env, "Dict", "keys") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "dict_keys")
+          .Ok({})
+        },
+        .None => .Err("expected Some"),
+      }
+    })
+    // ── Auto-detected inherent methods ──
+    .test("auto-detect inherent method: to_string on Point", fn() {
+      src := "type Point = .{ x: Int }\nfn to_string(p: Point) String { \"\" }"
+      env := try resolve_ok(src)
+      case resolver.lookup_method(env, "Point", "to_string") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "to_string")
+          .Ok({})
+        },
+        .None => .Err("expected to_string to be registered on Point"),
+      }
+    })
+    .test("no inherent method if first param not Named", fn() {
+      src := "type Point = .{ x: Int }\nfn format(s: String) String { s }"
+      env := try resolve_ok(src)
+      case resolver.lookup_method(env, "Point", "format") {
+        .Some(_) => .Err("format should not be registered on Point"),
+        .None => .Ok({}),
+      }
+    })
+    .test("auto-detect method on sum type", fn() {
+      src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float { 0.0 }"
+      env := try resolve_ok(src)
+      case resolver.lookup_method(env, "Shape", "area") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "area")
+          .Ok({})
+        },
+        .None => .Err("expected area to be registered on Shape"),
+      }
     })
 }
