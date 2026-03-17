@@ -98,11 +98,18 @@ pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) S
   }
 }
 
-fn add_method(methods: Dict<String, Vector<MethodEntry>>, type_name: String, method_name: String, function_name: String) Dict<String, Vector<MethodEntry>> {
-  entry := MethodEntry.{ method_name: method_name, function_name: function_name }
+fn me(method_name: String, function_name: String) MethodEntry {
+  MethodEntry.{ method_name: method_name, function_name: function_name }
+}
+
+fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: String, entries: Vector<MethodEntry>) Dict<String, Vector<MethodEntry>> {
   case methods[type_name] {
-    .Some(existing) => { methods[type_name] = existing.push(entry) },
-    .None => { methods[type_name] = [entry] },
+    .Some(existing) => {
+      result := existing
+      for e in entries { result = result.push(e) }
+      methods[type_name] = result
+    },
+    .None => { methods[type_name] = entries },
   }
   methods
 }
@@ -110,96 +117,52 @@ fn add_method(methods: Dict<String, Vector<MethodEntry>>, type_name: String, met
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   m := env.methods
 
-  // ── String: core builtins ──
-  m = add_method(m, "String", "len", "string_len")
-  m = add_method(m, "String", "get", "string_get")
-  m = add_method(m, "String", "slice", "string_slice")
-  m = add_method(m, "String", "concat", "string_concat")
-  m = add_method(m, "String", "char_code_at", "string_char_code_at")
-  m = add_method(m, "String", "utf8_bytes", "string_utf8_bytes")
-  m = add_method(m, "String", "to_string", "string_to_string")
-  m = add_method(m, "String", "compare", "compare")
-  // ── String: prelude ──
-  m = add_method(m, "String", "index_of", "index_of")
-  m = add_method(m, "String", "contains", "contains")
-  m = add_method(m, "String", "starts_with", "starts_with")
-  m = add_method(m, "String", "ends_with", "ends_with")
-  m = add_method(m, "String", "split", "split")
-  m = add_method(m, "String", "trim", "trim")
-  // ── String: unicode prelude ──
-  m = add_method(m, "String", "chars", "chars")
-  m = add_method(m, "String", "char_len", "char_len")
-  m = add_method(m, "String", "code_point_at", "code_point_at")
-  m = add_method(m, "String", "graphemes", "graphemes")
-
-  // ── Vector ──
-  m = add_method(m, "Vector", "len", "vector_len")
-  m = add_method(m, "Vector", "push", "vector_push")
-  m = add_method(m, "Vector", "get", "vector_get")
-  m = add_method(m, "Vector", "set", "vector_set")
-  m = add_method(m, "Vector", "concat", "vector_concat")
-  m = add_method(m, "Vector", "slice", "vector_slice")
-  m = add_method(m, "Vector", "map", "map")
-  m = add_method(m, "Vector", "filter", "filter")
-  m = add_method(m, "Vector", "fold", "fold")
-  m = add_method(m, "Vector", "find", "find")
-  m = add_method(m, "Vector", "any", "any")
-  m = add_method(m, "Vector", "all", "all")
-  m = add_method(m, "Vector", "contains", "contains")
-  m = add_method(m, "Vector", "reverse", "reverse")
-  m = add_method(m, "Vector", "sort_by", "sort_by")
-  m = add_method(m, "Vector", "join", "join")
-
-  // ── Dict ──
-  m = add_method(m, "Dict", "len", "dict_len")
-  m = add_method(m, "Dict", "has", "dict_has")
-  m = add_method(m, "Dict", "keys", "dict_keys")
-  m = add_method(m, "Dict", "values", "dict_values")
-  m = add_method(m, "Dict", "get", "dict_get")
-  m = add_method(m, "Dict", "set", "dict_set")
-  m = add_method(m, "Dict", "remove", "dict_remove")
-
-  // ── Cell ──
-  m = add_method(m, "Cell", "get", "cell_get")
-  m = add_method(m, "Cell", "set", "cell_set")
-  m = add_method(m, "Cell", "update", "cell_update")
-
-  // ── Int ──
-  m = add_method(m, "Int", "to_string", "int_to_string")
-  m = add_method(m, "Int", "to_float", "int_to_float")
-  m = add_method(m, "Int", "compare", "compare")
-
-  // ── Float ──
-  m = add_method(m, "Float", "to_string", "float_to_string")
-  m = add_method(m, "Float", "to_int", "float_to_int")
-  m = add_method(m, "Float", "compare", "compare")
-
-  // ── Bool ──
-  m = add_method(m, "Bool", "to_string", "bool_to_string")
-
-  // ── Byte ──
-  m = add_method(m, "Byte", "to_string", "byte_to_string")
-  m = add_method(m, "Byte", "to_int", "byte_to_int")
-  m = add_method(m, "Byte", "compare", "compare")
-
-  // ── Option ──
-  m = add_method(m, "Option", "map", "map")
-  m = add_method(m, "Option", "and_then", "and_then")
-  m = add_method(m, "Option", "ok_or", "ok_or")
-  m = add_method(m, "Option", "ok_or_else", "ok_or_else")
-  m = add_method(m, "Option", "transpose", "transpose")
-
-  // ── Result ──
-  m = add_method(m, "Result", "map", "map")
-  m = add_method(m, "Result", "and_then", "and_then")
-  m = add_method(m, "Result", "transpose", "transpose")
-
-  // ── Iterator ──
-  m = add_method(m, "Iterator", "next", "next")
-  m = add_method(m, "Iterator", "map", "map")
-  m = add_method(m, "Iterator", "filter", "filter")
-  m = add_method(m, "Iterator", "take", "take")
-  m = add_method(m, "Iterator", "to_vector", "to_vector")
+  m = register_methods(m, "String", [
+    me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
+    me("concat", "string_concat"), me("char_code_at", "string_char_code_at"),
+    me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
+    me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
+    me("starts_with", "starts_with"), me("ends_with", "ends_with"),
+    me("split", "split"), me("trim", "trim"),
+    me("chars", "chars"), me("char_len", "char_len"),
+    me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
+  ])
+  m = register_methods(m, "Vector", [
+    me("len", "vector_len"), me("push", "vector_push"), me("get", "vector_get"),
+    me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
+    me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
+    me("any", "any"), me("all", "all"), me("contains", "contains"),
+    me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
+  ])
+  m = register_methods(m, "Dict", [
+    me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
+    me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
+    me("remove", "dict_remove"),
+  ])
+  m = register_methods(m, "Cell", [
+    me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
+  ])
+  m = register_methods(m, "Int", [
+    me("to_string", "int_to_string"), me("to_float", "int_to_float"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Float", [
+    me("to_string", "float_to_string"), me("to_int", "float_to_int"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Bool", [me("to_string", "bool_to_string")])
+  m = register_methods(m, "Byte", [
+    me("to_string", "byte_to_string"), me("to_int", "byte_to_int"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Option", [
+    me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
+    me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
+  ])
+  m = register_methods(m, "Result", [
+    me("map", "map"), me("and_then", "and_then"), me("transpose", "transpose"),
+  ])
+  m = register_methods(m, "Iterator", [
+    me("next", "next"), me("map", "map"), me("filter", "filter"),
+    me("take", "take"), me("to_vector", "to_vector"),
+  ])
 
   ResolvedEnv.{
     types: env.types,
@@ -351,7 +314,7 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
         .Named(tid, _) => {
           case find_type_name(env, tid) {
             .Some(type_name) => {
-              m = add_method(m, type_name, f.name, f.name)
+              m = register_methods(m, type_name, [me(f.name, f.name)])
             },
             .None => {},
           }
