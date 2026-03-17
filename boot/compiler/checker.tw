@@ -1017,8 +1017,40 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
       CheckOut.{ ctx: u.ctx, diags: u.diags }
     },
     .Variant(name, sub_pats) => check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags),
-    .QualifiedVariant(_, name, sub_pats) => check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags),
+    .QualifiedVariant(path, name, sub_pats) => {
+      // Validate that the qualifier matches the scrutinee type
+      qv_diags := validate_qualifier(path, expected, pat.span, ctx)
+      for d in qv_diags { diags = diags.push(d) }
+      check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags)
+    },
     .ErrorPattern => CheckOut.{ ctx: ctx, diags: diags },
+  }
+}
+
+// Returns the type name for a scrutinee type, if it's a named/sum type.
+fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
+  zonked := zonk(ty, ctx.subst)
+  case zonked {
+    .Optional(_) => .Some("Option"),
+    .Result(_, _) => .Some("Result"),
+    .Named(tid, _) => find_type_name(ctx.env, tid),
+    _ => .None,
+  }
+}
+
+// Validate that a qualified variant path (e.g., Color in Color.Red) matches the scrutinee type.
+fn validate_qualifier(path: Vector<String>, expected: MonoType, s: span.Span, ctx: InferCtx) Vector<Diagnostic> {
+  if path.len() != 1 { return [] }
+  qualifier := path[0]
+  case scrutinee_type_name(expected, ctx) {
+    .Some(type_name) => {
+      if qualifier != type_name {
+        [diag.error(s, "qualifier ${qualifier} does not match scrutinee type ${type_name}")]
+      } else {
+        []
+      }
+    },
+    .None => [],
   }
 }
 
@@ -1112,7 +1144,28 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: span.Span,
       for arm in arms {
         case arm.pattern.kind {
           .Variant(name, _) => { covered = covered.push(name) },
-          .QualifiedVariant(_, name, _) => { covered = covered.push(name) },
+          .QualifiedVariant(path, name, _) => {
+            // Only count as covered if qualifier matches scrutinee type
+            if path.len() == 1 {
+              case scrutinee_type_name(scrut_ty, ctx) {
+                .Some(type_name) => {
+                  if path[0] == type_name { covered = covered.push(name) }
+                },
+                .None => { covered = covered.push(name) },
+              }
+            } else {
+              covered = covered.push(name)
+            }
+          },
+          .Literal(lit_expr) => {
+            case lit_expr.kind {
+              .BoolLit(val) => {
+                if val { covered = covered.push("true") }
+                else { covered = covered.push("false") }
+              },
+              _ => {},
+            }
+          },
           _ => {},
         }
       }
@@ -1369,12 +1422,34 @@ fn synth_unary(op: UnOp, operand: Expr, s: span.Span, ctx: InferCtx, diags: Vect
       zonked := zonk(r.ty, r.ctx.subst)
       case zonked {
         .Optional(inner) => {
-          // try on Option: unwraps to inner, function must return Option
-          SynthOut.{ ty: inner, ctx: r.ctx, diags: r.diags }
+          // try on Option: function must return Option
+          try_diags := case r.ctx.current_ret {
+            .Some(ret_ty) => {
+              case zonk(ret_ty, r.ctx.subst) {
+                .Optional(_) => r.diags,
+                _ => r.diags.push(diag.error(s, "try on Option requires function to return Option")),
+              }
+            },
+            .None => r.diags.push(diag.error(s, "try on Option requires function to return Option")),
+          }
+          SynthOut.{ ty: inner, ctx: r.ctx, diags: try_diags }
         },
-        .Result(ok_ty, _) => {
-          // try on Result: unwraps to ok_ty, function must return Result
-          SynthOut.{ ty: ok_ty, ctx: r.ctx, diags: r.diags }
+        .Result(ok_ty, err_ty) => {
+          // try on Result: function must return Result with compatible error type
+          try_result := case r.ctx.current_ret {
+            .Some(ret_ty) => {
+              case zonk(ret_ty, r.ctx.subst) {
+                .Result(_, ret_err) => {
+                  u := unify(err_ty, ret_err, s, r.ctx, r.diags)
+                  // Thread u.ctx so MetaVar substitutions from error unification are preserved
+                  SynthOut.{ ty: ok_ty, ctx: u.ctx, diags: u.diags }
+                },
+                _ => SynthOut.{ ty: ok_ty, ctx: r.ctx, diags: r.diags.push(diag.error(s, "try on Result requires function to return Result")) },
+              }
+            },
+            .None => SynthOut.{ ty: ok_ty, ctx: r.ctx, diags: r.diags.push(diag.error(s, "try on Result requires function to return Result")) },
+          }
+          try_result
         },
         _ => {
           m := fresh_meta(r.ctx)
@@ -1482,7 +1557,13 @@ fn synth_block(block: Block, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut 
       SynthOut.{ ty: r.ty, ctx: pop_scope(r.ctx), diags: r.diags }
     },
     .None => {
-      SynthOut.{ ty: MonoType.Void, ctx: pop_scope(cur_ctx), diags: cur_diags }
+      // If the last statement diverges, the block type is Never, not Void
+      block_ty := if block.stmts.len() > 0 and stmt_diverges(block.stmts[block.stmts.len() - 1]) {
+        MonoType.Never
+      } else {
+        MonoType.Void
+      }
+      SynthOut.{ ty: block_ty, ctx: pop_scope(cur_ctx), diags: cur_diags }
     },
   }
 }
@@ -1503,8 +1584,62 @@ fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<Di
       CheckOut.{ ctx: pop_scope(r.ctx), diags: r.diags }
     },
     .None => {
-      u := unify(MonoType.Void, expected, block.span, cur_ctx, cur_diags)
-      CheckOut.{ ctx: pop_scope(u.ctx), diags: u.diags }
+      // If the last statement diverges, don't unify Void with expected
+      diverges := if block.stmts.len() > 0 {
+        stmt_diverges(block.stmts[block.stmts.len() - 1])
+      } else { false }
+      if diverges {
+        CheckOut.{ ctx: pop_scope(cur_ctx), diags: cur_diags }
+      } else {
+        u := unify(MonoType.Void, expected, block.span, cur_ctx, cur_diags)
+        CheckOut.{ ctx: pop_scope(u.ctx), diags: u.diags }
+      }
+    },
+  }
+}
+
+// Check if a statement definitely diverges (all control paths return/error).
+fn stmt_diverges(stmt: Stmt) Bool {
+  case stmt {
+    .Return(_) => true,
+    .Expr(es) => expr_diverges(es.expr),
+    _ => false,
+  }
+}
+
+// Check if an expression definitely diverges.
+fn expr_diverges(e: Expr) Bool {
+  case e.kind {
+    // error("msg") diverges
+    .Call(callee, _) => {
+      case callee.kind {
+        .Ident(name) => name == "error",
+        _ => false,
+      }
+    },
+    // if cond { ... } else { ... } diverges if both branches diverge
+    .If(_, then_block, else_expr) => {
+      then_div := block_diverges(then_block)
+      else_div := case else_expr {
+        .Some(eb) => expr_diverges(eb),
+        .None => false,
+      }
+      then_div and else_div
+    },
+    .BlockExpr(block) => block_diverges(block),
+    _ => false,
+  }
+}
+
+fn block_diverges(block: Block) Bool {
+  case block.tail {
+    .Some(tail) => expr_diverges(tail),
+    .None => {
+      if block.stmts.len() > 0 {
+        stmt_diverges(block.stmts[block.stmts.len() - 1])
+      } else {
+        false
+      }
     },
   }
 }
@@ -1539,7 +1674,7 @@ fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
 }
 
 fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
-  case ctx.current_ret {
+  result := case ctx.current_ret {
     .Some(ret_ty) => {
       case rs.value {
         .Some(val) => {
@@ -1555,6 +1690,9 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckO
     },
     .None => CheckOut.{ ctx: ctx, diags: diags },
   }
+  // Record Never in the type map for the return's span
+  result.ctx = set_type_map(result.ctx, rs.span.start, MonoType.Never)
+  result
 }
 
 // ── Function checking ───────────────────────────────────────────────
@@ -1581,7 +1719,26 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) 
         },
         .None => {
           body_r := synth_block(decl.body, fn_ctx, diags)
-          CheckOut.{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
+          // Write inferred return type back to env so later functions see it.
+          // Limitation: this only works with source-order checking. Mutual recursion
+          // between unannotated functions is unsupported because inferred return types
+          // are only visible to functions checked later in source order.
+          result_ctx := pop_scope(body_r.ctx)
+          inferred_ret := zonk(body_r.ty, result_ctx.subst)
+          updated_fns: Vector<FunctionSig> = []
+          for f in result_ctx.env.functions {
+            if f.name == decl.name {
+              updated_fns = updated_fns.push(FunctionSig.{
+                name: f.name, type_params: f.type_params,
+                param_names: f.param_names, params: f.params,
+                ret: .Some(inferred_ret),
+              })
+            } else {
+              updated_fns = updated_fns.push(f)
+            }
+          }
+          result_ctx.env = resolver.env_with_functions(result_ctx.env, updated_fns)
+          CheckOut.{ ctx: result_ctx, diags: body_r.diags }
         },
       }
     },

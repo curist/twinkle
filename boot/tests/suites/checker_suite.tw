@@ -479,4 +479,113 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try type_at(r, src, "add(x"), "Int")
       .Ok({})
     })
+    // ── F2: Bool exhaustiveness ──
+    .test("F2 bool case exhaustive", fn() {
+      src := "fn f(b: Bool) Int { case b { true => 1, false => 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F2 bool case non-exhaustive", fn() {
+      src := "fn f(b: Bool) Int { case b { true => 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "non-exhaustive")
+      .Ok({})
+    })
+    .test("F2 bool case with wildcard", fn() {
+      src := "fn f(b: Bool) Int { case b { true => 1, _ => 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── F3: try validates enclosing return type ──
+    .test("F3 try option in option-returning fn ok", fn() {
+      src := "fn find(x: Int?) Int? { v := try x\nresult: Int? = .Some(v)\n result }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F3 try option in int-returning fn errors", fn() {
+      src := "fn find(x: Int?) Int { try x }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("try") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("F3 try result in int-returning fn errors", fn() {
+      src := "fn parse(x: Result<Int, String>) Int { try x }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("try") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    // ── F4: inferred return types written back ──
+    .test("F4 inferred return type propagates", fn() {
+      src := "fn double(x: Int) { x * 2 }\nfn use_it() Int { double(3) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "double(3)"), "Int")
+      .Ok({})
+    })
+    .test("F4 inferred void return", fn() {
+      src := "fn noop() { }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── F5: qualified variant path validation ──
+    .test("F5 qualified variant correct type", fn() {
+      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { Color.Red => 1, Color.Green => 2, Color.Blue => 3 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── F8: check_function context restore ──
+    .test("F8 second function independent of first", fn() {
+      src := "fn first() Int { 1 }\nfn second() String { \"hello\" }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "\"hello\""), "String")
+      .Ok({})
+    })
+    // ── F9: return records Never ──
+    .test("F9 return has Never type", fn() {
+      src := "fn f() Int { return 42 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F9 if-else with returns in both branches diverges", fn() {
+      src := "fn f(x: Bool) Int {\nif x { return 1 } else { return 2 }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F9 error() call diverges", fn() {
+      src := "fn f(x: Bool) Int {\nif x { return 1 } else { error(\"fail\") }\n}"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    // ── F3: try threads unification context ──
+    .test("F3 try on Result threads error type unification", fn() {
+      // Verify that try on Result properly threads u.ctx so MetaVar substitutions are preserved
+      src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Result<Int, E> { x := try inner(); .Ok(x) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F3 try on Result in non-Result function errors", fn() {
+      src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Int {\ntry inner()\n}"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("try on Result requires"))
+      .Ok({})
+    })
+    // ── F5: qualified variant path validation ──
+    .test("F5 correct qualifier accepted", fn() {
+      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Green => 2,\nColor.Blue => 3,\n}\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("F5 wrong qualifier produces diagnostic", fn() {
+      src := "type Color = { Red, Green, Blue }\ntype Shape = { Red, Circle }\nfn f(c: Color) Int {\ncase c {\nShape.Red => 1,\n_ => 0,\n}\n}"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs[0].contains("does not match"))
+      .Ok({})
+    })
 }

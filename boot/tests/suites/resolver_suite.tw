@@ -544,4 +544,54 @@ pub fn suite() runner.Suite {
         .None => .Err("expected area to be registered on Shape"),
       }
     })
+    // ── F1: param_names/param_types alignment on error ──
+    .test("F1 bad param type keeps lengths aligned", fn() {
+      src := "fn foo(x: Nonexistent, y: Int) Int { 0 }"
+      r := resolve_src(src)
+      // Should have a diagnostic for the bad type
+      try assert.is_true(r.diagnostics.len() > 0)
+      // The function should still be registered with aligned vectors
+      case resolver.lookup_function(r.env, "foo") {
+        .Some(sig) => {
+          try assert.int_eq(sig.param_names.len(), sig.params.len())
+          .Ok({})
+        },
+        .None => .Err("function foo should be registered"),
+      }
+    })
+    // ── F6: circular alias through wrapper types ──
+    .test("F6 circular alias through Optional", fn() {
+      msgs := try resolve_errs("type A = A?")
+      try assert.str_contains(msgs[0], "circular")
+      .Ok({})
+    })
+    .test("F6 circular alias through Vector", fn() {
+      msgs := try resolve_errs("type A = Vector<A>")
+      try assert.str_contains(msgs[0], "circular")
+      .Ok({})
+    })
+    .test("F6 circular alias through Function", fn() {
+      msgs := try resolve_errs("type A = fn() A")
+      try assert.str_contains(msgs[0], "circular")
+      .Ok({})
+    })
+    .test("F6 non-circular wrapper is ok", fn() {
+      env := try resolve_ok("type A = Vector<Int>")
+      .Ok({})
+    })
+    // ── F7: duplicate type parameter names ──
+    .test("F7 duplicate type params in type", fn() {
+      msgs := try resolve_errs("type Foo<T, T> = .{ a: T }")
+      try assert.str_contains(msgs[0], "duplicate type parameter")
+      .Ok({})
+    })
+    .test("F7 duplicate type params in function", fn() {
+      msgs := try resolve_errs("fn bar<A, A>(x: A) A { x }")
+      try assert.str_contains(msgs[0], "duplicate type parameter")
+      .Ok({})
+    })
+    .test("F7 distinct type params ok", fn() {
+      env := try resolve_ok("type Foo<A, B> = .{ a: A, b: B }")
+      .Ok({})
+    })
 }

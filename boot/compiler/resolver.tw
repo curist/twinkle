@@ -330,8 +330,20 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
   env_with_methods(env, m)
 }
 
-fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
+fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagnostic> {
   diags: Vector<Diagnostic> = []
+  seen: Dict<String, Bool> = Dict.new()
+  for tp in type_params {
+    if seen.has(tp) {
+      diags = diags.push(diag.error(s, "duplicate type parameter ${tp}"))
+    }
+    seen[tp] = true
+  }
+  diags
+}
+
+fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
+  diags := check_dup_type_params(decl.type_params, decl.span)
   type_params := decl.type_params
 
   case decl.def {
@@ -395,7 +407,7 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
 }
 
 fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
-  diags: Vector<Diagnostic> = []
+  diags := check_dup_type_params(decl.type_params, decl.span)
   type_params := decl.type_params
 
   param_names: Vector<String> = []
@@ -409,7 +421,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
         for d in r.diagnostics { diags = diags.push(d) }
         case r.ty {
           .Some(ty) => { param_types = param_types.push(ty) },
-          .None => {},
+          .None => { param_types = param_types.push(MonoType.Void) },
         }
       },
       .None => {
@@ -851,17 +863,7 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
       case entry.def {
         .Some(def) => {
           case def {
-            .Alias(_, _, target) => {
-              case target {
-                .Named(tid, _) => {
-                  case find_type_name(env, tid) {
-                    .Some(tname) => is_circular_alias(env, tname, new_visited),
-                    .None => false,
-                  }
-                },
-                _ => false,
-              }
-            },
+            .Alias(_, _, target) => mono_contains_circular(env, target, new_visited),
             _ => false,
           }
         },
@@ -869,6 +871,34 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
       }
     },
     .None => false,
+  }
+}
+
+fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, Bool>) Bool {
+  case ty {
+    .Named(tid, args) => {
+      case find_type_name(env, tid) {
+        .Some(tname) => {
+          if is_circular_alias(env, tname, visited) { return true }
+          for a in args {
+            if mono_contains_circular(env, a, visited) { return true }
+          }
+          false
+        },
+        .None => false,
+      }
+    },
+    .Optional(inner) => mono_contains_circular(env, inner, visited),
+    .Vector(inner) => mono_contains_circular(env, inner, visited),
+    .Dict(k, v) => mono_contains_circular(env, k, visited) or mono_contains_circular(env, v, visited),
+    .Result(ok, err) => mono_contains_circular(env, ok, visited) or mono_contains_circular(env, err, visited),
+    .Function(params, ret) => {
+      for p in params {
+        if mono_contains_circular(env, p, visited) { return true }
+      }
+      mono_contains_circular(env, ret, visited)
+    },
+    _ => false,
   }
 }
 
