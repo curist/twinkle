@@ -140,13 +140,13 @@
   path: (module_path
     (identifier) @module))
 
-; Destructuring import items
-(import_type_item
-  "type" @keyword.type)
-(import_type_item
-  name: (identifier) @type)
-(import_value_item
-  name: (identifier) @function)
+; Destructuring import items — PascalCase = type, snake_case = function
+(import_item
+  name: (identifier) @type
+  (#match? @type "^[A-Z]"))
+(import_item
+  name: (identifier) @function
+  (#match? @function "^[a-z]"))
 
 ; Punctuation
 [

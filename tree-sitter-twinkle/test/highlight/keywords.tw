@@ -34,7 +34,7 @@ use math.vector as vec
 
 use math.vector.{translate, Vec2 as V2}
 //^ keyword.import
-//                ^^^^^^^^^             function
+//                ^^^^^^^^^ function
 //                          ^^^^ type
 //                               ^^ keyword.import
 

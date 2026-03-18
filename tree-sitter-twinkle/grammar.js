@@ -50,18 +50,7 @@ module.exports = grammar({
       '}',
     ),
 
-    import_item: $ => choice(
-      $.import_value_item,
-      $.import_type_item,
-    ),
-
-    import_value_item: $ => seq(
-      field('name', $.identifier),
-      optional(seq('as', field('alias', $.identifier))),
-    ),
-
-    import_type_item: $ => seq(
-      'type',
+    import_item: $ => seq(
       field('name', $.identifier),
       optional(seq('as', field('alias', $.identifier))),
     ),
