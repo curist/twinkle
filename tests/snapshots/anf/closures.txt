@@ -83,14 +83,14 @@ fn __init__  [FuncId(46)]  params=[]
       } else {
         let L45 = index(L11, L13, Array)
         let L14 = init(L45)
-        let L46 = call L14 ()
-        let L47 = call GlobalFunc(4) (L46)
-        let L48 = call GlobalFunc(9) ("", L47)
-        let L49 = call GlobalFunc(2) (L48)
-        let L16 = init(L49)
-        let L50 = binop(Add, L13, 1, Int)
-        let L51 = assign(L13 = L50)
+        let L46 = binop(Add, L13, 1, Int)
+        let L47 = assign(L13 = L46)
         let L15 = init(void)
+        let L48 = call L14 ()
+        let L49 = call GlobalFunc(4) (L48)
+        let L50 = call GlobalFunc(9) ("", L49)
+        let L51 = call GlobalFunc(2) (L50)
+        let L16 = init(L51)
         continue
       }
       L52

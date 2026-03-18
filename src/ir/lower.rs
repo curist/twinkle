@@ -1019,40 +1019,43 @@ impl Lowerer {
                     span: iter_span,
                 };
                 let tmp_after_inc = self.local_allocator.alloc();
-                let idx_rebind = CoreExpr {
+
+                // body then continue
+                let body_then_cont = CoreExpr {
                     kind: CoreExprKind::Let {
-                        local: tmp_after_inc,
-                        value: Box::new(idx_inc),
+                        local: self.local_allocator.alloc(),
+                        value: Box::new(body_expr),
                         body: Box::new(continue_expr),
                     },
                     ty: MonoType::Void,
                     span: iter_span,
                 };
 
-                // body_then_idx_rebind: body followed by idx increment+continue
-                let body_then_inc = CoreExpr {
+                // Assign(idx, idx+1) BEFORE body so that if body hits `continue`
+                // the index is already advanced to the next element.
+                let inc_then_body = CoreExpr {
                     kind: CoreExprKind::Let {
-                        local: self.local_allocator.alloc(),
-                        value: Box::new(body_expr),
-                        body: Box::new(idx_rebind),
+                        local: tmp_after_inc,
+                        value: Box::new(idx_inc),
+                        body: Box::new(body_then_cont),
                     },
                     ty: MonoType::Void,
                     span: iter_span,
                 };
 
-                // Optionally bind user-visible index BEFORE the body
+                // Optionally bind user-visible index BEFORE the increment
                 let loop_body_inner = if let Some(user_idx) = idx_user {
                     CoreExpr {
                         kind: CoreExprKind::Let {
                             local: user_idx,
                             value: Box::new(idx_local_expr.clone()),
-                            body: Box::new(body_then_inc),
+                            body: Box::new(inc_then_body),
                         },
                         ty: MonoType::Void,
                         span: iter_span,
                     }
                 } else {
-                    body_then_inc
+                    inc_then_body
                 };
 
                 // Let(elem, elem_value, loop_body_inner)
@@ -1296,26 +1299,25 @@ impl Lowerer {
             ty: MonoType::Void,
             span: iter_span,
         };
-        let idx_rebind = CoreExpr {
+        // Increment idx BEFORE body so that if body hits `continue`
+        // the index is already advanced to the next element.
+        let body_then_tail = CoreExpr {
             kind: CoreExprKind::Let {
                 local: self.local_allocator.alloc(),
                 value: Box::new(idx_inc),
                 body: Box::new(CoreExpr {
-                    kind: CoreExprKind::Continue,
+                    kind: CoreExprKind::Let {
+                        local: self.local_allocator.alloc(),
+                        value: Box::new(body_expr),
+                        body: Box::new(CoreExpr {
+                            kind: CoreExprKind::Continue,
+                            ty: MonoType::Void,
+                            span: iter_span,
+                        }),
+                    },
                     ty: MonoType::Void,
                     span: iter_span,
                 }),
-            },
-            ty: MonoType::Void,
-            span: iter_span,
-        };
-
-        // body_then_tail
-        let body_then_tail = CoreExpr {
-            kind: CoreExprKind::Let {
-                local: self.local_allocator.alloc(),
-                value: Box::new(body_expr),
-                body: Box::new(idx_rebind),
             },
             ty: MonoType::Void,
             span: iter_span,
@@ -1834,14 +1836,16 @@ impl Lowerer {
             ty: MonoType::Void,
             span: iter_span,
         };
+        // Increment cur BEFORE body so that if body hits `continue`
+        // the counter is already advanced to the next element.
         let after_body = CoreExpr {
             kind: CoreExprKind::Let {
                 local: self.local_allocator.alloc(),
-                value: Box::new(body_expr),
+                value: Box::new(cur_inc),
                 body: Box::new(CoreExpr {
                     kind: CoreExprKind::Let {
                         local: self.local_allocator.alloc(),
-                        value: Box::new(cur_inc),
+                        value: Box::new(body_expr),
                         body: Box::new(continue_expr),
                     },
                     ty: MonoType::Void,
@@ -1852,7 +1856,7 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Optionally bind user-visible index before body
+        // Optionally bind user-visible index before the increment
         let loop_body_inner = if let Some(user_idx) = idx_user {
             CoreExpr {
                 kind: CoreExprKind::Let {

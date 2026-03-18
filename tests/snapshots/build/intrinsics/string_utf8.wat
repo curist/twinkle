@@ -1690,9 +1690,9 @@
     (local $p10 i32)
     (local $p11 i32)
     (local $p12 i64)
-    (local $p13 (ref $rt_types__String))
-    (local $p14 i32)
-    (local $p15 i64)
+    (local $p13 i32)
+    (local $p14 i64)
+    (local $p15 (ref $rt_types__String))
     (local $p16 i32)
     (local $p17 i32)
     (local $p18 i32)
@@ -1712,9 +1712,9 @@
     (local $p32 i32)
     (local $p33 i32)
     (local $p34 i64)
-    (local $p35 (ref $rt_types__String))
-    (local $p36 i32)
-    (local $p37 i64)
+    (local $p35 i32)
+    (local $p36 i64)
+    (local $p37 (ref $rt_types__String))
     (local $p38 i32)
     (local $p39 i32)
     (local $p40 i32)
@@ -1734,9 +1734,9 @@
     (local $p54 i32)
     (local $p55 i32)
     (local $p56 i64)
-    (local $p57 (ref $rt_types__String))
-    (local $p58 i32)
-    (local $p59 i64)
+    (local $p57 i32)
+    (local $p58 i64)
+    (local $p59 (ref $rt_types__String))
     (local $p60 i32)
     (local $p61 i32)
     (local $p62 i32)
@@ -1842,22 +1842,22 @@
             local.set $p10
             local.get $p10
             local.set $p11
-            local.get $p11
-            i64.extend_i32_u
-            local.set $p12
-            local.get $p12
-            call $rt_str__from_i64
-            local.set $p13
-            local.get $p13
-            call $rt_core__println
-            i32.const 0
-            local.set $p14
             local.get $p8
             i64.const 1
             i64.add
+            local.set $p12
+            local.get $p12
+            local.set $p8
+            i32.const 0
+            local.set $p13
+            local.get $p11
+            i64.extend_i32_u
+            local.set $p14
+            local.get $p14
+            call $rt_str__from_i64
             local.set $p15
             local.get $p15
-            local.set $p8
+            call $rt_core__println
             i32.const 0
             local.set $p16
             br $cont_0))
@@ -1948,22 +1948,22 @@
             local.set $p32
             local.get $p32
             local.set $p33
-            local.get $p33
-            i64.extend_i32_u
-            local.set $p34
-            local.get $p34
-            call $rt_str__from_i64
-            local.set $p35
-            local.get $p35
-            call $rt_core__println
-            i32.const 0
-            local.set $p36
             local.get $p30
             i64.const 1
             i64.add
+            local.set $p34
+            local.get $p34
+            local.set $p30
+            i32.const 0
+            local.set $p35
+            local.get $p33
+            i64.extend_i32_u
+            local.set $p36
+            local.get $p36
+            call $rt_str__from_i64
             local.set $p37
             local.get $p37
-            local.set $p30
+            call $rt_core__println
             i32.const 0
             local.set $p38
             br $cont_1))
@@ -2054,22 +2054,22 @@
             local.set $p54
             local.get $p54
             local.set $p55
-            local.get $p55
-            i64.extend_i32_u
-            local.set $p56
-            local.get $p56
-            call $rt_str__from_i64
-            local.set $p57
-            local.get $p57
-            call $rt_core__println
-            i32.const 0
-            local.set $p58
             local.get $p52
             i64.const 1
             i64.add
+            local.set $p56
+            local.get $p56
+            local.set $p52
+            i32.const 0
+            local.set $p57
+            local.get $p55
+            i64.extend_i32_u
+            local.set $p58
+            local.get $p58
+            call $rt_str__from_i64
             local.set $p59
             local.get $p59
-            local.set $p52
+            call $rt_core__println
             i32.const 0
             local.set $p60
             br $cont_2))
