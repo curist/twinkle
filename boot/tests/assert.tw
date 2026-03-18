@@ -106,3 +106,18 @@ pub fn err_contains<A>(res: Result<A, String>, expected_substring: String) Resul
     .Err(actual_error) => str_contains(actual_error, expected_substring),
   }
 }
+
+pub fn vec_len<A>(v: Vector<A>, expected_len: Int) Result<Void, String> {
+  if v.len() == expected_len {
+    .Ok({})
+  } else {
+    .Err("expected length ${expected_len}, got ${v.len()}")
+  }
+}
+
+pub fn vec_contains(v: Vector<String>, item: String) Result<Void, String> {
+  for s in v {
+    if s == item { return .Ok({}) }
+  }
+  .Err("expected vector to contain \"${item}\"")
+}

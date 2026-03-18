@@ -1,0 +1,99 @@
+use tests.runner
+use tests.assert
+use compiler.parser
+use compiler.resolver
+use compiler.checker
+use tests.suites.resolver_suite as rsuite
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+fn check_src(src: String) checker.CheckResult {
+  parsed := parser.parse(src, 0)
+  resolved := resolver.resolve(parsed.value, resolver.empty_env())
+  checker.check(parsed.value, resolved.env)
+}
+
+fn check_ok(src: String) Result<checker.CheckResult, String> {
+  r := check_src(src)
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+  }
+  .Ok(r)
+}
+
+fn check_errs(src: String) Result<Vector<String>, String> {
+  r := check_src(src)
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+  msgs: Vector<String> = []
+  for d in r.diagnostics {
+    msgs = msgs.push(d.message)
+  }
+  .Ok(msgs)
+}
+
+fn find_offset(src: String, needle: String) Int? {
+  if needle.len() > src.len() { return .None }
+  limit := src.len() - needle.len()
+  for i in range(limit + 1) {
+    if src.slice(i, i + needle.len()) == needle {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn type_at(result: checker.CheckResult, src: String, needle: String) Result<String, String> {
+  offset := find_offset(src, needle)
+  case offset {
+    .Some(off) => {
+      case result.type_map[off] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}'"),
+      }
+    },
+    .None => .Err("'${needle}' not found in source"),
+  }
+}
+
+// ── Suite ────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("checker coverage")
+    .test("function as value", fn() {
+      src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("bare return in void function", fn() {
+      src := "fn f() Void { return }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("collect with index", fn() {
+      src := "fn f(xs: Vector<Int>) Vector<Int> { collect x, i in xs { x + i } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("for over Dict iterates keys", fn() {
+      src := "fn f(d: Dict<String, Int>) String {\nresult := \"\"\nfor k in d { result = k }\nresult\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("for over String iterates Bytes", fn() {
+      src := "fn f(s: String) Int {\ncount := 0\nfor b in s { count = count + 1 }\ncount\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("function as value", fn() {
+      src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("bare return in void function", fn() {
+      src := "fn f() Void { return }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+}

@@ -15,6 +15,7 @@ use tests.suites.source_suite
 use tests.suites.parser_suite
 use tests.suites.resolver_suite
 use tests.suites.checker_suite
+use tests.suites.checker_coverage_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -33,4 +34,5 @@ runner.run_all([
   parser_suite.suite(),
   resolver_suite.suite(),
   checker_suite.suite(),
+  checker_coverage_suite.suite(),
 ])

@@ -594,4 +594,69 @@ pub fn suite() runner.Suite {
       env := try resolve_ok("type Foo<A, B> = .{ a: A, b: B }")
       .Ok({})
     })
+    // ── T1: Resolver error path tests ──
+    .test("T1 Vector wrong arity", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: Vector<Int, String> }")
+      try assert.str_contains(msgs[0], "Vector expects 1 type argument")
+      .Ok({})
+    })
+    .test("T1 Dict wrong arity", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: Dict<Int> }")
+      try assert.str_contains(msgs[0], "Dict expects 2 type argument")
+      .Ok({})
+    })
+    .test("T1 Result wrong arity", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: Result<Int> }")
+      try assert.str_contains(msgs[0], "Result expects 2 type argument")
+      .Ok({})
+    })
+    .test("T1 Option wrong arity", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: Option<Int, String> }")
+      try assert.str_contains(msgs[0], "Option expects 1 type argument")
+      .Ok({})
+    })
+    .test("T1 function param without annotation", fn() {
+      msgs := try resolve_errs("fn foo(x) Int { 0 }")
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
+    })
+    .test("T1 mutual record references resolve", fn() {
+      src := "type A = .{ b: B }\ntype B = .{ a: A }"
+      env := try resolve_ok(src)
+      try assert.is_true(resolver.has_type(env, "A"))
+      try assert.is_true(resolver.has_type(env, "B"))
+      .Ok({})
+    })
+    .test("T1 circular alias chain of 4", fn() {
+      src := "type A = B\ntype B = C\ntype C = D\ntype D = A"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs { if m.contains("circular") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("T1 inherent method on generic type", fn() {
+      src := "type Box<T> = .{ value: T }\nfn unwrap<T>(b: Box<T>) T { b.value }"
+      env := try resolve_ok(src)
+      case resolver.lookup_method(env, "Box", "unwrap") {
+        .Some(fn_name) => assert.str_eq(fn_name, "unwrap"),
+        .None => .Err("expected unwrap to be registered on Box"),
+      }
+    })
+    .test("T1 register_methods twice merges", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      env2 := resolver.register_builtin_methods(env)
+      // Should still find the method (even if registered twice)
+      case resolver.lookup_method(env2, "String", "len") {
+        .Some(fn_name) => assert.str_eq(fn_name, "string_len"),
+        .None => .Err("expected String.len after double registration"),
+      }
+    })
+    .test("T1 qualified type path not supported", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: some_mod.SomeType }")
+      found := false
+      for m in msgs { if m.contains("not yet supported") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
 }

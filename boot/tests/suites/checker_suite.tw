@@ -96,14 +96,44 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<Stri
 }
 
 fn find_offset(src: String, needle: String) Int? {
+  find_offset_after(src, needle, 0)
+}
+
+fn find_offset_after(src: String, needle: String, start: Int) Int? {
   if needle.len() > src.len() { return .None }
   limit := src.len() - needle.len()
   for i in range(limit + 1) {
-    if src.slice(i, i + needle.len()) == needle {
+    if i >= start and src.slice(i, i + needle.len()) == needle {
       return .Some(i)
     }
   }
   .None
+}
+
+fn find_offset_nth(src: String, needle: String, n: Int) Int? {
+  count := 0
+  if needle.len() > src.len() { return .None }
+  limit := src.len() - needle.len()
+  for i in range(limit + 1) {
+    if src.slice(i, i + needle.len()) == needle {
+      if count == n { return .Some(i) }
+      count = count + 1
+    }
+  }
+  .None
+}
+
+fn type_at_nth(result: checker.CheckResult, src: String, needle: String, n: Int) Result<String, String> {
+  offset := find_offset_nth(src, needle, n)
+  case offset {
+    .Some(off) => {
+      case result.type_map[off] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}' (occurrence ${n})"),
+      }
+    },
+    .None => .Err("'${needle}' occurrence ${n} not found in source"),
+  }
 }
 
 // ── Suite ────────────────────────────────────────────────────────────
@@ -714,4 +744,153 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     // ── C10: resolver documentation (no behavioral test needed, just smoke) ──
+    // ── T2: Checker error path tests ──
+    .test("T2 wrong variant arg count: Some(1,2)", fn() {
+      src := "fn f() Int? { .Some(1, 2) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "expects 1 argument")
+      .Ok({})
+    })
+    .test("T2 wrong variant arg count: None(1)", fn() {
+      src := "fn f() Int? { .None(1) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "expects 0 argument")
+      .Ok({})
+    })
+    .test("T2 wrong variant arg count: Ok()", fn() {
+      src := "fn f() Result<Int, String> { .Ok() }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "expects 1 argument")
+      .Ok({})
+    })
+    .test("T2 wrong variant arg count: Err(1,2)", fn() {
+      src := "fn f() Result<Int, String> { .Err(1, 2) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "expects 1 argument")
+      .Ok({})
+    })
+    .test("T2 unknown variant for Option", fn() {
+      src := "fn f() Int? { .Foo(1) }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs { if m.contains("unknown variant") or m.contains("variant") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("T2 user sum variant in check mode", fn() {
+      src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f() Shape { .Circle(1.0) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 user sum pattern", fn() {
+      src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r) => r, .Rect(w, h) => w }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 wrong sub-pattern count in user sum", fn() {
+      src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r, s) => r }\n}"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs { if m.contains("expects") and m.contains("binding") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("T2 field access on sum type", fn() {
+      src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float { s.foo }"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
+    })
+    .test("T2 field access on primitive", fn() {
+      src := "fn f(x: Int) Int { x.foo }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs { if m.contains("field") or m.contains("cannot access") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("T2 record lit with extra field", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2, z: 3 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "unknown field")
+      .Ok({})
+    })
+    .test("T2 record literal in non-Named context", fn() {
+      src := "fn f() Int { .{ x: 1 } }"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
+    })
+    .test("T2 dict indexing", fn() {
+      src := "fn f(d: Dict<String, Int>) Int? { d[\"key\"] }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 string indexing", fn() {
+      src := "fn f(s: String) Byte { s[0] }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 indexing non-indexable", fn() {
+      src := "fn f(x: Int) Int { x[0] }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "cannot index")
+      .Ok({})
+    })
+    .test("T2 range operator", fn() {
+      src := "fn f() Vector<Int> { 1..10 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 string concatenation", fn() {
+      src := "fn f() String { \"a\" + \"b\" }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "\"a\" + \"b\""), "String")
+      .Ok({})
+    })
+    .test("T2 bitwise and", fn() {
+      src := "fn f(a: Int, b: Int) Int { a & b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 bitwise or", fn() {
+      src := "fn f(a: Int, b: Int) Int { a | b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 bitwise xor", fn() {
+      src := "fn f(a: Int, b: Int) Int { a ^ b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("T2 bitwise not", fn() {
+      src := "fn f(a: Int) Int { ~a }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "~a"), "Int")
+      .Ok({})
+    })
+    .test("T2 self-application type error", fn() {
+      src := "fn f<T>(x: T) T { f(f) }"
+      msgs := try check_errs(src)
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
+    })
+    .test("T2 scope shadowing", fn() {
+      src := "fn f() Int {\nx := 42\nif true {\nx := \"hello\"\nx\n}\nx\n}"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      .Ok({})
+    })
+    .test("T2 literal pattern in case", fn() {
+      src := "fn f(x: Int) String {\ncase x {\n1 => \"one\",\n_ => \"other\",\n}\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── T3: Checker synthesis path tests ──
+    .test("T3 field access on generic record", fn() {
+      src := "type Box<T> = .{ value: T }\nfn get_val(b: Box<Int>) Int { b.value }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "b.value"), "Int")
+      .Ok({})
+    })
 }

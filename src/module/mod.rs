@@ -850,6 +850,11 @@ pub fn link(state: CompileState) -> CoreModule {
 
     let mut local_to_global: HashMap<(usize, u32), FuncId> = HashMap::new();
     let mut next_global = prelude::USER_FUNC_START;
+    // Build set of sparse prelude/intrinsic FuncIds to skip during linking
+    let prelude_ids: std::collections::HashSet<u32> = crate::intrinsics::registry::all_specs()
+        .iter()
+        .map(|spec| spec.func_id.0)
+        .collect();
     for &idx in &order {
         let mut local_ids: Vec<u32> = modules[idx]
             .functions
@@ -860,6 +865,9 @@ pub fn link(state: CompileState) -> CoreModule {
         local_ids.sort_unstable();
         local_ids.dedup();
         for local_id in local_ids {
+            while prelude_ids.contains(&next_global) {
+                next_global += 1;
+            }
             local_to_global.insert((idx, local_id), FuncId(next_global));
             next_global += 1;
         }
