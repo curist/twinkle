@@ -88,39 +88,37 @@ pub fn empty_env() ResolvedEnv {
 }
 
 pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) String? {
-  case env.methods[type_name] {
-    .Some(entries) => {
-      for e in entries {
-        if e.method_name == method_name {
-          return .Some(e.function_name)
-        }
-      }
-      .None
-    },
-    .None => .None,
+  entries := case env.methods[type_name] {
+    .Some(v) => v,
+    .None => { return .None },
   }
+  for e in entries {
+    if e.method_name == method_name {
+      return .Some(e.function_name)
+    }
+  }
+  .None
 }
 
 fn me(method_name: String, function_name: String) MethodEntry {
-  .{ method_name: method_name, function_name: function_name }
+  .{ method_name, function_name }
 }
 
 fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: String, entries: Vector<MethodEntry>) Dict<String, Vector<MethodEntry>> {
-  case methods[type_name] {
-    .Some(existing) => {
-      result := existing
-      for e in entries {
-        // Deduplicate: skip if method_name already registered
-        dup := false
-        for ex in result {
-          if ex.method_name == e.method_name { dup = true }
-        }
-        if !dup { result = result.push(e) }
-      }
-      methods[type_name] = result
+  existing := case methods[type_name] {
+    .Some(v) => v,
+    .None => {
+      methods[type_name] = entries
+      return methods
     },
-    .None => { methods[type_name] = entries },
   }
+  new_entries := collect e in entries {
+    // Deduplicate: skip if method_name already registered
+    dup := existing.any(fn(ex) { ex.method_name == e.method_name })
+    if dup { continue }
+    e
+  }
+  methods[type_name] = existing.concat(new_entries)
   methods
 }
 
@@ -263,12 +261,12 @@ pub fn resolve(module: Module, env: ResolvedEnv) ResolveResult {
 fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
   cur := env
   diags: Vector<Diagnostic> = []
-  seen_fns: Vector<String> = []
+  seen_fns: Dict<String, Bool> = Dict.new()
 
   for item in module.items {
     case item {
       .Type(decl) => {
-        if has_type(cur, decl.name) {
+        if cur.has_type(decl.name) {
           diags = diags.push(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
         } else {
           tid := TypeId.{ id: cur.types.len() }
@@ -276,14 +274,10 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
         }
       },
       .Function(decl) => {
-        fn_dup := false
-        for n in seen_fns {
-          if n == decl.name { fn_dup = true }
-        }
-        if fn_dup {
+        if seen_fns.has(decl.name) {
           diags = diags.push(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
         } else {
-          seen_fns = seen_fns.push(decl.name)
+          seen_fns[decl.name] = true
         }
       },
       // Use/Stmt items: imports deferred to multi-module Phase E;
@@ -341,19 +335,16 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
 fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
   m := env.methods
   for f in env.functions {
-    if f.params.len() > 0 {
-      case f.params[0] {
-        .Named(tid, _) => {
-          case find_type_name(env, tid) {
-            .Some(type_name) => {
-              m = m.register_methods(type_name, [me(f.name, f.name)])
-            },
-            .None => {},
-          }
-        },
-        _ => {},
-      }
+    if f.params.len() == 0 { continue }
+    tid := case f.params[0] {
+      .Named(t, _) => t,
+      _ => { continue },
     }
+    type_name := case find_type_name(env, tid) {
+      .Some(n) => n,
+      .None => { continue },
+    }
+    m = m.register_methods(type_name, [me(f.name, f.name)])
   }
   env.with_methods(m)
 }
@@ -451,14 +442,13 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
     }
   }
 
-  ret_ty: MonoType? = .None
-  case decl.return_type {
+  ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
       r := resolve_type_expr(ty_expr, type_params, env)
       diags = diags.concat(r.diagnostics)
-      ret_ty = r.ty
+      r.ty
     },
-    .None => {},
+    .None => .None,
   }
 
   new_env := env.add_function(.{
@@ -533,13 +523,11 @@ fn resolve_fn_type(param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars:
   if param_types.len() != param_exprs.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
-  case r.ty {
-    .Some(ret_ty) => .{
-      ty: .Some(MonoType.Function(param_types, ret_ty)),
-      diagnostics: all_diags,
-    },
-    .None => .{ ty: .None, diagnostics: all_diags },
+  ret_ty := case r.ty {
+    .Some(t) => t,
+    .None => { return .{ ty: .None, diagnostics: all_diags } },
   }
+  .{ ty: .Some(MonoType.Function(param_types, ret_ty)), diagnostics: all_diags }
 }
 
 fn resolve_optional_type(inner_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
@@ -559,18 +547,15 @@ fn resolve_result_type(ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<
   all_diags = all_diags.concat(r_ok.diagnostics)
   r_err := resolve_type_expr(err_expr, type_vars, env)
   all_diags = all_diags.concat(r_err.diagnostics)
-  case r_ok.ty {
-    .Some(ok_ty) => {
-      case r_err.ty {
-        .Some(err_ty) => .{
-          ty: .Some(MonoType.Result(ok_ty, err_ty)),
-          diagnostics: all_diags,
-        },
-        .None => .{ ty: .None, diagnostics: all_diags },
-      }
-    },
-    .None => .{ ty: .None, diagnostics: all_diags },
+  ok_ty := case r_ok.ty {
+    .Some(t) => t,
+    .None => { return .{ ty: .None, diagnostics: all_diags } },
   }
+  err_ty := case r_err.ty {
+    .Some(t) => t,
+    .None => { return .{ ty: .None, diagnostics: all_diags } },
+  }
+  .{ ty: .Some(MonoType.Result(ok_ty, err_ty)), diagnostics: all_diags }
 }
 
 fn resolve_type_path(path: TypePath, args: Vector<MonoType>, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
@@ -669,21 +654,19 @@ fn def_type_param_count(def: ResolvedTypeDef) Int {
 }
 
 fn check_user_type_arity(name: String, args: Vector<MonoType>, env: ResolvedEnv, s: span.Span) TypeResolveResult? {
-  case lookup_type(env, name) {
-    .Some(entry) => {
-      case entry.def {
-        .Some(def) => {
-          expected := def_type_param_count(def)
-          if args.len() != expected {
-            return .Some(type_err(diag.error(s, "${name} expects ${expected} type argument(s), got ${args.len()}")))
-          }
-          .None
-        },
-        .None => .None,
-      }
-    },
-    .None => .None,
+  entry := case env.lookup_type(name) {
+    .Some(e) => e,
+    .None => { return .None },
   }
+  def := case entry.def {
+    .Some(d) => d,
+    .None => { return .None },
+  }
+  expected := def_type_param_count(def)
+  if args.len() != expected {
+    return .Some(type_err(diag.error(s, "${name} expects ${expected} type argument(s), got ${args.len()}")))
+  }
+  .None
 }
 
 // ── Topological Sort for Type Declarations ──────────────────────────
@@ -720,16 +703,13 @@ type TopoState = .{
 }
 
 fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, state: Dict<String, Int>, order: Vector<Int>) TopoState {
-  cur_state := 0
-  case state[names[i]] {
-    .Some(s) => { cur_state = s },
-    .None => {},
+  cur_state := case state[names[i]] {
+    .Some(s) => s,
+    .None => 0,
   }
 
-  // Already visited — no work to do
-  if cur_state == 2 { return .{ state: state, order: order } }
-  // Cycle detected — bail out; circular aliases reported in Pass 3
-  if cur_state == 1 { return .{ state: state, order: order } }
+  // Already visited or cycle detected — no work to do
+  if cur_state > 0 { return .{ state, order } }
 
   // Mark in-progress
   new_state := state
