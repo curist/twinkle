@@ -228,7 +228,7 @@ fn handle_definition_request(session: &AnalysisSession, params: Option<&Value>) 
     };
 
     let analysis = session.analyze_entry(&path)?;
-    let Some(target) = definition_at_workspace(&analysis, &path, position) else {
+    let Some(target) = definition_at_workspace(&analysis, &analysis.entry_path, position) else {
         return Ok(Value::Null);
     };
     let Some(target_module) = analysis.modules.get(&target.path) else {
@@ -799,6 +799,60 @@ mod tests {
         assert!(
             message.contains("analysis failed"),
             "expected analysis failure message, got: {message}"
+        );
+    }
+
+    #[test]
+    fn definition_request_resolves_local_function_call() {
+        reset_global_cache();
+
+        let project_root = PathBuf::from("/virtual/lsp_cli_definition_local");
+        let stdlib_root = project_root.join("stdlib");
+        let entry = project_root.join("main.tw");
+        let source = r#"fn helper(x: Int) Int { x + 1 }
+
+fn main() Int {
+  m := 0
+  m = helper(m)
+  m
+}
+"#;
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(entry.clone(), source.to_string());
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+        };
+
+        // Cursor on "helper" in "m = helper(m)"
+        let cursor = source.find("helper(m)").expect("helper call");
+        let pos = byte_offset_to_position_utf16(source, cursor).expect("position");
+        let uri = path_to_file_uri(&entry).expect("uri");
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": pos.line, "character": pos.character }
+            }
+        });
+
+        let mut writer = Vec::new();
+        handle_lsp_message(&mut state, &payload, &mut writer).expect("handle");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["id"], json!(10));
+        assert!(
+            response["result"] != Value::Null,
+            "definition request should resolve local function call, got null"
+        );
+        assert!(
+            response["result"]["range"].is_object(),
+            "definition result should include a range"
         );
     }
 
