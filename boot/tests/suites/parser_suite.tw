@@ -47,34 +47,8 @@ fn parse_body_stmt(src: String, idx: Int) Result<ast.Stmt, String> {
   .Ok(block.stmts[idx])
 }
 
-fn expr_kind_name(kind: ast.ExprKind) String {
-  case kind {
-    .Ident(_) => "Ident",
-    .IntLit(_) => "IntLit",
-    .FloatLit(_) => "FloatLit",
-    .StringLit(_) => "StringLit",
-    .StringInterp(_) => "StringInterp",
-    .BoolLit(_) => "BoolLit",
-    .Unary(_, _) => "Unary",
-    .Binary(_, _, _) => "Binary",
-    .Call(_, _) => "Call",
-    .Field(_, _) => "Field",
-    .Index(_, _) => "Index",
-    .BlockExpr(_) => "BlockExpr",
-    .If(_, _, _) => "If",
-    .Case(_, _) => "Case",
-    .Array(_) => "Array",
-    .Record(_) => "Record",
-    .NamedRecord(_, _) => "NamedRecord",
-    .Variant(_, _) => "Variant",
-    .Closure(_, _, _) => "Closure",
-    .Collect(_) => "Collect",
-    .ErrorExpr => "ErrorExpr",
-  }
-}
-
 fn assert_expr_kind(expr: ast.Expr, expected: String) Result<Void, String> {
-  actual := expr_kind_name(expr.kind)
+  actual := expr.kind.name()
   if actual != expected {
     .Err("expected ${expected}, got ${actual}")
   } else {
@@ -1187,7 +1161,7 @@ pub fn suite() runner.Suite {
           try assert.str_eq(entries[0].name, "x")
           assert.str_eq(entries[1].name, "y")
         },
-        _ => assert.fail("expected NamedRecord, got ${expr_kind_name(expr.kind)}"),
+        _ => assert.fail("expected NamedRecord, got ${expr.kind.name()}"),
       }
     })
 
@@ -1210,7 +1184,7 @@ pub fn suite() runner.Suite {
           try assert_expr_kind(base, "Ident")
           assert.str_eq(name, "Some")
         },
-        _ => assert.fail("expected Field, got ${expr_kind_name(expr.kind)}"),
+        _ => assert.fail("expected Field, got ${expr.kind.name()}"),
       }
     })
 

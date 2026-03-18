@@ -256,3 +256,29 @@ pub type UnOp = {
   BitNot,
   Try,
 }
+
+pub fn name(kind: ExprKind) String {
+  case kind {
+    .Ident(_) => "Ident",
+    .IntLit(_) => "IntLit",
+    .FloatLit(_) => "FloatLit",
+    .StringLit(_) => "StringLit",
+    .StringInterp(_) => "StringInterp",
+    .BoolLit(_) => "BoolLit",
+    .Unary(_, _) => "Unary",
+    .Binary(_, _, _) => "Binary",
+    .Call(_, _) => "Call",
+    .Field(_, _) => "Field",
+    .Index(_, _) => "Index",
+    .BlockExpr(_) => "BlockExpr",
+    .If(_, _, _) => "If",
+    .Case(_, _) => "Case",
+    .Array(_) => "Array",
+    .Record(_) => "Record",
+    .NamedRecord(_, _) => "NamedRecord",
+    .Variant(_, _) => "Variant",
+    .Closure(_, _, _) => "Closure",
+    .Collect(_) => "Collect",
+    .ErrorExpr => "ErrorExpr",
+  }
+}
