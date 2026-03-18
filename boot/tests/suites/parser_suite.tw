@@ -176,7 +176,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("import: destructuring with value, type, and aliases", fn() {
-      src := "use math.vec.{add as plus, type Vec2 as V2}"
+      src := "use math.vec.{add as plus, Vec2 as V2}"
       parsed := parser.parse(src, 0)
       try assert.int_eq(parsed.diagnostics.len(), 0)
       try assert.int_eq(parsed.value.items.len(), 1)
@@ -1233,7 +1233,7 @@ pub fn suite() runner.Suite {
       assert.is_true(parsed.diagnostics.len() > 0)
     })
     .test("import: trailing comma in destructuring", fn() {
-      src := "use foo.bar.{add, type Vec,}"
+      src := "use foo.bar.{add, Vec,}"
       parsed := parser.parse(src, 0)
       try assert.int_eq(parsed.diagnostics.len(), 0)
       case parsed.value.items[0] {
@@ -1247,7 +1247,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("import: relative path with destructuring", fn() {
-      src := "use .util.{helper, type Config}"
+      src := "use .util.{helper, Config}"
       parsed := parser.parse(src, 0)
       try assert.int_eq(parsed.diagnostics.len(), 0)
       case parsed.value.items[0] {

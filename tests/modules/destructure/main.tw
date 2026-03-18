@@ -1,4 +1,4 @@
-use math.{add, make_vec, type Vec2}
+use math.{add, make_vec, Vec2}
 
 fn main() {
     result := add(1, 2)

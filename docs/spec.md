@@ -660,13 +660,13 @@ pub translate := vector.translate
 
 Circular imports are a compile-time error.
 
-#### Destructuring (future, not in MVP)
+#### Destructuring
 
-Bringing specific names directly into scope is not supported in MVP. Future syntax:
+Specific names can be brought directly into scope. PascalCase names are imported as types, snake_case names as values — no `type` keyword needed:
 
 ```tw
-use math.vector.{translate, scale}
-use math.vector.{translate as tr, scale}
+use math.vector.{translate, scale, Vec2}
+use math.vector.{translate as tr, Vec2 as V2}
 
 // to both alias the module and destructure, use two statements:
 use math.vector as vec

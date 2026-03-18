@@ -32,12 +32,11 @@ use math.vector as vec
 //^ keyword.import
 //              ^^ keyword.import
 
-use math.vector.{translate, type Vec2 as V2}
+use math.vector.{translate, Vec2 as V2}
 //^ keyword.import
-//                          ^^^^ keyword.type
-//                ^^^^^^^^^                  function
-//                               ^^^^ type
-//                                    ^^ keyword.import
+//                ^^^^^^^^^             function
+//                          ^^^^ type
+//                               ^^ keyword.import
 
 try foo()
 //^ keyword.exception

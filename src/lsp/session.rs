@@ -218,7 +218,7 @@ pub fn make_vec(x: Int, y: Int) Vec2 { Vec2.{ x: x, y: y } }
         );
         base_sources.insert(
             main_path.clone(),
-            r#"use math.{add, make_vec, type Vec2}
+            r#"use math.{add, make_vec, Vec2}
 
 fn main() {
     result := add(1, 2)
@@ -260,7 +260,7 @@ fn main() {
         eprintln!("hover_vec2 = {:?}", hover_vec2);
 
         // Hover on import line items
-        // `use math.{add, make_vec, type Vec2}` — line 0
+        // `use math.{add, make_vec, Vec2}` — line 0
         let hover_import_add = session
             .hover(&main_path, &main_path, PositionUtf16::new(0, 11))
             .expect("hover should not error");
@@ -275,10 +275,10 @@ fn main() {
         );
 
         let hover_import_vec2 = session
-            .hover(&main_path, &main_path, PositionUtf16::new(0, 31))
+            .hover(&main_path, &main_path, PositionUtf16::new(0, 26))
             .expect("hover should not error");
         eprintln!(
-            "hover_import_vec2 (line 0, col 31) = {:?}",
+            "hover_import_vec2 (line 0, col 26) = {:?}",
             hover_import_vec2
         );
         assert!(
@@ -317,7 +317,7 @@ fn main() {
         );
 
         // Goto definition from import line items
-        // `use math.{add, make_vec, type Vec2}` — `add` starts at col 10
+        // `use math.{add, make_vec, Vec2}` — `add` starts at col 10
         let def_import_add = session
             .definition(&main_path, &main_path, PositionUtf16::new(0, 11))
             .expect("definition should not error");

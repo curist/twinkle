@@ -75,7 +75,7 @@ p := Point.{ x: 1, y: 2 }
 ### Modules & Imports
 - Last path segment (without extension) is the module identifier
 - Aliasing: `use foo.bar as baz`
-- Destructuring: `use foo.bar.{fn1, fn2, type MyType}`
+- Destructuring: `use foo.bar.{fn1, fn2, MyType}`
 - Relative imports: `use .sibling` resolves from the importing file's parent namespace
 - Stdlib: `use @std.fs` (prelude modules auto-imported, no `use` needed)
 - Exports accessed as `module.function`, `module.Type`

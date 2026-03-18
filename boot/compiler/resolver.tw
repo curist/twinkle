@@ -6,12 +6,12 @@
 // Functional style: env is threaded through return values, never mutated in place.
 
 use lib.source.span
-use lib.source.diagnostic.{type Diagnostic, type StageResult}
+use lib.source.diagnostic.{Diagnostic, StageResult}
 use lib.source.diagnostic as diag
 use .ast.{
-  type Module, type Item, type TypeDecl, type FunctionDecl, type Param,
-  type TypeDef, type TypeExpr, type TypeExprKind, type TypePath,
-  type RecordField, type VariantDecl,
+  Module, Item, TypeDecl, FunctionDecl, Param,
+  TypeDef, TypeExpr, TypeExprKind, TypePath,
+  RecordField, VariantDecl,
 }
 
 // ── Resolved Types ──────────────────────────────────────────────────

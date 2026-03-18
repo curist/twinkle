@@ -365,32 +365,22 @@ impl Parser {
                 break;
             }
 
-            if self.peek_is(TokenKind::Type) {
-                // Type import: `type T` or `type T as U`
-                let type_tok = self.advance().unwrap();
-                let name_tok = self.expect(TokenKind::Ident)?;
-                let alias = if self.peek_is(TokenKind::As) {
-                    self.advance();
-                    Some(self.expect(TokenKind::Ident)?.text.clone())
-                } else {
-                    None
-                };
-                let span = type_tok.span.merge(&self.tokens[self.pos - 1].span);
+            // Infer value vs type from casing: PascalCase → type, snake_case → value
+            let name_tok = self.expect(TokenKind::Ident)?;
+            let alias = if self.peek_is(TokenKind::As) {
+                self.advance();
+                Some(self.expect(TokenKind::Ident)?.text.clone())
+            } else {
+                None
+            };
+            let span = name_tok.span.merge(&self.tokens[self.pos - 1].span);
+            if name_tok.text.starts_with(|c: char| c.is_uppercase()) {
                 items.push(ImportItem::Type {
                     name: name_tok.text.clone(),
                     alias,
                     span,
                 });
             } else {
-                // Value import: `x` or `x as y`
-                let name_tok = self.expect(TokenKind::Ident)?;
-                let alias = if self.peek_is(TokenKind::As) {
-                    self.advance();
-                    Some(self.expect(TokenKind::Ident)?.text.clone())
-                } else {
-                    None
-                };
-                let span = name_tok.span.merge(&self.tokens[self.pos - 1].span);
                 items.push(ImportItem::Value {
                     name: name_tok.text.clone(),
                     alias,
@@ -2284,7 +2274,7 @@ mod tests {
 
     #[test]
     fn test_parse_destructuring_type_imports() {
-        let decl = get_import("use foo.bar.{type Vec2, type Transform}");
+        let decl = get_import("use foo.bar.{Vec2, Transform}");
         assert_eq!(decl.module_path, vec!["foo", "bar"]);
         let items = decl.items.unwrap();
         assert_eq!(items.len(), 2);
@@ -2308,7 +2298,7 @@ mod tests {
 
     #[test]
     fn test_parse_destructuring_mixed_imports() {
-        let decl = get_import("use foo.bar.{translate, type Vec2}");
+        let decl = get_import("use foo.bar.{translate, Vec2}");
         assert_eq!(decl.module_path, vec!["foo", "bar"]);
         let items = decl.items.unwrap();
         assert_eq!(items.len(), 2);
@@ -2332,7 +2322,7 @@ mod tests {
 
     #[test]
     fn test_parse_destructuring_with_aliases() {
-        let decl = get_import("use foo.bar.{translate as tr, type Vec2 as V2}");
+        let decl = get_import("use foo.bar.{translate as tr, Vec2 as V2}");
         assert_eq!(decl.module_path, vec!["foo", "bar"]);
         let items = decl.items.unwrap();
         assert_eq!(items.len(), 2);

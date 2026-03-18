@@ -1,14 +1,14 @@
 use lib.source.span
-use lib.source.diagnostic.{type Diagnostic, type StageResult}
-use .tokens.{type Token, type TokenKind}
+use lib.source.diagnostic.{Diagnostic, StageResult}
+use .tokens.{Token, TokenKind}
 use .lexer
 use .ast.{
-  type Item, type UseDecl, type FunctionDecl, type Param, type TypeDecl, type Module,
-  type ImportItem, type ImportValueItem, type ImportTypeItem,
-  type Expr, type ExprKind, type Stmt, type Block, type Pattern, type TypeExpr, type TypePath,
-  type BinOp, type UnOp, type TypeDef, type CaseArm, type RecordEntry, type RecordField,
-  type VariantDecl, type StringPart, type LetStmt, type ForStmt, type ReturnStmt, type BreakStmt,
-  type ContinueStmt, type DeferStmt, type ExprStmt, type CollectExpr,
+  Item, UseDecl, FunctionDecl, Param, TypeDecl, Module,
+  ImportItem, ImportValueItem, ImportTypeItem,
+  Expr, ExprKind, Stmt, Block, Pattern, TypeExpr, TypePath,
+  BinOp, UnOp, TypeDef, CaseArm, RecordEntry, RecordField,
+  VariantDecl, StringPart, LetStmt, ForStmt, ReturnStmt, BreakStmt,
+  ContinueStmt, DeferStmt, ExprStmt, CollectExpr,
 }
 
 type ItemParse = .{
@@ -797,11 +797,6 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
     }
 
     item_start := i
-    is_type := false
-    if token_kind_at(tokens_in, i) == .Type {
-      is_type = true
-      i = i + 1
-    }
 
     if token_kind_at(tokens_in, i) != .Ident {
       diagnostics_out = diagnostics_out.push(diagnostic.error(
@@ -833,6 +828,8 @@ fn parse_import_items(tokens_in: Vector<Token>, start: Int) ImportItemsParse {
     }
 
     item_span := merge_range(tokens_in, item_start, i - 1)
+    // Infer value vs type from casing: PascalCase → type, snake_case → value
+    is_type := name.len() > 0 and name[0] >= 65 and name[0] <= 90
     if is_type {
       items = items.push(.Type(ImportTypeItem.{ name, alias, span: item_span }))
     } else {

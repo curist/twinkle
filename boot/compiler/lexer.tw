@@ -1,6 +1,6 @@
 use lib.source.span
-use lib.source.diagnostic.{type Diagnostic, type StageResult}
-use .tokens.{type Token, type TokenKind}
+use lib.source.diagnostic.{Diagnostic, StageResult}
+use .tokens.{Token, TokenKind}
 
 type ScanStringResult = .{
   next_index: Int,

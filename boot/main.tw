@@ -1,9 +1,9 @@
 use @std.proc
 use @std.fs
-use lib.argparse.app.{type App, type ParseResult}
-use lib.argparse.command.{type Command}
-use lib.source.registry.{type FileRegistry}
-use lib.source.diagnostic.{type Severity, type Diagnostic}
+use lib.argparse.app.{App, ParseResult}
+use lib.argparse.command.{Command}
+use lib.source.registry.{FileRegistry}
+use lib.source.diagnostic.{Severity, Diagnostic}
 use compiler.parser
 
 fn file_command(name: String, help: String) Command {
