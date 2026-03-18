@@ -34,6 +34,7 @@ pub type MonoType = {
   Result(MonoType, MonoType),
   MetaVar(Int),
   Never,
+  ErrorType,
 }
 
 pub type ResolvedField = .{
@@ -108,7 +109,14 @@ fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: Strin
   case methods[type_name] {
     .Some(existing) => {
       result := existing
-      for e in entries { result = result.push(e) }
+      for e in entries {
+        // Deduplicate: skip if method_name already registered
+        dup := false
+        for ex in result {
+          if ex.method_name == e.method_name { dup = true }
+        }
+        if !dup { result = result.push(e) }
+      }
       methods[type_name] = result
     },
     .None => { methods[type_name] = entries },
@@ -136,6 +144,32 @@ pub fn env_with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) Reso
 
 pub fn env_with_methods(env: ResolvedEnv, methods: Dict<String, Vector<MethodEntry>>) ResolvedEnv {
   ResolvedEnv.{ types: env.types, type_names: env.type_names, functions: env.functions, methods: methods, type_index: env.type_index, func_index: env.func_index }
+}
+
+pub fn add_type(env: ResolvedEnv, entry: TypeEntry, name: String) ResolvedEnv {
+  new_idx := env.type_index
+  new_idx[name] = env.types.len()
+  ResolvedEnv.{
+    types: env.types.push(entry),
+    type_names: env.type_names.push(name),
+    functions: env.functions,
+    methods: env.methods,
+    type_index: new_idx,
+    func_index: env.func_index,
+  }
+}
+
+pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
+  new_idx := env.func_index
+  new_idx[sig.name] = env.functions.len()
+  ResolvedEnv.{
+    types: env.types,
+    type_names: env.type_names,
+    functions: env.functions.push(sig),
+    methods: env.methods,
+    type_index: env.type_index,
+    func_index: new_idx,
+  }
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
@@ -248,7 +282,7 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
         } else {
           tid := TypeId.{ id: cur.types.len() }
           entry := TypeEntry.{ id: tid, def: .None, span: decl.span }
-          cur = env_with_types(cur, cur.types.push(entry), cur.type_names.push(decl.name))
+          cur = add_type(cur, entry, decl.name)
         }
       },
       .Function(decl) => {
@@ -293,11 +327,13 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
     for d in r.diagnostics { result_diags = result_diags.push(d) }
   }
 
-  // Resolve function signatures (skip duplicates already reported in Pass 1)
+  // Resolve function signatures (skip module-internal duplicates reported in Pass 1)
+  seen_fns: Dict<String, Bool> = Dict.new()
   for item in module.items {
     case item {
       .Function(decl) => {
-        if !has_function(cur, decl.name) {
+        if !seen_fns.has(decl.name) {
+          seen_fns[decl.name] = true
           r := resolve_function_decl(decl, cur)
           cur = r.env
           for d in r.diagnostics { result_diags = result_diags.push(d) }
@@ -424,11 +460,12 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
         for d in r.diagnostics { diags = diags.push(d) }
         case r.ty {
           .Some(ty) => { param_types = param_types.push(ty) },
-          .None => { param_types = param_types.push(MonoType.Void) },
+          .None => { param_types = param_types.push(MonoType.ErrorType) },
         }
       },
       .None => {
         diags = diags.push(diag.error(param.span, "function parameters must have type annotations"))
+        param_types = param_types.push(MonoType.ErrorType)
       },
     }
   }
@@ -450,7 +487,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
     params: param_types,
     ret: ret_ty,
   }
-  new_env := env_with_functions(env, env.functions.push(sig))
+  new_env := add_function(env, sig)
 
   ResolveResult.{ env: new_env, diagnostics: diags }
 }
@@ -940,6 +977,7 @@ pub fn ty_to_string(ty: MonoType) String {
       }
       "fn(${joined}) ${ty_to_string(ret)}"
     },
+    .ErrorType => "<error>",
   }
 }
 

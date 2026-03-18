@@ -3,12 +3,26 @@ use tests.assert
 use compiler.parser
 use compiler.resolver
 use compiler.ast
+use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn resolve_src(src: String) resolver.ResolveResult {
   parsed := parser.parse(src, 0)
   resolver.resolve(parsed.value, resolver.empty_env())
+}
+
+fn resolve_src_with_env(src: String, env: resolver.ResolvedEnv) resolver.ResolveResult {
+  parsed := parser.parse(src, 0)
+  resolver.resolve(parsed.value, env)
+}
+
+fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<resolver.ResolvedEnv, String> {
+  r := resolve_src_with_env(src, env)
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+  }
+  .Ok(r.env)
 }
 
 fn resolve_ok(src: String) Result<resolver.ResolvedEnv, String> {
@@ -73,6 +87,7 @@ pub fn mono_to_string(ty: resolver.MonoType) String {
     .Result(ok, err) => "Result<${mono_to_string(ok)}, ${mono_to_string(err)}>",
     .MetaVar(id) => "?${id}",
     .Never => "Never",
+    .ErrorType => "<error>",
   }
 }
 
@@ -658,5 +673,159 @@ pub fn suite() runner.Suite {
       for m in msgs { if m.contains("not yet supported") { found = true } }
       try assert.is_true(found)
       .Ok({})
+    })
+    // ── Issue 1: User functions shadow prelude functions ──
+    .test("user function shadows prelude function", fn() {
+      // Pre-populate env with a "map" function (simulating prelude)
+      prelude_sig := resolver.FunctionSig.{
+        name: "map",
+        type_params: ["A", "B"],
+        param_names: ["xs", "f"],
+        params: [
+          resolver.MonoType.Vector(resolver.MonoType.Var("A")),
+          resolver.MonoType.Function([resolver.MonoType.Var("A")], resolver.MonoType.Var("B")),
+        ],
+        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("B"))),
+      }
+      env := resolver.env_with_functions(resolver.empty_env(), [prelude_sig])
+
+      // User defines their own "map" — should shadow prelude's
+      src := "fn map(x: Int) Int { x }"
+      result_env := try resolve_ok_with_env(src, env)
+
+      // Lookup should find user's map (1 param of Int), not prelude's (2 params)
+      case resolver.lookup_function(result_env, "map") {
+        .Some(sig) => {
+          try assert.int_eq(sig.params.len(), 1)
+          try assert.str_eq(mono_to_string(sig.params[0]), "Int")
+          .Ok({})
+        },
+        .None => .Err("user-defined map should exist"),
+      }
+    })
+    .test("user function shadows prelude without diagnostic", fn() {
+      prelude_sig := resolver.FunctionSig.{
+        name: "to_string",
+        type_params: [],
+        param_names: ["x"],
+        params: [resolver.MonoType.Int],
+        ret: .Some(resolver.MonoType.String),
+      }
+      env := resolver.env_with_functions(resolver.empty_env(), [prelude_sig])
+
+      // User redefines to_string — should NOT produce a "duplicate" diagnostic
+      src := "fn to_string(x: Float) String { \"\" }"
+      r := resolve_src_with_env(src, env)
+      try assert.int_eq(r.diagnostics.len(), 0)
+      .Ok({})
+    })
+    // ── Issue 2: Missing param annotation alignment ──
+    .test("missing param annotation keeps param vectors aligned", fn() {
+      src := "fn foo(x, y: Int) Int { 0 }"
+      r := resolve_src(src)
+      // Should have a diagnostic for missing annotation
+      try assert.is_true(r.diagnostics.len() > 0)
+      // The function should have aligned param_names and params vectors
+      case resolver.lookup_function(r.env, "foo") {
+        .Some(sig) => {
+          try assert.int_eq(sig.param_names.len(), sig.params.len())
+          .Ok({})
+        },
+        .None => .Err("function foo should be registered"),
+      }
+    })
+    // ── Issue 3: Error sentinel not Void ──
+    .test("unresolved param type is not Void", fn() {
+      // fn foo(x: Nonexistent) Void {} — the error placeholder should not be Void
+      src := "fn foo(x: Nonexistent) Void { }"
+      r := resolve_src(src)
+      case resolver.lookup_function(r.env, "foo") {
+        .Some(sig) => {
+          param_str := mono_to_string(sig.params[0])
+          // param should be an error placeholder, NOT "Void"
+          if param_str == "Void" {
+            return .Err("error placeholder should not be Void (indistinguishable from real Void return)")
+          }
+          // return type SHOULD be actual Void
+          ret_str := case sig.ret {
+            .Some(ty) => mono_to_string(ty),
+            .None => "(none)",
+          }
+          try assert.str_eq(ret_str, "Void")
+          .Ok({})
+        },
+        .None => .Err("function foo should be registered"),
+      }
+    })
+    // ── Issue 5: Incremental add_type / add_function ──
+    .test("add_type incrementally builds env", fn() {
+      env := resolver.empty_env()
+      e1 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 0 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      env = resolver.add_type(env, e1, "Foo")
+      e2 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 1 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      env = resolver.add_type(env, e2, "Bar")
+
+      try assert.is_true(resolver.has_type(env, "Foo"))
+      try assert.is_true(resolver.has_type(env, "Bar"))
+      try assert.int_eq(env.types.len(), 2)
+      .Ok({})
+    })
+    .test("add_function incrementally builds env", fn() {
+      env := resolver.empty_env()
+      sig1 := resolver.FunctionSig.{
+        name: "foo", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      }
+      env = resolver.add_function(env, sig1)
+      sig2 := resolver.FunctionSig.{
+        name: "bar", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
+      }
+      env = resolver.add_function(env, sig2)
+
+      try assert.is_true(resolver.has_function(env, "foo"))
+      try assert.is_true(resolver.has_function(env, "bar"))
+      try assert.int_eq(env.functions.len(), 2)
+      .Ok({})
+    })
+    .test("add_function shadows existing by name", fn() {
+      env := resolver.empty_env()
+      sig1 := resolver.FunctionSig.{
+        name: "foo", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      }
+      env = resolver.add_function(env, sig1)
+      // Add another "foo" — should shadow the first
+      sig2 := resolver.FunctionSig.{
+        name: "foo", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
+      }
+      env = resolver.add_function(env, sig2)
+
+      case resolver.lookup_function(env, "foo") {
+        .Some(sig) => {
+          // Should find the second (shadowing) version
+          try assert.str_eq(mono_to_string(sig.params[0]), "String")
+          .Ok({})
+        },
+        .None => .Err("foo should exist"),
+      }
+    })
+    // ── Issue 6: Duplicate method deduplication ──
+    .test("duplicate builtin methods are deduplicated", fn() {
+      env := resolver.register_builtin_methods(resolver.empty_env())
+      env = resolver.register_builtin_methods(env)
+      // String.len should exist exactly once, not duplicated
+      case env.methods["String"] {
+        .Some(entries) => {
+          count := 0
+          for e in entries {
+            if e.method_name == "len" { count = count + 1 }
+          }
+          try assert.int_eq(count, 1)
+          .Ok({})
+        },
+        .None => .Err("String methods should exist"),
+      }
     })
 }
