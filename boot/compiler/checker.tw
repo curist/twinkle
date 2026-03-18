@@ -560,9 +560,19 @@ type VariantInfo = .{
 }
 
 // Resolve a variant name against a zonked type, returning substituted field types.
-// Returns .Ok(info) if found, .Err(message) on error, .None if not a Named sum.
+// Returns .Ok(info) if found, .Err(message) on error, .None if not a sum type.
 fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
   case zonked {
+    .Optional(inner) => {
+      if name == "Some" { return .Some(.Ok(.{ field_types: [inner] })) }
+      if name == "None" { return .Some(.Ok(.{ field_types: [] })) }
+      .Some(.Err("unknown variant .${name} for Optional"))
+    },
+    .Result(ok_ty, err_ty) => {
+      if name == "Ok" { return .Some(.Ok(.{ field_types: [ok_ty] })) }
+      if name == "Err" { return .Some(.Ok(.{ field_types: [err_ty] })) }
+      .Some(.Err("unknown variant .${name} for Result"))
+    },
     .Named(tid, type_args) => {
       def := try env.lookup_type_def(tid)
       case def {
@@ -708,103 +718,26 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Sp
 
 fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
-
-  // Handle Optional sugar: .Some(x) / .None
-  case zonked {
-    .Optional(inner) => {
-      if name == "Some" {
-        if args.len() != 1 {
-          return .{
-            ctx,
-            diags: diags.push(diag.error(s, ".Some expects 1 argument, got ${args.len()}")),
-          }
-        }
-        vr := synth(args[0], ctx, diags)
-        u := unify(vr.ty, inner, s, vr.ctx, vr.diags)
-        return .{ ctx: u.ctx, diags: u.diags }
-      }
-      if name == "None" {
-        if args.len() != 0 {
-          return .{
-            ctx,
-            diags: diags.push(diag.error(s, ".None expects 0 arguments, got ${args.len()}")),
-          }
-        }
-        return .{ ctx, diags }
-      }
-      return .{
-        ctx,
-        diags: diags.push(diag.error(s, "unknown variant .${name} for Optional")),
-      }
-    },
-    _ => {},
-  }
-
-  // Handle Result sugar: .Ok(x) / .Err(e)
-  case zonked {
-    .Result(ok_ty, err_ty) => {
-      if name == "Ok" {
-        if args.len() != 1 {
-          return .{
-            ctx,
-            diags: diags.push(diag.error(s, ".Ok expects 1 argument, got ${args.len()}")),
-          }
-        }
-        vr := synth(args[0], ctx, diags)
-        u := unify(vr.ty, ok_ty, s, vr.ctx, vr.diags)
-        return .{ ctx: u.ctx, diags: u.diags }
-      }
-      if name == "Err" {
-        if args.len() != 1 {
-          return .{
-            ctx,
-            diags: diags.push(diag.error(s, ".Err expects 1 argument, got ${args.len()}")),
-          }
-        }
-        vr := synth(args[0], ctx, diags)
-        u := unify(vr.ty, err_ty, s, vr.ctx, vr.diags)
-        return .{ ctx: u.ctx, diags: u.diags }
-      }
-      return .{
-        ctx,
-        diags: diags.push(diag.error(s, "unknown variant .${name} for Result")),
-      }
-    },
-    _ => {},
-  }
-
-  // User-defined sum types
   case resolve_variant_info(name, zonked, ctx.env) {
-    .Some(result) => {
-      case result {
-        .Ok(info) => {
-          if args.len() != info.field_types.len() {
-            return .{
-              ctx,
-              diags: diags.push(diag.error(s, ".${name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
-            }
-          }
-          cur_ctx := ctx
-          cur_diags := diags
-          for i in range(args.len()) {
-            ar := synth(args[i], cur_ctx, cur_diags)
-            u := unify(ar.ty, info.field_types[i], args[i].span, ar.ctx, ar.diags)
-            cur_ctx = u.ctx
-            cur_diags = u.diags
-          }
-          return .{ ctx: cur_ctx, diags: cur_diags }
-        },
-        .Err(msg) => {
-          return .{ ctx, diags: diags.push(diag.error(s, msg)) }
-        },
+    .Some(.Ok(info)) => {
+      if args.len() != info.field_types.len() {
+        return .{
+          ctx,
+          diags: diags.push(diag.error(s, ".${name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
+        }
       }
+      cur_ctx := ctx
+      cur_diags := diags
+      for i in range(args.len()) {
+        ar := synth(args[i], cur_ctx, cur_diags)
+        u := unify(ar.ty, info.field_types[i], args[i].span, ar.ctx, ar.diags)
+        cur_ctx = u.ctx
+        cur_diags = u.diags
+      }
+      .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .None => {},
-  }
-
-  .{
-    ctx,
-    diags: diags.push(diag.error(s, "variant .${name} used where ${ty_to_string(zonked)} expected")),
+    .Some(.Err(msg)) => .{ ctx, diags: diags.push(diag.error(s, msg)) },
+    .None => .{ ctx, diags: diags.push(diag.error(s, "variant .${name} used where ${ty_to_string(zonked)} expected")) },
   }
 }
 
@@ -1099,73 +1032,26 @@ fn validate_qualifier(path: Vector<String>, expected: MonoType, s: span.Span, ct
 
 fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
-
-  // Option: .Some(x) / .None
-  case zonked {
-    .Optional(inner) => {
-      if name == "Some" {
-        if sub_pats.len() != 1 {
-          return .{ ctx, diags: diags.push(diag.error(s, ".Some pattern expects 1 binding")) }
-        }
-        return check_pattern(sub_pats[0], inner, ctx, diags)
-      }
-      if name == "None" {
-        return .{ ctx, diags }
-      }
-      return .{ ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Optional")) }
-    },
-    _ => {},
-  }
-
-  // Result: .Ok(x) / .Err(e)
-  case zonked {
-    .Result(ok_ty, err_ty) => {
-      if name == "Ok" {
-        if sub_pats.len() != 1 {
-          return .{ ctx, diags: diags.push(diag.error(s, ".Ok pattern expects 1 binding")) }
-        }
-        return check_pattern(sub_pats[0], ok_ty, ctx, diags)
-      }
-      if name == "Err" {
-        if sub_pats.len() != 1 {
-          return .{ ctx, diags: diags.push(diag.error(s, ".Err pattern expects 1 binding")) }
-        }
-        return check_pattern(sub_pats[0], err_ty, ctx, diags)
-      }
-      return .{ ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Result")) }
-    },
-    _ => {},
-  }
-
-  // User-defined sum
   case resolve_variant_info(name, zonked, ctx.env) {
-    .Some(result) => {
-      case result {
-        .Ok(info) => {
-          if sub_pats.len() != info.field_types.len() {
-            return .{
-              ctx,
-              diags: diags.push(diag.error(s, ".${name} pattern expects ${info.field_types.len()} bindings, got ${sub_pats.len()}")),
-            }
-          }
-          cur_ctx := ctx
-          cur_diags := diags
-          for i in range(sub_pats.len()) {
-            pr := check_pattern(sub_pats[i], info.field_types[i], cur_ctx, cur_diags)
-            cur_ctx = pr.ctx
-            cur_diags = pr.diags
-          }
-          return .{ ctx: cur_ctx, diags: cur_diags }
-        },
-        .Err(msg) => {
-          return .{ ctx, diags: diags.push(diag.error(s, msg)) }
-        },
+    .Some(.Ok(info)) => {
+      if sub_pats.len() != info.field_types.len() {
+        return .{
+          ctx,
+          diags: diags.push(diag.error(s, ".${name} pattern expects ${info.field_types.len()} bindings, got ${sub_pats.len()}")),
+        }
       }
+      cur_ctx := ctx
+      cur_diags := diags
+      for i in range(sub_pats.len()) {
+        pr := check_pattern(sub_pats[i], info.field_types[i], cur_ctx, cur_diags)
+        cur_ctx = pr.ctx
+        cur_diags = pr.diags
+      }
+      .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .None => {},
+    .Some(.Err(msg)) => .{ ctx, diags: diags.push(diag.error(s, msg)) },
+    .None => .{ ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) },
   }
-
-  .{ ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) }
 }
 
 fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) Vector<Diagnostic> {

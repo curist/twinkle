@@ -93,3 +93,4 @@ Related historical context outside this folder:
 | [boot-resolver-fixes.md](boot-resolver-fixes.md) | Boot resolver fixes: arity checks, duplicate fn dedup, TypeEntry spans, error collection, topo-sorted type resolution |
 | [bug-codegen-cell-verify-panic.md](bug-codegen-cell-verify-panic.md) | Fix debug_assert panic for module-global Cell locals in codegen verification |
 | [bug-record-field-type-leak.md](bug-record-field-type-leak.md) | Record field type leak across functions — no longer reproduces |
+| [checker-variant-dispatch.md](checker-variant-dispatch.md) | Unify Optional/Result/Sum variant dispatch in self-hosted checker |
