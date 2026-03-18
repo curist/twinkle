@@ -346,7 +346,7 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
         .Named(tid, _) => {
           case find_type_name(env, tid) {
             .Some(type_name) => {
-              m = register_methods(m, type_name, [me(f.name, f.name)])
+              m = m.register_methods(type_name, [me(f.name, f.name)])
             },
             .None => {},
           }
@@ -375,33 +375,28 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
 
   case decl.def {
     .Record(fields) => {
-      resolved_fields: Vector<ResolvedField> = []
-      for field in fields {
+      resolved_fields: Vector<ResolvedField> = collect field in fields {
         r := resolve_type_expr(field.ty, type_params, env)
         diags = diags.concat(r.diagnostics)
         case r.ty {
-          .Some(ty) => {
-            resolved_fields = resolved_fields.push(.{ name: field.name, ty })
-          },
-          .None => {},
+          .Some(ty) => .{ name: field.name, ty },
+          .None => { continue },
         }
       }
       new_env := env.set_type_def(decl.name, .Record(decl.name, type_params, resolved_fields))
       .{ env: new_env, diagnostics: diags }
     },
     .Sum(variants) => {
-      resolved_variants: Vector<ResolvedVariant> = []
-      for variant in variants {
-        resolved_fields: Vector<MonoType> = []
-        for field_ty in variant.fields {
+      resolved_variants: Vector<ResolvedVariant> = collect variant in variants {
+        resolved_fields := collect field_ty in variant.fields {
           r := resolve_type_expr(field_ty, type_params, env)
           diags = diags.concat(r.diagnostics)
           case r.ty {
-            .Some(ty) => { resolved_fields = resolved_fields.push(ty) },
-            .None => {},
+            .Some(ty) => ty,
+            .None => { continue },
           }
         }
-        resolved_variants = resolved_variants.push(.{ name: variant.name, fields: resolved_fields })
+        .{ name: variant.name, fields: resolved_fields }
       }
       new_env := env.set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
       .{ env: new_env, diagnostics: diags }
@@ -439,21 +434,19 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
   type_params := decl.type_params
 
   param_names := collect param in decl.params { param.name }
-  param_types: Vector<MonoType> = []
-
-  for param in decl.params {
+  param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
         r := resolve_type_expr(ty_expr, type_params, env)
         diags = diags.concat(r.diagnostics)
         case r.ty {
-          .Some(ty) => { param_types = param_types.push(ty) },
-          .None => { param_types = param_types.push(MonoType.ErrorType) },
+          .Some(ty) => ty,
+          .None => .ErrorType,
         }
       },
       .None => {
         diags = diags.push(diag.error(param.span, "function parameters must have type annotations"))
-        param_types = param_types.push(MonoType.ErrorType)
+        .ErrorType
       },
     }
   }
@@ -508,18 +501,16 @@ pub fn resolve_type_expr(ty_expr: TypeExpr, type_vars: Vector<String>, env: Reso
 }
 
 fn resolve_applied_type(path: TypePath, args: Vector<TypeExpr>, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
-  resolved_args: Vector<MonoType> = []
   all_diags: Vector<Diagnostic> = []
-  any_failed := false
-  for arg in args {
+  resolved_args := collect arg in args {
     r := resolve_type_expr(arg, type_vars, env)
     all_diags = all_diags.concat(r.diagnostics)
     case r.ty {
-      .Some(ty) => { resolved_args = resolved_args.push(ty) },
-      .None => { any_failed = true },
+      .Some(ty) => ty,
+      .None => { continue },
     }
   }
-  if any_failed {
+  if resolved_args.len() != args.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
   r := resolve_type_path(path, resolved_args, type_vars, env)
@@ -529,19 +520,17 @@ fn resolve_applied_type(path: TypePath, args: Vector<TypeExpr>, type_vars: Vecto
 
 fn resolve_fn_type(param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
   all_diags: Vector<Diagnostic> = []
-  param_types: Vector<MonoType> = []
-  any_failed := false
-  for p in param_exprs {
+  param_types := collect p in param_exprs {
     r := resolve_type_expr(p, type_vars, env)
     all_diags = all_diags.concat(r.diagnostics)
     case r.ty {
-      .Some(ty) => { param_types = param_types.push(ty) },
-      .None => { any_failed = true },
+      .Some(ty) => ty,
+      .None => { continue },
     }
   }
   r := resolve_type_expr(ret_expr, type_vars, env)
   all_diags = all_diags.concat(r.diagnostics)
-  if any_failed {
+  if param_types.len() != param_exprs.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
   case r.ty {
@@ -854,21 +843,16 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
 fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<Diagnostic>) Vector<Diagnostic> {
   result := diags
   for i in range(env.type_names.len()) {
-    case env.types[i].def {
-      .Some(def) => {
-        case def {
-          .Alias(aname, _, _) => {
-            if is_circular_alias(env, aname, Dict.new()) {
-              result = result.push(diag.error(
-                env.types[i].span,
-                "circular type alias: ${aname}",
-              ))
-            }
-          },
-          _ => {},
-        }
-      },
-      .None => {},
+    def := case env.types[i].def {
+      .Some(d) => d,
+      .None => { continue },
+    }
+    aname := case def {
+      .Alias(name, _, _) => name,
+      _ => { continue },
+    }
+    if is_circular_alias(env, aname, Dict.new()) {
+      result = result.push(diag.error(env.types[i].span, "circular type alias: ${aname}"))
     }
   }
   result
@@ -879,19 +863,17 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
   new_visited := visited
   new_visited[name] = true
 
-  case lookup_type(env, name) {
-    .Some(entry) => {
-      case entry.def {
-        .Some(def) => {
-          case def {
-            .Alias(_, _, target) => mono_contains_circular(env, target, new_visited),
-            _ => false,
-          }
-        },
-        .None => false,
-      }
-    },
-    .None => false,
+  entry := case env.lookup_type(name) {
+    .Some(e) => e,
+    .None => { return false },
+  }
+  def := case entry.def {
+    .Some(d) => d,
+    .None => { return false },
+  }
+  case def {
+    .Alias(_, _, target) => mono_contains_circular(env, target, new_visited),
+    _ => false,
   }
 }
 
@@ -942,21 +924,13 @@ pub fn ty_to_string(ty: MonoType) String {
       if args.len() == 0 {
         "Named(${tid.id})"
       } else {
-        joined := ""
-        for a, i in args {
-          if i > 0 { joined = "${joined}, " }
-          joined = "${joined}${ty_to_string(a)}"
-        }
-        "Named(${tid.id})<${joined}>"
+        joined := collect a in args { ty_to_string(a) }
+        "Named(${tid.id})<${joined.join(", ")}>"
       }
     },
     .Function(params, ret) => {
-      joined := ""
-      for p, i in params {
-        if i > 0 { joined = "${joined}, " }
-        joined = "${joined}${ty_to_string(p)}"
-      }
-      "fn(${joined}) ${ty_to_string(ret)}"
+      joined := collect p in params { ty_to_string(p) }
+      "fn(${joined.join(", ")}) ${ty_to_string(ret)}"
     },
     .ErrorType => "<error>",
   }
