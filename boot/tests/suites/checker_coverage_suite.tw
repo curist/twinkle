@@ -9,7 +9,7 @@ use tests.suites.resolver_suite as rsuite
 
 fn check_src(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
-  resolved := resolver.resolve(parsed.value, resolver.empty_env())
+  resolved := resolver.empty_env().resolve(parsed.value)
   checker.check(parsed.value, resolved.env)
 }
 

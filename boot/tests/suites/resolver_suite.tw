@@ -9,12 +9,12 @@ use lib.source.span
 
 fn resolve_src(src: String) resolver.ResolveResult {
   parsed := parser.parse(src, 0)
-  resolver.resolve(parsed.value, resolver.empty_env())
+  resolver.empty_env().resolve(parsed.value)
 }
 
 fn resolve_src_with_env(src: String, env: resolver.ResolvedEnv) resolver.ResolveResult {
   parsed := parser.parse(src, 0)
-  resolver.resolve(parsed.value, env)
+  env.resolve(parsed.value)
 }
 
 fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<resolver.ResolvedEnv, String> {
@@ -489,7 +489,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("builtin method: String.len", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
+      env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "String", "len") {
         .Some(fn_name) => {
           try assert.str_eq(fn_name, "string_len")
@@ -499,7 +499,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("builtin method: Vector.push", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
+      env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Vector", "push") {
         .Some(fn_name) => {
           try assert.str_eq(fn_name, "vector_push")
@@ -509,7 +509,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("builtin method: Int.to_string", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
+      env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Int", "to_string") {
         .Some(fn_name) => {
           try assert.str_eq(fn_name, "int_to_string")
@@ -519,7 +519,7 @@ pub fn suite() runner.Suite {
       }
     })
     .test("builtin method: Dict.keys", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
+      env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Dict", "keys") {
         .Some(fn_name) => {
           try assert.str_eq(fn_name, "dict_keys")
@@ -659,8 +659,8 @@ pub fn suite() runner.Suite {
       }
     })
     .test("T1 register_methods twice merges", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
-      env2 := resolver.register_builtin_methods(env)
+      env := resolver.empty_env().register_builtin_methods()
+      env2 := env.register_builtin_methods()
       // Should still find the method (even if registered twice)
       case resolver.lookup_method(env2, "String", "len") {
         .Some(fn_name) => assert.str_eq(fn_name, "string_len"),
@@ -813,8 +813,8 @@ pub fn suite() runner.Suite {
     })
     // ── Issue 6: Duplicate method deduplication ──
     .test("duplicate builtin methods are deduplicated", fn() {
-      env := resolver.register_builtin_methods(resolver.empty_env())
-      env = resolver.register_builtin_methods(env)
+      env := resolver.empty_env().register_builtin_methods()
+      env = env.register_builtin_methods()
       // String.len should exist exactly once, not duplicated
       case env.methods["String"] {
         .Some(entries) => {

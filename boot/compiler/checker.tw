@@ -102,7 +102,7 @@ fn set_subst(ctx: InferCtx, id: Int, ty: MonoType) InferCtx {
 // ── Type annotation resolution ──────────────────────────────────────
 
 fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
-  r := resolver.resolve_type_expr(ty_expr, ctx.type_var_scope, ctx.env)
+  r := ctx.env.resolve_type_expr(ty_expr, ctx.type_var_scope)
   result_diags := diags.concat(r.diagnostics)
   case r.ty {
     .Some(ty) => .{ ty, ctx, diags: result_diags },

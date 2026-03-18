@@ -9,7 +9,7 @@ use tests.suites.resolver_suite as rsuite
 
 fn check_src(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
-  resolved := resolver.resolve(parsed.value, resolver.empty_env())
+  resolved := resolver.empty_env().resolve(parsed.value)
   checker.check(parsed.value, resolved.env)
 }
 
@@ -32,12 +32,12 @@ fn test_env() resolver.ResolvedEnv {
     builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
   ]
   env := resolver.empty_env().with_functions(fns)
-  resolver.register_builtin_methods(env)
+  env.register_builtin_methods()
 }
 
 fn check_src_with_builtins(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
-  resolved := resolver.resolve(parsed.value, test_env())
+  resolved := test_env().resolve(parsed.value)
   checker.check(parsed.value, resolved.env)
 }
 

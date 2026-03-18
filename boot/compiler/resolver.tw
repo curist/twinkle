@@ -243,12 +243,12 @@ pub type ResolveResult = .{
 
 // ── Public API ──────────────────────────────────────────────────────
 
-pub fn resolve(module: Module, env: ResolvedEnv) ResolveResult {
+pub fn resolve(env: ResolvedEnv, module: Module) ResolveResult {
   // Pass 1: collect declarations
-  p1 := collect_declarations(module, env)
+  p1 := collect_declarations(env, module)
 
   // Pass 2: resolve type references and function signatures
-  p2 := resolve_references(module, p1.env, p1.diagnostics)
+  p2 := resolve_references(p1.env, module, p1.diagnostics)
 
   // Pass 3: detect circular aliases
   p3_diags := detect_circular_aliases(p2.env, p2.diagnostics)
@@ -258,7 +258,7 @@ pub fn resolve(module: Module, env: ResolvedEnv) ResolveResult {
 
 // ── Pass 1: Collection ──────────────────────────────────────────────
 
-fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
+fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
   cur := env
   diags: Vector<Diagnostic> = []
   seen_fns: Dict<String, Bool> = Dict.new()
@@ -292,7 +292,7 @@ fn collect_declarations(module: Module, env: ResolvedEnv) ResolveResult {
 
 // ── Pass 2: Resolution ──────────────────────────────────────────────
 
-fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic>) ResolveResult {
+fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic>) ResolveResult {
   cur := env
   result_diags := diags
 
@@ -305,7 +305,7 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
   }
   sorted := topo_sort_type_decls(type_decls)
   for decl in sorted {
-    r := resolve_type_decl(decl, cur)
+    r := resolve_type_decl(cur, decl)
     cur = r.env
     result_diags = result_diags.concat(r.diagnostics)
   }
@@ -317,7 +317,7 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
       .Function(decl) => {
         if !seen_fns.has(decl.name) {
           seen_fns[decl.name] = true
-          r := resolve_function_decl(decl, cur)
+          r := resolve_function_decl(cur, decl)
           cur = r.env
           result_diags = result_diags.concat(r.diagnostics)
         }
@@ -340,7 +340,7 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
       .Named(t, _) => t,
       _ => { continue },
     }
-    type_name := case find_type_name(env, tid) {
+    type_name := case env.find_type_name(tid) {
       .Some(n) => n,
       .None => { continue },
     }
@@ -360,14 +360,14 @@ fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagn
   }
 }
 
-fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
+fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
   diags := check_dup_type_params(decl.type_params, decl.span)
   type_params := decl.type_params
 
   case decl.def {
     .Record(fields) => {
       resolved_fields: Vector<ResolvedField> = collect field in fields {
-        r := resolve_type_expr(field.ty, type_params, env)
+        r := env.resolve_type_expr(field.ty, type_params)
         diags = diags.concat(r.diagnostics)
         case r.ty {
           .Some(ty) => .{ name: field.name, ty },
@@ -380,7 +380,7 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
     .Sum(variants) => {
       resolved_variants: Vector<ResolvedVariant> = collect variant in variants {
         resolved_fields := collect field_ty in variant.fields {
-          r := resolve_type_expr(field_ty, type_params, env)
+          r := env.resolve_type_expr(field_ty, type_params)
           diags = diags.concat(r.diagnostics)
           case r.ty {
             .Some(ty) => ty,
@@ -393,7 +393,7 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
       .{ env: new_env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
-      r := resolve_type_expr(ty_expr, type_params, env)
+      r := env.resolve_type_expr(ty_expr, type_params)
       diags = diags.concat(r.diagnostics)
       case r.ty {
         .Some(ty) => {
@@ -420,7 +420,7 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
   env.with_types(new_types, env.type_names)
 }
 
-fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
+fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   diags := check_dup_type_params(decl.type_params, decl.span)
   type_params := decl.type_params
 
@@ -428,7 +428,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
   param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
-        r := resolve_type_expr(ty_expr, type_params, env)
+        r := env.resolve_type_expr(ty_expr, type_params)
         diags = diags.concat(r.diagnostics)
         case r.ty {
           .Some(ty) => ty,
@@ -444,7 +444,7 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
 
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
-      r := resolve_type_expr(ty_expr, type_params, env)
+      r := env.resolve_type_expr(ty_expr, type_params)
       diags = diags.concat(r.diagnostics)
       r.ty
     },
@@ -477,23 +477,23 @@ fn type_err(d: Diagnostic) TypeResolveResult {
   .{ ty: .None, diagnostics: [d] }
 }
 
-pub fn resolve_type_expr(ty_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+pub fn resolve_type_expr(env: ResolvedEnv, ty_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   case ty_expr.kind {
-    .Path(path) => resolve_type_path(path, [], type_vars, env),
-    .Applied(path, args) => resolve_applied_type(path, args, type_vars, env),
-    .Function(param_exprs, ret_expr) => resolve_fn_type(param_exprs, ret_expr, type_vars, env),
-    .Optional(inner_expr) => resolve_optional_type(inner_expr, type_vars, env),
-    .Result(ok_expr, err_expr) => resolve_result_type(ok_expr, err_expr, type_vars, env),
+    .Path(path) => resolve_type_path(env, path, [], type_vars),
+    .Applied(path, args) => resolve_applied_type(env, path, args, type_vars),
+    .Function(param_exprs, ret_expr) => resolve_fn_type(env, param_exprs, ret_expr, type_vars),
+    .Optional(inner_expr) => resolve_optional_type(env, inner_expr, type_vars),
+    .Result(ok_expr, err_expr) => resolve_result_type(env, ok_expr, err_expr, type_vars),
     .Record(_) => type_err(diag.error(ty_expr.span, "anonymous record types not supported in type expressions")),
     .Sum(_) => type_err(diag.error(ty_expr.span, "anonymous sum types not supported in type expressions")),
     .ErrorType => .{ ty: .None, diagnostics: [] },
   }
 }
 
-fn resolve_applied_type(path: TypePath, args: Vector<TypeExpr>, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>, type_vars: Vector<String>) TypeResolveResult {
   all_diags: Vector<Diagnostic> = []
   resolved_args := collect arg in args {
-    r := resolve_type_expr(arg, type_vars, env)
+    r := env.resolve_type_expr(arg, type_vars)
     all_diags = all_diags.concat(r.diagnostics)
     case r.ty {
       .Some(ty) => ty,
@@ -503,22 +503,22 @@ fn resolve_applied_type(path: TypePath, args: Vector<TypeExpr>, type_vars: Vecto
   if resolved_args.len() != args.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
-  r := resolve_type_path(path, resolved_args, type_vars, env)
+  r := env.resolve_type_path(path, resolved_args, type_vars)
   all_diags = all_diags.concat(r.diagnostics)
   .{ ty: r.ty, diagnostics: all_diags }
 }
 
-fn resolve_fn_type(param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   all_diags: Vector<Diagnostic> = []
   param_types := collect p in param_exprs {
-    r := resolve_type_expr(p, type_vars, env)
+    r := env.resolve_type_expr(p, type_vars)
     all_diags = all_diags.concat(r.diagnostics)
     case r.ty {
       .Some(ty) => ty,
       .None => { continue },
     }
   }
-  r := resolve_type_expr(ret_expr, type_vars, env)
+  r := env.resolve_type_expr(ret_expr, type_vars)
   all_diags = all_diags.concat(r.diagnostics)
   if param_types.len() != param_exprs.len() {
     return .{ ty: .None, diagnostics: all_diags }
@@ -530,8 +530,8 @@ fn resolve_fn_type(param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars:
   .{ ty: .Some(MonoType.Function(param_types, ret_ty)), diagnostics: all_diags }
 }
 
-fn resolve_optional_type(inner_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
-  r := resolve_type_expr(inner_expr, type_vars, env)
+fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
+  r := env.resolve_type_expr(inner_expr, type_vars)
   case r.ty {
     .Some(inner) => .{
       ty: .Some(MonoType.Optional(inner)),
@@ -541,11 +541,11 @@ fn resolve_optional_type(inner_expr: TypeExpr, type_vars: Vector<String>, env: R
   }
 }
 
-fn resolve_result_type(ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   all_diags: Vector<Diagnostic> = []
-  r_ok := resolve_type_expr(ok_expr, type_vars, env)
+  r_ok := env.resolve_type_expr(ok_expr, type_vars)
   all_diags = all_diags.concat(r_ok.diagnostics)
-  r_err := resolve_type_expr(err_expr, type_vars, env)
+  r_err := env.resolve_type_expr(err_expr, type_vars)
   all_diags = all_diags.concat(r_err.diagnostics)
   ok_ty := case r_ok.ty {
     .Some(t) => t,
@@ -558,21 +558,21 @@ fn resolve_result_type(ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<
   .{ ty: .Some(MonoType.Result(ok_ty, err_ty)), diagnostics: all_diags }
 }
 
-fn resolve_type_path(path: TypePath, args: Vector<MonoType>, type_vars: Vector<String>, env: ResolvedEnv) TypeResolveResult {
+fn resolve_type_path(env: ResolvedEnv, path: TypePath, args: Vector<MonoType>, type_vars: Vector<String>) TypeResolveResult {
   if path.segments.len() == 0 {
     return type_err(diag.error(path.span, "empty type path"))
   }
 
   if path.segments.len() == 1 {
     name := path.segments[0]
-    return resolve_single_name(name, args, type_vars, env, path.span)
+    return env.resolve_single_name(name, args, type_vars, path.span)
   }
 
   // Multi-segment path: qualified type reference (e.g., module.Type)
   type_err(diag.error(path.span, "qualified type paths are not yet supported"))
 }
 
-fn resolve_single_name(name: String, args: Vector<MonoType>, type_vars: Vector<String>, env: ResolvedEnv, s: span.Span) TypeResolveResult {
+fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, type_vars: Vector<String>, s: span.Span) TypeResolveResult {
   // Check type variables first
   if args.len() == 0 {
     for tv in type_vars {
@@ -629,13 +629,13 @@ fn resolve_single_name(name: String, args: Vector<MonoType>, type_vars: Vector<S
   }
 
   // Check user-defined types
-  check := check_user_type_arity(name, args, env, s)
+  check := env.check_user_type_arity(name, args, s)
   case check {
     .Some(err_result) => { return err_result },
     .None => {},
   }
 
-  case lookup_type(env, name) {
+  case env.lookup_type(name) {
     .Some(entry) => {
       return type_ok(MonoType.Named(entry.id, args))
     },
@@ -653,7 +653,7 @@ fn def_type_param_count(def: ResolvedTypeDef) Int {
   }
 }
 
-fn check_user_type_arity(name: String, args: Vector<MonoType>, env: ResolvedEnv, s: span.Span) TypeResolveResult? {
+fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>, s: span.Span) TypeResolveResult? {
   entry := case env.lookup_type(name) {
     .Some(e) => e,
     .None => { return .None },
@@ -860,7 +860,7 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
 fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, Bool>) Bool {
   case ty {
     .Named(tid, args) => {
-      case find_type_name(env, tid) {
+      case env.find_type_name(tid) {
         .Some(tname) => {
           if is_circular_alias(env, tname, visited) { return true }
           for a in args {
