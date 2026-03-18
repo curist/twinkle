@@ -989,11 +989,12 @@ impl<'a> EmitCtx<'a> {
                 self.assign_op_locals(op, next_idx, wasm_locals);
 
                 if !self.local_map.contains_key(local) {
-                    let inferred_mono = if self.module_global_sym(*local).is_some() {
-                        None
-                    } else {
-                        self.infer_let_op_mono_for_emit(*local, op)
-                    };
+                    let inferred_mono =
+                        if self.in_init_func && self.module_global_sym(*local).is_some() {
+                            None
+                        } else {
+                            self.infer_let_op_mono_for_emit(*local, op)
+                        };
                     let iterator_state = iterator_state_from_setup_op(op, self);
                     let iterator_next_state = iterator_next_result_state_from_op(op, self);
                     let erase_assignment = (self.assigned_locals.contains(local)
