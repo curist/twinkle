@@ -7,46 +7,46 @@ use lib.source.diagnostic
 pub fn suite() runner.Suite {
   runner.suite("source")
     // ── Span utilities ──
-    .test("span_len computes byte length", fn() {
+    .test("span len computes byte length", fn() {
       s := span.new(0, 10, 20)
-      try assert.int_eq(span.span_len(s), 10)
+      try assert.int_eq(s.len(), 10)
       .Ok({})
     })
-    .test("span_is_empty for zero-width span", fn() {
+    .test("span is_empty for zero-width span", fn() {
       s := span.new(0, 5, 5)
-      try assert.is_true(span.span_is_empty(s))
+      try assert.is_true(s.is_empty())
       .Ok({})
     })
-    .test("span_is_empty for non-empty span", fn() {
+    .test("span is_empty for non-empty span", fn() {
       s := span.new(0, 5, 10)
-      try assert.is_false(span.span_is_empty(s))
+      try assert.is_false(s.is_empty())
       .Ok({})
     })
-    .test("span_contains inside", fn() {
+    .test("span contains inside", fn() {
       s := span.new(0, 10, 20)
-      try assert.is_true(span.span_contains(s, 10))
-      try assert.is_true(span.span_contains(s, 15))
-      try assert.is_true(span.span_contains(s, 19))
+      try assert.is_true(s.contains(10))
+      try assert.is_true(s.contains(15))
+      try assert.is_true(s.contains(19))
       .Ok({})
     })
-    .test("span_contains outside", fn() {
+    .test("span contains outside", fn() {
       s := span.new(0, 10, 20)
-      try assert.is_false(span.span_contains(s, 9))
-      try assert.is_false(span.span_contains(s, 20))
+      try assert.is_false(s.contains(9))
+      try assert.is_false(s.contains(20))
       .Ok({})
     })
-    .test("span_merge covers both spans", fn() {
+    .test("span merge covers both spans", fn() {
       a := span.new(0, 10, 20)
       b := span.new(0, 15, 25)
-      m := span.span_merge(a, b)
+      m := a.merge(b)
       try assert.int_eq(m.start, 10)
       try assert.int_eq(m.end, 25)
       .Ok({})
     })
-    .test("span_merge reversed order", fn() {
+    .test("span merge reversed order", fn() {
       a := span.new(0, 15, 25)
       b := span.new(0, 10, 20)
-      m := span.span_merge(a, b)
+      m := a.merge(b)
       try assert.int_eq(m.start, 10)
       try assert.int_eq(m.end, 25)
       .Ok({})

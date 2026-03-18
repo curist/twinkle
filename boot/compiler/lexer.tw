@@ -57,11 +57,11 @@ fn keyword_or_ident(text: String) TokenKind {
 }
 
 fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
-  tokens.make(kind, source.slice(start, end), span.new(file_id, start, end), preceded_by_newline)
+  kind.make(source.slice(start, end), span.new(file_id, start, end), preceded_by_newline)
 }
 
 fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
-  tokens.make(kind, text, span.new(file_id, start, end), preceded_by_newline)
+  kind.make(text, span.new(file_id, start, end), preceded_by_newline)
 }
 
 

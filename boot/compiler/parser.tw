@@ -147,7 +147,7 @@ fn merge_range(tokens_in: Vector<Token>, start: Int, end_inclusive: Int) span.Sp
     return tokens_in[start].span
   }
   end_idx := if end_inclusive >= tokens_in.len() { tokens_in.len() - 1 } else { end_inclusive }
-  span.span_merge(tokens_in[start].span, tokens_in[end_idx].span)
+  tokens_in[start].span.merge(tokens_in[end_idx].span)
 }
 
 
@@ -492,7 +492,7 @@ fn parse_type_record_fields(tokens_in: Vector<Token>, start: Int) RecordFieldsPa
     diagnostics_out = diagnostics_out.concat(ty_parsed.diagnostics)
     i = ty_parsed.next_index
 
-    field_span := span.span_merge(token_span_at(tokens_in, field_start), ty_parsed.ty.span)
+    field_span := token_span_at(tokens_in, field_start).merge(ty_parsed.ty.span)
     fields = fields.push(RecordField.{ name: field_name, ty: ty_parsed.ty, span: field_span })
 
     if token_kind_at(tokens_in, i) == .Comma {
@@ -567,7 +567,7 @@ fn parse_sum_variants(tokens_in: Vector<Token>, start: Int) SumVariantsParse {
     variants = variants.push(VariantDecl.{
       name,
       fields,
-      span: span.span_merge(token_span_at(tokens_in, variant_start), variant_end_span),
+      span: token_span_at(tokens_in, variant_start).merge(variant_end_span),
     })
 
     if token_kind_at(tokens_in, i) == .Comma {
@@ -600,7 +600,7 @@ fn parse_type_expr(tokens_in: Vector<Token>, start: Int) TypeParse {
     err_parsed := parse_type_expr_base(tokens_in, start + 1)
     diagnostics_out := err_parsed.diagnostics
     void_ty := TypeExpr.{ kind: .Path(TypePath.{ segments: ["Void"], span: bang_span }), span: bang_span }
-    result_span := span.span_merge(bang_span, err_parsed.ty.span)
+    result_span := bang_span.merge(err_parsed.ty.span)
     ty := TypeExpr.{ kind: .Result(void_ty, err_parsed.ty), span: result_span }
     return .{ ty, next_index: err_parsed.next_index, diagnostics: diagnostics_out }
   }
@@ -610,7 +610,7 @@ fn parse_type_expr(tokens_in: Vector<Token>, start: Int) TypeParse {
     bang_i := parsed.next_index + 1
     err_parsed := parse_type_expr_base(tokens_in, bang_i)
     diagnostics_out := parsed.diagnostics.concat(err_parsed.diagnostics)
-    result_span := span.span_merge(parsed.ty.span, err_parsed.ty.span)
+    result_span := parsed.ty.span.merge(err_parsed.ty.span)
     ty := TypeExpr.{ kind: .Result(parsed.ty, err_parsed.ty), span: result_span }
     return .{ ty, next_index: err_parsed.next_index, diagnostics: diagnostics_out }
   }
@@ -651,7 +651,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
     diagnostics_out = diagnostics_out.concat(ret_parsed.diagnostics)
     i = ret_parsed.next_index
 
-    expr_span := span.span_merge(fn_start_span, ret_parsed.ty.span)
+    expr_span := fn_start_span.merge(ret_parsed.ty.span)
     ty := TypeExpr.{
       kind: .Function(params_parsed.tys, ret_parsed.ty),
       span: expr_span,
@@ -672,13 +672,13 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
       i = i + 1
       ty := TypeExpr.{
         kind: .Record(fields_parsed.fields),
-        span: span.span_merge(start_span, end_span),
+        span: start_span.merge(end_span),
       }
 
       if token_kind_at(tokens_in, i) == .Question {
         q_span := token_span_at(tokens_in, i)
         i = i + 1
-        ty = TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
+        ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
       }
 
       return .{ ty, next_index: i, diagnostics: diagnostics_out }
@@ -704,13 +704,13 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
       i = i + 1
       ty := TypeExpr.{
         kind: .Sum(variants_parsed.variants),
-        span: span.span_merge(start_span, end_span),
+        span: start_span.merge(end_span),
       }
 
       if token_kind_at(tokens_in, i) == .Question {
         q_span := token_span_at(tokens_in, i)
         i = i + 1
-        ty = TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
+        ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
       }
 
       return .{ ty, next_index: i, diagnostics: diagnostics_out }
@@ -772,7 +772,7 @@ fn parse_type_expr_base(tokens_in: Vector<Token>, start: Int) TypeParse {
   if token_kind_at(tokens_in, i) == .Question {
     q_span := token_span_at(tokens_in, i)
     i = i + 1
-    ty = TypeExpr.{ kind: .Optional(ty), span: span.span_merge(ty.span, q_span) }
+    ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
   }
 
   .{ ty, next_index: i, diagnostics: diagnostics_out }
@@ -1092,7 +1092,7 @@ fn parse_function(tokens_in: Vector<Token>, start: Int) ItemParse {
   body := parsed_body.block
   i = parsed_body.next_index
 
-  fn_span := span.span_merge(token_span_at(tokens_in, start), body.span)
+  fn_span := token_span_at(tokens_in, start).merge(body.span)
   decl := FunctionDecl.{
     is_pub,
     name,
@@ -1472,7 +1472,7 @@ fn parse_if_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
 
   expr := Expr.{
     kind: .If(cond, then_block, else_expr),
-    span: span.span_merge(token_span_at(tokens_in, start), end_span),
+    span: token_span_at(tokens_in, start).merge(end_span),
   }
 
   .{ expr, next_index: i, diagnostics: diagnostics_out }
@@ -1521,7 +1521,7 @@ fn parse_case_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
     arm_expr := parsed_arm_expr.expr
     i = parsed_arm_expr.next_index
 
-    arm_span := span.span_merge(patt.span, arm_expr.span)
+    arm_span := patt.span.merge(arm_expr.span)
     arms = arms.push(CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
 
     if token_kind_at(tokens_in, i) == .Comma {
@@ -1546,7 +1546,7 @@ fn parse_unary_op(tokens_in: Vector<Token>, start: Int, op: UnOp) ExprParse {
   parsed_rhs := parse_expr_bp(tokens_in, start + 1, 22)
   expr := Expr.{
     kind: .Unary(op, parsed_rhs.expr),
-    span: span.span_merge(token_span_at(tokens_in, start), parsed_rhs.expr.span),
+    span: token_span_at(tokens_in, start).merge(parsed_rhs.expr.span),
   }
   .{ expr, next_index: parsed_rhs.next_index, diagnostics: parsed_rhs.diagnostics }
 }
@@ -1595,7 +1595,7 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
             i = i + 1
             expr := Expr.{
               kind: .StringInterp(parts),
-              span: span.span_merge(token_span_at(tokens_in, start), last_span),
+              span: token_span_at(tokens_in, start).merge(last_span),
             }
             return .{ expr, next_index: i, diagnostics: diagnostics_out }
           },
@@ -1609,7 +1609,7 @@ fn parse_prefix(tokens_in: Vector<Token>, start: Int) ExprParse {
         }
       }
 
-      expr := Expr.{ kind: .StringInterp(parts), span: span.span_merge(token_span_at(tokens_in, start), last_span) }
+      expr := Expr.{ kind: .StringInterp(parts), span: token_span_at(tokens_in, start).merge(last_span) }
       .{ expr, next_index: i, diagnostics: diagnostics_out }
     },
     .True => {
@@ -1766,7 +1766,7 @@ fn parse_closure_expr(tokens_in: Vector<Token>, start: Int) ExprParse {
   diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
   i = parsed_body.next_index
 
-  closure_span := span.span_merge(token_span_at(tokens_in, start), parsed_body.block.span)
+  closure_span := token_span_at(tokens_in, start).merge(parsed_body.block.span)
   expr := Expr.{
     kind: .Closure(params, return_type, parsed_body.block),
     span: closure_span,
@@ -1840,7 +1840,7 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
       i = parsed_args.next_index
 
       if token_kind_at(tokens_in, i) == .RParen {
-        new_span := span.span_merge(expr.span, token_span_at(tokens_in, i))
+        new_span := expr.span.merge(token_span_at(tokens_in, i))
         expr = Expr.{ kind: .Call(expr, args), span: new_span }
         i = i + 1
         continue
@@ -1862,7 +1862,7 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
           .Ident(name) => {
             case parsed_record.expr.kind {
               .Record(entries) => {
-                expr = Expr.{ kind: .NamedRecord(name, entries), span: span.span_merge(expr.span, parsed_record.expr.span) }
+                expr = Expr.{ kind: .NamedRecord(name, entries), span: expr.span.merge(parsed_record.expr.span) }
               },
               _ => { expr = parsed_record.expr },
             }
@@ -1875,7 +1875,7 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
 
       if token_kind_at(tokens_in, i + 1) == .Ident {
         field_name := token_text_at(tokens_in, i + 1)
-        new_span := span.span_merge(expr.span, token_span_at(tokens_in, i + 1))
+        new_span := expr.span.merge(token_span_at(tokens_in, i + 1))
         expr = Expr.{ kind: .Field(expr, field_name), span: new_span }
         i = i + 2
         continue
@@ -1898,7 +1898,7 @@ fn parse_postfix(tokens_in: Vector<Token>, base: Expr, start_index: Int) ExprPar
         break
       }
 
-      new_span := span.span_merge(expr.span, token_span_at(tokens_in, i))
+      new_span := expr.span.merge(token_span_at(tokens_in, i))
       expr = Expr.{ kind: .Index(expr, idx_expr), span: new_span }
       i = i + 1
       continue
@@ -1943,7 +1943,7 @@ fn parse_expr_bp(tokens_in: Vector<Token>, start: Int, min_bp: Int) ExprParse {
 
         lhs = Expr.{
           kind: .Binary(info.op, lhs, rhs),
-          span: span.span_merge(lhs.span, rhs.span),
+          span: lhs.span.merge(rhs.span),
         }
 
         parsed_postfix_rhs := parse_postfix(tokens_in, lhs, i)
