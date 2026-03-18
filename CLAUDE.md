@@ -101,6 +101,11 @@ p.translate(1,2)  →  Point.translate(p,1,2)
 
 **Resolution order:** Check record fields first, then module inherent methods. Field vs inherent name collision is illegal.
 
+**When to design a function as an inherent method:** Put a type as the first parameter when:
+1. The type is defined in the same module (required — inherent methods only resolve for types defined in the defining module)
+2. The function returns the same type (builder/transform pattern), e.g. `env.with_types(...) ResolvedEnv`
+3. Multiple functions share the same receiver type, forming a cohesive API surface, e.g. `env.lookup_type(name)`, `env.has_type(name)`, `env.add_function(sig)`
+
 ### Capabilities (Explicit Records)
 Twinkle does not have traits. Capabilities are passed explicitly as records of functions:
 
