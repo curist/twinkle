@@ -31,7 +31,7 @@ fn test_env() resolver.ResolvedEnv {
     builtin_sig("println", ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
     builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
   ]
-  env := resolver.env_with_functions(resolver.empty_env(), fns)
+  env := resolver.empty_env().with_functions(fns)
   resolver.register_builtin_methods(env)
 }
 

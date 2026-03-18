@@ -687,7 +687,7 @@ pub fn suite() runner.Suite {
         ],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("B"))),
       }
-      env := resolver.env_with_functions(resolver.empty_env(), [prelude_sig])
+      env := resolver.empty_env().with_functions([prelude_sig])
 
       // User defines their own "map" — should shadow prelude's
       src := "fn map(x: Int) Int { x }"
@@ -711,7 +711,7 @@ pub fn suite() runner.Suite {
         params: [resolver.MonoType.Int],
         ret: .Some(resolver.MonoType.String),
       }
-      env := resolver.env_with_functions(resolver.empty_env(), [prelude_sig])
+      env := resolver.empty_env().with_functions([prelude_sig])
 
       // User redefines to_string — should NOT produce a "duplicate" diagnostic
       src := "fn to_string(x: Float) String { \"\" }"
@@ -761,9 +761,9 @@ pub fn suite() runner.Suite {
     .test("add_type incrementally builds env", fn() {
       env := resolver.empty_env()
       e1 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 0 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
-      env = resolver.add_type(env, e1, "Foo")
+      env = env.add_type( e1, "Foo")
       e2 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 1 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
-      env = resolver.add_type(env, e2, "Bar")
+      env = env.add_type( e2, "Bar")
 
       try assert.is_true(resolver.has_type(env, "Foo"))
       try assert.is_true(resolver.has_type(env, "Bar"))
@@ -776,12 +776,12 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
       }
-      env = resolver.add_function(env, sig1)
+      env = env.add_function( sig1)
       sig2 := resolver.FunctionSig.{
         name: "bar", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
       }
-      env = resolver.add_function(env, sig2)
+      env = env.add_function( sig2)
 
       try assert.is_true(resolver.has_function(env, "foo"))
       try assert.is_true(resolver.has_function(env, "bar"))
@@ -794,13 +794,13 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
       }
-      env = resolver.add_function(env, sig1)
+      env = env.add_function( sig1)
       // Add another "foo" — should shadow the first
       sig2 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
       }
-      env = resolver.add_function(env, sig2)
+      env = env.add_function( sig2)
 
       case resolver.lookup_function(env, "foo") {
         .Some(sig) => {

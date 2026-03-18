@@ -1891,7 +1891,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) 
               updated_fns = updated_fns.push(f)
             }
           }
-          result_ctx.env = resolver.env_with_functions(result_ctx.env, updated_fns)
+          result_ctx.env = result_ctx.env.with_functions(updated_fns)
           CheckOut.{ ctx: result_ctx, diags: body_r.diags }
         },
       }
