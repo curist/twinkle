@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::intrinsics::registry;
 use crate::ir::core::{CoreExpr, CoreExprKind, CoreModule, FuncId, MatchArm};
 use crate::ir::lower::prelude;
 
@@ -47,6 +48,11 @@ pub fn eliminate_dead_code(mut module: CoreModule) -> CoreModule {
     // 4. Build old→new FuncId mapping (compact sequential IDs)
     //    Sort by original FuncId to preserve the linker's ID assignment order,
     //    which may differ from the vec position order.
+    //    Skip prelude FuncIds to avoid collisions with sparse intrinsic IDs (1001+).
+    let prelude_ids: HashSet<u32> = registry::all_specs()
+        .iter()
+        .map(|spec| spec.func_id.0)
+        .collect();
     let mut old_to_new: HashMap<FuncId, FuncId> = HashMap::new();
     let mut sorted_ids: Vec<FuncId> = module
         .functions
@@ -57,6 +63,9 @@ pub fn eliminate_dead_code(mut module: CoreModule) -> CoreModule {
     sorted_ids.sort_by_key(|id| id.0);
     let mut next_id = prelude::USER_FUNC_START;
     for old_id in sorted_ids {
+        while prelude_ids.contains(&next_id) {
+            next_id += 1;
+        }
         old_to_new.insert(old_id, FuncId(next_id));
         next_id += 1;
     }

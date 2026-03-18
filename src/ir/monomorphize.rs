@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::intrinsics::registry;
 use crate::ir::core::{CoreExpr, CoreExprKind, CoreModule, FuncId, FunctionDef, MatchArm};
 use crate::types::ty::MonoType;
 
@@ -674,7 +675,11 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
     let generic_funcs: HashMap<FuncId, &FunctionDef> =
         generic_owned.iter().map(|f| (f.func_id, f)).collect();
 
-    // Next unused FuncId (above all existing ones).
+    // Next unused FuncId (above all existing ones), skipping prelude IDs.
+    let prelude_ids: HashSet<u32> = registry::all_specs()
+        .iter()
+        .map(|spec| spec.func_id.0)
+        .collect();
     let mut next_func_id: u32 = module
         .functions
         .iter()
@@ -722,7 +727,10 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
         }
         processed.insert(key.clone());
 
-        // Assign fresh FuncId and record the mapping.
+        // Assign fresh FuncId and record the mapping, skipping prelude IDs.
+        while prelude_ids.contains(&next_func_id) {
+            next_func_id += 1;
+        }
         let new_fid = FuncId(next_func_id);
         next_func_id += 1;
         spec_map.insert(key, new_fid);
