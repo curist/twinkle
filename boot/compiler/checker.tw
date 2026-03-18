@@ -132,16 +132,12 @@ fn zonk(ty: MonoType, subst: Dict<Int, MonoType>) MonoType {
     .Vector(inner) => MonoType.Vector(zonk(inner, subst)),
     .Dict(k, v) => MonoType.Dict(zonk(k, subst), zonk(v, subst)),
     .Function(params, ret) => {
-      zp: Vector<MonoType> = []
-      for p in params { zp = zp.push(zonk(p, subst)) }
-      MonoType.Function(zp, zonk(ret, subst))
+      MonoType.Function(params.map(fn(p) { zonk(p, subst) }), zonk(ret, subst))
     },
     .Optional(inner) => MonoType.Optional(zonk(inner, subst)),
     .Result(ok, err) => MonoType.Result(zonk(ok, subst), zonk(err, subst)),
     .Named(tid, args) => {
-      za: Vector<MonoType> = []
-      for a in args { za = za.push(zonk(a, subst)) }
-      MonoType.Named(tid, za)
+      MonoType.Named(tid, args.map(fn(a) { zonk(a, subst) }))
     },
     _ => ty,
   }
@@ -341,16 +337,12 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
     .Vector(inner) => MonoType.Vector(subst_vars(inner, var_map)),
     .Dict(k, v) => MonoType.Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
     .Function(params, ret) => {
-      sp: Vector<MonoType> = []
-      for p in params { sp = sp.push(subst_vars(p, var_map)) }
-      MonoType.Function(sp, subst_vars(ret, var_map))
+      MonoType.Function(params.map(fn(p) { subst_vars(p, var_map) }), subst_vars(ret, var_map))
     },
     .Optional(inner) => MonoType.Optional(subst_vars(inner, var_map)),
     .Result(ok, err) => MonoType.Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
-      sa: Vector<MonoType> = []
-      for a in args { sa = sa.push(subst_vars(a, var_map)) }
-      MonoType.Named(tid, sa)
+      MonoType.Named(tid, args.map(fn(a) { subst_vars(a, var_map) }))
     },
     _ => ty,
   }
@@ -375,10 +367,7 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
     var_map[tp] = m.ty
   }
 
-  inst_params: Vector<MonoType> = []
-  for p in sig.params {
-    inst_params = inst_params.push(subst_vars(p, var_map))
-  }
+  inst_params := sig.params.map(fn(p) { subst_vars(p, var_map) })
 
   inst_ret := case sig.ret {
     .Some(r) => subst_vars(r, var_map),
@@ -576,26 +565,19 @@ type VariantInfo = .{
 fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
   case zonked {
     .Named(tid, type_args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => {
-          case def {
-            .Sum(_, type_params, variants) => {
-              var_map := build_var_map(type_params, type_args)
-              for v in variants {
-                if v.name == name {
-                  field_types: Vector<MonoType> = []
-                  for ft in v.fields {
-                    field_types = field_types.push(subst_vars(ft, var_map))
-                  }
-                  return .Some(.Ok(.{ field_types: field_types }))
-                }
-              }
-              .Some(.Err("unknown variant .${name}"))
-            },
-            _ => .None,
+      def := try lookup_type_def(env, tid)
+      case def {
+        .Sum(_, type_params, variants) => {
+          var_map := build_var_map(type_params, type_args)
+          for v in variants {
+            if v.name == name {
+              field_types := v.fields.map(fn(ft) { subst_vars(ft, var_map) })
+              return .Some(.Ok(.{ field_types: field_types }))
+            }
           }
+          .Some(.Err("unknown variant .${name}"))
         },
-        .None => .None,
+        _ => .None,
       }
     },
     _ => .None,
@@ -608,46 +590,28 @@ fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diag
 
   case zonked_base {
     .Named(tid, type_args) => {
-      case lookup_type_def(br.ctx.env, tid) {
-        .Some(def) => {
-          case def {
-            .Record(_, type_params, fields) => {
-              var_map := build_var_map(type_params, type_args)
-              // Find the field
-              for f in fields {
-                if f.name == field_name {
-                  field_ty := subst_vars(f.ty, var_map)
-                  return .{ ty: field_ty, ctx: br.ctx, diags: br.diags }
-                }
-              }
-              .{
-                ty: MonoType.Void,
-                ctx: br.ctx,
-                diags: br.diags.push(diag.error(s, "no field '${field_name}' on this record")),
-              }
-            },
-            _ => .{
-              ty: MonoType.Void,
-              ctx: br.ctx,
-              diags: br.diags.push(diag.error(s, "field access on non-record type")),
-            },
+      def := case lookup_type_def(br.ctx.env, tid) {
+        .Some(d) => d,
+        .None => {
+          return .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(diag.error(s, "unknown type for field access")) }
+        },
+      }
+      case def {
+        .Record(_, type_params, fields) => {
+          var_map := build_var_map(type_params, type_args)
+          for f in fields {
+            if f.name == field_name {
+              return .{ ty: subst_vars(f.ty, var_map), ctx: br.ctx, diags: br.diags }
+            }
           }
+          .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(diag.error(s, "no field '${field_name}' on this record")) }
         },
-        .None => .{
-          ty: MonoType.Void,
-          ctx: br.ctx,
-          diags: br.diags.push(diag.error(s, "unknown type for field access")),
-        },
+        _ => .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(diag.error(s, "field access on non-record type")) },
       }
     },
     _ => {
-      // Could be a MetaVar or unsupported type
       m := fresh_meta(br.ctx)
-      .{
-        ty: m.ty,
-        ctx: m.ctx,
-        diags: br.diags.push(diag.error(s, "cannot access field '${field_name}' on ${ty_to_string(zonked_base)}")),
-      }
+      .{ ty: m.ty, ctx: m.ctx, diags: br.diags.push(diag.error(s, "cannot access field '${field_name}' on ${ty_to_string(zonked_base)}")) }
     },
   }
 }
@@ -692,63 +656,58 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Sp
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
   case zonked {
     .Named(tid, type_args) => {
-      case lookup_type_def(ctx.env, tid) {
-        .Some(def) => {
-          case def {
-            .Record(_, type_params, fields) => {
-              var_map := build_var_map(type_params, type_args)
-              cur_ctx := ctx
-              cur_diags := diags
-              // Check each provided field
-              for entry in entries {
-                found := false
-                for f in fields {
-                  if f.name == entry.name {
-                    found = true
-                    field_ty := subst_vars(f.ty, var_map)
-                    case entry.value {
-                      .Some(val) => {
-                        vr := synth(val, cur_ctx, cur_diags)
-                        u := unify(vr.ty, field_ty, entry.span, vr.ctx, vr.diags)
-                        cur_ctx = u.ctx
-                        cur_diags = u.diags
-                      },
-                      .None => {
-                        // Punning: .{ name } means .{ name: name }
-                        ir := synth_ident(entry.name, entry.span, cur_ctx, cur_diags)
-                        u := unify(ir.ty, field_ty, entry.span, ir.ctx, ir.diags)
-                        cur_ctx = u.ctx
-                        cur_diags = u.diags
-                      },
-                    }
-                  }
-                }
-                if !found {
-                  cur_diags = cur_diags.push(diag.error(entry.span, "unknown field '${entry.name}'"))
-                }
-              }
-              // Check missing fields
-              for f in fields {
-                has := false
-                for entry in entries {
-                  if entry.name == f.name { has = true }
-                }
-                if !has {
-                  cur_diags = cur_diags.push(diag.error(s, "missing field '${f.name}'"))
+      def := case lookup_type_def(ctx.env, tid) {
+        .Some(d) => d,
+        .None => {
+          return .{ ctx: ctx, diags: diags.push(diag.error(s, "cannot resolve record type")) }
+        },
+      }
+      case def {
+        .Record(_, type_params, fields) => {
+          var_map := build_var_map(type_params, type_args)
+          cur_ctx := ctx
+          cur_diags := diags
+          // Check each provided field
+          for entry in entries {
+            found := false
+            for f in fields {
+              if f.name == entry.name {
+                found = true
+                field_ty := subst_vars(f.ty, var_map)
+                case entry.value {
+                  .Some(val) => {
+                    vr := synth(val, cur_ctx, cur_diags)
+                    u := unify(vr.ty, field_ty, entry.span, vr.ctx, vr.diags)
+                    cur_ctx = u.ctx
+                    cur_diags = u.diags
+                  },
+                  .None => {
+                    // Punning: .{ name } means .{ name: name }
+                    ir := synth_ident(entry.name, entry.span, cur_ctx, cur_diags)
+                    u := unify(ir.ty, field_ty, entry.span, ir.ctx, ir.diags)
+                    cur_ctx = u.ctx
+                    cur_diags = u.diags
+                  },
                 }
               }
-              .{ ctx: cur_ctx, diags: cur_diags }
-            },
-            _ => .{
-              ctx: ctx,
-              diags: diags.push(diag.error(s, "expected a record type, got sum/alias")),
-            },
+            }
+            if !found {
+              cur_diags = cur_diags.push(diag.error(entry.span, "unknown field '${entry.name}'"))
+            }
           }
+          // Check missing fields
+          for f in fields {
+            has := false
+            for entry in entries {
+              if entry.name == f.name { has = true }
+            }
+            if !has {
+              cur_diags = cur_diags.push(diag.error(s, "missing field '${f.name}'"))
+            }
+          }
+          .{ ctx: cur_ctx, diags: cur_diags }
         },
-        .None => .{
-          ctx: ctx,
-          diags: diags.push(diag.error(s, "cannot resolve record type")),
-        },
+        _ => .{ ctx: ctx, diags: diags.push(diag.error(s, "expected a record type, got sum/alias")) },
       }
     },
     _ => .{
@@ -1235,43 +1194,41 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: span.Span,
     .None => diags,
     .Some(names) => {
       // Collect covered variant names from arm patterns
-      covered: Vector<String> = []
-      for arm in arms {
+      covered := collect arm in arms {
         case arm.pattern.kind {
-          .Variant(name, _) => { covered = covered.push(name) },
+          .Variant(name, _) => name,
           .QualifiedVariant(path, name, _) => {
             // Only count as covered if qualifier matches scrutinee type
             if path.len() == 1 {
               case scrutinee_type_name(scrut_ty, ctx) {
                 .Some(type_name) => {
-                  if path[0] == type_name { covered = covered.push(name) }
+                  if path[0] != type_name { continue }
                 },
-                .None => { covered = covered.push(name) },
+                .None => {},
               }
-            } else {
-              covered = covered.push(name)
             }
+            name
           },
           .Literal(lit_expr) => {
             case lit_expr.kind {
               .BoolLit(val) => {
-                if val { covered = covered.push("true") }
-                else { covered = covered.push("false") }
+                if val { "true" }
+                else { "false" }
               },
-              _ => {},
+              _ => { continue },
             }
           },
-          _ => {},
+          _ => { continue },
         }
       }
       // Find uncovered variants
-      missing: Vector<String> = []
-      for name in names {
+      missing := collect name in names {
         found := false
         for c in covered {
           if c == name { found = true }
         }
-        if !found { missing = missing.push(name) }
+        if found { continue }
+        name
       }
       if missing.len() > 0 {
         missing_str := ""
@@ -1294,20 +1251,10 @@ fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
     .Result(_, _) => .Some(["Ok", "Err"]),
     .Bool => .Some(["true", "false"]),
     .Named(tid, _) => {
-      case lookup_type_def(ctx.env, tid) {
-        .Some(def) => {
-          case def {
-            .Sum(_, _, variants) => {
-              names: Vector<String> = []
-              for v in variants {
-                names = names.push(v.name)
-              }
-              .Some(names)
-            },
-            _ => .None,
-          }
-        },
-        .None => .None,
+      def := try lookup_type_def(ctx.env, tid)
+      case def {
+        .Sum(_, _, variants) => .Some(variants.map(fn(v) { v.name })),
+        _ => .None,
       }
     },
     _ => .None,
@@ -1869,12 +1816,9 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) 
           // are only visible to functions checked later in source order.
           result_ctx := pop_scope(body_r.ctx)
           inferred_ret := zonk(body_r.ty, result_ctx.subst)
-          updated_fns: Vector<FunctionSig> = []
-          for f in result_ctx.env.functions {
-            if f.name == decl.name {
-              f.ret = .Some(inferred_ret)
-            }
-            updated_fns = updated_fns.push(f)
+          updated_fns := collect f in result_ctx.env.functions {
+            if f.name == decl.name { f.ret = .Some(inferred_ret) }
+            f
           }
           result_ctx.env = result_ctx.env.with_functions(updated_fns)
           .{ ctx: result_ctx, diags: body_r.diags }

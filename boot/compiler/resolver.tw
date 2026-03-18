@@ -303,11 +303,10 @@ fn resolve_references(module: Module, env: ResolvedEnv, diags: Vector<Diagnostic
   result_diags := diags
 
   // Collect type declarations and resolve in dependency order
-  type_decls: Vector<TypeDecl> = []
-  for item in module.items {
+  type_decls:= collect item in module.items {
     case item {
-      .Type(decl) => { type_decls = type_decls.push(decl) },
-      _ => {},  // Use/Function/Stmt items handled separately
+      .Type(decl) => decl,
+      _ => { continue },  // Use/Function/Stmt items handled separately
     }
   }
   sorted := topo_sort_type_decls(type_decls)
@@ -360,15 +359,14 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
 }
 
 fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagnostic> {
-  diags: Vector<Diagnostic> = []
   seen: Dict<String, Bool> = Dict.new()
-  for tp in type_params {
-    if seen.has(tp) {
-      diags = diags.push(diag.error(s, "duplicate type parameter ${tp}"))
+  collect tp in type_params {
+    if !seen.has(tp) {
+      seen[tp] = true
+      continue
     }
-    seen[tp] = true
+    diag.error(s, "duplicate type parameter ${tp}")
   }
-  diags
 }
 
 fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
@@ -383,12 +381,12 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
         diags = diags.concat(r.diagnostics)
         case r.ty {
           .Some(ty) => {
-            resolved_fields = resolved_fields.push(.{ name: field.name, ty: ty })
+            resolved_fields = resolved_fields.push(.{ name: field.name, ty })
           },
           .None => {},
         }
       }
-      new_env := set_type_def(env, decl.name, ResolvedTypeDef.Record(decl.name, type_params, resolved_fields))
+      new_env := env.set_type_def(decl.name, .Record(decl.name, type_params, resolved_fields))
       .{ env: new_env, diagnostics: diags }
     },
     .Sum(variants) => {
@@ -405,7 +403,7 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
         }
         resolved_variants = resolved_variants.push(.{ name: variant.name, fields: resolved_fields })
       }
-      new_env := set_type_def(env, decl.name, ResolvedTypeDef.Sum(decl.name, type_params, resolved_variants))
+      new_env := env.set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
       .{ env: new_env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
@@ -413,25 +411,24 @@ fn resolve_type_decl(decl: TypeDecl, env: ResolvedEnv) ResolveResult {
       diags = diags.concat(r.diagnostics)
       case r.ty {
         .Some(ty) => {
-          new_env := set_type_def(env, decl.name, ResolvedTypeDef.Alias(decl.name, type_params, ty))
+          new_env := env.set_type_def(decl.name, .Alias(decl.name, type_params, ty))
           .{ env: new_env, diagnostics: diags }
         },
-        .None => .{ env: env, diagnostics: diags },
+        .None => .{ env, diagnostics: diags },
       }
     },
-    .ErrorDef(_) => .{ env: env, diagnostics: diags },
+    .ErrorDef(_) => .{ env, diagnostics: diags },
   }
 }
 
 fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEnv {
-  new_types: Vector<TypeEntry> = []
-  for i in range(env.type_names.len()) {
+  new_types := collect i in range(env.type_names.len()) {
     if env.type_names[i] == name {
       entry := env.types[i]
       entry.def = .Some(def)
-      new_types = new_types.push(entry)
+      entry
     } else {
-      new_types = new_types.push(env.types[i])
+      env.types[i]
     }
   }
   env.with_types(new_types, env.type_names)
@@ -441,11 +438,10 @@ fn resolve_function_decl(decl: FunctionDecl, env: ResolvedEnv) ResolveResult {
   diags := check_dup_type_params(decl.type_params, decl.span)
   type_params := decl.type_params
 
-  param_names: Vector<String> = []
+  param_names := collect param in decl.params { param.name }
   param_types: Vector<MonoType> = []
 
   for param in decl.params {
-    param_names = param_names.push(param.name)
     case param.ty {
       .Some(ty_expr) => {
         r := resolve_type_expr(ty_expr, type_params, env)
@@ -708,13 +704,11 @@ fn topo_sort_type_decls(decls: Vector<TypeDecl>) Vector<TypeDecl> {
   if n <= 1 { return decls }
 
   // Build name list for dependency lookup
-  names: Vector<String> = []
-  for d in decls { names = names.push(d.name) }
+  names := collect d in decls { d.name }
 
   // Build deps: for each decl index, which other decl indices it depends on
-  all_deps: Vector<Vector<Int>> = []
-  for i in range(n) {
-    all_deps = all_deps.push(collect_type_refs(decls[i], names))
+  all_deps := collect decl in decls {
+    collect_type_refs(decl, names)
   }
 
   // DFS-based topological sort
@@ -728,11 +722,7 @@ fn topo_sort_type_decls(decls: Vector<TypeDecl>) Vector<TypeDecl> {
     result = r.order
   }
 
-  sorted: Vector<TypeDecl> = []
-  for idx in result {
-    sorted = sorted.push(decls[idx])
-  }
-  sorted
+  collect idx in result { decls[idx] }
 }
 
 type TopoState = .{
