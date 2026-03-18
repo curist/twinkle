@@ -82,7 +82,7 @@ pub fn eof(file_id: Int, offset: Int, preceded_by_newline: Bool) Token {
   make(.Eof, "", span.new(file_id, offset, offset), preceded_by_newline)
 }
 
-pub fn kind_name(kind: TokenKind) String {
+pub fn name(kind: TokenKind) String {
   case kind {
     .Use => "use",
     .As => "as",
