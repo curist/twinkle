@@ -1040,16 +1040,38 @@ impl TypeChecker {
                 // Fallback: original synth+synth+unify for diagnostics
                 let left_ty = self.synth_expr(left)?;
                 let right_ty = self.synth_expr(right)?;
-                self.unify(&left_ty, &right_ty, right.span)?;
+                let left_z = self.zonk(&left_ty);
+                let right_z = self.zonk(&right_ty);
+                // Byte/Int mix allowed (same numeric coercion as arithmetic)
+                match (&left_z, &right_z) {
+                    (MonoType::Int, MonoType::Byte)
+                    | (MonoType::Byte, MonoType::Int)
+                    | (MonoType::Byte, MonoType::Byte) => {}
+                    _ => {
+                        self.unify(&left_ty, &right_ty, right.span)?;
+                    }
+                }
                 Ok(MonoType::Bool)
             }
 
-            // Ordered comparison: T × T → Bool (no directional propagation)
+            // Ordered comparison: T × T → Bool
+            // Byte/Int mix allowed (same numeric coercion as arithmetic)
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                let left_ty = self.synth_expr(left)?;
-                let right_ty = self.synth_expr(right)?;
+                let left_raw = self.synth_expr(left)?;
+                let right_raw = self.synth_expr(right)?;
+                let left_ty = self.zonk(&left_raw);
+                let right_ty = self.zonk(&right_raw);
 
-                self.unify(&left_ty, &right_ty, right.span)?;
+                match (&left_ty, &right_ty) {
+                    (MonoType::Int, MonoType::Byte)
+                    | (MonoType::Byte, MonoType::Int)
+                    | (MonoType::Byte, MonoType::Byte) => {
+                        // Byte widens to Int for comparison
+                    }
+                    _ => {
+                        self.unify(&left_ty, &right_ty, right.span)?;
+                    }
+                }
                 Ok(MonoType::Bool)
             }
 

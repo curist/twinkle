@@ -1,0 +1,44 @@
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//   true
+//   false
+//   true
+//   false
+//   true
+//   true
+//   false
+//   false
+//   true
+//   true
+//   false
+//   false
+
+// Byte < Int, Byte >= Int, etc.
+a: Byte = "A"[0] // 65
+
+// ordered: Byte op Int
+println("${a < 66}")    // true
+println("${a > 66}")    // false
+println("${a <= 65}")   // true
+println("${a >= 66}")   // false
+
+// ordered: Int op Byte
+println("${66 > a}")    // true
+println("${66 < a}")    // false
+println("${65 <= a}")   // true
+println("${66 <= a}")   // false
+
+// equality: Byte op Int
+println("${a == 65}")   // true
+println("${a != 66}")   // true
+println("${a == 66}")   // false
+println("${a != 65}")   // false
+
+// equality: Int op Byte
+println("${65 == a}")   // true
+println("${66 != a}")   // true
+println("${66 == a}")   // false
+println("${65 != a}")   // false

@@ -493,6 +493,11 @@ fn byte_arithmetic_promotion() {
 }
 
 #[test]
+fn byte_int_comparison() {
+    check("tests/run/byte_int_comparison.tw");
+}
+
+#[test]
 fn byte_contextual_literals() {
     check("tests/run/byte_contextual_literals.tw");
 }

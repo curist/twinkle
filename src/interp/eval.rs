@@ -567,13 +567,18 @@ impl<W: Write> Interpreter<W> {
                 });
             }
         }
-        if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+        if matches!(
+            op,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+        ) {
             if let (Some(a), Some(b)) = (int_like(&lv), int_like(&rv)) {
                 return Ok(Value::Bool(match op {
                     BinOp::Lt => a < b,
                     BinOp::Le => a <= b,
                     BinOp::Gt => a > b,
                     BinOp::Ge => a >= b,
+                    BinOp::Eq => a == b,
+                    BinOp::Ne => a != b,
                     _ => unreachable!(),
                 }));
             }

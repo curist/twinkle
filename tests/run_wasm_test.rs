@@ -242,6 +242,11 @@ fn run_wasm_byte_arithmetic_promotion() {
 }
 
 #[test]
+fn run_wasm_byte_int_comparison() {
+    check("tests/run/byte_int_comparison.tw");
+}
+
+#[test]
 fn run_wasm_byte_contextual_literals() {
     check("tests/run/byte_contextual_literals.tw");
 }
