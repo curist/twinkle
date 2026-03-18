@@ -9,7 +9,7 @@ use lib.source.diagnostic as diag
 use .resolver.{
   MonoType, ResolvedEnv, FunctionSig, ResolvedTypeDef,
   TypeId, TypeEntry, ResolvedField, ResolvedVariant,
-  lookup_method, ty_to_string, find_type_name, lookup_type, lookup_type_def,
+  ty_to_string,
 }
 use .ast.{
   Module, Item, FunctionDecl, Param,
@@ -46,7 +46,7 @@ pub type CheckResult = .{
 
 fn empty_ctx(env: ResolvedEnv) InferCtx {
   .{
-    env: env,
+    env,
     locals: [Dict.new()],
     subst: Dict.new(),
     next_meta: 0,
@@ -105,7 +105,7 @@ fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<Diagnostic
   r := resolver.resolve_type_expr(ty_expr, ctx.type_var_scope, ctx.env)
   result_diags := diags.concat(r.diagnostics)
   case r.ty {
-    .Some(ty) => .{ ty: ty, ctx: ctx, diags: result_diags },
+    .Some(ty) => .{ ty, ctx, diags: result_diags },
     .None => {
       m := fresh_meta(ctx)
       .{ ty: m.ty, ctx: m.ctx, diags: result_diags }
@@ -118,7 +118,7 @@ fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<Diagnostic
 fn fresh_meta(ctx: InferCtx) SynthOut {
   ty := MonoType.MetaVar(ctx.next_meta)
   ctx.next_meta = ctx.next_meta + 1
-  .{ ty: ty, ctx: ctx, diags: [] }
+  .{ ty, ctx, diags: [] }
 }
 
 fn zonk(ty: MonoType, subst: Dict<Int, MonoType>) MonoType {
@@ -200,19 +200,19 @@ fn unify(a: MonoType, b: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Di
   zb := zonk(b, ctx.subst)
 
   // Never unifies with anything
-  case za { .Never => { return .{ ctx: ctx, diags: diags } }, _ => {} }
-  case zb { .Never => { return .{ ctx: ctx, diags: diags } }, _ => {} }
+  case za { .Never => { return .{ ctx, diags } }, _ => {} }
+  case zb { .Never => { return .{ ctx, diags } }, _ => {} }
 
   // MetaVar binding
   case za {
     .MetaVar(id) => {
       if occurs(id, zb, ctx.subst) {
         return .{
-          ctx: ctx,
+          ctx,
           diags: diags.push(diag.error(s, "infinite type (occurs check)")),
         }
       }
-      return .{ ctx: set_subst(ctx, id, zb), diags: diags }
+      return .{ ctx: set_subst(ctx, id, zb), diags }
     },
     _ => {},
   }
@@ -220,23 +220,23 @@ fn unify(a: MonoType, b: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Di
     .MetaVar(id) => {
       if occurs(id, za, ctx.subst) {
         return .{
-          ctx: ctx,
+          ctx,
           diags: diags.push(diag.error(s, "infinite type (occurs check)")),
         }
       }
-      return .{ ctx: set_subst(ctx, id, za), diags: diags }
+      return .{ ctx: set_subst(ctx, id, za), diags }
     },
     _ => {},
   }
 
   // Structural matching
   case za {
-    .Int => { case zb { .Int => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
-    .Float => { case zb { .Float => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
-    .Bool => { case zb { .Bool => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
-    .Byte => { case zb { .Byte => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
-    .String => { case zb { .String => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
-    .Void => { case zb { .Void => { return .{ ctx: ctx, diags: diags } }, _ => {} } },
+    .Int => { case zb { .Int => { return .{ ctx, diags } }, _ => {} } },
+    .Float => { case zb { .Float => { return .{ ctx, diags } }, _ => {} } },
+    .Bool => { case zb { .Bool => { return .{ ctx, diags } }, _ => {} } },
+    .Byte => { case zb { .Byte => { return .{ ctx, diags } }, _ => {} } },
+    .String => { case zb { .String => { return .{ ctx, diags } }, _ => {} } },
+    .Void => { case zb { .Void => { return .{ ctx, diags } }, _ => {} } },
     .Vector(ia) => {
       case zb {
         .Vector(ib) => { return unify(ia, ib, s, ctx, diags) },
@@ -305,12 +305,12 @@ fn unify(a: MonoType, b: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Di
       case zb {
         .Var(nb) => {
           if na == nb {
-            return .{ ctx: ctx, diags: diags }
+            return .{ ctx, diags }
           }
         },
         _ => {
           return .{
-            ctx: ctx,
+            ctx,
             diags: diags.push(diag.error(s, "uninstantiated type variable '${na}' reached unification (compiler bug)")),
           }
         },
@@ -321,7 +321,7 @@ fn unify(a: MonoType, b: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Di
 
   // Mismatch
   .{
-    ctx: ctx,
+    ctx,
     diags: diags.push(diag.error(s, "type mismatch: expected ${ty_to_string(za)}, got ${ty_to_string(zb)}")),
   }
 }
@@ -383,17 +383,16 @@ fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
   if depth > 10 { return ty }
   case ty {
     .Named(tid, type_args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => {
-          case def {
-            .Alias(_, type_params, target) => {
-              expanded := subst_vars(target, build_var_map(type_params, type_args))
-              expand_alias(expanded, env, depth + 1)
-            },
-            _ => ty,
-          }
+      def := case env.lookup_type_def(tid) {
+        .Some(d) => d,
+        .None => { return ty },
+      }
+      case def {
+        .Alias(_, type_params, target) => {
+          expanded := subst_vars(target, build_var_map(type_params, type_args))
+          expand_alias(expanded, env, depth + 1)
         },
-        .None => ty,
+        _ => ty,
       }
     },
     _ => ty,
@@ -409,10 +408,10 @@ fn synth(expr: Expr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
 
 fn synth_inner(expr: Expr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   case expr.kind {
-    .IntLit(_) => .{ ty: MonoType.Int, ctx: ctx, diags: diags },
-    .FloatLit(_) => .{ ty: MonoType.Float, ctx: ctx, diags: diags },
-    .BoolLit(_) => .{ ty: MonoType.Bool, ctx: ctx, diags: diags },
-    .StringLit(_) => .{ ty: MonoType.String, ctx: ctx, diags: diags },
+    .IntLit(_) => .{ ty: MonoType.Int, ctx, diags },
+    .FloatLit(_) => .{ ty: MonoType.Float, ctx, diags },
+    .BoolLit(_) => .{ ty: MonoType.Bool, ctx, diags },
+    .StringLit(_) => .{ ty: MonoType.String, ctx, diags },
 
     .Ident(name) => synth_ident(name, expr.span, ctx, diags),
 
@@ -453,15 +452,15 @@ fn synth_inner(expr: Expr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
 fn synth_ident(name: String, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   // Try local first
   case lookup_local(ctx, name) {
-    .Some(ty) => .{ ty: ty, ctx: ctx, diags: diags },
+    .Some(ty) => .{ ty, ctx, diags },
     .None => {
       // Try function
-      case resolver.lookup_function(ctx.env, name) {
+      case ctx.env.lookup_function(name) {
         .Some(sig) => {
           inst := instantiate(sig, ctx)
           // For zero-arg functions looked up as values, return Function type
           ty := MonoType.Function(inst.params, inst.ret)
-          .{ ty: ty, ctx: inst.ctx, diags: diags }
+          .{ ty, ctx: inst.ctx, diags }
         },
         .None => {
           m := fresh_meta(ctx)
@@ -480,7 +479,7 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: span.Span, ctx: InferCtx, dia
   // Special case: direct function call by name
   case callee.kind {
     .Ident(name) => {
-      case resolver.lookup_function(ctx.env, name) {
+      case ctx.env.lookup_function(name) {
         .Some(sig) => {
           inst := instantiate(sig, ctx)
           cur_ctx := inst.ctx
@@ -565,14 +564,14 @@ type VariantInfo = .{
 fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
   case zonked {
     .Named(tid, type_args) => {
-      def := try lookup_type_def(env, tid)
+      def := try env.lookup_type_def(tid)
       case def {
         .Sum(_, type_params, variants) => {
           var_map := build_var_map(type_params, type_args)
           for v in variants {
             if v.name == name {
               field_types := v.fields.map(fn(ft) { subst_vars(ft, var_map) })
-              return .Some(.Ok(.{ field_types: field_types }))
+              return .Some(.Ok(.{ field_types }))
             }
           }
           .Some(.Err("unknown variant .${name}"))
@@ -590,7 +589,7 @@ fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diag
 
   case zonked_base {
     .Named(tid, type_args) => {
-      def := case lookup_type_def(br.ctx.env, tid) {
+      def := case br.ctx.env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => {
           return .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(diag.error(s, "unknown type for field access")) }
@@ -617,49 +616,44 @@ fn synth_field(base: Expr, field_name: String, s: span.Span, ctx: InferCtx, diag
 }
 
 fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
-  case resolver.lookup_type(ctx.env, type_name) {
-    .Some(entry) => {
-      // Build type args: fresh MetaVars for generic types
-      cur_ctx := ctx
-      type_args: Vector<MonoType> = []
-      case entry.def {
-        .Some(def) => {
-          case def {
-            .Record(_, type_params, _) => {
-              for _ in type_params {
-                m := fresh_meta(cur_ctx)
-                cur_ctx = m.ctx
-                type_args = type_args.push(m.ty)
-              }
-            },
-            _ => {},
-          }
-        },
-        .None => {},
-      }
-      expected := MonoType.Named(entry.id, type_args)
-      cr := check_record_lit(entries, expected, s, cur_ctx, diags)
-      .{ ty: expected, ctx: set_type_map(cr.ctx, s.start, expected), diags: cr.diags }
-    },
+  entry := case ctx.env.lookup_type(type_name) {
+    .Some(e) => e,
     .None => {
       m := fresh_meta(ctx)
-      .{
-        ty: m.ty,
-        ctx: m.ctx,
-        diags: diags.push(diag.error(s, "unknown type '${type_name}'")),
-      }
+      return .{ ty: m.ty, ctx: m.ctx, diags: diags.push(diag.error(s, "unknown type '${type_name}'")) }
     },
   }
+
+  // Build type args: fresh MetaVars for generic record types
+  cur_ctx := ctx
+  type_args: Vector<MonoType> = []
+  case entry.def {
+    .Some(def) => case def {
+      .Record(_, type_params, _) => {
+        for _ in type_params {
+          m := fresh_meta(cur_ctx)
+          cur_ctx = m.ctx
+          type_args = type_args.push(m.ty)
+        }
+      },
+      _ => {},
+    },
+    .None => {},
+  }
+
+  expected := MonoType.Named(entry.id, type_args)
+  cr := check_record_lit(entries, expected, s, cur_ctx, diags)
+  .{ ty: expected, ctx: set_type_map(cr.ctx, s.start, expected), diags: cr.diags }
 }
 
 fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
   case zonked {
     .Named(tid, type_args) => {
-      def := case lookup_type_def(ctx.env, tid) {
+      def := case ctx.env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, "cannot resolve record type")) }
+          return .{ ctx, diags: diags.push(diag.error(s, "cannot resolve record type")) }
         },
       }
       case def {
@@ -669,10 +663,9 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Sp
           cur_diags := diags
           // Check each provided field
           for entry in entries {
-            found := false
-            for f in fields {
-              if f.name == entry.name {
-                found = true
+            field := fields.find(fn(f) { f.name == entry.name })
+            case field {
+              .Some(f) => {
                 field_ty := subst_vars(f.ty, var_map)
                 case entry.value {
                   .Some(val) => {
@@ -689,29 +682,25 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: span.Sp
                     cur_diags = u.diags
                   },
                 }
-              }
-            }
-            if !found {
-              cur_diags = cur_diags.push(diag.error(entry.span, "unknown field '${entry.name}'"))
+              },
+              .None => {
+                cur_diags = cur_diags.push(diag.error(entry.span, "unknown field '${entry.name}'"))
+              },
             }
           }
           // Check missing fields
           for f in fields {
-            has := false
-            for entry in entries {
-              if entry.name == f.name { has = true }
-            }
-            if !has {
+            if !entries.any(fn(e) { e.name == f.name }) {
               cur_diags = cur_diags.push(diag.error(s, "missing field '${f.name}'"))
             }
           }
           .{ ctx: cur_ctx, diags: cur_diags }
         },
-        _ => .{ ctx: ctx, diags: diags.push(diag.error(s, "expected a record type, got sum/alias")) },
+        _ => .{ ctx, diags: diags.push(diag.error(s, "expected a record type, got sum/alias")) },
       }
     },
     _ => .{
-      ctx: ctx,
+      ctx,
       diags: diags.push(diag.error(s, "record literal requires a known record type, got ${ty_to_string(zonked)}")),
     },
   }
@@ -726,7 +715,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
       if name == "Some" {
         if args.len() != 1 {
           return .{
-            ctx: ctx,
+            ctx,
             diags: diags.push(diag.error(s, ".Some expects 1 argument, got ${args.len()}")),
           }
         }
@@ -737,14 +726,14 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
       if name == "None" {
         if args.len() != 0 {
           return .{
-            ctx: ctx,
+            ctx,
             diags: diags.push(diag.error(s, ".None expects 0 arguments, got ${args.len()}")),
           }
         }
-        return .{ ctx: ctx, diags: diags }
+        return .{ ctx, diags }
       }
       return .{
-        ctx: ctx,
+        ctx,
         diags: diags.push(diag.error(s, "unknown variant .${name} for Optional")),
       }
     },
@@ -757,7 +746,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
       if name == "Ok" {
         if args.len() != 1 {
           return .{
-            ctx: ctx,
+            ctx,
             diags: diags.push(diag.error(s, ".Ok expects 1 argument, got ${args.len()}")),
           }
         }
@@ -768,7 +757,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
       if name == "Err" {
         if args.len() != 1 {
           return .{
-            ctx: ctx,
+            ctx,
             diags: diags.push(diag.error(s, ".Err expects 1 argument, got ${args.len()}")),
           }
         }
@@ -777,7 +766,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
         return .{ ctx: u.ctx, diags: u.diags }
       }
       return .{
-        ctx: ctx,
+        ctx,
         diags: diags.push(diag.error(s, "unknown variant .${name} for Result")),
       }
     },
@@ -791,7 +780,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
         .Ok(info) => {
           if args.len() != info.field_types.len() {
             return .{
-              ctx: ctx,
+              ctx,
               diags: diags.push(diag.error(s, ".${name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
             }
           }
@@ -806,7 +795,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
           return .{ ctx: cur_ctx, diags: cur_diags }
         },
         .Err(msg) => {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, msg)) }
+          return .{ ctx, diags: diags.push(diag.error(s, msg)) }
         },
       }
     },
@@ -814,7 +803,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
   }
 
   .{
-    ctx: ctx,
+    ctx,
     diags: diags.push(diag.error(s, "variant .${name} used where ${ty_to_string(zonked)} expected")),
   }
 }
@@ -822,7 +811,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: sp
 fn synth_array(elems: Vector<Expr>, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   if elems.len() == 0 {
     m := fresh_meta(ctx)
-    return .{ ty: MonoType.Vector(m.ty), ctx: m.ctx, diags: diags }
+    return .{ ty: MonoType.Vector(m.ty), ctx: m.ctx, diags }
   }
   // Synth first element, unify rest against it
   first := synth(elems[0], ctx, diags)
@@ -1064,8 +1053,8 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: span.Span, ctx: InferCtx, d
 
 fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   case pat.kind {
-    .Wildcard => .{ ctx: ctx, diags: diags },
-    .Ident(name) => .{ ctx: bind_local(ctx, name, expected), diags: diags },
+    .Wildcard => .{ ctx, diags },
+    .Ident(name) => .{ ctx: bind_local(ctx, name, expected), diags },
     .Literal(expr) => {
       r := synth(expr, ctx, diags)
       u := unify(r.ty, expected, pat.span, r.ctx, r.diags)
@@ -1077,7 +1066,7 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
       diags = diags.concat(validate_qualifier(path, expected, pat.span, ctx))
       check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags)
     },
-    .ErrorPattern => .{ ctx: ctx, diags: diags },
+    .ErrorPattern => .{ ctx, diags },
   }
 }
 
@@ -1087,7 +1076,7 @@ fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
   case zonked {
     .Optional(_) => .Some("Option"),
     .Result(_, _) => .Some("Result"),
-    .Named(tid, _) => find_type_name(ctx.env, tid),
+    .Named(tid, _) => ctx.env.find_type_name(tid),
     _ => .None,
   }
 }
@@ -1116,14 +1105,14 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
     .Optional(inner) => {
       if name == "Some" {
         if sub_pats.len() != 1 {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, ".Some pattern expects 1 binding")) }
+          return .{ ctx, diags: diags.push(diag.error(s, ".Some pattern expects 1 binding")) }
         }
         return check_pattern(sub_pats[0], inner, ctx, diags)
       }
       if name == "None" {
-        return .{ ctx: ctx, diags: diags }
+        return .{ ctx, diags }
       }
-      return .{ ctx: ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Optional")) }
+      return .{ ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Optional")) }
     },
     _ => {},
   }
@@ -1133,17 +1122,17 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
     .Result(ok_ty, err_ty) => {
       if name == "Ok" {
         if sub_pats.len() != 1 {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, ".Ok pattern expects 1 binding")) }
+          return .{ ctx, diags: diags.push(diag.error(s, ".Ok pattern expects 1 binding")) }
         }
         return check_pattern(sub_pats[0], ok_ty, ctx, diags)
       }
       if name == "Err" {
         if sub_pats.len() != 1 {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, ".Err pattern expects 1 binding")) }
+          return .{ ctx, diags: diags.push(diag.error(s, ".Err pattern expects 1 binding")) }
         }
         return check_pattern(sub_pats[0], err_ty, ctx, diags)
       }
-      return .{ ctx: ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Result")) }
+      return .{ ctx, diags: diags.push(diag.error(s, "unknown variant .${name} for Result")) }
     },
     _ => {},
   }
@@ -1155,7 +1144,7 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
         .Ok(info) => {
           if sub_pats.len() != info.field_types.len() {
             return .{
-              ctx: ctx,
+              ctx,
               diags: diags.push(diag.error(s, ".${name} pattern expects ${info.field_types.len()} bindings, got ${sub_pats.len()}")),
             }
           }
@@ -1169,14 +1158,14 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
           return .{ ctx: cur_ctx, diags: cur_diags }
         },
         .Err(msg) => {
-          return .{ ctx: ctx, diags: diags.push(diag.error(s, msg)) }
+          return .{ ctx, diags: diags.push(diag.error(s, msg)) }
         },
       }
     },
     .None => {},
   }
 
-  .{ ctx: ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) }
+  .{ ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) }
 }
 
 fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) Vector<Diagnostic> {
@@ -1223,19 +1212,11 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: span.Span,
       }
       // Find uncovered variants
       missing := collect name in names {
-        found := false
-        for c in covered {
-          if c == name { found = true }
-        }
-        if found { continue }
+        if covered.any(fn(c) { c == name }) { continue }
         name
       }
       if missing.len() > 0 {
-        missing_str := ""
-        for m, i in missing {
-          if i > 0 { missing_str = "${missing_str}, " }
-          missing_str = "${missing_str}.${m}"
-        }
+        missing_str := missing.map(fn(m) { ".${m}" }).join(", ")
         diags.push(diag.error(s, "non-exhaustive match, missing: ${missing_str}"))
       } else {
         diags
@@ -1251,7 +1232,7 @@ fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
     .Result(_, _) => .Some(["Ok", "Err"]),
     .Bool => .Some(["true", "false"]),
     .Named(tid, _) => {
-      def := try lookup_type_def(ctx.env, tid)
+      def := try ctx.env.lookup_type_def(tid)
       case def {
         .Sum(_, _, variants) => .Some(variants.map(fn(v) { v.name })),
         _ => .None,
@@ -1310,17 +1291,17 @@ type ElementResult = .{ ty: MonoType, diags: Vector<Diagnostic> }
 fn element_type_of(ty: MonoType, s: span.Span, ctx: InferCtx, diags: Vector<Diagnostic>) ElementResult {
   zonked := zonk(ty, ctx.subst)
   case zonked {
-    .Vector(elem) => .{ ty: elem, diags: diags },
-    .String => .{ ty: MonoType.Byte, diags: diags },
-    .Dict(k, _) => .{ ty: k, diags: diags },
+    .Vector(elem) => .{ ty: elem, diags },
+    .String => .{ ty: MonoType.Byte, diags },
+    .Dict(k, _) => .{ ty: k, diags },
     .Named(tid, args) => {
       // Range (TypeId 3) iterates Int; Iterator (TypeId 4) iterates its element type
-      case find_type_name(ctx.env, tid) {
+      case ctx.env.find_type_name(tid) {
         .Some(name) => {
           if name == "Range" {
-            .{ ty: MonoType.Int, diags: diags }
+            .{ ty: MonoType.Int, diags }
           } else if name == "Iterator" and args.len() > 0 {
-            .{ ty: args[0], diags: diags }
+            .{ ty: args[0], diags }
           } else {
             .{ ty: MonoType.Int, diags: diags.push(diag.error(s, "cannot iterate over ${ty_to_string(zonked)}")) }
           }
@@ -1566,9 +1547,9 @@ fn is_interpolatable(ty: MonoType, env: ResolvedEnv) Bool {
     .String => true,
     .Named(tid, _) => {
       // Check if this named type has a to_string method registered
-      case find_type_name(env, tid) {
+      case env.find_type_name(tid) {
         .Some(name) => {
-          case lookup_method(env, name, "to_string") {
+          case env.lookup_method(name, "to_string") {
             .Some(_) => true,
             .None => false,
           }
@@ -1723,15 +1704,15 @@ fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
           r := synth(val, ctx, diags)
           .{ ctx: r.ctx, diags: r.diags }
         },
-        .None => .{ ctx: ctx, diags: diags },
+        .None => .{ ctx, diags },
       }
     },
-    .Continue(_) => .{ ctx: ctx, diags: diags },
+    .Continue(_) => .{ ctx, diags },
     .Defer(ds) => {
       r := synth(ds.expr, ctx, diags)
       .{ ctx: r.ctx, diags: r.diags }
     },
-    _ => .{ ctx: ctx, diags: diags },
+    _ => .{ ctx, diags },
   }
 }
 
@@ -1779,7 +1760,7 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckO
         },
       }
     },
-    .None => .{ ctx: ctx, diags: diags },
+    .None => .{ ctx, diags },
   }
   // Record Never in the type map for the return's span
   result.ctx = set_type_map(result.ctx, rs.span.start, MonoType.Never)
@@ -1789,7 +1770,7 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckO
 // ── Function checking ───────────────────────────────────────────────
 
 fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
-  case resolver.lookup_function(ctx.env, decl.name) {
+  case ctx.env.lookup_function(decl.name) {
     .Some(sig) => {
       fn_ctx := push_scope(ctx)
 
@@ -1825,7 +1806,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) 
         },
       }
     },
-    .None => .{ ctx: ctx, diags: diags },
+    .None => .{ ctx, diags },
   }
 }
 
