@@ -98,18 +98,18 @@ fn __init__  [FuncId(46)]  params=[]
     let L17 = init(L53)
     void
 
-fn <lambda@268>  [FuncId(43)]  params=[]
+fn <lambda@269>  [FuncId(43)]  params=[]
   return_ty: Int
   body:
     L2
 
-fn <lambda@541>  [FuncId(44)]  params=[L3: Int]
+fn <lambda@544>  [FuncId(44)]  params=[L3: Int]
   return_ty: Int
   body:
     let L4 = binop(Add, L2, L3, Int)
     L4
 
-fn <lambda@805>  [FuncId(45)]  params=[]
+fn <lambda@810>  [FuncId(45)]  params=[]
   return_ty: Int
   body:
     L6

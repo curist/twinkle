@@ -24,39 +24,35 @@ use type_index::find_smallest_type_at_offset;
 pub fn expr_id_at_position(module: &AnalyzedModule, position: PositionUtf16) -> Option<ExprId> {
     let file_id = module.ast.span.file_id;
     let byte_offset = file_position_utf16_to_byte_offset(&module.file_registry, file_id, position)?;
-    let source = module.file_registry.source(file_id)?;
-    let span_offset = u32::try_from(source[..byte_offset as usize].chars().count()).ok()?;
     let index = ExprSpanIndex::build(&module.ast);
     index
-        .find_smallest_containing(file_id, span_offset)
+        .find_smallest_containing(file_id, byte_offset)
         .map(|entry| entry.expr_id)
 }
 
 pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Option<String> {
     let file_id = module.ast.span.file_id;
     let byte_offset = file_position_utf16_to_byte_offset(&module.file_registry, file_id, position)?;
-    let source = module.file_registry.source(file_id)?;
-    let span_offset = u32::try_from(source[..byte_offset as usize].chars().count()).ok()?;
 
-    if let Some(function_type) = hover_function_signature_at_offset(module, file_id, span_offset) {
+    if let Some(function_type) = hover_function_signature_at_offset(module, file_id, byte_offset) {
         return Some(function_type);
     }
 
-    if let Some(definition_hover) = hover_definition_at_offset(module, file_id, span_offset) {
+    if let Some(definition_hover) = hover_definition_at_offset(module, file_id, byte_offset) {
         return Some(definition_hover);
     }
 
-    if let Some(import_hover) = hover_import_item_at_offset(module, file_id, span_offset) {
+    if let Some(import_hover) = hover_import_item_at_offset(module, file_id, byte_offset) {
         return Some(import_hover);
     }
 
-    if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, span_offset)
+    if let Some(variant_hover) = hover_case_pattern_variant_at_offset(module, file_id, byte_offset)
     {
         return Some(variant_hover);
     }
 
     let index = ExprSpanIndex::build(&module.ast);
-    for entry in index.find_containing(file_id, span_offset) {
+    for entry in index.find_containing(file_id, byte_offset) {
         if let Some(ty) = module.typed.type_map.get_expr_type(entry.expr_id) {
             if let Some(sig) = find_expr_function_signature(module, &entry) {
                 return Some(format_function_signature(&sig, &module.typed.type_env));
@@ -72,7 +68,7 @@ pub fn hover_at_module(module: &AnalyzedModule, position: PositionUtf16) -> Opti
         }
     }
 
-    let type_node = find_smallest_type_at_offset(&module.ast, file_id, span_offset)?;
+    let type_node = find_smallest_type_at_offset(&module.ast, file_id, byte_offset)?;
     Some(format_type_hover(module, type_node))
 }
 
@@ -143,33 +139,12 @@ fn identifier_snippet<'a>(
     module: &'a AnalyzedModule,
     entry: &index::ExprSpanEntry,
 ) -> Option<&'a str> {
-    let source = module.file_registry.source(entry.span.file_id)?;
-    let start = span_offset_to_byte_offset(source, entry.span.start)?;
-    let end = span_offset_to_byte_offset(source, entry.span.end)?;
-    let snippet = source.get(start..end)?;
+    let snippet = module.file_registry.snippet(entry.span)?;
     // Only look up metadata for simple identifiers (no dots, no operators)
     if snippet.contains('.') || snippet.contains(' ') || snippet.contains('(') {
         return None;
     }
     Some(snippet)
-}
-
-fn span_offset_to_byte_offset(source: &str, span_offset: u32) -> Option<usize> {
-    if span_offset == 0 {
-        return Some(0);
-    }
-    let mut chars_seen = 0u32;
-    for (idx, _) in source.char_indices() {
-        if chars_seen == span_offset {
-            return Some(idx);
-        }
-        chars_seen += 1;
-    }
-    if chars_seen == span_offset {
-        Some(source.len())
-    } else {
-        None
-    }
 }
 
 fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {

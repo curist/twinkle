@@ -31,6 +31,8 @@ pub struct Lexer {
     source: Vec<char>,
     file_id: FileId,
     pos: usize,
+    /// Byte offset corresponding to `pos`, used for span creation.
+    byte_pos: usize,
     /// Stack of active `${...}` interpolation contexts (top = current depth).
     interpolation_stack: Vec<u32>,
 }
@@ -41,6 +43,7 @@ impl Lexer {
             source: source.chars().collect(),
             file_id,
             pos: 0,
+            byte_pos: 0,
             interpolation_stack: Vec::new(),
         }
     }
@@ -73,7 +76,7 @@ impl Lexer {
     fn lex_regular_token(&mut self) -> LexResult<Token> {
         let saw_newline = self.skip_whitespace_and_comments();
 
-        let start = self.pos;
+        let start = self.byte_pos;
 
         if self.is_eof() {
             return Ok(Token::eof(self.file_id, start as u32));
@@ -144,7 +147,7 @@ impl Lexer {
 
             _ => {
                 self.advance();
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::UnexpectedChar(ch), span));
             }
         };
@@ -154,9 +157,9 @@ impl Lexer {
     }
 
     fn lex_single(&mut self, kind: TokenKind) -> Token {
-        let start = self.pos;
+        let start = self.byte_pos;
         let ch = self.advance();
-        let span = Span::new(self.file_id, start as u32, self.pos as u32);
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
         Token::new(kind, span, ch.to_string())
     }
 
@@ -168,33 +171,34 @@ impl Lexer {
         next2: char,
         double2: TokenKind,
     ) -> Token {
-        let start = self.pos;
+        let start = self.byte_pos;
         let ch = self.advance();
         let next = self.peek();
 
         if next == next1 {
             self.advance();
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Token::new(double1, span, format!("{}{}", ch, next1))
         } else if next2 != '\0' && next == next2 {
             self.advance();
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Token::new(double2, span, format!("{}{}", ch, next2))
         } else {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Token::new(single, span, ch.to_string())
         }
     }
 
     fn lex_ident_or_keyword(&mut self) -> Token {
-        let start = self.pos;
+        let start = self.byte_pos;
+        let char_start = self.pos;
 
         while !self.is_eof() && self.is_ident_continue(self.peek()) {
             self.advance();
         }
 
-        let span = Span::new(self.file_id, start as u32, self.pos as u32);
-        let text: String = self.source[start..self.pos].iter().collect();
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+        let text: String = self.source[char_start..self.pos].iter().collect();
 
         // Check if it's a keyword
         let kind = TokenKind::from_keyword(&text).unwrap_or(TokenKind::Ident);
@@ -203,7 +207,8 @@ impl Lexer {
     }
 
     fn lex_number(&mut self) -> LexResult<Token> {
-        let start = self.pos;
+        let start = self.byte_pos;
+        let char_start = self.pos;
 
         // Check for hex literal: 0x...
         if self.peek() == '0' && self.peek_ahead(1) == 'x' {
@@ -212,7 +217,7 @@ impl Lexer {
 
             // Must have at least one hex digit
             if self.is_eof() || !self.peek().is_ascii_hexdigit() {
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::InvalidHexLiteral, span));
             }
 
@@ -220,8 +225,8 @@ impl Lexer {
                 self.advance();
             }
 
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
-            let text: String = self.source[start..self.pos].iter().collect();
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            let text: String = self.source[char_start..self.pos].iter().collect();
             return Ok(Token::new(TokenKind::IntLit, span, text));
         }
 
@@ -242,8 +247,8 @@ impl Lexer {
             }
         }
 
-        let span = Span::new(self.file_id, start as u32, self.pos as u32);
-        let text: String = self.source[start..self.pos].iter().collect();
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+        let text: String = self.source[char_start..self.pos].iter().collect();
 
         let kind = if is_float {
             TokenKind::FloatLit
@@ -255,7 +260,7 @@ impl Lexer {
     }
 
     fn lex_string(&mut self) -> LexResult<Token> {
-        let start = self.pos;
+        let start = self.byte_pos;
         self.advance(); // consume opening "
 
         let mut value = String::new();
@@ -280,17 +285,17 @@ impl Lexer {
             self.advance(); // consume {
             self.interpolation_stack.push(1);
 
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Ok(Token::new(TokenKind::StringStart, span, value))
         } else {
             // Simple string without interpolation
             if self.is_eof() {
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::UnterminatedString, span));
             }
 
             self.advance(); // consume closing "
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Ok(Token::new(TokenKind::StringLit, span, value))
         }
     }
@@ -315,9 +320,9 @@ impl Lexer {
         if self.peek() == '}' {
             // Guard against underflow
             if brace_depth == 0 {
-                let start = self.pos;
+                let start = self.byte_pos;
                 self.advance();
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::UnexpectedChar('}'), span));
             }
 
@@ -326,7 +331,7 @@ impl Lexer {
             if new_depth == 0 {
                 // End of interpolation, resume string
                 self.interpolation_stack.pop();
-                let start = self.pos;
+                let start = self.byte_pos;
                 self.advance(); // consume }
 
                 let mut value = String::new();
@@ -349,17 +354,17 @@ impl Lexer {
                     self.advance(); // consume {
                     self.interpolation_stack.push(1);
 
-                    let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                    let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                     Ok(Token::new(TokenKind::StringContinue, span, value))
                 } else {
                     if self.is_eof() {
-                        let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                         return Err(LexError::new(LexErrorKind::UnterminatedString, span));
                     }
 
                     self.advance(); // consume closing "
 
-                    let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                    let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                     Ok(Token::new(TokenKind::StringEnd, span, value))
                 }
             } else {
@@ -382,11 +387,11 @@ impl Lexer {
             '\\',
             "parse_escape_sequence must be called at a backslash"
         );
-        let start = self.pos;
+        let start = self.byte_pos;
         self.advance(); // consume '\'
 
         if self.is_eof() {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::UnterminatedString, span));
         }
 
@@ -403,7 +408,7 @@ impl Lexer {
             'x' => self.parse_hex_escape(start),
             'u' => self.parse_unicode_escape(start),
             _ => {
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 Err(LexError::new(LexErrorKind::InvalidEscape(ch), span))
             }
         }
@@ -415,7 +420,7 @@ impl Lexer {
         let value = (first << 4) | second;
 
         if value > 0x7f {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
         }
 
@@ -424,7 +429,7 @@ impl Lexer {
 
     fn consume_required_hex_digit(&mut self, start: usize) -> LexResult<u32> {
         if self.is_eof() {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
         }
 
@@ -435,7 +440,7 @@ impl Lexer {
             if ch != '"' {
                 self.advance();
             }
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidHexEscape, span));
         }
 
@@ -445,7 +450,7 @@ impl Lexer {
 
     fn parse_unicode_escape(&mut self, start: usize) -> LexResult<char> {
         if self.is_eof() || self.peek() != '{' {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
         }
 
@@ -455,7 +460,7 @@ impl Lexer {
 
         loop {
             if self.is_eof() {
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
             }
 
@@ -471,13 +476,13 @@ impl Lexer {
                 if ch != '"' {
                     self.advance();
                 }
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
             }
 
             if digits == 6 {
                 self.advance(); // consume the overflow digit for better span coverage
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
             }
 
@@ -487,19 +492,19 @@ impl Lexer {
         }
 
         if digits == 0 {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
         }
 
         if (0xd800..=0xdfff).contains(&value) {
-            let span = Span::new(self.file_id, start as u32, self.pos as u32);
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span));
         }
 
         match char::from_u32(value) {
             Some(ch) => Ok(ch),
             None => {
-                let span = Span::new(self.file_id, start as u32, self.pos as u32);
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                 Err(LexError::new(LexErrorKind::InvalidUnicodeEscape, span))
             }
         }
@@ -542,6 +547,7 @@ impl Lexer {
 
     fn advance(&mut self) -> char {
         let ch = self.peek();
+        self.byte_pos += ch.len_utf8();
         self.pos += 1;
         ch
     }

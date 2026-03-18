@@ -416,6 +416,49 @@ fn main() Int {
     assert_eq!(snippet, "helper");
 }
 
+#[test]
+fn definition_resolves_after_multibyte_utf8_comment() {
+    reset_global_cache();
+
+    let project_root = PathBuf::from("/virtual/lsp_definition_multibyte");
+    let stdlib_root = project_root.join("stdlib");
+    let entry = project_root.join("main.tw");
+    // The comment contains multi-byte UTF-8 characters (─ is U+2500, 3 bytes each).
+    // This exercises that lexer spans are byte-based, not char-based.
+    let source = r#"// ── Section ──────────────────
+
+fn helper(x: Int) Int { x + 1 }
+
+fn main() Int {
+  helper(5)
+}
+"#;
+
+    let mut sources = HashMap::new();
+    sources.insert(entry.clone(), source.to_string());
+
+    let analysis = twinkle::module::analyze_entry_from_source_map(
+        &entry,
+        &sources,
+        &project_root,
+        &stdlib_root,
+    )
+    .expect("analysis should succeed");
+
+    // Cursor on "helper" in "helper(5)"
+    let pos = position_of(source, "helper(5)", 0);
+    let target = definition_at_workspace(&analysis, &entry, pos)
+        .expect("goto-def after multibyte UTF-8 should resolve");
+    assert_eq!(target.path, entry);
+
+    let module = analysis.modules.get(&target.path).expect("module");
+    let snippet = module
+        .file_registry
+        .snippet(target.span)
+        .expect("definition snippet");
+    assert_eq!(snippet, "helper");
+}
+
 fn position_of(source: &str, needle: &str, relative_offset: usize) -> PositionUtf16 {
     let start = source.find(needle).expect("needle should be present");
     byte_offset_to_position_utf16(source, start + relative_offset).expect("position should convert")
