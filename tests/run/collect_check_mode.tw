@@ -1,0 +1,42 @@
+// Test that collect propagates expected element type into body,
+// enabling anonymous record literals and variant literals.
+//
+// Expected output:
+//   alice: 5
+//   bob: 3
+//   Some(alice)
+//   Some(bob)
+//   1 + 2 = 3
+//   3 + 4 = 7
+
+type Item = .{ name: String, value: Int }
+
+// Anonymous record literal in collect body (requires expected type propagation)
+names := ["alice", "bob"]
+items: Vector<Item> = collect n in names {
+  .{ name: n, value: n.len() }
+}
+for item in items {
+  println("${item.name}: ${item.value}")
+}
+
+// Variant literal in collect body with expected Option type
+opts: Vector<String?> = collect n in names {
+  .Some(n)
+}
+for o in opts {
+  case o {
+    .Some(s) => println("Some(${s})"),
+    .None => println("None"),
+  }
+}
+
+// Nested collect: inner collect produces Vector<Int>, outer produces Vector<String>
+pairs := [[1, 2], [3, 4]]
+sums: Vector<String> = collect pair in pairs {
+  s := pair.fold(0, fn(acc: Int, x: Int) { acc + x })
+  "${pair[0]} + ${pair[1]} = ${s}"
+}
+for s in sums {
+  println(s)
+}

@@ -838,6 +838,30 @@ impl TypeChecker {
                 }
             }
 
+            // Collect: propagate expected element type into body
+            ExprKind::Collect {
+                pattern,
+                index_pattern,
+                iter,
+                body,
+            } => {
+                if let MonoType::Vector(elem_ty) = expected {
+                    let actual = self.check_collect(
+                        pattern,
+                        index_pattern.as_ref(),
+                        iter,
+                        body,
+                        expr.span,
+                        elem_ty,
+                    )?;
+                    self.unify(&actual, expected, expr.span)
+                } else {
+                    let actual =
+                        self.synth_collect(pattern, index_pattern.as_ref(), iter, body, expr.span)?;
+                    self.unify(&actual, expected, expr.span)
+                }
+            }
+
             // Vector literals: check each element against the expected element type
             ExprKind::Array { elements } => {
                 if let MonoType::Vector(elem_ty) = expected {
@@ -3197,6 +3221,37 @@ impl TypeChecker {
         body: &Expr,
         span: Span,
     ) -> Result<MonoType, ()> {
+        self.collect_impl(pattern, index_pattern, iter, body, span, None)
+    }
+
+    fn check_collect(
+        &mut self,
+        pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
+        iter: &Expr,
+        body: &Expr,
+        span: Span,
+        expected_elem: &MonoType,
+    ) -> Result<MonoType, ()> {
+        self.collect_impl(
+            pattern,
+            index_pattern,
+            iter,
+            body,
+            span,
+            Some(expected_elem),
+        )
+    }
+
+    fn collect_impl(
+        &mut self,
+        pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
+        iter: &Expr,
+        body: &Expr,
+        span: Span,
+        expected_elem: Option<&MonoType>,
+    ) -> Result<MonoType, ()> {
         let iter_ty = self.synth_expr(iter)?;
 
         self.local_env.push_scope();
@@ -3319,6 +3374,14 @@ impl TypeChecker {
 
         let body_ty = if had_error {
             MonoType::Void
+        } else if let Some(expected) = expected_elem {
+            match self.check_expr(body, expected) {
+                Ok(()) => expected.clone(),
+                Err(()) => {
+                    self.local_env.pop_scope();
+                    return Err(());
+                }
+            }
         } else {
             match self.synth_expr(body) {
                 Ok(ty) => ty,
