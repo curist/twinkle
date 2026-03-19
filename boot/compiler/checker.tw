@@ -70,6 +70,13 @@ fn pop_scope(ctx: InferCtx) InferCtx {
   ctx
 }
 
+fn bind_optional(ctx: InferCtx, name: String?, ty: MonoType) InferCtx {
+  case name {
+    .Some(n) => bind_local(ctx, n, ty),
+    .None => ctx,
+  }
+}
+
 fn bind_local(ctx: InferCtx, name: String, ty: MonoType) InferCtx {
   last := ctx.locals.len() - 1
   frame := ctx.locals[last]
@@ -358,6 +365,37 @@ fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<
   m
 }
 
+fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<String>, type_args: Vector<MonoType>, name: String) MonoType? {
+  var_map := build_var_map(type_params, type_args)
+  for f in fields {
+    if f.name == name {
+      return .Some(subst_vars(f.ty, var_map))
+    }
+  }
+  .None
+}
+
+fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?, s: Span, diags: Vector<Diagnostic>) CheckOut {
+  case call_expected {
+    .Some(expected_ret) => {
+      pre_u := ctx.unify(inst_ret, expected_ret, s, diags)
+      .{ ctx: pre_u.ctx, diags }
+    },
+    .None => .{ ctx, diags },
+  }
+}
+
+fn check_args(ctx: InferCtx, args: Vector<Expr>, param_tys: Vector<MonoType>, diags: Vector<Diagnostic>) CheckOut {
+  cur_ctx := ctx
+  cur_diags := diags
+  for i in range(args.len()) {
+    ar := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
+    cur_ctx = ar.ctx
+    cur_diags = ar.diags
+  }
+  .{ ctx: cur_ctx, diags: cur_diags }
+}
+
 type InstOut = .{ params: Vector<MonoType>, ret: MonoType, ctx: InferCtx }
 
 fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
@@ -519,20 +557,10 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: V
       case clean_ctx.env.lookup_function(name) {
         .Some(sig) => {
           inst := instantiate(sig, clean_ctx)
-          cur_ctx := inst.ctx
-          cur_diags := diags
-
-          // Pre-unify return type with expected type from calling context
-          // to solve MetaVars before checking arguments
-          case call_expected {
-            .Some(expected_ret) => {
-              pre_u := cur_ctx.unify(inst.ret, expected_ret, s, cur_diags)
-              cur_ctx = pre_u.ctx
-              // Deliberately ignore new diagnostics from pre-unification;
-              // the outer unify in check_expr will re-report any real mismatch
-            },
-            .None => {},
-          }
+          // Pre-unify return type to solve MetaVars before checking arguments
+          pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
+          cur_ctx := pu.ctx
+          cur_diags := pu.diags
 
           // Check arg count
           if args.len() != inst.params.len() {
@@ -543,17 +571,9 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: V
             }
           }
 
-          // Type-check each arg against its param type (check mode pushes expected type down)
-          for i in range(args.len()) {
-            ar := cur_ctx.check_expr(args[i], inst.params[i], cur_diags)
-            cur_ctx = ar.ctx
-            cur_diags = ar.diags
-          }
-
-          // Record callee type
-          cur_ctx = set_type_map(cur_ctx, callee.span.start, MonoType.Function(inst.params, inst.ret))
-
-          .{ ty: inst.ret, ctx: cur_ctx, diags: cur_diags }
+          ar := check_args(cur_ctx, args, inst.params, cur_diags)
+          cur_ctx = set_type_map(ar.ctx, callee.span.start, MonoType.Function(inst.params, inst.ret))
+          .{ ty: inst.ret, ctx: cur_ctx, diags: ar.diags }
         },
         .None => synth_call_general(callee, args, s, clean_ctx, diags),
       }
@@ -671,17 +691,9 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
     .None => { return .None },
   }
   inst := instantiate(sig, ctx)
-  cur_ctx := inst.ctx
-  cur_diags := diags
-
-  // Pre-unify return type with expected type from calling context
-  case call_expected {
-    .Some(expected_ret) => {
-      pre_u := cur_ctx.unify(inst.ret, expected_ret, callee_span, cur_diags)
-      cur_ctx = pre_u.ctx
-    },
-    .None => {},
-  }
+  pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
+  cur_ctx := pu.ctx
+  cur_diags := pu.diags
 
   if args.len() != inst.params.len() {
     return .Some(.{
@@ -691,14 +703,9 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
     })
   }
 
-  for i in range(args.len()) {
-    ar := cur_ctx.check_expr(args[i], inst.params[i], cur_diags)
-    cur_ctx = ar.ctx
-    cur_diags = ar.diags
-  }
+  ar := check_args(cur_ctx, args, inst.params, cur_diags)
   callee_ty := MonoType.Function(inst.params, inst.ret)
-  cur_ctx = set_type_map(cur_ctx, callee_span.start, callee_ty)
-  .Some(.{ ty: inst.ret, ctx: cur_ctx, diags: cur_diags })
+  .Some(.{ ty: inst.ret, ctx: set_type_map(ar.ctx, callee_span.start, callee_ty), diags: ar.diags })
 }
 
 fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
@@ -721,17 +728,9 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     },
   }
   inst := instantiate(sig, br.ctx)
-  cur_ctx := inst.ctx
-  cur_diags := br.diags
-
-  // Pre-unify return type with expected type from calling context
-  case call_expected {
-    .Some(expected_ret) => {
-      pre_u := cur_ctx.unify(inst.ret, expected_ret, callee_span, cur_diags)
-      cur_ctx = pre_u.ctx
-    },
-    .None => {},
-  }
+  pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, br.diags)
+  cur_ctx := pu.ctx
+  cur_diags := pu.diags
 
   if inst.params.len() == 0 {
     return .Some(.{
@@ -756,14 +755,9 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     })
   }
 
-  for i in range(args.len()) {
-    ar := cur_ctx.check_expr(args[i], expected_args[i], cur_diags)
-    cur_ctx = ar.ctx
-    cur_diags = ar.diags
-  }
+  ar := check_args(cur_ctx, args, expected_args, cur_diags)
   callee_ty := MonoType.Function(expected_args, inst.ret)
-  cur_ctx = set_type_map(cur_ctx, callee_span.start, callee_ty)
-  .Some(.{ ty: inst.ret, ctx: cur_ctx, diags: cur_diags })
+  .Some(.{ ty: inst.ret, ctx: set_type_map(ar.ctx, callee_span.start, callee_ty), diags: ar.diags })
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
@@ -846,11 +840,9 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
       }
       case def {
         .Record(_, type_params, fields) => {
-          var_map := build_var_map(type_params, type_args)
-          for f in fields {
-            if f.name == field_name {
-              return .{ ty: subst_vars(f.ty, var_map), ctx: br.ctx, diags: br.diags }
-            }
+          case find_record_field_type(fields, type_params, type_args, field_name) {
+            .Some(fty) => { return .{ ty: fty, ctx: br.ctx, diags: br.diags } },
+            .None => {},
           }
           method_r := try_synth_method_value(zonked_base, field_name, s, br.ctx, br.diags)
           case method_r {
@@ -930,15 +922,12 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
       }
       case def {
         .Record(_, type_params, fields) => {
-          var_map := build_var_map(type_params, type_args)
           cur_ctx := ctx
           cur_diags := diags
           // Check each provided field
           for entry in entries {
-            field := fields.find(fn(f) { f.name == entry.name })
-            case field {
-              .Some(f) => {
-                field_ty := subst_vars(f.ty, var_map)
+            case find_record_field_type(fields, type_params, type_args, entry.name) {
+              .Some(field_ty) => {
                 case entry.value {
                   .Some(val) => {
                     vr := cur_ctx.synth(val, cur_diags)
@@ -1244,18 +1233,10 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
       // Synth else, unify with then
       else_r := then_r.ctx.synth(else_e, then_r.diags)
       // Skip Never arms for unification
-      case then_r.ty {
-        .Never => .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags },
-        _ => {
-          case else_r.ty {
-            .Never => .{ ty: then_r.ty, ctx: else_r.ctx, diags: else_r.diags },
-            _ => {
-              u2 := else_r.ctx.unify(then_r.ty, else_r.ty, s, else_r.diags)
-              .{ ty: then_r.ty, ctx: u2.ctx, diags: u2.diags }
-            },
-          }
-        },
-      }
+      if then_r.ty == .Never { return .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags } }
+      if else_r.ty == .Never { return .{ ty: then_r.ty, ctx: else_r.ctx, diags: else_r.diags } }
+      u2 := else_r.ctx.unify(then_r.ty, else_r.ty, s, else_r.diags)
+      .{ ty: then_r.ty, ctx: u2.ctx, diags: u2.diags }
     },
     .None => {
       // No else — result is Void
@@ -1489,46 +1470,15 @@ fn check_for(fs: ForStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
 
-  case fs.condition {
-    .Some(cond) => {
-      // for cond { body } — while-style loop
-      cr := cur_ctx.synth(cond, cur_diags)
-      u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
-      cur_ctx = u.ctx
-      cur_diags = u.diags
-    },
-    .None => {},
-  }
+  cond_r := check_optional_condition(fs.condition, cur_ctx, cur_diags)
+  cur_ctx = cond_r.ctx
+  cur_diags = cond_r.diags
 
   case fs.iter {
     .Some(iter_expr) => {
-      // for pattern in iter { body }
-      ir := cur_ctx.synth(iter_expr, cur_diags)
-      cur_ctx = ir.ctx
-      cur_diags = ir.diags
-
-      info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
-      elem_ty := info.elem_ty
-      cur_diags = info.diags
-
-      case fs.pattern {
-        .Some(name) => { cur_ctx = bind_local(cur_ctx, name, elem_ty) },
-        .None => {},
-      }
-      case fs.index {
-        .Some(idx_name) => {
-          if info.secondary_allowed {
-            case info.secondary_ty {
-              .Some(ty) => { cur_ctx = bind_local(cur_ctx, idx_name, ty) },
-              .None => { cur_ctx = bind_local(cur_ctx, idx_name, MonoType.Int) },
-            }
-          } else {
-            err := diag.error(iter_expr.span, "Iterator<T> does not support indexed for-loop bindings")
-            cur_diags = cur_diags.push(err)
-          }
-        },
-        .None => {},
-      }
+      ib := bind_iterable_vars(cur_ctx, iter_expr, fs.pattern, fs.index, "for-loop", cur_diags)
+      cur_ctx = ib.ctx
+      cur_diags = ib.diags
     },
     .None => {},
   }
@@ -1536,6 +1486,45 @@ fn check_for(fs: ForStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   // Check the body
   body_stmts := synth_block(fs.body, cur_ctx, cur_diags)
   .{ ctx: pop_scope(body_stmts.ctx), diags: body_stmts.diags }
+}
+
+type IterBindResult = .{ ctx: InferCtx, diags: Vector<Diagnostic>, elem_ty: MonoType }
+
+fn bind_iterable_vars(ctx: InferCtx, iter_expr: Expr, pattern: String?, index: String?, index_err_label: String, diags: Vector<Diagnostic>) IterBindResult {
+  ir := ctx.synth(iter_expr, diags)
+  cur_ctx := ir.ctx
+  cur_diags := ir.diags
+
+  info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
+  cur_diags = info.diags
+  cur_ctx = bind_optional(cur_ctx, pattern, info.elem_ty)
+
+  case index {
+    .Some(idx_name) => {
+      if info.secondary_allowed {
+        case info.secondary_ty {
+          .Some(ty) => { cur_ctx = bind_local(cur_ctx, idx_name, ty) },
+          .None => { cur_ctx = bind_local(cur_ctx, idx_name, MonoType.Int) },
+        }
+      } else {
+        err := diag.error(iter_expr.span, "Iterator<T> does not support indexed ${index_err_label} bindings")
+        cur_diags = cur_diags.push(err)
+      }
+    },
+    .None => {},
+  }
+  .{ ctx: cur_ctx, diags: cur_diags, elem_ty: info.elem_ty }
+}
+
+fn check_optional_condition(cond: Expr?, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  case cond {
+    .Some(c) => {
+      cr := ctx.synth(c, diags)
+      u := cr.ctx.unify(cr.ty, MonoType.Bool, c.span, cr.diags)
+      .{ ctx: u.ctx, diags: u.diags }
+    },
+    .None => .{ ctx, diags },
+  }
 }
 
 type IterableBindingInfo = .{
@@ -1591,43 +1580,16 @@ fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<Diagnost
 
   case ce.iter {
     .Some(iter_expr) => {
-      ir := cur_ctx.synth(iter_expr, cur_diags)
-      cur_ctx = ir.ctx
-      cur_diags = ir.diags
-      info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
-      elem_ty := info.elem_ty
-      cur_diags = info.diags
-      case ce.pattern {
-        .Some(name) => { cur_ctx = bind_local(cur_ctx, name, elem_ty) },
-        .None => {},
-      }
-      case ce.index {
-        .Some(idx_name) => {
-          if info.secondary_allowed {
-            case info.secondary_ty {
-              .Some(ty) => { cur_ctx = bind_local(cur_ctx, idx_name, ty) },
-              .None => { cur_ctx = bind_local(cur_ctx, idx_name, MonoType.Int) },
-            }
-          } else {
-            err := diag.error(iter_expr.span, "Iterator<T> does not support indexed collect bindings")
-            cur_diags = cur_diags.push(err)
-          }
-        },
-        .None => {},
-      }
+      ib := bind_iterable_vars(cur_ctx, iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      cur_ctx = ib.ctx
+      cur_diags = ib.diags
     },
     .None => {},
   }
 
-  case ce.condition {
-    .Some(cond) => {
-      cr := cur_ctx.synth(cond, cur_diags)
-      u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
-      cur_ctx = u.ctx
-      cur_diags = u.diags
-    },
-    .None => {},
-  }
+  cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
+  cur_ctx = cond_r.ctx
+  cur_diags = cond_r.diags
 
   body_r := synth_block(ce.body, cur_ctx, cur_diags)
   .{ ty: MonoType.Vector(body_r.ty), ctx: pop_scope(body_r.ctx), diags: body_r.diags }
@@ -1639,43 +1601,16 @@ fn check_collect(ce: CollectExpr, expected_elem: MonoType, s: Span, ctx: InferCt
 
   case ce.iter {
     .Some(iter_expr) => {
-      ir := cur_ctx.synth(iter_expr, cur_diags)
-      cur_ctx = ir.ctx
-      cur_diags = ir.diags
-
-      info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
-      cur_diags = info.diags
-      case ce.pattern {
-        .Some(name) => { cur_ctx = bind_local(cur_ctx, name, info.elem_ty) },
-        .None => {},
-      }
-      case ce.index {
-        .Some(idx_name) => {
-          if info.secondary_allowed {
-            case info.secondary_ty {
-              .Some(ty) => { cur_ctx = bind_local(cur_ctx, idx_name, ty) },
-              .None => { cur_ctx = bind_local(cur_ctx, idx_name, MonoType.Int) },
-            }
-          } else {
-            err := diag.error(iter_expr.span, "Iterator<T> does not support indexed collect bindings")
-            cur_diags = cur_diags.push(err)
-          }
-        },
-        .None => {},
-      }
+      ib := bind_iterable_vars(cur_ctx, iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      cur_ctx = ib.ctx
+      cur_diags = ib.diags
     },
     .None => {},
   }
 
-  case ce.condition {
-    .Some(cond) => {
-      cr := cur_ctx.synth(cond, cur_diags)
-      u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
-      cur_ctx = u.ctx
-      cur_diags = u.diags
-    },
-    .None => {},
-  }
+  cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
+  cur_ctx = cond_r.ctx
+  cur_diags = cond_r.diags
 
   body_r := check_block(ce.body, expected_elem, cur_ctx, cur_diags)
   .{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
@@ -1748,14 +1683,7 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
           }
           case def {
             .Record(_, type_params, fields) => {
-              var_map := build_var_map(type_params, type_args)
-              field_ty: MonoType? = .None
-              for f in fields {
-                if f.name == field_name {
-                  field_ty = .Some(subst_vars(f.ty, var_map))
-                }
-              }
-              case field_ty {
+              case find_record_field_type(fields, type_params, type_args, field_name) {
                 .Some(fty) => {
                   rr := br.ctx.check_expr(rhs, fty, br.diags)
                   .{ ty: MonoType.Void, ctx: rr.ctx, diags: rr.diags }
@@ -2130,6 +2058,7 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
 
 fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expr_ty, ctx.subst), ctx.env, 0)
+  missing_err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: missing inherent to_string() -> String")
   case zonked {
     .Int => .{ ctx, diags },
     .Float => .{ ctx, diags },
@@ -2137,7 +2066,6 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
     .Byte => .{ ctx, diags },
     .String => .{ ctx, diags },
     .Named(tid, _) => {
-      missing_err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: missing inherent to_string() -> String")
       type_name := case ctx.env.find_type_name(tid) {
         .Some(name) => name,
         .None => { return .{ ctx, diags: diags.push(missing_err) } },
@@ -2173,10 +2101,7 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
     },
     // MetaVar not yet solved — allow and let final zonk handle ambiguity.
     .MetaVar(_) => .{ ctx, diags },
-    _ => {
-      err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: missing inherent to_string() -> String")
-      .{ ctx, diags: diags.push(err) }
-    },
+    _ => .{ ctx, diags: diags.push(missing_err) },
   }
 }
 

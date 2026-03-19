@@ -96,3 +96,4 @@ Related historical context outside this folder:
 | [checker-variant-dispatch.md](checker-variant-dispatch.md) | Unify Optional/Result/Sum variant dispatch in self-hosted checker |
 | [boot-checker-stage0-parity.md](boot-checker-stage0-parity.md) | Stage0 parity closure plan for the self-hosted checker (assignment/call dispatch/bitwise/interpolation/pass-order alignment) |
 | [boot-checker-drift-fixes.md](boot-checker-drift-fixes.md) | Post-parity drift fixes: range type, Byte/Int promotion, shift ops, defer Never, directional equality, call_expected_ret |
+| [boot-checker-refactor.md](boot-checker-refactor.md) | Extract helpers (bind_optional, find_record_field_type, check_args, etc.) to reduce duplication in boot checker |
