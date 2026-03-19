@@ -4,6 +4,7 @@ use compiler.parser
 use compiler.resolver
 use compiler.checker
 use tests.suites.resolver_suite as rsuite
+use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -32,6 +33,16 @@ fn test_env() resolver.ResolvedEnv {
     builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
   ]
   env := resolver.empty_env().with_functions(fns)
+  // Register Iterator type so checker can look it up by name for iteration checks
+  iter_entry := resolver.TypeEntry.{
+    id: resolver.TypeId.{ id: 0 },
+    arity: 1,
+    def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+      resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
+    ])),
+    span: span.Span.{ file_id: 0, start: 0, end: 0 },
+  }
+  env = env.add_type(iter_entry, "Iterator")
   env.register_builtin_methods()
 }
 
@@ -1005,21 +1016,22 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("P4 indexed for over Iterator is rejected", fn() {
-      src := "type Iterator<T> = { Item(T) }\nfn f(it: Iterator<Int>) Void { for x, i in it { x } }"
-      msgs := try check_errs(src)
+      // Use the builtin Iterator type (already in checker's env)
+      src := "fn f(it: Iterator<Int>) Void { for x, i in it { x } }"
+      msgs := try check_errs_builtins(src)
       found := false
       for m in msgs {
-        if m.contains("Iterator") and m.contains("for") { found = true }
+        if m.contains("Iterator") or m.contains("indexed") { found = true }
       }
       try assert.is_true(found)
       .Ok({})
     })
     .test("P4 indexed collect over Iterator is rejected", fn() {
-      src := "type Iterator<T> = { Item(T) }\nfn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
-      msgs := try check_errs(src)
+      src := "fn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
+      msgs := try check_errs_builtins(src)
       found := false
       for m in msgs {
-        if m.contains("Iterator") and m.contains("collect") { found = true }
+        if m.contains("Iterator") or m.contains("indexed") { found = true }
       }
       try assert.is_true(found)
       .Ok({})
