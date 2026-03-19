@@ -65,6 +65,7 @@ pub type FunctionSig = .{
 
 pub type TypeEntry = .{
   id: TypeId,
+  arity: Int,
   def: ResolvedTypeDef?,
   span: span.Span,
 }
@@ -163,7 +164,9 @@ pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
   // functions shadow prelude functions.
   case env.func_index[sig.name] {
     .Some(idx) => {
-      env.functions = env.functions.set(idx, sig)
+      env.functions = collect i in range(env.functions.len()) {
+        if i == idx { sig } else { env.functions[i] }
+      }
       env
     },
     .None => {
@@ -267,6 +270,16 @@ pub fn resolve(env: ResolvedEnv, module: Module) ResolveResult {
   .{ env: p2.env, diagnostics: p3_diags }
 }
 
+fn is_reserved_type_name(name: String) Bool {
+  case name {
+    "Int" => true, "Float" => true, "Bool" => true, "Byte" => true,
+    "String" => true, "Void" => true, "Never" => true,
+    "Vector" => true, "Dict" => true, "Option" => true, "Result" => true,
+    "Cell" => true, "Range" => true, "Iterator" => true,
+    _ => false,
+  }
+}
+
 // ── Pass 1: Collection ──────────────────────────────────────────────
 
 fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
@@ -277,11 +290,13 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
   for item in module.items {
     case item {
       .Type(decl) => {
-        if cur.has_type(decl.name) {
+        if is_reserved_type_name(decl.name) {
+          diags = diags.push(diag.error(decl.span, "type name '${decl.name}' is reserved"))
+        } else if cur.has_type(decl.name) {
           diags = diags.push(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
         } else {
           tid := TypeId.{ id: cur.types.len() }
-          cur = cur.add_type(.{ id: tid, def: .None, span: decl.span }, decl.name)
+          cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
         }
       },
       .Function(decl) => {
@@ -338,17 +353,25 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
   }
 
   // Auto-detect inherent methods: functions whose first param is a Named type
-  cur = detect_inherent_methods(cur)
+  im := detect_inherent_methods(cur)
+  cur = im.env
+  result_diags = result_diags.concat(im.diagnostics)
 
   .{ env: cur, diagnostics: result_diags }
+}
+
+type DetectMethodsResult = .{
+  env: ResolvedEnv,
+  diagnostics: Vector<Diagnostic>,
 }
 
 // Inherent methods only apply to nominal user-defined types (Named).
 // Functions with Vector<T>, Option<T>, Result<T,E>, Dict<K,V>, or
 // primitive first params are excluded — builtin container/type methods
 // must be registered separately via register_builtin_methods.
-fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
+fn detect_inherent_methods(env: ResolvedEnv) DetectMethodsResult {
   m := env.methods
+  method_diags: Vector<Diagnostic> = []
   for f in env.functions {
     if f.params.len() == 0 { continue }
     tid := case f.params[0] {
@@ -359,9 +382,32 @@ fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
       .Some(n) => n,
       .None => { continue },
     }
-    m = m.register_methods(type_name, [me(f.name, f.name)])
+    // Check for collision with already-registered methods
+    collision := case m[type_name] {
+      .Some(existing) => existing.any(fn(e) { e.method_name == f.name }),
+      .None => false,
+    }
+    if collision {
+      method_diags = method_diags.push(diag.error(
+        span.Span.{ file_id: 0, start: 0, end: 0 },
+        "method '${f.name}' on type '${type_name}' conflicts with an existing registration"
+      ))
+    } else {
+      m = m.register_methods(type_name, [me(f.name, f.name)])
+    }
   }
-  env.with_methods(m)
+  .{ env: env.with_methods(m), diagnostics: method_diags }
+}
+
+fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<Diagnostic> {
+  seen: Dict<String, Bool> = Dict.new()
+  collect name in names {
+    if !seen.has(name) {
+      seen[name] = true
+      continue
+    }
+    diag.error(s, "duplicate ${kind} name: ${name}")
+  }
 }
 
 fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagnostic> {
@@ -381,25 +427,30 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
 
   case decl.def {
     .Record(fields) => {
+      field_names := collect f in fields { f.name }
+      diags = diags.concat(check_dup_names(field_names, "field", decl.span))
       resolved_fields: Vector<ResolvedField> = collect field in fields {
         r := env.resolve_type_expr(field.ty, type_params)
         diags = diags.concat(r.diagnostics)
-        case r.ty {
-          .Some(ty) => .{ name: field.name, ty },
-          .None => { continue },
+        ty := case r.ty {
+          .Some(t) => t,
+          .None => MonoType.ErrorType,
         }
+        .{ name: field.name, ty }
       }
       new_env := env.set_type_def(decl.name, .Record(decl.name, type_params, resolved_fields))
       .{ env: new_env, diagnostics: diags }
     },
     .Sum(variants) => {
+      variant_names := collect v in variants { v.name }
+      diags = diags.concat(check_dup_names(variant_names, "variant", decl.span))
       resolved_variants: Vector<ResolvedVariant> = collect variant in variants {
         resolved_fields := collect field_ty in variant.fields {
           r := env.resolve_type_expr(field_ty, type_params)
           diags = diags.concat(r.diagnostics)
           case r.ty {
             .Some(ty) => ty,
-            .None => { continue },
+            .None => MonoType.ErrorType,
           }
         }
         .{ name: variant.name, fields: resolved_fields }
@@ -440,6 +491,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   type_params := decl.type_params
 
   param_names := collect param in decl.params { param.name }
+  diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
@@ -673,13 +725,8 @@ fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>,
     .Some(e) => e,
     .None => { return .None },
   }
-  def := case entry.def {
-    .Some(d) => d,
-    .None => { return .None },
-  }
-  expected := def_type_param_count(def)
-  if args.len() != expected {
-    return .Some(type_err(diag.error(s, "${name} expects ${expected} type argument(s), got ${args.len()}")))
+  if args.len() != entry.arity {
+    return .Some(type_err(diag.error(s, "${name} expects ${entry.arity} type argument(s), got ${args.len()}")))
   }
   .None
 }
@@ -756,67 +803,81 @@ type TypeRefs = .{
 }
 
 // Collect indices of type names referenced by a type declaration's definition.
+// Type parameters are excluded to avoid phantom dependency edges when a type
+// parameter name shadows a declared type name.
 fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
   refs: TypeRefs = .{ indices: [], seen: Dict.new() }
+  tp := decl.type_params
   case decl.def {
     .Record(fields) => {
       for f in fields {
-        refs = collect_type_expr_refs(f.ty, names, refs)
+        refs = collect_type_expr_refs(f.ty, names, tp, refs)
       }
     },
     .Sum(variants) => {
       for v in variants {
         for ty in v.fields {
-          refs = collect_type_expr_refs(ty, names, refs)
+          refs = collect_type_expr_refs(ty, names, tp, refs)
         }
       }
     },
     .Alias(ty_expr) => {
-      refs = collect_type_expr_refs(ty_expr, names, refs)
+      refs = collect_type_expr_refs(ty_expr, names, tp, refs)
     },
     .ErrorDef(_) => {},
   }
   refs.indices
 }
 
-fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, acc: TypeRefs) TypeRefs {
+fn is_type_param(name: String, type_params: Vector<String>) Bool {
+  for tp in type_params {
+    if tp == name { return true }
+  }
+  false
+}
+
+fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, type_params: Vector<String>, acc: TypeRefs) TypeRefs {
   result := acc
   case ty.kind {
     .Path(path) => {
       if path.segments.len() == 1 {
-        result = add_name_index(path.segments[0], names, result)
+        if !is_type_param(path.segments[0], type_params) {
+          result = add_name_index(path.segments[0], names, result)
+        }
       }
     },
     .Applied(path, args) => {
       if path.segments.len() == 1 {
-        result = add_name_index(path.segments[0], names, result)
+        if !is_type_param(path.segments[0], type_params) {
+          result = add_name_index(path.segments[0], names, result)
+        }
       }
       for arg in args {
-        result = collect_type_expr_refs(arg, names, result)
+        result = collect_type_expr_refs(arg, names, type_params, result)
       }
     },
     .Function(params, ret) => {
       for p in params {
-        result = collect_type_expr_refs(p, names, result)
+        result = collect_type_expr_refs(p, names, type_params, result)
       }
-      result = collect_type_expr_refs(ret, names, result)
+      result = collect_type_expr_refs(ret, names, type_params, result)
     },
     .Optional(inner) => {
-      result = collect_type_expr_refs(inner, names, result)
+      result = collect_type_expr_refs(inner, names, type_params, result)
     },
     .Result(ok, err) => {
-      result = collect_type_expr_refs(ok, names, result)
-      result = collect_type_expr_refs(err, names, result)
+      result = collect_type_expr_refs(ok, names, type_params, result)
+      result = collect_type_expr_refs(err, names, type_params, result)
     },
     .Record(fields) => {
       for f in fields {
-        result = collect_type_expr_refs(f.ty, names, result)
+        result = collect_type_expr_refs(f.ty, names, type_params, result)
       }
     },
     .Sum(variants) => {
       for v in variants {
         for ty in v.fields {
-          result = collect_type_expr_refs(ty, names, result)
+          result = collect_type_expr_refs(ty, names, type_params, result)
         }
       }
     },

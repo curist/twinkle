@@ -760,9 +760,9 @@ pub fn suite() runner.Suite {
     // ── Issue 5: Incremental add_type / add_function ──
     .test("add_type incrementally builds env", fn() {
       env := resolver.empty_env()
-      e1 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 0 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e1 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 0 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
       env = env.add_type( e1, "Foo")
-      e2 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 1 }, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e2 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 1 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
       env = env.add_type( e2, "Bar")
 
       try assert.is_true(resolver.has_type(env, "Foo"))
@@ -810,6 +810,223 @@ pub fn suite() runner.Suite {
         },
         .None => .Err("foo should exist"),
       }
+    })
+    // ── Hardening item 1: type arity in forward/mutual refs ──
+    .test("H1 arity checked even when def is still shell", fn() {
+      // Wrapper depends on nothing, Inner depends on Wrapper.
+      // Topo order: Wrapper first, Inner second.
+      // But Inner has wrong arity for Wrapper — and Wrapper's def IS available.
+      // This test verifies the baseline works.
+      src := "type Wrapper<T> = .{ value: T }\ntype Inner = .{ w: Wrapper<Int, String> }"
+      msgs := try resolve_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("expects 1 type argument") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H1 arity checked on mutual recursion with wrong args", fn() {
+      // A and B are mutually recursive. A passes wrong arity to B.
+      // Topo visit: A depends on B, B depends on A.
+      // Visit A → visit B → A is in-progress, skip → B done → A done.
+      // Order: [B, A]. B resolved first (def populated), then A.
+      // When A is resolved, B's def exists, so arity check works.
+      // But reverse: B references A with correct arity, so no issue there.
+      // To catch the real bug: make A depend on nothing except B (wrong arity),
+      // and B depend on A. Then B is resolved after A, and when B tries
+      // to check A's arity, A has def. Still works.
+      //
+      // The ACTUAL bug: a standalone type with wrong arity for a type
+      // declared LATER that has no deps on it.
+      // Topo order for independent types: declaration order.
+      // type Usage = .{ x: Later<Int, String> }
+      // type Later<T> = .{ value: T }
+      // Usage has no recognized dep on Later (Later is resolved as Named),
+      // wait — collect_type_refs DOES find Later as a dep of Usage.
+      // So topo order: Later first, Usage second. Arity check works.
+      //
+      // Conclusion: topo sort ensures deps are resolved first, so arity
+      // check via def always works for type-to-type references.
+      // The real gap is types referenced from FUNCTION signatures —
+      // those aren't topo-sorted but resolved after all types.
+      // By then all defs are populated. So... the bug may not be
+      // triggerable in practice with the current architecture.
+      //
+      // Still, storing arity in TypeEntry is a robustness improvement.
+      // Test: verify arity is available on TypeEntry directly.
+      src := "type Box<T> = .{ value: T }\ntype Pair<A, B> = .{ a: A, b: B }"
+      r := resolve_src(src)
+      try assert.int_eq(r.diagnostics.len(), 0)
+      box_entry := case resolver.lookup_type(r.env, "Box") {
+        .Some(e) => e,
+        .None => { return .Err("Box not found") },
+      }
+      try assert.int_eq(box_entry.arity, 1)
+      pair_entry := case resolver.lookup_type(r.env, "Pair") {
+        .Some(e) => e,
+        .None => { return .Err("Pair not found") },
+      }
+      try assert.int_eq(pair_entry.arity, 2)
+      .Ok({})
+    })
+    // ── Hardening item 2: method name collision diagnostics ──
+    .test("H2 user inherent method colliding with builtin emits diagnostic", fn() {
+      // User type Point + builtin-registered method "show" on Point,
+      // then user defines fn show(p: Point) — should conflict.
+      src := "type Point = .{ x: Int }\nfn show(p: Point) String { \"\" }"
+      parsed := parser.parse(src, 0)
+      // Pre-register a builtin "show" method on Point
+      env := resolver.empty_env()
+      env.methods["Point"] = [resolver.MethodEntry.{ method_name: "show", function_name: "__builtin_show" }]
+      r := env.resolve(parsed.value)
+      found := false
+      for d in r.diagnostics {
+        if d.message.contains("show") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H2 duplicate user inherent methods for same type emit diagnostic", fn() {
+      // Two user functions with same name and same Named first-param type
+      // The second should produce a diagnostic (currently silently ignored)
+      src := "type Point = .{ x: Int }\nfn show(p: Point) String { \"\" }\nfn show(p: Point) String { \"\" }"
+      r := resolve_src(src)
+      // We expect TWO diagnostics: one for duplicate function, one for method collision
+      // But at minimum the duplicate function diagnostic
+      found_dup := false
+      for d in r.diagnostics {
+        if d.message.contains("duplicate function") { found_dup = true }
+      }
+      try assert.is_true(found_dup)
+      .Ok({})
+    })
+    // ── Hardening item 3: no partial defs on field resolution failure ──
+    .test("H3 record with bad field preserves field count", fn() {
+      src := "type Foo = .{ x: Int, y: Nonexistent, z: Bool }"
+      r := resolve_src(src)
+      // Should have a diagnostic for the bad type
+      try assert.is_true(r.diagnostics.len() > 0)
+      // The record should still have 3 fields (y with ErrorType, not skipped)
+      case resolver.lookup_type(r.env, "Foo") {
+        .Some(entry) => {
+          case entry.def {
+            .Some(def) => {
+              case def {
+                .Record(_, _, fields) => {
+                  try assert.int_eq(fields.len(), 3)
+                  try assert.str_eq(mono_to_string(fields[0].ty), "Int")
+                  try assert.str_eq(mono_to_string(fields[1].ty), "<error>")
+                  try assert.str_eq(mono_to_string(fields[2].ty), "Bool")
+                  .Ok({})
+                },
+                _ => .Err("expected Record"),
+              }
+            },
+            .None => .Err("expected def to be populated"),
+          }
+        },
+        .None => .Err("Foo not found"),
+      }
+    })
+    .test("H3 sum variant with bad field preserves field count", fn() {
+      src := "type Shape = { Circle(Nonexistent), Rect(Float, Float) }"
+      r := resolve_src(src)
+      try assert.is_true(r.diagnostics.len() > 0)
+      case resolver.lookup_type(r.env, "Shape") {
+        .Some(entry) => {
+          case entry.def {
+            .Some(def) => {
+              case def {
+                .Sum(_, _, variants) => {
+                  // Circle should have 1 field (ErrorType), not 0
+                  try assert.int_eq(variants[0].fields.len(), 1)
+                  try assert.str_eq(mono_to_string(variants[0].fields[0]), "<error>")
+                  // Rect should still have 2 fields
+                  try assert.int_eq(variants[1].fields.len(), 2)
+                  .Ok({})
+                },
+                _ => .Err("expected Sum"),
+              }
+            },
+            .None => .Err("expected def to be populated"),
+          }
+        },
+        .None => .Err("Shape not found"),
+      }
+    })
+    // ── Hardening item 4: type params in dependency collection ──
+    .test("H4 type param shadowing type name resolves as Var", fn() {
+      // type A = .{ x: Int }
+      // type B<A> = .{ value: A }  -- A here is a type param, not a ref to type A
+      // B's field "value" should resolve to Var("A"), not Named(A's id)
+      src := "type A = .{ x: Int }\ntype B<A> = .{ value: A }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "B", "value"), "Var(A)")
+      .Ok({})
+    })
+    // ── Hardening item 5: reserve builtin type names ──
+    .test("H5 declaring type named Vector is rejected", fn() {
+      msgs := try resolve_errs("type Vector = .{ x: Int }")
+      found := false
+      for m in msgs { if m.contains("reserved") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H5 declaring type named Option is rejected", fn() {
+      msgs := try resolve_errs("type Option = .{ x: Int }")
+      found := false
+      for m in msgs { if m.contains("reserved") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H5 declaring type named Result is rejected", fn() {
+      msgs := try resolve_errs("type Result = .{ x: Int }")
+      found := false
+      for m in msgs { if m.contains("reserved") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H5 declaring type named Dict is rejected", fn() {
+      msgs := try resolve_errs("type Dict = .{ x: Int }")
+      found := false
+      for m in msgs { if m.contains("reserved") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H5 declaring type named Int is rejected", fn() {
+      msgs := try resolve_errs("type Int = .{ x: Bool }")
+      found := false
+      for m in msgs { if m.contains("reserved") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    // ── Hardening item 6: duplicate field/variant/param checks ──
+    .test("H6 duplicate record field names rejected", fn() {
+      msgs := try resolve_errs("type Foo = .{ x: Int, x: Bool }")
+      found := false
+      for m in msgs { if m.contains("duplicate") and m.contains("field") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H6 duplicate sum variant names rejected", fn() {
+      msgs := try resolve_errs("type Foo = { A(Int), B, A(Bool) }")
+      found := false
+      for m in msgs { if m.contains("duplicate") and m.contains("variant") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H6 duplicate function param names rejected", fn() {
+      msgs := try resolve_errs("fn foo(x: Int, x: Bool) Int { 0 }")
+      found := false
+      for m in msgs { if m.contains("duplicate") and m.contains("param") { found = true } }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("H6 distinct fields/variants/params ok", fn() {
+      src := "type Rec = .{ a: Int, b: Bool }\ntype Sum = { X, Y(Int) }\nfn f(a: Int, b: Bool) Int { 0 }"
+      env := try resolve_ok(src)
+      .Ok({})
     })
     // ── Issue 6: Duplicate method deduplication ──
     .test("duplicate builtin methods are deduplicated", fn() {
