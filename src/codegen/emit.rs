@@ -932,11 +932,17 @@ fn local_can_store_typed_option(
 /// Returns true when both the destination local and source value agree on the
 /// same typed sum representation (e.g. both hold `Option<Int>` as a typed struct).
 fn can_preserve_typed_sum(dest: crate::ir::LocalId, value: &Atom, ctx: &EmitCtx<'_>) -> bool {
+    // Preserving typed-sum representation only makes sense for locals that can
+    // actually store that representation (typically `anyref`, or a matching
+    // typed option/result struct type). Otherwise we must emit the destination
+    // coercion to keep wasm stack types valid.
     let dst_repr = ctx.local_sum_repr(dest);
     let value_typed_option = atom_typed_general_option(value, ctx);
     match (dst_repr, value_typed_option.as_ref()) {
         (Some(SumRepr::TypedOption(dst_mono)), Some(src_mono))
-        | (Some(SumRepr::TypedResult(dst_mono)), Some(src_mono)) => dst_mono == src_mono,
+        | (Some(SumRepr::TypedResult(dst_mono)), Some(src_mono)) => {
+            dst_mono == src_mono && local_can_store_typed_option(dest, dst_mono, ctx)
+        }
         _ => false,
     }
 }

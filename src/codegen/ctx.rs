@@ -482,9 +482,10 @@ impl<'a> EmitCtx<'a> {
 
         for (i, local_id) in func.params.iter().enumerate() {
             let mono_ty = func.param_tys.get(i).cloned().unwrap_or(MonoType::Void);
-            let erased_assignment = (self.assigned_locals.contains(local_id)
-                || self.rebound_locals.contains(local_id))
-                && should_erase_assigned_local(&mono_ty);
+            // Params must stay ABI-compatible with the function signature.
+            // Even if a param is reassigned in ANF, its wasm local type is
+            // fixed by `FuncDef.params` and cannot be widened here.
+            let erased_assignment = false;
             let erase_init_cell = self.in_init_func && is_cell_mono(&mono_ty);
             let local_repr = if erased_assignment || erase_init_cell {
                 None
@@ -2765,6 +2766,41 @@ mod tests {
         let _locals = ctx.setup_locals(&func);
         let (_, ty) = ctx.local(LocalId(1)).expect("missing local L1");
         assert_eq!(*ty, ValType::I64);
+    }
+
+    #[test]
+    fn assigned_param_keeps_abi_local_type() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let func = AnfFunctionDef {
+            func_id: FuncId(103),
+            name: "assigned_param_keeps_abi_type".to_string(),
+            params: vec![LocalId(0)],
+            param_tys: vec![MonoType::named(crate::types::ty::RANGE_TYPE_ID)],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AAssign {
+                    local: LocalId(0),
+                    value: Atom::ALocal(LocalId(0)),
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(0)))),
+            },
+            return_ty: MonoType::named(crate::types::ty::RANGE_TYPE_ID),
+            op_result_mono: HashMap::new(),
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        let (_, ty) = ctx.local(LocalId(0)).expect("missing param local L0");
+        assert_eq!(
+            *ty,
+            mono_to_valtype_specialized(
+                &MonoType::named(crate::types::ty::RANGE_TYPE_ID),
+                &type_env,
+                &HashMap::new(),
+            )
+        );
     }
 
     #[test]
