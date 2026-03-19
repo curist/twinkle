@@ -893,4 +893,184 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try type_at(r, src, "b.value"), "Int")
       .Ok({})
     })
+    // ── Parity D1-D8 (red/green) ──
+    .test("P1 assignment rejects non-lvalue target", fn() {
+      src := "fn f() Void { 1 = 2 }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("assignment") or m.contains("target") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P1 module scope assignment is rejected", fn() {
+      src := "x := 1\nx = 2"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("module") or m.contains("rebind") or m.contains("assignment") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P1 field assignment happy path", fn() {
+      src := "type Point = .{ x: Int }\nfn f(p: Point) Void { p.x = 1 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P1 vector index assignment validates index and value types", fn() {
+      src := "fn f(xs: Vector<Int>) Void { xs[0] = 1 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P1 dict index assignment validates key and value types", fn() {
+      src := "fn f(m: Dict<String, Int>) Void { m[\"k\"] = 1 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P2 receiver method call dispatches through method registry", fn() {
+      src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn f(p: Point) Int { p.len() }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "p.len()"), "Int")
+      .Ok({})
+    })
+    .test("P2 module qualified call is gated by module alias set", fn() {
+      src := "fn f() String { Int.to_string(1) }"
+      r := try check_ok_builtins(src)
+      try assert.str_eq(try type_at(r, src, "Int.to_string(1)"), "String")
+      .Ok({})
+    })
+    .test("P2 missing method on known receiver emits method diagnostic", fn() {
+      src := "type Point = .{ x: Int }\nfn f(p: Point) Int { p.nope() }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("no method") or m.contains("no field") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P2 module alias lookup miss emits module-qualified diagnostic", fn() {
+      src := "fn f() Void { Int.no_such(1) }"
+      msgs := try check_errs_builtins(src)
+      found := false
+      for m in msgs {
+        if m.contains("Int.no_such") or m.contains("undefined variable") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P2 method value reference synthesizes function value", fn() {
+      src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn apply(g: fn() Int) Int { g() }\nfn f(p: Point) Int { apply(p.len) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "p.len"), "fn() Int")
+      .Ok({})
+    })
+    .test("P3 bitwise Byte and Byte yields Int", fn() {
+      src := "fn f(a: Byte, b: Byte) Int { a & b }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "a & b"), "Int")
+      .Ok({})
+    })
+    .test("P3 bitwise Byte and Int is allowed", fn() {
+      src := "fn f(a: Byte, b: Int) Int { a & b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P3 unary bitwise not on Byte yields Int", fn() {
+      src := "fn f(a: Byte) Int { ~a }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "~a"), "Int")
+      .Ok({})
+    })
+    .test("P3 bitwise rejects non-Int/Byte operands", fn() {
+      src := "fn f(a: Bool, b: Bool) Int { a & b }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("bitwise") and (m.contains("Int") or m.contains("Byte")) { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P4 for over Dict binds second variable to value type", fn() {
+      src := "fn f(d: Dict<String, Bool>) Bool {\nacc := false\nfor k, v in d { acc = acc || v }\nacc\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P4 collect over Dict binds second variable to value type", fn() {
+      src := "fn f(d: Dict<String, Bool>) Vector<Bool> { collect k, v in d { v } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P4 indexed for over Iterator is rejected", fn() {
+      src := "type Iterator<T> = { Item(T) }\nfn f(it: Iterator<Int>) Void { for x, i in it { x } }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("Iterator") and m.contains("for") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P4 indexed collect over Iterator is rejected", fn() {
+      src := "type Iterator<T> = { Item(T) }\nfn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("Iterator") and m.contains("collect") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P5 functions can read later top-level lets", fn() {
+      src := "fn use_x() Int { x }\nx := 42\nfn main() Int { use_x() }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at_nth(r, src, "use_x()", 1), "Int")
+      .Ok({})
+    })
+    .test("P6 interpolation requires to_string receiver-only shape", fn() {
+      dollar := "$"
+      src := "type Point = .{ x: Int }\nfn to_string(p: Point, n: Int) String { \"\" }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("to_string") and (m.contains("receiver") or m.contains("shape") or m.contains("missing")) { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P6 interpolation requires to_string to return String", fn() {
+      dollar := "$"
+      src := "type Point = .{ x: Int }\nfn to_string(p: Point) Int { 0 }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("to_string") and m.contains("String") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P7 case scrutinee must be sum or primitive", fn() {
+      src := "type Point = .{ x: Int }\nfn f(p: Point) Int { case p { _ => 1 } }"
+      msgs := try check_errs(src)
+      found := false
+      for m in msgs {
+        if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P7 check mode pushes expected element type into collect body", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn f(xs: Vector<Int>) Vector<Point> { collect x in xs { .{ x: x, y: x } } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P8 check mode narrows int literal to Byte", fn() {
+      src := "fn f() Byte { b: Byte = 255\nb }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "255"), "Byte")
+      .Ok({})
+    })
 }
