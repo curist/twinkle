@@ -1219,4 +1219,193 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    // ── G1: Block expression ────────────────────────────────────────────
+    .test("G1 block expr yields tail type", fn() {
+      src := "fn f() Int { { 1 + 2 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G1 block expr no tail yields Void", fn() {
+      src := "fn f() Void { { x := 1 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G2: Never branch in if/case ─────────────────────────────────────
+    .test("G2 if-else with one Never branch yields other type", fn() {
+      src := "fn f(x: Int) Int { if x < 0 { return 0 } else { x + 1 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G2 case with Never arm yields non-Never arm type", fn() {
+      src := "fn f(x: Int?) Int {\ncase x { .Some(v) => v, .None => error(\"none\") }\n}"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    // ── G3: Variant lit synth-mode error ────────────────────────────────
+    .test("G3 variant lit without context produces error", fn() {
+      src := "fn f() { x := .Some(1) }"
+      msgs := try check_errs(src)
+      .Ok({})
+    })
+    // ── G4: Modulo and float arithmetic ─────────────────────────────────
+    .test("G4 modulo operator produces Int", fn() {
+      src := "fn f(a: Int, b: Int) Int { a % b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G4 float addition produces Float", fn() {
+      src := "fn f(a: Float, b: Float) Float { a + b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G4 float multiplication produces Float", fn() {
+      src := "fn f(a: Float, b: Float) Float { a * b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G4 float subtraction produces Float", fn() {
+      src := "fn f(a: Float, b: Float) Float { a - b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G4 float division produces Float", fn() {
+      src := "fn f(a: Float, b: Float) Float { a / b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G5: != and other comparison operators ───────────────────────────
+    .test("G5 not-equal operator", fn() {
+      src := "fn f(a: Int, b: Int) Bool { a != b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G5 less-or-equal operator", fn() {
+      src := "fn f(a: Int, b: Int) Bool { a <= b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G5 greater-than operator", fn() {
+      src := "fn f(a: Int, b: Int) Bool { a > b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G5 greater-or-equal operator", fn() {
+      src := "fn f(a: Int, b: Int) Bool { a >= b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G5 float comparison", fn() {
+      src := "fn f(a: Float, b: Float) Bool { a < b }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G6: Return value type-checking ──────────────────────────────────
+    .test("G6 return matching type", fn() {
+      src := "fn f() Int { return 42 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G6 return mismatched type", fn() {
+      src := "fn f() Int { return \"hello\" }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("G6 return in void function with value", fn() {
+      src := "fn f() Void { return 42 }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // ── G7: Break with value and continue ───────────────────────────────
+    .test("G7 break in for loop", fn() {
+      src := "fn f(xs: Vector<Int>) Void {\nfor x in xs { if x > 10 { break } }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G7 continue in for loop", fn() {
+      src := "fn f(xs: Vector<Int>) Int {\nsum := 0\nfor x in xs { if x < 0 { continue }\nsum = sum + x }\nsum\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G8: Closure param inference and return mismatch ─────────────────
+    .test("G8 closure unannotated params inferred from context", fn() {
+      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn g() Int { apply(fn(x) { x + 1 }, 10) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G8 closure return annotation mismatch", fn() {
+      src := "fn f() { g: fn(Int) Int = fn(x: Int) String { \"bad\" } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("G8 closure param annotation mismatch", fn() {
+      src := "fn f() { g: fn(Int) Int = fn(x: String) Int { 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // ── G9: Collect-while and collect over String/Dict ───────────────────
+    .test("G9 collect-while with non-Bool condition errors", fn() {
+      src := "fn f() Vector<Int> { collect 42 { 1 } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    .test("G9 collect over String yields Byte elements", fn() {
+      src := "fn f(s: String) Vector<Int> { collect b in s { b + 0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G9 collect over Dict yields key elements", fn() {
+      src := "fn f(d: Dict<String, Int>) Vector<String> { collect k in d { k } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G9 collect over Dict with index yields value", fn() {
+      src := "fn f(d: Dict<String, Int>) Vector<Int> { collect k, v in d { v } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G10: Literal patterns (String, Bool) ────────────────────────────
+    .test("G10 string literal pattern in case", fn() {
+      src := "fn f(s: String) Int {\ncase s { \"hello\" => 1, \"world\" => 2, _ => 0 }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G10 bool literal pattern in case", fn() {
+      src := "fn f(b: Bool) Int {\ncase b { true => 1, false => 0 }\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── G11: MetaVar in arithmetic and negation ─────────────────────────
+    .test("G11 generic call result in arithmetic", fn() {
+      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(1) + 2 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G11 negation on Float", fn() {
+      src := "fn f(x: Float) Float { -x }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G11 negation on non-numeric errors", fn() {
+      src := "fn f(x: Bool) Bool { -x }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "negate")
+      .Ok({})
+    })
+    .test("G11 logical not on non-Bool errors", fn() {
+      src := "fn f(x: Int) Bool { !x }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "type mismatch")
+      .Ok({})
+    })
+    // ── G12: Method chains ──────────────────────────────────────────────
+    .test("G12 method chain on user types", fn() {
+      src := "type Builder = .{ count: Int }\nfn inc(b: Builder) Builder { Builder.{ count: b.count + 1 } }\nfn value(b: Builder) Int { b.count }\nfn f() Int {\nb := Builder.{ count: 0 }\nb.inc().inc().value()\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
 }
