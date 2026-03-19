@@ -101,6 +101,12 @@ type ParamListParse = .{
   diagnostics: Vector<Diagnostic>,
 }
 
+type ParseState = .{
+  i: Int,
+  items: Vector<Item>,
+  diagnostics: Vector<Diagnostic>,
+}
+
 type InfixInfo = .{
   left: Int,
   right: Int,
@@ -2283,50 +2289,62 @@ fn parse_top_level_stmt(tokens_in: Vector<Token>, start: Int) ItemParse {
   .{ item: .Stmt(parsed_stmt.stmt), next_index, diagnostics: diagnostics_out }
 }
 
+fn parse_item_at(tokens_in: Vector<Token>, i: Int) ItemParse {
+  k := token_kind_at(tokens_in, i)
+  case k {
+    .Use => parse_use(tokens_in, i),
+    .Type => parse_type(tokens_in, i),
+    .Fn => parse_function(tokens_in, i),
+    .Pub => {
+      k1 := token_kind_at(tokens_in, i + 1)
+      if k1 == .Type {
+        parse_type(tokens_in, i)
+      } else if k1 == .Fn {
+        parse_function(tokens_in, i)
+      } else {
+        parse_top_level_stmt(tokens_in, i)
+      }
+    },
+    _ => parse_top_level_stmt(tokens_in, i),
+  }
+}
+
+fn advance_parse_index(i: Int, next_i: Int) Int {
+  if next_i <= i {
+    i + 1
+  } else {
+    next_i
+  }
+}
+
+fn step(self: ParseState, tokens_in: Vector<Token>) ParseState {
+  parsed_item := parse_item_at(tokens_in, self.i)
+  .{
+    i: advance_parse_index(self.i, parsed_item.next_index),
+    items: self.items.push(parsed_item.item),
+    diagnostics: self.diagnostics.concat(parsed_item.diagnostics),
+  }
+}
+
 pub fn parse(source: String, file_id: Int) StageResult<Module> {
   lexed := lexer.lex(source, file_id)
   tokens_in := lexed.value
-  diagnostics_out := lexed.diagnostics
-  items: Vector<Item> = []
-  i := 0
+  state := ParseState.{
+    i: 0,
+    items: [],
+    diagnostics: lexed.diagnostics,
+  }
 
-  for i < tokens_in.len() {
-    k := token_kind_at(tokens_in, i)
-    if k == .Eof {
+  for state.i < tokens_in.len() {
+    if token_kind_at(tokens_in, state.i) == .Eof {
       break
     }
-
-    parsed_item := case k {
-      .Use => parse_use(tokens_in, i),
-      .Type => parse_type(tokens_in, i),
-      .Fn => parse_function(tokens_in, i),
-      .Pub => {
-        k1 := token_kind_at(tokens_in, i + 1)
-        if k1 == .Type {
-          parse_type(tokens_in, i)
-        } else if k1 == .Fn {
-          parse_function(tokens_in, i)
-        } else {
-          parse_top_level_stmt(tokens_in, i)
-        }
-      },
-      _ => parse_top_level_stmt(tokens_in, i),
-    }
-
-    items = items.push(parsed_item.item)
-    diagnostics_out = diagnostics_out.concat(parsed_item.diagnostics)
-
-    next_i := parsed_item.next_index
-    if next_i <= i {
-      next_i = i + 1
-    }
-
-    i = next_i
+    state = state.step(tokens_in)
   }
 
   module_ast := Module.{
-    items,
+    items: state.items,
     span: span.new(file_id, 0, source.len()),
   }
-  diagnostic.stage_result(module_ast, diagnostics_out)
+  diagnostic.stage_result(module_ast, state.diagnostics)
 }
