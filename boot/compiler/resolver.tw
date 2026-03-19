@@ -158,9 +158,20 @@ pub fn add_type(env: ResolvedEnv, entry: TypeEntry, name: String) ResolvedEnv {
 }
 
 pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
-  env.func_index[sig.name] = env.functions.len()
-  env.functions = env.functions.push(sig)
-  env
+  // If a function with this name already exists, replace it in-place
+  // to avoid orphaned entries in the vector.  This happens when user
+  // functions shadow prelude functions.
+  case env.func_index[sig.name] {
+    .Some(idx) => {
+      env.functions = env.functions.set(idx, sig)
+      env
+    },
+    .None => {
+      env.func_index[sig.name] = env.functions.len()
+      env.functions = env.functions.push(sig)
+      env
+    },
+  }
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
@@ -332,13 +343,17 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
   .{ env: cur, diagnostics: result_diags }
 }
 
+// Inherent methods only apply to nominal user-defined types (Named).
+// Functions with Vector<T>, Option<T>, Result<T,E>, Dict<K,V>, or
+// primitive first params are excluded — builtin container/type methods
+// must be registered separately via register_builtin_methods.
 fn detect_inherent_methods(env: ResolvedEnv) ResolvedEnv {
   m := env.methods
   for f in env.functions {
     if f.params.len() == 0 { continue }
     tid := case f.params[0] {
       .Named(t, _) => t,
-      _ => { continue },
+      _ => { continue },  // Non-nominal first param — not an inherent method
     }
     type_name := case env.find_type_name(tid) {
       .Some(n) => n,
@@ -708,7 +723,11 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
     .None => 0,
   }
 
-  // Already visited or cycle detected — no work to do
+  // state=1 (in-progress) means we've hit a cycle; state=2 (done) means
+  // already visited.  Both are skipped here — this is a dependency-biased
+  // ordering pass, not a cycle verifier.  Cycles are silently tolerated;
+  // alias cycles are caught later in Pass 3.  Mutual recursion between
+  // records/sums is allowed by design.
   if cur_state > 0 { return .{ state, order } }
 
   // Mark in-progress
@@ -885,6 +904,45 @@ fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, 
   }
 }
 
+// Environment-aware type stringifier — resolves Named(id) to actual type names.
+// Use this for user-facing diagnostics.
+pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
+  case ty {
+    .Int => "Int",
+    .Float => "Float",
+    .Bool => "Bool",
+    .Byte => "Byte",
+    .String => "String",
+    .Void => "Void",
+    .Never => "Never",
+    .Var(n) => n,
+    .MetaVar(id) => "?${id}",
+    .Vector(inner) => "Vector<${env.ty_to_string_env(inner)}>",
+    .Dict(k, v) => "Dict<${env.ty_to_string_env(k)}, ${env.ty_to_string_env(v)}>",
+    .Optional(inner) => "${env.ty_to_string_env(inner)}?",
+    .Result(ok, err) => "Result<${env.ty_to_string_env(ok)}, ${env.ty_to_string_env(err)}>",
+    .Named(tid, args) => {
+      name := case env.find_type_name(tid) {
+        .Some(n) => n,
+        .None => "Named(${tid.id})",
+      }
+      if args.len() == 0 {
+        name
+      } else {
+        joined := collect a in args { env.ty_to_string_env(a) }
+        "${name}<${joined.join(", ")}>"
+      }
+    },
+    .Function(params, ret) => {
+      joined := collect p in params { env.ty_to_string_env(p) }
+      "fn(${joined.join(", ")}) ${env.ty_to_string_env(ret)}"
+    },
+    .ErrorType => "<error>",
+  }
+}
+
+// Debug-only type stringifier — Named types render as raw ids (e.g. "Named(3)").
+// Prefer ty_to_string_env for user-facing diagnostics.
 pub fn ty_to_string(ty: MonoType) String {
   case ty {
     .Int => "Int",
