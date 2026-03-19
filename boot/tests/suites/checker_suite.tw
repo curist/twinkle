@@ -43,6 +43,17 @@ fn test_env() resolver.ResolvedEnv {
     span: span.Span.{ file_id: 0, start: 0, end: 0 },
   }
   env = env.add_type(iter_entry, "Iterator")
+  // Register Range type (TypeId 3 in stage0) so range operator tests work
+  range_entry := resolver.TypeEntry.{
+    id: resolver.TypeId.{ id: 3 },
+    arity: 0,
+    def: .Some(resolver.ResolvedTypeDef.Record("Range", [], [
+      resolver.ResolvedField.{ name: "start", ty: resolver.MonoType.Int },
+      resolver.ResolvedField.{ name: "end", ty: resolver.MonoType.Int },
+    ])),
+    span: span.Span.{ file_id: 0, start: 0, end: 0 },
+  }
+  env = env.add_type(range_entry, "Range")
   env.register_builtin_methods()
 }
 
@@ -253,7 +264,7 @@ pub fn suite() runner.Suite {
     .test("bool plus int error", fn() {
       src := "fn f() Int { true + 1 }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
+      try assert.str_contains(msgs[0], "operator not supported")
       .Ok({})
     })
     // string interp test deferred — can't embed ${} in string literals without outer interpolation
@@ -849,8 +860,9 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("T2 range operator", fn() {
-      src := "fn f() Vector<Int> { 1..10 }"
-      r := try check_ok(src)
+      src := "fn f() { x := 1..10\nx }"
+      r := try check_ok_builtins(src)
+      try assert.str_eq(try type_at(r, src, "1..10"), "Named(3)")
       .Ok({})
     })
     .test("T2 string concatenation", fn() {
@@ -1083,6 +1095,128 @@ pub fn suite() runner.Suite {
       src := "fn f() Byte { b: Byte = 255\nb }"
       r := try check_ok(src)
       try assert.str_eq(try type_at(r, src, "255"), "Byte")
+      .Ok({})
+    })
+    // ── D9: Range operator type ────────────────────────────────────────
+    .test("D9 range operator produces Named(3) not Vector<Int>", fn() {
+      src := "fn f() { x := 1..10\nx }"
+      r := try check_ok_builtins(src)
+      try assert.str_eq(try type_at(r, src, "1..10"), "Named(3)")
+      .Ok({})
+    })
+    // ── D10: Byte/Int arithmetic cross-promotion ───────────────────────
+    .test("D10 Byte + Int promotes to Int", fn() {
+      src := "fn f(b: Byte) Int { b + 1 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "b + 1"), "Int")
+      .Ok({})
+    })
+    .test("D10 Int - Byte promotes to Int", fn() {
+      src := "fn f(n: Int, b: Byte) Int { n - b }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "n - b"), "Int")
+      .Ok({})
+    })
+    .test("D10 Byte * Byte promotes to Int", fn() {
+      src := "fn f(a: Byte, b: Byte) Int { a * b }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "a * b"), "Int")
+      .Ok({})
+    })
+    .test("D10 Byte comparison with Int allowed", fn() {
+      src := "fn f(b: Byte) Bool { b < 128 }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── D15: Defer Never rejection ─────────────────────────────────────
+    .test("D15 defer with error() is rejected", fn() {
+      src := "fn f() { defer error(\"cleanup\")\n1 }"
+      msgs := try check_errs_builtins(src)
+      found := false
+      for m in msgs {
+        if m.contains("defer") and m.contains("diverge") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("D15 defer with normal expr is ok", fn() {
+      src := "fn f() { defer println(\"done\")\n1 }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    // ── D11: Shift operators ───────────────────────────────────────────
+    .test("D11 left shift Int produces Int", fn() {
+      src := "fn f(x: Int) Int { x << 2 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "x << 2"), "Int")
+      .Ok({})
+    })
+    .test("D11 right shift Byte produces Int", fn() {
+      src := "fn f(b: Byte) Int { b >> 1 }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "b >> 1"), "Int")
+      .Ok({})
+    })
+    .test("D11 shift rejects non-Int/Byte operands", fn() {
+      src := "fn f() Int { 1.0 << 2 }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "bitwise")
+      .Ok({})
+    })
+    // ── D12: CollectWhile ──────────────────────────────────────────────
+    .test("D12 collect-while produces Vector of body type", fn() {
+      src := "fn f() Vector<Int> { x := 0\ncollect x < 10 { x } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── D14: Directional equality ──────────────────────────────────────
+    .test("D14 equality pushes left type into anonymous variant on right", fn() {
+      src := "type Kind = { A, B }\nfn f(k: Kind) Bool { k == .A }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("D14 equality pushes right type into anonymous variant on left", fn() {
+      src := "type Kind = { A, B }\nfn f(k: Kind) Bool { .A == k }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── D16: Type alias record constructor ─────────────────────────────
+    .test("D16 type alias record constructor", fn() {
+      src := "type Point = .{ x: Int, y: Int }\ntype Pt = Point\nfn f() Pt { Pt.{ x: 1, y: 2 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── D13: call_expected_ret pre-unification ─────────────────────────
+    .test("D13 generic call solves return type from annotation context", fn() {
+      // identity<T>(x: T) T — when called in annotated binding,
+      // expected return type should solve T before checking arg
+      src := "fn identity<T>(x: T) T { x }\nfn f() { v: Int = identity(42)\nv }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("D13 generic call with anonymous record arg needs return-type context", fn() {
+      // make<T>(x: T) Vector<T> — when T is only solvable from return context
+      src := "type Pair = .{ a: Int, b: Int }\nfn wrap<T>(x: T) Vector<T> { [x] }\nfn f() Vector<Pair> { wrap(.{ a: 1, b: 2 }) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("D13 method call pre-unifies return type for generic methods", fn() {
+      // wrap_thing<T>(self: Thing, x: T) Vector<T> — method on Thing
+      // When called as thing.wrap_thing(.{ a: 1 }), T needs return-type context
+      src := "type Pair = .{ a: Int, b: Int }\ntype Thing = .{ id: Int }\nfn wrap_thing<T>(self: Thing, x: T) Vector<T> { [x] }\nfn f(t: Thing) Vector<Pair> { t.wrap_thing(.{ a: 1, b: 2 }) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    // ── Review fix: String + MetaVar ───────────────────────────────────
+    .test("R1 String + generic call result is valid", fn() {
+      src := "fn identity<T>(x: T) T { x }\nfn f() String { \"hello\" + identity(\" world\") }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("R1 MetaVar + String concat (right is string, left unsolved)", fn() {
+      // When left side is unsolved MetaVar from generic call, + String should work
+      src := "fn identity<T>(x: T) T { x }\nfn f() String { identity(\"hello\") + \" world\" }"
+      r := try check_ok(src)
       .Ok({})
     })
 }

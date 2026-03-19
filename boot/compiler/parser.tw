@@ -1231,11 +1231,12 @@ fn infix_binding(kind: TokenKind) InfixInfo? {
     .LtEq => .Some(.{ left: 16, right: 17, op: .Le }),
     .Gt => .Some(.{ left: 16, right: 17, op: .Gt }),
     .GtEq => .Some(.{ left: 16, right: 17, op: .Ge }),
-    .Plus => .Some(.{ left: 18, right: 19, op: .Add }),
-    .Minus => .Some(.{ left: 18, right: 19, op: .Sub }),
-    .Star => .Some(.{ left: 20, right: 21, op: .Mul }),
-    .Slash => .Some(.{ left: 20, right: 21, op: .Div }),
-    .Percent => .Some(.{ left: 20, right: 21, op: .Mod }),
+    .LtLt => .Some(.{ left: 18, right: 19, op: .Shl }),
+    .Plus => .Some(.{ left: 20, right: 21, op: .Add }),
+    .Minus => .Some(.{ left: 20, right: 21, op: .Sub }),
+    .Star => .Some(.{ left: 22, right: 23, op: .Mul }),
+    .Slash => .Some(.{ left: 22, right: 23, op: .Div }),
+    .Percent => .Some(.{ left: 22, right: 23, op: .Mod }),
     _ => .None,
   }
 }
@@ -1927,6 +1928,32 @@ fn parse_expr_bp(tokens_in: Vector<Token>, start: Int, min_bp: Int) ExprParse {
     // Hard stop tokens in expression context.
     if k == .Eof or k == .RParen or k == .RBracket or k == .RBrace or k == .Comma or k == .Semi or k == .FatArrow {
       break
+    }
+
+    // Detect >> as shift: two adjacent Gt tokens with no whitespace
+    if k == .Gt and i + 1 < tokens_in.len() and token_kind_at(tokens_in, i + 1) == .Gt {
+      t1 := tokens_in[i]
+      t2 := tokens_in[i + 1]
+      if t1.span.end == t2.span.start {
+        // This is >> (shift right)
+        shr_left_bp := 18
+        shr_right_bp := 19
+        if shr_left_bp >= min_bp {
+          parsed_rhs := parse_expr_bp(tokens_in, i + 2, shr_right_bp)
+          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          rhs := parsed_rhs.expr
+          i = parsed_rhs.next_index
+          lhs = Expr.{
+            kind: .Binary(.Shr, lhs, rhs),
+            span: lhs.span.merge(rhs.span),
+          }
+          parsed_postfix_rhs := parse_postfix(tokens_in, lhs, i)
+          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          lhs = parsed_postfix_rhs.expr
+          i = parsed_postfix_rhs.next_index
+          continue
+        }
+      }
     }
 
     binding := infix_binding(k)

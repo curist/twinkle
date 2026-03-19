@@ -301,6 +301,12 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
+    if c == 60 and i + 1 < n and Byte.to_int(source[i + 1]) == 60 {
+      i = i + 2
+      out = out.push(make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline))
+      continue
+    }
+
     if c == 62 and i + 1 < n and Byte.to_int(source[i + 1]) == 61 {
       i = i + 2
       out = out.push(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline))

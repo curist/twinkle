@@ -246,6 +246,8 @@ pub type BinOp = {
   BitAnd,
   BitOr,
   BitXor,
+  Shl,
+  Shr,
   Range,
   Assign,
 }

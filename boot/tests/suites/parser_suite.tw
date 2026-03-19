@@ -1137,15 +1137,13 @@ pub fn suite() runner.Suite {
 
     // ── Shift Operators ───────────────────────────────────────────
 
-    .test("expr: shift left produces diagnostic (not in boot AST)", fn() {
+    .test("expr: shift left parses as BinOp.Shl", fn() {
       parsed := parser.parse("fn f() Int { a << b }", 0)
-      // Boot parser has no Shl/Shr in BinOp, so << parses as two Lt tokens
-      // and produces a diagnostic or unexpected parse
-      assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics.len() == 0)
     })
-    .test("expr: shift right produces diagnostic (not in boot AST)", fn() {
+    .test("expr: shift right parses as BinOp.Shr", fn() {
       parsed := parser.parse("fn f() Int { a >> b }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics.len() == 0)
     })
 
     // ── Named Record Literal ─────────────────────────────────────
