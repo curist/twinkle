@@ -235,6 +235,50 @@ pub answer := 42
             "expected fix hint in parse error, got: {rendered}"
         );
     }
+
+    #[test]
+    fn statement_in_expression_context_case_arm() {
+        let source = "fn f() Int { case 1 { 1 => return 1, _ => 0 } }";
+        let err = parse_source(source, "test.tw").expect_err("parse should fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("case arm body"),
+            "expected case-arm context, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn statement_in_expression_context_call_arg() {
+        let source = "fn f() { foo(return 1) }";
+        let err = parse_source(source, "test.tw").expect_err("parse should fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("call argument"),
+            "expected call-argument context, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn statement_in_expression_context_array_element() {
+        let source = "fn f() { [return 1] }";
+        let err = parse_source(source, "test.tw").expect_err("parse should fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("array element"),
+            "expected array-element context, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn statement_in_expression_context_grouped() {
+        let source = "fn f() { (return 1) }";
+        let err = parse_source(source, "test.tw").expect_err("parse should fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("grouped expression"),
+            "expected grouped-expression context, got: {rendered}"
+        );
+    }
 }
 
 fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {
@@ -327,10 +371,14 @@ fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> any
                     file_name, line, col
                 )
             }
-            parser::ParseErrorKind::StatementInExpression { statement } => {
+            parser::ParseErrorKind::StatementInExpression { statement, context } => {
+                let ctx = match context {
+                    Some(c) => format!(" in {c}"),
+                    None => String::new(),
+                };
                 format!(
-                    "{}:{}:{}: '{}' is a statement and cannot be used where an expression is expected\nhint: wrap it in a block expression, e.g. `=> {{ {} ... }}`",
-                    file_name, line, col, statement, statement
+                    "{}:{}:{}: '{}' is a statement and cannot be used where an expression is expected{}\nhint: wrap it in a block expression, e.g. `=> {{ {} ... }}`",
+                    file_name, line, col, statement, ctx, statement
                 )
             }
         };

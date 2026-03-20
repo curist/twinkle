@@ -40,12 +40,23 @@ pub enum ParseErrorKind {
     /// A statement keyword appeared where an expression is required.
     StatementInExpression {
         statement: &'static str,
+        context: Option<&'static str>,
     },
 }
 
 impl ParseError {
     fn new(kind: ParseErrorKind, span: Span) -> Self {
         Self { kind, span }
+    }
+
+    fn with_context(mut self, ctx: &'static str) -> Self {
+        if let ParseErrorKind::StatementInExpression {
+            ref mut context, ..
+        } = self.kind
+        {
+            *context = Some(ctx);
+        }
+        self
     }
 
     fn unexpected_token(expected: Vec<&str>, found: &Token) -> Self {
@@ -626,6 +637,10 @@ impl Parser {
         self.parse_expr_bp(0)
     }
 
+    fn parse_expr_in(&mut self, context: &'static str) -> ParseResult<Expr> {
+        self.parse_expr_bp(0).map_err(|e| e.with_context(context))
+    }
+
     /// Ensure all tokens have been consumed
     pub fn expect_eof(&mut self) -> ParseResult<()> {
         if !self.is_eof() {
@@ -804,25 +819,36 @@ impl Parser {
             TokenKind::Return => Err(ParseError::new(
                 ParseErrorKind::StatementInExpression {
                     statement: "return",
+                    context: None,
                 },
                 token.span,
             )),
             TokenKind::Break => Err(ParseError::new(
-                ParseErrorKind::StatementInExpression { statement: "break" },
+                ParseErrorKind::StatementInExpression {
+                    statement: "break",
+                    context: None,
+                },
                 token.span,
             )),
             TokenKind::Continue => Err(ParseError::new(
                 ParseErrorKind::StatementInExpression {
                     statement: "continue",
+                    context: None,
                 },
                 token.span,
             )),
             TokenKind::Defer => Err(ParseError::new(
-                ParseErrorKind::StatementInExpression { statement: "defer" },
+                ParseErrorKind::StatementInExpression {
+                    statement: "defer",
+                    context: None,
+                },
                 token.span,
             )),
             TokenKind::For => Err(ParseError::new(
-                ParseErrorKind::StatementInExpression { statement: "for" },
+                ParseErrorKind::StatementInExpression {
+                    statement: "for",
+                    context: None,
+                },
                 token.span,
             )),
 
@@ -1025,7 +1051,7 @@ impl Parser {
 
     fn parse_grouped(&mut self) -> ParseResult<Expr> {
         self.expect(TokenKind::LParen)?;
-        let expr = self.parse_expr()?;
+        let expr = self.parse_expr_in("grouped expression")?;
         self.expect(TokenKind::RParen)?;
         Ok(expr)
     }
@@ -1038,7 +1064,7 @@ impl Parser {
 
         let mut args = Vec::new();
         while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
-            args.push(self.parse_expr()?);
+            args.push(self.parse_expr_in("call argument")?);
 
             if !self.peek_is(TokenKind::RParen) {
                 self.expect(TokenKind::Comma)?;
@@ -1106,7 +1132,7 @@ impl Parser {
         let mut elements = Vec::new();
 
         while !self.peek_is(TokenKind::RBracket) && !self.is_eof() {
-            elements.push(self.parse_expr()?);
+            elements.push(self.parse_expr_in("array element")?);
 
             if !self.peek_is(TokenKind::RBracket) {
                 self.expect(TokenKind::Comma)?;
@@ -1279,7 +1305,7 @@ impl Parser {
     fn parse_case_arm(&mut self) -> ParseResult<CaseArm> {
         let pattern = self.parse_pattern()?;
         self.expect(TokenKind::FatArrow)?;
-        let body = self.parse_expr()?;
+        let body = self.parse_expr_in("case arm body")?;
         let span = pattern.span().merge(&body.span);
 
         Ok(CaseArm {

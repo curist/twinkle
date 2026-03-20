@@ -1,0 +1,4 @@
+fn foo(x: Int) {}
+fn f() {
+  foo(return 1)
+}

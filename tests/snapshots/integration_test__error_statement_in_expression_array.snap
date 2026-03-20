@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"statement_in_expression_array.tw:2:4: 'return' is a statement and cannot be used where an expression is expected in array element\nhint: wrap it in a block expression, e.g. `=> { return ... }`\n   2 |   [return 1]\n\n         ^-----"

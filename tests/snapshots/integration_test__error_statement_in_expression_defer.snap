@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"statement_in_expression_defer.tw:3:10: 'defer' is a statement and cannot be used where an expression is expected in case arm body\nhint: wrap it in a block expression, e.g. `=> { defer ... }`\n   3 |     1 => defer cleanup(),\n\n               ^----"

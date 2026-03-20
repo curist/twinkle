@@ -4,6 +4,7 @@ use compiler.lexer
 use compiler.parser
 use compiler.tokens
 use compiler.ast
+use @std.fs
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -74,6 +75,27 @@ fn type_is_path(ty: ast.TypeExpr, expected_last_seg: String) Bool {
     },
     _ => false,
   }
+}
+
+// ── Fixture Helpers ──────────────────────────────────────────────────
+
+fn read_fixture(path: String) Result<String, String> {
+  case fs.read_text(path) {
+    .Ok(content) => .Ok(content),
+    .Err(_) => .Err("failed to read fixture: ${path}"),
+  }
+}
+
+fn assert_fixture_diagnostic(src: String, keyword: String, context: String) Result<Void, String> {
+  parsed := parser.parse(src, 0)
+  if parsed.diagnostics.len() == 0 {
+    return .Err("expected diagnostics but got none")
+  }
+  msg := parsed.diagnostics[0].message
+  try assert.is_true(msg.contains("'${keyword}' is a statement"))
+  try assert.is_true(msg.contains("where an expression is expected"))
+  try assert.is_true(msg.contains(context))
+  assert.is_true(msg.contains("wrap it in a block expression"))
 }
 
 // ── Suite ────────────────────────────────────────────────────────────
@@ -1458,5 +1480,159 @@ pub fn suite() runner.Suite {
     .test("error recovery: single unknown token", fn() {
       parsed := parser.parse("#", 0)
       assert.is_true(parsed.diagnostics.len() > 0)
+    })
+
+    // ── Diagnostics Clarity: Statement in Expression ──────────────
+
+    .test("diagnostics: return in expression position", fn() {
+      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      msg := parsed.diagnostics[0].message
+      try assert.is_true(msg.contains("is a statement"))
+      try assert.is_true(msg.contains("where an expression is expected"))
+      assert.is_true(msg.contains("wrap it in a block expression"))
+    })
+    .test("diagnostics: break in expression position", fn() {
+      parsed := parser.parse("fn f() { case 1 { 1 => break, _ => {} } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      msg := parsed.diagnostics[0].message
+      try assert.is_true(msg.contains("is a statement"))
+      try assert.is_true(msg.contains("where an expression is expected"))
+      assert.is_true(msg.contains("wrap it in a block expression"))
+    })
+    .test("diagnostics: continue in expression position", fn() {
+      parsed := parser.parse("fn f() { case 1 { 1 => continue, _ => {} } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      msg := parsed.diagnostics[0].message
+      try assert.is_true(msg.contains("is a statement"))
+      try assert.is_true(msg.contains("where an expression is expected"))
+      assert.is_true(msg.contains("wrap it in a block expression"))
+    })
+    .test("diagnostics: defer in expression position", fn() {
+      parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      msg := parsed.diagnostics[0].message
+      try assert.is_true(msg.contains("is a statement"))
+      try assert.is_true(msg.contains("where an expression is expected"))
+      assert.is_true(msg.contains("wrap it in a block expression"))
+    })
+    .test("diagnostics: for in expression position", fn() {
+      parsed := parser.parse("fn f() { case 1 { 1 => for x in xs { }, _ => {} } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      msg := parsed.diagnostics[0].message
+      try assert.is_true(msg.contains("is a statement"))
+      try assert.is_true(msg.contains("where an expression is expected"))
+      assert.is_true(msg.contains("wrap it in a block expression"))
+    })
+
+    // ── Diagnostics Clarity: Span Check ──────────────────────────
+
+    .test("diagnostics: return span points at keyword", fn() {
+      src := "fn f() Int { case 1 { 1 => return 1, _ => 0 } }"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      diag_span := parsed.diagnostics[0].span
+      // The span should cover the 'return' keyword (6 chars)
+      assert.int_eq(diag_span.end - diag_span.start, 6)
+    })
+
+    // ── Diagnostics Clarity: Recovery ────────────────────────────
+
+    .test("diagnostics: statement-in-expr recovers to next fn", fn() {
+      src := "fn bad() Int { case 1 { 1 => return 1, _ => 0 } }\nfn ok() {}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      found_ok := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "ok" {
+              found_ok = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_ok)
+    })
+
+    // ── Diagnostics Clarity: Context-Aware Messages ────────────
+
+    .test("diagnostics: statement in case arm mentions context", fn() {
+      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics[0].message.contains("case arm body"))
+    })
+    .test("diagnostics: statement in call arg mentions context", fn() {
+      parsed := parser.parse("fn f() { foo(return 1) }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics[0].message.contains("call argument"))
+    })
+    .test("diagnostics: statement in array element mentions context", fn() {
+      parsed := parser.parse("fn f() { [return 1] }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics[0].message.contains("array element"))
+    })
+    .test("diagnostics: statement in grouped expr mentions context", fn() {
+      parsed := parser.parse("fn f() { (return 1) }", 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics[0].message.contains("grouped expression"))
+    })
+
+    // ── Diagnostics Clarity: No False Positives ──────────────────
+
+    .test("diagnostics: valid return in block has no statement-in-expr error", fn() {
+      parsed := parser.parse("fn f() Int { return 1 }", 0)
+      assert.int_eq(parsed.diagnostics.len(), 0)
+    })
+    .test("diagnostics: valid for loop has no statement-in-expr error", fn() {
+      parsed := parser.parse("fn f() { for x in xs { continue } }", 0)
+      assert.int_eq(parsed.diagnostics.len(), 0)
+    })
+
+    // ── Fixture-Driven Parity: Statement in Expression ──────────
+
+    .test("fixture parity: statement_in_expression_return", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_return.tw")
+      try assert_fixture_diagnostic(src, "return", "case arm body")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_break", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_break.tw")
+      try assert_fixture_diagnostic(src, "break", "case arm body")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_continue", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_continue.tw")
+      try assert_fixture_diagnostic(src, "continue", "case arm body")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_defer", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_defer.tw")
+      try assert_fixture_diagnostic(src, "defer", "case arm body")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_for", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_for.tw")
+      try assert_fixture_diagnostic(src, "for", "case arm body")
+      .Ok({})
+    })
+
+    // ── Fixture-Driven Parity: Context-Specific ─────────────────
+
+    .test("fixture parity: statement_in_expression_call_arg", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_call_arg.tw")
+      try assert_fixture_diagnostic(src, "return", "call argument")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_array", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_array.tw")
+      try assert_fixture_diagnostic(src, "return", "array element")
+      .Ok({})
+    })
+    .test("fixture parity: statement_in_expression_grouped", fn() {
+      src := try read_fixture("tests/parser_errors/statement_in_expression_grouped.tw")
+      try assert_fixture_diagnostic(src, "return", "grouped expression")
+      .Ok({})
     })
 }
