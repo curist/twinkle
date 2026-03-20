@@ -1211,13 +1211,22 @@ pub fn suite() runner.Suite {
     // ── Pub Top-Level Let ────────────────────────────────────────
 
     .test("pub let: pub on top-level binding parses as stmt", fn() {
-      // pub x := 42 — boot parser routes `pub` + non-fn/type to top-level stmt
-      // `pub` is consumed as an expression stmt, `x := 42` as a separate let stmt
       parsed := parser.parse("pub x := 42", 0)
-      // `pub` as an expression is not valid, so we expect a diagnostic
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // Should still produce items without crashing
-      assert.is_true(parsed.value.items.len() >= 1)
+      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.int_eq(parsed.value.items.len(), 1)
+      case parsed.value.items[0] {
+        .Stmt(stmt) => {
+          case stmt {
+            .Let(ls) => {
+              try assert.str_eq(ls.name, "x")
+              try assert.is_true(ls.is_pub)
+              assert.is_true(!ls.is_rebind)
+            },
+            _ => assert.fail("expected Let stmt"),
+          }
+        },
+        _ => assert.fail("expected Stmt item"),
+      }
     })
 
     // ── Destructuring Import Edge Cases ──────────────────────────

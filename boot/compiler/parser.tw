@@ -1933,7 +1933,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
   .{ value: lhs, cursor: c, diagnostics: diagnostics_out }
 }
 
-fn parse_binding_stmt(c: Cursor) StmtParse {
+fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   diagnostics_out: Vector<Diagnostic> = []
   start_pos := c.pos
 
@@ -1984,10 +1984,15 @@ fn parse_binding_stmt(c: Cursor) StmtParse {
     ty,
     value: parsed_value.value,
     is_rebind,
+    is_pub,
     span: c.span_from(start_pos),
   })
 
   .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_binding_stmt(c: Cursor) StmtParse {
+  parse_binding_stmt_with_pub(c, false)
 }
 
 fn parse_return_stmt(c: Cursor) StmtParse {
@@ -2237,6 +2242,31 @@ fn parse_top_level_stmt(c: Cursor) ItemParse {
   .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
 }
 
+fn parse_pub_top_level_stmt(c: Cursor) ItemParse {
+  start_pos := c.pos
+  parsed_stmt := parse_binding_stmt_with_pub(c, true)
+  diagnostics_out := parsed_stmt.diagnostics
+  c = parsed_stmt.cursor
+
+  if c.pos <= start_pos {
+    c = c.with_pos(start_pos + 1)
+  }
+
+  if c.kind() == .Semi {
+    c = c.advance()
+  }
+
+  if c.kind() == .Eof {
+    return .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+  }
+
+  if c.pos < c.tokens.len() and c.preceded_by_newline() and is_item_start(c.kind()) {
+    return .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+  }
+
+  .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+}
+
 fn parse_item_at(c: Cursor) ItemParse {
   k := c.kind()
   case k {
@@ -2249,6 +2279,10 @@ fn parse_item_at(c: Cursor) ItemParse {
         parse_type(c)
       } else if k1 == .Fn {
         parse_function(c)
+      } else if k1 == .Ident {
+        // pub x := value — consume pub, parse as pub binding
+        pub_c := c.advance()
+        parse_pub_top_level_stmt(pub_c)
       } else {
         parse_top_level_stmt(c)
       }

@@ -40,6 +40,7 @@ from stage0, bootstrapping sequence)
 |------|-------------|--------|---------|
 | Frontend | Lexer, parser, resolver, type checker | Planned | — |
 | Backend | Core IR, ANF, optimizer, codegen, linker | Planned | — |
+| Pub rebinding rule | Align boot checker with stage0 pub-only rebinding restriction | **Done** | [archive/boot-pub-rebinding.md](archive/boot-pub-rebinding.md) |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |

@@ -89,8 +89,8 @@ pub enum TypeError {
     /// Dict key type must be Int or String
     InvalidDictKey { key_type: MonoType, span: Span },
 
-    /// Rebinding is not allowed at module scope
-    ModuleScopeRebinding { name: String, span: Span },
+    /// Rebinding a public binding is not allowed
+    PubBindingRebinding { name: String, span: Span },
 
     /// Occurs check failed: infinite type would be created
     OccursCheckFailed { span: Span },
@@ -277,11 +277,11 @@ impl TypeError {
                     name
                 )),
             ),
-            TypeError::ModuleScopeRebinding { name, span } => self.format_error(
+            TypeError::PubBindingRebinding { name, span } => self.format_error(
                 registry,
                 *span,
-                &format!("Cannot rebind '{}' at module scope", name),
-                Some("Rebinding (=) is not allowed at module scope — each name may only be bound once.\nUse a new binding (`:=`) instead."),
+                &format!("Cannot rebind public binding '{}'", name),
+                Some("Public bindings cannot be rebound — they are part of the module's exported interface."),
             ),
             TypeError::InvalidDictKey { key_type, span } => self.format_error(
                 registry,

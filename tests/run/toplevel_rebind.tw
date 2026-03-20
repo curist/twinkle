@@ -1,0 +1,16 @@
+// Expected output:
+//   x=10 y=11
+//   sum=55
+
+// Simple rebinding at top level
+x := 10
+y := x
+y = y + 1
+println("x=${x} y=${y}")
+
+// Rebinding in top-level for loop
+sum := 0
+for i in range_from(1, 11) {
+  sum = sum + i
+}
+println("sum=${sum}")

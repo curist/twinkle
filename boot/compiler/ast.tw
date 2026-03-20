@@ -125,6 +125,7 @@ pub type LetStmt = .{
   ty: TypeExpr?,
   value: Expr,
   is_rebind: Bool,
+  is_pub: Bool,
   span: span.Span,
 }
 

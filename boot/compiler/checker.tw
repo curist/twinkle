@@ -32,6 +32,7 @@ pub type InferCtx = .{
   type_var_scope: Vector<String>,
   type_map: Dict<Int, MonoType>,
   call_expected_ret: MonoType?,
+  pub_names: Dict<String, Bool>,
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic> }
@@ -57,6 +58,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     type_var_scope: [],
     type_map: Dict.new(),
     call_expected_ret: .None,
+    pub_names: Dict.new(),
   }
 }
 
@@ -1646,12 +1648,11 @@ fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: 
 fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   case lhs.kind {
     .Ident(name) => {
-      // Module-scope rebinding via expression assignment is disallowed.
-      if ctx.locals.len() == 1 {
+      if ctx.pub_names.has(name) {
         return .{
           ty: MonoType.Void,
           ctx,
-          diags: diags.push(diag.error(lhs.span, "assignment at module scope is not allowed")),
+          diags: diags.push(diag.error(lhs.span, "cannot rebind public binding '${name}'")),
         }
       }
       case lookup_local(ctx, name) {
@@ -2309,8 +2310,8 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<Diagnostic>) Ch
 
 fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   if ls.is_rebind {
-    if ctx.locals.len() == 1 {
-      return .{ ctx, diags: diags.push(diag.error(ls.span, "assignment at module scope is not allowed")) }
+    if ctx.pub_names.has(ls.name) {
+      return .{ ctx, diags: diags.push(diag.error(ls.span, "cannot rebind public binding '${ls.name}'")) }
     }
     // Assignment: x = value — look up existing type and unify
     val_r := ctx.synth(ls.value, diags)
@@ -2323,6 +2324,10 @@ fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
         return .{ ctx: val_r.ctx, diags: val_r.diags.push(diag.error(ls.span, "undefined variable: ${ls.name}")) }
       },
     }
+  }
+  // Track pub bindings
+  if ls.is_pub {
+    ctx.pub_names[ls.name] = true
   }
   case ls.ty {
     .Some(ty_expr) => {

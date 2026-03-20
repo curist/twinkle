@@ -529,7 +529,8 @@ Module-level value bindings are **module globals**:
 * Their names are in scope for all functions in the module, regardless of source order.
 * They can be marked `pub` to export them.
 * They are evaluated once at module initialization time, top-to-bottom.
-* Rebinding (`=`) is not allowed at module scope — each name may only be bound once.
+* Public (`pub`) bindings cannot be rebound — they are part of the module's exported interface and each name may only be bound once.
+* Private bindings may be rebound at module scope, following the same rules as §7.3–7.4.
 
 #### Expression statements
 

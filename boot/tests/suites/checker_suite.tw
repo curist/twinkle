@@ -927,12 +927,22 @@ pub fn suite() runner.Suite {
       try assert.is_true(found)
       .Ok({})
     })
-    .test("P1 module scope assignment is rejected", fn() {
+    .test("P1 private top-level rebinding is allowed", fn() {
       src := "x := 1\nx = 2"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("P1 private top-level rebinding in for loop is allowed", fn() {
+      src := "sum := 0\nfor i in range(10) {\n  sum = sum + i\n}"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("P1 pub binding rebinding is rejected", fn() {
+      src := "pub x := 1\nx = 2"
       msgs := try check_errs(src)
       found := false
       for m in msgs {
-        if m.contains("module") or m.contains("rebind") or m.contains("assignment") { found = true }
+        if m.contains("public") or m.contains("pub") { found = true }
       }
       try assert.is_true(found)
       .Ok({})

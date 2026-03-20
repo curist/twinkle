@@ -33,8 +33,8 @@ pub struct TypeChecker {
     // Type variable scope — names in scope resolve to MonoType::Var
     type_var_scope: Vec<String>,
 
-    // True when type-checking at module scope (top-level lets/stmts)
-    at_module_scope: bool,
+    // Names declared `pub` at module scope — these cannot be rebound
+    pub_bindings: HashSet<String>,
 
     // Unification engine: MetaVar counter and solved assignments
     next_meta: u32,
@@ -81,7 +81,7 @@ impl TypeChecker {
             current_function_ret: None,
             module_aliases,
             type_var_scope: Vec::new(),
-            at_module_scope: true,
+            pub_bindings: HashSet::new(),
             next_meta: 0,
             meta_subst: HashMap::new(),
             call_expected_ret: None,
@@ -96,12 +96,16 @@ impl TypeChecker {
                     pattern,
                     ty,
                     value,
+                    is_pub,
                     span,
                     ..
                 } = stmt
                 {
                     // Only simple identifier patterns for top-level lets
                     if let Pattern::Ident(name, _) = pattern {
+                        if *is_pub {
+                            checker.pub_bindings.insert(name.clone());
+                        }
                         // Determine the expected type.
                         // Even when checking fails, keep a binding to avoid
                         // noisy follow-up "undefined variable" diagnostics.
@@ -200,7 +204,6 @@ impl TypeChecker {
     fn check_function(&mut self, decl: &FunctionDecl) {
         // Push type variable scope for generic functions
         let saved_type_vars = std::mem::replace(&mut self.type_var_scope, decl.type_params.clone());
-        let saved_module_scope = std::mem::replace(&mut self.at_module_scope, false);
 
         // Push a new scope for the function body
         self.local_env.push_scope();
@@ -269,7 +272,6 @@ impl TypeChecker {
         self.current_function_ret = None;
         self.local_env.pop_scope();
         self.type_var_scope = saved_type_vars;
-        self.at_module_scope = saved_module_scope;
     }
 
     //
@@ -377,9 +379,7 @@ impl TypeChecker {
             }
             Stmt::ForCond { cond, body, .. } => {
                 let _ = self.check_expr(cond, &MonoType::Bool);
-                let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
                 let _ = self.synth_block(body);
-                self.at_module_scope = saved_scope;
             }
             Stmt::Break { value, .. } => {
                 if let Some(val) = value {
@@ -450,7 +450,6 @@ impl TypeChecker {
         }
         let saved = self.current_function_ret.take();
         self.current_function_ret = expected_ret.clone();
-        let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
 
         let body_ty = match &expected_ret {
             Some(exp) => {
@@ -462,7 +461,6 @@ impl TypeChecker {
 
         self.local_env.pop_scope();
         self.current_function_ret = saved;
-        self.at_module_scope = saved_scope;
 
         Ok(MonoType::Function {
             params: param_types,
@@ -826,11 +824,9 @@ impl TypeChecker {
                     }
                     let saved = self.current_function_ret.take();
                     self.current_function_ret = Some(ret_ty.clone());
-                    let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
                     let result = self.check_expr(&fe.body, &ret_ty);
                     self.local_env.pop_scope();
                     self.current_function_ret = saved;
-                    self.at_module_scope = saved_scope;
                     result
                 } else {
                     let actual = self.synth_expr(expr)?;
@@ -2963,8 +2959,8 @@ impl TypeChecker {
     fn synth_assign(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
         match &left.kind {
             ExprKind::Ident(name) => {
-                if self.at_module_scope {
-                    self.errors.push(TypeError::ModuleScopeRebinding {
+                if self.pub_bindings.contains(name) {
+                    self.errors.push(TypeError::PubBindingRebinding {
                         name: name.clone(),
                         span: left.span,
                     });
@@ -3203,9 +3199,7 @@ impl TypeChecker {
             }
         }
 
-        let saved_scope = std::mem::replace(&mut self.at_module_scope, false);
         let _ = self.synth_block(body);
-        self.at_module_scope = saved_scope;
         self.local_env.pop_scope();
     }
 

@@ -611,3 +611,8 @@ fn qualified_variant_constructor() {
 fn qualified_variant_constructor_edge() {
     check("tests/run/qualified_variant_constructor_edge/main.tw");
 }
+
+#[test]
+fn toplevel_rebind() {
+    check("tests/run/toplevel_rebind.tw");
+}
