@@ -23,8 +23,8 @@ snapshot.
 
 | Phase | Scope | Status | Notes |
 |------|-------|--------|-------|
-| A | Frontend (lexer/parser/resolver/checker) | In Progress | Lexer done. Parser done. Resolver functional with arity checks, topo-sorted type resolution, circular alias detection, and full error collection. Type checker M1–M9 done; method registry M1–M4 done; frontend fixes plan complete (correctness, completeness, refactoring, test coverage). |
-| B | Core IR lowering + monomorphization | Planned | No committed self-hosted Core IR pipeline yet. |
+| A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker (M1–M9) all complete. Method registry M1–M4 done; M5 deferred to multi-module. Snapshot testing for diagnostics. |
+| B | Core IR lowering + monomorphization | Planned | [boot-core-ir.md](boot-core-ir.md) — 10 milestones covering IR types, lowering, and monomorphization. |
 | C | ANF lowering + optimization | Planned | No committed self-hosted ANF/opt pipeline yet. |
 | D | Codegen + linker | Planned | Representation/layout redesign is documented in [self-hosting.md](self-hosting.md). |
 | E | Integration + self-hosting loop | Planned | Depends on A-D milestones and `boot` module/graph/query libs. |
