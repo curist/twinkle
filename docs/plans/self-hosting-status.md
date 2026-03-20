@@ -1,6 +1,6 @@
 # Self-Hosting Status Tracker
 
-Last updated: 2026-03-18
+Last updated: 2026-03-20
 
 ## Purpose
 
@@ -35,20 +35,13 @@ snapshot.
 
 | Area | Status | Plan |
 |------|--------|------|
-| Frontend gap closure | Planned | [boot-parser-gap-closure.md](boot-parser-gap-closure.md) |
+| Frontend gap closure | Done | [archive/boot-parser-gap-closure.md](archive/boot-parser-gap-closure.md) |
 | Resolver fixes | Done | [archive/boot-resolver-fixes.md](archive/boot-resolver-fixes.md) |
 | Type checker | In Progress | [boot-type-checker.md](boot-type-checker.md) — M1–M9 done |
 | Resolver method registry | In Progress | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) — M1–M4 done, M5 (method call checking) remaining |
 | Frontend fixes | Done | [archive/boot-frontend-fixes.md](archive/boot-frontend-fixes.md) — correctness, completeness, refactoring, test coverage |
+| Snapshot testing | Done | [archive/boot-snapshot-testing.md](archive/boot-snapshot-testing.md) — `.boot.expected` files for parser diagnostics |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
-
----
-
-## Unaddressed Plans
-
-| Plan | Current State |
-|------|---------------|
-| [boot-parser-gap-closure.md](boot-parser-gap-closure.md) | Defined, but milestone execution has not started. |
 
 ---
 

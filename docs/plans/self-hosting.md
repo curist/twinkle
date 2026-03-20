@@ -7,7 +7,7 @@ composable pipeline with first-class support for LSP and tooling from the start.
 ## Status Tracking
 
 - Execution status tracker: [self-hosting-status.md](self-hosting-status.md)
-- Frontend gap-closure tracker: [boot-parser-gap-closure.md](boot-parser-gap-closure.md)
+- Frontend gap-closure tracker: [archive/boot-parser-gap-closure.md](archive/boot-parser-gap-closure.md) (Done)
 
 ## Design Principles
 
@@ -411,8 +411,8 @@ that is saved/restored once per branch, not N independent channels.
 
 ### Phase A — Frontend (Lexer + Parser + Resolver + Type Checker)
 
-Prerequisite: [boot-source-lib.md](boot-source-lib.md) (`boot/lib/source` —
-spans, file registry, diagnostics, `StageResult<T>`).
+Prerequisite: [archive/boot-source-lib.md](archive/boot-source-lib.md) (`boot/lib/source` —
+spans, file registry, diagnostics, `StageResult<T>`) (Done).
 
 Cleanest data structures, minimal state. The frontend is the most important
 piece because it's what the LSP uses. Build it first with LSP in mind:
