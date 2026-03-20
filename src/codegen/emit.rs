@@ -1038,8 +1038,19 @@ fn emit_let_binding(
             else_branch,
         } => {
             let mut instrs = emit_atom(cond, Some(&ValType::I32), ctx);
-            let then_body = emit_expr_value(then_branch, &bind_ty, fn_return_ty, ctx);
-            let else_body = emit_expr_value(else_branch, &bind_ty, fn_return_ty, ctx);
+            // Preserve typed Option/Result representation across `if` joins when
+            // this let-binding is flow-tracked as a typed sum.
+            let preserve_typed_sum = local_has_typed_sum_repr(local, ctx);
+            let then_body = if preserve_typed_sum {
+                emit_expr_value_with_expected(then_branch, None, fn_return_ty, ctx)
+            } else {
+                emit_expr_value(then_branch, &bind_ty, fn_return_ty, ctx)
+            };
+            let else_body = if preserve_typed_sum {
+                emit_expr_value_with_expected(else_branch, None, fn_return_ty, ctx)
+            } else {
+                emit_expr_value(else_branch, &bind_ty, fn_return_ty, ctx)
+            };
             let both_arms_diverge =
                 expr_always_diverges(then_branch) && expr_always_diverges(else_branch);
             instrs.push(Instr::If {
@@ -2020,7 +2031,14 @@ fn combine_i32_ands(mut checks: Vec<Vec<Instr>>) -> Vec<Instr> {
 
 fn emit_non_exhaustive_match_fallback(ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     ensure_rt_core_trap_import(ctx);
-    let mut instrs = emit_pooled_string_literal_atom("non-exhaustive match", ctx);
+    let trap_msg = match (ctx.current_func_name.as_deref(), ctx.current_func_id) {
+        (Some(name), Some(func_id)) => {
+            format!("non-exhaustive match in {name} (FuncId({}))", func_id.0)
+        }
+        (None, Some(func_id)) => format!("non-exhaustive match in FuncId({})", func_id.0),
+        _ => "non-exhaustive match".to_string(),
+    };
+    let mut instrs = emit_pooled_string_literal_atom(&trap_msg, ctx);
     instrs.push(Instr::Call("rt_core__trap".to_string()));
     instrs.push(Instr::Unreachable);
     instrs
@@ -4783,6 +4801,7 @@ fn typed_general_option_from_op(
             ctx.infer_let_op_mono_for_emit(local, op)
                 .filter(is_typed_general_sum_candidate)
         }
+        AnfOp::AIf { .. } => op_typed_general_option_source(local, op, ctx, &HashMap::new()),
         AnfOp::AMatch { arms, .. } => {
             let candidate = ctx
                 .infer_let_op_mono_for_emit(local, op)
@@ -9395,6 +9414,76 @@ mod tests {
     }
 
     #[test]
+    fn emit_if_typed_option_binding_avoids_erased_variant_boundary() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let option_int = MonoType::Named {
+            type_id: OPTION_TYPE_ID,
+            args: vec![MonoType::Int],
+        };
+
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.local_map.insert(LocalId(2), (1, ValType::Anyref));
+        ctx.local_map.insert(LocalId(3), (2, ValType::Anyref));
+        ctx.op_result_mono.insert(LocalId(1), option_int.clone());
+        ctx.op_result_mono.insert(LocalId(2), option_int.clone());
+        ctx.op_result_mono.insert(LocalId(3), option_int.clone());
+
+        let op = AnfOp::AIf {
+            cond: Atom::ALitBool(true),
+            then_branch: Box::new(AnfExpr::Let {
+                local: LocalId(2),
+                op: Box::new(AnfOp::AVariant {
+                    type_id: OPTION_TYPE_ID,
+                    variant: VariantId(1),
+                    args: vec![Atom::ALitInt(7)],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(2)))),
+            }),
+            else_branch: Box::new(AnfExpr::Let {
+                local: LocalId(3),
+                op: Box::new(AnfOp::AVariant {
+                    type_id: OPTION_TYPE_ID,
+                    variant: VariantId(1),
+                    args: vec![Atom::ALitInt(8)],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(3)))),
+            }),
+        };
+
+        let mut observed_sum_repr: Option<SumRepr> = None;
+        let body = AnfExpr::Atom(Atom::ALitVoid);
+        let instrs = emit_let_expr(LocalId(1), &op, &body, None, &mut ctx, |ctx, _| {
+            observed_sum_repr = ctx.local_sum_repr(LocalId(1)).cloned();
+            vec![]
+        });
+
+        assert!(
+            matches!(
+                observed_sum_repr,
+                Some(SumRepr::TypedOption(MonoType::Named { type_id, ref args }))
+                if type_id == OPTION_TYPE_ID && args.as_slice() == [MonoType::Int]
+            ),
+            "expected AIf Option let-binding to seed TypedOption metadata, got {:?}",
+            observed_sum_repr
+        );
+        assert!(
+            !instr_tree_any(&instrs, &|i| matches!(
+                i,
+                Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(name),
+                } if name == T_VARIANT
+            )),
+            "typed Option-producing if should not emit Option->Variant dispatch in branch join: {:?}",
+            instrs
+        );
+    }
+
+    #[test]
     fn emit_match_variant_binds_payload_var_local() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
@@ -9464,6 +9553,35 @@ mod tests {
         assert_eq!(instrs.last(), Some(&Instr::Unreachable));
         assert!(!instrs.iter().any(|i| matches!(i, Instr::LocalSet(0))));
         assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_core__trap"));
+    }
+
+    #[test]
+    fn emit_match_empty_arms_trap_includes_current_function_context() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.current_func_id = Some(FuncId(42));
+        ctx.current_func_name = Some("find_id_by_span".to_string());
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.local_map.insert(LocalId(2), (1, ValType::Anyref));
+
+        let _instrs = emit_let_binding(
+            LocalId(1),
+            &AnfOp::AMatch {
+                scrutinee: Atom::ALocal(LocalId(2)),
+                arms: vec![],
+            },
+            None,
+            &mut ctx,
+        );
+
+        let expected = b"non-exhaustive match in find_id_by_span (FuncId(42))".to_vec();
+        assert!(
+            ctx.requested_string_literals().contains_key(&expected),
+            "expected trap message to include function context; literals={:?}",
+            ctx.requested_string_literals().keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]

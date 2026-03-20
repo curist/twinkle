@@ -243,6 +243,7 @@ pub struct EmitCtx<'a> {
     rebound_locals: HashSet<LocalId>,
     in_init_func: bool,
     pub current_func_id: Option<FuncId>,
+    pub current_func_name: Option<String>,
     module_globals: HashMap<LocalId, String>,
     pub label_stack: Vec<(Label, Label)>,
     pub loop_result_stack: Vec<Option<ValType>>,
@@ -277,6 +278,7 @@ impl<'a> EmitCtx<'a> {
             rebound_locals: HashSet::new(),
             in_init_func: false,
             current_func_id: None,
+            current_func_name: None,
             module_globals: HashMap::new(),
             label_stack: Vec::new(),
             loop_result_stack: Vec::new(),
@@ -470,6 +472,7 @@ impl<'a> EmitCtx<'a> {
         self.next_label_id = 0;
         self.in_init_func = func.name == "__init__";
         self.current_func_id = Some(func.func_id);
+        self.current_func_name = Some(func.name.clone());
         self.assigned_locals = collect_assigned_locals(&func.body);
         let mut local_bind_counts = HashMap::new();
         collect_local_binding_counts_expr(&func.body, &mut local_bind_counts);
