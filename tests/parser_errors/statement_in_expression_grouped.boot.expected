@@ -1,0 +1,4 @@
+2:4: 'return' is a statement and cannot be used where an expression is expected in grouped expression
+hint: wrap it in a block expression, e.g. `=> { return ... }`
+2:11: expected ')'
+2:12: expected expression

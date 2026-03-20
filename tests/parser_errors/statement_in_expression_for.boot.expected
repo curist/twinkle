@@ -1,0 +1,5 @@
+3:10: 'for' is a statement and cannot be used where an expression is expected in case arm body
+hint: wrap it in a block expression, e.g. `=> { for ... }`
+3:16: expected '=>' in case arm
+3:16: expected expression
+3:22: expected '=>' in case arm

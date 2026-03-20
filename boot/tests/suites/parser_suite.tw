@@ -4,7 +4,10 @@ use compiler.lexer
 use compiler.parser
 use compiler.tokens
 use compiler.ast
+use lib.source.registry
+use lib.source.diagnostic
 use @std.fs
+use @std.proc
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -86,16 +89,47 @@ fn read_fixture(path: String) Result<String, String> {
   }
 }
 
-fn assert_fixture_diagnostic(src: String, keyword: String, context: String) Result<Void, String> {
-  parsed := parser.parse(src, 0)
-  if parsed.diagnostics.len() == 0 {
-    return .Err("expected diagnostics but got none")
+fn snap_update_mode() Bool {
+  case proc.env("TWK_SNAP_UPDATE") {
+    .Some(v) => v == "1",
+    .None => false,
   }
-  msg := parsed.diagnostics[0].message
-  try assert.is_true(msg.contains("'${keyword}' is a statement"))
-  try assert.is_true(msg.contains("where an expression is expected"))
-  try assert.is_true(msg.contains(context))
-  assert.is_true(msg.contains("wrap it in a block expression"))
+}
+
+fn assert_snapshot(fixture_path: String) Result<Void, String> {
+  src := try read_fixture(fixture_path)
+  reg := registry.empty()
+  result := registry.add_file(reg, fixture_path, src)
+  parsed := parser.parse(src, result.file_id)
+  actual := diagnostic.format_diagnostics(reg, parsed.diagnostics)
+  base := fixture_path.slice(0, fixture_path.len() - 3)
+  expected_path := "${base}.boot.expected"
+  update := snap_update_mode()
+  case fs.read_text(expected_path) {
+    .Ok(expected) => {
+      trimmed := expected.trim()
+      if actual == trimmed {
+        .Ok({})
+      } else if update {
+        case fs.write_text(expected_path, "${actual}\n") {
+          .Ok(_) => .Ok({}),
+          .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
+        }
+      } else {
+        .Err("snapshot mismatch for ${expected_path}\n--- expected ---\n${trimmed}\n--- actual ---\n${actual}")
+      }
+    },
+    .Err(_) => {
+      if update {
+        case fs.write_text(expected_path, "${actual}\n") {
+          .Ok(_) => .Ok({}),
+          .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
+        }
+      } else {
+        .Err("missing snapshot file: ${expected_path} (run with TWK_SNAP_UPDATE=1 to generate)")
+      }
+    },
+  }
 }
 
 // ── Suite ────────────────────────────────────────────────────────────
@@ -1599,49 +1633,48 @@ pub fn suite() runner.Suite {
       assert.int_eq(parsed.diagnostics.len(), 0)
     })
 
-    // ── Fixture-Driven Parity: Statement in Expression ──────────
+    // ── Fixture Snapshot Tests ──────────────────────────────────
 
-    .test("fixture parity: statement_in_expression_return", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_return.tw")
-      try assert_fixture_diagnostic(src, "return", "case arm body")
-      .Ok({})
+    .test("snapshot: statement_in_expression_return", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_return.tw")
     })
-    .test("fixture parity: statement_in_expression_break", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_break.tw")
-      try assert_fixture_diagnostic(src, "break", "case arm body")
-      .Ok({})
+    .test("snapshot: statement_in_expression_break", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_break.tw")
     })
-    .test("fixture parity: statement_in_expression_continue", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_continue.tw")
-      try assert_fixture_diagnostic(src, "continue", "case arm body")
-      .Ok({})
+    .test("snapshot: statement_in_expression_continue", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw")
     })
-    .test("fixture parity: statement_in_expression_defer", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_defer.tw")
-      try assert_fixture_diagnostic(src, "defer", "case arm body")
-      .Ok({})
+    .test("snapshot: statement_in_expression_defer", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw")
     })
-    .test("fixture parity: statement_in_expression_for", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_for.tw")
-      try assert_fixture_diagnostic(src, "for", "case arm body")
-      .Ok({})
+    .test("snapshot: statement_in_expression_for", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_for.tw")
     })
-
-    // ── Fixture-Driven Parity: Context-Specific ─────────────────
-
-    .test("fixture parity: statement_in_expression_call_arg", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_call_arg.tw")
-      try assert_fixture_diagnostic(src, "return", "call argument")
-      .Ok({})
+    .test("snapshot: statement_in_expression_call_arg", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw")
     })
-    .test("fixture parity: statement_in_expression_array", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_array.tw")
-      try assert_fixture_diagnostic(src, "return", "array element")
-      .Ok({})
+    .test("snapshot: statement_in_expression_array", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_array.tw")
     })
-    .test("fixture parity: statement_in_expression_grouped", fn() {
-      src := try read_fixture("tests/parser_errors/statement_in_expression_grouped.tw")
-      try assert_fixture_diagnostic(src, "return", "grouped expression")
-      .Ok({})
+    .test("snapshot: statement_in_expression_grouped", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw")
+    })
+    .test("snapshot: case_missing_comma", fn() {
+      assert_snapshot("tests/parser_errors/case_missing_comma.tw")
+    })
+    .test("snapshot: missing_operand", fn() {
+      assert_snapshot("tests/parser_errors/missing_operand.tw")
+    })
+    .test("snapshot: missing_paren", fn() {
+      assert_snapshot("tests/parser_errors/missing_paren.tw")
+    })
+    .test("snapshot: unterminated_string", fn() {
+      assert_snapshot("tests/parser_errors/unterminated_string.tw")
+    })
+    .test("snapshot: invalid_hex_escape", fn() {
+      assert_snapshot("tests/parser_errors/invalid_hex_escape.tw")
+    })
+    .test("snapshot: invalid_unicode_escape", fn() {
+      assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw")
     })
 }

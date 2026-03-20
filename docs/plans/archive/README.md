@@ -99,3 +99,4 @@ Related historical context outside this folder:
 | [boot-checker-refactor.md](boot-checker-refactor.md) | Extract helpers (bind_optional, find_record_field_type, check_args, etc.) to reduce duplication in boot checker |
 | [parser-diagnostic-parity.md](parser-diagnostic-parity.md) | Parser diagnostic message parity between Rust and boot compilers (phases 1-4: message templates, context, shared fixtures) |
 | [boot-pub-rebinding.md](boot-pub-rebinding.md) | Align boot checker with stage0 pub-only rebinding restriction |
+| [boot-snapshot-testing.md](boot-snapshot-testing.md) | Snapshot testing for boot compiler diagnostics (`.boot.expected` files, `TWK_SNAP_UPDATE=1`) |

@@ -1,0 +1,6 @@
+2:11: unterminated string literal
+3:1: expected ',' or ')' in call arguments
+4:1: expected expression
+1:1: expected ',' or ')' in call arguments
+1:1: expected ')' after call arguments
+1:1: expected '}' to close block

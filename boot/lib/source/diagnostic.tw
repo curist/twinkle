@@ -1,6 +1,7 @@
 // Diagnostic types for compiler error reporting.
 
 use .span
+use .registry
 
 pub type Severity = { Error, Warning, Hint, Info }
 
@@ -25,4 +26,19 @@ pub fn warning(span: span.Span, message: String) Diagnostic {
 
 pub fn stage_result<T>(value: T, diagnostics: Vector<Diagnostic>) StageResult<T> {
   .{ value, diagnostics }
+}
+
+pub fn format_diagnostic(reg: registry.FileRegistry, d: Diagnostic) String {
+  case registry.line_col(reg, d.span) {
+    .Some(lc) => "${lc.line}:${lc.column}: ${d.message}",
+    .None => "?:?: ${d.message}",
+  }
+}
+
+pub fn format_diagnostics(reg: registry.FileRegistry, ds: Vector<Diagnostic>) String {
+  lines: Vector<String> = []
+  for d in ds {
+    lines = lines.push(format_diagnostic(reg, d))
+  }
+  lines.join("\n")
 }
