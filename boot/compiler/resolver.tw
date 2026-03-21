@@ -352,8 +352,12 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
     }
   }
 
-  // Auto-detect inherent methods: functions whose first param is a Named type
-  im := detect_inherent_methods(cur)
+  // Auto-detect inherent methods: only for types declared in this module
+  local_type_names: Dict<String, Bool> = Dict.new()
+  for decl in type_decls {
+    local_type_names[decl.name] = true
+  }
+  im := detect_inherent_methods(cur, local_type_names)
   cur = im.env
   result_diags = result_diags.concat(im.diagnostics)
 
@@ -369,7 +373,7 @@ type DetectMethodsResult = .{
 // Functions with Vector<T>, Option<T>, Result<T,E>, Dict<K,V>, or
 // primitive first params are excluded — builtin container/type methods
 // must be registered separately via register_builtin_methods.
-fn detect_inherent_methods(env: ResolvedEnv) DetectMethodsResult {
+fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool>) DetectMethodsResult {
   m := env.methods
   method_diags: Vector<Diagnostic> = []
   for f in env.functions {
@@ -382,6 +386,8 @@ fn detect_inherent_methods(env: ResolvedEnv) DetectMethodsResult {
       .Some(n) => n,
       .None => { continue },
     }
+    // Only register methods for types defined in this module
+    if !local_type_names.has(type_name) { continue }
     // Check for collision with already-registered methods
     collision := case m[type_name] {
       .Some(existing) => existing.any(fn(e) { e.method_name == f.name }),
