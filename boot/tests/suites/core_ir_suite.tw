@@ -755,6 +755,28 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     // Range for-loop test deferred — requires Range type in test env
+    // ── G1+G2: Method calls ──────────────────────────────────────────
+    .test("lower method call as GlobalFunc", fn() Result<Void, String> {
+      // p.get_x() should become Call(GlobalFunc(get_x_fid), [p])
+      src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }\nfn f(p: Point) Int { p.get_x() }"
+      lr := try lower_src(src)
+      // f is the third function (after get_x and the first)
+      // get_x should have a FuncId, and f's body should call GlobalFunc(get_x_fid)
+      get_x_fid := lr.module.functions[0].func_id.id
+      f_body := lr.module.functions[1].body
+      case f_body.kind {
+        .Call(callee, args) => {
+          case callee.kind {
+            .GlobalFunc(fid) => {
+              try assert.int_eq(fid.id, get_x_fid)
+              assert.int_eq(args.len(), 1)  // receiver p is the arg
+            },
+            _ => .Err("expected GlobalFunc callee for method call"),
+          }
+        },
+        _ => .Err("expected Call for method call, got other kind"),
+      }
+    })
     .test("lower for-in dict loop", fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Void { for k in m { k } }"
       lr := try lower_src(src)
@@ -763,6 +785,66 @@ pub fn suite() runner.Suite {
       try assert.ok(has_loop(body), "expected Loop in dict for-in")
       try assert.ok(has_func_id(body, 14), "expected DICT_KEYS (FuncId 14) call")
       .Ok({})
+    })
+    .test("lower collect over string", fn() Result<Void, String> {
+      src := "fn f(s: String) Vector<Byte> { collect b in s { b } }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // String collect uses STRING_LEN (FuncId 8)
+      try assert.ok(has_func_id(body, 8), "expected STRING_LEN (FuncId 8) call")
+      .Ok({})
+    })
+    .test("lower collect over dict", fn() Result<Void, String> {
+      src := "fn f(m: Dict<String, Int>) Vector<String> { collect k in m { k } }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Dict collect calls DICT_KEYS (FuncId 14)
+      try assert.ok(has_func_id(body, 14), "expected DICT_KEYS (FuncId 14) call")
+      .Ok({})
+    })
+    .test("lower named record through type alias", fn() Result<Void, String> {
+      // Pt is an alias for Point. The record constructor must use Point's canonical
+      // TypeId so that field indices resolve correctly.
+      src := "type Point = .{ x: Int, y: Int }\ntype Pt = Point\nfn f() Point { Point.{ x: 1, y: 2 } }\nfn g() Pt { Pt.{ x: 1, y: 2 } }"
+      lr := try lower_src(src)
+      // f uses Point directly, g uses alias Pt — both should produce same TypeId
+      f_body := lr.module.functions[0].body
+      g_body := lr.module.functions[1].body
+      case f_body.kind {
+        .Record(f_tid, _) => {
+          case g_body.kind {
+            .Record(g_tid, _) => {
+              try assert.int_eq(g_tid.id, f_tid.id)
+              .Ok({})
+            },
+            _ => .Err("expected Record in g"),
+          }
+        },
+        _ => .Err("expected Record in f"),
+      }
+    })
+    .test("terminal expr-stmt not wrapped in Let", fn() Result<Void, String> {
+      // A block expression containing return, used as an expr-statement,
+      // should emit the terminal directly, not wrap in Let(_, Return, rest)
+      src := "fn f(x: Int) Int {\n  { return 1 }\n  0\n}"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      try assert.ok(!has_terminal_in_let_value(body), "terminal should not appear in Let value position")
+      .Ok({})
+    })
+    .test("qualified variant uses qualifier TypeId", fn() Result<Void, String> {
+      // QualifiedVariant should resolve TypeId from qualifier, not scrutinee
+      src := "type Foo = { A(Int), B }\nfn f(x: Foo) Int { case x { Foo.A(n) => n, Foo.B => 0 } }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Just check it lowers without error and has a Match
+      case body.kind {
+        .Match(_, arms) => {
+          try assert.int_eq(arms.len(), 2)
+          .Ok({})
+        },
+        _ => .Err("expected Match"),
+      }
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"

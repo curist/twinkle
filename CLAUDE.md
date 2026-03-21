@@ -28,6 +28,11 @@ cargo run
 cargo test
 ```
 
+### Boot Compiler Tests
+```bash
+cargo run --release -- run boot/tests/main.tw
+```
+
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
 - `TWINKLE_ROOT` env var overrides project root (see Modules & Imports below).

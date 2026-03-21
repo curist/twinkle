@@ -36,6 +36,7 @@ type LowerCtx = .{
   next_global: Int,
   current_fn_return_type: MonoType?,
   errors: Vector<Diagnostic>,
+  method_calls: Dict<Int, String>,
 }
 
 // ── Result types ────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ fn new_ctx(check_result: CheckResult) LowerCtx {
     next_global: 0,
     current_fn_return_type: .None,
     errors: [],
+    method_calls: check_result.method_calls,
   }
 }
 
@@ -136,6 +138,15 @@ fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
 
 fn void_expr(s: Span) CoreExpr {
   CoreExpr.{ kind: .LitVoid, ty: MonoType.Void, span: s }
+}
+
+fn is_terminal(expr: CoreExpr) Bool {
+  case expr.kind {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    _ => false,
+  }
 }
 
 // ── Hex parsing helper ──────────────────────────────────────────────
@@ -223,7 +234,7 @@ fn parse_float_literal(raw: String) Float {
 // ── Expression lowering ─────────────────────────────────────────────
 
 fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
-  ty := expr_type(ctx, expr)
+  ty := ctx.expr_type(expr)
   s := expr.span
 
   case expr.kind {
@@ -248,12 +259,12 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
       ExprOut.{ expr: CoreExpr.{ kind: .LitStr(val), ty, span: s }, ctx }
     },
     .Ident(name) => {
-      case lookup_local(ctx, name) {
+      case ctx.lookup_local(name) {
         .Some(local_id) => {
           ExprOut.{ expr: CoreExpr.{ kind: .Local(local_id), ty, span: s }, ctx }
         },
         .None => {
-          case lookup_func(ctx, name) {
+          case ctx.lookup_func(name) {
             .Some(func_id) => {
               ExprOut.{ expr: CoreExpr.{ kind: .GlobalFunc(func_id), ty, span: s }, ctx }
             },
@@ -263,7 +274,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
                   ExprOut.{ expr: CoreExpr.{ kind: .GlobalLocal(gid), ty, span: s }, ctx }
                 },
                 .None => {
-                  ctx = emit_error(ctx, s, "undefined variable: ${name}")
+                  ctx = ctx.emit_error(s, "undefined variable: ${name}")
                   ExprOut.{ expr: void_expr(s), ctx }
                 },
               }
@@ -272,23 +283,23 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
         },
       }
     },
-    .Call(callee_expr, args) => lower_call(ctx, callee_expr, args, ty, s),
-    .NamedRecord(type_name, entries) => lower_named_record(ctx, type_name, entries, ty, s),
-    .Record(entries) => lower_anon_record(ctx, entries, ty, s),
-    .Field(base_expr, field_name) => lower_field(ctx, expr, base_expr, field_name, ty, s),
-    .Variant(name, args) => lower_variant(ctx, name, args, ty, s),
-    .Case(scrut, arms) => lower_case(ctx, scrut, arms, ty, s),
-    .Array(elems) => lower_array(ctx, elems, ty, s),
-    .Index(base_expr, idx_expr) => lower_index(ctx, base_expr, idx_expr, ty, s),
-    .Binary(ast_op, lhs, rhs) => lower_binary(ctx, ast_op, lhs, rhs, ty, s),
-    .Unary(ast_op, operand) => lower_unary(ctx, ast_op, operand, ty, s),
-    .If(cond_expr, then_block, else_expr) => lower_if(ctx, cond_expr, then_block, else_expr, ty, s),
-    .BlockExpr(block) => lower_block(ctx, block),
-    .Closure(params, _, body) => lower_closure(ctx, params, body, ty, s),
-    .StringInterp(parts) => lower_string_interp(ctx, parts, ty, s),
-    .Collect(ce) => lower_collect(ctx, ce, ty, s),
+    .Call(callee_expr, args) => ctx.lower_call(callee_expr, args, ty, s),
+    .NamedRecord(type_name, entries) => ctx.lower_named_record(type_name, entries, ty, s),
+    .Record(entries) => ctx.lower_anon_record(entries, ty, s),
+    .Field(base_expr, field_name) => ctx.lower_field(expr, base_expr, field_name, ty, s),
+    .Variant(name, args) => ctx.lower_variant(name, args, ty, s),
+    .Case(scrut, arms) => ctx.lower_case(scrut, arms, ty, s),
+    .Array(elems) => ctx.lower_array(elems, ty, s),
+    .Index(base_expr, idx_expr) => ctx.lower_index(base_expr, idx_expr, ty, s),
+    .Binary(ast_op, lhs, rhs) => ctx.lower_binary(ast_op, lhs, rhs, ty, s),
+    .Unary(ast_op, operand) => ctx.lower_unary(ast_op, operand, ty, s),
+    .If(cond_expr, then_block, else_expr) => ctx.lower_if(cond_expr, then_block, else_expr, ty, s),
+    .BlockExpr(block) => ctx.lower_block(block),
+    .Closure(params, _, body) => ctx.lower_closure(params, body, ty, s),
+    .StringInterp(parts) => ctx.lower_string_interp(parts, ty, s),
+    .Collect(ce) => ctx.lower_collect(ce, ty, s),
     _ => {
-      ctx = emit_error(ctx, s, "unsupported expression kind: ${expr.kind.name()}")
+      ctx = ctx.emit_error(s, "unsupported expression kind: ${expr.kind.name()}")
       ExprOut.{ expr: void_expr(s), ctx }
     },
   }
@@ -355,7 +366,23 @@ fn find_variant_index(env: ResolvedEnv, tid: TypeId, variant_name: String) Int {
 
 fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
   case env.lookup_type(name) {
-    .Some(entry) => .Some(entry.id),
+    .Some(entry) => {
+      // Follow type aliases to the canonical record TypeId
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Alias(_, _, target_ty) => {
+              case target_ty {
+                .Named(tid, _) => .Some(tid),
+                _ => .Some(entry.id),
+              }
+            },
+            _ => .Some(entry.id),
+          }
+        },
+        .None => .Some(entry.id),
+      }
+    },
     .None => .None,
   }
 }
@@ -373,22 +400,22 @@ fn lower_named_record(ctx: LowerCtx, type_name: String, entries: Vector<ast.Reco
   tid := case resolve_type_id(ctx.env, type_name) {
     .Some(id) => id,
     .None => {
-      ctx = emit_error(ctx, s, "unknown type: ${type_name}")
+      ctx = ctx.emit_error(s, "unknown type: ${type_name}")
       return ExprOut.{ expr: void_expr(s), ctx }
     },
   }
-  lower_record_fields(ctx, tid, entries, ty, s)
+  ctx.lower_record_fields(tid, entries, ty, s)
 }
 
 fn lower_anon_record(ctx: LowerCtx, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span) ExprOut {
   tid := case type_id_from_mono(ty) {
     .Some(id) => id,
     .None => {
-      ctx = emit_error(ctx, s, "cannot determine record type")
+      ctx = ctx.emit_error(s, "cannot determine record type")
       return ExprOut.{ expr: void_expr(s), ctx }
     },
   }
-  lower_record_fields(ctx, tid, entries, ty, s)
+  ctx.lower_record_fields(tid, entries, ty, s)
 }
 
 fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span) ExprOut {
@@ -399,20 +426,20 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
     fid := FieldId.{ id: fid_idx }
     case entry.value {
       .Some(val_expr) => {
-        r := lower_expr(cur_ctx, val_expr)
+        r := cur_ctx.lower_expr(val_expr)
         fields = fields.push(FieldInit.{ field: fid, value: r.expr })
         cur_ctx = r.ctx
       },
       .None => {
         // Field punning: `name` means `name: name`
-        case lookup_local(cur_ctx, entry.name) {
+        case cur_ctx.lookup_local(entry.name) {
           .Some(local_id) => {
             val_ty := find_field_type(cur_ctx.env, tid, entry.name)
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
             fields = fields.push(FieldInit.{ field: fid, value: val })
           },
           .None => {
-            cur_ctx = emit_error(cur_ctx, entry.span, "undefined variable: ${entry.name}")
+            cur_ctx = cur_ctx.emit_error(entry.span, "undefined variable: ${entry.name}")
             fields = fields.push(FieldInit.{ field: fid, value: void_expr(entry.span) })
           },
         }
@@ -426,12 +453,12 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
 }
 
 fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: String, ty: MonoType, s: Span) ExprOut {
-  br := lower_expr(ctx, base_expr)
-  base_ty := expr_type(br.ctx, base_expr)
+  br := ctx.lower_expr(base_expr)
+  base_ty := br.ctx.expr_type(base_expr)
   tid := case type_id_from_mono(base_ty) {
     .Some(id) => id,
     .None => {
-      ctx2 := emit_error(br.ctx, s, "cannot determine record type for field access")
+      ctx2 := br.ctx.emit_error(s, "cannot determine record type for field access")
       return ExprOut.{ expr: void_expr(s), ctx: ctx2 }
     },
   }
@@ -448,7 +475,7 @@ fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoType, 
   tid := case type_id_from_mono(ty) {
     .Some(id) => id,
     .None => {
-      ctx = emit_error(ctx, s, "cannot determine variant type")
+      ctx = ctx.emit_error(s, "cannot determine variant type")
       return ExprOut.{ expr: void_expr(s), ctx }
     },
   }
@@ -456,7 +483,7 @@ fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoType, 
   lowered_args: Vector<CoreExpr> = []
   cur_ctx := ctx
   for arg in args {
-    r := lower_expr(cur_ctx, arg)
+    r := cur_ctx.lower_expr(arg)
     lowered_args = lowered_args.push(r.expr)
     cur_ctx = r.ctx
   }
@@ -469,18 +496,18 @@ fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoType, 
 // ── Case / match lowering ───────────────────────────────────────────
 
 fn lower_case(ctx: LowerCtx, scrut: Expr, arms: Vector<ast.CaseArm>, ty: MonoType, s: Span) ExprOut {
-  sr := lower_expr(ctx, scrut)
-  scrut_ty := expr_type(sr.ctx, scrut)
+  sr := ctx.lower_expr(scrut)
+  scrut_ty := sr.ctx.expr_type(scrut)
 
   lowered_arms: Vector<MatchArm> = []
   cur_ctx := sr.ctx
   for arm in arms {
-    cur_ctx = push_scope(cur_ctx)
-    pat_r := lower_pattern(cur_ctx, arm.pattern, scrut_ty)
+    cur_ctx = cur_ctx.push_scope()
+    pat_r := cur_ctx.lower_pattern(arm.pattern, scrut_ty)
     cur_ctx = pat_r.ctx
-    body_r := lower_expr(cur_ctx, arm.expr)
+    body_r := cur_ctx.lower_expr(arm.expr)
     cur_ctx = body_r.ctx
-    cur_ctx = pop_scope(cur_ctx)
+    cur_ctx = cur_ctx.pop_scope()
     lowered_arms = lowered_arms.push(MatchArm.{ pattern: pat_r.pattern, body: body_r.expr })
   }
   ExprOut.{
@@ -495,7 +522,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
   case pat.kind {
     .Wildcard => PatternOut.{ pattern: .Wildcard, ctx },
     .Ident(name) => {
-      lo := alloc_local(ctx, name)
+      lo := ctx.alloc_local(name)
       PatternOut.{ pattern: .Var(lo.local), ctx: lo.ctx }
     },
     .Literal(expr) => {
@@ -518,7 +545,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
       for sp in sub_pats {
-        pr := lower_pattern(cur_ctx, sp, MonoType.Void)
+        pr := cur_ctx.lower_pattern(sp, MonoType.Void)
         lowered_pats = lowered_pats.push(pr.pattern)
         cur_ctx = pr.ctx
       }
@@ -527,17 +554,23 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
         ctx: cur_ctx,
       }
     },
-    .QualifiedVariant(_, name, sub_pats) => {
-      // Same as Variant but ignoring the qualifier for now
-      tid := case type_id_from_mono(scrut_ty) {
+    .QualifiedVariant(qualifier, name, sub_pats) => {
+      // Resolve TypeId from qualifier path; fall back to scrutinee type
+      qual_name := if qualifier.len() > 0 { qualifier[qualifier.len() - 1] } else { "" }
+      tid := case resolve_type_id(ctx.env, qual_name) {
         .Some(id) => id,
-        .None => { return PatternOut.{ pattern: .Wildcard, ctx } },
+        .None => {
+          case type_id_from_mono(scrut_ty) {
+            .Some(id) => id,
+            .None => { return PatternOut.{ pattern: .Wildcard, ctx } },
+          }
+        },
       }
       vid_idx := find_variant_index(ctx.env, tid, name)
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
       for sp in sub_pats {
-        pr := lower_pattern(cur_ctx, sp, MonoType.Void)
+        pr := cur_ctx.lower_pattern(sp, MonoType.Void)
         lowered_pats = lowered_pats.push(pr.pattern)
         cur_ctx = pr.ctx
       }
@@ -556,7 +589,7 @@ fn lower_array(ctx: LowerCtx, elems: Vector<Expr>, ty: MonoType, s: Span) ExprOu
   lowered: Vector<CoreExpr> = []
   cur_ctx := ctx
   for e in elems {
-    r := lower_expr(cur_ctx, e)
+    r := cur_ctx.lower_expr(e)
     lowered = lowered.push(r.expr)
     cur_ctx = r.ctx
   }
@@ -567,8 +600,8 @@ fn lower_array(ctx: LowerCtx, elems: Vector<Expr>, ty: MonoType, s: Span) ExprOu
 }
 
 fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: Span) ExprOut {
-  br := lower_expr(ctx, base_expr)
-  ir := lower_expr(br.ctx, idx_expr)
+  br := ctx.lower_expr(base_expr)
+  ir := br.ctx.lower_expr(idx_expr)
   ExprOut.{
     expr: CoreExpr.{ kind: .Index(br.expr, ir.expr), ty, span: s },
     ctx: ir.ctx,
@@ -578,19 +611,77 @@ fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: 
 // ── Call lowering ───────────────────────────────────────────────────
 
 fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
-  // Lower callee
-  cr := lower_expr(ctx, callee_expr)
-  // Lower arguments
-  lowered_args: Vector<CoreExpr> = []
-  cur_ctx := cr.ctx
-  for arg in args {
-    ar := lower_expr(cur_ctx, arg)
-    lowered_args = lowered_args.push(ar.expr)
-    cur_ctx = ar.ctx
-  }
-  ExprOut.{
-    expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
-    ctx: cur_ctx,
+  // Check if this is a method call (receiver.method(...) desugared to GlobalFunc)
+  case ctx.method_calls[callee_expr.id] {
+    .Some(method_name) => {
+      // callee_expr is Field(receiver, method_name) — lower receiver, prepend as first arg
+      case callee_expr.kind {
+        .Field(receiver, _) => {
+          rr := ctx.lower_expr(receiver)
+          lowered_args: Vector<CoreExpr> = [rr.expr]
+          cur_ctx := rr.ctx
+          for arg in args {
+            ar := cur_ctx.lower_expr(arg)
+            lowered_args = lowered_args.push(ar.expr)
+            cur_ctx = ar.ctx
+          }
+          case cur_ctx.func_table[method_name] {
+            .Some(fid) => {
+              callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: MonoType.Void, span: callee_expr.span }
+              ExprOut.{
+                expr: CoreExpr.{ kind: .Call(callee_core, lowered_args), ty, span: s },
+                ctx: cur_ctx,
+              }
+            },
+            .None => {
+              // Fallback: lower normally if function not found
+              cr := ctx.lower_expr(callee_expr)
+              lowered_args2: Vector<CoreExpr> = []
+              cur_ctx2 := cr.ctx
+              for arg in args {
+                ar := cur_ctx2.lower_expr(arg)
+                lowered_args2 = lowered_args2.push(ar.expr)
+                cur_ctx2 = ar.ctx
+              }
+              ExprOut.{
+                expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args2), ty, span: s },
+                ctx: cur_ctx2,
+              }
+            },
+          }
+        },
+        _ => {
+          // Not a field expression — should not happen, but fall through
+          cr := ctx.lower_expr(callee_expr)
+          lowered_args: Vector<CoreExpr> = []
+          cur_ctx := cr.ctx
+          for arg in args {
+            ar := cur_ctx.lower_expr(arg)
+            lowered_args = lowered_args.push(ar.expr)
+            cur_ctx = ar.ctx
+          }
+          ExprOut.{
+            expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
+            ctx: cur_ctx,
+          }
+        },
+      }
+    },
+    .None => {
+      // Normal call — lower callee and args
+      cr := ctx.lower_expr(callee_expr)
+      lowered_args: Vector<CoreExpr> = []
+      cur_ctx := cr.ctx
+      for arg in args {
+        ar := cur_ctx.lower_expr(arg)
+        lowered_args = lowered_args.push(ar.expr)
+        cur_ctx = ar.ctx
+      }
+      ExprOut.{
+        expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
+        ctx: cur_ctx,
+      }
+    },
   }
 }
 
@@ -636,8 +727,8 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
   // Short-circuit: a && b => If(a, b, false)
   case ast_op {
     .LogicalAnd => {
-      lr := lower_expr(ctx, lhs)
-      rr := lower_expr(lr.ctx, rhs)
+      lr := ctx.lower_expr(lhs)
+      rr := lr.ctx.lower_expr(rhs)
       ExprOut.{
         expr: CoreExpr.{
           kind: .If(lr.expr, rr.expr, CoreExpr.{ kind: .LitBool(false), ty: MonoType.Bool, span: s }),
@@ -648,8 +739,8 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
       }
     },
     .LogicalOr => {
-      lr := lower_expr(ctx, lhs)
-      rr := lower_expr(lr.ctx, rhs)
+      lr := ctx.lower_expr(lhs)
+      rr := lr.ctx.lower_expr(rhs)
       ExprOut.{
         expr: CoreExpr.{
           kind: .If(lr.expr, CoreExpr.{ kind: .LitBool(true), ty: MonoType.Bool, span: s }, rr.expr),
@@ -660,8 +751,8 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
       }
     },
     _ => {
-      lr := lower_expr(ctx, lhs)
-      rr := lower_expr(lr.ctx, rhs)
+      lr := ctx.lower_expr(lhs)
+      rr := lr.ctx.lower_expr(rhs)
       ExprOut.{
         expr: CoreExpr.{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
         ctx: rr.ctx,
@@ -672,9 +763,9 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
 
 fn lower_unary(ctx: LowerCtx, ast_op: AstUnOp, operand: Expr, ty: MonoType, s: Span) ExprOut {
   case ast_op {
-    .Try => lower_try(ctx, operand, ty, s),
+    .Try => ctx.lower_try(operand, ty, s),
     _ => {
-      r := lower_expr(ctx, operand)
+      r := ctx.lower_expr(operand)
       ExprOut.{
         expr: CoreExpr.{ kind: .UnOp(map_unop(ast_op), r.expr), ty, span: s },
         ctx: r.ctx,
@@ -684,11 +775,11 @@ fn lower_unary(ctx: LowerCtx, ast_op: AstUnOp, operand: Expr, ty: MonoType, s: S
 }
 
 fn lower_if(ctx: LowerCtx, cond_expr: Expr, then_block: Block, else_expr: Expr?, ty: MonoType, s: Span) ExprOut {
-  cr := lower_expr(ctx, cond_expr)
-  tr := lower_block(cr.ctx, then_block)
+  cr := ctx.lower_expr(cond_expr)
+  tr := cr.ctx.lower_block(then_block)
   case else_expr {
     .Some(el) => {
-      er := lower_expr(tr.ctx, el)
+      er := tr.ctx.lower_expr(el)
       ExprOut.{
         expr: CoreExpr.{ kind: .If(cr.expr, tr.expr, er.expr), ty, span: s },
         ctx: er.ctx,
@@ -707,7 +798,7 @@ fn lower_if(ctx: LowerCtx, cond_expr: Expr, then_block: Block, else_expr: Expr?,
 
 fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoType, s: Span) ExprOut {
   // 1. Allocate a FuncId for the hoisted lambda
-  fid_out := alloc_func_id(ctx)
+  fid_out := ctx.alloc_func_id()
   ctx = fid_out.ctx
   lambda_func_id := fid_out.func_id
 
@@ -721,11 +812,11 @@ fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoT
   ctx.current_fn_return_type = .Some(lambda_ret_ty)
 
   // 3. Lower params in a new scope
-  ctx = push_scope(ctx)
+  ctx = ctx.push_scope()
   lambda_params: Vector<Param> = []
   param_locals: Vector<LocalId> = []
   for p in params {
-    lo := alloc_local(ctx, p.name)
+    lo := ctx.alloc_local(p.name)
     ctx = lo.ctx
     // Get param type from the closure's function type
     param_ty := MonoType.Void  // placeholder
@@ -748,9 +839,9 @@ fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoT
   }
 
   // 4. Lower body
-  body_r := lower_block(ctx, body)
+  body_r := ctx.lower_block(body)
   ctx = body_r.ctx
-  ctx = pop_scope(ctx)
+  ctx = ctx.pop_scope()
 
   // 5. Restore return type
   ctx.current_fn_return_type = saved_return_type
@@ -921,8 +1012,8 @@ fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Void {
 // ── Try lowering ──────────────────────────────────────────────────
 
 fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
-  r := lower_expr(ctx, operand)
-  operand_ty := expr_type(r.ctx, operand)
+  r := ctx.lower_expr(operand)
+  operand_ty := r.ctx.expr_type(operand)
 
   // TypeId(0) = Option, TypeId(1) = Result
   option_tid := TypeId.{ id: 0 }
@@ -931,9 +1022,9 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
   case operand_ty {
     .Result(ok_ty, err_ty) => {
       // try on Result<T, E> → match { .Ok(val) => val, .Err(e) => return .Err(e) }
-      ok_local_out := alloc_anon_local(r.ctx)
+      ok_local_out := r.ctx.alloc_anon_local()
       ctx = ok_local_out.ctx
-      err_local_out := alloc_anon_local(ctx)
+      err_local_out := ctx.alloc_anon_local()
       ctx = err_local_out.ctx
 
       ret_ty := case ctx.current_fn_return_type {
@@ -965,7 +1056,7 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
     },
     .Optional(inner_ty) => {
       // try on Option<T> → match { .Some(val) => val, .None => return .None }
-      some_local_out := alloc_anon_local(r.ctx)
+      some_local_out := r.ctx.alloc_anon_local()
       ctx = some_local_out.ctx
 
       ret_ty := case ctx.current_fn_return_type {
@@ -996,7 +1087,7 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
       }
     },
     _ => {
-      ctx = emit_error(r.ctx, s, "try requires Result or Option type")
+      ctx = r.ctx.emit_error(s, "try requires Result or Option type")
       ExprOut.{ expr: void_expr(s), ctx }
     },
   }
@@ -1017,9 +1108,9 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
         str_parts = str_parts.push(CoreExpr.{ kind: .LitStr(text), ty: str_ty, span: s })
       },
       .Interpolation(expr) => {
-        r := lower_expr(cur_ctx, expr)
+        r := cur_ctx.lower_expr(expr)
         cur_ctx = r.ctx
-        part_ty := expr_type(cur_ctx, expr)
+        part_ty := cur_ctx.expr_type(expr)
         // If already string, use directly; otherwise call to_string
         str_expr := case part_ty {
           .String => r.expr,
@@ -1110,22 +1201,36 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
   void_ty := MonoType.Void
   int_ty := MonoType.Int
 
-  builder_lo := alloc_anon_local(ctx)
+  builder_lo := ctx.alloc_anon_local()
   ctx = builder_lo.ctx
   builder_local := builder_lo.local
 
   case ce.iter {
     .Some(iter_expr) => {
-      ctx = push_scope(ctx)
-      ar := lower_expr(ctx, iter_expr)
+      ctx = ctx.push_scope()
+      ar := ctx.lower_expr(iter_expr)
       ctx = ar.ctx
-      arr_lo := alloc_anon_local(ctx)
+      arr_lo := ctx.alloc_anon_local()
       arr_local := arr_lo.local
       ctx = arr_lo.ctx
-      len_lo := alloc_anon_local(ctx)
+      // For Dict iteration, allocate keys local early so elem_bind can use it
+      index_source := arr_local
+      index_source_ty := ar.expr.ty
+      dict_keys_local: LocalId? = .None
+      case ar.expr.ty {
+        .Dict(key_ty, _) => {
+          klo := ctx.alloc_anon_local()
+          ctx = klo.ctx
+          dict_keys_local = .Some(klo.local)
+          index_source = klo.local
+          index_source_ty = MonoType.Vector(key_ty)
+        },
+        _ => {},
+      }
+      len_lo := ctx.alloc_anon_local()
       len_local := len_lo.local
       ctx = len_lo.ctx
-      idx_lo := alloc_anon_local(ctx)
+      idx_lo := ctx.alloc_anon_local()
       idx_local := idx_lo.local
       ctx = idx_lo.ctx
 
@@ -1133,7 +1238,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
         .Some(name) => name,
         .None => "_",
       }
-      elem_lo := alloc_local(ctx, elem_name)
+      elem_lo := ctx.alloc_local(elem_name)
       elem_local := elem_lo.local
       ctx = elem_lo.ctx
 
@@ -1141,16 +1246,16 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
       idx_user_local: LocalId? = .None
       case ce.index {
         .Some(idx_name) => {
-          ilo := alloc_local(ctx, idx_name)
+          ilo := ctx.alloc_local(idx_name)
           ctx = ilo.ctx
           idx_user_local = .Some(ilo.local)
         },
         .None => {},
       }
 
-      body_r := lower_block(ctx, ce.body)
+      body_r := ctx.lower_block(ce.body)
       ctx = body_r.ctx
-      ctx = pop_scope(ctx)
+      ctx = ctx.pop_scope()
 
       // builder_push(builder, body_result)
       push_call := CoreExpr.{
@@ -1176,11 +1281,11 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
         span: s,
       }
 
-      ao1 := alloc_anon_local(ctx)
+      ao1 := ctx.alloc_anon_local()
       ctx = ao1.ctx
-      ao2 := alloc_anon_local(ctx)
+      ao2 := ctx.alloc_anon_local()
       ctx = ao2.ctx
-      ao3 := alloc_anon_local(ctx)
+      ao3 := ctx.alloc_anon_local()
       ctx = ao3.ctx
 
       cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
@@ -1202,7 +1307,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
       elem_bind := CoreExpr.{
         kind: .Let(elem_local, CoreExpr.{
           kind: .Index(
-            CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s },
+            CoreExpr.{ kind: .Local(index_source), ty: index_source_ty, span: s },
             CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
           ),
           ty: void_ty,
@@ -1231,16 +1336,76 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
       loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
       idx_init := CoreExpr.{ kind: .Let(idx_local, CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }, loop_expr), ty: void_ty, span: s }
-      len_call := CoreExpr.{
-        kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
-          [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
-        ),
-        ty: int_ty,
-        span: s,
+
+      // Dispatch on iterator type for len function and arr binding
+      iter_ty := ar.expr.ty
+      arr_init := case iter_ty {
+        .String => {
+          // String: use STRING_LEN (FuncId 8)
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
+              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+          CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
+        },
+        .Dict(_, _) => {
+          // Dict: call DICT_KEYS (FuncId 14), then use VECTOR_LEN on keys
+          case dict_keys_local {
+            .Some(keys_local) => {
+              keys_call := CoreExpr.{
+                kind: .Call(
+                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
+                  [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
+                ),
+                ty: index_source_ty,
+                span: s,
+              }
+              len_call := CoreExpr.{
+                kind: .Call(
+                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+                  [CoreExpr.{ kind: .Local(keys_local), ty: index_source_ty, span: s }],
+                ),
+                ty: int_ty,
+                span: s,
+              }
+              len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+              keys_init := CoreExpr.{ kind: .Let(keys_local, keys_call, len_init), ty: void_ty, span: s }
+              CoreExpr.{ kind: .Let(arr_local, ar.expr, keys_init), ty: void_ty, span: s }
+            },
+            .None => {
+              // Fallback (should not happen)
+              len_call := CoreExpr.{
+                kind: .Call(
+                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },
+                  [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
+                ),
+                ty: int_ty,
+                span: s,
+              }
+              len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+              CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
+            },
+          }
+        },
+        _ => {
+          // Vector (default): use VECTOR_LEN (FuncId 10)
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+              [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+          CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
+        },
       }
-      len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-      arr_init := CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
 
       // builder_freeze(builder)
       freeze_call := CoreExpr.{
@@ -1252,7 +1417,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
         span: s,
       }
 
-      ao4 := alloc_anon_local(ctx)
+      ao4 := ctx.alloc_anon_local()
       ctx = ao4.ctx
 
       // Let(_, for_loop, freeze)
@@ -1275,12 +1440,12 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
       // collect while cond { body } — condition-form
       case ce.condition {
         .Some(cond_expr) => {
-          ctx = push_scope(ctx)
-          cr := lower_expr(ctx, cond_expr)
+          ctx = ctx.push_scope()
+          cr := ctx.lower_expr(cond_expr)
           ctx = cr.ctx
-          body_r := lower_block(ctx, ce.body)
+          body_r := ctx.lower_block(ce.body)
           ctx = body_r.ctx
-          ctx = pop_scope(ctx)
+          ctx = ctx.pop_scope()
 
           push_call := CoreExpr.{
             kind: .Call(
@@ -1312,7 +1477,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
             span: s,
           }
 
-          ao5 := alloc_anon_local(ctx)
+          ao5 := ctx.alloc_anon_local()
           ctx = ao5.ctx
           loop_then_freeze := CoreExpr.{ kind: .Let(ao5.local, loop_expr, freeze_call), ty, span: s }
 
@@ -1329,7 +1494,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
           ExprOut.{ expr: result, ctx }
         },
         .None => {
-          ctx = emit_error(ctx, s, "collect requires either iter or condition")
+          ctx = ctx.emit_error(s, "collect requires either iter or condition")
           ExprOut.{ expr: void_expr(s), ctx }
         },
       }
@@ -1345,10 +1510,10 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
     .Some(iter_expr) => {
       // for x in xs { body }
       // Dispatches on iter type: Vector, String, Dict
-      ctx = push_scope(ctx)
-      ar := lower_expr(ctx, iter_expr)
+      ctx = ctx.push_scope()
+      ar := ctx.lower_expr(iter_expr)
       ctx = ar.ctx
-      arr_lo := alloc_anon_local(ctx)
+      arr_lo := ctx.alloc_anon_local()
       arr_local := arr_lo.local
       ctx = arr_lo.ctx
       // index_source: the collection we Index into (arr_local for Vec/String, keys for Dict)
@@ -1358,7 +1523,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       dict_keys_local: LocalId? = .None
       case ar.expr.ty {
         .Dict(key_ty, _) => {
-          klo := alloc_anon_local(ctx)
+          klo := ctx.alloc_anon_local()
           ctx = klo.ctx
           dict_keys_local = .Some(klo.local)
           index_source = klo.local
@@ -1367,11 +1532,11 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         _ => {},
       }
 
-      len_lo := alloc_anon_local(ctx)
+      len_lo := ctx.alloc_anon_local()
       len_local := len_lo.local
       ctx = len_lo.ctx
 
-      idx_lo := alloc_anon_local(ctx)
+      idx_lo := ctx.alloc_anon_local()
       idx_local := idx_lo.local
       ctx = idx_lo.ctx
 
@@ -1380,7 +1545,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         .Some(name) => name,
         .None => "_",
       }
-      elem_lo := alloc_local(ctx, elem_name)
+      elem_lo := ctx.alloc_local(elem_name)
       elem_local := elem_lo.local
       ctx = elem_lo.ctx
 
@@ -1388,16 +1553,16 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       idx_user_local: LocalId? = .None
       case fs.index {
         .Some(idx_name) => {
-          ilo := alloc_local(ctx, idx_name)
+          ilo := ctx.alloc_local(idx_name)
           ctx = ilo.ctx
           idx_user_local = .Some(ilo.local)
         },
         .None => {},
       }
 
-      body_r := lower_block(ctx, fs.body)
+      body_r := ctx.lower_block(fs.body)
       ctx = body_r.ctx
-      ctx = pop_scope(ctx)
+      ctx = ctx.pop_scope()
 
       int_ty := MonoType.Int
       void_ty := MonoType.Void
@@ -1416,7 +1581,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
 
       // Let(_, Assign(idx, idx+1), Continue)
-      ao1 := alloc_anon_local(ctx)
+      ao1 := ctx.alloc_anon_local()
       ctx = ao1.ctx
       inc_then_cont := CoreExpr.{
         kind: .Let(ao1.local, idx_inc, cont),
@@ -1425,7 +1590,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       }
 
       // Let(_, body, inc_then_cont)
-      ao2 := alloc_anon_local(ctx)
+      ao2 := ctx.alloc_anon_local()
       ctx = ao2.ctx
       body_then_inc := CoreExpr.{
         kind: .Let(ao2.local, body_r.expr, inc_then_cont),
@@ -1436,7 +1601,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       // Optionally bind user-visible index before the increment
       body_or_idx := case idx_user_local {
         .Some(user_idx) => {
-          ao_idx := alloc_anon_local(ctx)
+          ao_idx := ctx.alloc_anon_local()
           ctx = ao_idx.ctx
           CoreExpr.{
             kind: .Let(user_idx, CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s }, body_then_inc),
@@ -1554,8 +1719,8 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
       // for cond { body }  →  Loop(If(!cond, Break, body))
       case fs.condition {
         .Some(cond_expr) => {
-          cr := lower_expr(ctx, cond_expr)
-          body_r := lower_block(cr.ctx, fs.body)
+          cr := ctx.lower_expr(cond_expr)
+          body_r := cr.ctx.lower_block(fs.body)
           void_ty := MonoType.Void
           loop_body := CoreExpr.{
             kind: .If(
@@ -1573,7 +1738,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         },
         .None => {
           // Infinite loop: for { body }  →  Loop(body)
-          body_r := lower_block(ctx, fs.body)
+          body_r := ctx.lower_block(fs.body)
           ExprOut.{
             expr: CoreExpr.{ kind: .Loop(body_r.expr), ty: MonoType.Void, span: s },
             ctx: body_r.ctx,
@@ -1596,9 +1761,9 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
       // r.field = val → Assign(r_local, RecordUpdate(Local(r), field_id, val))
       case base.kind {
         .Ident(name) => {
-          case lookup_local(ctx, name) {
+          case ctx.lookup_local(name) {
             .Some(root_local) => {
-              base_ty := expr_type(ctx, base)
+              base_ty := ctx.expr_type(base)
               tid := case type_id_from_mono(base_ty) {
                 .Some(id) => id,
                 .None => { return .None },
@@ -1622,7 +1787,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
         _ => {
           // Nested: a.b.field = v → recursively build update
           // lower the inner lvalue with RecordUpdate as the rhs
-          base_ty := expr_type(ctx, base)
+          base_ty := ctx.expr_type(base)
           tid := case type_id_from_mono(base_ty) {
             .Some(id) => id,
             .None => { return .None },
@@ -1634,13 +1799,13 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
           // RecordUpdate(base_lowered, field, rhs_core) as the new rhs.
           // But we need the current base value first. Use a temp approach:
           // lower base as expr, wrap in RecordUpdate, recurse.
-          br := lower_expr(ctx, base)
+          br := ctx.lower_expr(base)
           inner_update := CoreExpr.{
             kind: .RecordUpdate(br.expr, fid, rhs_core),
             ty: base_ty,
             span: s,
           }
-          lower_lvalue_assign(br.ctx, base, inner_update, s)
+          br.ctx.lower_lvalue_assign(base, inner_update, s)
         },
       }
     },
@@ -1649,10 +1814,10 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
       // m[k] = val  → Assign(m_local, Call(DICT_SET, [m, k, val]))
       case base.kind {
         .Ident(name) => {
-          case lookup_local(ctx, name) {
+          case ctx.lookup_local(name) {
             .Some(root_local) => {
-              base_ty := expr_type(ctx, base)
-              ir := lower_expr(ctx, index)
+              base_ty := ctx.expr_type(base)
+              ir := ctx.lower_expr(index)
               // Dispatch on base type: Vector vs Dict
               func_id := case base_ty {
                 .Dict(_, _) => FuncId.{ id: 13 },   // DICT_SET
@@ -1681,17 +1846,17 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
 // ── Block and statement lowering ────────────────────────────────────
 
 fn lower_block(ctx: LowerCtx, block: Block) ExprOut {
-  ctx = push_scope(ctx)
-  result := lower_stmts(ctx, block.stmts, 0, block.tail, block.span)
+  ctx = ctx.push_scope()
+  result := ctx.lower_stmts(block.stmts, 0, block.tail, block.span)
   ctx = result.ctx
-  ctx = pop_scope(ctx)
+  ctx = ctx.pop_scope()
   ExprOut.{ expr: result.expr, ctx }
 }
 
 fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_span: Span) ExprOut {
   if idx >= stmts.len() {
     case tail {
-      .Some(expr) => lower_expr(ctx, expr),
+      .Some(expr) => ctx.lower_expr(expr),
       .None => ExprOut.{ expr: void_expr(block_span), ctx },
     }
   } else {
@@ -1700,16 +1865,16 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
       .Let(ls) => {
         if ls.is_rebind {
           // x = expr  →  Let(_, Assign(x_local, lower(expr)), rest)
-          r := lower_expr(ctx, ls.value)
-          target := case lookup_local(r.ctx, ls.name) {
+          r := ctx.lower_expr(ls.value)
+          target := case r.ctx.lookup_local(ls.name) {
             .Some(id) => id,
             .None => {
-              r.ctx = emit_error(r.ctx, ls.span, "undefined variable for assign: ${ls.name}")
+              r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
               LocalId.{ id: -1 }
             },
           }
-          rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-          ao := alloc_anon_local(rest.ctx)
+          rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+          ao := rest.ctx.alloc_anon_local()
           ExprOut.{
             expr: CoreExpr.{
               kind: .Let(ao.local, CoreExpr.{ kind: .Assign(target, r.expr), ty: MonoType.Void, span: ls.span }, rest.expr),
@@ -1719,9 +1884,9 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
             ctx: ao.ctx,
           }
         } else {
-          r := lower_expr(ctx, ls.value)
-          lo := alloc_local(r.ctx, ls.name)
-          rest := lower_stmts(lo.ctx, stmts, idx + 1, tail, block_span)
+          r := ctx.lower_expr(ls.value)
+          lo := r.ctx.alloc_local(ls.name)
+          rest := lo.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
           ExprOut.{
             expr: CoreExpr.{
               kind: .Let(lo.local, r.expr, rest.expr),
@@ -1736,11 +1901,11 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         // Check for lvalue assignment: expr = Binary(Assign, lhs, rhs)
         case es.expr.kind {
           .Binary(.Assign, lhs, rhs) => {
-            rhs_r := lower_expr(ctx, rhs)
-            case lower_lvalue_assign(rhs_r.ctx, lhs, rhs_r.expr, es.span) {
+            rhs_r := ctx.lower_expr(rhs)
+            case rhs_r.ctx.lower_lvalue_assign(lhs, rhs_r.expr, es.span) {
               .Some(lv) => {
-                rest := lower_stmts(lv.ctx, stmts, idx + 1, tail, block_span)
-                ao := alloc_anon_local(rest.ctx)
+                rest := lv.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+                ao := rest.ctx.alloc_anon_local()
                 ExprOut.{
                   expr: CoreExpr.{
                     kind: .Let(ao.local, CoreExpr.{ kind: .Assign(lv.root, lv.update), ty: MonoType.Void, span: es.span }, rest.expr),
@@ -1752,31 +1917,40 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
               },
               .None => {
                 // Fall through to generic expr lowering
-                r := lower_expr(ctx, es.expr)
-                rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-                ao := alloc_anon_local(rest.ctx)
-                ExprOut.{
-                  expr: CoreExpr.{
-                    kind: .Let(ao.local, r.expr, rest.expr),
-                    ty: rest.expr.ty,
-                    span: es.span,
-                  },
-                  ctx: ao.ctx,
+                r := ctx.lower_expr(es.expr)
+                if is_terminal(r.expr) {
+                  ExprOut.{ expr: r.expr, ctx: r.ctx }
+                } else {
+                  rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+                  ao := rest.ctx.alloc_anon_local()
+                  ExprOut.{
+                    expr: CoreExpr.{
+                      kind: .Let(ao.local, r.expr, rest.expr),
+                      ty: rest.expr.ty,
+                      span: es.span,
+                    },
+                    ctx: ao.ctx,
+                  }
                 }
               },
             }
           },
           _ => {
-            r := lower_expr(ctx, es.expr)
-            rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-            ao := alloc_anon_local(rest.ctx)
-            ExprOut.{
-              expr: CoreExpr.{
-                kind: .Let(ao.local, r.expr, rest.expr),
-                ty: rest.expr.ty,
-                span: es.span,
-              },
-              ctx: ao.ctx,
+            r := ctx.lower_expr(es.expr)
+            if is_terminal(r.expr) {
+              // Terminal expr-stmt: emit directly, drop remaining stmts
+              ExprOut.{ expr: r.expr, ctx: r.ctx }
+            } else {
+              rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+              ao := rest.ctx.alloc_anon_local()
+              ExprOut.{
+                expr: CoreExpr.{
+                  kind: .Let(ao.local, r.expr, rest.expr),
+                  ty: rest.expr.ty,
+                  span: es.span,
+                },
+                ctx: ao.ctx,
+              }
             }
           },
         }
@@ -1784,7 +1958,7 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
       .Return(rs) => {
         case rs.value {
           .Some(val_expr) => {
-            r := lower_expr(ctx, val_expr)
+            r := ctx.lower_expr(val_expr)
             ExprOut.{
               expr: CoreExpr.{ kind: .Return(.Some(r.expr)), ty: MonoType.Void, span: rs.span },
               ctx: r.ctx,
@@ -1801,7 +1975,7 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
       .Break(bs) => {
         case bs.value {
           .Some(val_expr) => {
-            r := lower_expr(ctx, val_expr)
+            r := ctx.lower_expr(val_expr)
             ExprOut.{
               expr: CoreExpr.{ kind: .Break(.Some(r.expr)), ty: MonoType.Void, span: bs.span },
               ctx: r.ctx,
@@ -1822,9 +1996,9 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         }
       },
       .Defer(ds) => {
-        r := lower_expr(ctx, ds.expr)
-        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-        ao := alloc_anon_local(rest.ctx)
+        r := ctx.lower_expr(ds.expr)
+        rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+        ao := rest.ctx.alloc_anon_local()
         ExprOut.{
           expr: CoreExpr.{
             kind: .Let(ao.local, CoreExpr.{ kind: .Defer(r.expr), ty: MonoType.Void, span: ds.span }, rest.expr),
@@ -1835,9 +2009,9 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         }
       },
       .For(fs) => {
-        r := lower_for(ctx, fs)
-        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-        ao := alloc_anon_local(rest.ctx)
+        r := ctx.lower_for(fs)
+        rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
+        ao := rest.ctx.alloc_anon_local()
         ExprOut.{
           expr: CoreExpr.{
             kind: .Let(ao.local, r.expr, rest.expr),
@@ -1848,8 +2022,8 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         }
       },
       _ => {
-        ctx = emit_error(ctx, block_span, "unsupported statement kind")
-        lower_stmts(ctx, stmts, idx + 1, tail, block_span)
+        ctx = ctx.emit_error(block_span, "unsupported statement kind")
+        ctx.lower_stmts(stmts, idx + 1, tail, block_span)
       },
     }
   }
@@ -1858,11 +2032,11 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
 // ── Function lowering ───────────────────────────────────────────────
 
 fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId) FuncOut {
-  ctx = push_scope(ctx)
+  ctx = ctx.push_scope()
 
   params: Vector<Param> = []
   for p in decl.params {
-    lo := alloc_local(ctx, p.name)
+    lo := ctx.alloc_local(p.name)
     ctx = lo.ctx
     // Look up param type from checker — params don't have expr.id,
     // so we look up the function sig from env
@@ -1898,9 +2072,9 @@ fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId) FuncOut {
   saved_return_type := ctx.current_fn_return_type
   ctx.current_fn_return_type = ret_ty_for_try
 
-  body_r := lower_block(ctx, decl.body)
+  body_r := ctx.lower_block(decl.body)
   ctx = body_r.ctx
-  ctx = pop_scope(ctx)
+  ctx = ctx.pop_scope()
   ctx.current_fn_return_type = saved_return_type
 
   // Get return type from signature
@@ -1950,7 +2124,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
   for item in module.items {
     case item {
       .Function(decl) => {
-        r := alloc_func_id(ctx)
+        r := ctx.alloc_func_id()
         ctx = r.ctx
         ctx.func_table[decl.name] = r.func_id
       },
@@ -1965,7 +2139,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
       .Function(decl) => {
         case ctx.func_table[decl.name] {
           .Some(fid) => {
-            r := lower_function(ctx, decl, fid)
+            r := ctx.lower_function(decl, fid)
             functions = functions.push(r.def)
             ctx = r.ctx
           },
@@ -1985,7 +2159,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
         case stmt {
           .Let(ls) => {
             has_init = true
-            r := lower_expr(ctx, ls.value)
+            r := ctx.lower_expr(ls.value)
             ctx = r.ctx
             case ctx.module_globals[ls.name] {
               .Some(gid) => {
@@ -2000,7 +2174,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
           },
           .Expr(es) => {
             has_init = true
-            r := lower_expr(ctx, es.expr)
+            r := ctx.lower_expr(es.expr)
             ctx = r.ctx
             init_stmts = init_stmts.push(r.expr)
           },
@@ -2013,7 +2187,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
 
   init_func_id: FuncId? = .None
   if has_init {
-    fid_out := alloc_func_id(ctx)
+    fid_out := ctx.alloc_func_id()
     ctx = fid_out.ctx
     init_fid := fid_out.func_id
     init_func_id = .Some(init_fid)
@@ -2022,7 +2196,7 @@ pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
     init_body := void_expr(Span.{ file_id: 0, start: 0, end: 0 })
     i := init_stmts.len() - 1
     for _ in range(init_stmts.len()) {
-      ao := alloc_anon_local(ctx)
+      ao := ctx.alloc_anon_local()
       ctx = ao.ctx
       init_body = CoreExpr.{
         kind: .Let(ao.local, init_stmts[i], init_body),

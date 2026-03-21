@@ -34,6 +34,7 @@ pub type InferCtx = .{
   expr_spans: Dict<Int, Int>,
   call_expected_ret: MonoType?,
   pub_names: Dict<String, Bool>,
+  method_calls: Dict<Int, String>,
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic> }
@@ -45,6 +46,7 @@ pub type CheckResult = .{
   expr_spans: Dict<Int, Int>,
   env: ResolvedEnv,
   diagnostics: Vector<Diagnostic>,
+  method_calls: Dict<Int, String>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -62,6 +64,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     expr_spans: Dict.new(),
     call_expected_ret: .None,
     pub_names: Dict.new(),
+    method_calls: Dict.new(),
   }
 }
 
@@ -770,7 +773,9 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
 
   ar := check_args(cur_ctx, args, expected_args, cur_diags)
   callee_ty := MonoType.Function(expected_args, inst.ret)
-  .Some(.{ ty: inst.ret, ctx: set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty), diags: ar.diags })
+  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
+  final_ctx.method_calls[callee_id] = method_name
+  .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
@@ -2506,5 +2511,6 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     expr_spans: ctx.expr_spans,
     env: ctx.env,
     diagnostics: cur_diags,
+    method_calls: ctx.method_calls,
   }
 }
