@@ -1,6 +1,6 @@
 # Boot Compiler — Core IR & Lowering
 
-Last updated: 2026-03-20
+Last updated: 2026-03-21
 
 ## Background
 
@@ -121,7 +121,6 @@ pub type CoreExprKind = {
   LitInt(Int),
   LitFloat(Float),
   LitBool(Bool),
-  LitByte(Byte),
   LitStr(String),
   LitVoid,
 
@@ -178,7 +177,7 @@ pub type CorePattern = {
 
 | Stage0 | Boot | Rationale |
 |--------|------|-----------|
-| No `LitByte` | `LitByte(Byte)` | Byte is a first-class primitive |
+| No `LitByte` | No `LitByte` (removed) | Twinkle has no byte literal syntax; int literals typed as `Byte` via annotation produce `LitInt` with `ty: MonoType.Byte` |
 | `params: Vec<LocalId>` + `param_tys: Vec<MonoType>` (parallel arrays) | `params: Vector<Param>` with `Param = .{ local: LocalId, ty: MonoType }` | Paired data stays together |
 | `Defer(Box<CoreExpr>)` | `Defer(CoreExpr)` | Same design — opaque node carried through Core IR, erased in ANF defer-elim pass |
 | `LitFloat(f64)` | `LitFloat(Float)` | Twinkle `Float` is f64 |
@@ -485,20 +484,27 @@ Let(tmp, lower(e),
 
 ### String interpolation → concat chain
 
-`"hello ${name}!"` becomes a right-fold concat chain. The `to_string`
-call dispatches through the method registry (type-dependent — different
-functions for Int, Float, Bool, Byte, String):
+`"hello ${name}!"` becomes a left-fold concat chain. Each interpolated
+expression dispatches to a type-specific `to_string` function by
+matching the expression's `MonoType`:
+- `Int` → `Call(FuncId(4), [expr])` (int_to_string)
+- `Float` → `Call(FuncId(5), [expr])` (float_to_string)
+- `Bool` → `Call(FuncId(6), [expr])` (bool_to_string)
+- `Byte` → `Call(FuncId(1024), [expr])` (byte_to_string)
+- `String` → use directly (no conversion)
+- fallback → `Call(FuncId(7), [expr])` (string_to_string identity)
+
 ```
 Call(string_concat, [
-  LitStr("hello "),
   Call(string_concat, [
-    Call(to_string_for_T, [Local(name)]),
-    LitStr("!")])])
+    LitStr("hello "),
+    Call(to_string_for_T, [Local(name)])]),
+  LitStr("!")])
 ```
 
-The `to_string` resolution uses the same method lookup as dot-call syntax,
-not a hardcoded FuncId. The lowerer calls the equivalent of
-`lookup_method(expr_type, "to_string")` for each interpolated expression.
+The `to_string` dispatch uses hardcoded FuncIds rather than method lookup,
+which is sufficient for single-module lowering. This may need revisiting
+in Phase E if user-defined `to_string` methods should be supported.
 
 ### Collect → builder pattern
 
@@ -576,11 +582,13 @@ fields, not from `type_env`.
 
 ### Improvements over Stage0
 
-- **Single-pass collect + rewrite**: stage0 does two separate full-tree
-  traversals (collect instantiations, then rewrite calls). The boot
-  compiler combines these into one pass.
 - **Paired params**: `Vector<Param>` instead of parallel `params`/`param_tys`
   arrays eliminates zip-everywhere boilerplate.
+
+Note: the current implementation uses two separate traversals (collect
+instantiations, then rewrite calls) matching stage0's approach. A
+single-pass optimization is deferred — the two-pass version is simpler
+and correctness is easier to verify.
 
 ### Types
 
@@ -710,7 +718,7 @@ expressions (no Let wrapping). Lower simple rebinding (`x = expr`) to
 Lower closures with free variable capture and hoisting (free vars in
 `MakeClosure`, not prepended to params). Lower `try` to Match + Return
 for both Result and Option variants (using `current_fn_return_type`).
-Lower string interpolation to right-fold concat chains with type-
+Lower string interpolation to left-fold concat chains with type-
 dispatched `to_string`. Lower array literals and collect expressions
 (including indexed and condition forms).
 
@@ -738,9 +746,9 @@ Lower top-level `let` bindings to `GlobalLocal` references. Synthesize
 ### M9 — Monomorphization
 
 Implement `monomorphize(module: CoreModule) CoreModule` as a separate
-pass. BFS specialization with combined collect+rewrite traversal. Type
-args derived from concrete types on Core IR nodes (no external map
-needed).
+pass. BFS specialization with two-pass traversal (collect instantiations,
+then rewrite calls). Type args derived from concrete types on Core IR
+nodes (no external map needed).
 
 **Tests:**
 - `fn id<T>(x: T) T { x }; fn f() Int { id(42) }` → `id` specialized
@@ -820,3 +828,115 @@ have no corresponding `FunctionDef` in `CoreModule.functions` — they are
 provided by the runtime. User-defined function FuncIds start after the
 prelude range (`USER_FUNC_START`). The lowerer must not attempt to look
 up a `FunctionDef` for intrinsic FuncIds.
+
+## Implementation Status (as of 2026-03-21)
+
+### Completed
+
+M0 (partial), M1, M2, M3, M4, M5 (partial), M6 (partial), M7 (partial),
+M8, M9 (partial), M10 (partial).
+
+The core pipeline works: parse → resolve → check → lower → monomorphize
+for programs using literals, let-bindings, operators, if/match, function
+calls, records, variants, closures, try, for-loops (vector + condition),
+collect (vector + condition), defer, module-level lets, and generics.
+
+### Gaps — features not yet implemented
+
+These are plan items with no implementation at all.
+
+**G1. `method_calls` map (M0, blocks M4/M7)**
+`CheckResult` lacks the `method_calls: Dict<Int, String>` field.
+`LowerCtx` also lacks it. Without this map, the lowerer cannot resolve
+dot-call syntax (`x.method(args)`) or module-qualified calls
+(`Mod.func(args)`) to `GlobalFunc` — they currently fall through to
+`RecordGet`, producing wrong Core IR.
+
+**G2. Method call lowering (M4/M7)**
+Depends on G1. Three forms are missing:
+- Receiver method call: `x.method(args)` → `Call(GlobalFunc(fid), [x, ...args])`
+- Module-qualified call: `Mod.func(args)` → `Call(GlobalFunc(fid), [...args])`
+- First-class method value: `x.method` → `Let(tmp, x, MakeClosure(fid, [tmp]))`
+
+**G3. Complex lvalue assignment / `lower_lvalue_chain` (M6)**
+Only simple rebinding (`x = expr`) is implemented. Missing:
+- `r.field = val` → `Assign(r_local, RecordUpdate(...))`
+- `xs[i] = val` → `Assign(xs_local, Call(VECTOR_SET_UNSAFE, [...]))`
+- `m[k] = val` → `Assign(m_local, Call(DICT_SET, [...]))`
+- Nested chains: `a.b.c = x`
+
+**G4. For-loop type dispatch (M6)**
+The `for x in iter` branch always uses the vector pattern (VECTOR_LEN +
+Index). Missing type-dispatched forms:
+- String iteration: `for b in s` → `string_len` + `Index` yielding `Byte`
+- Range iteration: `for x in range(a,b)` → `RecordGet` on start/end/step
+- Dict iteration: `for k in dict` → `DICT_KEYS` then vector loop; `for k, v in dict` → value via `DICT_GET_UNSAFE`
+- Iterator iteration: `for x in iter` → `ITERATOR_NEXT` loop with Option match
+
+**G5. Collect type dispatch (M7)**
+Same gap as G4. Only vector and condition collect forms are implemented.
+Missing: dict, iterator, and range collect.
+
+**G6. Type alias resolution in records (M5)**
+`lower_named_record` resolves `TypeId` from the name but does not follow
+type aliases to the canonical record TypeId. If a user writes
+`type Pt = Point` and constructs `Pt.{ x: 1, y: 2 }`, the lowerer uses
+the alias TypeId, not Point's — field lookups will fail.
+
+### Discrepancies — implemented but diverging from plan
+
+**D1. Terminal-aware expr-stmts (RISK: ANF panic)**
+`lower_stmts` correctly handles `Return`/`Break`/`Continue` as terminal
+*statements* (emitting them directly, dropping rest). However, the
+`.Expr(es)` case always wraps in `Let(_, lower(e), rest)` even when the
+lowered sub-expression is itself terminal (e.g., a block ending with
+`return`). The plan warns this produces malformed Core IR that the ANF
+lowerer panics on. Fix: after lowering an expression statement, check
+whether the result is a terminal form; if so, emit it directly without
+`Let` wrapping.
+
+**D2. QualifiedVariant pattern ignores qualifier (RISK: wrong TypeId)**
+`lower_pattern` handles `QualifiedVariant(path, name, pats)` but ignores
+the qualifier path — it uses the scrutinee type for TypeId resolution,
+same as unqualified `Variant`. This breaks when the qualifier is the
+disambiguator (e.g., `Foo.Ok` vs `Result.Ok` on a scrutinee whose type
+doesn't uniquely determine the variant). Fix: resolve `TypeId` from the
+qualified path via `resolve_type_id(env, path)`.
+
+**D3. Monomorphization `match_type_against` ignores TypeId (FIXED)**
+The `Named` case in `match_type_against` was matching any two `Named`
+types regardless of their TypeId, causing incorrect substitutions when
+different generic types share argument-list lengths. Fixed 2026-03-21:
+added `tid_p.id != tid_c.id` guard.
+
+**D4. `for x,i` / `collect x,i` index variable not bound (FIXED)**
+`lower_for` ignored `ForStmt.index` entirely; `lower_collect` allocated
+the local but never assigned the counter value. Fixed 2026-03-21: both
+now bind the user index local to the loop counter before the body.
+
+**D5. Field punning type always `Void` (FIXED)**
+Field punning created a synthetic `Expr` with `id: -1` for type lookup;
+since no AST node has that id, the type was always `Void`. Fixed
+2026-03-21: uses `find_field_type(env, tid, name)` instead.
+
+**D6. `Byte` missing from string interpolation (FIXED)**
+The `Byte` case in `lower_string_interp` fell through to
+`string_to_string` (FuncId 7) instead of `byte_to_string` (FuncId 1024).
+Fixed 2026-03-21.
+
+**D7. `LitByte(Byte)` in CoreExprKind unreachable (FIXED)**
+Twinkle has no byte literal syntax — int literals are typed as `Byte`
+via annotation and produce `LitInt` with `ty: MonoType.Byte`. Removed
+`LitByte` from `CoreExprKind` 2026-03-21. Plan updated to match.
+
+### Fix priority
+
+Ordered by risk (ANF panics, wrong codegen) then breadth of impact:
+
+1. **D1** — terminal expr-stmt wrapping (ANF panic risk)
+2. **D2** — QualifiedVariant qualifier (wrong TypeId)
+3. **G1 + G2** — method_calls + method call lowering (blocks all dot-call programs)
+4. **G3** — complex lvalue assignment (blocks field/index/dict mutation)
+5. **G4** — for-loop type dispatch (blocks string/range/dict/iterator loops)
+6. **G5** — collect type dispatch (same iterator types as G4)
+7. **G6** — type alias resolution (edge case, low frequency)

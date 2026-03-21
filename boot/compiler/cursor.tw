@@ -4,10 +4,17 @@ use .tokens.{Token, TokenKind}
 pub type Cursor = .{
   tokens: Vector<Token>,
   pos: Int,
+  next_expr_id: Cell<Int>,
 }
 
 pub fn new(tokens: Vector<Token>) Cursor {
-  .{ tokens, pos: 0 }
+  .{ tokens, pos: 0, next_expr_id: Cell.new(0) }
+}
+
+pub fn alloc_expr_id(c: Cursor) Int {
+  id := c.next_expr_id.get()
+  c.next_expr_id.set(id + 1)
+  id
 }
 
 pub fn kind(c: Cursor) TokenKind {
@@ -31,15 +38,15 @@ pub fn preceded_by_newline(c: Cursor) Bool {
 }
 
 pub fn advance(c: Cursor) Cursor {
-  .{ tokens: c.tokens, pos: c.pos + 1 }
+  .{ tokens: c.tokens, pos: c.pos + 1, next_expr_id: c.next_expr_id }
 }
 
 pub fn at(c: Cursor, offset: Int) Cursor {
-  .{ tokens: c.tokens, pos: c.pos + offset }
+  .{ tokens: c.tokens, pos: c.pos + offset, next_expr_id: c.next_expr_id }
 }
 
 pub fn with_pos(c: Cursor, new_pos: Int) Cursor {
-  .{ tokens: c.tokens, pos: new_pos }
+  .{ tokens: c.tokens, pos: new_pos, next_expr_id: c.next_expr_id }
 }
 
 pub fn is_eof(c: Cursor) Bool {

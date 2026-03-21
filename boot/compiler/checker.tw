@@ -31,6 +31,7 @@ pub type InferCtx = .{
   current_ret: MonoType?,
   type_var_scope: Vector<String>,
   type_map: Dict<Int, MonoType>,
+  expr_spans: Dict<Int, Int>,
   call_expected_ret: MonoType?,
   pub_names: Dict<String, Bool>,
 }
@@ -41,6 +42,7 @@ type UnifyOut = .{ ctx: InferCtx, diags: Vector<Diagnostic> }
 
 pub type CheckResult = .{
   type_map: Dict<Int, MonoType>,
+  expr_spans: Dict<Int, Int>,
   env: ResolvedEnv,
   diagnostics: Vector<Diagnostic>,
 }
@@ -57,6 +59,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     current_ret: .None,
     type_var_scope: [],
     type_map: Dict.new(),
+    expr_spans: Dict.new(),
     call_expected_ret: .None,
     pub_names: Dict.new(),
   }
@@ -102,8 +105,14 @@ fn lookup_local(ctx: InferCtx, name: String) MonoType? {
   .None
 }
 
-fn set_type_map(ctx: InferCtx, offset: Int, ty: MonoType) InferCtx {
-  ctx.type_map[offset] = ty
+fn set_type_map(ctx: InferCtx, id: Int, ty: MonoType) InferCtx {
+  ctx.type_map[id] = ty
+  ctx
+}
+
+fn set_type_map_span(ctx: InferCtx, id: Int, span_start: Int, ty: MonoType) InferCtx {
+  ctx.type_map[id] = ty
+  ctx.expr_spans[id] = span_start
   ctx
 }
 
@@ -445,7 +454,9 @@ fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
 
 fn synth(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
   r := ctx.synth_inner(expr, diags)
-  .{ ty: r.ty, ctx: set_type_map(r.ctx, expr.span.start, r.ty), diags: r.diags }
+  new_ctx := set_type_map(r.ctx, expr.id, r.ty)
+  new_ctx.expr_spans[expr.id] = expr.span.start
+  .{ ty: r.ty, ctx: new_ctx, diags: r.diags }
 }
 
 fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
@@ -457,7 +468,7 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
 
     .Ident(name) => synth_ident(name, expr.span, ctx, diags),
 
-    .Call(callee, args) => synth_call(callee, args, expr.span, ctx, diags),
+    .Call(callee, args) => synth_call(callee, args, expr.id, expr.span.start, expr.span, ctx, diags),
 
     .BlockExpr(block) => synth_block(block, ctx, diags),
 
@@ -478,7 +489,7 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
 
     .Collect(ce) => synth_collect(ce, expr.span, ctx, diags),
 
-    .NamedRecord(type_name, entries) => synth_named_record(type_name, entries, expr.span, ctx, diags),
+    .NamedRecord(type_name, entries) => synth_named_record(type_name, entries, expr.id, expr.span.start, expr.span, ctx, diags),
 
     _ => {
       m := fresh_meta(ctx)
@@ -517,7 +528,7 @@ fn synth_ident(name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) 
   }
 }
 
-fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   // Capture and clear call_expected_ret so it doesn't leak into nested
   // synth_expr calls (e.g. synthesising the callee/base). The value is
   // used once for pre-unification at the right level.
@@ -532,7 +543,7 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: V
       case base.kind {
         .Ident(alias) => {
           if is_module_alias(clean_ctx, alias) {
-            module_call := try_synth_module_qualified_call(alias, method_name, args, callee.span, clean_ctx, diags, call_expected)
+            module_call := try_synth_module_qualified_call(alias, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
             case module_call {
               .Some(r) => { return r },
               .None => {
@@ -549,10 +560,10 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: V
       }
 
       // Receiver method call form: receiver.method(...)
-      method_call := try_synth_method_call(base, method_name, args, callee.span, clean_ctx, diags, call_expected)
+      method_call := try_synth_method_call(base, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
       case method_call {
         .Some(r) => r,
-        .None => synth_call_general(callee, args, s, clean_ctx, diags),
+        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
       }
     },
     .Ident(name) => {
@@ -568,23 +579,23 @@ fn synth_call(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: V
           if args.len() != inst.params.len() {
             return .{
               ty: inst.ret,
-              ctx: set_type_map(cur_ctx, callee.span.start, MonoType.Function(inst.params, inst.ret)),
+              ctx: set_type_map_span(cur_ctx, callee.id, callee.span.start, MonoType.Function(inst.params, inst.ret)),
               diags: cur_diags.push(diag.error(s, "expected ${inst.params.len()} arguments, got ${args.len()}")),
             }
           }
 
           ar := check_args(cur_ctx, args, inst.params, cur_diags)
-          cur_ctx = set_type_map(ar.ctx, callee.span.start, MonoType.Function(inst.params, inst.ret))
+          cur_ctx = set_type_map_span(ar.ctx, callee.id, callee.span.start, MonoType.Function(inst.params, inst.ret))
           .{ ty: inst.ret, ctx: cur_ctx, diags: ar.diags }
         },
-        .None => synth_call_general(callee, args, s, clean_ctx, diags),
+        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
       }
     },
-    _ => synth_call_general(callee, args, s, clean_ctx, diags),
+    _ => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
   }
 }
 
-fn synth_call_general(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   // Synth the callee
   callee_r := ctx.synth(callee, diags)
   cur_ctx := callee_r.ctx
@@ -600,7 +611,7 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, s: Span, ctx: InferCtx, 
           cur_ctx = cr.ctx
           cur_diags = cr.diags
         }
-        return .{ ty: ret_ty, ctx: set_type_map(cur_ctx, s.start, ret_ty), diags: cur_diags }
+        return .{ ty: ret_ty, ctx: set_type_map_span(cur_ctx, call_id, call_span_start, ret_ty), diags: cur_diags }
       }
       // Wrong arg count — fall through to synth path for error reporting
     },
@@ -683,7 +694,7 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
   }
 }
 
-fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
+fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
     .None => { return .None },
@@ -700,17 +711,17 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
   if args.len() != inst.params.len() {
     return .Some(.{
       ty: inst.ret,
-      ctx: set_type_map(cur_ctx, callee_span.start, MonoType.Function(inst.params, inst.ret)),
+      ctx: set_type_map_span(cur_ctx, callee_id, callee_span_start, MonoType.Function(inst.params, inst.ret)),
       diags: cur_diags.push(diag.error(callee_span, "expected ${inst.params.len()} arguments, got ${args.len()}")),
     })
   }
 
   ar := check_args(cur_ctx, args, inst.params, cur_diags)
   callee_ty := MonoType.Function(inst.params, inst.ret)
-  .Some(.{ ty: inst.ret, ctx: set_type_map(ar.ctx, callee_span.start, callee_ty), diags: ar.diags })
+  .Some(.{ ty: inst.ret, ctx: set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty), diags: ar.diags })
 }
 
-fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
+fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   br := ctx.synth(base, diags)
   base_ty := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
   sig := case lookup_method_sig(base_ty, method_name, br.ctx.env) {
@@ -752,14 +763,14 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     err := diag.error(callee_span, "expected ${expected_args.len()} arguments, got ${args.len()}")
     return .Some(.{
       ty: inst.ret,
-      ctx: set_type_map(cur_ctx, callee_span.start, callee_ty),
+      ctx: set_type_map_span(cur_ctx, callee_id, callee_span_start, callee_ty),
       diags: cur_diags.push(err),
     })
   }
 
   ar := check_args(cur_ctx, args, expected_args, cur_diags)
   callee_ty := MonoType.Function(expected_args, inst.ret)
-  .Some(.{ ty: inst.ret, ctx: set_type_map(ar.ctx, callee_span.start, callee_ty), diags: ar.diags })
+  .Some(.{ ty: inst.ret, ctx: set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty), diags: ar.diags })
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
@@ -881,7 +892,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
   }
 }
 
-fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, record_id: Int, record_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   entry := case ctx.env.lookup_type(type_name) {
     .Some(e) => e,
     .None => {
@@ -909,7 +920,7 @@ fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, s: Span, 
 
   expected := MonoType.Named(entry.id, type_args)
   cr := check_record_lit(entries, expected, s, cur_ctx, diags)
-  .{ ty: expected, ctx: set_type_map(cr.ctx, s.start, expected), diags: cr.diags }
+  .{ ty: expected, ctx: set_type_map_span(cr.ctx, record_id, record_span_start, expected), diags: cr.diags }
 }
 
 fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
@@ -1056,7 +1067,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
       case zonk(expected, ctx.subst) {
         .Byte => {
           if int_literal_fits_byte(raw) {
-            return .{ ctx: set_type_map(ctx, expr.span.start, MonoType.Byte), diags }
+            return .{ ctx: set_type_map_span(ctx, expr.id, expr.span.start, MonoType.Byte), diags }
           }
           return .{
             ctx,
@@ -1071,15 +1082,15 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
   case expr.kind {
     .Record(entries) => {
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map(r.ctx, expr.span.start, expected), diags: r.diags }
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Variant(name, args) => {
       r := check_variant_lit(name, args, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map(r.ctx, expr.span.start, expected), diags: r.diags }
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Closure(params, ret_ty, body) => {
       r := check_closure(params, ret_ty, body, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map(r.ctx, expr.span.start, expected), diags: r.diags }
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Array(elems) => {
       // Push expected element type into array check
@@ -1093,7 +1104,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
             cur_ctx = u.ctx
             cur_diags = u.diags
           }
-          return .{ ctx: set_type_map(cur_ctx, expr.span.start, expected), diags: cur_diags }
+          return .{ ctx: set_type_map_span(cur_ctx, expr.id, expr.span.start, expected), diags: cur_diags }
         },
         _ => {},
       }
@@ -1102,7 +1113,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
       case zonk(expected, ctx.subst) {
         .Vector(elem_ty) => {
           r := check_collect(ce, elem_ty, expr.span, ctx, diags)
-          return .{ ctx: set_type_map(r.ctx, expr.span.start, expected), diags: r.diags }
+          return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
         },
         _ => {},
       }
@@ -2361,8 +2372,6 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckO
     },
     .None => .{ ctx, diags },
   }
-  // Record Never in the type map for the return's span
-  result.ctx = set_type_map(result.ctx, rs.span.start, MonoType.Never)
   result
 }
 
@@ -2478,8 +2487,12 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
         zonked := zonk(ty, ctx.subst)
         final_map[key] = zonked
         if contains_meta(zonked) {
+          span_start := case ctx.expr_spans[key] {
+            .Some(s) => s,
+            .None => 0,
+          }
           cur_diags = cur_diags.push(diag.error(
-            Span.{ file_id: 0, start: key, end: key },
+            Span.{ file_id: 0, start: span_start, end: span_start },
             "cannot infer type for this expression",
           ))
         }
@@ -2490,6 +2503,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
 
   .{
     type_map: final_map,
+    expr_spans: ctx.expr_spans,
     env: ctx.env,
     diagnostics: cur_diags,
   }

@@ -158,7 +158,7 @@ fn error_type(span_in: span.Span) TypeExpr {
 }
 
 fn error_expr(span_in: span.Span) Expr {
-  Expr.{ kind: .ErrorExpr, span: span_in }
+  Expr.{ id: -1, kind: .ErrorExpr, span: span_in }
 }
 
 fn stmt_in_expr_msg(kw: String, context: String?) String {
@@ -1267,13 +1267,13 @@ fn parse_pattern(c: Cursor) PatternParse {
       _         => .StringLit(text),
     }
     s := c.span()
-    lit := Expr.{ kind: expr_kind, span: s }
+    lit := Expr.{ id: c.alloc_expr_id(), kind: expr_kind, span: s }
     patt := Pattern.{ kind: .Literal(lit), span: s }
     return .{ value: patt, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
   if k == .True or k == .False {
-    lit := Expr.{ kind: .BoolLit(k == .True), span: c.span() }
+    lit := Expr.{ id: c.alloc_expr_id(), kind: .BoolLit(k == .True), span: c.span() }
     patt := Pattern.{ kind: .Literal(lit), span: c.span() }
     return .{ value: patt, cursor: c.advance(), diagnostics: diagnostics_out }
   }
@@ -1349,17 +1349,17 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
       c.span(),
       "expected '}' to close record literal",
     ))
-    expr := Expr.{ kind: .Record(fields), span: c.span_from(start_pos) }
+    expr := Expr.{ id: c.alloc_expr_id(), kind: .Record(fields), span: c.span_from(start_pos) }
     return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
   }
 
-  expr := Expr.{ kind: .Record(fields), span: c.span_through(start_pos) }
+  expr := Expr.{ id: c.alloc_expr_id(), kind: .Record(fields), span: c.span_through(start_pos) }
   .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
 }
 
 fn parse_block_expr(c: Cursor) ExprParse {
   parsed := parse_block(c)
-  .{ value: Expr.{ kind: .BlockExpr(parsed.value), span: parsed.value.span },
+  .{ value: Expr.{ id: c.alloc_expr_id(), kind: .BlockExpr(parsed.value), span: parsed.value.span },
     cursor: parsed.cursor,
     diagnostics: parsed.diagnostics,
   }
@@ -1408,6 +1408,7 @@ fn parse_if_expr(c: Cursor) ExprParse {
   }
 
   expr := Expr.{
+    id: c.alloc_expr_id(),
     kind: .If(cond, then_block, else_expr),
     span: start_span.merge(end_span),
   }
@@ -1430,7 +1431,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
       c.span(),
       "expected '{' after case expression",
     ))
-    expr := Expr.{ kind: .Case(scrutinee, []), span: c.span_through(start_pos) }
+    expr := Expr.{ id: c.alloc_expr_id(), kind: .Case(scrutinee, []), span: c.span_through(start_pos) }
     return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
   }
 
@@ -1469,7 +1470,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
   }
 
   if c.kind() == .RBrace {
-    expr := Expr.{ kind: .Case(scrutinee, arms), span: c.span_through(start_pos) }
+    expr := Expr.{ id: c.alloc_expr_id(), kind: .Case(scrutinee, arms), span: c.span_through(start_pos) }
     return .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
@@ -1477,7 +1478,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
     c.span(),
     "expected '}' to close case expression",
   ))
-  expr := Expr.{ kind: .Case(scrutinee, arms), span: c.span_from(start_pos) }
+  expr := Expr.{ id: c.alloc_expr_id(), kind: .Case(scrutinee, arms), span: c.span_from(start_pos) }
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
 }
 
@@ -1485,6 +1486,7 @@ fn parse_unary_op(c: Cursor, op: UnOp) ExprParse {
   start_span := c.span()
   parsed_rhs := parse_expr_bp(c.advance(), 22)
   expr := Expr.{
+    id: c.alloc_expr_id(),
     kind: .Unary(op, parsed_rhs.value),
     span: start_span.merge(parsed_rhs.value.span),
   }
@@ -1497,15 +1499,15 @@ fn parse_prefix(c: Cursor) ExprParse {
 
   case k {
     .IntLit => {
-      expr := Expr.{ kind: .IntLit(c.text()), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .IntLit(c.text()), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .FloatLit => {
-      expr := Expr.{ kind: .FloatLit(c.text()), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .FloatLit(c.text()), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .StringLit => {
-      expr := Expr.{ kind: .StringLit(c.text()), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .StringLit(c.text()), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .StringStart => {
@@ -1535,6 +1537,7 @@ fn parse_prefix(c: Cursor) ExprParse {
             last_span = c.span()
             c = c.advance()
             expr := Expr.{
+              id: c.alloc_expr_id(),
               kind: .StringInterp(parts),
               span: start_span.merge(last_span),
             }
@@ -1550,19 +1553,19 @@ fn parse_prefix(c: Cursor) ExprParse {
         }
       }
 
-      expr := Expr.{ kind: .StringInterp(parts), span: start_span.merge(last_span) }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .StringInterp(parts), span: start_span.merge(last_span) }
       .{ value: expr, cursor: c, diagnostics: diagnostics_out }
     },
     .True => {
-      expr := Expr.{ kind: .BoolLit(true), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .BoolLit(true), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .False => {
-      expr := Expr.{ kind: .BoolLit(false), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .BoolLit(false), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .Ident => {
-      expr := Expr.{ kind: .Ident(c.text()), span: c.span() }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .Ident(c.text()), span: c.span() }
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .Dot => {
@@ -1586,7 +1589,7 @@ fn parse_prefix(c: Cursor) ExprParse {
           }
         }
 
-        expr := Expr.{ kind: .Variant(name, args), span: c.span_from(start_pos) }
+        expr := Expr.{ id: c.alloc_expr_id(), kind: .Variant(name, args), span: c.span_from(start_pos) }
         return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
       }
 
@@ -1638,7 +1641,7 @@ fn parse_prefix(c: Cursor) ExprParse {
       }
 
       if c.kind() == .RBracket {
-        expr := Expr.{ kind: .Array(elems), span: c.span_through(start_pos) }
+        expr := Expr.{ id: c.alloc_expr_id(), kind: .Array(elems), span: c.span_through(start_pos) }
         return .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
       }
 
@@ -1646,7 +1649,7 @@ fn parse_prefix(c: Cursor) ExprParse {
         c.span(),
         "expected ']' to close array literal",
       ))
-      expr := Expr.{ kind: .Array(elems), span: c.span_from(start_pos) }
+      expr := Expr.{ id: c.alloc_expr_id(), kind: .Array(elems), span: c.span_from(start_pos) }
       .{ value: expr, cursor: c, diagnostics: diagnostics_out }
     },
     .LBrace => parse_block_expr(c),
@@ -1717,6 +1720,7 @@ fn parse_closure_expr(c: Cursor) ExprParse {
 
   closure_span := start_span.merge(parsed_body.value.span)
   expr := Expr.{
+    id: c.alloc_expr_id(),
     kind: .Closure(params, return_type, parsed_body.value),
     span: closure_span,
   }
@@ -1769,6 +1773,7 @@ fn parse_collect_expr(c: Cursor) ExprParse {
 
   collect_span := c.span_from(start_pos)
   expr := Expr.{
+    id: c.alloc_expr_id(),
     kind: .Collect(CollectExpr.{ pattern, index, iter, condition, body: parsed_body.value }),
     span: collect_span,
   }
@@ -1790,7 +1795,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
 
       if c.kind() == .RParen {
         new_span := expr.span.merge(c.span())
-        expr = Expr.{ kind: .Call(expr, args), span: new_span }
+        expr = Expr.{ id: c.alloc_expr_id(), kind: .Call(expr, args), span: new_span }
         c = c.advance()
         continue
       }
@@ -1811,7 +1816,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
           .Ident(name) => {
             case parsed_record.value.kind {
               .Record(entries) => {
-                expr = Expr.{ kind: .NamedRecord(name, entries), span: expr.span.merge(parsed_record.value.span) }
+                expr = Expr.{ id: c.alloc_expr_id(), kind: .NamedRecord(name, entries), span: expr.span.merge(parsed_record.value.span) }
               },
               _ => { expr = parsed_record.value },
             }
@@ -1825,7 +1830,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
       if c.at(1).kind() == .Ident {
         field_name := c.at(1).text()
         new_span := expr.span.merge(c.at(1).span())
-        expr = Expr.{ kind: .Field(expr, field_name), span: new_span }
+        expr = Expr.{ id: c.alloc_expr_id(), kind: .Field(expr, field_name), span: new_span }
         c = c.at(2)
         continue
       }
@@ -1848,7 +1853,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
       }
 
       new_span := expr.span.merge(c.span())
-      expr = Expr.{ kind: .Index(expr, idx_expr), span: new_span }
+      expr = Expr.{ id: c.alloc_expr_id(), kind: .Index(expr, idx_expr), span: new_span }
       c = c.advance()
       continue
     }
@@ -1892,6 +1897,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           rhs := parsed_rhs.value
           c = parsed_rhs.cursor
           lhs = Expr.{
+            id: c.alloc_expr_id(),
             kind: .Binary(.Shr, lhs, rhs),
             span: lhs.span.merge(rhs.span),
           }
@@ -1917,6 +1923,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
         c = parsed_rhs.cursor
 
         lhs = Expr.{
+          id: c.alloc_expr_id(),
           kind: .Binary(info.op, lhs, rhs),
           span: lhs.span.merge(rhs.span),
         }

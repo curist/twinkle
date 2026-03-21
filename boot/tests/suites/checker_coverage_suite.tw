@@ -44,13 +44,36 @@ fn find_offset(src: String, needle: String) Int? {
   .None
 }
 
+fn find_id_by_span(result: checker.CheckResult, target_offset: Int) Int? {
+  best: Int? = .None
+  for eid in result.expr_spans.keys() {
+    case result.expr_spans[eid] {
+      .Some(span_start) => {
+        if span_start == target_offset {
+          best = case best {
+            .None => .Some(eid),
+            .Some(prev) => if eid > prev { .Some(eid) } else { .Some(prev) },
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  best
+}
+
 fn type_at(result: checker.CheckResult, src: String, needle: String) Result<String, String> {
   offset := find_offset(src, needle)
   case offset {
     .Some(off) => {
-      case result.type_map[off] {
-        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-        .None => .Err("no type at offset ${off} for '${needle}'"),
+      case find_id_by_span(result, off) {
+        .Some(eid) => {
+          case result.type_map[eid] {
+            .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+            .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
+          }
+        },
+        .None => .Err("no expr id at offset ${off} for '${needle}'"),
       }
     },
     .None => .Err("'${needle}' not found in source"),

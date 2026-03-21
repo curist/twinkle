@@ -163,6 +163,7 @@ pub type ExprStmt = .{
 }
 
 pub type Expr = .{
+  id: Int,
   kind: ExprKind,
   span: span.Span,
 }

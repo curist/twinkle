@@ -1,0 +1,107 @@
+// Core IR types for the boot compiler.
+//
+// Every node carries its resolved MonoType. The lowerer populates `ty`
+// from the checker's type_map (keyed by expr.id).
+
+use lib.source.span.{Span}
+use .resolver.{MonoType, ResolvedEnv, TypeId}
+
+// ── Identity types ──────────────────────────────────────────────────
+
+pub type LocalId = .{ id: Int }
+pub type FuncId = .{ id: Int }
+pub type FieldId = .{ id: Int }
+pub type VariantId = .{ id: Int }
+
+// ── Core expressions ────────────────────────────────────────────────
+
+pub type CoreExpr = .{
+  kind: CoreExprKind,
+  ty: MonoType,
+  span: Span,
+}
+
+pub type CoreExprKind = {
+  // Literals
+  LitInt(Int),
+  LitFloat(Float),
+  LitBool(Bool),
+  LitStr(String),
+  LitVoid,
+
+  // Variables
+  Local(LocalId),
+  GlobalLocal(LocalId),
+  GlobalFunc(FuncId),
+
+  // Binding
+  Let(LocalId, CoreExpr, CoreExpr),
+  Assign(LocalId, CoreExpr),
+
+  // Operators
+  BinOp(BinOp, CoreExpr, CoreExpr),
+  UnOp(UnOp, CoreExpr),
+
+  // Calls & closures
+  Call(CoreExpr, Vector<CoreExpr>),
+  MakeClosure(FuncId, Vector<LocalId>),
+
+  // Control flow
+  If(CoreExpr, CoreExpr, CoreExpr),
+  Match(CoreExpr, Vector<MatchArm>),
+  Loop(CoreExpr),
+  Break(CoreExpr?),
+  Continue,
+  Return(CoreExpr?),
+  Defer(CoreExpr),
+
+  // Data
+  Record(TypeId, Vector<FieldInit>),
+  RecordGet(CoreExpr, FieldId),
+  RecordUpdate(CoreExpr, FieldId, CoreExpr),
+  Variant(TypeId, VariantId, Vector<CoreExpr>),
+  ArrayLit(Vector<CoreExpr>),
+  Index(CoreExpr, CoreExpr),
+}
+
+pub type BinOp = {
+  Add, Sub, Mul, Div, Mod,
+  Eq, Ne, Lt, Le, Gt, Ge,
+  And, Or,
+  BitAnd, BitOr, BitXor, Shl, Shr,
+}
+
+pub type UnOp = {
+  Neg, Not,
+}
+
+pub type FieldInit = .{ field: FieldId, value: CoreExpr }
+
+pub type MatchArm = .{ pattern: CorePattern, body: CoreExpr }
+
+pub type CorePattern = {
+  Wildcard,
+  Var(LocalId),
+  LitInt(Int),
+  LitBool(Bool),
+  LitStr(String),
+  Variant(TypeId, VariantId, Vector<CorePattern>),
+}
+
+// ── Function and module ─────────────────────────────────────────────
+
+pub type Param = .{ local: LocalId, ty: MonoType }
+
+pub type FunctionDef = .{
+  func_id: FuncId,
+  name: String,
+  params: Vector<Param>,
+  body: CoreExpr,
+  return_ty: MonoType,
+}
+
+pub type CoreModule = .{
+  functions: Vector<FunctionDef>,
+  type_env: ResolvedEnv,
+  init_func_id: FuncId?,
+}
