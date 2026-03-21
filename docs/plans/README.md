@@ -58,3 +58,4 @@ from stage0, bootstrapping sequence)
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |
+| [method-resolution-spec-alignment.md](method-resolution-spec-alignment.md) | Align dot-method resolution with spec: defining-module inherent methods only (no implicit extension-method drift) |
