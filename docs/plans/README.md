@@ -39,7 +39,6 @@ from stage0, bootstrapping sequence)
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Frontend | Lexer, parser, resolver, type checker | **Done** | Checker: [boot-type-checker.md](boot-type-checker.md); methods: [boot-resolver-method-registry.md](boot-resolver-method-registry.md) (M5 deferred to multi-module) |
-| Core IR & lowering | Core IR types, AST→Core IR, monomorphization | Planned | [boot-core-ir.md](boot-core-ir.md) |
 | ANF + codegen | ANF lowering, optimizer, codegen, linker | Planned | — |
 | Pub rebinding rule | Align boot checker with stage0 pub-only rebinding restriction | **Done** | [archive/boot-pub-rebinding.md](archive/boot-pub-rebinding.md) |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |

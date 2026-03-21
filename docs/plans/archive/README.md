@@ -100,3 +100,4 @@ Related historical context outside this folder:
 | [parser-diagnostic-parity.md](parser-diagnostic-parity.md) | Parser diagnostic message parity between Rust and boot compilers (phases 1-4: message templates, context, shared fixtures) |
 | [boot-pub-rebinding.md](boot-pub-rebinding.md) | Align boot checker with stage0 pub-only rebinding restriction |
 | [boot-snapshot-testing.md](boot-snapshot-testing.md) | Snapshot testing for boot compiler diagnostics (`.boot.expected` files, `TWK_SNAP_UPDATE=1`) |
+| [boot-core-ir.md](boot-core-ir.md) | Boot Core IR types, AST→Core IR lowering, monomorphization (Phase B) |

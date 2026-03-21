@@ -1,6 +1,6 @@
 # Self-Hosting Status Tracker
 
-Last updated: 2026-03-20
+Last updated: 2026-03-21
 
 ## Purpose
 
@@ -24,7 +24,7 @@ snapshot.
 | Phase | Scope | Status | Notes |
 |------|-------|--------|-------|
 | A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker (M1–M9) all complete. Method registry M1–M4 done; M5 deferred to multi-module. Snapshot testing for diagnostics. |
-| B | Core IR lowering + monomorphization | Planned | [boot-core-ir.md](boot-core-ir.md) — 10 milestones covering IR types, lowering, and monomorphization. |
+| B | Core IR lowering + monomorphization | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — IR types, lowering (all expr/stmt forms), monomorphization. All gaps and discrepancies resolved. |
 | C | ANF lowering + optimization | Planned | No committed self-hosted ANF/opt pipeline yet. |
 | D | Codegen + linker | Planned | Representation/layout redesign is documented in [self-hosting.md](self-hosting.md). |
 | E | Integration + self-hosting loop | Planned | Depends on A-D milestones and `boot` module/graph/query libs. |
@@ -40,6 +40,7 @@ snapshot.
 | Type checker | In Progress | [boot-type-checker.md](boot-type-checker.md) — M1–M9 done |
 | Resolver method registry | In Progress | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) — M1–M4 done, M5 (method call checking) remaining |
 | Frontend fixes | Done | [archive/boot-frontend-fixes.md](archive/boot-frontend-fixes.md) — correctness, completeness, refactoring, test coverage |
+| Core IR & lowering | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — Core IR types, AST→Core IR lowering, monomorphization |
 | Snapshot testing | Done | [archive/boot-snapshot-testing.md](archive/boot-snapshot-testing.md) — `.boot.expected` files for parser diagnostics |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 

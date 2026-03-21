@@ -34,7 +34,12 @@ pub type InferCtx = .{
   expr_spans: Dict<Int, Int>,
   call_expected_ret: MonoType?,
   pub_names: Dict<String, Bool>,
-  method_calls: Dict<Int, String>,
+  method_calls: Dict<Int, MethodCallInfo>,
+}
+
+pub type MethodCallInfo = .{
+  func_name: String,
+  has_receiver: Bool,
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic> }
@@ -46,7 +51,7 @@ pub type CheckResult = .{
   expr_spans: Dict<Int, Int>,
   env: ResolvedEnv,
   diagnostics: Vector<Diagnostic>,
-  method_calls: Dict<Int, String>,
+  method_calls: Dict<Int, MethodCallInfo>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -670,6 +675,14 @@ fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) F
   env.lookup_function(fn_name)
 }
 
+fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+  owner := case method_owner_name(base_ty, env) {
+    .Some(name) => name,
+    .None => { return .None },
+  }
+  env.lookup_method(owner, method_name)
+}
+
 fn named_function_field_exists(base_ty: MonoType, field_name: String, env: ResolvedEnv) Bool {
   case base_ty {
     .Named(tid, type_args) => {
@@ -721,7 +734,9 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
 
   ar := check_args(cur_ctx, args, inst.params, cur_diags)
   callee_ty := MonoType.Function(inst.params, inst.ret)
-  .Some(.{ ty: inst.ret, ctx: set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty), diags: ar.diags })
+  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
+  final_ctx.method_calls[callee_id] = MethodCallInfo.{ func_name: fn_name, has_receiver: false }
+  .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
 }
 
 fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
@@ -774,7 +789,11 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
   ar := check_args(cur_ctx, args, expected_args, cur_diags)
   callee_ty := MonoType.Function(expected_args, inst.ret)
   final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
-  final_ctx.method_calls[callee_id] = method_name
+  resolved_fn := case resolve_method_func_name(base_ty, method_name, final_ctx.env) {
+    .Some(name) => name,
+    .None => method_name,  // fallback to surface name
+  }
+  final_ctx.method_calls[callee_id] = MethodCallInfo.{ func_name: resolved_fn, has_receiver: true }
   .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
 }
 

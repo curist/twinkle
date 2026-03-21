@@ -36,7 +36,7 @@ type LowerCtx = .{
   next_global: Int,
   current_fn_return_type: MonoType?,
   errors: Vector<Diagnostic>,
-  method_calls: Dict<Int, String>,
+  method_calls: Dict<Int, checker.MethodCallInfo>,
 }
 
 // ── Result types ────────────────────────────────────────────────────
@@ -611,77 +611,67 @@ fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: 
 // ── Call lowering ───────────────────────────────────────────────────
 
 fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
-  // Check if this is a method call (receiver.method(...) desugared to GlobalFunc)
+  // Check if this is a method/module-qualified call resolved by the checker
   case ctx.method_calls[callee_expr.id] {
-    .Some(method_name) => {
-      // callee_expr is Field(receiver, method_name) — lower receiver, prepend as first arg
-      case callee_expr.kind {
-        .Field(receiver, _) => {
-          rr := ctx.lower_expr(receiver)
-          lowered_args: Vector<CoreExpr> = [rr.expr]
-          cur_ctx := rr.ctx
-          for arg in args {
-            ar := cur_ctx.lower_expr(arg)
-            lowered_args = lowered_args.push(ar.expr)
-            cur_ctx = ar.ctx
-          }
-          case cur_ctx.func_table[method_name] {
-            .Some(fid) => {
-              callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: MonoType.Void, span: callee_expr.span }
-              ExprOut.{
-                expr: CoreExpr.{ kind: .Call(callee_core, lowered_args), ty, span: s },
-                ctx: cur_ctx,
-              }
-            },
-            .None => {
-              // Fallback: lower normally if function not found
-              cr := ctx.lower_expr(callee_expr)
-              lowered_args2: Vector<CoreExpr> = []
-              cur_ctx2 := cr.ctx
-              for arg in args {
-                ar := cur_ctx2.lower_expr(arg)
-                lowered_args2 = lowered_args2.push(ar.expr)
-                cur_ctx2 = ar.ctx
-              }
-              ExprOut.{
-                expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args2), ty, span: s },
-                ctx: cur_ctx2,
-              }
-            },
-          }
-        },
-        _ => {
-          // Not a field expression — should not happen, but fall through
-          cr := ctx.lower_expr(callee_expr)
-          lowered_args: Vector<CoreExpr> = []
-          cur_ctx := cr.ctx
-          for arg in args {
-            ar := cur_ctx.lower_expr(arg)
-            lowered_args = lowered_args.push(ar.expr)
-            cur_ctx = ar.ctx
-          }
-          ExprOut.{
-            expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
-            ctx: cur_ctx,
+    .Some(info) => {
+      case ctx.func_table[info.func_name] {
+        .Some(fid) => {
+          callee_ty := ctx.expr_type(callee_expr)
+          if info.has_receiver {
+            // Receiver method call: x.method(args) → Call(GlobalFunc, [x, ...args])
+            case callee_expr.kind {
+              .Field(receiver, _) => {
+                rr := ctx.lower_expr(receiver)
+                lowered_args: Vector<CoreExpr> = [rr.expr]
+                cur_ctx := rr.ctx
+                for arg in args {
+                  ar := cur_ctx.lower_expr(arg)
+                  lowered_args = lowered_args.push(ar.expr)
+                  cur_ctx = ar.ctx
+                }
+                callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: callee_expr.span }
+                ExprOut.{
+                  expr: CoreExpr.{ kind: .Call(callee_core, lowered_args), ty, span: s },
+                  ctx: cur_ctx,
+                }
+              },
+              _ => lower_call_generic(ctx, callee_expr, args, ty, s),
+            }
+          } else {
+            // Module-qualified call: Mod.func(args) → Call(GlobalFunc, args)
+            lowered_args: Vector<CoreExpr> = []
+            cur_ctx := ctx
+            for arg in args {
+              ar := cur_ctx.lower_expr(arg)
+              lowered_args = lowered_args.push(ar.expr)
+              cur_ctx = ar.ctx
+            }
+            callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: callee_expr.span }
+            ExprOut.{
+              expr: CoreExpr.{ kind: .Call(callee_core, lowered_args), ty, span: s },
+              ctx: cur_ctx,
+            }
           }
         },
+        .None => lower_call_generic(ctx, callee_expr, args, ty, s),
       }
     },
-    .None => {
-      // Normal call — lower callee and args
-      cr := ctx.lower_expr(callee_expr)
-      lowered_args: Vector<CoreExpr> = []
-      cur_ctx := cr.ctx
-      for arg in args {
-        ar := cur_ctx.lower_expr(arg)
-        lowered_args = lowered_args.push(ar.expr)
-        cur_ctx = ar.ctx
-      }
-      ExprOut.{
-        expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
-        ctx: cur_ctx,
-      }
-    },
+    .None => lower_call_generic(ctx, callee_expr, args, ty, s),
+  }
+}
+
+fn lower_call_generic(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
+  cr := ctx.lower_expr(callee_expr)
+  lowered_args: Vector<CoreExpr> = []
+  cur_ctx := cr.ctx
+  for arg in args {
+    ar := cur_ctx.lower_expr(arg)
+    lowered_args = lowered_args.push(ar.expr)
+    cur_ctx = ar.ctx
+  }
+  ExprOut.{
+    expr: CoreExpr.{ kind: .Call(cr.expr, lowered_args), ty, span: s },
+    ctx: cur_ctx,
   }
 }
 
