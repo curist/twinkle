@@ -901,7 +901,7 @@ impl ValueEnv {
             "error".to_string(),
             MonoType::Function {
                 params: vec![MonoType::String],
-                ret: Box::new(MonoType::Void), // Actually never returns, but Void for now
+                ret: Box::new(MonoType::Never),
             },
         );
         env.builtins.insert(

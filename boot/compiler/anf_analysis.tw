@@ -1,0 +1,242 @@
+// ANF analysis utilities: free/bound/assigned locals, pattern bindings, divergence.
+//
+// Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
+
+use .core_ir.{LocalId, CorePattern}
+use .anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+
+// ── Set helpers (Dict<Int, Bool> as set) ────────────────────────────
+
+pub fn set_has(s: Dict<Int, Bool>, k: Int) Bool {
+  s.has(k)
+}
+
+fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
+  s[k] = true
+  s
+}
+
+// ── collect_pattern_bindings ────────────────────────────────────────
+
+pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case pattern {
+    .Var(id) => set_add(out, id.id),
+    .Variant(_, _, fields) => {
+      result := out
+      for f in fields { result = collect_pattern_bindings(f, result) }
+      result
+    },
+    .Wildcard => out,
+    .LitInt(_) => out,
+    .LitBool(_) => out,
+    .LitStr(_) => out,
+  }
+}
+
+// ── collect_free_locals ─────────────────────────────────────────────
+
+pub fn collect_free_locals(expr: AnfExpr, declared: Dict<Int, Bool>) Dict<Int, Bool> {
+  free: Dict<Int, Bool> = Dict.new()
+  r := collect_free_expr(expr, declared, free)
+  r.free
+}
+
+type FreeState = .{ declared: Dict<Int, Bool>, free: Dict<Int, Bool> }
+
+fn free_atom(atom: Atom, st: FreeState) FreeState {
+  case atom {
+    .ALocal(id) => {
+      if !set_has(st.declared, id.id) {
+        FreeState.{ declared: st.declared, free: set_add(st.free, id.id) }
+      } else {
+        st
+      }
+    },
+    _ => st,
+  }
+}
+
+fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
+  case expr {
+    .Let(local, op, body) => {
+      st := collect_free_op(op, declared, free)
+      new_declared := set_add(st.declared, local.id)
+      collect_free_expr(body, new_declared, st.free)
+    },
+    .Atom(atom) => free_atom(atom, FreeState.{ declared: declared, free: free }),
+    .Return(.Some(atom)) => free_atom(atom, FreeState.{ declared: declared, free: free }),
+    .Break(.Some(atom)) => free_atom(atom, FreeState.{ declared: declared, free: free }),
+    .Return(.None) => FreeState.{ declared: declared, free: free },
+    .Break(.None) => FreeState.{ declared: declared, free: free },
+    .Continue => FreeState.{ declared: declared, free: free },
+  }
+}
+
+fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
+  st := FreeState.{ declared: declared, free: free }
+  case op {
+    .ACall(callee, args) => {
+      st = free_atom(callee, st)
+      for a in args { st = free_atom(a, st) }
+      st
+    },
+    .AIf(cond, then_e, else_e) => {
+      st = free_atom(cond, st)
+      then_st := collect_free_expr(then_e, st.declared, st.free)
+      else_st := collect_free_expr(else_e, st.declared, then_st.free)
+      FreeState.{ declared: st.declared, free: else_st.free }
+    },
+    .AMatch(scrutinee, arms) => {
+      st = free_atom(scrutinee, st)
+      for arm in arms {
+        arm_declared := collect_pattern_bindings(arm.pattern, st.declared)
+        arm_st := collect_free_expr(arm.body, arm_declared, st.free)
+        st = FreeState.{ declared: st.declared, free: arm_st.free }
+      }
+      st
+    },
+    .ALoop(body) => {
+      body_st := collect_free_expr(body, st.declared, st.free)
+      FreeState.{ declared: st.declared, free: body_st.free }
+    },
+    .ADefer(body) => {
+      body_st := collect_free_expr(body, st.declared, st.free)
+      FreeState.{ declared: st.declared, free: body_st.free }
+    },
+    .ABinOp(_, left, right, _) => {
+      st = free_atom(left, st)
+      free_atom(right, st)
+    },
+    .AUnOp(_, inner, _) => free_atom(inner, st),
+    .AMakeClosure(_, free_vars) => {
+      for v in free_vars {
+        if !set_has(st.declared, v.id) {
+          st = FreeState.{ declared: st.declared, free: set_add(st.free, v.id) }
+        }
+      }
+      st
+    },
+    .ARecord(_, fields) => {
+      for f in fields { st = free_atom(f.value, st) }
+      st
+    },
+    .ARecordGet(target, _, _) => free_atom(target, st),
+    .ARecordUpdate(base, _, value, _, _) => {
+      st = free_atom(base, st)
+      free_atom(value, st)
+    },
+    .AVariant(_, _, args) => {
+      for a in args { st = free_atom(a, st) }
+      st
+    },
+    .AArrayLit(elems) => {
+      for a in elems { st = free_atom(a, st) }
+      st
+    },
+    .AIndex(base, index, _, _) => {
+      st = free_atom(base, st)
+      free_atom(index, st)
+    },
+    .AInit(value) => free_atom(value, st),
+    .AAssign(local, value) => {
+      if !set_has(st.declared, local.id) {
+        st = FreeState.{ declared: st.declared, free: set_add(st.free, local.id) }
+      }
+      free_atom(value, st)
+    },
+  }
+}
+
+// ── collect_bound_locals ────────────────────────────────────────────
+
+pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> {
+  collect_bound_expr(expr, Dict.new())
+}
+
+fn collect_bound_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case expr {
+    .Let(local, op, body) => {
+      result := set_add(out, local.id)
+      result = collect_bound_op(op, result)
+      collect_bound_expr(body, result)
+    },
+    _ => out,
+  }
+}
+
+fn collect_bound_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      result := collect_bound_expr(then_e, out)
+      collect_bound_expr(else_e, result)
+    },
+    .AMatch(_, arms) => {
+      result := out
+      for arm in arms { result = collect_bound_expr(arm.body, result) }
+      result
+    },
+    .ALoop(body) => collect_bound_expr(body, out),
+    .ADefer(body) => collect_bound_expr(body, out),
+    _ => out,
+  }
+}
+
+// ── collect_assigned_locals ─────────────────────────────────────────
+
+pub fn collect_assigned_locals(expr: AnfExpr) Dict<Int, Bool> {
+  collect_assigned_expr(expr, Dict.new())
+}
+
+fn collect_assigned_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case expr {
+    .Let(_, op, body) => {
+      result := collect_assigned_op(op, out)
+      collect_assigned_expr(body, result)
+    },
+    _ => out,
+  }
+}
+
+fn collect_assigned_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .AAssign(local, _) => set_add(out, local.id),
+    .AIf(_, then_e, else_e) => {
+      result := collect_assigned_expr(then_e, out)
+      collect_assigned_expr(else_e, result)
+    },
+    .AMatch(_, arms) => {
+      result := out
+      for arm in arms { result = collect_assigned_expr(arm.body, result) }
+      result
+    },
+    .ALoop(body) => collect_assigned_expr(body, out),
+    .ADefer(body) => collect_assigned_expr(body, out),
+    _ => out,
+  }
+}
+
+// ── expr_always_diverges ────────────────────────────────────────────
+
+pub fn expr_always_diverges(expr: AnfExpr) Bool {
+  case expr {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    .Atom(_) => false,
+    .Let(_, op, body) => op_always_diverges(op) or expr_always_diverges(body),
+  }
+}
+
+pub fn op_always_diverges(op: AnfOp) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => expr_always_diverges(then_e) and expr_always_diverges(else_e),
+    .AMatch(_, arms) => {
+      if arms.len() == 0 { return true }
+      for arm in arms {
+        if !expr_always_diverges(arm.body) { return false }
+      }
+      true
+    },
+    _ => false,
+  }
+}

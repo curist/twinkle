@@ -1,0 +1,705 @@
+// Core IR → ANF IR lowering pass.
+//
+// Transforms block-structured Core IR into flat let-chains (ANF) where
+// every intermediate computation is bound to a named local.
+//
+// Uses an explicit let-accumulator pattern: bindings are collected into
+// a Vector<LetBinding>, then wrapped around a tail expression via build_lets.
+
+use .core_ir.{
+  LocalId, FuncId, FieldId, VariantId,
+  CoreExpr, CoreExprKind, CoreModule, CorePattern, FunctionDef, MatchArm,
+  Param, BinOp, UnOp, FieldInit,
+}
+use .resolver.{MonoType, TypeId}
+use .anf.{
+  Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm,
+  FieldAtom, OpKind, IndexKind,
+}
+
+// ── State ───────────────────────────────────────────────────────────
+
+type LowerState = .{
+  next_temp: Int,
+  op_result_mono: Dict<Int, MonoType>,
+}
+
+type FreshResult = .{ local: LocalId, state: LowerState }
+
+fn fresh(state: LowerState) FreshResult {
+  id := state.next_temp
+  FreshResult.{ local: LocalId.{ id: id }, state: LowerState.{ next_temp: id + 1, op_result_mono: state.op_result_mono } }
+}
+
+// ── Let accumulator ─────────────────────────────────────────────────
+
+type LetBinding = .{ local: LocalId, op: AnfOp }
+
+fn build_lets(accum: Vector<LetBinding>, tail: AnfExpr) AnfExpr {
+  result := tail
+  i := accum.len() - 1
+  for i >= 0 {
+    b := accum[i]
+    result = .Let(b.local, b.op, result)
+    i = i - 1
+  }
+  result
+}
+
+type PushResult = .{ accum: Vector<LetBinding>, state: LowerState }
+
+fn push_accum(
+  accum: Vector<LetBinding>,
+  state: LowerState,
+  local: LocalId,
+  op: AnfOp,
+  ty: MonoType,
+) PushResult {
+  new_accum := accum.push(LetBinding.{ local: local, op: op })
+  new_mono := state.op_result_mono
+  new_mono[local.id] = ty
+  PushResult.{ accum: new_accum, state: LowerState.{ next_temp: state.next_temp, op_result_mono: new_mono } }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn op_kind_from(ty: MonoType) OpKind {
+  case ty {
+    .Int => .Int,
+    .Byte => .Int,
+    .Float => .Float,
+    .Bool => .Bool,
+    .String => .Str,
+    _ => error("op_kind_from: unexpected type"),
+  }
+}
+
+fn index_kind_from(ty: MonoType) IndexKind {
+  case ty {
+    .Vector(_) => .Array,
+    .Dict(_, _) => .Dict,
+    .String => .Str,
+    _ => error("index_kind_from: unexpected type"),
+  }
+}
+
+fn type_id_from(ty: MonoType) TypeId {
+  case ty {
+    .Named(tid, _) => tid,
+    _ => error("type_id_from: expected Named type"),
+  }
+}
+
+// ── max_local_id ────────────────────────────────────────────────────
+
+fn max_local_id_in_func(func: FunctionDef) Int {
+  max := 0
+  for p in func.params {
+    if p.local.id > max { max = p.local.id }
+  }
+  max_local_id_in_expr(func.body, max)
+}
+
+fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
+  case expr.kind {
+    .Local(id) => if id.id > max { id.id } else { max },
+    .GlobalLocal(id) => if id.id > max { id.id } else { max },
+    .Let(local, value, body) => {
+      m := if local.id > max { local.id } else { max }
+      m = max_local_id_in_expr(value, m)
+      max_local_id_in_expr(body, m)
+    },
+    .Assign(local, value) => {
+      m := if local.id > max { local.id } else { max }
+      max_local_id_in_expr(value, m)
+    },
+    .MakeClosure(_, free_vars) => {
+      m := max
+      for v in free_vars {
+        if v.id > m { m = v.id }
+      }
+      m
+    },
+    .BinOp(_, left, right) => {
+      m := max_local_id_in_expr(left, max)
+      max_local_id_in_expr(right, m)
+    },
+    .UnOp(_, inner) => max_local_id_in_expr(inner, max),
+    .Call(callee, args) => {
+      m := max_local_id_in_expr(callee, max)
+      for a in args { m = max_local_id_in_expr(a, m) }
+      m
+    },
+    .If(cond, then_e, else_e) => {
+      m := max_local_id_in_expr(cond, max)
+      m = max_local_id_in_expr(then_e, m)
+      max_local_id_in_expr(else_e, m)
+    },
+    .Match(scrutinee, arms) => {
+      m := max_local_id_in_expr(scrutinee, max)
+      for arm in arms {
+        m = max_local_id_in_pattern(arm.pattern, m)
+        m = max_local_id_in_expr(arm.body, m)
+      }
+      m
+    },
+    .Loop(body) => max_local_id_in_expr(body, max),
+    .Break(val) => {
+      case val {
+        .Some(v) => max_local_id_in_expr(v, max),
+        .None => max,
+      }
+    },
+    .Return(val) => {
+      case val {
+        .Some(v) => max_local_id_in_expr(v, max),
+        .None => max,
+      }
+    },
+    .Record(_, fields) => {
+      m := max
+      for f in fields { m = max_local_id_in_expr(f.value, m) }
+      m
+    },
+    .RecordGet(target, _) => max_local_id_in_expr(target, max),
+    .RecordUpdate(base, _, value) => {
+      m := max_local_id_in_expr(base, max)
+      max_local_id_in_expr(value, m)
+    },
+    .Variant(_, _, args) => {
+      m := max
+      for a in args { m = max_local_id_in_expr(a, m) }
+      m
+    },
+    .ArrayLit(elements) => {
+      m := max
+      for e in elements { m = max_local_id_in_expr(e, m) }
+      m
+    },
+    .Index(base, index) => {
+      m := max_local_id_in_expr(base, max)
+      max_local_id_in_expr(index, m)
+    },
+    .Defer(inner) => max_local_id_in_expr(inner, max),
+    .LitInt(_) => max,
+    .LitFloat(_) => max,
+    .LitBool(_) => max,
+    .LitStr(_) => max,
+    .LitVoid => max,
+    .GlobalFunc(_) => max,
+    .Continue => max,
+  }
+}
+
+fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
+  case pattern {
+    .Var(id) => if id.id > max { id.id } else { max },
+    .Variant(_, _, fields) => {
+      m := max
+      for f in fields { m = max_local_id_in_pattern(f, m) }
+      m
+    },
+    .Wildcard => max,
+    .LitInt(_) => max,
+    .LitBool(_) => max,
+    .LitStr(_) => max,
+  }
+}
+
+// ── Entry points ────────────────────────────────────────────────────
+
+pub fn lower_module(module: CoreModule) AnfModule {
+  functions: Vector<AnfFunctionDef> = []
+  for func in module.functions {
+    next_temp := max_local_id_in_func(func) + 1
+    state := LowerState.{ next_temp: next_temp, op_result_mono: Dict.new() }
+    result := lower_expr_top(func.body, state)
+    fdef := AnfFunctionDef.{
+      func_id: func.func_id,
+      name: func.name,
+      params: func.params,
+      op_result_mono: result.state.op_result_mono,
+      body: result.expr,
+      return_ty: func.return_ty,
+    }
+    functions = functions.push(fdef)
+  }
+  AnfModule.{
+    functions: functions,
+    init_func_id: module.init_func_id,
+  }
+}
+
+// ── lower_expr_top ──────────────────────────────────────────────────
+
+type ExprResult = .{ expr: AnfExpr, state: LowerState }
+type ExprAccumResult = .{ expr: AnfExpr, state: LowerState, accum: Vector<LetBinding> }
+type AtomAccumResult = .{ atom: Atom, state: LowerState, accum: Vector<LetBinding> }
+
+fn lower_expr_top(expr: CoreExpr, state: LowerState) ExprResult {
+  accum: Vector<LetBinding> = []
+  r := lower_expr(expr, state, accum)
+  ExprResult.{ expr: build_lets(r.accum, r.expr), state: r.state }
+}
+
+// ── lower_expr ──────────────────────────────────────────────────────
+
+fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) ExprAccumResult {
+  case expr.kind {
+    // ── Atoms ──
+    .LitInt(n) => ExprAccumResult.{ expr: .Atom(.ALitInt(n)), state: state, accum: accum },
+    .LitFloat(v) => ExprAccumResult.{ expr: .Atom(.ALitFloat(v)), state: state, accum: accum },
+    .LitBool(b) => ExprAccumResult.{ expr: .Atom(.ALitBool(b)), state: state, accum: accum },
+    .LitStr(s) => ExprAccumResult.{ expr: .Atom(.ALitStr(s)), state: state, accum: accum },
+    .LitVoid => ExprAccumResult.{ expr: .Atom(.ALitVoid), state: state, accum: accum },
+    .Local(id) => ExprAccumResult.{ expr: .Atom(.ALocal(id)), state: state, accum: accum },
+    .GlobalLocal(id) => ExprAccumResult.{ expr: .Atom(.ALocal(id)), state: state, accum: accum },
+    .GlobalFunc(id) => ExprAccumResult.{ expr: .Atom(.AGlobalFunc(id)), state: state, accum: accum },
+
+    // ── Non-atomic ops ──
+    .MakeClosure(func_id, free_vars) => {
+      r := fresh(state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .BinOp(op, left, right) => {
+      kind := op_kind_from(left.ty)
+      la := atomize(left, state, accum)
+      ra := atomize(right, la.state, la.accum)
+      r := fresh(ra.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .UnOp(op, inner) => {
+      kind := op_kind_from(inner.ty)
+      ia := atomize(inner, state, accum)
+      r := fresh(ia.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Call(callee, args) => {
+      ca := atomize(callee, state, accum)
+      cur_state := ca.state
+      cur_accum := ca.accum
+      arg_atoms: Vector<Atom> = []
+      for a in args {
+        aa := atomize(a, cur_state, cur_accum)
+        arg_atoms = arg_atoms.push(aa.atom)
+        cur_state = aa.state
+        cur_accum = aa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Record(type_id, fields) => {
+      cur_state := state
+      cur_accum := accum
+      field_atoms: Vector<FieldAtom> = []
+      for f in fields {
+        fa := atomize(f.value, cur_state, cur_accum)
+        field_atoms = field_atoms.push(FieldAtom.{ field: f.field, value: fa.atom })
+        cur_state = fa.state
+        cur_accum = fa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .RecordGet(target, field) => {
+      tid := type_id_from(target.ty)
+      ta := atomize(target, state, accum)
+      r := fresh(ta.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .RecordUpdate(base, field, value) => {
+      tid := type_id_from(base.ty)
+      ba := atomize(base, state, accum)
+      va := atomize(value, ba.state, ba.accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(va.accum, st, tmp, .ARecordUpdate(ba.atom, field, va.atom, false, tid), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Variant(type_id, variant, args) => {
+      cur_state := state
+      cur_accum := accum
+      arg_atoms: Vector<Atom> = []
+      for a in args {
+        aa := atomize(a, cur_state, cur_accum)
+        arg_atoms = arg_atoms.push(aa.atom)
+        cur_state = aa.state
+        cur_accum = aa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .ArrayLit(elements) => {
+      cur_state := state
+      cur_accum := accum
+      atoms: Vector<Atom> = []
+      for e in elements {
+        ea := atomize(e, cur_state, cur_accum)
+        atoms = atoms.push(ea.atom)
+        cur_state = ea.state
+        cur_accum = ea.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Index(base, index) => {
+      bty := index_kind_from(base.ty)
+      ba := atomize(base, state, accum)
+      ia := atomize(index, ba.state, ba.accum)
+      r := fresh(ia.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    // ── Defer ──
+    .Defer(inner) => {
+      inner_r := lower_expr_top(inner, state)
+      r := fresh(inner_r.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
+      ExprAccumResult.{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
+    },
+
+    // ── Assign ──
+    .Assign(local, value) => {
+      va := atomize(value, state, accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
+      ExprAccumResult.{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
+    },
+
+    // ── Let ──
+    .Let(orig_local, value, body) => {
+      // Lower value in isolated accumulator
+      value_accum: Vector<LetBinding> = []
+      vr := lower_expr(value, state, value_accum)
+      case vr.expr {
+        .Atom(atom) => {
+          // Value reduced to atom — extend outer accum, push AInit
+          merged := accum
+          for b in vr.accum {
+            merged = merged.push(b)
+          }
+          pa := push_accum(merged, vr.state, orig_local, .AInit(atom), value.ty)
+          // Continue with body
+          lower_expr(body, pa.state, pa.accum)
+        },
+        _ => {
+          // Terminal (Return/Break/Continue) — body is unreachable
+          ExprAccumResult.{
+            expr: build_lets(vr.accum, vr.expr),
+            state: vr.state,
+            accum: accum,
+          }
+        },
+      }
+    },
+
+    // ── Control flow ──
+    .If(cond, then_e, else_e) => {
+      ca := atomize(cond, state, accum)
+      then_r := lower_expr_top(then_e, ca.state)
+      else_r := lower_expr_top(else_e, then_r.state)
+      r := fresh(else_r.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ca.accum, st, tmp, .AIf(ca.atom, then_r.expr, else_r.expr), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Match(scrutinee, arms) => {
+      sa := atomize(scrutinee, state, accum)
+      cur_state := sa.state
+      anf_arms: Vector<AnfMatchArm> = []
+      for arm in arms {
+        arm_r := lower_expr_top(arm.body, cur_state)
+        anf_arms = anf_arms.push(AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr })
+        cur_state = arm_r.state
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(sa.accum, st, tmp, .AMatch(sa.atom, anf_arms), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    .Loop(body) => {
+      body_r := lower_expr_top(body, state)
+      r := fresh(body_r.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(accum, st, tmp, .ALoop(body_r.expr), expr.ty)
+      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+    },
+
+    // ── Terminals ──
+    .Break(val) => {
+      case val {
+        .Some(v) => {
+          va := atomize(v, state, accum)
+          ExprAccumResult.{ expr: .Break(.Some(va.atom)), state: va.state, accum: va.accum }
+        },
+        .None => ExprAccumResult.{ expr: .Break(.None), state: state, accum: accum },
+      }
+    },
+
+    .Continue => ExprAccumResult.{ expr: .Continue, state: state, accum: accum },
+
+    .Return(val) => {
+      case val {
+        .Some(v) => {
+          va := atomize(v, state, accum)
+          ExprAccumResult.{ expr: .Return(.Some(va.atom)), state: va.state, accum: va.accum }
+        },
+        .None => ExprAccumResult.{ expr: .Return(.None), state: state, accum: accum },
+      }
+    },
+  }
+}
+
+// ── atomize ─────────────────────────────────────────────────────────
+
+fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAccumResult {
+  case expr.kind {
+    // Already atoms
+    .LitInt(n) => AtomAccumResult.{ atom: .ALitInt(n), state: state, accum: accum },
+    .LitFloat(v) => AtomAccumResult.{ atom: .ALitFloat(v), state: state, accum: accum },
+    .LitBool(b) => AtomAccumResult.{ atom: .ALitBool(b), state: state, accum: accum },
+    .LitStr(s) => AtomAccumResult.{ atom: .ALitStr(s), state: state, accum: accum },
+    .LitVoid => AtomAccumResult.{ atom: .ALitVoid, state: state, accum: accum },
+    .Local(id) => AtomAccumResult.{ atom: .ALocal(id), state: state, accum: accum },
+    .GlobalLocal(id) => AtomAccumResult.{ atom: .ALocal(id), state: state, accum: accum },
+    .GlobalFunc(id) => AtomAccumResult.{ atom: .AGlobalFunc(id), state: state, accum: accum },
+
+    // Structural forms: lower independently, flatten into accum
+    .If(_, _, _) => atomize_structural(expr, state, accum),
+    .Match(_, _) => atomize_structural(expr, state, accum),
+    .Loop(_) => atomize_structural(expr, state, accum),
+    .Let(_, _, _) => atomize_structural(expr, state, accum),
+
+    // Terminals in atomize position = malformed Core IR
+    .Break(_) => error("atomize: Break in operand position"),
+    .Continue => error("atomize: Continue in operand position"),
+    .Return(_) => error("atomize: Return in operand position"),
+
+    // Non-atomic ops — same as lower_expr but return atom
+    .MakeClosure(func_id, free_vars) => {
+      r := fresh(state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .BinOp(op, left, right) => {
+      kind := op_kind_from(left.ty)
+      la := atomize(left, state, accum)
+      ra := atomize(right, la.state, la.accum)
+      r := fresh(ra.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .UnOp(op, inner) => {
+      kind := op_kind_from(inner.ty)
+      ia := atomize(inner, state, accum)
+      r := fresh(ia.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .Call(callee, args) => {
+      ca := atomize(callee, state, accum)
+      cur_state := ca.state
+      cur_accum := ca.accum
+      arg_atoms: Vector<Atom> = []
+      for a in args {
+        aa := atomize(a, cur_state, cur_accum)
+        arg_atoms = arg_atoms.push(aa.atom)
+        cur_state = aa.state
+        cur_accum = aa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .Record(type_id, fields) => {
+      cur_state := state
+      cur_accum := accum
+      field_atoms: Vector<FieldAtom> = []
+      for f in fields {
+        fa := atomize(f.value, cur_state, cur_accum)
+        field_atoms = field_atoms.push(FieldAtom.{ field: f.field, value: fa.atom })
+        cur_state = fa.state
+        cur_accum = fa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .RecordGet(target, field) => {
+      tid := type_id_from(target.ty)
+      ta := atomize(target, state, accum)
+      r := fresh(ta.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .RecordUpdate(base, field, value) => {
+      tid := type_id_from(base.ty)
+      ba := atomize(base, state, accum)
+      va := atomize(value, ba.state, ba.accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(va.accum, st, tmp, .ARecordUpdate(ba.atom, field, va.atom, false, tid), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .Variant(type_id, variant, args) => {
+      cur_state := state
+      cur_accum := accum
+      arg_atoms: Vector<Atom> = []
+      for a in args {
+        aa := atomize(a, cur_state, cur_accum)
+        arg_atoms = arg_atoms.push(aa.atom)
+        cur_state = aa.state
+        cur_accum = aa.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .ArrayLit(elements) => {
+      cur_state := state
+      cur_accum := accum
+      atoms: Vector<Atom> = []
+      for e in elements {
+        ea := atomize(e, cur_state, cur_accum)
+        atoms = atoms.push(ea.atom)
+        cur_state = ea.state
+        cur_accum = ea.accum
+      }
+      r := fresh(cur_state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .Index(base, index) => {
+      bty := index_kind_from(base.ty)
+      ba := atomize(base, state, accum)
+      ia := atomize(index, ba.state, ba.accum)
+      r := fresh(ia.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
+      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+    },
+    .Assign(local, value) => {
+      va := atomize(value, state, accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
+      AtomAccumResult.{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
+    },
+    .Defer(inner) => {
+      inner_r := lower_expr_top(inner, state)
+      r := fresh(inner_r.state)
+      tmp := r.local
+      st := r.state
+      pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
+      AtomAccumResult.{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
+    },
+  }
+}
+
+// ── Structural form atomization ─────────────────────────────────────
+
+fn atomize_structural(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAccumResult {
+  anf_r := lower_expr_top(expr, state)
+  r := fresh(anf_r.state)
+  tmp := r.local
+  st := r.state
+  // Splice: replace the tail Atom with a binding to tmp, then flatten
+  spliced := splice_atom_bind(anf_r.expr, tmp)
+  flat := flatten_into_accum(spliced, accum, tmp, st, expr.ty)
+  AtomAccumResult.{ atom: .ALocal(tmp), state: flat.state, accum: flat.accum }
+}
+
+type FlatResult = .{ state: LowerState, accum: Vector<LetBinding> }
+
+fn splice_atom_bind(anf: AnfExpr, result_local: LocalId) AnfExpr {
+  case anf {
+    .Let(local, op, body) => .Let(local, op, splice_atom_bind(body, result_local)),
+    .Atom(atom) => .Let(result_local, .AInit(atom), .Atom(.ALocal(result_local))),
+    other => other,
+  }
+}
+
+fn flatten_into_accum(
+  anf: AnfExpr,
+  accum: Vector<LetBinding>,
+  result_local: LocalId,
+  state: LowerState,
+  result_ty: MonoType,
+) FlatResult {
+  case anf {
+    .Let(local, op, body) => {
+      new_accum := accum.push(LetBinding.{ local: local, op: op })
+      flatten_into_accum(body, new_accum, result_local, state, result_ty)
+    },
+    .Atom(atom) => {
+      pa := push_accum(accum, state, result_local, .AInit(atom), result_ty)
+      FlatResult.{ state: pa.state, accum: pa.accum }
+    },
+    _ => error("flatten_into_accum: terminal in structural sub-expression"),
+  }
+}

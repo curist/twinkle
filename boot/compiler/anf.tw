@@ -1,0 +1,78 @@
+// ANF (Administrative Normal Form) IR types for the boot compiler.
+//
+// ANF makes evaluation order explicit: every intermediate computation
+// is bound to a named local via Let, producing flat let-chains that
+// map directly to Wasm instructions.
+
+use .core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param}
+use .resolver.{MonoType, TypeId}
+
+// ── Auxiliary enums ─────────────────────────────────────────────────
+
+pub type OpKind = { Int, Float, Bool, Str }
+
+pub type IndexKind = { Array, Dict, Str }
+
+// ── Atoms (trivial values) ──────────────────────────────────────────
+
+pub type Atom = {
+  ALocal(LocalId),
+  AGlobalFunc(FuncId),
+  ALitInt(Int),
+  ALitFloat(Float),
+  ALitBool(Bool),
+  ALitStr(String),
+  ALitVoid,
+}
+
+// ── ANF expressions (flat let-chains) ───────────────────────────────
+
+pub type AnfExpr = {
+  Let(LocalId, AnfOp, AnfExpr),
+  Atom(Atom),
+  Return(Atom?),
+  Break(Atom?),
+  Continue,
+}
+
+// ── ANF operations (non-atomic computations) ────────────────────────
+
+pub type AnfOp = {
+  ACall(Atom, Vector<Atom>),
+  AIf(Atom, AnfExpr, AnfExpr),
+  AMatch(Atom, Vector<AnfMatchArm>),
+  ALoop(AnfExpr),
+  ABinOp(BinOp, Atom, Atom, OpKind),
+  AUnOp(UnOp, Atom, OpKind),
+  AMakeClosure(FuncId, Vector<LocalId>),
+  ARecord(TypeId, Vector<FieldAtom>),
+  ARecordGet(Atom, FieldId, TypeId),
+  ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId),
+  AVariant(TypeId, VariantId, Vector<Atom>),
+  AArrayLit(Vector<Atom>),
+  AIndex(Atom, Atom, IndexKind, MonoType),
+  AInit(Atom),
+  AAssign(LocalId, Atom),
+  ADefer(AnfExpr),
+}
+
+// ── Supporting records ──────────────────────────────────────────────
+
+pub type FieldAtom = .{ field: FieldId, value: Atom }
+pub type AnfMatchArm = .{ pattern: CorePattern, body: AnfExpr }
+
+// ── Function and module ─────────────────────────────────────────────
+
+pub type AnfFunctionDef = .{
+  func_id: FuncId,
+  name: String,
+  params: Vector<Param>,
+  op_result_mono: Dict<Int, MonoType>,
+  body: AnfExpr,
+  return_ty: MonoType,
+}
+
+pub type AnfModule = .{
+  functions: Vector<AnfFunctionDef>,
+  init_func_id: FuncId?,
+}

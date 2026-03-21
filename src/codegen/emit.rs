@@ -2907,6 +2907,12 @@ fn emit_coerce_local(
                 heap: heap.clone(),
             },
         ],
+        // I32 → Ref coercion: only reachable for Never-typed locals (Bool/Byte/Void
+        // never coerce to Ref in valid code). Emit unreachable to satisfy the Wasm
+        // type validator in divergent branches.
+        (ValType::I32, ValType::Ref { .. }) => {
+            vec![Instr::Unreachable]
+        }
         _ => panic!(
             "unsupported local coercion from {:?} to {:?} in Stage 8c Step 2 (FuncId {:?}, local idx {})",
             local_ty, expected, ctx.current_func_id, idx
