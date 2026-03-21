@@ -1344,19 +1344,28 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
   case fs.iter {
     .Some(iter_expr) => {
       // for x in xs { body }
-      //   → Let(arr, lower(xs),
-      //       Let(len, Call(vector_len, [arr]),
-      //         Let(idx, LitInt(0),
-      //           Loop(If(idx >= len, Break,
-      //             Let(x, Index(arr, idx),
-      //               Let(_, lower(body),
-      //                 Let(_, Assign(idx, idx+1), Continue))))))))
+      // Dispatches on iter type: Vector, String, Dict
       ctx = push_scope(ctx)
       ar := lower_expr(ctx, iter_expr)
       ctx = ar.ctx
       arr_lo := alloc_anon_local(ctx)
       arr_local := arr_lo.local
       ctx = arr_lo.ctx
+      // index_source: the collection we Index into (arr_local for Vec/String, keys for Dict)
+      index_source := arr_local
+      index_source_ty := ar.expr.ty
+      // For Dict iteration, allocate a keys local early so elem_bind can use it
+      dict_keys_local: LocalId? = .None
+      case ar.expr.ty {
+        .Dict(key_ty, _) => {
+          klo := alloc_anon_local(ctx)
+          ctx = klo.ctx
+          dict_keys_local = .Some(klo.local)
+          index_source = klo.local
+          index_source_ty = MonoType.Vector(key_ty)
+        },
+        _ => {},
+      }
 
       len_lo := alloc_anon_local(ctx)
       len_local := len_lo.local
@@ -1438,11 +1447,11 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         .None => body_then_inc,
       }
 
-      // Let(x, Index(arr, idx), body_or_idx)
+      // Let(x, Index(index_source, idx), body_or_idx)
       elem_bind := CoreExpr.{
         kind: .Let(elem_local, CoreExpr.{
           kind: .Index(
-            CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s },
+            CoreExpr.{ kind: .Local(index_source), ty: index_source_ty, span: s },
             CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
           ),
           ty: void_ty,  // element type — approximate
@@ -1479,32 +1488,67 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         span: s,
       }
 
-      // Let(len, Call(vector_len, [arr]), idx_init)
-      // For now, use a simple array length approach — vector.len() call
-      // We approximate len as BinOp placeholder; will be refined later
-      len_call := CoreExpr.{
-        kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN = FuncId(10)
-          [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
-        ),
-        ty: int_ty,
-        span: s,
+      // Dispatch on iterator type for len function and arr binding
+      iter_ty := ar.expr.ty
+      case iter_ty {
+        .String => {
+          // String: use string_len (FuncId 8)
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
+              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
+          ExprOut.{ expr: result, ctx }
+        },
+        .Dict(key_ty, _) => {
+          // Dict: call DICT_KEYS (FuncId 14) to get key vector, then iterate that
+          keys_local := case dict_keys_local {
+            .Some(kl) => kl,
+            .None => arr_local,  // should not happen
+          }
+          keys_ty := MonoType.Vector(key_ty)
+          keys_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
+              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
+            ),
+            ty: keys_ty,
+            span: s,
+          }
+          // len on the keys vector
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+              [CoreExpr.{ kind: .Local(keys_local), ty: keys_ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+          keys_init := CoreExpr.{ kind: .Let(keys_local, keys_call, len_init), ty: void_ty, span: s }
+          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, keys_init), ty: void_ty, span: s }
+          ExprOut.{ expr: result, ctx }
+        },
+        _ => {
+          // Vector (default): use vector_len (FuncId 10)
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+              [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
+          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
+          ExprOut.{ expr: result, ctx }
+        },
       }
-
-      len_init := CoreExpr.{
-        kind: .Let(len_local, len_call, idx_init),
-        ty: void_ty,
-        span: s,
-      }
-
-      // Let(arr, lower(xs), len_init)
-      result := CoreExpr.{
-        kind: .Let(arr_local, ar.expr, len_init),
-        ty: void_ty,
-        span: s,
-      }
-
-      ExprOut.{ expr: result, ctx }
     },
     .None => {
       // for cond { body }  →  Loop(If(!cond, Break, body))

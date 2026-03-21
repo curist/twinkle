@@ -140,6 +140,37 @@ fn has_terminal_in_let_value(expr: core_ir.CoreExpr) Bool {
   }
 }
 
+fn has_func_id(expr: core_ir.CoreExpr, target_id: Int) Bool {
+  case expr.kind {
+    .Call(callee, args) => {
+      case callee.kind {
+        .GlobalFunc(fid) => {
+          if fid.id == target_id { return true }
+        },
+        _ => {},
+      }
+      if has_func_id(callee, target_id) { return true }
+      for a in args {
+        if has_func_id(a, target_id) { return true }
+      }
+      false
+    },
+    .GlobalFunc(fid) => fid.id == target_id,
+    .Let(_, val, body) => has_func_id(val, target_id) or has_func_id(body, target_id),
+    .If(cond, then_e, else_e) => has_func_id(cond, target_id) or has_func_id(then_e, target_id) or has_func_id(else_e, target_id),
+    .Match(scrut, arms) => {
+      if has_func_id(scrut, target_id) { return true }
+      for arm in arms {
+        if has_func_id(arm.body, target_id) { return true }
+      }
+      false
+    },
+    .Loop(inner) => has_func_id(inner, target_id),
+    .Assign(_, val) => has_func_id(val, target_id),
+    _ => false,
+  }
+}
+
 fn has_call(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .Call(_, _) => true,
@@ -711,6 +742,27 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let wrapping dict assignment"),
       }
+    })
+    // ── G4: For-loop type dispatch ──────────────────────────────────
+    .test("lower for-in string loop", fn() Result<Void, String> {
+      src := "fn f(s: String) Void { for b in s { b } }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Should use string_len (FuncId 8), not vector_len
+      try assert.ok(has_loop(body), "expected Loop in string for-in")
+      // Check that the len call uses FuncId(8) = string_len
+      try assert.ok(has_func_id(body, 8), "expected string_len (FuncId 8) call")
+      .Ok({})
+    })
+    // Range for-loop test deferred — requires Range type in test env
+    .test("lower for-in dict loop", fn() Result<Void, String> {
+      src := "fn f(m: Dict<String, Int>) Void { for k in m { k } }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Dict loop calls DICT_KEYS (FuncId 14) to get key vector
+      try assert.ok(has_loop(body), "expected Loop in dict for-in")
+      try assert.ok(has_func_id(body, 14), "expected DICT_KEYS (FuncId 14) call")
+      .Ok({})
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"
