@@ -1,0 +1,9 @@
+// Extension method on a primitive type should be rejected.
+// `zap` is defined in user code, not in Int's defining module,
+// so `x.zap()` must not resolve as a dot method.
+
+fn zap(n: Int) Int { n + 1 }
+
+x := 1
+y := x.zap()
+println("${y}")

@@ -136,15 +136,26 @@ pub fn resolve_stage(
     Resolver::resolve(ast, type_env, value_env)
 }
 
+/// Resolve with `is_internal` flag for stdlib/prelude modules.
+pub fn resolve_stage_internal(
+    ast: &SourceFile,
+    type_env: TypeEnv,
+    value_env: ValueEnv,
+    is_internal: bool,
+) -> Result<ResolvedModule, Vec<TypeError>> {
+    Resolver::resolve_with_options(ast, type_env, value_env, is_internal)
+}
+
 /// Resolve with structured diagnostics suitable for tooling.
 pub fn resolve_stage_with_diagnostics(
     ast: &SourceFile,
     type_env: TypeEnv,
     value_env: ValueEnv,
     registry: &FileRegistry,
+    is_internal: bool,
 ) -> Result<ResolvedModule, Vec<QueryDiagnostic>> {
     let type_env_for_fmt = type_env.clone();
-    match resolve_stage(ast, type_env, value_env) {
+    match resolve_stage_internal(ast, type_env, value_env, is_internal) {
         Ok(r) => Ok(r),
         Err(errors) => Err(errors
             .iter()

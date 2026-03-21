@@ -37,15 +37,15 @@ fn test_closure_param(items: Vector<Item>) Item? {
   find(items, fn(a) { a.name == "x" })
 }
 
-// Gap A via method call: opt.ok_or(.Variant(...)) with annotated binding.
-fn test_ok_or_method_annotated(opt: Int?) Result<Int, MyError> {
-  r: Result<Int, MyError> = opt.ok_or(.InvalidInput("bad"))
+// Gap A via function call: ok_or(opt, .Variant(...)) with annotated binding.
+fn test_ok_or_call_annotated(opt: Int?) Result<Int, MyError> {
+  r: Result<Int, MyError> = ok_or(opt, .InvalidInput("bad"))
   r
 }
 
-// Gap A via try + method call chain.
-fn test_ok_or_method_try(opt: Int?) Result<Int, MyError> {
-  x := try opt.ok_or(.NotFound("missing"))
+// Gap A via try + function call.
+fn test_ok_or_call_try(opt: Int?) Result<Int, MyError> {
+  x := try ok_or(opt, .NotFound("missing"))
   .Ok(x)
 }
 

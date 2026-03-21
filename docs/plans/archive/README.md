@@ -105,3 +105,4 @@ Related historical context outside this folder:
 | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) | Boot resolver method registry M1–M4; M5 deferred to multi-module |
 | [boot-resolver-hardening.md](boot-resolver-hardening.md) | Boot resolver hardening and edge-case fixes |
 | [string-interning.md](string-interning.md) | Compile-time string literal interning (Phase 1 landed; runtime Phase 2 optional) |
+| [method-resolution-spec-alignment.md](method-resolution-spec-alignment.md) | Align dot-method resolution with spec: defining-module inherent methods only (Phases 1–2 done; Phase 3–4 deferred) |

@@ -120,11 +120,13 @@ fn hover_on_inherent_method_name_shows_function_type() {
     let math = project_root.join("math.tw");
     let main_source = r#"use math
 
-n := 1
-value := n.inc()
+n := math.Counter.{ value: 1 }
+result := n.inc()
 "#;
-    let math_source = r#"pub fn inc(x: Int) Int {
-  x + 1
+    let math_source = r#"pub type Counter = .{ value: Int }
+
+pub fn inc(c: Counter) Counter {
+  Counter.{ value: c.value + 1 }
 }
 "#;
 
@@ -147,7 +149,7 @@ value := n.inc()
     let byte_offset = main_source.find("inc()").expect("method call") + 1;
     let pos = byte_offset_to_position_utf16(main_source, byte_offset).expect("position");
     let hover = hover_at_module(main, pos);
-    assert_eq!(hover.as_deref(), Some("fn(x: Int) Int"));
+    assert_eq!(hover.as_deref(), Some("fn(c: Counter) Counter"));
 }
 
 #[test]
@@ -645,23 +647,21 @@ fn hover_on_graphemes_method_name_is_stable_across_columns() {
     let project_root = PathBuf::from("/virtual/lsp_hover_graphemes_columns");
     let stdlib_root = project_root.join("stdlib");
     let entry = project_root.join("main.tw");
-    let source = r#"/// First stage.
-fn graphemes(s: String) Iterator<String> {
+    let source = r#"type Text = .{ data: String }
+
+/// First stage.
+fn graphemes(t: Text) Iterator<String> {
   Iterator.unfold(0, fn(i: Int) UnfoldStep<String, Int> {
     if i == 0 {
-      UnfoldStep.Yield(s, 1)
+      UnfoldStep.Yield(t.data, 1)
     } else {
       UnfoldStep.Done
     }
   })
 }
 
-/// Second stage.
-fn to_vector(it: Iterator<String>) Vector<String> {
-  collect x in it { x }
-}
-
-gs := "hello".graphemes().to_vector()
+t := Text.{ data: "hello" }
+gs := t.graphemes()
 "#;
 
     let mut sources = HashMap::new();
@@ -679,7 +679,7 @@ gs := "hello".graphemes().to_vector()
         .get(&analysis.entry_path)
         .expect("entry module should exist");
 
-    let graphemes_offset = source.find("graphemes").expect("graphemes call");
+    let graphemes_offset = source.rfind("graphemes").expect("graphemes call");
     let g_pos = byte_offset_to_position_utf16(source, graphemes_offset).expect("g position");
     let g_hover = hover_at_module(main, g_pos).expect("hover on g");
 
@@ -688,11 +688,11 @@ gs := "hello".graphemes().to_vector()
     let e_hover = hover_at_module(main, e_pos).expect("hover on second e");
 
     assert!(
-        g_hover.contains("fn(s: String) Iterator<String>"),
+        g_hover.contains("fn(t: Text) Iterator<String>"),
         "expected graphemes signature on g, got: {g_hover}"
     );
     assert!(
-        e_hover.contains("fn(s: String) Iterator<String>"),
+        e_hover.contains("fn(t: Text) Iterator<String>"),
         "expected graphemes signature on second e, got: {e_hover}"
     );
 }
@@ -704,24 +704,22 @@ fn hover_on_graphemes_method_name_is_stable_with_multibyte_prefix_line() {
     let project_root = PathBuf::from("/virtual/lsp_hover_graphemes_columns_multibyte_prefix");
     let stdlib_root = project_root.join("stdlib");
     let entry = project_root.join("main.tw");
-    let source = r#"/// First stage.
-fn graphemes(s: String) Iterator<String> {
+    let source = r#"type Text = .{ data: String }
+
+/// First stage.
+fn graphemes(t: Text) Iterator<String> {
   Iterator.unfold(0, fn(i: Int) UnfoldStep<String, Int> {
     if i == 0 {
-      UnfoldStep.Yield(s, 1)
+      UnfoldStep.Yield(t.data, 1)
     } else {
       UnfoldStep.Done
     }
   })
 }
 
-/// Second stage.
-fn to_vector(it: Iterator<String>) Vector<String> {
-  collect x in it { x }
-}
-
 // ASCII — each character is its own grapheme
-gs := "hello".graphemes().to_vector()
+t := Text.{ data: "hello" }
+gs := t.graphemes()
 "#;
 
     let mut sources = HashMap::new();
@@ -739,7 +737,7 @@ gs := "hello".graphemes().to_vector()
         .get(&analysis.entry_path)
         .expect("entry module should exist");
 
-    let graphemes_offset = source.find("graphemes").expect("graphemes call");
+    let graphemes_offset = source.rfind("graphemes").expect("graphemes call");
     let g_pos = byte_offset_to_position_utf16(source, graphemes_offset).expect("g position");
     let g_hover = hover_at_module(main, g_pos).expect("hover on g");
 
@@ -748,11 +746,11 @@ gs := "hello".graphemes().to_vector()
     let e_hover = hover_at_module(main, e_pos).expect("hover on second e");
 
     assert!(
-        g_hover.contains("fn(s: String) Iterator<String>"),
+        g_hover.contains("fn(t: Text) Iterator<String>"),
         "expected graphemes signature on g, got: {g_hover}"
     );
     assert!(
-        e_hover.contains("fn(s: String) Iterator<String>"),
+        e_hover.contains("fn(t: Text) Iterator<String>"),
         "expected graphemes signature on second e, got: {e_hover}"
     );
 }

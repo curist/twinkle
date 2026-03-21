@@ -552,6 +552,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             state.type_env.clone(),
             state.value_env.clone(),
             &file_registry,
+            is_internal,
         ) {
             Ok(resolved) => {
                 record_stage_trace(stage_trace, &canonical, CompileStage::Resolve, false);
@@ -588,7 +589,13 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     };
     // Register current module's own functions as inherent methods so that
     // p1.method() syntax works within the same file (not just cross-module).
-    register_inherent_methods(&ast, alias, &mut resolved.type_env, &mut resolved.value_env);
+    register_inherent_methods(
+        &ast,
+        alias,
+        &mut resolved.type_env,
+        &mut resolved.value_env,
+        is_internal,
+    );
     state.type_env = resolved.type_env.clone();
     state.value_env = resolved.value_env.clone();
 
@@ -1325,7 +1332,22 @@ fn register_inherent_methods(
     alias: &str,
     type_env: &mut TypeEnv,
     value_env: &mut ValueEnv,
+    is_internal: bool,
 ) {
+    // Collect TypeIds defined in this module so we only register inherent
+    // methods for types the module owns.
+    let local_type_ids: std::collections::HashSet<TypeId> = ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let Item::TypeDecl(decl) = item {
+                type_env.lookup_type(&decl.name)
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let registrations: Vec<(TypeId, String, FunctionSignature, Option<FunctionSignature>)> = ast
         .items
         .iter()
@@ -1334,6 +1356,13 @@ fn register_inherent_methods(
                 if let Some(sig) = value_env.get_function(&decl.name) {
                     if let Some(receiver_ty) = sig.params.first() {
                         if let Some(type_id) = method_receiver_type_id(receiver_ty) {
+                            // Only register methods for types defined in this module.
+                            // Internal (stdlib/prelude) modules may also register
+                            // methods on builtin types.
+                            let is_local = local_type_ids.contains(&type_id);
+                            if !is_local && !is_internal {
+                                return None;
+                            }
                             let method_qname = format!("{}.{}", alias, &decl.name);
                             let method_sig = FunctionSignature {
                                 name: method_qname,

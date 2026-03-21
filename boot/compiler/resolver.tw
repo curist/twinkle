@@ -179,52 +179,52 @@ pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   m := env.methods
-    .register_methods("String", [
-      me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
-      me("concat", "string_concat"), me("char_code_at", "string_char_code_at"),
-      me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
-      me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
-      me("starts_with", "starts_with"), me("ends_with", "ends_with"),
-      me("split", "split"), me("trim", "trim"),
-      me("chars", "chars"), me("char_len", "char_len"),
-      me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
-    ])
-    .register_methods("Vector", [
-      me("len", "vector_len"), me("push", "vector_push"), me("get", "vector_get"),
-      me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
-      me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
-      me("any", "any"), me("all", "all"), me("contains", "contains"),
-      me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
-    ])
-    .register_methods("Dict", [
-      me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
-      me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
-      me("remove", "dict_remove"),
-    ])
-    .register_methods("Cell", [
-      me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
-    ])
-    .register_methods("Int", [
-      me("to_string", "int_to_string"), me("to_float", "int_to_float"), me("compare", "compare"),
-    ])
-    .register_methods("Float", [
-      me("to_string", "float_to_string"), me("to_int", "float_to_int"), me("compare", "compare"),
-    ])
-    .register_methods("Bool", [me("to_string", "bool_to_string")])
-    .register_methods("Byte", [
-      me("to_string", "byte_to_string"), me("to_int", "byte_to_int"), me("compare", "compare"),
-    ])
-    .register_methods("Option", [
-      me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
-      me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
-    ])
-    .register_methods("Result", [
-      me("map", "map"), me("and_then", "and_then"), me("transpose", "transpose"),
-    ])
-    .register_methods("Iterator", [
-      me("next", "next"), me("map", "map"), me("filter", "filter"),
-      me("take", "take"), me("to_vector", "to_vector"),
-    ])
+  m = register_methods(m, "String", [
+    me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
+    me("concat", "string_concat"), me("char_code_at", "string_char_code_at"),
+    me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
+    me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
+    me("starts_with", "starts_with"), me("ends_with", "ends_with"),
+    me("split", "split"), me("trim", "trim"),
+    me("chars", "chars"), me("char_len", "char_len"),
+    me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
+  ])
+  m = register_methods(m, "Vector", [
+    me("len", "vector_len"), me("push", "vector_push"), me("get", "vector_get"),
+    me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
+    me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
+    me("any", "any"), me("all", "all"), me("contains", "contains"),
+    me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
+  ])
+  m = register_methods(m, "Dict", [
+    me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
+    me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
+    me("remove", "dict_remove"),
+  ])
+  m = register_methods(m, "Cell", [
+    me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
+  ])
+  m = register_methods(m, "Int", [
+    me("to_string", "int_to_string"), me("to_float", "int_to_float"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Float", [
+    me("to_string", "float_to_string"), me("to_int", "float_to_int"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Bool", [me("to_string", "bool_to_string")])
+  m = register_methods(m, "Byte", [
+    me("to_string", "byte_to_string"), me("to_int", "byte_to_int"), me("compare", "compare"),
+  ])
+  m = register_methods(m, "Option", [
+    me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
+    me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
+  ])
+  m = register_methods(m, "Result", [
+    me("map", "map"), me("and_then", "and_then"), me("transpose", "transpose"),
+  ])
+  m = register_methods(m, "Iterator", [
+    me("next", "next"), me("map", "map"), me("filter", "filter"),
+    me("take", "take"), me("to_vector", "to_vector"),
+  ])
   env.with_methods(m)
 }
 
@@ -393,7 +393,7 @@ fn detect_inherent_methods(env: ResolvedEnv) DetectMethodsResult {
         "method '${f.name}' on type '${type_name}' conflicts with an existing registration"
       ))
     } else {
-      m = m.register_methods(type_name, [me(f.name, f.name)])
+      m = register_methods(m, type_name, [me(f.name, f.name)])
     }
   }
   .{ env: env.with_methods(m), diagnostics: method_diags }

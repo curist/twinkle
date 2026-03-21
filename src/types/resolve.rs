@@ -28,6 +28,13 @@ pub struct Resolver {
     function_decls: HashMap<String, FunctionDecl>,
     function_spans: HashMap<String, Span>,
     function_decl_order: Vec<String>,
+
+    // TypeIds defined in this module — only these are eligible for inherent methods
+    local_type_ids: HashSet<TypeId>,
+
+    // Whether this is an internal (stdlib/prelude) module — allowed to register
+    // methods on builtin types.
+    is_internal: bool,
 }
 
 impl Resolver {
@@ -41,6 +48,17 @@ impl Resolver {
         type_env: TypeEnv,
         value_env: ValueEnv,
     ) -> Result<ResolvedModule, Vec<TypeError>> {
+        Self::resolve_with_options(source_file, type_env, value_env, false)
+    }
+
+    /// Resolve with options. `is_internal` allows stdlib/prelude modules to
+    /// register methods on builtin types.
+    pub fn resolve_with_options(
+        source_file: &SourceFile,
+        type_env: TypeEnv,
+        value_env: ValueEnv,
+        is_internal: bool,
+    ) -> Result<ResolvedModule, Vec<TypeError>> {
         let mut resolver = Resolver {
             type_env,
             value_env,
@@ -51,6 +69,8 @@ impl Resolver {
             function_decls: HashMap::new(),
             function_spans: HashMap::new(),
             function_decl_order: Vec::new(),
+            local_type_ids: HashSet::new(),
+            is_internal,
         };
 
         // Pass 1: Collect this module's declarations; imports are no-ops (already compiled)
@@ -169,6 +189,7 @@ impl Resolver {
             };
             let type_id = self.type_env.add_type(placeholder);
             type_ids.insert(name.clone(), type_id);
+            self.local_type_ids.insert(type_id);
         }
 
         // Pass 2b: Resolve each type definition fully and UPDATE in place
@@ -288,10 +309,20 @@ impl Resolver {
         for decl in &decls {
             match self.resolve_function_sig(decl) {
                 Ok(sig) => {
+                    // Register inherent methods only for types owned by this module.
+                    // Internal (stdlib/prelude) modules may also register methods
+                    // on builtin types.
                     if let Some(receiver_ty) = sig.params.first() {
                         if let Some(type_id) = method_receiver_type_id(receiver_ty) {
-                            self.type_env
-                                .add_method(type_id, sig.name.clone(), sig.name.clone());
+                            let is_local = self.local_type_ids.contains(&type_id);
+                            let is_builtin_allowed = self.is_internal && !is_local;
+                            if is_local || is_builtin_allowed {
+                                self.type_env.add_method(
+                                    type_id,
+                                    sig.name.clone(),
+                                    sig.name.clone(),
+                                );
+                            }
                         }
                     }
                     self.value_env.add_function(sig);

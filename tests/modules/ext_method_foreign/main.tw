@@ -1,0 +1,11 @@
+// Extension method on a foreign named type should be rejected.
+// `area` is defined here but `Circle` is defined in shapes,
+// so `circ.area()` must not resolve as a dot method.
+
+use shapes
+
+fn area(c: shapes.Circle) Float { 3.14 * c.radius * c.radius }
+
+circ := shapes.Circle.{ radius: 5.0 }
+a := circ.area()
+println("${a}")

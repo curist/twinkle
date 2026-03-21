@@ -160,20 +160,22 @@ fn method_completion_includes_doc_comment_for_user_method() {
     let project_root = PathBuf::from("/virtual/lsp_completion_docs_method");
     let stdlib_root = project_root.join("stdlib");
     let entry = project_root.join("main.tw");
-    let source = r#"/// Increment an integer by one.
-fn inc(x: Int) Int {
-  x + 1
+    let source = r#"type Counter = .{ value: Int }
+
+/// Increment the counter by one.
+fn inc(c: Counter) Counter {
+  Counter.{ value: c.value + 1 }
 }
 
-n := 1
-value := n.inc()
+c := Counter.{ value: 1 }
+result := c.inc()
 "#;
 
     let mut base_sources = HashMap::new();
     base_sources.insert(entry.clone(), source.to_string());
     let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
 
-    let position = position_after(source, "n.");
+    let position = position_after(source, "c.");
     let items = session
         .completion(&entry, &entry, position)
         .expect("completion should succeed");
@@ -185,7 +187,7 @@ value := n.inc()
     assert_eq!(inc_item.kind, CompletionKind::Method);
     assert_eq!(
         inc_item.documentation.as_deref(),
-        Some("Increment an integer by one."),
+        Some("Increment the counter by one."),
         "expected method completion docs from /// comment"
     );
 }

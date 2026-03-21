@@ -8,7 +8,8 @@ use anyhow::{Result, anyhow};
 
 use crate::ir::lower::LowerInput;
 use crate::query::api::{
-    ParsedModule, lower_stage, parse_source_module, resolve_stage, typecheck_stage_with_options,
+    ParsedModule, lower_stage, parse_source_module, resolve_stage_internal,
+    typecheck_stage_with_options,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
@@ -99,7 +100,7 @@ impl<'a> ModuleStageRunner<'a> {
         }
 
         let type_env_for_errs = type_env.clone();
-        let resolved = match resolve_stage(ast, type_env, value_env) {
+        let resolved = match resolve_stage_internal(ast, type_env, value_env, self.is_internal) {
             Ok(resolved) => resolved,
             Err(errors) => {
                 let msgs: Vec<String> = errors

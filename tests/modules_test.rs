@@ -299,3 +299,26 @@ fn test_module_method_value_ref_lower() {
         result.err()
     );
 }
+
+/// Extension method on a primitive type should be rejected.
+/// User code defines `fn zap(n: Int) Int` — `x.zap()` must not work.
+#[test]
+fn test_ext_method_on_primitive_rejected() {
+    let result = check("ext_method_primitive/main.tw");
+    assert!(
+        result.is_err(),
+        "Extension method on primitive should be rejected, but check succeeded"
+    );
+}
+
+/// Extension method on a foreign named type should be rejected.
+/// `area` is defined in main but `Circle` is defined in shapes —
+/// `circ.area()` must not resolve as a dot method.
+#[test]
+fn test_ext_method_on_foreign_type_rejected() {
+    let result = check("ext_method_foreign/main.tw");
+    assert!(
+        result.is_err(),
+        "Extension method on foreign type should be rejected, but check succeeded"
+    );
+}

@@ -133,11 +133,13 @@ fn definition_resolves_method_call_target() {
     let math = project_root.join("math.tw");
     let main_source = r#"use math
 
-n := 1
-value := n.inc()
+n := math.Counter.{ value: 1 }
+result := n.inc()
 "#;
-    let math_source = r#"pub fn inc(x: Int) Int {
-  x + 1
+    let math_source = r#"pub type Counter = .{ value: Int }
+
+pub fn inc(c: Counter) Counter {
+  Counter.{ value: c.value + 1 }
 }
 "#;
 

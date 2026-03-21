@@ -1,0 +1,1 @@
+pub type Circle = .{ radius: Float }

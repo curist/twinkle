@@ -163,38 +163,47 @@ impl CompileState {
                 );
             }
 
-            // Register inherent methods: functions whose first parameter is a
-            // receiver type (named or builtin synthetic receiver) become methods.
+            // Register inherent methods: only for types defined in this module.
+            // Extension methods on foreign or builtin types are not allowed
+            // (builtin methods are registered separately via prelude plumbing).
+            // The function itself is still callable via its qualified name
+            // (registered above); this only controls dot-method availability.
             if let Some(receiver_ty) = sig.params.first() {
                 if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
-                    self.type_env.add_method(
-                        receiver_type_id,
-                        func_name.clone(),
-                        qualified_name.clone(),
-                    );
+                    let is_own_type = exports
+                        .public_types
+                        .values()
+                        .any(|&tid| tid == receiver_type_id);
+                    if is_own_type {
+                        self.type_env.add_method(
+                            receiver_type_id,
+                            func_name.clone(),
+                            qualified_name.clone(),
+                        );
 
-                    // Builtin receiver methods can also be called via canonical
-                    // module aliases, e.g. `Vector.map(xs, f)`.
-                    if let Some(alias_name) = builtin_method_alias(receiver_type_id) {
-                        let builtin_name = format!("{}.{}", alias_name, func_name);
-                        let builtin_sig = FunctionSignature {
-                            name: builtin_name.clone(),
-                            type_params: sig.type_params.clone(),
-                            param_names: sig.param_names.clone(),
-                            params: sig.params.clone(),
-                            ret: sig.ret.clone(),
-                            doc: sig.doc.clone(),
-                        };
-                        self.value_env.add_function(builtin_sig);
-                        if let Some(&func_id) = exports.public_func_ids.get(func_name) {
-                            self.func_table.insert(builtin_name.clone(), func_id);
-                            self.qualified_func_targets.insert(
-                                builtin_name,
-                                ExternalFuncRef {
-                                    module_path: exports.canonical_path.clone(),
-                                    local_func_id: func_id,
-                                },
-                            );
+                        // Builtin receiver methods can also be called via canonical
+                        // module aliases, e.g. `Vector.map(xs, f)`.
+                        if let Some(alias_name) = builtin_method_alias(receiver_type_id) {
+                            let builtin_name = format!("{}.{}", alias_name, func_name);
+                            let builtin_sig = FunctionSignature {
+                                name: builtin_name.clone(),
+                                type_params: sig.type_params.clone(),
+                                param_names: sig.param_names.clone(),
+                                params: sig.params.clone(),
+                                ret: sig.ret.clone(),
+                                doc: sig.doc.clone(),
+                            };
+                            self.value_env.add_function(builtin_sig);
+                            if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                                self.func_table.insert(builtin_name.clone(), func_id);
+                                self.qualified_func_targets.insert(
+                                    builtin_name,
+                                    ExternalFuncRef {
+                                        module_path: exports.canonical_path.clone(),
+                                        local_func_id: func_id,
+                                    },
+                                );
+                            }
                         }
                     }
                 }

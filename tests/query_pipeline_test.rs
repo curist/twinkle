@@ -154,6 +154,7 @@ fn query_resolve_diagnostics_are_structured() {
         TypeEnv::new(),
         ValueEnv::new(),
         &parsed.file_registry,
+        false,
     ) {
         Ok(_) => panic!("resolve should fail"),
         Err(diags) => diags,
