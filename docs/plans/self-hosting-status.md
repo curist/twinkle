@@ -25,7 +25,7 @@ snapshot.
 |------|-------|--------|-------|
 | A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker (M1–M9) all complete. Method registry M1–M4 done; M5 deferred to multi-module. Snapshot testing for diagnostics. |
 | B | Core IR lowering + monomorphization | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — IR types, lowering (all expr/stmt forms), monomorphization. All gaps and discrepancies resolved. |
-| C | ANF lowering + optimization | Planned | No committed self-hosted ANF/opt pipeline yet. |
+| C | ANF lowering + optimization | Planned | [boot-anf-lowering.md](boot-anf-lowering.md) — 10 milestones: ANF types, lowering (atoms/control/let), analysis, 4 peephole passes, defer elim, integration |
 | D | Codegen + linker | Planned | Representation/layout redesign is documented in [self-hosting.md](self-hosting.md). |
 | E | Integration + self-hosting loop | Planned | Depends on A-D milestones and `boot` module/graph/query libs. |
 
@@ -43,6 +43,7 @@ snapshot.
 | Frontend fixes | Done | [archive/boot-frontend-fixes.md](archive/boot-frontend-fixes.md) — correctness, completeness, refactoring, test coverage |
 | Core IR & lowering | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — Core IR types, AST→Core IR lowering, monomorphization |
 | Snapshot testing | Done | [archive/boot-snapshot-testing.md](archive/boot-snapshot-testing.md) — `.boot.expected` files for parser diagnostics |
+| ANF lowering + optimization | Planned | [boot-anf-lowering.md](boot-anf-lowering.md) — M1–M10 |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 
 ---
