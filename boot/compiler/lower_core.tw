@@ -1540,6 +1540,100 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
   }
 }
 
+// ── Lvalue chain lowering ────────────────────────────────────────────
+
+type LvalueOut = .{ root: LocalId, update: CoreExpr, ctx: LowerCtx }
+
+// Recursively lower an lvalue assignment: r.field = v, xs[i] = v, m[k] = v
+// Returns the root local and the update expression to assign to it.
+fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) LvalueOut? {
+  case lhs.kind {
+    .Field(base, field_name) => {
+      // r.field = val → Assign(r_local, RecordUpdate(Local(r), field_id, val))
+      case base.kind {
+        .Ident(name) => {
+          case lookup_local(ctx, name) {
+            .Some(root_local) => {
+              base_ty := expr_type(ctx, base)
+              tid := case type_id_from_mono(base_ty) {
+                .Some(id) => id,
+                .None => { return .None },
+              }
+              fid_idx := find_field_index(ctx.env, tid, field_name)
+              fid := FieldId.{ id: fid_idx }
+              update := CoreExpr.{
+                kind: .RecordUpdate(
+                  CoreExpr.{ kind: .Local(root_local), ty: base_ty, span: s },
+                  fid,
+                  rhs_core,
+                ),
+                ty: base_ty,
+                span: s,
+              }
+              .Some(LvalueOut.{ root: root_local, update, ctx })
+            },
+            .None => .None,
+          }
+        },
+        _ => {
+          // Nested: a.b.field = v → recursively build update
+          // lower the inner lvalue with RecordUpdate as the rhs
+          base_ty := expr_type(ctx, base)
+          tid := case type_id_from_mono(base_ty) {
+            .Some(id) => id,
+            .None => { return .None },
+          }
+          fid_idx := find_field_index(ctx.env, tid, field_name)
+          fid := FieldId.{ id: fid_idx }
+          // We need to read the current base value to build the update.
+          // For nested chains, we lower_lvalue_assign on `base` with
+          // RecordUpdate(base_lowered, field, rhs_core) as the new rhs.
+          // But we need the current base value first. Use a temp approach:
+          // lower base as expr, wrap in RecordUpdate, recurse.
+          br := lower_expr(ctx, base)
+          inner_update := CoreExpr.{
+            kind: .RecordUpdate(br.expr, fid, rhs_core),
+            ty: base_ty,
+            span: s,
+          }
+          lower_lvalue_assign(br.ctx, base, inner_update, s)
+        },
+      }
+    },
+    .Index(base, index) => {
+      // xs[i] = val → Assign(xs_local, Call(VECTOR_SET_UNSAFE, [xs, i, val]))
+      // m[k] = val  → Assign(m_local, Call(DICT_SET, [m, k, val]))
+      case base.kind {
+        .Ident(name) => {
+          case lookup_local(ctx, name) {
+            .Some(root_local) => {
+              base_ty := expr_type(ctx, base)
+              ir := lower_expr(ctx, index)
+              // Dispatch on base type: Vector vs Dict
+              func_id := case base_ty {
+                .Dict(_, _) => FuncId.{ id: 13 },   // DICT_SET
+                _ => FuncId.{ id: 12 },              // VECTOR_SET_UNSAFE
+              }
+              update := CoreExpr.{
+                kind: .Call(
+                  CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+                  [CoreExpr.{ kind: .Local(root_local), ty: base_ty, span: s }, ir.expr, rhs_core],
+                ),
+                ty: base_ty,
+                span: s,
+              }
+              .Some(LvalueOut.{ root: root_local, update, ctx: ir.ctx })
+            },
+            .None => .None,
+          }
+        },
+        _ => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
 // ── Block and statement lowering ────────────────────────────────────
 
 fn lower_block(ctx: LowerCtx, block: Block) ExprOut {
@@ -1595,16 +1689,52 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         }
       },
       .Expr(es) => {
-        r := lower_expr(ctx, es.expr)
-        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
-        ao := alloc_anon_local(rest.ctx)
-        ExprOut.{
-          expr: CoreExpr.{
-            kind: .Let(ao.local, r.expr, rest.expr),
-            ty: rest.expr.ty,
-            span: es.span,
+        // Check for lvalue assignment: expr = Binary(Assign, lhs, rhs)
+        case es.expr.kind {
+          .Binary(.Assign, lhs, rhs) => {
+            rhs_r := lower_expr(ctx, rhs)
+            case lower_lvalue_assign(rhs_r.ctx, lhs, rhs_r.expr, es.span) {
+              .Some(lv) => {
+                rest := lower_stmts(lv.ctx, stmts, idx + 1, tail, block_span)
+                ao := alloc_anon_local(rest.ctx)
+                ExprOut.{
+                  expr: CoreExpr.{
+                    kind: .Let(ao.local, CoreExpr.{ kind: .Assign(lv.root, lv.update), ty: MonoType.Void, span: es.span }, rest.expr),
+                    ty: rest.expr.ty,
+                    span: es.span,
+                  },
+                  ctx: ao.ctx,
+                }
+              },
+              .None => {
+                // Fall through to generic expr lowering
+                r := lower_expr(ctx, es.expr)
+                rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
+                ao := alloc_anon_local(rest.ctx)
+                ExprOut.{
+                  expr: CoreExpr.{
+                    kind: .Let(ao.local, r.expr, rest.expr),
+                    ty: rest.expr.ty,
+                    span: es.span,
+                  },
+                  ctx: ao.ctx,
+                }
+              },
+            }
           },
-          ctx: ao.ctx,
+          _ => {
+            r := lower_expr(ctx, es.expr)
+            rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span)
+            ao := alloc_anon_local(rest.ctx)
+            ExprOut.{
+              expr: CoreExpr.{
+                kind: .Let(ao.local, r.expr, rest.expr),
+                ty: rest.expr.ty,
+                span: es.span,
+              },
+              ctx: ao.ctx,
+            }
+          },
         }
       },
       .Return(rs) => {

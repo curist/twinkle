@@ -114,6 +114,32 @@ fn has_global_local(expr: core_ir.CoreExpr) Bool {
   }
 }
 
+// Check if a Return/Break/Continue appears in Let.value position (malformed Core IR)
+fn has_terminal_in_let_value(expr: core_ir.CoreExpr) Bool {
+  case expr.kind {
+    .Let(_, val, body) => {
+      case val.kind {
+        .Return(_) => true,
+        .Break(_) => true,
+        .Continue => true,
+        _ => has_terminal_in_let_value(val) or has_terminal_in_let_value(body),
+      }
+    },
+    .If(cond, then_e, else_e) => {
+      has_terminal_in_let_value(cond) or has_terminal_in_let_value(then_e) or has_terminal_in_let_value(else_e)
+    },
+    .Match(scrut, arms) => {
+      if has_terminal_in_let_value(scrut) { return true }
+      for arm in arms {
+        if has_terminal_in_let_value(arm.body) { return true }
+      }
+      false
+    },
+    .Loop(inner) => has_terminal_in_let_value(inner),
+    _ => false,
+  }
+}
+
 fn has_call(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .Call(_, _) => true,
@@ -625,6 +651,66 @@ pub fn suite() runner.Suite {
       try assert.ok(!has_generic, "generic functions should be dropped after mono")
       try assert.ok(result.functions.len() >= 3, "expected at least 3 functions after mono")
       .Ok({})
+    })
+    // ── G3: Complex lvalue assignment ────────────────────────────────
+    .test("lower field assignment", fn() Result<Void, String> {
+      src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) Point { p.x = 42; p }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Should produce: Let(_, Assign(p, RecordUpdate(Local(p), x_fid, LitInt(42))), Local(p))
+      case body.kind {
+        .Let(_, assign_expr, _) => {
+          case assign_expr.kind {
+            .Assign(_, update) => {
+              case update.kind {
+                .RecordUpdate(_, _, _) => .Ok({}),
+                _ => .Err("expected RecordUpdate in assign value"),
+              }
+            },
+            _ => .Err("expected Assign"),
+          }
+        },
+        _ => .Err("expected Let wrapping field assignment"),
+      }
+    })
+    .test("lower index assignment", fn() Result<Void, String> {
+      src := "fn f(xs: Vector<Int>) Vector<Int> { xs[0] = 99; xs }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      // Should produce: Let(_, Assign(xs, Call(VECTOR_SET_UNSAFE, [...])), Local(xs))
+      case body.kind {
+        .Let(_, assign_expr, _) => {
+          case assign_expr.kind {
+            .Assign(_, update) => {
+              case update.kind {
+                .Call(_, _) => .Ok({}),
+                _ => .Err("expected Call (VECTOR_SET_UNSAFE) in assign value"),
+              }
+            },
+            _ => .Err("expected Assign"),
+          }
+        },
+        _ => .Err("expected Let wrapping index assignment"),
+      }
+    })
+    .test("lower dict assignment", fn() Result<Void, String> {
+      src := "fn f(m: Dict<String, Int>) Dict<String, Int> { m[\"k\"] = 1; m }"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      case body.kind {
+        .Let(_, assign_expr, _) => {
+          case assign_expr.kind {
+            .Assign(_, update) => {
+              case update.kind {
+                .Call(_, _) => .Ok({}),
+                _ => .Err("expected Call (DICT_SET) in assign value"),
+              }
+            },
+            _ => .Err("expected Assign"),
+          }
+        },
+        _ => .Err("expected Let wrapping dict assignment"),
+      }
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"
