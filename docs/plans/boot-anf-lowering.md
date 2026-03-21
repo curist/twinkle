@@ -519,13 +519,17 @@ rewrite; defer elimination is the last pass in the pipeline.
   the current defer list.
 - At each exit point (Return/Break/Continue/tail Atom), prepend deferred
   expressions in LIFO order before the exit.
-- **`in_sub_expr` flag:** When descending into `AIf`/`AMatch` arm bodies
-  (via the op-level elimination function), set `in_sub_expr = true`. When
-  descending into `ALoop` bodies, keep `in_sub_expr = false` — loop body
-  tail IS a real scope exit. When `in_sub_expr` is true, terminal `Atom`
-  nodes do NOT fire defers (they are value-producing positions, not scope
-  exits). Only `Return`/`Break`/`Continue` and true function/loop tail
-  atoms fire defers.
+- **`in_sub_expr` flag:** Controls whether a terminal `Atom` node fires
+  defers (scope exit) or just produces a value (sub-expression).
+
+  | Context | `in_sub_expr` | Terminal `Atom` fires defers? |
+  |---------|---------------|-------------------------------|
+  | Function body (top-level) | `false` | Yes — function tail exit |
+  | `ALoop` body | `false` | Yes — loop tail exit |
+  | `AIf` branch | `true` | No — value-producing position |
+  | `AMatch` arm body | `true` | No — value-producing position |
+
+  `Return`/`Break`/`Continue` always fire defers regardless of `in_sub_expr`.
 
 **Capture semantics:**
 ```tw
