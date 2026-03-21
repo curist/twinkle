@@ -37,8 +37,9 @@ snapshot.
 |------|--------|------|
 | Frontend gap closure | Done | [archive/boot-parser-gap-closure.md](archive/boot-parser-gap-closure.md) |
 | Resolver fixes | Done | [archive/boot-resolver-fixes.md](archive/boot-resolver-fixes.md) |
-| Type checker | In Progress | [boot-type-checker.md](boot-type-checker.md) — M1–M9 done |
-| Resolver method registry | In Progress | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) — M1–M4 done, M5 (method call checking) remaining |
+| Type checker | Done | [archive/boot-type-checker.md](archive/boot-type-checker.md) — M1–M9 done |
+| Resolver method registry | Done | [archive/boot-resolver-method-registry.md](archive/boot-resolver-method-registry.md) — M1–M4 done, M5 deferred to multi-module |
+| Resolver hardening | Done | [archive/boot-resolver-hardening.md](archive/boot-resolver-hardening.md) |
 | Frontend fixes | Done | [archive/boot-frontend-fixes.md](archive/boot-frontend-fixes.md) — correctness, completeness, refactoring, test coverage |
 | Core IR & lowering | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — Core IR types, AST→Core IR lowering, monomorphization |
 | Snapshot testing | Done | [archive/boot-snapshot-testing.md](archive/boot-snapshot-testing.md) — `.boot.expected` files for parser diagnostics |

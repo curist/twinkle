@@ -101,3 +101,7 @@ Related historical context outside this folder:
 | [boot-pub-rebinding.md](boot-pub-rebinding.md) | Align boot checker with stage0 pub-only rebinding restriction |
 | [boot-snapshot-testing.md](boot-snapshot-testing.md) | Snapshot testing for boot compiler diagnostics (`.boot.expected` files, `TWK_SNAP_UPDATE=1`) |
 | [boot-core-ir.md](boot-core-ir.md) | Boot Core IR types, AST→Core IR lowering, monomorphization (Phase B) |
+| [boot-type-checker.md](boot-type-checker.md) | Boot type checker milestones M1–M9 (Phase A) |
+| [boot-resolver-method-registry.md](boot-resolver-method-registry.md) | Boot resolver method registry M1–M4; M5 deferred to multi-module |
+| [boot-resolver-hardening.md](boot-resolver-hardening.md) | Boot resolver hardening and edge-case fixes |
+| [string-interning.md](string-interning.md) | Compile-time string literal interning (Phase 1 landed; runtime Phase 2 optional) |

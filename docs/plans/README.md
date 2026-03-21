@@ -38,9 +38,7 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Frontend | Lexer, parser, resolver, type checker | **Done** | Checker: [boot-type-checker.md](boot-type-checker.md); methods: [boot-resolver-method-registry.md](boot-resolver-method-registry.md) (M5 deferred to multi-module) |
 | ANF + codegen | ANF lowering, optimizer, codegen, linker | Planned | — |
-| Pub rebinding rule | Align boot checker with stage0 pub-only rebinding restriction | **Done** | [archive/boot-pub-rebinding.md](archive/boot-pub-rebinding.md) |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
@@ -56,7 +54,6 @@ from stage0, bootstrapping sequence)
 
 | Plan | Description |
 |------|-------------|
-| [string-interning.md](string-interning.md) | String literal pooling landed; runtime interning remains optional follow-up |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
