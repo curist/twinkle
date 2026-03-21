@@ -1,6 +1,7 @@
 // FileRegistry: stores source files and provides span-based lookups.
 
 use .span
+use lib.ascii
 
 type SourceFile = .{
   name: String,
@@ -27,7 +28,7 @@ pub fn empty() FileRegistry {
 fn compute_line_starts(source: String) Vector<Int> {
   starts: Vector<Int> = [0]
   for b, i in source {
-    if Byte.to_int(b) == 10 {
+    if ascii.is_newline(b.to_int()) {
       starts = starts.push(i + 1)
     }
   }

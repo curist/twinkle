@@ -1,5 +1,6 @@
 use lib.source.span
 use lib.source.diagnostic.{Diagnostic, StageResult}
+use lib.ascii
 use .tokens.{Token, TokenKind}
 use .lexer
 use .cursor.{Cursor}
@@ -50,8 +51,8 @@ fn is_upper_ascii_name(name: String) Bool {
   if name.len() == 0 {
     return false
   }
-  c := Byte.to_int(name[0])
-  c >= 65 and c <= 90
+  c := name[0].to_int()
+  ascii.is_upper(c)
 }
 
 fn span_of_stmt(stmt: Stmt) span.Span {

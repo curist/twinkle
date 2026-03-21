@@ -1190,6 +1190,31 @@ pub fn suite() runner.Suite {
       try assert.is_true(lexed.value[18].kind == .IntLit)
       assert.is_true(lexed.value[19].kind == .StringEnd)
     })
+    .test("lexer: utf8 in comment does not trap", fn() {
+      src := "// 你好\nfn main() {}"
+      lexed := lexer.lex(src, 0)
+      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.is_true(lexed.value.len() >= 2)
+      try assert.is_true(lexed.value[0].kind == .Fn)
+      assert.is_true(lexed.value[0].preceded_by_newline)
+    })
+    .test("lexer: utf8 plain string literal does not trap", fn() {
+      src := "\"你好\""
+      lexed := lexer.lex(src, 0)
+      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.is_true(lexed.value.len() >= 2)
+      assert.is_true(lexed.value[0].kind == .StringLit)
+    })
+    .test("lexer: utf8 string interpolation segments do not trap", fn() {
+      dollar := "$"
+      src := "\"你好 ${dollar}{x} 世界\""
+      lexed := lexer.lex(src, 0)
+      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.is_true(lexed.value.len() >= 4)
+      try assert.is_true(lexed.value[0].kind == .StringStart)
+      try assert.is_true(lexed.value[1].kind == .Ident)
+      assert.is_true(lexed.value[2].kind == .StringEnd)
+    })
 
     // ── Shift Operators ───────────────────────────────────────────
 
