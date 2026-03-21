@@ -151,86 +151,6 @@ fn is_terminal(expr: CoreExpr) Bool {
 
 // ── Hex parsing helper ──────────────────────────────────────────────
 
-fn parse_hex(s: String) Int {
-  result := 0
-  i := 2  // skip "0x" or "0X"
-  for i < s.len() {
-    b := s[i]
-    digit := if b >= 0x30 and b <= 0x39 {
-      b.to_int() - 0x30
-    } else if b >= 0x41 and b <= 0x46 {
-      b.to_int() - 0x41 + 10
-    } else if b >= 0x61 and b <= 0x66 {
-      b.to_int() - 0x61 + 10
-    } else {
-      0
-    }
-    result = result * 16 + digit
-    i = i + 1
-  }
-  result
-}
-
-fn parse_int_literal(raw: String) Int {
-  if raw.len() >= 2 {
-    b0 := raw[0]
-    b1 := raw[1]
-    if b0.to_int() == 0x30 and (b1.to_int() == 0x78 or b1.to_int() == 0x58) {
-      return parse_hex(raw)
-    }
-  }
-  result := 0
-  neg := false
-  start := 0
-  if raw.len() > 0 and raw[0].to_int() == 0x2D {
-    neg = true
-    start = 1
-  }
-  i := start
-  for i < raw.len() {
-    b := raw[i]
-    if b.to_int() == 0x5F {
-      i = i + 1
-      continue
-    }
-    result = result * 10 + (b.to_int() - 0x30)
-    i = i + 1
-  }
-  if neg { 0 - result } else { result }
-}
-
-fn parse_float_literal(raw: String) Float {
-  int_part := 0.0
-  frac_part := 0.0
-  frac_div := 1.0
-  in_frac := false
-  neg := false
-  i := 0
-  if raw.len() > 0 and raw[0].to_int() == 0x2D {
-    neg = true
-    i = 1
-  }
-  for i < raw.len() {
-    b := raw[i]
-    if b.to_int() == 0x2E {
-      in_frac = true
-    } else if b.to_int() == 0x5F {
-      // skip
-    } else {
-      digit := (b.to_int() - 0x30).to_float()
-      if in_frac {
-        frac_div = frac_div * 10.0
-        frac_part = frac_part + digit / frac_div
-      } else {
-        int_part = int_part * 10.0 + digit
-      }
-    }
-    i = i + 1
-  }
-  result := int_part + frac_part
-  if neg { 0.0 - result } else { result }
-}
-
 // ── Expression lowering ─────────────────────────────────────────────
 
 fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
@@ -238,12 +158,10 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
   s := expr.span
 
   case expr.kind {
-    .IntLit(raw) => {
-      n := parse_int_literal(raw)
+    .IntLit(n) => {
       ExprOut.{ expr: CoreExpr.{ kind: .LitInt(n), ty, span: s }, ctx }
     },
-    .FloatLit(raw) => {
-      f := parse_float_literal(raw)
+    .FloatLit(f) => {
       ExprOut.{ expr: CoreExpr.{ kind: .LitFloat(f), ty, span: s }, ctx }
     },
     .BoolLit(b) => {
@@ -527,7 +445,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
     },
     .Literal(expr) => {
       case expr.kind {
-        .IntLit(raw) => PatternOut.{ pattern: .LitInt(parse_int_literal(raw)), ctx },
+        .IntLit(n) => PatternOut.{ pattern: .LitInt(n), ctx },
         .BoolLit(b) => PatternOut.{ pattern: .LitBool(b), ctx },
         .StringLit(raw) => {
           val := if raw.len() >= 2 { raw.slice(1, raw.len() - 1) } else { raw }
@@ -1181,6 +1099,214 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
   ExprOut.{ expr: acc, ctx: cur_ctx }
 }
 
+// ── Shared indexed-iteration helpers ────────────────────────────────
+
+type IterSetup = .{
+  ctx: LowerCtx,
+  arr_local: LocalId,
+  len_local: LocalId,
+  idx_local: LocalId,
+  elem_local: LocalId,
+  idx_user_local: LocalId?,
+  index_source: LocalId,
+  index_source_ty: MonoType,
+  dict_keys_local: LocalId?,
+  iter_core: CoreExpr,
+  body_core: CoreExpr,
+}
+
+fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: String?, body: Block, s: Span) IterSetup {
+  ctx = ctx.push_scope()
+  ar := ctx.lower_expr(iter_expr)
+  ctx = ar.ctx
+  arr_lo := ctx.alloc_anon_local()
+  arr_local := arr_lo.local
+  ctx = arr_lo.ctx
+  index_source := arr_local
+  index_source_ty := ar.expr.ty
+  dict_keys_local: LocalId? = .None
+  case ar.expr.ty {
+    .Dict(key_ty, _) => {
+      klo := ctx.alloc_anon_local()
+      ctx = klo.ctx
+      dict_keys_local = .Some(klo.local)
+      index_source = klo.local
+      index_source_ty = MonoType.Vector(key_ty)
+    },
+    _ => {},
+  }
+  len_lo := ctx.alloc_anon_local()
+  len_local := len_lo.local
+  ctx = len_lo.ctx
+  idx_lo := ctx.alloc_anon_local()
+  idx_local := idx_lo.local
+  ctx = idx_lo.ctx
+  elem_name := case pattern {
+    .Some(name) => name,
+    .None => "_",
+  }
+  elem_lo := ctx.alloc_local(elem_name)
+  elem_local := elem_lo.local
+  ctx = elem_lo.ctx
+  idx_user_local: LocalId? = .None
+  case index {
+    .Some(idx_name) => {
+      ilo := ctx.alloc_local(idx_name)
+      ctx = ilo.ctx
+      idx_user_local = .Some(ilo.local)
+    },
+    .None => {},
+  }
+  body_r := ctx.lower_block(body)
+  ctx = body_r.ctx
+  ctx = ctx.pop_scope()
+  IterSetup.{
+    ctx, arr_local, len_local, idx_local, elem_local,
+    idx_user_local, index_source, index_source_ty,
+    dict_keys_local, iter_core: ar.expr, body_core: body_r.expr,
+  }
+}
+
+fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
+  int_ty := MonoType.Int
+  void_ty := MonoType.Void
+  ctx := setup.ctx
+
+  idx_inc := CoreExpr.{
+    kind: .Assign(setup.idx_local, CoreExpr.{
+      kind: .BinOp(.Add,
+        CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s },
+        CoreExpr.{ kind: .LitInt(1), ty: int_ty, span: s },
+      ),
+      ty: int_ty,
+      span: s,
+    }),
+    ty: void_ty,
+    span: s,
+  }
+
+  cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
+  ao1 := ctx.alloc_anon_local()
+  ctx = ao1.ctx
+  inc_then_cont := CoreExpr.{ kind: .Let(ao1.local, idx_inc, cont), ty: void_ty, span: s }
+
+  ao2 := ctx.alloc_anon_local()
+  ctx = ao2.ctx
+  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, inner_action, inc_then_cont), ty: void_ty, span: s }
+
+  body_or_idx := case setup.idx_user_local {
+    .Some(user_idx) => {
+      CoreExpr.{
+        kind: .Let(user_idx, CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s }, action_then_inc),
+        ty: void_ty,
+        span: s,
+      }
+    },
+    .None => action_then_inc,
+  }
+
+  elem_bind := CoreExpr.{
+    kind: .Let(setup.elem_local, CoreExpr.{
+      kind: .Index(
+        CoreExpr.{ kind: .Local(setup.index_source), ty: setup.index_source_ty, span: s },
+        CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s },
+      ),
+      ty: void_ty,
+      span: s,
+    }, body_or_idx),
+    ty: void_ty,
+    span: s,
+  }
+
+  loop_body := CoreExpr.{
+    kind: .If(
+      CoreExpr.{
+        kind: .BinOp(.Ge,
+          CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s },
+          CoreExpr.{ kind: .Local(setup.len_local), ty: int_ty, span: s },
+        ),
+        ty: MonoType.Bool,
+        span: s,
+      },
+      CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s },
+      elem_bind,
+    ),
+    ty: void_ty,
+    span: s,
+  }
+
+  loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
+  idx_init := CoreExpr.{ kind: .Let(setup.idx_local, CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }, loop_expr), ty: void_ty, span: s }
+
+  iter_ty := setup.iter_core.ty
+  result := case iter_ty {
+    .String => {
+      len_call := CoreExpr.{
+        kind: .Call(
+          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
+          [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+        ),
+        ty: int_ty,
+        span: s,
+      }
+      len_init := CoreExpr.{ kind: .Let(setup.len_local, len_call, idx_init), ty: void_ty, span: s }
+      CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, len_init), ty: void_ty, span: s }
+    },
+    .Dict(key_ty, _) => {
+      case setup.dict_keys_local {
+        .Some(keys_local) => {
+          keys_ty := MonoType.Vector(key_ty)
+          keys_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
+              [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+            ),
+            ty: keys_ty,
+            span: s,
+          }
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+              [CoreExpr.{ kind: .Local(keys_local), ty: keys_ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(setup.len_local, len_call, idx_init), ty: void_ty, span: s }
+          keys_init := CoreExpr.{ kind: .Let(keys_local, keys_call, len_init), ty: void_ty, span: s }
+          CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, keys_init), ty: void_ty, span: s }
+        },
+        .None => {
+          len_call := CoreExpr.{
+            kind: .Call(
+              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },
+              [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+            ),
+            ty: int_ty,
+            span: s,
+          }
+          len_init := CoreExpr.{ kind: .Let(setup.len_local, len_call, idx_init), ty: void_ty, span: s }
+          CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, len_init), ty: void_ty, span: s }
+        },
+      }
+    },
+    _ => {
+      len_call := CoreExpr.{
+        kind: .Call(
+          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+          [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+        ),
+        ty: int_ty,
+        span: s,
+      }
+      len_init := CoreExpr.{ kind: .Let(setup.len_local, len_call, idx_init), ty: void_ty, span: s }
+      CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, len_init), ty: void_ty, span: s }
+    },
+  }
+
+  ExprOut.{ expr: result, ctx }
+}
+
 // ── Collect lowering ──────────────────────────────────────────────
 
 fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut {
@@ -1197,207 +1323,21 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
   case ce.iter {
     .Some(iter_expr) => {
-      ctx = ctx.push_scope()
-      ar := ctx.lower_expr(iter_expr)
-      ctx = ar.ctx
-      arr_lo := ctx.alloc_anon_local()
-      arr_local := arr_lo.local
-      ctx = arr_lo.ctx
-      // For Dict iteration, allocate keys local early so elem_bind can use it
-      index_source := arr_local
-      index_source_ty := ar.expr.ty
-      dict_keys_local: LocalId? = .None
-      case ar.expr.ty {
-        .Dict(key_ty, _) => {
-          klo := ctx.alloc_anon_local()
-          ctx = klo.ctx
-          dict_keys_local = .Some(klo.local)
-          index_source = klo.local
-          index_source_ty = MonoType.Vector(key_ty)
-        },
-        _ => {},
-      }
-      len_lo := ctx.alloc_anon_local()
-      len_local := len_lo.local
-      ctx = len_lo.ctx
-      idx_lo := ctx.alloc_anon_local()
-      idx_local := idx_lo.local
-      ctx = idx_lo.ctx
+      setup := setup_indexed_iter(ctx, iter_expr, ce.pattern, ce.index, ce.body, s)
+      ctx = setup.ctx
 
-      elem_name := case ce.pattern {
-        .Some(name) => name,
-        .None => "_",
-      }
-      elem_lo := ctx.alloc_local(elem_name)
-      elem_local := elem_lo.local
-      ctx = elem_lo.ctx
-
-      // Optional index variable
-      idx_user_local: LocalId? = .None
-      case ce.index {
-        .Some(idx_name) => {
-          ilo := ctx.alloc_local(idx_name)
-          ctx = ilo.ctx
-          idx_user_local = .Some(ilo.local)
-        },
-        .None => {},
-      }
-
-      body_r := ctx.lower_block(ce.body)
-      ctx = body_r.ctx
-      ctx = ctx.pop_scope()
-
-      // builder_push(builder, body_result)
       push_call := CoreExpr.{
         kind: .Call(
           CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 34 }), ty: void_ty, span: s },  // VECTOR_BUILDER_PUSH
-          [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }, body_r.expr],
+          [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }, setup.body_core],
         ),
         ty: void_ty,
         span: s,
       }
 
-      // Assign(idx, idx + 1)
-      idx_inc := CoreExpr.{
-        kind: .Assign(idx_local, CoreExpr.{
-          kind: .BinOp(.Add,
-            CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
-            CoreExpr.{ kind: .LitInt(1), ty: int_ty, span: s },
-          ),
-          ty: int_ty,
-          span: s,
-        }),
-        ty: void_ty,
-        span: s,
-      }
+      loop_r := build_indexed_loop(setup, push_call, s)
+      ctx = loop_r.ctx
 
-      ao1 := ctx.alloc_anon_local()
-      ctx = ao1.ctx
-      ao2 := ctx.alloc_anon_local()
-      ctx = ao2.ctx
-      ao3 := ctx.alloc_anon_local()
-      ctx = ao3.ctx
-
-      cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
-      inc_then_cont := CoreExpr.{ kind: .Let(ao1.local, idx_inc, cont), ty: void_ty, span: s }
-      push_then_inc := CoreExpr.{ kind: .Let(ao2.local, push_call, inc_then_cont), ty: void_ty, span: s }
-
-      // Optionally bind user-visible index before the body
-      body_inner := case idx_user_local {
-        .Some(user_idx) => {
-          CoreExpr.{
-            kind: .Let(user_idx, CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s }, push_then_inc),
-            ty: void_ty,
-            span: s,
-          }
-        },
-        .None => push_then_inc,
-      }
-
-      elem_bind := CoreExpr.{
-        kind: .Let(elem_local, CoreExpr.{
-          kind: .Index(
-            CoreExpr.{ kind: .Local(index_source), ty: index_source_ty, span: s },
-            CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
-          ),
-          ty: void_ty,
-          span: s,
-        }, body_inner),
-        ty: void_ty,
-        span: s,
-      }
-
-      loop_body := CoreExpr.{
-        kind: .If(
-          CoreExpr.{
-            kind: .BinOp(.Ge,
-              CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
-              CoreExpr.{ kind: .Local(len_local), ty: int_ty, span: s },
-            ),
-            ty: MonoType.Bool,
-            span: s,
-          },
-          CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s },
-          elem_bind,
-        ),
-        ty: void_ty,
-        span: s,
-      }
-
-      loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
-      idx_init := CoreExpr.{ kind: .Let(idx_local, CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }, loop_expr), ty: void_ty, span: s }
-
-      // Dispatch on iterator type for len function and arr binding
-      iter_ty := ar.expr.ty
-      arr_init := case iter_ty {
-        .String => {
-          // String: use STRING_LEN (FuncId 8)
-          len_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
-              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
-            ),
-            ty: int_ty,
-            span: s,
-          }
-          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-          CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
-        },
-        .Dict(_, _) => {
-          // Dict: call DICT_KEYS (FuncId 14), then use VECTOR_LEN on keys
-          case dict_keys_local {
-            .Some(keys_local) => {
-              keys_call := CoreExpr.{
-                kind: .Call(
-                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
-                  [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
-                ),
-                ty: index_source_ty,
-                span: s,
-              }
-              len_call := CoreExpr.{
-                kind: .Call(
-                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
-                  [CoreExpr.{ kind: .Local(keys_local), ty: index_source_ty, span: s }],
-                ),
-                ty: int_ty,
-                span: s,
-              }
-              len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-              keys_init := CoreExpr.{ kind: .Let(keys_local, keys_call, len_init), ty: void_ty, span: s }
-              CoreExpr.{ kind: .Let(arr_local, ar.expr, keys_init), ty: void_ty, span: s }
-            },
-            .None => {
-              // Fallback (should not happen)
-              len_call := CoreExpr.{
-                kind: .Call(
-                  CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },
-                  [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
-                ),
-                ty: int_ty,
-                span: s,
-              }
-              len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-              CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
-            },
-          }
-        },
-        _ => {
-          // Vector (default): use VECTOR_LEN (FuncId 10)
-          len_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
-              [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
-            ),
-            ty: int_ty,
-            span: s,
-          }
-          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-          CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
-        },
-      }
-
-      // builder_freeze(builder)
       freeze_call := CoreExpr.{
         kind: .Call(
           CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 35 }), ty: void_ty, span: s },  // VECTOR_BUILDER_FREEZE
@@ -1407,13 +1347,10 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
         span: s,
       }
 
-      ao4 := ctx.alloc_anon_local()
-      ctx = ao4.ctx
+      ao := ctx.alloc_anon_local()
+      ctx = ao.ctx
+      loop_then_freeze := CoreExpr.{ kind: .Let(ao.local, loop_r.expr, freeze_call), ty, span: s }
 
-      // Let(_, for_loop, freeze)
-      loop_then_freeze := CoreExpr.{ kind: .Let(ao4.local, arr_init, freeze_call), ty, span: s }
-
-      // builder_new()
       builder_new := CoreExpr.{
         kind: .Call(
           CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 33 }), ty: void_ty, span: s },  // VECTOR_BUILDER_NEW
@@ -1498,212 +1435,8 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
   s := fs.span
   case fs.iter {
     .Some(iter_expr) => {
-      // for x in xs { body }
-      // Dispatches on iter type: Vector, String, Dict
-      ctx = ctx.push_scope()
-      ar := ctx.lower_expr(iter_expr)
-      ctx = ar.ctx
-      arr_lo := ctx.alloc_anon_local()
-      arr_local := arr_lo.local
-      ctx = arr_lo.ctx
-      // index_source: the collection we Index into (arr_local for Vec/String, keys for Dict)
-      index_source := arr_local
-      index_source_ty := ar.expr.ty
-      // For Dict iteration, allocate a keys local early so elem_bind can use it
-      dict_keys_local: LocalId? = .None
-      case ar.expr.ty {
-        .Dict(key_ty, _) => {
-          klo := ctx.alloc_anon_local()
-          ctx = klo.ctx
-          dict_keys_local = .Some(klo.local)
-          index_source = klo.local
-          index_source_ty = MonoType.Vector(key_ty)
-        },
-        _ => {},
-      }
-
-      len_lo := ctx.alloc_anon_local()
-      len_local := len_lo.local
-      ctx = len_lo.ctx
-
-      idx_lo := ctx.alloc_anon_local()
-      idx_local := idx_lo.local
-      ctx = idx_lo.ctx
-
-      // Allocate the loop variable
-      elem_name := case fs.pattern {
-        .Some(name) => name,
-        .None => "_",
-      }
-      elem_lo := ctx.alloc_local(elem_name)
-      elem_local := elem_lo.local
-      ctx = elem_lo.ctx
-
-      // Optional index variable
-      idx_user_local: LocalId? = .None
-      case fs.index {
-        .Some(idx_name) => {
-          ilo := ctx.alloc_local(idx_name)
-          ctx = ilo.ctx
-          idx_user_local = .Some(ilo.local)
-        },
-        .None => {},
-      }
-
-      body_r := ctx.lower_block(fs.body)
-      ctx = body_r.ctx
-      ctx = ctx.pop_scope()
-
-      int_ty := MonoType.Int
-      void_ty := MonoType.Void
-
-      // Assign(idx, idx + 1)
-      idx_inc := CoreExpr.{
-        kind: .Assign(idx_local, CoreExpr.{
-          kind: .BinOp(.Add, CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s }, CoreExpr.{ kind: .LitInt(1), ty: int_ty, span: s }),
-          ty: int_ty,
-          span: s,
-        }),
-        ty: void_ty,
-        span: s,
-      }
-
-      cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
-
-      // Let(_, Assign(idx, idx+1), Continue)
-      ao1 := ctx.alloc_anon_local()
-      ctx = ao1.ctx
-      inc_then_cont := CoreExpr.{
-        kind: .Let(ao1.local, idx_inc, cont),
-        ty: void_ty,
-        span: s,
-      }
-
-      // Let(_, body, inc_then_cont)
-      ao2 := ctx.alloc_anon_local()
-      ctx = ao2.ctx
-      body_then_inc := CoreExpr.{
-        kind: .Let(ao2.local, body_r.expr, inc_then_cont),
-        ty: void_ty,
-        span: s,
-      }
-
-      // Optionally bind user-visible index before the increment
-      body_or_idx := case idx_user_local {
-        .Some(user_idx) => {
-          ao_idx := ctx.alloc_anon_local()
-          ctx = ao_idx.ctx
-          CoreExpr.{
-            kind: .Let(user_idx, CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s }, body_then_inc),
-            ty: void_ty,
-            span: s,
-          }
-        },
-        .None => body_then_inc,
-      }
-
-      // Let(x, Index(index_source, idx), body_or_idx)
-      elem_bind := CoreExpr.{
-        kind: .Let(elem_local, CoreExpr.{
-          kind: .Index(
-            CoreExpr.{ kind: .Local(index_source), ty: index_source_ty, span: s },
-            CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
-          ),
-          ty: void_ty,  // element type — approximate
-          span: s,
-        }, body_or_idx),
-        ty: void_ty,
-        span: s,
-      }
-
-      // If(idx >= len, Break, elem_bind)
-      loop_body := CoreExpr.{
-        kind: .If(
-          CoreExpr.{
-            kind: .BinOp(.Ge,
-              CoreExpr.{ kind: .Local(idx_local), ty: int_ty, span: s },
-              CoreExpr.{ kind: .Local(len_local), ty: int_ty, span: s },
-            ),
-            ty: MonoType.Bool,
-            span: s,
-          },
-          CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s },
-          elem_bind,
-        ),
-        ty: void_ty,
-        span: s,
-      }
-
-      loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
-
-      // Let(idx, 0, Loop(...))
-      idx_init := CoreExpr.{
-        kind: .Let(idx_local, CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }, loop_expr),
-        ty: void_ty,
-        span: s,
-      }
-
-      // Dispatch on iterator type for len function and arr binding
-      iter_ty := ar.expr.ty
-      case iter_ty {
-        .String => {
-          // String: use string_len (FuncId 8)
-          len_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
-              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
-            ),
-            ty: int_ty,
-            span: s,
-          }
-          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
-          ExprOut.{ expr: result, ctx }
-        },
-        .Dict(key_ty, _) => {
-          // Dict: call DICT_KEYS (FuncId 14) to get key vector, then iterate that
-          keys_local := case dict_keys_local {
-            .Some(kl) => kl,
-            .None => arr_local,  // should not happen
-          }
-          keys_ty := MonoType.Vector(key_ty)
-          keys_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
-              [CoreExpr.{ kind: .Local(arr_local), ty: iter_ty, span: s }],
-            ),
-            ty: keys_ty,
-            span: s,
-          }
-          // len on the keys vector
-          len_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
-              [CoreExpr.{ kind: .Local(keys_local), ty: keys_ty, span: s }],
-            ),
-            ty: int_ty,
-            span: s,
-          }
-          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-          keys_init := CoreExpr.{ kind: .Let(keys_local, keys_call, len_init), ty: void_ty, span: s }
-          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, keys_init), ty: void_ty, span: s }
-          ExprOut.{ expr: result, ctx }
-        },
-        _ => {
-          // Vector (default): use vector_len (FuncId 10)
-          len_call := CoreExpr.{
-            kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
-              [CoreExpr.{ kind: .Local(arr_local), ty: ar.expr.ty, span: s }],
-            ),
-            ty: int_ty,
-            span: s,
-          }
-          len_init := CoreExpr.{ kind: .Let(len_local, len_call, idx_init), ty: void_ty, span: s }
-          result := CoreExpr.{ kind: .Let(arr_local, ar.expr, len_init), ty: void_ty, span: s }
-          ExprOut.{ expr: result, ctx }
-        },
-      }
+      setup := setup_indexed_iter(ctx, iter_expr, fs.pattern, fs.index, fs.body, s)
+      build_indexed_loop(setup, setup.body_core, s)
     },
     .None => {
       // for cond { body }  →  Loop(If(!cond, Break, body))

@@ -170,8 +170,8 @@ pub type Expr = .{
 
 pub type ExprKind = {
   Ident(String),
-  IntLit(String),
-  FloatLit(String),
+  IntLit(Int),
+  FloatLit(Float),
   StringLit(String),
   StringInterp(Vector<StringPart>),
   BoolLit(Bool),

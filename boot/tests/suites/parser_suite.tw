@@ -385,14 +385,14 @@ pub fn suite() runner.Suite {
     .test("expr: integer literal", fn() {
       expr := try parse_body_tail("fn f() Int { 42 }")
       case expr.kind {
-        .IntLit(s) => assert.str_eq(s, "42"),
+        .IntLit(n) => assert.int_eq(n, 42),
         _ => assert.fail("expected IntLit"),
       }
     })
     .test("expr: float literal", fn() {
       expr := try parse_body_tail("fn f() Float { 3.14 }")
       case expr.kind {
-        .FloatLit(s) => assert.str_eq(s, "3.14"),
+        .FloatLit(f) => assert.str_eq(f.to_string(), "3.14"),
         _ => assert.fail("expected FloatLit"),
       }
     })
@@ -430,7 +430,7 @@ pub fn suite() runner.Suite {
     .test("expr: hex integer literal", fn() {
       expr := try parse_body_tail("fn f() Int { 0xFF }")
       case expr.kind {
-        .IntLit(s) => assert.str_eq(s, "0xFF"),
+        .IntLit(n) => assert.int_eq(n, 255),
         _ => assert.fail("expected IntLit"),
       }
     })
