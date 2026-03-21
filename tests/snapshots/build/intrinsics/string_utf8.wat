@@ -68,7 +68,9 @@
   (global $user____str_lit_global_536f6d6528 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (global $user____str_lit_global_6261642062797465 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (global $user____str_lit_global_68656c6c6f (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
-  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d61746368 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (global $user____str_lit_global_726f756e642d747269703a20 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (global $user____str_lit_global_78 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
   (global $user____str_lit_global_c3a9 (mut (ref null $rt_types__String)) (ref.null $rt_types__String))
@@ -1444,7 +1446,7 @@
           (then
             call $user____str_lit_get_4e6f6e65)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d61746368
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -1668,7 +1670,7 @@
             local.set $p4
             local.get $p4)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d61746368
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -2528,7 +2530,7 @@
             local.set $p107
             local.get $p107)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d61746368
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -2711,7 +2713,7 @@
             local.set $p115
             local.get $p115)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d61746368
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -3534,9 +3536,9 @@
     global.get $user____str_lit_global_68656c6c6f
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d61746368 (type $functype_35)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929 (type $functype_35)
     (result (ref $rt_types__String))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d61746368
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929
     ref.is_null
     (if
       (then
@@ -3560,9 +3562,142 @@
         i32.const 116
         i32.const 99
         i32.const 104
-        array.new_fixed $rt_types__String 20
-        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d61746368))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d61746368
+        i32.const 32
+        i32.const 105
+        i32.const 110
+        i32.const 32
+        i32.const 95
+        i32.const 95
+        i32.const 105
+        i32.const 110
+        i32.const 105
+        i32.const 116
+        i32.const 95
+        i32.const 95
+        i32.const 32
+        i32.const 40
+        i32.const 70
+        i32.const 117
+        i32.const 110
+        i32.const 99
+        i32.const 73
+        i32.const 100
+        i32.const 40
+        i32.const 52
+        i32.const 51
+        i32.const 41
+        i32.const 41
+        array.new_fixed $rt_types__String 45
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642834332929
+    ref.as_non_null
+  )
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929 (type $functype_35)
+    (result (ref $rt_types__String))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929
+    ref.is_null
+    (if
+      (then
+        i32.const 110
+        i32.const 111
+        i32.const 110
+        i32.const 45
+        i32.const 101
+        i32.const 120
+        i32.const 104
+        i32.const 97
+        i32.const 117
+        i32.const 115
+        i32.const 116
+        i32.const 105
+        i32.const 118
+        i32.const 101
+        i32.const 32
+        i32.const 109
+        i32.const 97
+        i32.const 116
+        i32.const 99
+        i32.const 104
+        i32.const 32
+        i32.const 105
+        i32.const 110
+        i32.const 32
+        i32.const 98
+        i32.const 121
+        i32.const 116
+        i32.const 101
+        i32.const 32
+        i32.const 40
+        i32.const 70
+        i32.const 117
+        i32.const 110
+        i32.const 99
+        i32.const 73
+        i32.const 100
+        i32.const 40
+        i32.const 52
+        i32.const 50
+        i32.const 41
+        i32.const 41
+        array.new_fixed $rt_types__String 41
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2062797465202846756e6349642834322929
+    ref.as_non_null
+  )
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929 (type $functype_35)
+    (result (ref $rt_types__String))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929
+    ref.is_null
+    (if
+      (then
+        i32.const 110
+        i32.const 111
+        i32.const 110
+        i32.const 45
+        i32.const 101
+        i32.const 120
+        i32.const 104
+        i32.const 97
+        i32.const 117
+        i32.const 115
+        i32.const 116
+        i32.const 105
+        i32.const 118
+        i32.const 101
+        i32.const 32
+        i32.const 109
+        i32.const 97
+        i32.const 116
+        i32.const 99
+        i32.const 104
+        i32.const 32
+        i32.const 105
+        i32.const 110
+        i32.const 32
+        i32.const 115
+        i32.const 104
+        i32.const 111
+        i32.const 119
+        i32.const 95
+        i32.const 111
+        i32.const 112
+        i32.const 116
+        i32.const 32
+        i32.const 40
+        i32.const 70
+        i32.const 117
+        i32.const 110
+        i32.const 99
+        i32.const 73
+        i32.const 100
+        i32.const 40
+        i32.const 52
+        i32.const 49
+        i32.const 41
+        i32.const 41
+        array.new_fixed $rt_types__String 45
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e2073686f775f6f7074202846756e6349642834312929
     ref.as_non_null
   )
   (func $user____str_lit_get_726f756e642d747269703a20 (type $functype_35)
