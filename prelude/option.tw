@@ -6,6 +6,14 @@ pub fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
   }
 }
 
+/// Extract the value from Some, or return a default.
+pub fn unwrap_or<T>(opt: Option<T>, default: T) T {
+  case opt {
+    .Some(v) => v,
+    .None => default,
+  }
+}
+
 /// Transform the Some payload.
 pub fn map<T, U>(opt: Option<T>, f: fn(T) U) Option<U> {
   case opt {

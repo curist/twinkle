@@ -382,6 +382,35 @@ pub fn suite() runner.Suite {
       try assert.err_eq(still_failed, "boom")
       .Ok({})
     })
+    .test("Option.unwrap_or returns value from Some", fn() {
+      opt: Int? = .Some(42)
+      try assert.int_eq(opt.unwrap_or(0), 42)
+      .Ok({})
+    })
+    .test("Option.unwrap_or returns default from None", fn() {
+      opt: Int? = .None
+      try assert.int_eq(opt.unwrap_or(99), 99)
+      .Ok({})
+    })
+    .test("Option.unwrap_or with string type", fn() {
+      some: String? = .Some("hello")
+      none: String? = .None
+      try assert.str_eq(some.unwrap_or("default"), "hello")
+      try assert.str_eq(none.unwrap_or("default"), "default")
+      .Ok({})
+    })
+    .test("Option.unwrap_or on dict indexing", fn() {
+      d: Dict<String, Int> = Dict.new()
+      d["x"] = 10
+      try assert.int_eq(d["x"].unwrap_or(0), 10)
+      try assert.int_eq(d["missing"].unwrap_or(-1), -1)
+      .Ok({})
+    })
+    .test("Option.unwrap_or qualified call", fn() {
+      opt: Int? = .None
+      try assert.int_eq(Option.unwrap_or(opt, 7), 7)
+      .Ok({})
+    })
     .test("Option and Result combinators support qualified calls", fn() {
       o: Int? = .Some(3)
       om := Option.map(o, fn(x: Int) { x + 2 })

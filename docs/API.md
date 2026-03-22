@@ -20,6 +20,7 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `.unwrap_or(default)` | `fn<T>(opt: Option<T>, default: T) T` | Extract `Some(v)` or return `default` |
 | `.map(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) U) Option<U>` | Transform `Some(v)` into `Some(f(v))`; leaves `None` unchanged |
 | `.and_then(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U>` | Chain Option-producing steps without nesting |
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
