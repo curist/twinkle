@@ -1,0 +1,65 @@
+// Dead let elimination: remove Let(t, pure_op, body) where t is never used.
+
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.anf_analysis.{collect_assigned_locals, set_has}
+use compiler.opt.use_count.{count_uses, is_pure}
+
+pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
+
+pub fn dead_let_elim(expr: AnfExpr) ElimResult {
+  uses := count_uses(expr)
+  assigned := collect_assigned_locals(expr)
+  dead_let_inner(expr, uses, assigned)
+}
+
+fn dead_let_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) ElimResult {
+  case expr {
+    .Let(local, op, body) => {
+      use_count := uses[local.id].unwrap_or(0)
+      if use_count == 0 and !set_has(assigned, local.id) and is_pure(op) {
+        result := dead_let_inner(body, uses, assigned)
+        return ElimResult.{ expr: result.expr, changed: true }
+      }
+      op_result := dead_let_op(op, uses, assigned)
+      body_result := dead_let_inner(body, uses, assigned)
+      ElimResult.{
+        expr: .Let(local, op_result.op, body_result.expr),
+        changed: op_result.changed or body_result.changed,
+      }
+    },
+    _ => ElimResult.{ expr: expr, changed: false },
+  }
+}
+
+type OpElimResult = .{ op: AnfOp, changed: Bool }
+
+fn dead_let_op(op: AnfOp, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) OpElimResult {
+  case op {
+    .AIf(cond, then_e, else_e) => {
+      then_r := dead_let_inner(then_e, uses, assigned)
+      else_r := dead_let_inner(else_e, uses, assigned)
+      OpElimResult.{
+        op: .AIf(cond, then_r.expr, else_r.expr),
+        changed: then_r.changed or else_r.changed,
+      }
+    },
+    .AMatch(scrutinee, arms) => {
+      changed := false
+      new_arms: Vector<AnfMatchArm> = collect arm in arms {
+        r := dead_let_inner(arm.body, uses, assigned)
+        if r.changed { changed = true }
+        AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
+      }
+      OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+    },
+    .ALoop(body) => {
+      r := dead_let_inner(body, uses, assigned)
+      OpElimResult.{ op: .ALoop(r.expr), changed: r.changed }
+    },
+    .ADefer(inner) => {
+      r := dead_let_inner(inner, uses, assigned)
+      OpElimResult.{ op: .ADefer(r.expr), changed: r.changed }
+    },
+    _ => OpElimResult.{ op: op, changed: false },
+  }
+}

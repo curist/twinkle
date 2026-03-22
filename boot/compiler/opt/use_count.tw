@@ -1,0 +1,161 @@
+// Use counting for ANF locals.
+//
+// Two variants:
+// - count_uses: counts ALL references (including AMakeClosure.free_vars)
+// - count_uses_excluding_free_vars: excludes closure free_var positions
+//
+// A "use" is any ALocal(id) in an operand/atom position.
+// Let binders and AAssign targets are NOT counted as uses.
+//
+// Dict is COW in Twinkle, so every function threads and returns the updated dict.
+
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+
+fn inc(uses: Dict<Int, Int>, id: Int) Dict<Int, Int> {
+  uses[id] = uses[id].unwrap_or(0) + 1
+  uses
+}
+
+// ── count_uses ──────────────────────────────────────────────────────
+
+pub fn count_uses(expr: AnfExpr) Dict<Int, Int> {
+  uses: Dict<Int, Int> = Dict.new()
+  count_expr(expr, uses)
+}
+
+fn count_atom(atom: Atom, uses: Dict<Int, Int>) Dict<Int, Int> {
+  case atom {
+    .ALocal(id) => inc(uses, id.id),
+    _ => uses,
+  }
+}
+
+fn count_expr(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
+  case expr {
+    .Let(_, op, body) => {
+      u := count_op(op, uses)
+      count_expr(body, u)
+    },
+    .Atom(a) => count_atom(a, uses),
+    .Return(.Some(a)) => count_atom(a, uses),
+    .Return(.None) => uses,
+    .Break(.Some(a)) => count_atom(a, uses),
+    .Break(.None) => uses,
+    .Continue => uses,
+  }
+}
+
+fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
+  case op {
+    .ACall(callee, args) => {
+      u := count_atom(callee, uses)
+      for a in args { u = count_atom(a, u) }
+      u
+    },
+    .AIf(cond, then_e, else_e) => {
+      u := count_atom(cond, uses)
+      u = count_expr(then_e, u)
+      count_expr(else_e, u)
+    },
+    .AMatch(scrutinee, arms) => {
+      u := count_atom(scrutinee, uses)
+      for arm in arms { u = count_expr(arm.body, u) }
+      u
+    },
+    .ALoop(body) => count_expr(body, uses),
+    .ABinOp(_, left, right, _) => {
+      u := count_atom(left, uses)
+      count_atom(right, u)
+    },
+    .AUnOp(_, inner, _) => count_atom(inner, uses),
+    .AMakeClosure(_, free_vars) => {
+      u := uses
+      for v in free_vars { u = inc(u, v.id) }
+      u
+    },
+    .ARecord(_, fields) => {
+      u := uses
+      for f in fields { u = count_atom(f.value, u) }
+      u
+    },
+    .ARecordGet(target, _, _) => count_atom(target, uses),
+    .ARecordUpdate(base, _, value, _, _) => {
+      u := count_atom(base, uses)
+      count_atom(value, u)
+    },
+    .AVariant(_, _, args) => {
+      u := uses
+      for a in args { u = count_atom(a, u) }
+      u
+    },
+    .AArrayLit(elems) => {
+      u := uses
+      for a in elems { u = count_atom(a, u) }
+      u
+    },
+    .AIndex(base, index, _, _) => {
+      u := count_atom(base, uses)
+      count_atom(index, u)
+    },
+    .AInit(value) => count_atom(value, uses),
+    .AAssign(_, value) => count_atom(value, uses),
+    .ADefer(inner) => count_expr(inner, uses),
+  }
+}
+
+// ── count_uses_excluding_free_vars ──────────────────────────────────
+
+pub fn count_uses_excluding_free_vars(expr: AnfExpr) Dict<Int, Int> {
+  uses: Dict<Int, Int> = Dict.new()
+  count_expr_ex(expr, uses)
+}
+
+fn count_expr_ex(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
+  case expr {
+    .Let(_, op, body) => {
+      u := count_op_ex(op, uses)
+      count_expr_ex(body, u)
+    },
+    .Atom(a) => count_atom(a, uses),
+    .Return(.Some(a)) => count_atom(a, uses),
+    .Return(.None) => uses,
+    .Break(.Some(a)) => count_atom(a, uses),
+    .Break(.None) => uses,
+    .Continue => uses,
+  }
+}
+
+fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
+  case op {
+    .AMakeClosure(_, _) => uses,
+    _ => count_op(op, uses),
+  }
+}
+
+// ── is_pure ─────────────────────────────────────────────────────────
+
+pub fn is_pure(op: AnfOp) Bool {
+  case op {
+    .ABinOp(binop, _, _, kind) => {
+      case kind {
+        .Int => {
+          case binop {
+            .Div => false,
+            .Mod => false,
+            _ => true,
+          }
+        },
+        _ => true,
+      }
+    },
+    .AInit(_) => true,
+    .AUnOp(_, _, _) => true,
+    .ARecord(_, _) => true,
+    .ARecordGet(_, _, _) => true,
+    .ARecordUpdate(_, _, _, _, _) => true,
+    .AVariant(_, _, _) => true,
+    .AArrayLit(_) => true,
+    .AMakeClosure(_, _) => true,
+    _ => false,
+  }
+}

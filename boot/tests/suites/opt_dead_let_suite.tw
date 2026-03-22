@@ -1,0 +1,349 @@
+use tests.runner
+use tests.assert
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern}
+use compiler.resolver.{MonoType, TypeId}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, OpKind, IndexKind, FieldAtom}
+use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
+use compiler.opt.dead_let.{dead_let_elim}
+use compiler.opt.copy_prop.{copy_propagate, subst_atom}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn uses_for(uses: Dict<Int, Int>, id: Int) Int {
+  uses[id].unwrap_or(0)
+}
+
+// ── count_uses ──────────────────────────────────────────────────────
+
+fn test_count_uses_simple() Result<Void, String> {
+  // Let(0, AInit(ALocal(1)), Atom(ALocal(0)))
+  // local 1 used once (in AInit), local 0 used once (in tail Atom)
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALocal(lid(1))), .Atom(.ALocal(lid(0))))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 0), 1)
+  try assert.int_eq(uses_for(uses, 1), 1)
+  .Ok({})
+}
+
+fn test_count_uses_let_binder_not_counted() Result<Void, String> {
+  // Let(5, AInit(ALitInt(42)), Atom(ALitVoid))
+  // local 5 is only the binder — should have 0 uses
+  expr: AnfExpr = .Let(lid(5), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 5), 0)
+  .Ok({})
+}
+
+fn test_count_uses_assign_target_not_counted() Result<Void, String> {
+  // Let(0, AAssign(7, ALitInt(1)), Atom(ALitVoid))
+  // local 7 is the assign target — not a use
+  expr: AnfExpr = .Let(lid(0), .AAssign(lid(7), .ALitInt(1)), .Atom(.ALitVoid))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 7), 0)
+  .Ok({})
+}
+
+fn test_count_uses_closure_free_vars() Result<Void, String> {
+  // Let(0, AMakeClosure(99, [1, 2]), Atom(ALocal(0)))
+  // locals 1 and 2 each used once (as free vars)
+  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(1), lid(2)]), .Atom(.ALocal(lid(0))))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 1), 1)
+  try assert.int_eq(uses_for(uses, 2), 1)
+  try assert.int_eq(uses_for(uses, 0), 1)
+  .Ok({})
+}
+
+fn test_count_uses_excluding_free_vars() Result<Void, String> {
+  // Let(1, AInit(ALitInt(10)), Let(0, AMakeClosure(99, [1]), Atom(ALocal(0))))
+  // local 1 used only as free var — excluding_free_vars count should be 0
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(10)),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALocal(lid(0)))))
+  uses := count_uses_excluding_free_vars(expr)
+  try assert.int_eq(uses_for(uses, 1), 0)
+  try assert.int_eq(uses_for(uses, 0), 1)
+  .Ok({})
+}
+
+fn test_count_uses_multiple_refs() Result<Void, String> {
+  // Let(0, ABinOp(Add, ALocal(1), ALocal(1), Int), Atom(ALocal(0)))
+  // local 1 used twice
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), .Atom(.ALocal(lid(0))))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 1), 2)
+  .Ok({})
+}
+
+// ── is_pure ─────────────────────────────────────────────────────────
+
+fn test_is_pure_init() Result<Void, String> {
+  assert.is_true(is_pure(.AInit(.ALitInt(42))))
+}
+
+fn test_is_pure_binop_add() Result<Void, String> {
+  assert.is_true(is_pure(.ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int)))
+}
+
+fn test_is_pure_int_div_impure() Result<Void, String> {
+  assert.is_false(is_pure(.ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int)))
+}
+
+fn test_is_pure_int_mod_impure() Result<Void, String> {
+  assert.is_false(is_pure(.ABinOp(.Mod, .ALitInt(1), .ALitInt(0), .Int)))
+}
+
+fn test_is_pure_float_div_pure() Result<Void, String> {
+  assert.is_true(is_pure(.ABinOp(.Div, .ALitFloat(1.0), .ALitFloat(0.0), .Float)))
+}
+
+fn test_is_pure_call_impure() Result<Void, String> {
+  assert.is_false(is_pure(.ACall(.AGlobalFunc(fid(1)), [])))
+}
+
+fn test_is_pure_assign_impure() Result<Void, String> {
+  assert.is_false(is_pure(.AAssign(lid(0), .ALitInt(1))))
+}
+
+fn test_is_pure_index_impure() Result<Void, String> {
+  assert.is_false(is_pure(.AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .Int)))
+}
+
+fn test_is_pure_record() Result<Void, String> {
+  assert.is_true(is_pure(.ARecord(TypeId.{ id: 7 }, [])))
+}
+
+fn test_is_pure_variant() Result<Void, String> {
+  assert.is_true(is_pure(.AVariant(TypeId.{ id: 7 }, VariantId.{ id: 0 }, [])))
+}
+
+fn test_is_pure_make_closure() Result<Void, String> {
+  assert.is_true(is_pure(.AMakeClosure(fid(99), [])))
+}
+
+fn test_is_pure_unop() Result<Void, String> {
+  assert.is_true(is_pure(.AUnOp(.Neg, .ALitInt(1), .Int)))
+}
+
+// ── dead_let_elim ───────────────────────────────────────────────────
+
+fn test_dead_let_drops_unused_pure() Result<Void, String> {
+  // Let(0, ABinOp(Add, 1, 2, Int), Atom(ALitInt(42)))
+  // local 0 is unused, op is pure → should be eliminated
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int), .Atom(.ALitInt(42)))
+  result := dead_let_elim(expr)
+  try assert.is_true(result.changed)
+  case result.expr {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    _ => .Err("expected Atom(42)"),
+  }
+}
+
+fn test_dead_let_keeps_used() Result<Void, String> {
+  // Let(0, AInit(ALitInt(42)), Atom(ALocal(0)))
+  // local 0 IS used → should be kept
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALocal(lid(0))))
+  result := dead_let_elim(expr)
+  try assert.is_false(result.changed)
+  case result.expr {
+    .Let(_, _, _) => .Ok({}),
+    _ => .Err("expected Let to be preserved"),
+  }
+}
+
+fn test_dead_let_keeps_impure() Result<Void, String> {
+  // Let(0, ACall(...), Atom(ALitVoid))
+  // local 0 is unused, but ACall is impure → should be kept
+  expr: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(1)), []), .Atom(.ALitVoid))
+  result := dead_let_elim(expr)
+  try assert.is_false(result.changed)
+  case result.expr {
+    .Let(_, _, _) => .Ok({}),
+    _ => .Err("expected Let to be preserved (impure)"),
+  }
+}
+
+fn test_dead_let_keeps_int_div() Result<Void, String> {
+  // Let(0, ABinOp(Div, 1, 0, Int), Atom(ALitInt(42)))
+  // unused but int div is impure (may trap) → keep
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int), .Atom(.ALitInt(42)))
+  result := dead_let_elim(expr)
+  try assert.is_false(result.changed)
+  case result.expr {
+    .Let(_, _, _) => .Ok({}),
+    _ => .Err("expected Let to be preserved (int div)"),
+  }
+}
+
+fn test_dead_let_keeps_assigned() Result<Void, String> {
+  // Let(5, AInit(ALitInt(0)), Let(0, AAssign(5, ALitInt(1)), Atom(ALitVoid)))
+  // local 5 has 0 uses but IS an assign target → should be kept
+  expr: AnfExpr = .Let(lid(5), .AInit(.ALitInt(0)),
+    .Let(lid(0), .AAssign(lid(5), .ALitInt(1)), .Atom(.ALitVoid)))
+  result := dead_let_elim(expr)
+  // The outer Let(5) should be kept because 5 is assigned
+  case result.expr {
+    .Let(local, _, _) => assert.int_eq(local.id, 5),
+    _ => .Err("expected Let(5) preserved"),
+  }
+}
+
+fn test_dead_let_nested_in_if() Result<Void, String> {
+  // Let(0, AIf(true, Let(1, AInit(42), Atom(42)), Atom(0)), Atom(ALocal(0)))
+  // inner Let(1) is dead pure → should be eliminated inside the if branch
+  expr: AnfExpr = .Let(lid(0),
+    .AIf(.ALitBool(true),
+      .Let(lid(1), .AInit(.ALitInt(42)), .Atom(.ALitInt(42))),
+      .Atom(.ALitInt(0))),
+    .Atom(.ALocal(lid(0))))
+  result := dead_let_elim(expr)
+  assert.is_true(result.changed)
+}
+
+// ── subst_atom ──────────────────────────────────────────────────────
+
+fn test_subst_atom_replaces() Result<Void, String> {
+  // Atom(ALocal(5)) → subst 5 with ALitInt(42) → Atom(ALitInt(42))
+  expr: AnfExpr = .Atom(.ALocal(lid(5)))
+  result := subst_atom(expr, lid(5), .ALitInt(42))
+  case result {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    _ => .Err("expected substituted literal"),
+  }
+}
+
+fn test_subst_atom_leaves_other() Result<Void, String> {
+  // Atom(ALocal(3)) → subst 5 with ALitInt(42) → Atom(ALocal(3)) unchanged
+  expr: AnfExpr = .Atom(.ALocal(lid(3)))
+  result := subst_atom(expr, lid(5), .ALitInt(42))
+  case result {
+    .Atom(.ALocal(local)) => assert.int_eq(local.id, 3),
+    _ => .Err("expected unchanged local"),
+  }
+}
+
+fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
+  // Let(0, AMakeClosure(99, [5]), Atom(ALocal(0)))
+  // subst 5 with ALitInt(42) → free_vars should remain [5] unchanged
+  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(5)]), .Atom(.ALocal(lid(0))))
+  result := subst_atom(expr, lid(5), .ALitInt(42))
+  case result {
+    .Let(_, op, _) => {
+      case op {
+        .AMakeClosure(_, free_vars) => assert.int_eq(free_vars[0].id, 5),
+        _ => { return .Err("expected AMakeClosure") },
+      }
+    },
+    _ => .Err("expected Let"),
+  }
+}
+
+// ── copy_propagate ──────────────────────────────────────────────────
+
+fn test_copy_prop_inlines_literal() Result<Void, String> {
+  // Let(1, AInit(ALitInt(42)), Atom(ALocal(1)))
+  // local 1 used once with literal init → should inline
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(42)), .Atom(.ALocal(lid(1))))
+  result := copy_propagate(expr)
+  try assert.is_true(result.changed)
+  case result.expr {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    _ => .Err("expected inlined literal"),
+  }
+}
+
+fn test_copy_prop_inlines_global_func() Result<Void, String> {
+  // Let(1, AInit(AGlobalFunc(99)), Atom(ALocal(1)))
+  expr: AnfExpr = .Let(lid(1), .AInit(.AGlobalFunc(fid(99))), .Atom(.ALocal(lid(1))))
+  result := copy_propagate(expr)
+  try assert.is_true(result.changed)
+  case result.expr {
+    .Atom(.AGlobalFunc(f)) => assert.int_eq(f.id, 99),
+    _ => .Err("expected inlined global func"),
+  }
+}
+
+fn test_copy_prop_keeps_local_init() Result<Void, String> {
+  // Let(1, AInit(ALocal(5)), Atom(ALocal(1)))
+  // ALocal is NOT a non-local atom — should NOT be propagated
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(5))), .Atom(.ALocal(lid(1))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
+fn test_copy_prop_keeps_multi_use() Result<Void, String> {
+  // Let(1, AInit(ALitInt(42)), Let(0, ABinOp(Add, ALocal(1), ALocal(1), Int), Atom(ALocal(0))))
+  // local 1 used twice → should NOT be propagated
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(42)),
+    .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), .Atom(.ALocal(lid(0)))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
+fn test_copy_prop_keeps_closure_only_use() Result<Void, String> {
+  // Let(1, AInit(ALitInt(10)), Let(0, AMakeClosure(99, [1]), Atom(ALocal(0))))
+  // local 1 used only as closure free_var → must NOT be propagated
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(10)),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALocal(lid(0)))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
+fn test_copy_prop_keeps_assigned() Result<Void, String> {
+  // Let(1, AInit(ALitInt(42)), Let(0, AAssign(1, ALitInt(99)), Atom(ALocal(1))))
+  // local 1 is assigned → must NOT be propagated
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(42)),
+    .Let(lid(0), .AAssign(lid(1), .ALitInt(99)), .Atom(.ALocal(lid(1)))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  s := runner.suite("Opt: Dead Let & Copy Prop")
+  // count_uses
+  s = s.test("uses: simple", test_count_uses_simple)
+  s = s.test("uses: binder not counted", test_count_uses_let_binder_not_counted)
+  s = s.test("uses: assign target not counted", test_count_uses_assign_target_not_counted)
+  s = s.test("uses: closure free vars", test_count_uses_closure_free_vars)
+  s = s.test("uses: excluding free vars", test_count_uses_excluding_free_vars)
+  s = s.test("uses: multiple refs", test_count_uses_multiple_refs)
+  // is_pure
+  s = s.test("pure: init", test_is_pure_init)
+  s = s.test("pure: binop add", test_is_pure_binop_add)
+  s = s.test("pure: int div impure", test_is_pure_int_div_impure)
+  s = s.test("pure: int mod impure", test_is_pure_int_mod_impure)
+  s = s.test("pure: float div pure", test_is_pure_float_div_pure)
+  s = s.test("pure: call impure", test_is_pure_call_impure)
+  s = s.test("pure: assign impure", test_is_pure_assign_impure)
+  s = s.test("pure: index impure", test_is_pure_index_impure)
+  s = s.test("pure: record", test_is_pure_record)
+  s = s.test("pure: variant", test_is_pure_variant)
+  s = s.test("pure: make_closure", test_is_pure_make_closure)
+  s = s.test("pure: unop", test_is_pure_unop)
+  // dead_let_elim
+  s = s.test("dead_let: drops unused pure", test_dead_let_drops_unused_pure)
+  s = s.test("dead_let: keeps used", test_dead_let_keeps_used)
+  s = s.test("dead_let: keeps impure", test_dead_let_keeps_impure)
+  s = s.test("dead_let: keeps int div", test_dead_let_keeps_int_div)
+  s = s.test("dead_let: keeps assigned", test_dead_let_keeps_assigned)
+  s = s.test("dead_let: nested in if", test_dead_let_nested_in_if)
+  // subst_atom
+  s = s.test("subst: replaces target", test_subst_atom_replaces)
+  s = s.test("subst: leaves other", test_subst_atom_leaves_other)
+  s = s.test("subst: skips closure free_vars", test_subst_atom_does_not_enter_closure_free_vars)
+  // copy_propagate
+  s = s.test("copy_prop: inlines literal", test_copy_prop_inlines_literal)
+  s = s.test("copy_prop: inlines global func", test_copy_prop_inlines_global_func)
+  s = s.test("copy_prop: keeps local init", test_copy_prop_keeps_local_init)
+  s = s.test("copy_prop: keeps multi-use", test_copy_prop_keeps_multi_use)
+  s = s.test("copy_prop: keeps closure-only use", test_copy_prop_keeps_closure_only_use)
+  s = s.test("copy_prop: keeps assigned", test_copy_prop_keeps_assigned)
+  s
+}
