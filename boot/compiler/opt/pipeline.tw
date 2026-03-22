@@ -10,6 +10,7 @@ use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.liveness.{annotate_in_place}
 use compiler.opt.uniqueness.{CowConfig, CowOpEntry, BuilderConfig, uniqueness_rewrite}
+use compiler.opt.defer_elim.{eliminate_defers}
 
 // ── compute_pinned ──────────────────────────────────────────────────
 
@@ -148,10 +149,12 @@ pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) An
     // Post-loop pass: annotate record updates for in-place reuse
     optimized = annotate_in_place(optimized)
     // Post-loop pass: uniqueness rewrite (COW elimination)
-    case cow_config {
+    optimized = case cow_config {
       .Some(config) => uniqueness_rewrite(optimized, config),
       .None => optimized,
     }
+    // Post-loop pass: defer elimination (must be last)
+    eliminate_defers(optimized)
   }
 
   AnfModule.{

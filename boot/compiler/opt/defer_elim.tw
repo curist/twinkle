@@ -1,0 +1,418 @@
+// ANF defer elimination pass.
+//
+// Removes all ADefer nodes by rewriting exit points (Return, Break,
+// Continue, terminal Atom) to execute deferred expressions in LIFO order
+// before transferring control.
+//
+// Threads two defer lists:
+//   fn_defers    — declared outside the current loop; fired on Return
+//                  and normal function exit (terminal Atom at function tail).
+//   loop_defers  — declared inside the current loop iteration; fired on
+//                  Break, Continue, and end-of-iteration (terminal Atom
+//                  at loop body tail).
+//
+// When Return fires inside a loop, BOTH lists run (inner loop defers
+// before outer function defers — true LIFO).
+//
+// Entering a loop resets loop_defers = [] and folds the previous
+// loop_defers into fn_defers.
+//
+// After this pass no ADefer nodes remain.
+
+use compiler.core_ir.{LocalId, CorePattern}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom, AnfFunctionDef}
+use compiler.anf_analysis.{collect_free_locals}
+
+// ── Public entry point ─────────────────────────────────────────────
+
+pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
+  next := Cell.new(next_local_id(func))
+  body := elim(func.body, [], [], false, false, next)
+  AnfFunctionDef.{
+    func_id: func.func_id,
+    name: func.name,
+    params: func.params,
+    op_result_mono: func.op_result_mono,
+    body: body,
+    return_ty: func.return_ty,
+  }
+}
+
+// ── Core recursive rewrite ─────────────────────────────────────────
+
+// Recursively rewrite expr, threading the active defer lists.
+//
+// fn_defers / loop_defers — in declaration order (reversed on insertion).
+// in_sub_expr — true inside AIf/AMatch branches (value position);
+//   terminal Atom does NOT fire defers.
+// in_loop — true inside a loop body; terminal Atom fires only loop_defers.
+fn elim(expr: AnfExpr, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
+        in_sub_expr: Bool, in_loop: Bool, next: Cell<Int>) AnfExpr {
+  case expr {
+    .Let(local, op, body) => {
+      case op {
+        // ── ADefer: register and continue into body ──────────
+        .ADefer(d) => {
+          // Capture-by-value: snapshot each free local at registration time
+          captures := compute_captures(d, next)
+          deferred := if captures.remap.len() == 0 { d } else { remap_expr(d, captures.remap) }
+
+          // Add to loop_defers (fn_defers is set by the loop handler)
+          new_loop := loop_defers.push(deferred)
+
+          rewritten_tail := elim(body, fn_defers, new_loop, in_sub_expr, in_loop, next)
+          prepend_snapshots(captures.snapshots, rewritten_tail)
+        },
+
+        // ── ALoop: reset loop_defers; fold old into fn_defers ─
+        .ALoop(loop_body) => {
+          inner_fn := fn_defers.concat(loop_defers)
+          new_loop_body := elim(loop_body, inner_fn, [], false, true, next)
+          new_body := elim(body, fn_defers, loop_defers, in_sub_expr, in_loop, next)
+          .Let(local, .ALoop(new_loop_body), new_body)
+        },
+
+        // ── General Let: recurse into op sub-expressions and body
+        _ => {
+          new_op := elim_op(op, fn_defers, loop_defers, in_loop, next)
+          new_body := elim(body, fn_defers, loop_defers, in_sub_expr, in_loop, next)
+          .Let(local, new_op, new_body)
+        },
+      }
+    },
+
+    // ── Return: prepend all defers (LIFO) ──────────────────────
+    .Return(v) => {
+      all := fn_defers.concat(loop_defers)
+      prepend_defers(all, .Return(v))
+    },
+
+    // ── Break: prepend loop_defers (LIFO) ──────────────────────
+    .Break(v) => prepend_defers(loop_defers, .Break(v)),
+
+    // ── Continue: prepend loop_defers (LIFO) ───────────────────
+    .Continue => prepend_defers(loop_defers, .Continue),
+
+    // ── Terminal Atom ──────────────────────────────────────────
+    .Atom(a) => {
+      if in_sub_expr {
+        .Atom(a)
+      } else if in_loop {
+        prepend_defers(loop_defers, .Atom(a))
+      } else {
+        all := fn_defers.concat(loop_defers)
+        prepend_defers(all, .Atom(a))
+      }
+    },
+  }
+}
+
+// ── elim_op: recurse into ops with sub-expressions ─────────────────
+
+fn elim_op(op: AnfOp, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
+           in_loop: Bool, next: Cell<Int>) AnfOp {
+  case op {
+    // Branches produce values — pass in_sub_expr=true
+    .AIf(cond, then_e, else_e) =>
+      .AIf(cond,
+           elim(then_e, fn_defers, loop_defers, true, in_loop, next),
+           elim(else_e, fn_defers, loop_defers, true, in_loop, next)),
+
+    .AMatch(scrutinee, arms) => {
+      new_arms := collect arm in arms {
+        AnfMatchArm.{
+          pattern: arm.pattern,
+          body: elim(arm.body, fn_defers, loop_defers, true, in_loop, next),
+        }
+      }
+      .AMatch(scrutinee, new_arms)
+    },
+
+    // ALoop inside an op (not a Let): same reset logic
+    .ALoop(body) => {
+      inner_fn := fn_defers.concat(loop_defers)
+      .ALoop(elim(body, inner_fn, [], false, true, next))
+    },
+
+    // ADefer in op position — invalid ANF
+    .ADefer(_) => error("ADefer in op position — invalid ANF; should always appear as Let op"),
+
+    other => other,
+  }
+}
+
+// ── prepend_defers: insert deferred exprs in LIFO order ────────────
+
+// Defers are in declaration order; fold so last-declared fires first.
+fn prepend_defers(defers: Vector<AnfExpr>, tail: AnfExpr) AnfExpr {
+  result := tail
+  for d in defers {
+    result = splice_defer_before(d, result)
+  }
+  result
+}
+
+// Walk the let-chain of deferred and replace its terminal Atom with
+// continuation, discarding the void result.
+fn splice_defer_before(deferred: AnfExpr, continuation: AnfExpr) AnfExpr {
+  case deferred {
+    .Atom(_) => continuation,
+    .Let(local, op, body) => .Let(local, op, splice_defer_before(body, continuation)),
+    // Diverging terminal in a deferred expression — should not happen after
+    // type checking, but keep the terminal as a safe fallback.
+    terminal => terminal,
+  }
+}
+
+// ── Capture semantics ──────────────────────────────────────────────
+
+type SnapshotBinding = .{ src: LocalId, snap: LocalId }
+type CaptureResult = .{ remap: Dict<Int, Int>, snapshots: Vector<SnapshotBinding> }
+
+fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
+  free := collect_free_locals(expr, Dict.new())
+  remap: Dict<Int, Int> = Dict.new()
+  snapshots: Vector<SnapshotBinding> = []
+
+  // Sort keys for determinism
+  keys := free.keys()
+  sorted := sort_ints(keys)
+
+  for src_id in sorted {
+    snap_id := next.get()
+    next.set(snap_id + 1)
+    remap[src_id] = snap_id
+    snapshots = snapshots.push(SnapshotBinding.{ src: LocalId.{ id: src_id }, snap: LocalId.{ id: snap_id } })
+  }
+
+  CaptureResult.{ remap: remap, snapshots: snapshots }
+}
+
+// Insert snapshot let-bindings: let snap = init(src) for each capture
+fn prepend_snapshots(snapshots: Vector<SnapshotBinding>, tail: AnfExpr) AnfExpr {
+  // Build in reverse so first snapshot is outermost
+  result := tail
+  idx := snapshots.len() - 1
+  for idx >= 0 {
+    s := snapshots[idx]
+    result = .Let(s.snap, .AInit(.ALocal(s.src)), result)
+    idx = idx - 1
+  }
+  result
+}
+
+// Simple insertion sort for small int vectors
+fn sort_ints(xs: Vector<Int>) Vector<Int> {
+  result: Vector<Int> = []
+  for x in xs {
+    // Find insertion point
+    inserted := false
+    new: Vector<Int> = []
+    for r in result {
+      if !inserted and x < r {
+        new = new.push(x)
+        inserted = true
+      }
+      new = new.push(r)
+    }
+    if !inserted { new = new.push(x) }
+    result = new
+  }
+  result
+}
+
+// ── Remap: substitute locals in deferred body ──────────────────────
+
+fn remap_local(id: Int, remap: Dict<Int, Int>) Int {
+  remap[id].unwrap_or(id)
+}
+
+fn remap_atom(atom: Atom, remap: Dict<Int, Int>) Atom {
+  case atom {
+    .ALocal(id) => .ALocal(LocalId.{ id: remap_local(id.id, remap) }),
+    other => other,
+  }
+}
+
+fn remap_expr(expr: AnfExpr, remap: Dict<Int, Int>) AnfExpr {
+  case expr {
+    .Let(local, op, body) =>
+      .Let(local, remap_op(op, remap), remap_expr(body, remap)),
+    .Atom(a) => .Atom(remap_atom(a, remap)),
+    .Return(.Some(a)) => .Return(.Some(remap_atom(a, remap))),
+    .Return(.None) => .Return(.None),
+    .Break(.Some(a)) => .Break(.Some(remap_atom(a, remap))),
+    .Break(.None) => .Break(.None),
+    .Continue => .Continue,
+  }
+}
+
+fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
+  case op {
+    .ACall(callee, args) =>
+      .ACall(remap_atom(callee, remap),
+             collect a in args { remap_atom(a, remap) }),
+
+    .AIf(cond, then_e, else_e) =>
+      .AIf(remap_atom(cond, remap),
+           remap_expr(then_e, remap),
+           remap_expr(else_e, remap)),
+
+    .AMatch(scrutinee, arms) =>
+      .AMatch(remap_atom(scrutinee, remap),
+              collect arm in arms {
+                AnfMatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap) }
+              }),
+
+    .ALoop(body) => .ALoop(remap_expr(body, remap)),
+
+    .ABinOp(binop, left, right, kind) =>
+      .ABinOp(binop, remap_atom(left, remap), remap_atom(right, remap), kind),
+
+    .AUnOp(unop, inner, kind) =>
+      .AUnOp(unop, remap_atom(inner, remap), kind),
+
+    .AMakeClosure(func_id, free_vars) => {
+      new_vars := collect v in free_vars {
+        LocalId.{ id: remap_local(v.id, remap) }
+      }
+      .AMakeClosure(func_id, new_vars)
+    },
+
+    .ARecord(type_id, fields) =>
+      .ARecord(type_id, collect f in fields {
+        FieldAtom.{ field: f.field, value: remap_atom(f.value, remap) }
+      }),
+
+    .ARecordGet(target, field_id, type_id) =>
+      .ARecordGet(remap_atom(target, remap), field_id, type_id),
+
+    .ARecordUpdate(base, field_id, value, can_reuse, type_id) =>
+      .ARecordUpdate(remap_atom(base, remap), field_id, remap_atom(value, remap), can_reuse, type_id),
+
+    .AVariant(type_id, variant_id, args) =>
+      .AVariant(type_id, variant_id, collect a in args { remap_atom(a, remap) }),
+
+    .AArrayLit(elems) =>
+      .AArrayLit(collect a in elems { remap_atom(a, remap) }),
+
+    .AIndex(base, index, kind, mono) =>
+      .AIndex(remap_atom(base, remap), remap_atom(index, remap), kind, mono),
+
+    .AInit(value) => .AInit(remap_atom(value, remap)),
+
+    .AAssign(local, value) => {
+      .AAssign(LocalId.{ id: remap_local(local.id, remap) }, remap_atom(value, remap))
+    },
+
+    .ADefer(body) => .ADefer(remap_expr(body, remap)),
+  }
+}
+
+// ── max_local_id helpers ───────────────────────────────────────────
+
+fn next_local_id(func: AnfFunctionDef) Int {
+  m := 0
+  for p in func.params {
+    if p.local.id > m { m = p.local.id }
+  }
+  m = max_local_in_expr(func.body, m)
+  m + 1
+}
+
+fn max_local_in_atom(a: Atom, m: Int) Int {
+  case a {
+    .ALocal(id) => if id.id > m { id.id } else { m },
+    _ => m,
+  }
+}
+
+fn max_local_in_expr(expr: AnfExpr, m: Int) Int {
+  case expr {
+    .Let(local, op, body) => {
+      m2 := if local.id > m { local.id } else { m }
+      m3 := max_local_in_op(op, m2)
+      max_local_in_expr(body, m3)
+    },
+    .Atom(a) => max_local_in_atom(a, m),
+    .Return(.Some(a)) => max_local_in_atom(a, m),
+    .Break(.Some(a)) => max_local_in_atom(a, m),
+    _ => m,
+  }
+}
+
+fn max_local_in_op(op: AnfOp, m: Int) Int {
+  case op {
+    .ACall(callee, args) => {
+      r := max_local_in_atom(callee, m)
+      for a in args { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AIf(cond, then_e, else_e) => {
+      r := max_local_in_atom(cond, m)
+      r = max_local_in_expr(then_e, r)
+      max_local_in_expr(else_e, r)
+    },
+    .AMatch(scrutinee, arms) => {
+      r := max_local_in_atom(scrutinee, m)
+      for arm in arms {
+        r = max_local_in_pattern(arm.pattern, r)
+        r = max_local_in_expr(arm.body, r)
+      }
+      r
+    },
+    .ALoop(body) => max_local_in_expr(body, m),
+    .ADefer(body) => max_local_in_expr(body, m),
+    .ABinOp(_, left, right, _) => {
+      r := max_local_in_atom(left, m)
+      max_local_in_atom(right, r)
+    },
+    .AUnOp(_, inner, _) => max_local_in_atom(inner, m),
+    .AMakeClosure(_, free_vars) => {
+      r := m
+      for v in free_vars { if v.id > r { r = v.id } }
+      r
+    },
+    .ARecord(_, fields) => {
+      r := m
+      for f in fields { r = max_local_in_atom(f.value, r) }
+      r
+    },
+    .ARecordGet(target, _, _) => max_local_in_atom(target, m),
+    .ARecordUpdate(base, _, value, _, _) => {
+      r := max_local_in_atom(base, m)
+      max_local_in_atom(value, r)
+    },
+    .AVariant(_, _, args) => {
+      r := m
+      for a in args { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AArrayLit(elems) => {
+      r := m
+      for a in elems { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AIndex(base, index, _, _) => {
+      r := max_local_in_atom(base, m)
+      max_local_in_atom(index, r)
+    },
+    .AInit(value) => max_local_in_atom(value, m),
+    .AAssign(local, value) => {
+      r := if local.id > m { local.id } else { m }
+      max_local_in_atom(value, r)
+    },
+  }
+}
+
+fn max_local_in_pattern(pat: CorePattern, m: Int) Int {
+  case pat {
+    .Var(id) => if id.id > m { id.id } else { m },
+    .Variant(_, _, fields) => {
+      r := m
+      for f in fields { r = max_local_in_pattern(f, r) }
+      r
+    },
+    _ => m,
+  }
+}
