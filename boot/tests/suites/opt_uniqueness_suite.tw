@@ -1,0 +1,1222 @@
+use tests.runner
+use tests.assert
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, Param}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm, FieldAtom, OpKind}
+use compiler.anf_analysis.{set_has}
+use compiler.resolver.{MonoType, TypeId}
+use compiler.opt.uniqueness.{CowOpEntry, BuilderConfig, CowConfig, uniqueness_rewrite}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn field(id: Int) FieldId { FieldId.{ id: id } }
+fn tid(id: Int) TypeId { TypeId.{ id: id } }
+
+// Mock FuncIds for testing
+// COW ops
+fn mock_vec_set() FuncId { fid(200) }
+fn mock_vec_set_in_place() FuncId { fid(201) }
+fn mock_dict_set() FuncId { fid(202) }
+fn mock_dict_set_in_place() FuncId { fid(203) }
+fn mock_vec_push() FuncId { fid(204) }
+// Fresh producers
+fn mock_vec_make() FuncId { fid(210) }
+fn mock_dict_new() FuncId { fid(211) }
+// Read-only
+fn mock_vec_len() FuncId { fid(220) }
+// Builder
+fn mock_builder_new() FuncId { fid(230) }
+fn mock_builder_from() FuncId { fid(231) }
+fn mock_builder_push() FuncId { fid(232) }
+fn mock_builder_freeze() FuncId { fid(233) }
+
+fn mock_config() CowConfig {
+  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
+  // VEC_SET: base_arg=0, in_place=VEC_SET_IN_PLACE
+  cow_ops[mock_vec_set().id] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(mock_vec_set_in_place()) }
+  // DICT_SET: base_arg=0, in_place=DICT_SET_IN_PLACE
+  cow_ops[mock_dict_set().id] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(mock_dict_set_in_place()) }
+  // VEC_PUSH: base_arg=0, no in_place (used for loop region rewrite)
+  cow_ops[mock_vec_push().id] = CowOpEntry.{ base_arg: 0, in_place_id: .None }
+
+  fresh: Dict<Int, Bool> = Dict.new()
+  fresh[mock_vec_make().id] = true
+  fresh[mock_dict_new().id] = true
+  fresh[mock_builder_freeze().id] = true
+
+  read_only: Dict<Int, Bool> = Dict.new()
+  read_only[mock_vec_len().id] = true
+
+  CowConfig.{
+    cow_ops: cow_ops,
+    fresh_producer_ids: fresh,
+    read_only_ids: read_only,
+    builder: BuilderConfig.{
+      push_id: mock_vec_push(),
+      builder_new_id: mock_builder_new(),
+      builder_from_id: mock_builder_from(),
+      builder_push_id: mock_builder_push(),
+      builder_freeze_id: mock_builder_freeze(),
+    },
+  }
+}
+
+fn make_func(body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(1),
+    name: "test",
+    params: [],
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
+fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(1),
+    name: "test",
+    params: params,
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
+// ── Phase 1: Tainted detection (params) ─────────────────────────────
+
+fn test_params_tainted_no_rewrite() Result<Void, String> {
+  // fn test(v: Vec) { let r = vec_set(v, 0, 42); Atom(r) }
+  // Param v (local 0) is tainted → vec_set should NOT be rewritten
+  body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+    .Atom(.ALocal(lid(1))))
+  params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
+  func := make_func_with_params(params, body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Should still be MOCK_VEC_SET, not MOCK_VEC_SET_IN_PLACE
+  case result.body {
+    .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.int_eq(f.id, mock_vec_set().id),
+    _ => .Err("expected ACall"),
+  }
+}
+
+// ── Phase 1: Closure capture taints ─────────────────────────────────
+
+fn test_closure_capture_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = make_closure(f, [v]); let r = vec_set(v, 0, 1); Atom(r)
+  // v is captured by closure → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AMakeClosure(fid(99), [lid(0)]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Dig into: Let(0, ..., Let(1, ..., Let(2, ACall(...), ...)))
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected nested Let with ACall"),
+  }
+}
+
+// ── Phase 2: Fresh producer + unique → rewrite ──────────────────────
+
+fn test_fresh_unique_rewrite() Result<Void, String> {
+  // let v = vec_make(); let r = vec_set(v, 0, 42); Atom(r)
+  // v is fresh (unique), v is dead after vec_set → rewrite to vec_set_in_place
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewritten to in_place"),
+  }
+}
+
+// ── Phase 2: Array literal is fresh ─────────────────────────────────
+
+fn test_array_lit_fresh() Result<Void, String> {
+  // let v = [1, 2, 3]; let r = vec_set(v, 0, 99); Atom(r)
+  // AArrayLit produces fresh value → unique → rewrite
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([.ALitInt(1), .ALitInt(2), .ALitInt(3)]),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(99)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewritten to in_place"),
+  }
+}
+
+// ── Phase 2: Record literal is fresh ────────────────────────────────
+
+fn test_record_fresh() Result<Void, String> {
+  // let r = Record(tid, [f0: 1]); let r2 = ARecordUpdate(r, f0, 99, false, tid); Atom(r2)
+  // ARecord produces fresh → unique → can_reuse_in_place = true
+  body: AnfExpr = .Let(lid(0),
+    .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALitInt(1) }]),
+    .Let(lid(1),
+      .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _)) => {
+      assert.is_true(can_reuse)
+    },
+    _ => .Err("expected ARecordUpdate with can_reuse"),
+  }
+}
+
+// ── Phase 2: Base still live → no rewrite ───────────────────────────
+
+fn test_base_live_no_rewrite() Result<Void, String> {
+  // let v = vec_make(); let r = vec_set(v, 0, 42); let x = AInit(v); Atom(x)
+  // v is still used after vec_set → NOT dead → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Let(lid(2), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (base live)"),
+  }
+}
+
+// ── Phase 2: AInit uniqueness transfer ──────────────────────────────
+
+fn test_init_transfer() Result<Void, String> {
+  // let v = vec_make(); let w = AInit(v); let r = vec_set(w, 0, 42); Atom(r)
+  // v is fresh → unique. AInit transfers uniqueness to w. vec_set(w,...) should rewrite.
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALocal(lid(0))),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewritten after init transfer"),
+  }
+}
+
+// ── Phase 2: Consume-reassign pattern ───────────────────────────────
+
+fn test_consume_reassign() Result<Void, String> {
+  // let v = vec_make()
+  // let r = vec_set(v, 0, 42)
+  // let _ = AAssign(v, r)
+  // let r2 = vec_set(v, 1, 99)
+  // Atom(r2)
+  // v is fresh, vec_set consumes v and reassigns → both should rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(99)]),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // First vec_set should be rewritten (consume-reassign: v dead because immediately reassigned)
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f1), _),
+      .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f2), _), _)))) => {
+      try assert.int_eq(f1.id, mock_vec_set_in_place().id)
+      assert.int_eq(f2.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected both vec_set rewritten"),
+  }
+}
+
+// ── Phase 2: Non-COW call taints args ───────────────────────────────
+
+fn test_non_cow_call_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = some_func(v); let r = vec_set(v, 0, 42); Atom(r)
+  // v passed to unknown function → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (tainted by non-COW call)"),
+  }
+}
+
+// ── Phase 2: Read-only call does not taint ──────────────────────────
+
+fn test_read_only_no_taint() Result<Void, String> {
+  // let v = vec_make(); let _ = vec_len(v); let r = vec_set(v, 0, 42); Atom(r)
+  // vec_len is read-only → v stays unique → rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .ACall(.AGlobalFunc(mock_vec_len()), [.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewrite (read-only doesn't taint)"),
+  }
+}
+
+// ── Phase 2: COW op base arg not tainted ────────────────────────────
+
+fn test_cow_base_arg_not_tainted() Result<Void, String> {
+  // let v = vec_make(); let r = vec_set(v, 0, 42); Atom(r)
+  // base arg (v) in a COW op should NOT be tainted by the call itself
+  // (already covered by fresh_unique_rewrite, but explicit)
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewrite (COW base not tainted)"),
+  }
+}
+
+// ── Phase 2: Stored in container taints ─────────────────────────────
+
+fn test_stored_in_array_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = [v]; let r = vec_set(v, 0, 42); Atom(r)
+  // v stored in array → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AArrayLit([.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (stored in array)"),
+  }
+}
+
+// ── Phase 2: Variant literal is fresh ───────────────────────────────
+
+fn test_variant_fresh() Result<Void, String> {
+  // let v = Variant(tid, vid, [1]); — fresh
+  // (Variant itself is fresh, just verifying the uniqueness tracking doesn't crash)
+  body: AnfExpr = .Let(lid(0),
+    .AVariant(tid(7), VariantId.{ id: 0 }, [.ALitInt(1)]),
+    .Atom(.ALocal(lid(0))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+  // No crash, body unchanged
+  case result.body {
+    .Let(_, .AVariant(_, _, _), _) => .Ok({}),
+    _ => .Err("expected AVariant preserved"),
+  }
+}
+
+// ── Phase 2: Branches conservative ──────────────────────────────────
+
+fn test_branches_conservative() Result<Void, String> {
+  // Uniqueness created inside a branch should NOT leak to the continuation.
+  // let _ = if(cond,
+  //   { let v = vec_make(); Atom(ALocal(v)) },   // v is unique inside this branch
+  //   Atom(ALitVoid))
+  // The result is bound to local 5. But even though the then branch produces a fresh
+  // value, at the join point we can't know which branch ran.
+  // Here we just test that the inner branch vec_make → vec_set rewrites correctly
+  // while loops correctly don't propagate uniqueness.
+  //
+  // Test: uniqueness from outer scope IS preserved after branches (no consumption).
+  // let v = vec_make()
+  // let _ = if(cond, Atom(void), Atom(void))  // branches don't touch v
+  // let r = vec_set(v, 0, 42)
+  // Atom(r)
+  // v was unique before the if, branches didn't consume it → still unique after
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .AIf(.ALitBool(true), .Atom(.ALitVoid), .Atom(.ALitVoid)),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // v is still unique after the harmless branch → should rewrite
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewrite (unique preserved across harmless branch)"),
+  }
+}
+
+// ── Phase 3: Loop accumulator pattern → builder ─────────────────────
+
+fn test_loop_accumulator_rewrite() Result<Void, String> {
+  // let v = AArrayLit([])   // fresh, empty
+  // let _ = ALoop(
+  //   let tmp = vec_push(v, 1)
+  //   let _ = AAssign(v, tmp)
+  //   Continue
+  // )
+  // Atom(v)
+  //
+  // After rewrite:
+  // Let(0, AArrayLit([]),
+  //   Let(builder, builder_new(),
+  //     Let(3, Loop(rewritten),
+  //       Let(freeze, freeze(builder),
+  //         Let(assign, Assign(0, freeze), Atom(ALocal(0)))))))
+  loop_body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(3), .ALoop(loop_body),
+      .Atom(.ALocal(lid(0)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Check: Let(0, AArrayLit, Let(builder, Call(builder_new, []), ...))
+  case result.body {
+    .Let(_, .AArrayLit(_), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_builder_new().id)
+    },
+    _ => .Err("expected builder_new call after array lit"),
+  }
+}
+
+// ── Phase 3: Non-empty accumulator uses builder_from ────────────────
+
+fn test_loop_accumulator_from() Result<Void, String> {
+  // let v = vec_make()   // fresh but NOT empty (came from vec_make, not AArrayLit([]))
+  // let _ = ALoop(
+  //   let tmp = vec_push(v, 1)
+  //   let _ = AAssign(v, tmp)
+  //   Continue
+  // )
+  // Atom(v)
+  //
+  // Should use builder_from (not builder_new) since v is not known empty
+  loop_body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3), .ALoop(loop_body),
+      .Atom(.ALocal(lid(0)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Check: Let(0, Call(vec_make), Let(builder, Call(builder_from, [ALocal(0)]), ...))
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_builder_from().id)
+    },
+    _ => .Err("expected builder_from call"),
+  }
+}
+
+// ── Phase 2: Dict set rewrite ───────────────────────────────────────
+
+fn test_dict_set_rewrite() Result<Void, String> {
+  // let d = dict_new(); let r = dict_set(d, key, val); Atom(r)
+  // d is fresh → unique → rewrite to dict_set_in_place
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_dict_set_in_place().id)
+    },
+    _ => .Err("expected dict_set rewritten to in_place"),
+  }
+}
+
+// ── Phase 2: AAssign uniqueness transfer ────────────────────────────
+
+fn test_assign_transfer() Result<Void, String> {
+  // let v = AInit(0)  // not unique (literal)
+  // let fresh = vec_make()  // fresh → unique
+  // let _ = AAssign(v, fresh)  // transfer uniqueness from fresh to v
+  // let r = vec_set(v, 0, 42)
+  // Atom(r)
+  body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(0)),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_make()), []),
+      .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewrite after assign transfer"),
+  }
+}
+
+// ── Phase 2: Alias taints when source still live ────────────────────
+
+fn test_alias_taints() Result<Void, String> {
+  // let v = vec_make(); let w = AInit(v); let r = vec_set(v, 0, 42); let _ = AInit(w); Atom(_)
+  // w = v creates alias; v is still live (used in vec_set AND w is used after)
+  // Actually: the key is v is aliased (w = v means two names for same value)
+  // → v should be tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALocal(lid(0))),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Let(lid(3), .AInit(.ALocal(lid(1))),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (aliased)"),
+  }
+}
+
+// ── Correctness: AAssign alias taint ─────────────────────────────────
+
+fn test_assign_alias_taints() Result<Void, String> {
+  // let v = vec_make()
+  // let w = AInit(0)         // w is some mutable local
+  // let _ = AAssign(w, v)    // w = v — creates alias through reassignment
+  // let r = vec_set(v, 0, 42)
+  // let _ = AInit(w)         // w is still used → v is aliased
+  // Atom(_)
+  //
+  // v is aliased via AAssign(w, v) because w is still live → v tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALitInt(0)),
+      .Let(lid(5), .AAssign(lid(1), .ALocal(lid(0))),
+        .Let(lid(2),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+          .Let(lid(3), .AInit(.ALocal(lid(1))),
+            .Atom(.ALocal(lid(3))))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // vec_set should NOT be rewritten because v is aliased through w
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (assign alias)"),
+  }
+}
+
+// ── Correctness: Branch-boundary alias escape ───────────────────────
+
+fn test_branch_boundary_alias_escape() Result<Void, String> {
+  // let x = vec_make()    // fresh, unique
+  // let _ = if(cond,
+  //   { let y = AInit(x); let _ = AMakeClosure(f, [y]); Atom(void) },
+  //   Atom(void))
+  // let r = vec_set(x, 0, 42)
+  // Atom(r)
+  //
+  // Inside the then branch: y = x (alias), y is captured by closure → y tainted.
+  // x is live-out of the branch (used in vec_set after) → x should be tainted
+  // via branch-boundary alias escape. vec_set should NOT rewrite.
+  then_branch: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(0))),
+    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+      .Atom(.ALitVoid)))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3),
+      .AIf(.ALitBool(true), then_branch, .Atom(.ALitVoid)),
+      .Let(lid(4),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(4))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (branch-boundary alias escape)"),
+  }
+}
+
+// ── Correctness: AAssign alias across branch boundary ───────────────
+
+fn test_assign_alias_cross_scope() Result<Void, String> {
+  // let v = vec_make()
+  // let w = AInit(0)
+  // let _ = if(cond,
+  //   { let _ = AAssign(w, v); Atom(void) },   // alias v→w in branch
+  //   Atom(void))
+  // let r = vec_set(v, 0, 42)
+  // let _ = AInit(w)    // w used after → v aliased across scope
+  // Atom(_)
+  //
+  // AAssign(w, v) in a branch, v still live after branch → v tainted → no rewrite
+  then_branch: AnfExpr = .Let(lid(5), .AAssign(lid(1), .ALocal(lid(0))),
+    .Atom(.ALitVoid))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALitInt(0)),
+      .Let(lid(3),
+        .AIf(.ALitBool(true), then_branch, .Atom(.ALitVoid)),
+        .Let(lid(4),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+          .Let(lid(6), .AInit(.ALocal(lid(1))),
+            .Atom(.ALocal(lid(6))))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (assign alias across scope)"),
+  }
+}
+
+// ── AAssign alias: source dead after assign → NOT tainted (safe) ────
+
+fn test_assign_alias_source_dead_ok() Result<Void, String> {
+  // let v = vec_make()
+  // let w = AInit(0)
+  // let _ = AAssign(w, v)    // w = v
+  // let r = vec_set(w, 0, 42)
+  // Atom(r)
+  //
+  // After AAssign(w, v), v is NOT used again. w is the only name.
+  // So v is NOT aliased (source dead) → w gets uniqueness via transfer → rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALitInt(0)),
+      .Let(lid(5), .AAssign(lid(1), .ALocal(lid(0))),
+        .Let(lid(2),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+          .Atom(.ALocal(lid(2)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // w is unique (transferred from v) → vec_set should rewrite
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected rewrite (source dead after assign)"),
+  }
+}
+
+// ── AAssign alias: multiple assigns chain ───────────────────────────
+
+fn test_assign_chain_taint() Result<Void, String> {
+  // let v = vec_make()
+  // let w = AInit(0)
+  // let x = AInit(0)
+  // let _ = AAssign(w, v)    // w = v
+  // let _ = AAssign(x, w)    // x = w (= v)
+  // let r = vec_set(v, 0, 42)
+  // let _ = AInit(x)          // x is used → w is aliased → v is aliased
+  // Atom(_)
+  //
+  // Chain: v → w → x. x is still live → v should be tainted
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AInit(.ALitInt(0)),
+      .Let(lid(7), .AInit(.ALitInt(0)),
+        .Let(lid(5), .AAssign(lid(1), .ALocal(lid(0))),
+          .Let(lid(6), .AAssign(lid(7), .ALocal(lid(1))),
+            .Let(lid(2),
+              .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+              .Let(lid(3), .AInit(.ALocal(lid(7))),
+                .Atom(.ALocal(lid(3))))))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (chain alias)"),
+  }
+}
+
+// ── Branch-boundary: alias in else branch ───────────────────────────
+
+fn test_branch_boundary_else_branch() Result<Void, String> {
+  // Same as branch-boundary test but alias+capture is in the ELSE branch
+  // let x = vec_make()
+  // let _ = if(cond,
+  //   Atom(void),
+  //   { let y = AInit(x); let _ = AMakeClosure(f, [y]); Atom(void) })
+  // let r = vec_set(x, 0, 42)
+  // Atom(r)
+  else_branch: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(0))),
+    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+      .Atom(.ALitVoid)))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3),
+      .AIf(.ALitBool(true), .Atom(.ALitVoid), else_branch),
+      .Let(lid(4),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(4))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (else branch escape)"),
+  }
+}
+
+// ── Branch-boundary: alias in branch but source NOT live-out → safe ─
+
+fn test_branch_alias_source_not_live_out() Result<Void, String> {
+  // let x = vec_make()
+  // let _ = if(cond,
+  //   { let y = AInit(x); let _ = AMakeClosure(f, [y]); Atom(void) },
+  //   Atom(void))
+  // Atom(ALitVoid)
+  //
+  // x is NOT used after the if → x is NOT live-out → no boundary escape.
+  // The alias+capture happens but x dies → should not taint x for
+  // operations before the if (there are none, but this verifies no crash/false-taint).
+  then_branch: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(0))),
+    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+      .Atom(.ALitVoid)))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3),
+      .AIf(.ALitBool(true), then_branch, .Atom(.ALitVoid)),
+      .Atom(.ALitVoid)))
+  func := make_func(body)
+  // Should not crash. x is not used after if, so no observable taint effect.
+  result := uniqueness_rewrite(func, mock_config())
+  case result.body {
+    .Let(_, _, _) => .Ok({}),
+    _ => .Err("expected Let preserved"),
+  }
+}
+
+// ── Branch-boundary: match arm alias escape ─────────────────────────
+
+fn test_match_arm_alias_escape() Result<Void, String> {
+  // let x = vec_make()
+  // let _ = match(scrutinee,
+  //   { let y = AInit(x); let _ = AMakeClosure(f, [y]); Atom(void) })
+  // let r = vec_set(x, 0, 42)
+  // Atom(r)
+  //
+  // Same pattern but via AMatch instead of AIf
+  arm_body: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(0))),
+    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+      .Atom(.ALitVoid)))
+  arms: Vector<AnfMatchArm> = [
+    AnfMatchArm.{ pattern: .Wildcard, body: arm_body },
+  ]
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3),
+      .AMatch(.ALitBool(true), arms),
+      .Let(lid(4),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(4))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (match arm alias escape)"),
+  }
+}
+
+// ── Stored in record field taints ───────────────────────────────────
+
+fn test_stored_in_record_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = Record(tid, [f0: v]); let r = vec_set(v, 0, 42); Atom(r)
+  // v stored in record field → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALocal(lid(0)) }]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (stored in record)"),
+  }
+}
+
+// ── Stored in variant taints ────────────────────────────────────────
+
+fn test_stored_in_variant_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = Variant(tid, vid, [v]); let r = vec_set(v, 0, 42); Atom(r)
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .AVariant(tid(0), VariantId.{ id: 1 }, [.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (stored in variant)"),
+  }
+}
+
+// ── Indirect (closure) call taints all args ─────────────────────────
+
+fn test_indirect_call_taints() Result<Void, String> {
+  // let v = vec_make(); let _ = ACall(ALocal(closure), [v]); let r = vec_set(v, 0, 42); Atom(r)
+  // Closure call is not a known function → all args tainted
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .ACall(.ALocal(lid(9)), [.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (indirect call)"),
+  }
+}
+
+// ── COW non-base arg IS tainted ─────────────────────────────────────
+
+fn test_cow_non_base_arg_tainted() Result<Void, String> {
+  // let v = vec_make()   // fresh
+  // let w = vec_make()   // fresh
+  // let r = vec_set(v, 0, w)  // w is non-base arg in cow op → w tainted
+  // let r2 = vec_set(w, 0, 1) // w tainted → no rewrite
+  // Atom(r2)
+  //
+  // v is base (arg 0), w is value (arg 2, non-base) → w gets tainted
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_make()), []),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALocal(lid(1))]),
+        .Let(lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(1)]),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // The second vec_set(w, ...) should NOT be rewritten because w was tainted
+  // as a non-base arg in the first vec_set
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (non-base arg tainted)"),
+  }
+}
+
+// ── Loop: unique but tainted → no builder rewrite ───────────────────
+
+fn test_loop_tainted_no_rewrite() Result<Void, String> {
+  // let v = vec_make()
+  // let _ = some_func(v)    // taints v
+  // let _ = ALoop(
+  //   let tmp = vec_push(v, 1)
+  //   let _ = AAssign(v, tmp)
+  //   Continue)
+  // Atom(v)
+  //
+  // v is tainted → loop region rewrite should NOT fire
+  loop_body: AnfExpr = .Let(lid(2),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1), .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
+      .Let(lid(4), .ALoop(loop_body),
+        .Atom(.ALocal(lid(0))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Should still have ALoop, no builder wrapping
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, .ALoop(_), _))) => .Ok({}),
+    _ => .Err("expected ALoop preserved (tainted)"),
+  }
+}
+
+// ── Loop: base used in non-push way inside loop → no rewrite ────────
+
+fn test_loop_base_used_non_push() Result<Void, String> {
+  // let v = AArrayLit([])
+  // let _ = ALoop(
+  //   let _ = ACall(some_func, [v])    // v used in non-push call
+  //   let tmp = vec_push(v, 1)
+  //   let _ = AAssign(v, tmp)
+  //   Continue)
+  // Atom(v)
+  //
+  // v passed to unknown function inside loop → analyze should return None
+  loop_body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
+    .Let(lid(2),
+      .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+      .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),
+        .Continue)))
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(4), .ALoop(loop_body),
+      .Atom(.ALocal(lid(0)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Should still have ALoop (no builder rewrite)
+  case result.body {
+    .Let(_, _, .Let(_, .ALoop(_), _)) => .Ok({}),
+    _ => .Err("expected ALoop preserved (base used in non-push way)"),
+  }
+}
+
+// ── Loop: push in conditional branch inside loop ────────────────────
+
+fn test_loop_push_in_branch() Result<Void, String> {
+  // let v = AArrayLit([])
+  // let _ = ALoop(
+  //   let _ = AIf(cond,
+  //     { let tmp = vec_push(v, 1); let _ = AAssign(v, tmp); Atom(void) },
+  //     Atom(void))
+  //   Continue)
+  // Atom(v)
+  //
+  // Push is inside a conditional branch — should still be detected and rewritten
+  then_branch: AnfExpr = .Let(lid(2),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),
+      .Atom(.ALitVoid)))
+  loop_body: AnfExpr = .Let(lid(1),
+    .AIf(.ALitBool(true), then_branch, .Atom(.ALitVoid)),
+    .Continue)
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(4), .ALoop(loop_body),
+      .Atom(.ALocal(lid(0)))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Should be rewritten to builder
+  case result.body {
+    .Let(_, .AArrayLit(_), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_builder_new().id)
+    },
+    _ => .Err("expected builder_new (push in branch)"),
+  }
+}
+
+// ── AInit transfer: source tainted → no transfer ────────────────────
+
+fn test_init_transfer_tainted_source() Result<Void, String> {
+  // fn test(v: Vec) {    // v is a param → tainted
+  //   let w = AInit(v);  // should NOT transfer uniqueness (v tainted)
+  //   let r = vec_set(w, 0, 42);
+  //   Atom(r) }
+  body: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(0))),
+    .Let(lid(2),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+      .Atom(.ALocal(lid(2)))))
+  params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
+  func := make_func_with_params(params, body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set().id)
+    },
+    _ => .Err("expected no rewrite (tainted source init transfer)"),
+  }
+}
+
+// ── Record update: consume-reassign with uniqueness ─────────────────
+
+fn test_record_update_consume_reassign() Result<Void, String> {
+  // let r = Record(tid, [f0: 1, f1: 2])   // fresh
+  // let r2 = ARecordUpdate(r, f0, 99, false, tid)
+  // let _ = AAssign(r, r2)
+  // let r3 = ARecordUpdate(r, f1, 88, false, tid)
+  // Atom(r3)
+  //
+  // r is fresh. First update consumes r and reassigns. Second update should also mark in-place.
+  body: AnfExpr = .Let(lid(0),
+    .ARecord(tid(7), [
+      FieldAtom.{ field: field(0), value: .ALitInt(1) },
+      FieldAtom.{ field: field(1), value: .ALitInt(2) },
+    ]),
+    .Let(lid(1),
+      .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
+      .Let(lid(5), .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(lid(2),
+          .ARecordUpdate(.ALocal(lid(0)), field(1), .ALitInt(88), false, tid(7)),
+          .Atom(.ALocal(lid(2)))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // First update: consume-reassign → can_reuse = true
+  case result.body {
+    .Let(_, _, .Let(_, .ARecordUpdate(_, _, _, can_reuse1, _),
+      .Let(_, _, .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _)))) => {
+      try assert.is_true(can_reuse1)
+      assert.is_true(can_reuse2)
+    },
+    _ => .Err("expected both record updates in-place"),
+  }
+}
+
+// ── Helpers for regression tests ─────────────────────────────────────
+
+fn find_vec_set(e: AnfExpr) FuncId? {
+  case e {
+    .Let(_, .ACall(.AGlobalFunc(f), _), body) => {
+      if f.id == mock_vec_set().id or f.id == mock_vec_set_in_place().id {
+        .Some(f)
+      } else {
+        find_vec_set(body)
+      }
+    },
+    .Let(_, _, body) => find_vec_set(body),
+    _ => .None,
+  }
+}
+
+fn find_builder_local(e: AnfExpr) LocalId? {
+  case e {
+    .Let(local, .ACall(.AGlobalFunc(f), _), body) => {
+      if f.id == mock_builder_new().id {
+        .Some(local)
+      } else {
+        find_builder_local(body)
+      }
+    },
+    .Let(_, _, body) => find_builder_local(body),
+    _ => .None,
+  }
+}
+
+// ── Issue 1: Loop rewrite continuation must be recursively rewritten ─
+
+fn test_loop_rewrite_continues_into_cont() Result<Void, String> {
+  // let v = AArrayLit([])       // fresh, empty
+  // let _ = ALoop(
+  //   let tmp = vec_push(v, 1)
+  //   let _ = AAssign(v, tmp)
+  //   Continue)
+  // let r = vec_set(v, 0, 42)   // v is now builder_freeze result → fresh → rewritable
+  // Atom(r)
+  //
+  // After loop rewrite, v holds builder_freeze output (a fresh producer).
+  // The vec_set(v, ...) in the continuation should also be rewritten to vec_set_in_place.
+  loop_body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(3), .ALoop(loop_body),
+      .Let(lid(4),
+        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+        .Atom(.ALocal(lid(4))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Find the vec_set/vec_set_in_place call deep in the rewritten tree.
+  case find_vec_set(result.body) {
+    .Some(f) => assert.int_eq(f.id, mock_vec_set_in_place().id),
+    .None => .Err("expected to find vec_set call in rewritten tree"),
+  }
+}
+
+// ── Issue 2: max_local_in_op must visit pattern-bound locals ────────
+
+fn test_max_local_pattern_bindings() Result<Void, String> {
+  // A Variant pattern binds a local with a high ID that is unused in the body.
+  // max_local_in_op must walk patterns, not just bodies.
+  // Without the fix, next_local_id misses lid(5) from the pattern, returns 5,
+  // and the builder local collides.
+  //
+  // let v = AArrayLit([])
+  // let _ = AMatch(scrutinee, [
+  //   Variant(tid, vid, [Var(lid(5))]) => Atom(ALitVoid)   // binds 5 but unused
+  // ])
+  // let _ = ALoop(...)
+  // Atom(v)
+  match_arm := AnfMatchArm.{
+    pattern: .Variant(tid(0), VariantId.{ id: 0 }, [.Var(lid(5))]),
+    body: .Atom(.ALitVoid),
+  }
+  loop_body: AnfExpr = .Let(lid(2),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(1),
+      .AMatch(.ALitBool(true), [match_arm]),
+      .Let(lid(4), .ALoop(loop_body),
+        .Atom(.ALocal(lid(0))))))
+  func := make_func(body)
+  result := uniqueness_rewrite(func, mock_config())
+
+  // Find builder_new call and check its bound local ID.
+  case find_builder_local(result.body) {
+    .Some(local) => {
+      // builder local must be >= 6 (not 5 which collides with pattern local)
+      if local.id >= 6 {
+        .Ok({})
+      } else {
+        .Err("builder local ${local.id} collides with pattern local 5")
+      }
+    },
+    .None => .Err("expected builder_new call in rewritten tree"),
+  }
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  s := runner.suite("Opt: Uniqueness Rewrite")
+  // Phase 1: tainted detection
+  s = s.test("params tainted → no rewrite", test_params_tainted_no_rewrite)
+  s = s.test("closure capture taints", test_closure_capture_taints)
+  s = s.test("non-COW call taints args", test_non_cow_call_taints)
+  s = s.test("read-only call does not taint", test_read_only_no_taint)
+  s = s.test("COW base arg not tainted", test_cow_base_arg_not_tainted)
+  s = s.test("stored in array taints", test_stored_in_array_taints)
+  s = s.test("alias taints when source live", test_alias_taints)
+  // Phase 2: uniqueness tracking + rewrite
+  s = s.test("fresh producer + dead → rewrite", test_fresh_unique_rewrite)
+  s = s.test("array literal is fresh", test_array_lit_fresh)
+  s = s.test("record literal is fresh", test_record_fresh)
+  s = s.test("variant literal is fresh", test_variant_fresh)
+  s = s.test("base still live → no rewrite", test_base_live_no_rewrite)
+  s = s.test("AInit uniqueness transfer", test_init_transfer)
+  s = s.test("AAssign uniqueness transfer", test_assign_transfer)
+  s = s.test("consume-reassign pattern", test_consume_reassign)
+  s = s.test("branches conservative", test_branches_conservative)
+  s = s.test("dict set rewrite", test_dict_set_rewrite)
+  // Correctness: AAssign alias taint
+  s = s.test("assign alias taints", test_assign_alias_taints)
+  s = s.test("assign alias source dead → safe", test_assign_alias_source_dead_ok)
+  s = s.test("assign chain taint", test_assign_chain_taint)
+  // Correctness: branch-boundary alias escape
+  s = s.test("branch-boundary alias escape", test_branch_boundary_alias_escape)
+  s = s.test("branch-boundary else branch", test_branch_boundary_else_branch)
+  s = s.test("branch alias source not live-out → safe", test_branch_alias_source_not_live_out)
+  s = s.test("match arm alias escape", test_match_arm_alias_escape)
+  // Correctness: AAssign alias across scope
+  s = s.test("assign alias across scope", test_assign_alias_cross_scope)
+  // Correctness: container/call taint coverage
+  s = s.test("stored in record taints", test_stored_in_record_taints)
+  s = s.test("stored in variant taints", test_stored_in_variant_taints)
+  s = s.test("indirect call taints", test_indirect_call_taints)
+  s = s.test("COW non-base arg tainted", test_cow_non_base_arg_tainted)
+  // Correctness: init transfer with tainted source
+  s = s.test("init transfer tainted source", test_init_transfer_tainted_source)
+  // Correctness: record update consume-reassign
+  s = s.test("record update consume-reassign chain", test_record_update_consume_reassign)
+  // Phase 3: loop region rewrite
+  s = s.test("loop accumulator → builder_new", test_loop_accumulator_rewrite)
+  s = s.test("loop accumulator → builder_from", test_loop_accumulator_from)
+  s = s.test("loop tainted → no builder rewrite", test_loop_tainted_no_rewrite)
+  s = s.test("loop base used in non-push way", test_loop_base_used_non_push)
+  s = s.test("loop push in conditional branch", test_loop_push_in_branch)
+  // Regression: loop rewrite recurses into continuation
+  s = s.test("loop rewrite continues into cont", test_loop_rewrite_continues_into_cont)
+  // Regression: max_local_id accounts for pattern bindings
+  s = s.test("max local accounts for pattern bindings", test_max_local_pattern_bindings)
+  s
+}

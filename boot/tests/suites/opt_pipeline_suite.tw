@@ -1,0 +1,238 @@
+use tests.runner
+use tests.assert
+use compiler.core_ir.{LocalId, FuncId, BinOp, Param}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, OpKind}
+use compiler.anf_analysis.{set_has}
+use compiler.resolver.{MonoType}
+use compiler.opt.pipeline.{optimize_module}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id: id } }
+
+fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(id),
+    name: name,
+    params: [],
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
+fn make_func_with_params(id: Int, name: String, params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(id),
+    name: name,
+    params: params,
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
+// ── Test: const-fold chain across rounds ────────────────────────────
+
+// let x = 1; let y = x + 2; y * 3
+// Round 1: copy-prop inlines x→1: let y = 1 + 2; y * 3
+//          const-fold: let y = 3; y * 3
+// Round 2: copy-prop inlines y→3: 3 * 3
+//          const-fold: 9
+fn test_cross_round_chain() Result<Void, String> {
+  // let x = AInit(1)
+  // let y = ABinOp(Add, ALocal(x), 2)
+  // let z = ABinOp(Mul, ALocal(y), 3)
+  // Atom(ALocal(z))
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)),
+    .Let(lid(1), .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
+      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(1, "test", expr)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  result := optimize_module(module)
+  optimized := result.functions[0].body
+
+  // Fully reduces to Atom(9) after copy-prop inlines the final literal
+  case optimized {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 9),
+    _ => .Err("expected Atom(9)"),
+  }
+}
+
+// ── Test: dead code after branch simplification ─────────────────────
+
+// let c = true; let r = if c { 5 } else { 10 }; Atom(r)
+// Round 1: copy-prop inlines c→true, branch-simp selects then (5)
+//          dead-let removes unused bindings
+fn test_branch_simp_then_dead_elim() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitBool(true)),
+    .Let(lid(1), .AIf(.ALocal(lid(0)),
+      .Atom(.ALitInt(5)),
+      .Atom(.ALitInt(10))),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(1, "test", expr)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  result := optimize_module(module)
+  optimized := result.functions[0].body
+
+  // Fully reduces to Atom(5) after copy-prop + dead-let
+  case optimized {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 5),
+    _ => .Err("expected Atom(5)"),
+  }
+}
+
+// ── Test: pinned locals not eliminated ──────────────────────────────
+
+// __init__ defines local 0 (x = 42), another function references local 0 as free
+// Dead let should NOT eliminate x even though it seems "unused" within __init__
+fn test_pinned_locals_preserved() Result<Void, String> {
+  // __init__: let x = 42; Atom(Void)
+  init_body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
+  init_func := make_func(100, "__init__", init_body)
+
+  // other func: body references local 0 (free variable from __init__)
+  other_body: AnfExpr = .Atom(.ALocal(lid(0)))
+  other_func := make_func(101, "other", other_body)
+
+  module: AnfModule = AnfModule.{
+    functions: [init_func, other_func],
+    init_func_id: .Some(fid(100)),
+  }
+  result := optimize_module(module)
+  init_optimized := result.functions[0].body
+
+  // Local 0 should still be bound (pinned, not eliminated)
+  case init_optimized {
+    .Let(local, .AInit(.ALitInt(42)), _) => assert.int_eq(local.id, 0),
+    _ => .Err("expected pinned local 0 to be preserved"),
+  }
+}
+
+// ── Test: no init_func_id means no pinning ──────────────────────────
+
+fn test_no_init_no_pinning() Result<Void, String> {
+  // let x = 42; Atom(Void) — x is unused and should be eliminated
+  body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
+  func := make_func(1, "test", body)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  result := optimize_module(module)
+  optimized := result.functions[0].body
+
+  // Dead let should remove unused local 0
+  case optimized {
+    .Atom(.ALitVoid) => assert.is_true(true),
+    _ => .Err("expected dead let to eliminate unused local"),
+  }
+}
+
+// ── Test: multiple functions all optimized ───────────────────────────
+
+fn test_multiple_functions_optimized() Result<Void, String> {
+  // func1: let x = 1 + 2; Atom(x) → let x = 3; Atom(x)
+  body1: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int),
+    .Atom(.ALocal(lid(0))))
+  func1 := make_func(1, "f1", body1)
+
+  // func2: let y = 10 - 3; Atom(y) → let y = 7; Atom(y)
+  body2: AnfExpr = .Let(lid(0), .ABinOp(.Sub, .ALitInt(10), .ALitInt(3), .Int),
+    .Atom(.ALocal(lid(0))))
+  func2 := make_func(2, "f2", body2)
+
+  module: AnfModule = AnfModule.{ functions: [func1, func2], init_func_id: .None }
+  result := optimize_module(module)
+
+  // Check func1: fully reduces to Atom(3)
+  case result.functions[0].body {
+    .Atom(.ALitInt(n)) => try assert.int_eq(n, 3),
+    _ => { return .Err("func1: expected Atom(3)") },
+  }
+  // Check func2: fully reduces to Atom(7)
+  case result.functions[1].body {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 7),
+    _ => .Err("func2: expected Atom(7)"),
+  }
+}
+
+// ── Test: already optimal stays unchanged ───────────────────────────
+
+fn test_already_optimal() Result<Void, String> {
+  // let x = ACall(f, []); Atom(x) — cannot optimize
+  body: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(0))))
+  func := make_func(1, "test", body)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  result := optimize_module(module)
+  optimized := result.functions[0].body
+
+  case optimized {
+    .Let(_, .ACall(_, _), .Atom(.ALocal(_))) => assert.is_true(true),
+    _ => .Err("expected no change for non-optimizable code"),
+  }
+}
+
+// ── Test: copy prop with pinned skips pinned local ──────────────────
+
+fn test_copy_prop_respects_pinned() Result<Void, String> {
+  // __init__: let x = 42; let y = AInit(ALocal(x)); Atom(y)
+  // If x is pinned, copy prop should NOT inline x into y
+  init_body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)),
+    .Let(lid(1), .AInit(.ALocal(lid(0))),
+      .Atom(.ALocal(lid(1)))))
+  init_func := make_func(100, "__init__", init_body)
+
+  // other func references local 0 as free
+  other_body: AnfExpr = .Atom(.ALocal(lid(0)))
+  other_func := make_func(101, "other", other_body)
+
+  module: AnfModule = AnfModule.{
+    functions: [init_func, other_func],
+    init_func_id: .Some(fid(100)),
+  }
+  result := optimize_module(module)
+  init_optimized := result.functions[0].body
+
+  // Local 0 should remain as a Let binding (pinned)
+  case init_optimized {
+    .Let(local, .AInit(.ALitInt(42)), _) => assert.int_eq(local.id, 0),
+    _ => .Err("expected pinned local 0 preserved in init"),
+  }
+}
+
+// ── Test: nested fold requires multiple rounds ──────────────────────
+
+// let a = 1; let b = 2; let c = a + b; let d = c + 4; Atom(d)
+// Needs: copy-prop a, copy-prop b, fold a+b=3, copy-prop c, fold 3+4=7
+fn test_nested_multi_round() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)),
+    .Let(lid(1), .AInit(.ALitInt(2)),
+      .Let(lid(2), .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(1)), .Int),
+        .Let(lid(3), .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(1, "test", expr)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  result := optimize_module(module)
+  optimized := result.functions[0].body
+
+  // Fully reduces to Atom(7)
+  case optimized {
+    .Atom(.ALitInt(n)) => assert.int_eq(n, 7),
+    _ => .Err("expected Atom(7)"),
+  }
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  s := runner.suite("Opt: Pipeline")
+  s = s.test("cross-round const-fold chain", test_cross_round_chain)
+  s = s.test("branch simp then dead elim", test_branch_simp_then_dead_elim)
+  s = s.test("pinned locals preserved", test_pinned_locals_preserved)
+  s = s.test("no init = no pinning", test_no_init_no_pinning)
+  s = s.test("multiple functions optimized", test_multiple_functions_optimized)
+  s = s.test("already optimal unchanged", test_already_optimal)
+  s = s.test("copy prop respects pinned", test_copy_prop_respects_pinned)
+  s = s.test("nested multi-round fold", test_nested_multi_round)
+  s
+}

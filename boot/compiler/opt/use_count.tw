@@ -156,6 +156,25 @@ pub fn is_pure(op: AnfOp) Bool {
     .AVariant(_, _, _) => true,
     .AArrayLit(_) => true,
     .AMakeClosure(_, _) => true,
+    // Structural purity: recurse into branches/arms
+    .AIf(_, then_e, else_e) => expr_is_pure(then_e) and expr_is_pure(else_e),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if !expr_is_pure(arm.body) { return false }
+      }
+      true
+    },
     _ => false,
+  }
+}
+
+// Check if an entire expression is pure (all ops in the let-chain are pure).
+fn expr_is_pure(expr: AnfExpr) Bool {
+  case expr {
+    .Let(_, op, body) => is_pure(op) and expr_is_pure(body),
+    .Atom(_) => true,
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
   }
 }

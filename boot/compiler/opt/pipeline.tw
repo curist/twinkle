@@ -1,0 +1,161 @@
+// Fixed-point optimization pipeline: wire dead_let, copy_prop, const_fold,
+// branch_simp into a loop, with module-level orchestration and pinned locals.
+
+use compiler.core_ir.{LocalId, FuncId}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
+use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
+use compiler.opt.dead_let.{dead_let_elim_with_pinned}
+use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
+use compiler.opt.const_fold.{constant_fold}
+use compiler.opt.branch_simp.{branch_simplify}
+use compiler.opt.liveness.{annotate_in_place}
+use compiler.opt.uniqueness.{CowConfig, CowOpEntry, BuilderConfig, uniqueness_rewrite}
+
+// ── compute_pinned ──────────────────────────────────────────────────
+
+// Compute the set of locals in __init__ that are free in other functions.
+// These must not be eliminated or propagated away.
+fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
+  pinned: Dict<Int, Bool> = Dict.new()
+
+  case module.init_func_id {
+    .None => { return pinned },
+    .Some(init_fid) => {
+      // Find the __init__ function and collect its bound locals
+      init_bound: Dict<Int, Bool> = Dict.new()
+      found := false
+      for f in module.functions {
+        if f.func_id.id == init_fid.id {
+          init_bound = collect_bound_locals(f.body)
+          found = true
+        }
+      }
+      if !found { return pinned }
+
+      // Collect free locals of all non-init functions, seeding with their params
+      for f in module.functions {
+        if f.func_id.id != init_fid.id {
+          declared: Dict<Int, Bool> = Dict.new()
+          for p in f.params {
+            declared[p.local.id] = true
+          }
+          free := collect_free_locals(f.body, declared)
+          // Intersect with init's bound locals
+          for k in free.keys() {
+            if set_has(init_bound, k) {
+              pinned[k] = true
+            }
+          }
+        }
+      }
+    },
+  }
+
+  pinned
+}
+
+// ── optimize_func ───────────────────────────────────────────────────
+
+fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>) AnfFunctionDef {
+  expr := func.body
+  round := 0
+
+  for round < 10 {
+    round = round + 1
+
+    // 1. Dead let elimination (with pinned locals)
+    r1 := dead_let_elim_with_pinned(expr, pinned)
+    expr = r1.expr
+
+    // 2. Copy propagation (with pinned locals)
+    r2 := copy_propagate_with_pinned(expr, pinned)
+    expr = r2.expr
+
+    // 3. Constant folding
+    r3 := constant_fold(expr)
+    expr = r3.expr
+
+    // 4. Branch simplification
+    r4 := branch_simplify(expr)
+    expr = r4.expr
+
+    if !r1.changed and !r2.changed and !r3.changed and !r4.changed {
+      break
+    }
+  }
+
+  AnfFunctionDef.{
+    func_id: func.func_id,
+    name: func.name,
+    params: func.params,
+    op_result_mono: func.op_result_mono,
+    body: expr,
+    return_ty: func.return_ty,
+  }
+}
+
+// ── prelude CowConfig ─────────────────────────────────────────────
+
+// Build the CowConfig for prelude FuncIds, matching the Rust compiler's
+// cow_op_info / is_fresh_producer / is_read_only mappings.
+pub fn make_prelude_cow_config() CowConfig {
+  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
+
+  // VECTOR_SET_UNSAFE(12) → VECTOR_SET_IN_PLACE(1013), base_arg=0
+  cow_ops[12] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1013 }) }
+  // DICT_SET(13) → DICT_SET_IN_PLACE(1015), base_arg=0
+  cow_ops[13] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1015 }) }
+  // DICT_REMOVE(29) → DICT_REMOVE_IN_PLACE(1016), base_arg=0
+  cow_ops[29] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1016 }) }
+  // VECTOR_PUSH(11) — no in-place target, but participates in loop region rewrite
+  cow_ops[11] = CowOpEntry.{ base_arg: 0, in_place_id: .None }
+
+  fresh_producer_ids: Dict<Int, Bool> = Dict.new()
+  fresh_producer_ids[40] = true   // VECTOR_MAKE
+  fresh_producer_ids[35] = true   // VECTOR_BUILDER_FREEZE
+  fresh_producer_ids[22] = true   // DICT_NEW
+
+  read_only_ids: Dict<Int, Bool> = Dict.new()
+  read_only_ids[10] = true        // VECTOR_LEN
+
+  builder := BuilderConfig.{
+    push_id: FuncId.{ id: 11 },          // VECTOR_PUSH
+    builder_new_id: FuncId.{ id: 33 },   // VECTOR_BUILDER_NEW
+    builder_from_id: FuncId.{ id: 1014 },// VECTOR_BUILDER_FROM
+    builder_push_id: FuncId.{ id: 34 },  // VECTOR_BUILDER_PUSH
+    builder_freeze_id: FuncId.{ id: 35 },// VECTOR_BUILDER_FREEZE
+  }
+
+  CowConfig.{
+    cow_ops: cow_ops,
+    fresh_producer_ids: fresh_producer_ids,
+    read_only_ids: read_only_ids,
+    builder: builder,
+  }
+}
+
+// ── optimize_module ─────────────────────────────────────────────────
+
+pub fn optimize_module(module: AnfModule) AnfModule {
+  optimize_module_with_config(module, .Some(make_prelude_cow_config()))
+}
+
+pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) AnfModule {
+  pinned := compute_pinned(module)
+
+  new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
+    optimized := optimize_func(f, pinned)
+    // Post-loop pass: annotate record updates for in-place reuse
+    optimized = annotate_in_place(optimized)
+    // Post-loop pass: uniqueness rewrite (COW elimination)
+    case cow_config {
+      .Some(config) => uniqueness_rewrite(optimized, config),
+      .None => optimized,
+    }
+  }
+
+  AnfModule.{
+    functions: new_funcs,
+    init_func_id: module.init_func_id,
+  }
+}

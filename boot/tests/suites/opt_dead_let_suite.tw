@@ -264,23 +264,46 @@ fn test_copy_prop_inlines_global_func() Result<Void, String> {
   }
 }
 
-fn test_copy_prop_keeps_local_init() Result<Void, String> {
-  // Let(1, AInit(ALocal(5)), Atom(ALocal(1)))
-  // ALocal is NOT a non-local atom — should NOT be propagated
+fn test_copy_prop_forwards_local() Result<Void, String> {
+  // Let(1, AInit(ALocal(5)), Atom(ALocal(1))) → Atom(ALocal(5))
+  // Local-to-local forwarding when source isn't assigned
   expr: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(5))), .Atom(.ALocal(lid(1))))
   result := copy_propagate(expr)
-  try assert.is_false(result.changed)
-  .Ok({})
+  try assert.is_true(result.changed)
+  case result.expr {
+    .Atom(.ALocal(id)) => assert.int_eq(id.id, 5),
+    _ => .Err("expected Atom(ALocal(5))"),
+  }
 }
 
-fn test_copy_prop_keeps_multi_use() Result<Void, String> {
-  // Let(1, AInit(ALitInt(42)), Let(0, ABinOp(Add, ALocal(1), ALocal(1), Int), Atom(ALocal(0))))
-  // local 1 used twice → should NOT be propagated
+fn test_copy_prop_keeps_local_when_assigned() Result<Void, String> {
+  // Let(1, AInit(ALocal(5)), Let(2, AAssign(5, ALitInt(0)), Atom(ALocal(1))))
+  // Source local 5 is assigned → should NOT forward
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALocal(lid(5))),
+    .Let(lid(2), .AAssign(lid(5), .ALitInt(0)), .Atom(.ALocal(lid(1)))))
+  result := copy_propagate(expr)
+  // The AInit(ALocal(5)) should not be propagated because local 5 is assigned
+  case result.expr {
+    .Let(local, .AInit(.ALocal(_)), _) => assert.int_eq(local.id, 1),
+    _ => .Err("expected local 1 binding preserved"),
+  }
+}
+
+fn test_copy_prop_inlines_multi_use_literal() Result<Void, String> {
+  // Let(1, AInit(ALitInt(42)), ABinOp(Add, ALocal(1), ALocal(1)))
+  // Literals are safe to duplicate → should propagate into both uses
   expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(42)),
     .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), .Atom(.ALocal(lid(0)))))
   result := copy_propagate(expr)
-  try assert.is_false(result.changed)
-  .Ok({})
+  try assert.is_true(result.changed)
+  // After propagation: Let(0, ABinOp(Add, ALitInt(42), ALitInt(42), Int), Atom(ALocal(0)))
+  case result.expr {
+    .Let(_, .ABinOp(_, .ALitInt(a), .ALitInt(b), _), _) => {
+      try assert.int_eq(a, 42)
+      assert.int_eq(b, 42)
+    },
+    _ => .Err("expected literal inlined into both operands"),
+  }
 }
 
 fn test_copy_prop_keeps_closure_only_use() Result<Void, String> {
@@ -301,6 +324,68 @@ fn test_copy_prop_keeps_assigned() Result<Void, String> {
   result := copy_propagate(expr)
   try assert.is_false(result.changed)
   .Ok({})
+}
+
+// ── is_pure: structural purity ──────────────────────────────────────
+
+fn test_is_pure_if_pure_branches() Result<Void, String> {
+  // AIf(cond, Atom(ALitInt(1)), Atom(ALitInt(2))) — both branches pure → pure
+  op: AnfOp = .AIf(.ALocal(lid(0)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2)))
+  assert.is_true(is_pure(op))
+}
+
+fn test_is_pure_if_impure_branch() Result<Void, String> {
+  // AIf(cond, Let(_, ACall(...), Atom(..)), Atom(..)) — then has call → impure
+  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
+  op: AnfOp = .AIf(.ALocal(lid(0)), then_e, .Atom(.ALitInt(2)))
+  assert.is_false(is_pure(op))
+}
+
+fn test_is_pure_match_pure_arms() Result<Void, String> {
+  // AMatch with all pure arm bodies → pure
+  arms: Vector<AnfMatchArm> = [
+    AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(1)) },
+  ]
+  op: AnfOp = .AMatch(.ALocal(lid(0)), arms)
+  assert.is_true(is_pure(op))
+}
+
+fn test_is_pure_match_impure_arm() Result<Void, String> {
+  // AMatch with an impure arm body → impure
+  impure_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
+  arms: Vector<AnfMatchArm> = [
+    AnfMatchArm.{ pattern: .Wildcard, body: impure_body },
+  ]
+  op: AnfOp = .AMatch(.ALocal(lid(0)), arms)
+  assert.is_false(is_pure(op))
+}
+
+fn test_dead_let_drops_unused_pure_if() Result<Void, String> {
+  // Let(0, AIf(cond, Atom(1), Atom(2)), Atom(ALitVoid))
+  // Local 0 unused, AIf is structurally pure → should be eliminated
+  expr: AnfExpr = .Let(lid(0),
+    .AIf(.ALocal(lid(5)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+    .Atom(.ALitVoid))
+  result := dead_let_elim(expr)
+  try assert.is_true(result.changed)
+  case result.expr {
+    .Atom(.ALitVoid) => assert.is_true(true),
+    _ => .Err("expected unused pure if to be eliminated"),
+  }
+}
+
+fn test_dead_let_keeps_unused_impure_if() Result<Void, String> {
+  // Let(0, AIf(cond, Let(_, ACall(...), ...), ...), Atom(ALitVoid))
+  // Local 0 unused, but AIf has a call → should NOT be eliminated
+  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(lid(0),
+    .AIf(.ALocal(lid(5)), then_e, .Atom(.ALitInt(2))),
+    .Atom(.ALitVoid))
+  result := dead_let_elim(expr)
+  case result.expr {
+    .Let(_, .AIf(_, _, _), _) => assert.is_true(true),
+    _ => .Err("expected impure if to be kept"),
+  }
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
@@ -327,6 +412,10 @@ pub fn suite() runner.Suite {
   s = s.test("pure: variant", test_is_pure_variant)
   s = s.test("pure: make_closure", test_is_pure_make_closure)
   s = s.test("pure: unop", test_is_pure_unop)
+  s = s.test("pure: if pure branches", test_is_pure_if_pure_branches)
+  s = s.test("pure: if impure branch", test_is_pure_if_impure_branch)
+  s = s.test("pure: match pure arms", test_is_pure_match_pure_arms)
+  s = s.test("pure: match impure arm", test_is_pure_match_impure_arm)
   // dead_let_elim
   s = s.test("dead_let: drops unused pure", test_dead_let_drops_unused_pure)
   s = s.test("dead_let: keeps used", test_dead_let_keeps_used)
@@ -334,6 +423,8 @@ pub fn suite() runner.Suite {
   s = s.test("dead_let: keeps int div", test_dead_let_keeps_int_div)
   s = s.test("dead_let: keeps assigned", test_dead_let_keeps_assigned)
   s = s.test("dead_let: nested in if", test_dead_let_nested_in_if)
+  s = s.test("dead_let: drops unused pure if", test_dead_let_drops_unused_pure_if)
+  s = s.test("dead_let: keeps unused impure if", test_dead_let_keeps_unused_impure_if)
   // subst_atom
   s = s.test("subst: replaces target", test_subst_atom_replaces)
   s = s.test("subst: leaves other", test_subst_atom_leaves_other)
@@ -341,8 +432,9 @@ pub fn suite() runner.Suite {
   // copy_propagate
   s = s.test("copy_prop: inlines literal", test_copy_prop_inlines_literal)
   s = s.test("copy_prop: inlines global func", test_copy_prop_inlines_global_func)
-  s = s.test("copy_prop: keeps local init", test_copy_prop_keeps_local_init)
-  s = s.test("copy_prop: keeps multi-use", test_copy_prop_keeps_multi_use)
+  s = s.test("copy_prop: forwards local", test_copy_prop_forwards_local)
+  s = s.test("copy_prop: keeps local when assigned", test_copy_prop_keeps_local_when_assigned)
+  s = s.test("copy_prop: inlines multi-use literal", test_copy_prop_inlines_multi_use_literal)
   s = s.test("copy_prop: keeps closure-only use", test_copy_prop_keeps_closure_only_use)
   s = s.test("copy_prop: keeps assigned", test_copy_prop_keeps_assigned)
   s

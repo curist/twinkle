@@ -113,12 +113,31 @@ pub fn copy_propagate_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) PropRe
   copy_prop_inner(expr, uses, assigned)
 }
 
+// Check if an atom can be propagated into N use sites.
+// Literals and global funcs are always safe to duplicate.
+// Locals are safe if used exactly once and the source isn't reassigned.
+fn can_propagate(lit: Atom, use_count: Int, target_assigned: Bool, assigned: Dict<Int, Bool>) Bool {
+  if target_assigned { return false }
+  case lit {
+    .ALocal(src) => {
+      // Local-to-local forwarding: safe when the source isn't reassigned
+      // and the target is used exactly once
+      use_count == 1 and !set_has(assigned, src.id)
+    },
+    _ => {
+      // Literals and global funcs: always safe to duplicate (multi-use OK)
+      use_count >= 1
+    },
+  }
+}
+
 fn copy_prop_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) PropResult {
   case expr {
     .Let(local, op, body) => {
       case op {
         .AInit(lit) => {
-          if is_non_local_atom(lit) and uses[local.id].unwrap_or(0) == 1 and !set_has(assigned, local.id) {
+          use_count := uses[local.id].unwrap_or(0)
+          if can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
             new_body := subst_atom(body, local, lit)
             return PropResult.{ expr: new_body, changed: true }
           }

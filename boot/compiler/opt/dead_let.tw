@@ -7,8 +7,14 @@ use compiler.opt.use_count.{count_uses, is_pure}
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
 
 pub fn dead_let_elim(expr: AnfExpr) ElimResult {
+  dead_let_elim_with_pinned(expr, Dict.new())
+}
+
+pub fn dead_let_elim_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) ElimResult {
   uses := count_uses(expr)
   assigned := collect_assigned_locals(expr)
+  // Merge pinned into assigned so pinned locals are never eliminated
+  for k in pinned.keys() { assigned[k] = true }
   dead_let_inner(expr, uses, assigned)
 }
 
