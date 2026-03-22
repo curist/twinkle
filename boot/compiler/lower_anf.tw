@@ -700,6 +700,9 @@ fn flatten_into_accum(
       pa := push_accum(accum, state, result_local, .AInit(atom), result_ty)
       FlatResult.{ state: pa.state, accum: pa.accum }
     },
-    _ => error("flatten_into_accum: terminal in structural sub-expression"),
+    // Terminal (Return/Break/Continue) in structural sub-expression.
+    // The type checker prevents this via Never-typed expressions;
+    // reaching here indicates malformed Core IR (matches stage0 behavior).
+    _ => error("flatten_into_accum: terminal in operand position — Core IR is malformed"),
   }
 }
