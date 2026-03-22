@@ -1,0 +1,167 @@
+// Constant folding: evaluate ABinOp/AUnOp with literal operands at compile time.
+//
+// Division/modulo by zero are left as-is (runtime trap is intended).
+
+use compiler.core_ir.{BinOp, UnOp}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+
+pub type FoldResult = .{ expr: AnfExpr, changed: Bool }
+
+pub fn constant_fold(expr: AnfExpr) FoldResult {
+  case expr {
+    .Let(local, op, body) => {
+      case try_fold_op(op) {
+        .Some(folded) => {
+          body_r := constant_fold(body)
+          FoldResult.{ expr: .Let(local, .AInit(folded), body_r.expr), changed: true }
+        },
+        .None => {
+          op_r := constant_fold_op(op)
+          body_r := constant_fold(body)
+          FoldResult.{
+            expr: .Let(local, op_r.op, body_r.expr),
+            changed: op_r.changed or body_r.changed,
+          }
+        },
+      }
+    },
+    _ => FoldResult.{ expr: expr, changed: false },
+  }
+}
+
+fn try_fold_op(op: AnfOp) Atom? {
+  case op {
+    .ABinOp(binop, left, right, _) => fold_binop(binop, left, right),
+    .AUnOp(unop, inner, _) => fold_unop(unop, inner),
+    _ => .None,
+  }
+}
+
+fn fold_binop(op: BinOp, left: Atom, right: Atom) Atom? {
+  case left {
+    .ALitInt(a) => {
+      case right {
+        .ALitInt(b) => fold_int_binop(op, a, b),
+        _ => .None,
+      }
+    },
+    .ALitFloat(a) => {
+      case right {
+        .ALitFloat(b) => fold_float_binop(op, a, b),
+        _ => .None,
+      }
+    },
+    .ALitBool(a) => {
+      case right {
+        .ALitBool(b) => fold_bool_binop(op, a, b),
+        _ => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn fold_int_binop(op: BinOp, a: Int, b: Int) Atom? {
+  case op {
+    .Add => .Some(.ALitInt(a + b)),
+    .Sub => .Some(.ALitInt(a - b)),
+    .Mul => .Some(.ALitInt(a * b)),
+    .Div => {
+      if b == 0 { .None } else { .Some(.ALitInt(a / b)) }
+    },
+    .Mod => {
+      if b == 0 { .None } else { .Some(.ALitInt(a % b)) }
+    },
+    .BitAnd => .Some(.ALitInt(a & b)),
+    .BitOr => .Some(.ALitInt(a | b)),
+    .BitXor => .Some(.ALitInt(a ^ b)),
+    .Shl => .Some(.ALitInt(a << (b & 63))),
+    .Shr => .Some(.ALitInt(a >> (b & 63))),
+    .Eq => .Some(.ALitBool(a == b)),
+    .Ne => .Some(.ALitBool(a != b)),
+    .Lt => .Some(.ALitBool(a < b)),
+    .Le => .Some(.ALitBool(a <= b)),
+    .Gt => .Some(.ALitBool(a > b)),
+    .Ge => .Some(.ALitBool(a >= b)),
+    _ => .None,
+  }
+}
+
+fn fold_float_binop(op: BinOp, a: Float, b: Float) Atom? {
+  case op {
+    .Add => .Some(.ALitFloat(a + b)),
+    .Sub => .Some(.ALitFloat(a - b)),
+    .Mul => .Some(.ALitFloat(a * b)),
+    .Div => .Some(.ALitFloat(a / b)),
+    .Eq => .Some(.ALitBool(a == b)),
+    .Ne => .Some(.ALitBool(a != b)),
+    .Lt => .Some(.ALitBool(a < b)),
+    .Le => .Some(.ALitBool(a <= b)),
+    .Gt => .Some(.ALitBool(a > b)),
+    .Ge => .Some(.ALitBool(a >= b)),
+    _ => .None,
+  }
+}
+
+fn fold_bool_binop(op: BinOp, a: Bool, b: Bool) Atom? {
+  case op {
+    .And => .Some(.ALitBool(a and b)),
+    .Or => .Some(.ALitBool(a or b)),
+    .Eq => .Some(.ALitBool(a == b)),
+    .Ne => .Some(.ALitBool(a != b)),
+    _ => .None,
+  }
+}
+
+fn fold_unop(op: UnOp, inner: Atom) Atom? {
+  case op {
+    .Neg => {
+      case inner {
+        .ALitInt(n) => .Some(.ALitInt(-n)),
+        .ALitFloat(f) => .Some(.ALitFloat(-f)),
+        _ => .None,
+      }
+    },
+    .Not => {
+      case inner {
+        .ALitBool(b) => .Some(.ALitBool(!b)),
+        _ => .None,
+      }
+    },
+  }
+}
+
+// ── Recurse into sub-expressions ────────────────────────────────────
+
+type OpFoldResult = .{ op: AnfOp, changed: Bool }
+
+fn constant_fold_op(op: AnfOp) OpFoldResult {
+  case op {
+    .AIf(cond, then_e, else_e) => {
+      then_r := constant_fold(then_e)
+      else_r := constant_fold(else_e)
+      OpFoldResult.{
+        op: .AIf(cond, then_r.expr, else_r.expr),
+        changed: then_r.changed or else_r.changed,
+      }
+    },
+    .AMatch(scrutinee, arms) => {
+      changed := false
+      new_arms: Vector<AnfMatchArm> = collect arm in arms {
+        r := constant_fold(arm.body)
+        if r.changed { changed = true }
+        AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
+      }
+      OpFoldResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+    },
+    .ALoop(body) => {
+      r := constant_fold(body)
+      OpFoldResult.{ op: .ALoop(r.expr), changed: r.changed }
+    },
+    .ADefer(inner) => {
+      r := constant_fold(inner)
+      OpFoldResult.{ op: .ADefer(r.expr), changed: r.changed }
+    },
+    _ => OpFoldResult.{ op: op, changed: false },
+  }
+}

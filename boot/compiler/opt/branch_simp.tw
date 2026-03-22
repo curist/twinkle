@@ -1,0 +1,83 @@
+// Branch simplification: eliminate AIf with literal bool condition.
+//
+// Let(t, AIf(ALitBool(b), then, else), body) → splice selected branch.
+// If the selected branch terminates (Return/Break/Continue), the
+// continuation body is unreachable and dropped.
+
+use compiler.core_ir.{LocalId}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+
+pub type SimpResult = .{ expr: AnfExpr, changed: Bool }
+
+pub fn branch_simplify(expr: AnfExpr) SimpResult {
+  case expr {
+    .Let(local, op, body) => {
+      case op {
+        .AIf(.ALitBool(b), then_e, else_e) => {
+          selected := if b { then_e } else { else_e }
+          spliced := splice_branch(selected, local, body)
+          SimpResult.{ expr: spliced, changed: true }
+        },
+        _ => {
+          op_r := branch_simplify_op(op)
+          body_r := branch_simplify(body)
+          SimpResult.{
+            expr: .Let(local, op_r.op, body_r.expr),
+            changed: op_r.changed or body_r.changed,
+          }
+        },
+      }
+    },
+    _ => SimpResult.{ expr: expr, changed: false },
+  }
+}
+
+// Splice a selected branch into the continuation.
+// If the branch ends in Atom(a), rewrite to Let(result_local, AInit(a), continuation).
+// If the branch ends in a terminal (Return/Break/Continue), drop continuation.
+fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) AnfExpr {
+  case branch {
+    .Atom(a) => .Let(result_local, .AInit(a), continuation),
+    .Return(_) => branch,
+    .Break(_) => branch,
+    .Continue => branch,
+    .Let(local, op, body) => {
+      AnfExpr.Let(local, op, splice_branch(body, result_local, continuation))
+    },
+  }
+}
+
+// ── Recurse into sub-expressions ────────────────────────────────────
+
+type OpSimpResult = .{ op: AnfOp, changed: Bool }
+
+fn branch_simplify_op(op: AnfOp) OpSimpResult {
+  case op {
+    .AIf(cond, then_e, else_e) => {
+      then_r := branch_simplify(then_e)
+      else_r := branch_simplify(else_e)
+      OpSimpResult.{
+        op: .AIf(cond, then_r.expr, else_r.expr),
+        changed: then_r.changed or else_r.changed,
+      }
+    },
+    .AMatch(scrutinee, arms) => {
+      changed := false
+      new_arms: Vector<AnfMatchArm> = collect arm in arms {
+        r := branch_simplify(arm.body)
+        if r.changed { changed = true }
+        AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
+      }
+      OpSimpResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+    },
+    .ALoop(body) => {
+      r := branch_simplify(body)
+      OpSimpResult.{ op: .ALoop(r.expr), changed: r.changed }
+    },
+    .ADefer(inner) => {
+      r := branch_simplify(inner)
+      OpSimpResult.{ op: .ADefer(r.expr), changed: r.changed }
+    },
+    _ => OpSimpResult.{ op: op, changed: false },
+  }
+}
