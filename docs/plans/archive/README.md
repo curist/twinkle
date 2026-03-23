@@ -108,3 +108,4 @@ Related historical context outside this folder:
 | [boot-resolver-hardening.md](boot-resolver-hardening.md) | Boot resolver hardening and edge-case fixes |
 | [string-interning.md](string-interning.md) | Compile-time string literal interning (Phase 1 landed; runtime Phase 2 optional) |
 | [method-resolution-spec-alignment.md](method-resolution-spec-alignment.md) | Align dot-method resolution with spec: defining-module inherent methods only (Phases 1–2 done; Phase 3–4 deferred) |
+| [method-resolution-via-type.md](method-resolution-via-type.md) | Method resolution via type origin — destructured/transitive imports resolve inherent methods without the defining module in scope |

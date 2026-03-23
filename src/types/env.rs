@@ -11,6 +11,18 @@ use super::ty::{
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
 
+/// Stored information for an inherent method, allowing method resolution
+/// without requiring the defining module to be in the value environment.
+#[derive(Debug, Clone)]
+pub struct MethodInfo {
+    /// Qualified function name used by the lowerer to resolve FuncId
+    pub func_name: String,
+    /// Full function signature for type checking. None for builtin methods
+    /// registered early (before intrinsic signatures are available) — these
+    /// fall back to ValueEnv lookup.
+    pub signature: Option<FunctionSignature>,
+}
+
 /// Type environment - tracks user-defined type declarations
 #[derive(Debug, Clone)]
 pub struct TypeEnv {
@@ -20,15 +32,15 @@ pub struct TypeEnv {
     record_fields: HashMap<(TypeId, String), usize>,
     // For sum types: map (TypeId, variant_name) -> variant index
     sum_variants: HashMap<(TypeId, String), usize>,
-    // For inherent methods: map (TypeId, method_name) -> function name
+    // For inherent methods: map (TypeId, method_name) -> MethodInfo
     // Methods are functions whose first parameter is the receiver type
-    methods: HashMap<(TypeId, String), String>,
+    methods: HashMap<(TypeId, String), MethodInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeEnvBindingSnapshot {
     type_names: HashMap<String, TypeId>,
-    methods: HashMap<(TypeId, String), String>,
+    methods: HashMap<(TypeId, String), MethodInfo>,
 }
 
 impl TypeEnv {
@@ -203,159 +215,53 @@ impl TypeEnv {
         // Register all builtin method mappings.
         // These map (synthetic_type_id, method_name) → qualified function name
         // so that the env-driven resolution path works for all builtin types.
-
-        // Vector methods
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "len".to_string(),
-            "Vector.len".to_string(),
-        );
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "push".to_string(),
-            "Vector.push".to_string(),
-        );
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "concat".to_string(),
-            "Vector.concat".to_string(),
-        );
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "slice".to_string(),
-            "Vector.slice".to_string(),
-        );
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "get".to_string(),
-            "Vector.get".to_string(),
-        );
-        env.add_method(
-            BUILTIN_VECTOR_TYPE_ID,
-            "set".to_string(),
-            "Vector.set".to_string(),
-        );
-
-        // String methods
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "len".to_string(),
-            "String.len".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "concat".to_string(),
-            "String.concat".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "slice".to_string(),
-            "String.slice".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "get".to_string(),
-            "String.get".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "to_string".to_string(),
-            "String.to_string".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "char_code_at".to_string(),
-            "String.char_code_at".to_string(),
-        );
-        env.add_method(
-            BUILTIN_STRING_TYPE_ID,
-            "utf8_bytes".to_string(),
-            "String.utf8_bytes".to_string(),
-        );
-
-        // Dict methods
-        env.add_method(
-            BUILTIN_DICT_TYPE_ID,
-            "len".to_string(),
-            "Dict.len".to_string(),
-        );
-        env.add_method(
-            BUILTIN_DICT_TYPE_ID,
-            "has".to_string(),
-            "Dict.has".to_string(),
-        );
-        env.add_method(
-            BUILTIN_DICT_TYPE_ID,
-            "keys".to_string(),
-            "Dict.keys".to_string(),
-        );
-        env.add_method(
-            BUILTIN_DICT_TYPE_ID,
-            "remove".to_string(),
-            "Dict.remove".to_string(),
-        );
-        env.add_method(
-            BUILTIN_DICT_TYPE_ID,
-            "set".to_string(),
-            "Dict.set".to_string(),
-        );
-
-        // Cell methods
-        env.add_method(CELL_TYPE_ID, "get".to_string(), "Cell.get".to_string());
-        env.add_method(CELL_TYPE_ID, "set".to_string(), "Cell.set".to_string());
-        env.add_method(
-            CELL_TYPE_ID,
-            "update".to_string(),
-            "Cell.update".to_string(),
-        );
-
-        // Iterator methods
-        env.add_method(
-            ITERATOR_TYPE_ID,
-            "next".to_string(),
-            "Iterator.next".to_string(),
-        );
-
-        // Option methods
-        env.add_method(
-            OPTION_TYPE_ID,
-            "ok_or".to_string(),
-            "Option.ok_or".to_string(),
-        );
-        env.add_method(
-            OPTION_TYPE_ID,
-            "ok_or_else".to_string(),
-            "Option.ok_or_else".to_string(),
-        );
-
-        // Primitive methods
-        env.add_method(
-            BUILTIN_INT_TYPE_ID,
-            "to_string".to_string(),
-            "Int.to_string".to_string(),
-        );
-        env.add_method(
-            BUILTIN_FLOAT_TYPE_ID,
-            "to_string".to_string(),
-            "Float.to_string".to_string(),
-        );
-        env.add_method(
-            BUILTIN_BOOL_TYPE_ID,
-            "to_string".to_string(),
-            "Bool.to_string".to_string(),
-        );
-
-        // Byte methods
-        env.add_method(
-            BUILTIN_BYTE_TYPE_ID,
-            "to_int".to_string(),
-            "Byte.to_int".to_string(),
-        );
-        env.add_method(
-            BUILTIN_BYTE_TYPE_ID,
-            "to_string".to_string(),
-            "Byte.to_string".to_string(),
-        );
+        // Signature is None — builtins are resolved via ValueEnv fallback.
+        let builtin_methods: &[(TypeId, &str, &str)] = &[
+            // Vector
+            (BUILTIN_VECTOR_TYPE_ID, "len", "Vector.len"),
+            (BUILTIN_VECTOR_TYPE_ID, "push", "Vector.push"),
+            (BUILTIN_VECTOR_TYPE_ID, "concat", "Vector.concat"),
+            (BUILTIN_VECTOR_TYPE_ID, "slice", "Vector.slice"),
+            (BUILTIN_VECTOR_TYPE_ID, "get", "Vector.get"),
+            (BUILTIN_VECTOR_TYPE_ID, "set", "Vector.set"),
+            // String
+            (BUILTIN_STRING_TYPE_ID, "len", "String.len"),
+            (BUILTIN_STRING_TYPE_ID, "concat", "String.concat"),
+            (BUILTIN_STRING_TYPE_ID, "slice", "String.slice"),
+            (BUILTIN_STRING_TYPE_ID, "get", "String.get"),
+            (BUILTIN_STRING_TYPE_ID, "to_string", "String.to_string"),
+            (
+                BUILTIN_STRING_TYPE_ID,
+                "char_code_at",
+                "String.char_code_at",
+            ),
+            (BUILTIN_STRING_TYPE_ID, "utf8_bytes", "String.utf8_bytes"),
+            // Dict
+            (BUILTIN_DICT_TYPE_ID, "len", "Dict.len"),
+            (BUILTIN_DICT_TYPE_ID, "has", "Dict.has"),
+            (BUILTIN_DICT_TYPE_ID, "keys", "Dict.keys"),
+            (BUILTIN_DICT_TYPE_ID, "remove", "Dict.remove"),
+            (BUILTIN_DICT_TYPE_ID, "set", "Dict.set"),
+            // Cell
+            (CELL_TYPE_ID, "get", "Cell.get"),
+            (CELL_TYPE_ID, "set", "Cell.set"),
+            (CELL_TYPE_ID, "update", "Cell.update"),
+            // Iterator
+            (ITERATOR_TYPE_ID, "next", "Iterator.next"),
+            // Option
+            (OPTION_TYPE_ID, "ok_or", "Option.ok_or"),
+            (OPTION_TYPE_ID, "ok_or_else", "Option.ok_or_else"),
+            // Primitives
+            (BUILTIN_INT_TYPE_ID, "to_string", "Int.to_string"),
+            (BUILTIN_FLOAT_TYPE_ID, "to_string", "Float.to_string"),
+            (BUILTIN_BOOL_TYPE_ID, "to_string", "Bool.to_string"),
+            // Byte
+            (BUILTIN_BYTE_TYPE_ID, "to_int", "Byte.to_int"),
+            (BUILTIN_BYTE_TYPE_ID, "to_string", "Byte.to_string"),
+        ];
+        for &(type_id, method, func) in builtin_methods {
+            env.add_method(type_id, method.to_string(), func.to_string(), None);
+        }
 
         env
     }
@@ -447,10 +353,32 @@ impl TypeEnv {
         }
     }
 
-    /// Restore type-name and method bindings from a prior snapshot.
+    /// Restore type-name and method bindings from a prior snapshot,
+    /// but preserve any NEW method entries for user-defined types that
+    /// were added during dependency compilation (for transitive method
+    /// resolution). Builtin type methods (Vector, String, etc.) are
+    /// fully restored to maintain prelude isolation for stdlib modules.
     pub fn restore_bindings(&mut self, snapshot: TypeEnvBindingSnapshot) {
+        use super::ty::builtin_method_alias;
+
+        // Collect new methods for user-defined types only.
+        let new_user_methods: Vec<_> = self
+            .methods
+            .iter()
+            .filter(|(key, _)| {
+                // Keep if: (1) not in snapshot, and (2) not a builtin type
+                builtin_method_alias(key.0).is_none() && !snapshot.methods.contains_key(key)
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         self.type_names = snapshot.type_names;
         self.methods = snapshot.methods;
+
+        // Re-insert new user-defined type method entries
+        for (key, info) in new_user_methods {
+            self.methods.entry(key).or_insert(info);
+        }
     }
 
     /// Get a type definition by ID
@@ -790,10 +718,24 @@ impl TypeEnv {
         }
     }
 
-    /// Register a method for a type
-    /// Methods are functions whose first parameter is the receiver type
-    pub fn add_method(&mut self, type_id: TypeId, method_name: String, func_name: String) {
-        self.methods.insert((type_id, method_name), func_name);
+    /// Register a method for a type.
+    /// Methods are functions whose first parameter is the receiver type.
+    /// Pass `signature` for user-defined methods; builtins registered early
+    /// can pass `None` and rely on ValueEnv fallback.
+    pub fn add_method(
+        &mut self,
+        type_id: TypeId,
+        method_name: String,
+        func_name: String,
+        signature: Option<FunctionSignature>,
+    ) {
+        self.methods.insert(
+            (type_id, method_name),
+            MethodInfo {
+                func_name,
+                signature,
+            },
+        );
     }
 
     pub fn remove_method(&mut self, type_id: TypeId, method_name: &str) {
@@ -806,10 +748,16 @@ impl TypeEnv {
             .contains_key(&(type_id, method_name.to_string()))
     }
 
-    /// Get the function name for a method
-    /// Returns None if the method doesn't exist
-    pub fn get_method_function(&self, type_id: TypeId, method_name: &str) -> Option<&String> {
+    /// Get the full method info (signature + func name) for a method.
+    pub fn get_method(&self, type_id: TypeId, method_name: &str) -> Option<&MethodInfo> {
         self.methods.get(&(type_id, method_name.to_string()))
+    }
+
+    /// Get the function name for a method (convenience wrapper).
+    pub fn get_method_function(&self, type_id: TypeId, method_name: &str) -> Option<&String> {
+        self.methods
+            .get(&(type_id, method_name.to_string()))
+            .map(|info| &info.func_name)
     }
 
     /// Check if a type has a field with the given name (for collision detection)
@@ -828,9 +776,9 @@ impl TypeEnv {
     pub fn methods_for_type(&self, type_id: TypeId) -> Vec<(&str, &str)> {
         self.methods
             .iter()
-            .filter_map(move |((tid, method_name), func_name)| {
+            .filter_map(move |((tid, method_name), info)| {
                 if *tid == type_id {
-                    Some((method_name.as_str(), func_name.as_str()))
+                    Some((method_name.as_str(), info.func_name.as_str()))
                 } else {
                     None
                 }

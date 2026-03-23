@@ -1,6 +1,5 @@
 use tests.runner
 use tests.assert
-use compiler.builtins
 use compiler.builtins.{BuiltinRegistry, BuiltinKind, make_builtin_registry}
 use compiler.core_ir.{FuncId}
 

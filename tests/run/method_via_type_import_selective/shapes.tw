@@ -1,0 +1,10 @@
+pub type Circle = .{ radius: Float }
+pub type Rect = .{ w: Float, h: Float }
+
+pub fn area_c(c: Circle) Float {
+    3.14 * c.radius * c.radius
+}
+
+pub fn area_r(r: Rect) Float {
+    r.w * r.h
+}

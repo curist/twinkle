@@ -22,7 +22,6 @@ use .core_ir.{
   LocalId, FuncId, FieldId, VariantId,
   BinOp, UnOp, FieldInit, MatchArm, CorePattern,
 }
-use .builtins
 use .builtins.{BuiltinRegistry}
 
 // ── Lowering context ────────────────────────────────────────────────

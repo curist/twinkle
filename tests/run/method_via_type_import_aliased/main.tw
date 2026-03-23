@@ -1,0 +1,12 @@
+// Expected output:
+//   5
+//   7
+
+// Aliased destructured import — methods should still resolve
+use vec2.{Vec2 as V}
+
+a := V.{ x: 1, y: 2 }
+b := V.{ x: 4, y: 5 }
+c := a.add(b)
+println("${c.x}")
+println("${c.y}")

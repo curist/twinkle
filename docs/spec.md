@@ -668,10 +668,23 @@ Specific names can be brought directly into scope. PascalCase names are imported
 ```tw
 use math.vector.{translate, scale, Vec2}
 use math.vector.{translate as tr, Vec2 as V2}
+```
 
-// to both alias the module and destructure, use two statements:
-use math.vector as vec
-use math.vector.{translate, scale}
+A destructured import brings only the listed names into scope — the parent module itself is **not** imported. `use foo.{MyType}` does not make `foo` available as a name:
+
+```tw
+use math.vector.{Vec2}
+
+v := Vec2.{ x: 1, y: 2 }
+v.translate(3, 4)          // ok — inherent methods resolve via the type
+vector.scale(v, 2)         // error — "vector" is not in scope
+```
+
+Importing a type is sufficient to call its inherent methods (see §9). To also use the module as a qualified namespace, import it separately:
+
+```tw
+use math.vector
+use math.vector.{Vec2}
 ```
 
 Wildcard imports (`use foo.*`) will never be supported.
@@ -702,10 +715,12 @@ Dot sugar:
 p.translate(1,2)
 ```
 
-desugars to:
+desugars to a call to the `translate` function defined in the module where `Point` is declared. The defining module does not need to be in scope — method resolution is based on the receiver's type origin, not on imported module names.
+
+Conceptually equivalent to:
 
 ```tw
-point.translate(p,1,2)
+point.translate(p,1,2)   // "point" is the defining module, resolved internally
 ```
 
 ### Built-in inherent methods
@@ -793,7 +808,8 @@ case String.from_char_code(97) {
 ### Dot resolution rules
 
 * Check record fields first.
-* Then check module of the type for a matching inherent method.
+* Then check the defining module of the receiver's type for a matching inherent method.
+* Method resolution depends on the type, not on how it was imported. A type obtained via destructured import, or received transitively from another module, resolves methods the same way.
 * No trait involvement.
 * If a name collision exists (field vs inherent), dot is illegal.
 

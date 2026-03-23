@@ -321,6 +321,7 @@ impl Resolver {
                                     type_id,
                                     sig.name.clone(),
                                     sig.name.clone(),
+                                    Some(sig.clone()),
                                 );
                             }
                         }

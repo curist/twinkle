@@ -1457,12 +1457,12 @@ impl TypeChecker {
             | MonoType::String
             | MonoType::Byte => Ok(()),
             MonoType::Named { type_id, .. } => {
-                if let Some(func_name) = self
-                    .type_env
-                    .get_method_function(*type_id, "to_string")
-                    .cloned()
+                if let Some(method_info) = self.type_env.get_method(*type_id, "to_string").cloned()
                 {
-                    if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+                    let sig_opt = method_info
+                        .signature
+                        .or_else(|| self.value_env.get_function(&method_info.func_name).cloned());
+                    if let Some(sig) = sig_opt {
                         let full_fn_ty = MonoType::Function {
                             params: sig.params.clone(),
                             ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
@@ -1587,17 +1587,18 @@ impl TypeChecker {
             self.call_expected_ret = call_expected;
             return Ok(None);
         };
-        let func_name = if let Some(name) = self
-            .type_env
-            .get_method_function(receiver_type_id, method)
-            .cloned()
-        {
-            name
-        } else {
-            self.call_expected_ret = call_expected;
-            return Ok(None);
-        };
-        let sig = if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+        let method_info =
+            if let Some(info) = self.type_env.get_method(receiver_type_id, method).cloned() {
+                info
+            } else {
+                self.call_expected_ret = call_expected;
+                return Ok(None);
+            };
+        // Use stored signature directly (Option B) or fall back to ValueEnv
+        // for builtin methods registered without a signature.
+        let sig = if let Some(sig) = method_info.signature {
+            sig
+        } else if let Some(sig) = self.value_env.get_function(&method_info.func_name).cloned() {
             sig
         } else {
             self.call_expected_ret = call_expected;
@@ -2057,28 +2058,29 @@ impl TypeChecker {
         method: &str,
         span: Span,
     ) -> Result<MonoType, ()> {
-        let func_name =
-            if let Some(name) = self.type_env.get_method_function(type_id, method).cloned() {
-                name
-            } else {
-                let type_name = self
-                    .type_env
-                    .get_def(type_id)
-                    .map(|d| d.name().to_string())
-                    .or_else(|| builtin_method_alias(type_id).map(|name| name.to_string()))
-                    .unwrap_or_else(|| format!("Type#{}", type_id.0));
-                self.errors.push(TypeError::NoSuchField {
-                    record_type: type_name,
-                    field: method.to_string(),
-                    span,
-                });
-                return Err(());
-            };
-        let sig = if let Some(sig) = self.value_env.get_function(&func_name).cloned() {
+        let method_info = if let Some(info) = self.type_env.get_method(type_id, method).cloned() {
+            info
+        } else {
+            let type_name = self
+                .type_env
+                .get_def(type_id)
+                .map(|d| d.name().to_string())
+                .or_else(|| builtin_method_alias(type_id).map(|name| name.to_string()))
+                .unwrap_or_else(|| format!("Type#{}", type_id.0));
+            self.errors.push(TypeError::NoSuchField {
+                record_type: type_name,
+                field: method.to_string(),
+                span,
+            });
+            return Err(());
+        };
+        let sig = if let Some(sig) = method_info.signature {
+            sig
+        } else if let Some(sig) = self.value_env.get_function(&method_info.func_name).cloned() {
             sig
         } else {
             self.errors.push(TypeError::UndefinedVariable {
-                name: func_name,
+                name: method_info.func_name,
                 span,
             });
             return Err(());

@@ -455,6 +455,16 @@ module, graph, query — deferred until this phase).
 - Implement `ProjectState` + dependency graph for incremental
 - Build CLI entry point with argparse
 - Run compatibility suite against stage0
+- **Method resolution via type origin:** when merging module environments,
+  ensure inherent method signatures are attached to the *type* (not the
+  module's function namespace). Otherwise destructured imports like
+  `use foo.{MyType}` won't resolve `MyType`'s methods — the same bug
+  fixed in stage0 (see `docs/plans/archive/method-resolution-via-type.md`).
+  The boot compiler's `checker.tw:lookup_method_sig` currently does a
+  two-step lookup (`lookup_method` → `lookup_function`); the multi-module
+  pipeline must populate `env.functions` with the defining module's
+  signatures for any imported type, or switch to storing signatures
+  directly in the method table (as stage0 now does with `MethodInfo`).
 
 ## Repository Layout
 

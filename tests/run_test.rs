@@ -161,6 +161,36 @@ fn multi_module_alias() {
 }
 
 #[test]
+fn method_via_type_import() {
+    check("tests/run/method_via_type_import/main.tw");
+}
+
+#[test]
+fn method_via_type_import_selective() {
+    check("tests/run/method_via_type_import_selective/main.tw");
+}
+
+#[test]
+fn method_transitive_module() {
+    check("tests/run/method_transitive_module/main.tw");
+}
+
+#[test]
+fn method_via_type_import_aliased() {
+    check("tests/run/method_via_type_import_aliased/main.tw");
+}
+
+#[test]
+fn method_via_type_import_multi() {
+    check("tests/run/method_via_type_import_multi/main.tw");
+}
+
+#[test]
+fn method_via_type_import_first_class() {
+    check("tests/run/method_via_type_import_first_class/main.tw");
+}
+
+#[test]
 fn pub_values() {
     check("tests/run/pub_values/main.tw");
 }

@@ -1,0 +1,12 @@
+// Expected output:
+//   10
+//   14
+
+// Import multiple types — each gets its own methods
+use shapes.{Circle, Rect}
+
+c := Circle.{ radius: 5 }
+println("${c.diameter()}")
+
+r := Rect.{ w: 3, h: 4 }
+println("${r.perimeter()}")

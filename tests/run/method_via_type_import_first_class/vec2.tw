@@ -1,0 +1,5 @@
+pub type Vec2 = .{ x: Int, y: Int }
+
+pub fn magnitude_sq(v: Vec2) Int {
+    v.x * v.x + v.y * v.y
+}

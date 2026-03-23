@@ -811,13 +811,21 @@ fn maybe_lower_module(
         return Ok(());
     }
 
+    // Merge persistent method_func_targets into qualified_func_targets
+    // so the lowerer can resolve transitive method FuncIds.
+    let mut merged_func_targets = state.qualified_func_targets.clone();
+    for (name, ext_ref) in &state.method_func_targets {
+        merged_func_targets
+            .entry(name.clone())
+            .or_insert_with(|| ext_ref.clone());
+    }
     let input = LowerInput {
         type_env: state.type_env.clone(),
         value_env: state.value_env.clone(),
         func_table: state.func_table.clone(),
         module_aliases: state.module_aliases.clone(),
         qualified_value_globals: state.qualified_value_globals.clone(),
-        qualified_func_targets: state.qualified_func_targets.clone(),
+        qualified_func_targets: merged_func_targets,
         next_func_id: module_next_func_id,
         next_global_local_id: state.next_global_local_id,
     };
@@ -1391,7 +1399,7 @@ fn register_inherent_methods(
         })
         .collect();
     for (type_id, method_name, qsig, builtin_sig) in registrations {
-        type_env.add_method(type_id, method_name, qsig.name.clone());
+        type_env.add_method(type_id, method_name, qsig.name.clone(), Some(qsig.clone()));
         value_env.add_function(qsig);
         if let Some(sig) = builtin_sig {
             value_env.add_function(sig);

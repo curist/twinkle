@@ -1,0 +1,10 @@
+pub type Circle = .{ radius: Int }
+pub type Rect = .{ w: Int, h: Int }
+
+pub fn diameter(c: Circle) Int {
+    c.radius * 2
+}
+
+pub fn perimeter(r: Rect) Int {
+    2 * (r.w + r.h)
+}

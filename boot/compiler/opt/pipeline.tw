@@ -2,7 +2,6 @@
 // branch_simp into a loop, with module-level orchestration and pinned locals.
 
 use compiler.core_ir.{LocalId, FuncId}
-use compiler.builtins
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}

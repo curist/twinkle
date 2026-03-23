@@ -73,6 +73,10 @@ pub struct CompileState {
     pub qualified_value_globals: HashMap<String, LocalId>,
     /// "alias.fn" → target module path + module-local FuncId for linker remap.
     pub qualified_func_targets: HashMap<String, ExternalFuncRef>,
+    /// Persistent method func targets — NOT snapshot/restored.
+    /// Accumulates ExternalFuncRef entries for inherent methods so they
+    /// remain available across module boundaries (transitive method calls).
+    pub method_func_targets: HashMap<String, ExternalFuncRef>,
     /// alias → exports for each compiled import
     pub module_registry: HashMap<String, ModuleExports>,
 
@@ -118,6 +122,7 @@ impl CompileState {
             module_aliases: default_module_aliases(),
             qualified_value_globals: HashMap::new(),
             qualified_func_targets: HashMap::new(),
+            method_func_targets: HashMap::new(),
             module_registry: HashMap::new(),
             next_global_local_id: 0,
             lowered_modules: Vec::new(),
@@ -179,7 +184,18 @@ impl CompileState {
                             receiver_type_id,
                             func_name.clone(),
                             qualified_name.clone(),
+                            Some(sig.clone()),
                         );
+                        // Persist method func target (not snapshot/restored)
+                        if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                            self.method_func_targets.insert(
+                                qualified_name.clone(),
+                                ExternalFuncRef {
+                                    module_path: exports.canonical_path.clone(),
+                                    local_func_id: func_id,
+                                },
+                            );
+                        }
 
                         // Builtin receiver methods can also be called via canonical
                         // module aliases, e.g. `Vector.map(xs, f)`.
@@ -228,7 +244,7 @@ impl CompileState {
     /// Returns an error listing any names not found in the module's exports.
     pub fn register_import_items(
         &mut self,
-        _alias: &str,
+        alias: &str,
         exports: &ModuleExports,
         items: &[ImportItem],
     ) -> Result<(), Vec<(String, &'static str)>> {
@@ -297,6 +313,43 @@ impl CompileState {
                     let &type_id = exports.public_types.get(name).unwrap();
                     self.type_env
                         .register_type_alias(unqualified.to_string(), type_id);
+
+                    // Register inherent methods for the imported type.
+                    // The signature is stored directly in TypeEnv so method
+                    // resolution bypasses ValueEnv entirely (Option B).
+                    for (func_name, sig) in &exports.public_functions {
+                        if let Some(receiver_ty) = sig.params.first() {
+                            if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
+                                if receiver_type_id == type_id {
+                                    // Use the module's qualified name for
+                                    // FuncId resolution in the lowerer.
+                                    let qualified_name = format!("{}.{}", alias, func_name);
+
+                                    // Register FuncId mapping so the lowerer
+                                    // can resolve the qualified name.
+                                    if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                                        self.func_table.insert(qualified_name.clone(), func_id);
+                                        let ext_ref = ExternalFuncRef {
+                                            module_path: exports.canonical_path.clone(),
+                                            local_func_id: func_id,
+                                        };
+                                        self.qualified_func_targets
+                                            .insert(qualified_name.clone(), ext_ref.clone());
+                                        // Persist for transitive method resolution
+                                        self.method_func_targets
+                                            .insert(qualified_name.clone(), ext_ref);
+                                    }
+
+                                    self.type_env.add_method(
+                                        type_id,
+                                        func_name.clone(),
+                                        qualified_name,
+                                        Some(sig.clone()),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -350,8 +403,12 @@ impl CompileState {
                 );
             }
 
-            self.type_env
-                .add_method(receiver_type_id, func_name.clone(), builtin_name);
+            self.type_env.add_method(
+                receiver_type_id,
+                func_name.clone(),
+                builtin_name,
+                Some(sig.clone()),
+            );
         }
     }
 }

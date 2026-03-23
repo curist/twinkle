@@ -1,0 +1,21 @@
+// Expected output:
+//   (0, 0)
+//   (5, 0)
+//   (5, 3)
+
+// Module C: uses module B, does NOT import module A (point) at all.
+// B's functions that involve A's types should still work fine.
+use geometry
+
+p := geometry.origin()
+println(geometry.describe(p))
+
+p2 := geometry.move_right(p, 5)
+println(geometry.describe(p2))
+
+// The hard case: C gets a Point from B and calls Point's inherent
+// method (.translate) WITHOUT ever importing point. This works
+// because method resolution uses the signature stored in TypeEnv
+// (Option B) rather than requiring the module in ValueEnv.
+p3 := p2.translate(0, 3)
+println(geometry.describe(p3))

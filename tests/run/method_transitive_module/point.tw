@@ -1,0 +1,10 @@
+// Module A: defines Point type with methods
+pub type Point = .{ x: Int, y: Int }
+
+pub fn new(x: Int, y: Int) Point {
+    Point.{ x: x, y: y }
+}
+
+pub fn translate(p: Point, dx: Int, dy: Int) Point {
+    Point.{ x: p.x + dx, y: p.y + dy }
+}
