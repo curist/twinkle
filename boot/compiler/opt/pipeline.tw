@@ -2,6 +2,7 @@
 // branch_simp into a loop, with module-level orchestration and pinned locals.
 
 use compiler.core_ir.{LocalId, FuncId}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
 use compiler.opt.dead_let.{dead_let_elim_with_pinned}
@@ -99,32 +100,28 @@ fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>) AnfFunctionDef {
 
 // Build the CowConfig for prelude FuncIds, matching the Rust compiler's
 // cow_op_info / is_fresh_producer / is_read_only mappings.
-pub fn make_prelude_cow_config() CowConfig {
-  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
+pub fn make_prelude_cow_config(b: BuiltinRegistry) CowConfig {
 
-  // VECTOR_SET_UNSAFE(12) → VECTOR_SET_IN_PLACE(1013), base_arg=0
-  cow_ops[12] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1013 }) }
-  // DICT_SET(13) → DICT_SET_IN_PLACE(1015), base_arg=0
-  cow_ops[13] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1015 }) }
-  // DICT_REMOVE(29) → DICT_REMOVE_IN_PLACE(1016), base_arg=0
-  cow_ops[29] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(FuncId.{ id: 1016 }) }
-  // VECTOR_PUSH(11) — no in-place target, but participates in loop region rewrite
-  cow_ops[11] = CowOpEntry.{ base_arg: 0, in_place_id: .None }
+  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
+  cow_ops[b.id("vector_set_unsafe").id] = .{ base_arg: 0, in_place_id: .Some(b.id("vector_set_in_place")) }
+  cow_ops[b.id("dict_set").id] = .{ base_arg: 0, in_place_id: .Some(b.id("dict_set_in_place")) }
+  cow_ops[b.id("dict_remove").id] = .{ base_arg: 0, in_place_id: .Some(b.id("dict_remove_in_place")) }
+  cow_ops[b.id("vector_push").id] = .{ base_arg: 0, in_place_id: .None }
 
   fresh_producer_ids: Dict<Int, Bool> = Dict.new()
-  fresh_producer_ids[40] = true   // VECTOR_MAKE
-  fresh_producer_ids[35] = true   // VECTOR_BUILDER_FREEZE
-  fresh_producer_ids[22] = true   // DICT_NEW
+  fresh_producer_ids[b.id("vector_make").id] = true
+  fresh_producer_ids[b.id("vector_builder_freeze").id] = true
+  fresh_producer_ids[b.id("dict_new").id] = true
 
   read_only_ids: Dict<Int, Bool> = Dict.new()
-  read_only_ids[10] = true        // VECTOR_LEN
+  read_only_ids[b.id("vector_len").id] = true
 
   builder := BuilderConfig.{
-    push_id: FuncId.{ id: 11 },          // VECTOR_PUSH
-    builder_new_id: FuncId.{ id: 33 },   // VECTOR_BUILDER_NEW
-    builder_from_id: FuncId.{ id: 1014 },// VECTOR_BUILDER_FROM
-    builder_push_id: FuncId.{ id: 34 },  // VECTOR_BUILDER_PUSH
-    builder_freeze_id: FuncId.{ id: 35 },// VECTOR_BUILDER_FREEZE
+    push_id: b.id("vector_push"),
+    builder_new_id: b.id("vector_builder_new"),
+    builder_from_id: b.id("vector_builder_from"),
+    builder_push_id: b.id("vector_builder_push"),
+    builder_freeze_id: b.id("vector_builder_freeze"),
   }
 
   CowConfig.{
@@ -138,7 +135,7 @@ pub fn make_prelude_cow_config() CowConfig {
 // ── optimize_module ─────────────────────────────────────────────────
 
 pub fn optimize_module(module: AnfModule) AnfModule {
-  optimize_module_with_config(module, .Some(make_prelude_cow_config()))
+  optimize_module_with_config(module, .Some(make_prelude_cow_config(make_builtin_registry())))
 }
 
 pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) AnfModule {

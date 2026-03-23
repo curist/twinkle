@@ -7,6 +7,7 @@ use compiler.ast
 use compiler.core_ir
 use compiler.lower_core
 use compiler.monomorphize
+use compiler.builtins.{make_builtin_registry}
 use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ fn lower_src(src: String) Result<lower_core.LowerResult, String> {
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message}")
   }
-  .Ok(lower_core.lower_module(parsed.value, check_result))
+  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
 }
 
 fn lower_fn_body(src: String) Result<core_ir.CoreExpr, String> {
@@ -432,7 +433,8 @@ pub fn suite() runner.Suite {
           case callee.kind {
             .GlobalFunc(fid) => {
               // add should have been assigned a FuncId
-              try assert.ok(fid.id >= 41, "FuncId should be >= USER_FUNC_START")
+              reg := make_builtin_registry()
+              try assert.ok(fid.id >= reg.next_id, "FuncId should be >= user func start")
               assert.int_eq(args.len(), 2)
             },
             _ => .Err("expected GlobalFunc callee"),
@@ -748,10 +750,9 @@ pub fn suite() runner.Suite {
       src := "fn f(s: String) Void { for b in s { b } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
-      // Should use string_len (FuncId 8), not vector_len
       try assert.ok(has_loop(body), "expected Loop in string for-in")
-      // Check that the len call uses FuncId(8) = string_len
-      try assert.ok(has_func_id(body, 8), "expected string_len (FuncId 8) call")
+      reg := make_builtin_registry()
+      try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
       .Ok({})
     })
     // Range for-loop test deferred — requires Range type in test env
@@ -781,25 +782,25 @@ pub fn suite() runner.Suite {
       src := "fn f(m: Dict<String, Int>) Void { for k in m { k } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
-      // Dict loop calls DICT_KEYS (FuncId 14) to get key vector
       try assert.ok(has_loop(body), "expected Loop in dict for-in")
-      try assert.ok(has_func_id(body, 14), "expected DICT_KEYS (FuncId 14) call")
+      reg := make_builtin_registry()
+      try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
       .Ok({})
     })
     .test("lower collect over string", fn() Result<Void, String> {
       src := "fn f(s: String) Vector<Byte> { collect b in s { b } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
-      // String collect uses STRING_LEN (FuncId 8)
-      try assert.ok(has_func_id(body, 8), "expected STRING_LEN (FuncId 8) call")
+      reg := make_builtin_registry()
+      try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
       .Ok({})
     })
     .test("lower collect over dict", fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Vector<String> { collect k in m { k } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
-      // Dict collect calls DICT_KEYS (FuncId 14)
-      try assert.ok(has_func_id(body, 14), "expected DICT_KEYS (FuncId 14) call")
+      reg := make_builtin_registry()
+      try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
       .Ok({})
     })
     .test("lower named record through type alias", fn() Result<Void, String> {

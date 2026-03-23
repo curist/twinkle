@@ -26,6 +26,7 @@ use tests.suites.opt_pipeline_suite
 use tests.suites.opt_liveness_suite
 use tests.suites.opt_uniqueness_suite
 use tests.suites.opt_defer_elim_suite
+use tests.suites.builtins_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -55,4 +56,5 @@ runner.run_all([
   opt_liveness_suite.suite(),
   opt_uniqueness_suite.suite(),
   opt_defer_elim_suite.suite(),
+  builtins_suite.suite(),
 ])

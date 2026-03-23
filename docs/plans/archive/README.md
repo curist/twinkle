@@ -100,6 +100,7 @@ Related historical context outside this folder:
 | [parser-diagnostic-parity.md](parser-diagnostic-parity.md) | Parser diagnostic message parity between Rust and boot compilers (phases 1-4: message templates, context, shared fixtures) |
 | [boot-pub-rebinding.md](boot-pub-rebinding.md) | Align boot checker with stage0 pub-only rebinding restriction |
 | [boot-snapshot-testing.md](boot-snapshot-testing.md) | Snapshot testing for boot compiler diagnostics (`.boot.expected` files, `TWK_SNAP_UPDATE=1`) |
+| [boot-builtin-registry.md](boot-builtin-registry.md) | Centralized builtin FuncId registry for boot compiler — eliminates hardcoded magic numbers |
 | [boot-core-ir.md](boot-core-ir.md) | Boot Core IR types, AST→Core IR lowering, monomorphization (Phase B) |
 | [boot-type-checker.md](boot-type-checker.md) | Boot type checker milestones M1–M9 (Phase A) |
 | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) | Boot resolver method registry M1–M4; M5 deferred to multi-module |

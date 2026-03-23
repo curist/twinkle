@@ -1,0 +1,166 @@
+// Builtin function registry — centralizes FuncId assignments and dispatch metadata.
+// See docs/plans/boot-builtin-registry.md for design.
+
+use compiler.core_ir.{FuncId}
+
+pub type BuiltinKind = {
+  Runtime(RuntimeInfo),
+  Intrinsic,
+}
+
+pub type RuntimeInfo = .{
+  wasm_module: String,
+  wasm_name: String,
+}
+
+pub type BuiltinEntry = .{
+  name: String,
+  func_id: FuncId,
+  kind: BuiltinKind,
+}
+
+pub type BuiltinRegistry = .{
+  by_name: Dict<String, BuiltinEntry>,
+  by_id: Dict<Int, BuiltinEntry>,
+  entries: Vector<BuiltinEntry>,
+  next_id: Int,
+}
+
+// ── Registration helpers ──
+
+pub fn runtime(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String) BuiltinRegistry {
+  case reg.by_name[name] {
+    .Some(_) => error("duplicate builtin registration: ${name}"),
+    .None => {},
+  }
+  fid := FuncId.{ id: reg.next_id }
+  entry := BuiltinEntry.{
+    name: name,
+    func_id: fid,
+    kind: .Runtime(RuntimeInfo.{ wasm_module: wasm_module, wasm_name: wasm_name }),
+  }
+  by_name := reg.by_name
+  by_id := reg.by_id
+  by_name[name] = entry
+  by_id[fid.id] = entry
+  BuiltinRegistry.{
+    by_name: by_name,
+    by_id: by_id,
+    entries: reg.entries.push(entry),
+    next_id: reg.next_id + 1,
+  }
+}
+
+pub fn intrinsic(reg: BuiltinRegistry, name: String) BuiltinRegistry {
+  case reg.by_name[name] {
+    .Some(_) => error("duplicate builtin registration: ${name}"),
+    .None => {},
+  }
+  fid := FuncId.{ id: reg.next_id }
+  entry := BuiltinEntry.{ name: name, func_id: fid, kind: .Intrinsic }
+  by_name := reg.by_name
+  by_id := reg.by_id
+  by_name[name] = entry
+  by_id[fid.id] = entry
+  BuiltinRegistry.{
+    by_name: by_name,
+    by_id: by_id,
+    entries: reg.entries.push(entry),
+    next_id: reg.next_id + 1,
+  }
+}
+
+pub fn id(reg: BuiltinRegistry, name: String) FuncId {
+  case reg.by_name[name] {
+    .Some(entry) => entry.func_id,
+    .None => error("unknown builtin: ${name}"),
+  }
+}
+
+pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? {
+  reg.by_id[func_id.id]
+}
+
+// ── Full registry ──
+
+pub fn make_builtin_registry() BuiltinRegistry {
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 0 }
+    // ── I/O ──
+    .runtime("print",   "rt.core", "print")
+    .runtime("println", "rt.core", "println")
+    .runtime("error",   "rt.core", "trap")
+    .runtime("eprint",  "rt.core", "eprint")
+    .runtime("eprintln","rt.core", "eprintln")
+    // ── to_string family ──
+    .runtime("int_to_string",    "rt.str", "from_i64")
+    .runtime("float_to_string",  "rt.str", "from_f64")
+    .runtime("bool_to_string",   "rt.str", "from_bool")
+    .intrinsic("string_to_string")
+    // ── String ops ──
+    .runtime("string_len",    "rt.str", "len")
+    .runtime("string_concat", "rt.str", "concat")
+    .runtime("string_substring", "rt.str", "substring")
+    .intrinsic("string_get")
+    .intrinsic("string_slice")
+    .intrinsic("from_code_point")
+    .intrinsic("string_utf8_bytes")
+    .intrinsic("string_from_utf8")
+    .intrinsic("char_code_at")
+    .intrinsic("from_char_code")
+    // ── Vector ops ──
+    .runtime("vector_len",       "rt.arr", "len")
+    .intrinsic("vector_push")
+    .runtime("vector_set_unsafe","rt.arr", "set")
+    .runtime("vector_concat",    "rt.arr", "concat")
+    .runtime("vector_slice",     "rt.arr", "slice")
+    .intrinsic("vector_get")
+    .intrinsic("vector_set")
+    .intrinsic("vector_make")
+    // ── Vector builder ──
+    .runtime("vector_builder_new",    "rt.arr", "builder_new")
+    .runtime("vector_builder_push",   "rt.arr", "builder_push")
+    .runtime("vector_builder_freeze", "rt.arr", "builder_freeze")
+    .runtime("vector_builder_from",   "rt.arr", "builder_from")
+    // ── Dict ops ──
+    .runtime("dict_new",    "rt.dict", "make")
+    .runtime("dict_set",    "rt.dict", "set")
+    .runtime("dict_keys",   "rt.dict", "keys")
+    .runtime("dict_get",    "rt.dict", "get_option")
+    .intrinsic("dict_get_unsafe")
+    .runtime("dict_len",    "rt.dict", "len")
+    .runtime("dict_has",    "rt.dict", "has")
+    .runtime("dict_remove", "rt.dict", "remove")
+    // ── In-place variants (optimizer rewrites) ──
+    .intrinsic("vector_set_in_place")
+    .runtime("dict_set_in_place",    "rt.dict", "set_in_place")
+    .runtime("dict_remove_in_place", "rt.dict", "remove_in_place")
+    // ── Range & iterators ──
+    .intrinsic("range_from")
+    .intrinsic("range")
+    .intrinsic("range_step")
+    .intrinsic("iterator_next")
+    .intrinsic("iterator_unfold")
+    // ── Cell ──
+    .intrinsic("cell_new")
+    .intrinsic("cell_get")
+    .intrinsic("cell_set")
+    .intrinsic("cell_update")
+    // ── Byte ops ──
+    .intrinsic("byte_to_int")
+    .intrinsic("byte_from_int")
+    .intrinsic("byte_to_string")
+    // ── Numeric parsing ──
+    .intrinsic("int_from_string")
+    .intrinsic("float_from_string")
+    // ── Host ops ──
+    .runtime("host_read_file",  "host", "read_file")
+    .runtime("host_write_file", "host", "write_file")
+    .runtime("host_write_bytes","host", "write_bytes")
+    .runtime("host_mkdirp",     "host", "mkdirp")
+    .runtime("host_list_dir",   "host", "list_dir")
+    .runtime("host_exists",     "host", "exists")
+    .runtime("host_args",       "host", "args")
+    .runtime("host_env",        "host", "env")
+    .runtime("host_cwd",        "host", "cwd")
+    .runtime("host_exit",       "host", "exit")
+}

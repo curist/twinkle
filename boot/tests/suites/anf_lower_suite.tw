@@ -7,6 +7,7 @@ use compiler.core_ir.{LocalId, FuncId, FieldId, CoreExpr, CoreExprKind, CoreModu
 use compiler.resolver.{MonoType, TypeId}
 use compiler.lower_core
 use compiler.monomorphize
+use compiler.builtins.{make_builtin_registry}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, OpKind, IndexKind}
 use compiler.lower_anf
 
@@ -25,7 +26,7 @@ fn anf_src(src: String) Result<AnfModule, String> {
   if check_result.diagnostics.len() > 0 {
     return .Err("check: ${check_result.diagnostics[0].message}")
   }
-  lr := lower_core.lower_module(parsed.value, check_result)
+  lr := lower_core.lower_module(parsed.value, check_result, make_builtin_registry())
   mono := monomorphize.monomorphize(lr.module)
   .Ok(lower_anf.lower_module(mono))
 }

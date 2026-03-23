@@ -21,12 +21,14 @@ use .core_ir.{
   LocalId, FuncId, FieldId, VariantId,
   BinOp, UnOp, FieldInit, MatchArm, CorePattern,
 }
+use .builtins.{BuiltinRegistry}
 
 // ── Lowering context ────────────────────────────────────────────────
 
 type LowerCtx = .{
   type_map: Dict<Int, MonoType>,
   env: ResolvedEnv,
+  builtins: BuiltinRegistry,
   func_table: Dict<String, FuncId>,
   locals: Vector<Dict<String, LocalId>>,
   next_local: Int,
@@ -53,14 +55,19 @@ type FuncOut = .{ def: FunctionDef, ctx: LowerCtx }
 
 // ── Context helpers ─────────────────────────────────────────────────
 
-fn new_ctx(check_result: CheckResult) LowerCtx {
+fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
+  func_table: Dict<String, FuncId> = Dict.new()
+  for entry in reg.entries {
+    func_table[entry.name] = entry.func_id
+  }
   .{
     type_map: check_result.type_map,
     env: check_result.env,
-    func_table: Dict.new(),
+    builtins: reg,
+    func_table: func_table,
     locals: [Dict.new()],
     next_local: 0,
-    next_func: 41,  // USER_FUNC_START
+    next_func: reg.next_id,
     hoisted: [],
     module_globals: Dict.new(),
     next_global: 0,
@@ -1025,7 +1032,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
           .Int => {
             CoreExpr.{
               kind: .Call(
-                CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 4 }), ty: MonoType.Void, span: s },  // int_to_string
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("int_to_string")), ty: .Void, span: s },
                 [r.expr],
               ),
               ty: str_ty,
@@ -1035,7 +1042,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
           .Float => {
             CoreExpr.{
               kind: .Call(
-                CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 5 }), ty: MonoType.Void, span: s },  // float_to_string
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("float_to_string")), ty: .Void, span: s },
                 [r.expr],
               ),
               ty: str_ty,
@@ -1045,7 +1052,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
           .Bool => {
             CoreExpr.{
               kind: .Call(
-                CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 6 }), ty: MonoType.Void, span: s },  // bool_to_string
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("bool_to_string")), ty: .Void, span: s },
                 [r.expr],
               ),
               ty: str_ty,
@@ -1055,7 +1062,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
           .Byte => {
             CoreExpr.{
               kind: .Call(
-                CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 1024 }), ty: MonoType.Void, span: s },  // byte_to_string
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("byte_to_string")), ty: .Void, span: s },
                 [r.expr],
               ),
               ty: str_ty,
@@ -1066,7 +1073,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
             // Fallback: call string_to_string (identity) for now
             CoreExpr.{
               kind: .Call(
-                CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 7 }), ty: MonoType.Void, span: s },  // string_to_string
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")), ty: .Void, span: s },
                 [r.expr],
               ),
               ty: str_ty,
@@ -1088,7 +1095,7 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
   for i < str_parts.len() {
     acc = CoreExpr.{
       kind: .Call(
-        CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 9 }), ty: MonoType.Void, span: s },  // string_concat
+        .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_concat")), ty: .Void, span: s },
         [acc, str_parts[i]],
       ),
       ty: str_ty,
@@ -1243,7 +1250,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     .String => {
       len_call := CoreExpr.{
         kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 8 }), ty: void_ty, span: s },  // STRING_LEN
+          .{ kind: .GlobalFunc(ctx.builtins.id("string_len")), ty: void_ty, span: s },
           [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,
@@ -1258,7 +1265,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           keys_ty := MonoType.Vector(key_ty)
           keys_call := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 14 }), ty: void_ty, span: s },  // DICT_KEYS
+              .{ kind: .GlobalFunc(ctx.builtins.id("dict_keys")), ty: void_ty, span: s },
               [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
             ),
             ty: keys_ty,
@@ -1266,7 +1273,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           }
           len_call := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+              .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
               [CoreExpr.{ kind: .Local(keys_local), ty: keys_ty, span: s }],
             ),
             ty: int_ty,
@@ -1279,7 +1286,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         .None => {
           len_call := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },
+              .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
               [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
             ),
             ty: int_ty,
@@ -1293,7 +1300,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     _ => {
       len_call := CoreExpr.{
         kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 10 }), ty: void_ty, span: s },  // VECTOR_LEN
+          .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
           [CoreExpr.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,
@@ -1328,7 +1335,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
       push_call := CoreExpr.{
         kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 34 }), ty: void_ty, span: s },  // VECTOR_BUILDER_PUSH
+          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_push")), ty: void_ty, span: s },
           [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }, setup.body_core],
         ),
         ty: void_ty,
@@ -1340,7 +1347,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
       freeze_call := CoreExpr.{
         kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 35 }), ty: void_ty, span: s },  // VECTOR_BUILDER_FREEZE
+          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_freeze")), ty: void_ty, span: s },
           [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }],
         ),
         ty,
@@ -1353,7 +1360,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
       builder_new := CoreExpr.{
         kind: .Call(
-          CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 33 }), ty: void_ty, span: s },  // VECTOR_BUILDER_NEW
+          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
           [],
         ),
         ty: void_ty,
@@ -1376,7 +1383,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
           push_call := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 34 }), ty: void_ty, span: s },
+              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_push")), ty: void_ty, span: s },
               [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }, body_r.expr],
             ),
             ty: void_ty,
@@ -1397,7 +1404,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
           freeze_call := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 35 }), ty: void_ty, span: s },
+              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_freeze")), ty: void_ty, span: s },
               [CoreExpr.{ kind: .Local(builder_local), ty: void_ty, span: s }],
             ),
             ty,
@@ -1410,7 +1417,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
           builder_new := CoreExpr.{
             kind: .Call(
-              CoreExpr.{ kind: .GlobalFunc(FuncId.{ id: 33 }), ty: void_ty, span: s },
+              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
               [],
             ),
             ty: void_ty,
@@ -1543,8 +1550,8 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
               ir := ctx.lower_expr(index)
               // Dispatch on base type: Vector vs Dict
               func_id := case base_ty {
-                .Dict(_, _) => FuncId.{ id: 13 },   // DICT_SET
-                _ => FuncId.{ id: 12 },              // VECTOR_SET_UNSAFE
+                .Dict(_, _) => ctx.builtins.id("dict_set"),
+                _ => ctx.builtins.id("vector_set_unsafe"),
               }
               update := CoreExpr.{
                 kind: .Call(
@@ -1823,8 +1830,8 @@ fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId) FuncOut {
 
 // ── Module lowering (entry point) ───────────────────────────────────
 
-pub fn lower_module(module: Module, check_result: CheckResult) LowerResult {
-  ctx := new_ctx(check_result)
+pub fn lower_module(module: Module, check_result: CheckResult, builtins: BuiltinRegistry) LowerResult {
+  ctx := new_ctx(check_result, builtins)
 
   // Pre-pass 1: assign GlobalLocal IDs to module-level lets
   for item in module.items {

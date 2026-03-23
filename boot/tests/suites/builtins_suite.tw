@@ -1,0 +1,153 @@
+use tests.runner
+use tests.assert
+use compiler.builtins.{BuiltinRegistry, BuiltinKind, make_builtin_registry}
+use compiler.core_ir.{FuncId}
+
+fn empty_registry() BuiltinRegistry {
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 0 }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("builtins registry")
+
+    // ── Construction ──
+
+    .test("empty registry has next_id 0", fn() {
+      reg := empty_registry()
+      try assert.int_eq(reg.next_id, 0)
+      try assert.int_eq(reg.entries.len(), 0)
+      .Ok({})
+    })
+
+    // ── runtime registration ──
+
+    .test("runtime registration assigns auto-incremented id", fn() {
+      reg := empty_registry()
+        .runtime("print", "rt.core", "print")
+        .runtime("println", "rt.core", "println")
+      try assert.int_eq(reg.next_id, 2)
+      try assert.int_eq(reg.entries.len(), 2)
+      try assert.int_eq(reg.id("print").id, 0)
+      try assert.int_eq(reg.id("println").id, 1)
+      .Ok({})
+    })
+
+    .test("runtime entry has correct dispatch kind", fn() {
+      reg := empty_registry()
+        .runtime("print", "rt.core", "print")
+      entry := try reg.entry(reg.id("print")).ok_or("missing")
+      case entry.kind {
+        .Runtime(info) => {
+          try assert.str_eq(info.wasm_module, "rt.core")
+          try assert.str_eq(info.wasm_name, "print")
+          .Ok({})
+        },
+        .Intrinsic => .Err("expected Runtime, got Intrinsic"),
+      }
+    })
+
+    // ── intrinsic registration ──
+
+    .test("intrinsic registration assigns auto-incremented id", fn() {
+      reg := empty_registry()
+        .runtime("print", "rt.core", "print")
+        .intrinsic("string_to_string")
+      try assert.int_eq(reg.id("string_to_string").id, 1)
+      .Ok({})
+    })
+
+    .test("intrinsic entry has correct dispatch kind", fn() {
+      reg := empty_registry()
+        .intrinsic("string_get")
+      entry := try reg.entry(reg.id("string_get")).ok_or("missing")
+      case entry.kind {
+        .Intrinsic => .Ok({}),
+        .Runtime(_) => .Err("expected Intrinsic, got Runtime"),
+      }
+    })
+
+    // ── lookup ──
+
+    .test("id lookup returns correct FuncId", fn() {
+      reg := empty_registry()
+        .runtime("a", "m", "a")
+        .intrinsic("b")
+        .runtime("c", "m", "c")
+      try assert.int_eq(reg.id("a").id, 0)
+      try assert.int_eq(reg.id("b").id, 1)
+      try assert.int_eq(reg.id("c").id, 2)
+      .Ok({})
+    })
+
+    .test("entry reverse lookup by FuncId", fn() {
+      reg := empty_registry()
+        .runtime("print", "rt.core", "print")
+        .intrinsic("string_get")
+      e0 := try reg.entry(reg.id("print")).ok_or("missing 0")
+      try assert.str_eq(e0.name, "print")
+      e1 := try reg.entry(reg.id("string_get")).ok_or("missing 1")
+      try assert.str_eq(e1.name, "string_get")
+      .Ok({})
+    })
+
+    .test("entry returns None for unknown FuncId", fn() {
+      reg := empty_registry()
+        .runtime("print", "rt.core", "print")
+      try assert.is_none(reg.entry(FuncId.{ id: 999 }))
+      .Ok({})
+    })
+
+    // ── make_builtin_registry ──
+
+    .test("full registry has expected builtins", fn() {
+      reg := make_builtin_registry()
+      // Spot-check a few known entries exist and have correct kinds
+      print_entry := try reg.entry(reg.id("print")).ok_or("missing print")
+      case print_entry.kind {
+        .Runtime(info) => {
+          try assert.str_eq(info.wasm_module, "rt.core")
+          try assert.str_eq(info.wasm_name, "print")
+        },
+        .Intrinsic => { return .Err("print should be Runtime") },
+      }
+
+      // intrinsic check
+      sg_entry := try reg.entry(reg.id("string_get")).ok_or("missing string_get")
+      case sg_entry.kind {
+        .Intrinsic => {},
+        .Runtime(_) => { return .Err("string_get should be Intrinsic") },
+      }
+
+      // vector ops
+      _ := reg.id("vector_len")
+      _ := reg.id("vector_push")
+      _ := reg.id("vector_set_unsafe")
+
+      // dict ops
+      _ := reg.id("dict_new")
+      _ := reg.id("dict_set")
+
+      // in-place variants
+      _ := reg.id("vector_set_in_place")
+      _ := reg.id("dict_set_in_place")
+
+      // host ops
+      _ := reg.id("host_read_file")
+      _ := reg.id("host_exit")
+
+      .Ok({})
+    })
+
+    .test("full registry ids are contiguous from 0", fn() {
+      reg := make_builtin_registry()
+      try assert.int_eq(reg.entries[0].func_id.id, 0)
+      // each entry's id matches its index
+      for entry, i in reg.entries {
+        if entry.func_id.id != i {
+          error("entry ${i} has id ${entry.func_id.id}")
+        }
+      }
+      try assert.int_eq(reg.next_id, reg.entries.len())
+      .Ok({})
+    })
+}
