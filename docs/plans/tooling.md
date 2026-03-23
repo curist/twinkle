@@ -71,6 +71,8 @@
 * **LSP (`T4`)**
   * New module recommended: `src/lsp/mod.rs` (or standalone crate later).
   * Integrate with query API from Stage 6b Step D; keep lower/link out of hot path.
+  * Keep protocol-specific UTF-16 position conversion in LSP-private helpers;
+    do not expand the public `String` API just for LSP.
   * Add edit-loop latency benchmark harness (new `benches/lsp_latency.rs`).
 
 **Planned tools** (all as `twk` subcommands initially, rewritten in Twinkle post-self-hosting):

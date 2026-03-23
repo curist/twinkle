@@ -422,6 +422,9 @@ piece because it's what the LSP uses. Build it first with LSP in mind:
 - Resolver producing partial environments
 - Bidirectional type checker with `InferCtx` threading
 - Position index built during type checking
+- LSP protocol position conversion kept in tooling-private helpers
+  (`boot/tooling/lsp/position.tw`) rather than expanding the public `String`
+  API or `boot/lib/source`
 - All stages return `StageResult<T>` with partial results
 
 ### Phase B — Core IR Lowering + Monomorphization
@@ -494,6 +497,9 @@ boot/
     graph/                   # dependency graph, topo sort
     query/                   # stage cache, invalidation
     argparse/                # CLI argument parsing
+  tooling/
+    lsp/
+      position.tw            # UTF-16 <-> byte offset helpers for LSP only
 ```
 
 ## Compatibility Suite

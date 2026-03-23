@@ -152,6 +152,15 @@ twk lsp      # start, communicate via stdin/stdout
 4. Go-to-definition: extend `ResolvedModule` with declaration spans
 5. Completion: suggest names from current scope's `ValueEnv` / `TypeEnv`
 
+### Position encoding boundary
+
+Twinkle strings remain UTF-8 and the general string API stays byte-oriented.
+LSP is the exception because the protocol uses UTF-16 positions by default
+(with optional encoding negotiation in newer protocol versions). The boot
+compiler should keep this conversion logic in tooling-private helpers such as
+`boot/tooling/lsp/position.tw`, instead of adding UTF-16 methods to `String`
+or folding protocol-specific behavior into `boot/lib/source`.
+
 ### Hosting
 
 Initially: Rust host using `tower-lsp` or similar. After self-hosting: rewrite
