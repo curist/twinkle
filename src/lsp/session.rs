@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -15,6 +16,7 @@ use super::position::PositionUtf16;
 pub struct AnalysisSession {
     project_root: PathBuf,
     stdlib_root: PathBuf,
+    source_roots: Vec<PathBuf>,
     base_sources: HashMap<PathBuf, String>,
     overlays: HashMap<PathBuf, String>,
 }
@@ -25,9 +27,25 @@ impl AnalysisSession {
         stdlib_root: impl AsRef<Path>,
         base_sources: HashMap<PathBuf, String>,
     ) -> Self {
+        let project_root = canonicalize_or_self(project_root.as_ref());
+        let stdlib_root = canonicalize_or_self(stdlib_root.as_ref());
+        let source_roots = dedup_roots(vec![project_root.clone(), stdlib_root.clone()]);
+        Self::new_with_source_roots(project_root, stdlib_root, source_roots, base_sources)
+    }
+
+    pub fn new_with_source_roots(
+        project_root: impl AsRef<Path>,
+        stdlib_root: impl AsRef<Path>,
+        source_roots: Vec<PathBuf>,
+        base_sources: HashMap<PathBuf, String>,
+    ) -> Self {
+        let project_root = canonicalize_or_self(project_root.as_ref());
+        let stdlib_root = canonicalize_or_self(stdlib_root.as_ref());
+        let base_sources = normalize_sources(&project_root, base_sources);
         Self {
-            project_root: project_root.as_ref().to_path_buf(),
-            stdlib_root: stdlib_root.as_ref().to_path_buf(),
+            project_root,
+            stdlib_root,
+            source_roots: dedup_roots(source_roots),
             base_sources,
             overlays: HashMap::new(),
         }
@@ -45,6 +63,37 @@ impl AnalysisSession {
 
     pub fn did_close(&mut self, path: impl AsRef<Path>) {
         self.overlays.remove(&self.normalize_path(path.as_ref()));
+    }
+
+    pub fn sync_disk_file(&mut self, path: impl AsRef<Path>) -> Result<bool> {
+        let normalized = self.normalize_path(path.as_ref());
+        if !self.should_track_path(&normalized) {
+            return Ok(false);
+        }
+
+        match fs::read_to_string(&normalized) {
+            Ok(text) => {
+                self.base_sources.insert(normalized, text);
+                Ok(true)
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.base_sources.remove(&normalized);
+                Ok(true)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub fn remove_disk_file(&mut self, path: impl AsRef<Path>) -> bool {
+        let normalized = self.normalize_path(path.as_ref());
+        if !self.should_track_path(&normalized) {
+            return false;
+        }
+        self.base_sources.remove(&normalized).is_some()
+    }
+
+    pub fn open_document_paths(&self) -> Vec<PathBuf> {
+        self.overlays.keys().cloned().collect()
     }
 
     pub fn analyze_entry(&self, entry_path: impl AsRef<Path>) -> Result<WorkspaceAnalysis> {
@@ -166,11 +215,58 @@ impl AnalysisSession {
         };
         normalized.canonicalize().unwrap_or(normalized)
     }
+
+    fn should_track_path(&self, path: &Path) -> bool {
+        path.extension().is_some_and(|ext| ext == "tw")
+            && self.source_roots.iter().any(|root| path.starts_with(root))
+    }
+}
+
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn dedup_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for root in roots {
+        let canonical = canonicalize_or_self(&root);
+        if !out.iter().any(|existing| existing == &canonical) {
+            out.push(canonical);
+        }
+    }
+    out
+}
+
+fn normalize_sources(
+    project_root: &Path,
+    sources: HashMap<PathBuf, String>,
+) -> HashMap<PathBuf, String> {
+    sources
+        .into_iter()
+        .map(|(path, text)| {
+            let normalized = if path.is_absolute() {
+                canonicalize_or_self(&path)
+            } else {
+                canonicalize_or_self(&project_root.join(path))
+            };
+            (normalized, text)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_test_dir(case: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("twinkle_lsp_session_{case}_{nanos}"))
+    }
 
     #[test]
     fn hover_uses_overlay_updates_without_touching_base_sources() {
@@ -348,5 +444,126 @@ fn main() {
             hover_add2.is_some(),
             "hover on destructured `add` call should return type"
         );
+    }
+
+    #[test]
+    fn sync_disk_file_updates_unopened_dependency_snapshot() {
+        let root = temp_test_dir("sync_dependency");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let project_root = root.join("project");
+        let stdlib_root = root.join("stdlib");
+        fs::create_dir_all(&project_root).expect("create project root");
+        fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+        let main_path = project_root.join("main.tw");
+        let helper_path = project_root.join("helper.tw");
+
+        let main_source = "use helper\nvalue := helper.answer()\n";
+        let helper_source = "pub fn answer() Int { 42 }\n";
+        fs::write(&main_path, main_source).expect("write main");
+        fs::write(&helper_path, helper_source).expect("write helper");
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(main_path.clone(), main_source.to_string());
+        base_sources.insert(helper_path.clone(), helper_source.to_string());
+
+        let mut session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+        let before = session
+            .diagnostics(&main_path, &helper_path)
+            .expect("diagnostics before change");
+        assert!(
+            before.is_empty(),
+            "expected helper diagnostics to start clean"
+        );
+
+        fs::write(&helper_path, "pub fn answer() Int { missing_name }\n").expect("rewrite helper");
+        assert!(
+            session.sync_disk_file(&helper_path).expect("sync helper"),
+            "expected helper path to be tracked"
+        );
+
+        let after = session
+            .diagnostics(&main_path, &helper_path)
+            .expect("diagnostics after sync");
+        assert!(
+            after.iter().any(|diag| diag.code == "E_UNDEFINED_VARIABLE"),
+            "expected synced helper diagnostics, got: {after:?}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sync_disk_file_preserves_open_overlay_precedence() {
+        let root = temp_test_dir("overlay_precedence");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let project_root = root.join("project");
+        let stdlib_root = root.join("stdlib");
+        fs::create_dir_all(&project_root).expect("create project root");
+        fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+        let main_path = project_root.join("main.tw");
+        fs::write(&main_path, "value := 42\n").expect("write main");
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(main_path.clone(), "value := 42\n".to_string());
+
+        let mut session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+        session.did_open(&main_path, "value := \"hi\"\n".to_string());
+        fs::write(&main_path, "value := true\n").expect("update disk file");
+        assert!(
+            session.sync_disk_file(&main_path).expect("sync main"),
+            "expected main path to be tracked"
+        );
+
+        let hover = session
+            .hover(&main_path, &main_path, PositionUtf16::new(0, 9))
+            .expect("hover after sync");
+        assert_eq!(hover.as_deref(), Some("String"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_disk_file_drops_deleted_module_from_snapshot() {
+        let root = temp_test_dir("remove_deleted");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let project_root = root.join("project");
+        let stdlib_root = root.join("stdlib");
+        fs::create_dir_all(&project_root).expect("create project root");
+        fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+        let main_path = project_root.join("main.tw");
+        let helper_path = project_root.join("helper.tw");
+
+        let main_source = "use helper\nvalue := helper.answer()\n";
+        let helper_source = "pub fn answer() Int { 42 }\n";
+        fs::write(&main_path, main_source).expect("write main");
+        fs::write(&helper_path, helper_source).expect("write helper");
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(main_path.clone(), main_source.to_string());
+        base_sources.insert(helper_path.clone(), helper_source.to_string());
+
+        let mut session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+        assert!(
+            session.remove_disk_file(&helper_path),
+            "expected helper removal"
+        );
+
+        let analysis = session
+            .analyze_entry(&main_path)
+            .expect("analysis after removal");
+        assert!(
+            !analysis
+                .modules
+                .contains_key(&helper_path.canonicalize().expect("canonical helper")),
+            "expected helper module to be absent after removal"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

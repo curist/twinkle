@@ -5,6 +5,7 @@
 > **Phase 1 LSP execution plan (completed):** See [archive/lsp-hover-goto-definition.md](archive/lsp-hover-goto-definition.md).
 >
 > **LSP completion follow-up plan:** See [lsp-completion.md](lsp-completion.md).  
+> **Archived LSP watched files plan:** See [archive/lsp-file-watching.md](archive/lsp-file-watching.md).  
 > **Archived Phase 2 mixed plan:** See [archive/lsp-diagnostics-completion.md](archive/lsp-diagnostics-completion.md).
 
 **Prerequisites before tooling:**

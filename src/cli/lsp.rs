@@ -42,10 +42,22 @@ pub fn cmd_lsp() -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
 struct LspState {
     session: Option<AnalysisSession>,
     shutdown_requested: bool,
+    supports_watched_files_dynamic_registration: bool,
+    next_server_request_id: i64,
+}
+
+impl Default for LspState {
+    fn default() -> Self {
+        Self {
+            session: None,
+            shutdown_requested: false,
+            supports_watched_files_dynamic_registration: false,
+            next_server_request_id: 1,
+        }
+    }
 }
 
 fn handle_lsp_message(
@@ -64,6 +76,8 @@ fn handle_lsp_message(
             Ok(session) => {
                 state.session = Some(session);
                 state.shutdown_requested = false;
+                state.supports_watched_files_dynamic_registration =
+                    client_supports_watched_files_dynamic_registration(params);
 
                 if let Some(id) = id {
                     let result = json!({
@@ -83,12 +97,18 @@ fn handle_lsp_message(
                 }
             }
             Err(err) => {
+                state.supports_watched_files_dynamic_registration = false;
                 if let Some(id) = id {
                     write_error_response(writer, id, -32002, &err.to_string())?;
                 }
             }
         },
-        "initialized" => {}
+        "initialized" => {
+            if state.supports_watched_files_dynamic_registration {
+                register_watched_files(writer, state.next_server_request_id)?;
+                state.next_server_request_id += 1;
+            }
+        }
         "shutdown" => {
             state.shutdown_requested = true;
             if let Some(id) = id {
@@ -132,14 +152,15 @@ fn handle_lsp_message(
             if let (Some(session), Some(params)) = (state.session.as_mut(), params) {
                 if let Some(path) = extract_text_document_path(params) {
                     session.did_close(&path);
+                    let _ = session.sync_disk_file(&path);
                     // Clear diagnostics for the closed file
-                    let uri = path_to_file_uri(&path)?;
-                    write_notification(
-                        writer,
-                        "textDocument/publishDiagnostics",
-                        json!({ "uri": uri, "diagnostics": [] }),
-                    )?;
+                    clear_diagnostics_for_file(&path, writer)?;
                 }
+            }
+        }
+        "workspace/didChangeWatchedFiles" => {
+            if let (Some(session), Some(params)) = (state.session.as_mut(), params) {
+                handle_watched_files_notification(session, params, writer)?;
             }
         }
         "textDocument/hover" => {
@@ -328,11 +349,81 @@ fn initialize_session(params: Option<&Value>) -> Result<AnalysisSession> {
         prelude_root,
     ]);
     let base_sources = load_tw_sources_from_roots(&source_roots)?;
-    Ok(AnalysisSession::new(
+    Ok(AnalysisSession::new_with_source_roots(
         &project_root,
         &stdlib_root,
+        source_roots,
         base_sources,
     ))
+}
+
+fn client_supports_watched_files_dynamic_registration(params: Option<&Value>) -> bool {
+    params
+        .and_then(|value| value.get("capabilities"))
+        .and_then(|value| value.get("workspace"))
+        .and_then(|value| value.get("didChangeWatchedFiles"))
+        .and_then(|value| value.get("dynamicRegistration"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn register_watched_files(writer: &mut impl Write, id: i64) -> Result<()> {
+    write_request(
+        writer,
+        json!(id),
+        "client/registerCapability",
+        json!({
+            "registrations": [{
+                "id": "twk-workspace-didChangeWatchedFiles",
+                "method": "workspace/didChangeWatchedFiles",
+                "registerOptions": {
+                    "watchers": [{
+                        "globPattern": "**/*.tw",
+                        "kind": 7
+                    }]
+                }
+            }]
+        }),
+    )
+}
+
+fn handle_watched_files_notification(
+    session: &mut AnalysisSession,
+    params: &Value,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let Some(changes) = params.get("changes").and_then(Value::as_array) else {
+        return Ok(());
+    };
+
+    let mut deleted_paths = Vec::new();
+    for change in changes {
+        let Some(uri) = change.get("uri").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(path) = file_uri_to_path(uri) else {
+            continue;
+        };
+
+        match change.get("type").and_then(Value::as_u64) {
+            Some(1 | 2) => {
+                if let Err(err) = session.sync_disk_file(&path) {
+                    eprintln!("failed to refresh watched file {}: {err}", path.display());
+                }
+            }
+            Some(3) => {
+                session.remove_disk_file(&path);
+                deleted_paths.push(path);
+            }
+            _ => {}
+        }
+    }
+
+    for path in &deleted_paths {
+        clear_diagnostics_for_file(path, writer)?;
+    }
+    refresh_open_document_diagnostics(session, writer)?;
+    Ok(())
 }
 
 fn detect_stdlib_root(project_root: &Path) -> PathBuf {
@@ -451,6 +542,16 @@ fn write_error_response(
     write_lsp_payload(writer, &payload)
 }
 
+fn write_request(writer: &mut impl Write, id: Value, method: &str, params: Value) -> Result<()> {
+    let payload = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params
+    });
+    write_lsp_payload(writer, &payload)
+}
+
 fn write_notification(writer: &mut impl Write, method: &str, params: Value) -> Result<()> {
     let payload = json!({
         "jsonrpc": "2.0",
@@ -486,6 +587,27 @@ fn publish_diagnostics_for_file(
         "textDocument/publishDiagnostics",
         json!({ "uri": uri, "diagnostics": lsp_diags }),
     )
+}
+
+fn clear_diagnostics_for_file(path: &Path, writer: &mut impl Write) -> Result<()> {
+    let uri = path_to_file_uri(path)?;
+    write_notification(
+        writer,
+        "textDocument/publishDiagnostics",
+        json!({ "uri": uri, "diagnostics": [] }),
+    )
+}
+
+fn refresh_open_document_diagnostics(
+    session: &AnalysisSession,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let mut open_docs = session.open_document_paths();
+    open_docs.sort();
+    for path in open_docs {
+        publish_diagnostics_for_file(session, &path, writer)?;
+    }
+    Ok(())
 }
 
 fn lsp_diagnostic_to_json(diag: &LspDiagnostic) -> Value {
@@ -560,6 +682,16 @@ mod tests {
     use super::*;
     use crate::lsp::position::byte_offset_to_position_utf16;
     use crate::query::cache::reset_global_cache;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_test_dir(case: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("twinkle_lsp_cli_{case}_{nanos}"))
+    }
 
     #[test]
     fn completion_request_returns_lsp_completion_items() {
@@ -577,6 +709,7 @@ mod tests {
         let mut state = LspState {
             session: Some(session),
             shutdown_requested: false,
+            ..Default::default()
         };
 
         let cursor = source.find("text.").expect("text receiver") + "text.".len();
@@ -636,6 +769,7 @@ mod tests {
         let mut state = LspState {
             session: Some(session),
             shutdown_requested: false,
+            ..Default::default()
         };
 
         let cursor = source.find("range").expect("range symbol");
@@ -687,6 +821,7 @@ mod tests {
         let mut state = LspState {
             session: Some(session),
             shutdown_requested: false,
+            ..Default::default()
         };
 
         let pos = byte_offset_to_position_utf16(source, 0).expect("position");
@@ -736,6 +871,7 @@ mod tests {
         let mut state = LspState {
             session: Some(session),
             shutdown_requested: false,
+            ..Default::default()
         };
 
         let cursor = source.find("println").expect("println call");
@@ -825,6 +961,7 @@ fn main() Int {
         let mut state = LspState {
             session: Some(session),
             shutdown_requested: false,
+            ..Default::default()
         };
 
         // Cursor on "helper" in "m = helper(m)"
@@ -854,6 +991,174 @@ fn main() Int {
             response["result"]["range"].is_object(),
             "definition result should include a range"
         );
+    }
+
+    #[test]
+    fn initialized_registers_watched_files_when_client_supports_dynamic_registration() {
+        let mut state = LspState {
+            session: None,
+            shutdown_requested: false,
+            supports_watched_files_dynamic_registration: true,
+            next_server_request_id: 41,
+        };
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+
+        let mut writer = Vec::new();
+        let should_exit = handle_lsp_message(&mut state, &payload, &mut writer).expect("handle");
+        assert!(!should_exit, "initialized should not exit");
+        assert_eq!(state.next_server_request_id, 42);
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["id"], json!(41));
+        assert_eq!(response["method"], json!("client/registerCapability"));
+        assert_eq!(
+            response["params"]["registrations"][0]["method"],
+            json!("workspace/didChangeWatchedFiles")
+        );
+        assert_eq!(
+            response["params"]["registrations"][0]["registerOptions"]["watchers"][0]["globPattern"],
+            json!("**/*.tw")
+        );
+    }
+
+    #[test]
+    fn watched_file_change_refreshes_open_document_diagnostics() {
+        reset_global_cache();
+
+        let root = temp_test_dir("watched_change");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let project_root = root.join("project");
+        let stdlib_root = root.join("stdlib");
+        fs::create_dir_all(&project_root).expect("create project root");
+        fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+        let main_path = project_root.join("main.tw");
+        let helper_path = project_root.join("helper.tw");
+        let main_source = "use helper\nvalue: Int = helper.answer()\n";
+        let helper_source = "pub fn answer() Int { 42 }\n";
+        fs::write(&main_path, main_source).expect("write main");
+        fs::write(&helper_path, helper_source).expect("write helper");
+
+        let mut base_sources = HashMap::new();
+        base_sources.insert(main_path.clone(), main_source.to_string());
+        base_sources.insert(helper_path.clone(), helper_source.to_string());
+
+        let session = AnalysisSession::new(&project_root, &stdlib_root, base_sources);
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+            supports_watched_files_dynamic_registration: false,
+            next_server_request_id: 1,
+        };
+
+        let main_uri = path_to_file_uri(&main_path).expect("main uri");
+        let open_payload = json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": main_uri,
+                    "text": main_source
+                }
+            }
+        });
+        let mut open_writer = Vec::new();
+        handle_lsp_message(&mut state, &open_payload, &mut open_writer).expect("didOpen");
+
+        fs::write(&helper_path, "pub fn answer() String { \"hi\" }\n").expect("rewrite helper");
+        let helper_uri = path_to_file_uri(&helper_path).expect("helper uri");
+        let watch_payload = json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWatchedFiles",
+            "params": {
+                "changes": [{
+                    "uri": helper_uri,
+                    "type": 2
+                }]
+            }
+        });
+
+        let mut writer = Vec::new();
+        let should_exit =
+            handle_lsp_message(&mut state, &watch_payload, &mut writer).expect("watch");
+        assert!(!should_exit, "watch notification should not exit");
+
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["method"], json!("textDocument/publishDiagnostics"));
+        let published_path = file_uri_to_path(
+            response["params"]["uri"]
+                .as_str()
+                .expect("published diagnostics uri"),
+        )
+        .expect("decode published path");
+        assert_eq!(
+            published_path
+                .canonicalize()
+                .expect("canonical published path"),
+            main_path.canonicalize().expect("canonical main path")
+        );
+        let diagnostics = response["params"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics array");
+        assert!(
+            !diagnostics.is_empty(),
+            "expected refreshed diagnostics after helper change"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watched_file_delete_clears_diagnostics_for_deleted_path() {
+        reset_global_cache();
+
+        let root = temp_test_dir("watched_delete");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let project_root = root.join("project");
+        let stdlib_root = root.join("stdlib");
+        fs::create_dir_all(&project_root).expect("create project root");
+        fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+        let deleted_path = project_root.join("gone.tw");
+        fs::write(&deleted_path, "value := 42\n").expect("write file");
+
+        let session = AnalysisSession::new(&project_root, &stdlib_root, HashMap::new());
+        let mut state = LspState {
+            session: Some(session),
+            shutdown_requested: false,
+            supports_watched_files_dynamic_registration: false,
+            next_server_request_id: 1,
+        };
+
+        let deleted_uri = path_to_file_uri(&deleted_path).expect("uri");
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWatchedFiles",
+            "params": {
+                "changes": [{
+                    "uri": deleted_uri,
+                    "type": 3
+                }]
+            }
+        });
+
+        let mut writer = Vec::new();
+        handle_lsp_message(&mut state, &payload, &mut writer).expect("watch delete");
+        let response = decode_lsp_body(&writer);
+        assert_eq!(response["method"], json!("textDocument/publishDiagnostics"));
+        assert_eq!(
+            response["params"]["uri"],
+            json!(path_to_file_uri(&deleted_path).expect("uri"))
+        );
+        assert_eq!(response["params"]["diagnostics"], json!([]));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn decode_lsp_body(buffer: &[u8]) -> Value {
