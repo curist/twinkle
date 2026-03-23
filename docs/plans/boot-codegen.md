@@ -1,6 +1,6 @@
 # Boot Compiler — Codegen & Linker (Phase D)
 
-Last updated: 2026-03-23
+Last updated: 2026-03-24
 
 ## Background
 
@@ -36,6 +36,13 @@ From [self-hosting.md](self-hosting.md) — these are non-negotiable:
    repr across branches.
 6. **One metadata channel, not six** — a local's backend info is fully
    determined by its type + layout registry.
+
+This document describes a bootstrap-compatible Phase D plan. Per
+[backend-anyref-elimination.md](backend-anyref-elimination.md), any shared
+runtime container refs or `anyref`-based helper boundaries described below are
+transitional constraints of the current runtime surface, not the intended end
+state. The target architecture is per-instantiation typed container/helper
+families for concrete monomorphized code.
 
 ## Stage0 Bug Categories & How Phase D Avoids Them
 
@@ -390,13 +397,17 @@ type. Full mapping:
 | `Record(r)` | `Ref(false, Named(r.sym))` |
 | `Sum(s)` | `Ref(false, Named(s.sym))` |
 | `Closure(c)` | `Ref(false, Named(c.closure_sym))` |
-| `Vector_(elem)` | `Ref(false, Named("rt_types__Array"))` |
-| `Dict_(k, v)` | `Ref(false, Named("rt_types__Dict"))` |
+| `Vector_(elem)` | `Ref(false, Named("rt_types__Array"))` in the bootstrap runtime; later phases should replace this with a per-instantiation vector family |
+| `Dict_(k, v)` | `Ref(false, Named("rt_types__Dict"))` in the bootstrap runtime; later phases should replace this with a per-instantiation dict family |
 | `Iterator_(it)` | `Ref(false, Named(it.state_sym))` |
 | `Cell_(inner)` | `Ref(false, Named(cell_sym))` — cell_sym derived from inner layout |
 
-Containers map to the runtime's concrete struct/array types, not `anyref`.
-This ensures container-self positions in ABI contracts match without wrapping.
+The bootstrap mapping keeps container-self positions as typed refs rather than
+plain `anyref`, which ensures ABI contracts match without wrapping the
+container object itself. This should not be read as the final container
+specialization policy. The intended end state is to replace shared
+`rt_types__Array` / `rt_types__Dict` with per-instantiation container
+families, as described in [backend-anyref-elimination.md](backend-anyref-elimination.md).
 
 **`val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType`** — shorthand
 composition, with explicit `Never → unreachable` handling: this function
@@ -530,8 +541,9 @@ pub fn insert_boundaries(
 ) AnfModule
 ```
 
-**Runtime ABI reality:** The runtime modules do NOT use a uniform `anyref`
-ABI. Each builtin has a specific Wasm-level signature with mixed types:
+**Runtime ABI reality (bootstrap baseline):** The currently planned runtime
+modules do NOT use a uniform `anyref` ABI. Each builtin has a specific
+Wasm-level signature with mixed types:
 
 | Module | Example | Wasm params | Wasm result |
 |--------|---------|-------------|-------------|
@@ -551,8 +563,12 @@ Key patterns:
 - Scalars stored AS elements (e.g., `Int` in `Vector<Int>`) must be boxed
   to `anyref` via `RefI31` (for i31-range values) or `$BoxedInt`/`$BoxedFloat`
 
-This means the boundary pass must know the **exact Wasm signature** of each
-builtin, not assume a uniform erased ABI.
+This is the boundary shape the bootstrap backend must target if it links
+against the current shared runtime helpers. It is not the desired steady
+state. The longer-term goal is to shrink and eventually replace these
+`anyref` element/key/value boundaries with typed helper families, so the
+boundary pass must be structured in a way that can later target more concrete
+runtime signatures without redesigning the rest of Phase D.
 
 **Builtin ABI contract table:**
 

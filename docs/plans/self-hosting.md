@@ -304,9 +304,13 @@ fn layout_of(ty: MonoType, type_env: TypeEnv) -> WasmLayout
 There is no "erased fallback" at the layout level. If a type is concrete
 (which it always is after monomorphization), it gets a concrete layout.
 `anyref` still exists at the Wasm runtime ABI boundary — calls into runtime
-helpers (`rt.arr`, `rt.str`, etc.) require boxing/unboxing — but this is
-handled by explicit boundary nodes (Rule 3), not by falling back to an
-erased layout for the value itself.
+helpers (`rt.arr`, `rt.str`, etc.) may require boxing/unboxing in the initial
+bootstrapping implementation — but this is handled by explicit boundary nodes
+(Rule 3), not by falling back to an erased layout for the value itself. Per
+[backend-anyref-elimination.md](backend-anyref-elimination.md), those runtime
+ABI boundaries are transitional constraints, not the intended steady-state
+architecture. The long-term target is typed helper and container families
+rather than universal `anyref` payload paths.
 
 #### Rule 2: No Shadow Type System
 
@@ -443,10 +447,16 @@ Tree-rewriting passes with tractable state:
 
 ### Phase D — Codegen + Linker
 
-Most complex stage. Build last so the other phases are stable:
+Most complex stage. Build after Phases A-C are stable, but do not treat the
+first working runtime/container ABI as the final architecture. Phase D should
+land as a bootstrap-compatible MVP that preserves the backend direction in
+[backend-anyref-elimination.md](backend-anyref-elimination.md):
 
 - WAT emission is mostly string building from structured data
 - Typed closure / sum repr specialization is the hardest part
+- Shared `Array` / `Dict` plus `anyref` element slots may exist temporarily at
+  runtime boundaries, but they are transitional scaffolding rather than the
+  target representation policy
 - Linker is mechanical: namespace prefixing + symbol resolution
 
 ### Phase E — Integration + Self-Hosting
