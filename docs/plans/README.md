@@ -38,8 +38,8 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| ANF + optimization | ANF lowering, optimizer (Phase C) | Planned | [boot-anf-lowering.md](boot-anf-lowering.md) |
-| Codegen + linker | WAT emission, linking (Phase D) | Planned | — |
+| ANF + optimization | ANF lowering, optimizer (Phase C) | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) |
+| Codegen + linker | WAT emission, linking (Phase D) | Planned | [boot-codegen.md](boot-codegen.md) |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |

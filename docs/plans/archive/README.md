@@ -102,6 +102,7 @@ Related historical context outside this folder:
 | [boot-snapshot-testing.md](boot-snapshot-testing.md) | Snapshot testing for boot compiler diagnostics (`.boot.expected` files, `TWK_SNAP_UPDATE=1`) |
 | [boot-builtin-registry.md](boot-builtin-registry.md) | Centralized builtin FuncId registry for boot compiler — eliminates hardcoded magic numbers |
 | [boot-core-ir.md](boot-core-ir.md) | Boot Core IR types, AST→Core IR lowering, monomorphization (Phase B) |
+| [boot-anf-lowering.md](boot-anf-lowering.md) | Boot ANF lowering & optimization — ANF IR types, Core→ANF lowering, analysis, peephole passes, liveness, uniqueness, defer elimination (Phase C) |
 | [boot-type-checker.md](boot-type-checker.md) | Boot type checker milestones M1–M9 (Phase A) |
 | [boot-resolver-method-registry.md](boot-resolver-method-registry.md) | Boot resolver method registry M1–M4; M5 deferred to multi-module |
 | [boot-resolver-hardening.md](boot-resolver-hardening.md) | Boot resolver hardening and edge-case fixes |
