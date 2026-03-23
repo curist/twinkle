@@ -1,0 +1,334 @@
+// Wasm layout types and the central `layout_of` function.
+//
+// Every concrete MonoType maps to exactly one WasmLayout.
+// This is the single source of truth — no shadow metadata.
+
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.core_ir.{FieldId, VariantId}
+use compiler.codegen.wasm_ir.{ValType, HeapType}
+
+// ── Wasm value type (simplified for layout) ─────────────────────────
+
+pub type WasmValType = { WI32, WI64, WF64, WAnyref }
+
+// ── Layout types ────────────────────────────────────────────────────
+
+pub type WasmLayout = {
+  Scalar(WasmValType),
+  Record(WasmRecordLayout),
+  Sum(WasmSumLayout),
+  Closure(WasmClosureLayout),
+  Vector_(WasmLayout),
+  Dict_(WasmLayout, WasmLayout),
+  Iterator_(WasmIteratorLayout),
+  Cell_(WasmLayout),
+}
+
+pub type WasmRecordLayout = .{
+  type_id: TypeId,
+  sym: String,
+  fields: Vector<WasmFieldLayout>,
+}
+
+pub type WasmFieldLayout = .{
+  field_id: FieldId,
+  name: String,
+  val_type: ValType,
+}
+
+pub type WasmSumLayout = .{
+  type_id: TypeId,
+  sym: String,
+  tag_type: ValType,
+  variants: Vector<WasmVariantLayout>,
+}
+
+pub type WasmVariantLayout = .{
+  variant_id: VariantId,
+  name: String,
+  payload_types: Vector<ValType>,
+  struct_field_offset: Int,
+}
+
+pub type WasmClosureLayout = .{
+  closure_sym: String,
+  universal_func_type_sym: String,
+  env_sym: String,
+  typed_func_type_sym: String,
+  param_types: Vector<ValType>,
+  result_type: ValType?,
+}
+
+pub type WasmIteratorLayout = .{
+  state_sym: String,
+  step_sym: String,
+  yield_layout: WasmLayout,
+}
+
+// ── mono_to_key ─────────────────────────────────────────────────────
+
+pub fn mono_to_key(ty: MonoType) String {
+  case ty {
+    .Int => "i64",
+    .Float => "f64",
+    .Bool => "i32",
+    .Byte => "i32b",
+    .String => "str",
+    .Void => "void",
+    .Never => "never",
+    .Named(tid, args) => {
+      base := "t${tid.id}"
+      if args.len() == 0 { return base }
+      parts := collect a in args { mono_to_key(a) }
+      "${base}_${parts.join("_")}"
+    },
+    .Vector(elem) => "vec_${mono_to_key(elem)}",
+    .Dict(k, v) => "dict_${mono_to_key(k)}_${mono_to_key(v)}",
+    .Function(params, ret) => {
+      parts := collect p in params { mono_to_key(p) }
+      "fn_${parts.join("_")}_${mono_to_key(ret)}"
+    },
+    .Optional(inner) => "opt_${mono_to_key(inner)}",
+    .Result(ok, err) => "res_${mono_to_key(ok)}_${mono_to_key(err)}",
+    .Var(name) => "var_${name}",
+    .MetaVar(id) => "meta_${id}",
+    .ErrorType => "error",
+  }
+}
+
+// ── layout_of ───────────────────────────────────────────────────────
+
+pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
+  case ty {
+    .Int => .Scalar(.WI64),
+    .Float => .Scalar(.WF64),
+    .Bool => .Scalar(.WI32),
+    .Byte => .Scalar(.WI32),
+    .Void => .Scalar(.WAnyref),
+    .String => .Scalar(.WAnyref),
+    .Never => error("layout_of called on Never — must be handled as unreachable"),
+    .Named(tid, args) => layout_of_named(tid, args, env),
+    .Vector(elem) => .Vector_(layout_of(elem, env)),
+    .Dict(k, v) => .Dict_(layout_of(k, env), layout_of(v, env)),
+    .Function(params, ret) => layout_of_function(params, ret, env),
+    .Optional(inner) => layout_of_optional(inner, env),
+    .Result(ok, err) => layout_of_result(ok, err, env),
+    .Var(_) => error("layout_of called on Var — must be monomorphized"),
+    .MetaVar(_) => error("layout_of called on MetaVar — must be resolved"),
+    .ErrorType => error("layout_of called on ErrorType"),
+  }
+}
+
+fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
+  for i in range(env.types.len()) {
+    if env.types[i].id.id == tid.id {
+      return env.types[i]
+    }
+  }
+  error("layout_of_named: TypeId ${tid.id} not found")
+}
+
+fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
+  entry := find_type_entry(env, tid)
+  def := case entry.def {
+    .Some(d) => d,
+    .None => error("layout_of_named: TypeId ${tid.id} has no definition"),
+  }
+  case def {
+    .Record(name, type_params, fields) => {
+      sym := "$${name}_${mono_to_key(.Named(tid, args))}"
+      field_layouts := collect f,i in fields {
+        // Substitute type params with concrete args
+        field_ty := subst_type_params(f.ty, type_params, args)
+        WasmFieldLayout.{
+          field_id: FieldId.{ id: i },
+          name: f.name,
+          val_type: val_type_of(layout_of(field_ty, env)),
+        }
+      }
+      .Record(WasmRecordLayout.{
+        type_id: tid,
+        sym: sym,
+        fields: field_layouts,
+      })
+    },
+    .Sum(name, type_params, variants) => {
+      layout_of_sum_def(tid, args, name, type_params, variants, env)
+    },
+    .Alias(_, _, target) => {
+      // Resolve alias and compute layout of the target
+      layout_of(subst_type_params(target, [], args), env)
+    },
+  }
+}
+
+fn layout_of_sum_def(
+  tid: TypeId,
+  args: Vector<MonoType>,
+  name: String,
+  type_params: Vector<String>,
+  variants: Vector<ResolvedVariant>,
+  env: ResolvedEnv,
+) WasmLayout {
+  sym := "$${name}_${mono_to_key(.Named(tid, args))}"
+  // Build variant layouts
+  offset := 1  // field 0 is the tag
+  var_layouts := collect v,i in variants {
+    payload_types := collect f in v.fields {
+      field_ty := subst_type_params(f, type_params, args)
+      val_type_of(layout_of(field_ty, env))
+    }
+    vl := WasmVariantLayout.{
+      variant_id: VariantId.{ id: i },
+      name: v.name,
+      payload_types: payload_types,
+      struct_field_offset: offset,
+    }
+    offset = offset + payload_types.len()
+    vl
+  }
+  .Sum(WasmSumLayout.{
+    type_id: tid,
+    sym: sym,
+    tag_type: .I32,
+    variants: var_layouts,
+  })
+}
+
+fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
+  inner_vt := val_type_of(layout_of(inner, env))
+  sym := "$Option_${mono_to_key(.Optional(inner))}"
+  .Sum(WasmSumLayout.{
+    type_id: TypeId.{ id: -1 },
+    sym: sym,
+    tag_type: .I32,
+    variants: [
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 0 },
+        name: "None",
+        payload_types: [],
+        struct_field_offset: 1,
+      },
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 1 },
+        name: "Some",
+        payload_types: [inner_vt],
+        struct_field_offset: 1,
+      },
+    ],
+  })
+}
+
+fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
+  ok_vt := val_type_of(layout_of(ok, env))
+  err_vt := val_type_of(layout_of(err, env))
+  sym := "$Result_${mono_to_key(.Result(ok, err))}"
+  .Sum(WasmSumLayout.{
+    type_id: TypeId.{ id: -1 },
+    sym: sym,
+    tag_type: .I32,
+    variants: [
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 0 },
+        name: "Ok",
+        payload_types: [ok_vt],
+        struct_field_offset: 1,
+      },
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 1 },
+        name: "Err",
+        payload_types: [err_vt],
+        struct_field_offset: 2,
+      },
+    ],
+  })
+}
+
+fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv) WasmLayout {
+  param_vts := collect p in params { val_type_of(layout_of(p, env)) }
+  ret_layout := layout_of(ret, env)
+  ret_vt: ValType? = .Some(val_type_of(ret_layout))
+  key := mono_to_key(.Function(params, ret))
+  .Closure(WasmClosureLayout.{
+    closure_sym: "$closure_${key}",
+    universal_func_type_sym: "$ClosureFunc",
+    env_sym: "$ClosureEnv",
+    typed_func_type_sym: "$ft_${key}",
+    param_types: param_vts,
+    result_type: ret_vt,
+  })
+}
+
+// ── Type parameter substitution ─────────────────────────────────────
+
+fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      for p,i in type_params {
+        if p == name {
+          return args[i]
+        }
+      }
+      ty
+    },
+    .Named(tid, inner_args) => {
+      new_args := collect a in inner_args { subst_type_params(a, type_params, args) }
+      .Named(tid, new_args)
+    },
+    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
+    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
+    .Function(ps, r) => {
+      new_ps := collect p in ps { subst_type_params(p, type_params, args) }
+      .Function(new_ps, subst_type_params(r, type_params, args))
+    },
+    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
+    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
+    _ => ty,
+  }
+}
+
+// ── val_type_of ─────────────────────────────────────────────────────
+
+pub fn val_type_of(layout: WasmLayout) ValType {
+  case layout {
+    .Scalar(.WI32) => .I32,
+    .Scalar(.WI64) => .I64,
+    .Scalar(.WF64) => .F64,
+    .Scalar(.WAnyref) => .Anyref,
+    .Record(r) => .Ref(false, .Named(r.sym)),
+    .Sum(s) => .Ref(false, .Named(s.sym)),
+    .Closure(c) => .Ref(false, .Named(c.closure_sym)),
+    .Vector_(_) => .Ref(false, .Named("$Array")),
+    .Dict_(_, _) => .Ref(false, .Named("$Dict")),
+    .Iterator_(it) => .Ref(false, .Named(it.state_sym)),
+    .Cell_(inner) => {
+      key := val_type_key(inner)
+      .Ref(false, .Named("$Cell_${key}"))
+    },
+  }
+}
+
+fn val_type_key(layout: WasmLayout) String {
+  case layout {
+    .Scalar(.WI32) => "i32",
+    .Scalar(.WI64) => "i64",
+    .Scalar(.WF64) => "f64",
+    .Scalar(.WAnyref) => "anyref",
+    .Record(r) => r.sym,
+    .Sum(s) => s.sym,
+    .Closure(c) => c.closure_sym,
+    .Vector_(_) => "arr",
+    .Dict_(_, _) => "dict",
+    .Iterator_(it) => it.state_sym,
+    .Cell_(inner) => "cell_${val_type_key(inner)}",
+  }
+}
+
+// ── val_type_of_mono ────────────────────────────────────────────────
+
+pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
+  case ty {
+    .Never => error("val_type_of_mono called on Never — callers must check first"),
+    _ => val_type_of(layout_of(ty, env)),
+  }
+}

@@ -103,7 +103,7 @@ Phase D consumes these existing types:
 
 ## Milestone Plan
 
-### M1: Wasm IR Types (`boot/compiler/wasm_ir.tw`)
+### M1: Wasm IR Types (`boot/compiler/codegen/wasm_ir.tw`)
 
 Define the Wasm IR data structures — the output of codegen, input to WAT
 emission. Mirrors stage0's `src/wasm/ir.rs`.
@@ -278,7 +278,7 @@ pub type WasmModule = .{
 
 ---
 
-### M2: Wasm Layout Types & `layout_of` (`boot/compiler/wasm_layout.tw`)
+### M2: Wasm Layout Types & `layout_of` (`boot/compiler/codegen/wasm_layout.tw`)
 
 The central representation decision. Every concrete MonoType maps to exactly
 one `WasmLayout`. This is the single source of truth — no shadow metadata.
@@ -407,7 +407,7 @@ must trap/error if called on Never (callers must check first).
 
 ---
 
-### M3: Wasm Type Registry & `plan_wasm_types` (`boot/compiler/wasm_plan.tw`)
+### M3: Wasm Type Registry & `plan_wasm_types` (`boot/compiler/codegen/wasm_plan.tw`)
 
 Pre-compute the complete set of Wasm type definitions needed by the module.
 The emitter receives this as input and never creates types during emission.
@@ -506,7 +506,7 @@ entries.
 
 ---
 
-### M4: Boundary Insertion Pass (`boot/compiler/insert_boundaries.tw`)
+### M4: Boundary Insertion Pass (`boot/compiler/codegen/insert_boundaries.tw`)
 
 Insert explicit `WrapAnyref` / `UnwrapAnyref` nodes at every point where a
 typed value crosses a representation boundary (calls to runtime helpers that
@@ -635,7 +635,7 @@ matches the semantic `Vector<Int>` — no unwrap needed.
 
 ---
 
-### M5: Pattern Match Emission (`boot/compiler/emit_pattern.tw`)
+### M5: Pattern Match Emission (`boot/compiler/codegen/emit_pattern.tw`)
 
 Dedicated module for pattern match compilation. Extracted from the main
 emitter to isolate the complexity and ensure short-circuit correctness.
@@ -690,7 +690,7 @@ result type.
 
 ---
 
-### M6: Core Emission — Atoms, Ops, Expressions (`boot/compiler/emit.tw`)
+### M6: Core Emission — Atoms, Ops, Expressions (`boot/compiler/codegen/emit.tw`)
 
 The main emitter. Translates ANF nodes to Wasm instructions using the
 type registry (no flow metadata).
@@ -815,7 +815,7 @@ and no result type.
 
 ---
 
-### M7: Call Emission & Trampolines (`boot/compiler/emit.tw` continued)
+### M7: Call Emission & Trampolines (`boot/compiler/codegen/emit.tw` continued)
 
 Call dispatch is the second-most complex part after pattern matching.
 
@@ -872,7 +872,7 @@ Field offsets always from layout definition, never hard-coded.
 
 ---
 
-### M8: WAT Emission (`boot/compiler/wat.tw`)
+### M8: WAT Emission (`boot/compiler/codegen/wat.tw`)
 
 Serialize `WasmModule` (or `LinkedModule`) to WAT text format.
 
@@ -896,7 +896,7 @@ the output compiles with wasmtime/wasm-tools.
 
 ---
 
-### M9: Linker (`boot/compiler/linker.tw`)
+### M9: Linker (`boot/compiler/codegen/linker.tw`)
 
 Merge user module with runtime modules.
 
@@ -945,7 +945,7 @@ symbol qualification and import resolution.
 
 ---
 
-### M10: Runtime Module Ports (`boot/compiler/runtime/`)
+### M10: Runtime Module Ports (`boot/compiler/codegen/runtime/`)
 
 Port the stage0 Rust runtime module builders to Twinkle. These produce
 `WasmModule` values containing the runtime type definitions and helper
@@ -954,7 +954,7 @@ functions.
 **Files:**
 
 ```
-boot/compiler/runtime/
+boot/compiler/codegen/runtime/
   types.tw    # $Closure, $Variant, $String, $Array, etc.
   core.tw     # print, println, error, int_to_string, etc.
   arr.tw      # vector_len, vector_push, vector_get, etc.
@@ -1013,7 +1013,7 @@ pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Stri
 ## File Layout
 
 ```
-boot/compiler/
+boot/compiler/codegen/
   wasm_ir.tw            # M1: Wasm IR types (TypeDef, Instr, WasmModule, etc.)
   wasm_layout.tw        # M2: WasmLayout, layout_of, val_type_of
   wasm_plan.tw          # M3: WasmTypeRegistry, plan_wasm_types

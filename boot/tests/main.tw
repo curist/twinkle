@@ -27,6 +27,9 @@ use tests.suites.opt_liveness_suite
 use tests.suites.opt_uniqueness_suite
 use tests.suites.opt_defer_elim_suite
 use tests.suites.builtins_suite
+use tests.suites.wasm_ir_suite
+use tests.suites.wasm_layout_suite
+use tests.suites.wasm_plan_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -57,4 +60,7 @@ runner.run_all([
   opt_uniqueness_suite.suite(),
   opt_defer_elim_suite.suite(),
   builtins_suite.suite(),
+  wasm_ir_suite.suite(),
+  wasm_layout_suite.suite(),
+  wasm_plan_suite.suite(),
 ])
