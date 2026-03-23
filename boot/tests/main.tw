@@ -30,6 +30,7 @@ use tests.suites.builtins_suite
 use tests.suites.wasm_ir_suite
 use tests.suites.wasm_layout_suite
 use tests.suites.wasm_plan_suite
+use tests.suites.insert_boundaries_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -63,4 +64,5 @@ runner.run_all([
   wasm_ir_suite.suite(),
   wasm_layout_suite.suite(),
   wasm_plan_suite.suite(),
+  insert_boundaries_suite.suite(),
 ])

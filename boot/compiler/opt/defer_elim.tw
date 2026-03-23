@@ -306,6 +306,8 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
     },
 
     .ADefer(body) => .ADefer(remap_expr(body, remap)),
+    .AWrapAnyref(a, mono) => .AWrapAnyref(remap_atom(a, remap), mono),
+    .AUnwrapAnyref(a, mono) => .AUnwrapAnyref(remap_atom(a, remap), mono),
   }
 }
 
@@ -402,6 +404,8 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
       r := if local.id > m { local.id } else { m }
       max_local_in_atom(value, r)
     },
+    .AWrapAnyref(a, _) => max_local_in_atom(a, m),
+    .AUnwrapAnyref(a, _) => max_local_in_atom(a, m),
   }
 }
 

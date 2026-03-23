@@ -135,6 +135,8 @@ fn live_in_op(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool> {
       // Conservatively treat all locals read in deferred expr as live
       compute_live(inner, live)
     },
+    .AWrapAnyref(a, _) => add_atom(a, live),
+    .AUnwrapAnyref(a, _) => add_atom(a, live),
   }
 }
 

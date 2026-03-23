@@ -271,6 +271,14 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
     .AInit(atom) => walk_atom(reg, atom),
     .AAssign(_, atom) => walk_atom(reg, atom),
     .ADefer(_) => error("ADefer must be eliminated before codegen"),
+    .AWrapAnyref(atom, mono) => {
+      reg = walk_atom(reg, atom)
+      register_mono(reg, mono, env)
+    },
+    .AUnwrapAnyref(atom, mono) => {
+      reg = walk_atom(reg, atom)
+      register_mono(reg, mono, env)
+    },
   }
 }
 

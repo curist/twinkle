@@ -1,0 +1,489 @@
+use tests.runner
+use tests.assert
+use compiler.resolver
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
+use compiler.builtins as bi
+use compiler.builtins.{BuiltinRegistry, BuiltinKind, RuntimeInfo}
+use compiler.anf.{
+  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
+  AnfFunctionDef, AnfModule,
+}
+use compiler.codegen.wasm_ir.{ValType, HeapType}
+use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, val_type_of, mono_to_key}
+use compiler.codegen.wasm_plan.{
+  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
+}
+use compiler.codegen.insert_boundaries.{AbiContract, insert_boundaries}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn empty_env() ResolvedEnv { resolver.empty_env() }
+
+fn empty_registry() WasmTypeRegistry {
+  WasmTypeRegistry.{
+    type_defs: [],
+    layout_cache: Dict.new(),
+    type_index: Dict.new(),
+    concrete_func_sigs: Dict.new(),
+    capture_layouts: Dict.new(),
+    module_globals: Dict.new(),
+    string_pool: Dict.new(),
+    runtime_imports: [],
+  }
+}
+
+fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
+  reg := empty_registry()
+  env := empty_env()
+  for ty in types {
+    key := mono_to_key(ty)
+    reg.layout_cache[key] = layout_of(ty, env)
+  }
+  reg
+}
+
+fn empty_builtins() BuiltinRegistry {
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 100 }
+}
+
+fn empty_abi() Dict<Int, AbiContract> { Dict.new() }
+
+fn mk_param(id: Int, ty: MonoType) Param {
+  Param.{ local: lid(id), ty: ty }
+}
+
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
+  d: Dict<Int, MonoType> = Dict.new()
+  for k,i in entries { d[k] = types[i] }
+  d
+}
+
+fn mk_func_def(
+  id: Int,
+  name: String,
+  params: Vector<Param>,
+  ret: MonoType,
+  body: AnfExpr,
+  mono_map: Dict<Int, MonoType>,
+) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(id),
+    name: name,
+    params: params,
+    op_result_mono: mono_map,
+    body: body,
+    return_ty: ret,
+  }
+}
+
+fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{ functions: funcs, init_func_id: .None }
+}
+
+fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
+  AbiContract.{ param_types: params, result_types: results }
+}
+
+// ── ANF traversal helpers ───────────────────────────────────────────
+
+fn count_wraps_expr(expr: AnfExpr) Int {
+  case expr {
+    .Let(_, op, body) => count_wraps_op(op) + count_wraps_expr(body),
+    _ => 0,
+  }
+}
+
+fn count_wraps_op(op: AnfOp) Int {
+  case op {
+    .AWrapAnyref(_, _) => 1,
+    .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
+    .AMatch(_, arms) => {
+      s := 0
+      for arm in arms { s = s + count_wraps_expr(arm.body) }
+      s
+    },
+    .ALoop(inner) => count_wraps_expr(inner),
+    .ADefer(inner) => count_wraps_expr(inner),
+    _ => 0,
+  }
+}
+
+fn count_unwraps_expr(expr: AnfExpr) Int {
+  case expr {
+    .Let(_, op, body) => count_unwraps_op(op) + count_unwraps_expr(body),
+    _ => 0,
+  }
+}
+
+fn count_unwraps_op(op: AnfOp) Int {
+  case op {
+    .AUnwrapAnyref(_, _) => 1,
+    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
+    .AMatch(_, arms) => {
+      s := 0
+      for arm in arms { s = s + count_unwraps_expr(arm.body) }
+      s
+    },
+    .ALoop(inner) => count_unwraps_expr(inner),
+    .ADefer(inner) => count_unwraps_expr(inner),
+    _ => 0,
+  }
+}
+
+// Find the MonoType of the first AWrapAnyref in the expression
+fn first_wrap_mono(expr: AnfExpr) MonoType? {
+  case expr {
+    .Let(_, op, body) => {
+      found: MonoType? = case op {
+        .AWrapAnyref(_, mono) => .Some(mono),
+        _ => .None,
+      }
+      case found {
+        .Some(_) => found,
+        .None => first_wrap_mono(body),
+      }
+    },
+    _ => .None,
+  }
+}
+
+// Find the MonoType of the first AUnwrapAnyref in the expression
+fn first_unwrap_mono(expr: AnfExpr) MonoType? {
+  case expr {
+    .Let(_, op, body) => {
+      found: MonoType? = case op {
+        .AUnwrapAnyref(_, mono) => .Some(mono),
+        _ => .None,
+      }
+      case found {
+        .Some(_) => found,
+        .None => first_unwrap_mono(body),
+      }
+    },
+    _ => .None,
+  }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("insert_boundaries (M4)")
+
+    // ── Basic plumbing ──
+
+    .test("empty module passthrough", fn() {
+      anf := mk_module([])
+      result := insert_boundaries(anf, empty_registry(), empty_builtins(), empty_abi(), empty_env())
+      try assert.int_eq(result.functions.len(), 0)
+      .Ok({})
+    })
+
+    // ── User function calls: no boundaries ──
+
+    .test("user call produces no boundaries", fn() {
+      // fn f(x: Int) Int { let t0 = call(user_fn#99, [x]); t0 }
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f", [mk_param(0, .Int)], .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int])
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result_body := result.functions[0].body
+      try assert.int_eq(count_wraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── Runtime call: wrap scalar arg at anyref position ──
+
+    .test("wraps Int arg at anyref ABI position", fn() {
+      // Simulates: builtin#50(str_arg, int_arg)
+      // ABI: (anyref, anyref) → (anyref)
+      // str_arg is String (already anyref) → no wrap
+      // int_arg is Int (i64) → AWrapAnyref
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(fid(50)), [.ALocal(lid(0)), .ALocal(lid(1))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.String])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .String), mk_param(1, .Int)],
+        .String, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.String])
+      builtins := empty_builtins().runtime("test_builtin", "rt.test", "test")
+      builtin_fid := builtins.id("test_builtin").id
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[builtin_fid] = mk_abi([.Anyref, .Anyref], [.Anyref])
+      // Reconstruct with correct fid in the body
+      body2: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(builtins.id("test_builtin")), [.ALocal(lid(0)), .ALocal(lid(1))]),
+        .Atom(.ALocal(lid(10))))
+      mono2 := mk_mono_map([10], [MonoType.String])
+      func2 := mk_func_def(1, "f",
+        [mk_param(0, .String), mk_param(1, .Int)],
+        .String, body2, mono2)
+      anf2 := mk_module([func2])
+
+      result := insert_boundaries(anf2, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      // Int arg should be wrapped (String arg should not)
+      try assert.int_eq(count_wraps_expr(result_body), 1)
+      // Check the wrap is for Int
+      wrap_ty := try first_wrap_mono(result_body).ok_or("no AWrapAnyref found")
+      case wrap_ty {
+        .Int => .Ok({}),
+        _ => .Err("expected wrap type Int"),
+      }
+    })
+
+    // ── Runtime call: unwrap anyref result ──
+
+    .test("unwraps anyref result to concrete type", fn() {
+      // Simulates: let t0 = builtin#50(str_arg) where result is anyref but expected Int
+      builtins := empty_builtins().runtime("get_val", "rt.test", "get")
+      get_fid := builtins.id("get_val")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[get_fid.id] = mk_abi([.Anyref], [.Anyref])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f", [mk_param(0, .String)], .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.String])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      // Result should be unwrapped from anyref to Int
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
+      case unwrap_ty {
+        .Int => .Ok({}),
+        _ => .Err("expected unwrap type Int"),
+      }
+    })
+
+    // ── No wrap for String at anyref position ──
+
+    .test("no wrap for String at anyref position", fn() {
+      // String maps to anyref already — no boundary needed
+      builtins := empty_builtins().runtime("str_fn", "rt.test", "str_fn")
+      str_fid := builtins.id("str_fn")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[str_fid.id] = mk_abi([.Anyref], [.Anyref])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(str_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.String])
+      func := mk_func_def(1, "f", [mk_param(0, .String)], .String, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.String])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      // String → anyref needs no wrap, anyref → String needs no unwrap
+      try assert.int_eq(count_wraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── Array index: unwrap element ──
+
+    .test("array index unwraps non-anyref element", fn() {
+      // let t0 = AIndex(vec, idx, Array, Int)
+      // Array get returns anyref, element type is Int → unwrap
+      body: AnfExpr = .Let(lid(10),
+        .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.Int),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .Vector(.Int)), mk_param(1, .Int)],
+        .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
+      case unwrap_ty {
+        .Int => .Ok({}),
+        _ => .Err("expected unwrap type Int"),
+      }
+    })
+
+    // ── Array index: no unwrap for String element ──
+
+    .test("array index no unwrap for String element", fn() {
+      // AIndex(vec, idx, Array, String) — String is already anyref
+      body: AnfExpr = .Let(lid(10),
+        .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.String),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.String])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .Vector(.String)), mk_param(1, .Int)],
+        .String, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.String, MonoType.Vector(.String)])
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── String index: no boundaries ──
+
+    .test("string index produces no boundaries", fn() {
+      // AIndex(str, idx, Str, Byte) — Byte is i32, no anyref crossing
+      body: AnfExpr = .Let(lid(10),
+        .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Str, MonoType.Byte),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Byte])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .String), mk_param(1, .Int)],
+        .Byte, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.String, MonoType.Byte, MonoType.Int])
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_wraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── Both wrap and unwrap in one call ──
+
+    .test("wrap arg and unwrap result in same call", fn() {
+      // builtin(int_arg) → anyref result expected as Int
+      // ABI: (anyref) → (anyref)
+      // int_arg: Int → needs wrap
+      // result: anyref → Int needs unwrap
+      builtins := empty_builtins().runtime("roundtrip", "rt.test", "roundtrip")
+      rt_fid := builtins.id("roundtrip")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[rt_fid.id] = mk_abi([.Anyref], [.Anyref])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f", [mk_param(0, .Int)], .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_wraps_expr(result_body), 1)
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      .Ok({})
+    })
+
+    // ── No wrap for non-anyref ABI position ──
+
+    .test("no wrap when ABI param is not anyref", fn() {
+      // builtin(vec, idx) where ABI is (ref $Array, i32) → no anyref positions
+      builtins := empty_builtins().runtime("vec_len", "rt.arr", "len")
+      len_fid := builtins.id("vec_len")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[len_fid.id] = mk_abi(
+        [.Ref(true, .Named("$Array"))],
+        [.I32])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(len_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .Vector(.Int))],
+        .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_wraps_expr(result_body), 0)
+      // i32 result to Int (i64) is a conversion, not an anyref boundary
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── Multiple args: only anyref positions get wrapped ──
+
+    .test("wraps only args at anyref positions in multi-arg call", fn() {
+      // builtin(ref $Array, i32, anyref) → (ref $Array)
+      // vec: Vector<Int> → ref $Array (no wrap, non-anyref ABI)
+      // idx: Int → i32 (no wrap, non-anyref ABI)
+      // elem: Int → anyref (WRAP needed)
+      builtins := empty_builtins().runtime("arr_set", "rt.arr", "set")
+      set_fid := builtins.id("arr_set")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[set_fid.id] = mk_abi(
+        [.Ref(true, .Named("$Array")), .I32, .Anyref],
+        [.Ref(false, .Named("$Array"))])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(set_fid), [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Vector(.Int)])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .Vector(.Int)), mk_param(1, .Int), mk_param(2, .Int)],
+        .Vector(.Int), body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      // Only elem (3rd arg, Int at anyref position) should be wrapped
+      try assert.int_eq(count_wraps_expr(result_body), 1)
+      // Result is ref $Array, not anyref → no unwrap
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
+    // ── Wraps Bool at anyref position ──
+
+    .test("wraps Bool arg at anyref position", fn() {
+      builtins := empty_builtins().runtime("store_bool", "rt.test", "store")
+      store_fid := builtins.id("store_bool")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[store_fid.id] = mk_abi([.Anyref], [.Anyref])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.String])
+      func := mk_func_def(1, "f", [mk_param(0, .Bool)], .String, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Bool, MonoType.String])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_wraps_expr(result_body), 1)
+      wrap_ty := try first_wrap_mono(result_body).ok_or("no AWrapAnyref found")
+      case wrap_ty {
+        .Bool => .Ok({}),
+        _ => .Err("expected wrap type Bool"),
+      }
+    })
+}

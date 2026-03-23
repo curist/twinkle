@@ -526,6 +526,8 @@ fn op_uses_local(op: AnfOp, local: LocalId) Bool {
     .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
     .ALoop(_) => false,
     .ADefer(_) => false,
+    .AWrapAnyref(a, _) => atom_is_local(a, local),
+    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
   }
 }
 
@@ -768,6 +770,8 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
       r := if target.id > m { target.id } else { m }
       max_local_in_atom(value, r)
     },
+    .AWrapAnyref(a, _) => max_local_in_atom(a, m),
+    .AUnwrapAnyref(a, _) => max_local_in_atom(a, m),
   }
 }
 

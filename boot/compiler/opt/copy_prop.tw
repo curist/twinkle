@@ -87,6 +87,8 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
     .AInit(value) => .AInit(sa(value)),
     .AAssign(local, value) => .AAssign(local, sa(value)),
     .ADefer(inner) => .ADefer(subst_atom(inner, target, replacement)),
+    .AWrapAnyref(a, mono) => .AWrapAnyref(sa(a), mono),
+    .AUnwrapAnyref(a, mono) => .AUnwrapAnyref(sa(a), mono),
   }
 }
 

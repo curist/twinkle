@@ -54,6 +54,9 @@ pub type AnfOp = {
   AInit(Atom),
   AAssign(LocalId, Atom),
   ADefer(AnfExpr),
+  // Phase D boundary insertion (added for codegen)
+  AWrapAnyref(Atom, MonoType),         // typed → anyref boxing
+  AUnwrapAnyref(Atom, MonoType),       // anyref → typed unboxing
 }
 
 // ── Supporting records ──────────────────────────────────────────────

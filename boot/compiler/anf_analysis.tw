@@ -144,6 +144,8 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       }
       free_atom(value, st)
     },
+    .AWrapAnyref(a, _) => free_atom(a, st),
+    .AUnwrapAnyref(a, _) => free_atom(a, st),
   }
 }
 
