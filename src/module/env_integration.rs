@@ -55,8 +55,9 @@ pub(super) fn project_dependency_exports(
 ) -> anyhow::Result<()> {
     match projection {
         DependencyProjection::Import { alias, items } => {
-            state.register_module_exports(alias, exports);
             if let Some(items) = items {
+                // Destructured import: only bring the listed names into scope,
+                // NOT the parent module name.
                 if let Err(missing) = state.register_import_items(alias, exports, items) {
                     let details: Vec<String> = missing
                         .iter()
@@ -68,6 +69,9 @@ pub(super) fn project_dependency_exports(
                         details.join(", ")
                     ));
                 }
+            } else {
+                // Plain import: bring the module name into scope.
+                state.register_module_exports(alias, exports);
             }
         }
         DependencyProjection::Prelude => state.register_prelude_exports(exports),

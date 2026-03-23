@@ -1,8 +1,10 @@
 use lib.source.span
+use lib.source.diagnostic
 use lib.source.diagnostic.{Diagnostic, StageResult}
 use lib.ascii
 use .tokens.{Token, TokenKind}
 use .lexer
+use .cursor
 use .cursor.{Cursor}
 use .ast.{
   Item, UseDecl, FunctionDecl, Param, TypeDecl, Module,

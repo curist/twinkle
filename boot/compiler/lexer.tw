@@ -1,6 +1,8 @@
 use lib.source.span
+use lib.source.diagnostic
 use lib.source.diagnostic.{Diagnostic, StageResult}
 use lib.ascii
+use .tokens
 use .tokens.{Token, TokenKind}
 
 type ScanStringResult = .{

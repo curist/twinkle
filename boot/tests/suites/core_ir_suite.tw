@@ -7,6 +7,7 @@ use compiler.ast
 use compiler.core_ir
 use compiler.lower_core
 use compiler.monomorphize
+use compiler.builtins
 use compiler.builtins.{make_builtin_registry}
 use lib.source.span
 

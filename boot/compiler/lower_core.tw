@@ -15,12 +15,14 @@ use .ast.{
   CollectExpr, StringPart, Param as AstParam,
 }
 use .resolver.{MonoType, ResolvedEnv, TypeId}
+use .checker
 use .checker.{CheckResult}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
   LocalId, FuncId, FieldId, VariantId,
   BinOp, UnOp, FieldInit, MatchArm, CorePattern,
 }
+use .builtins
 use .builtins.{BuiltinRegistry}
 
 // ── Lowering context ────────────────────────────────────────────────

@@ -6,7 +6,7 @@ fn main() {
     println("${result}")
     println("${v.x}")
 
-    // qualified access should still work
-    q := math.add(3, 4)
+    // destructured names work directly
+    q := add(3, 4)
     println("${q}")
 }

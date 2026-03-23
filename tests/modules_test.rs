@@ -279,6 +279,22 @@ fn test_module_destructure_missing_export() {
     );
 }
 
+/// destructured imports should NOT bring the parent module into scope
+#[test]
+fn test_module_destructure_no_parent_scope() {
+    let result = check("destructure/main_no_parent_scope.tw");
+    assert!(
+        result.is_err(),
+        "Expected qualified access via parent module to fail after destructured import"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("math") || err.contains("Undefined"),
+        "Error should mention undefined module access: {}",
+        err
+    );
+}
+
 /// cross-module method value reference extraction
 #[test]
 fn test_module_method_value_ref_check() {
