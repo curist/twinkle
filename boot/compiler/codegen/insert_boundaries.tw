@@ -21,7 +21,6 @@ use compiler.anf.{
 type BCtx = .{
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
   local_types: Dict<Int, MonoType>,   // LocalId → MonoType
   next_local: Int,                    // next fresh LocalId
@@ -34,7 +33,6 @@ fn alloc_local(ctx: BCtx) AllocResult {
   new_ctx := BCtx.{
     registry: ctx.registry,
     builtins: ctx.builtins,
-    abi_table: ctx.abi_table,
     env: ctx.env,
     local_types: ctx.local_types,
     next_local: ctx.next_local + 1,
@@ -81,6 +79,10 @@ fn needs_unwrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bo
   !is_anyref(vt)
 }
 
+fn has_abi(abi: AbiContract) Bool {
+  abi.param_types.len() > 0 or abi.result_types.len() > 0
+}
+
 // ── ABI table constructor ───────────────────────────────────────────
 
 fn ref_null(name: String) ValType { .Ref(true, .Named(name)) }
@@ -105,55 +107,11 @@ fn register_abi(table: Dict<Int, AbiContract>, reg: BuiltinRegistry, name: Strin
 
 pub fn make_abi_table(reg: BuiltinRegistry) Dict<Int, AbiContract> {
   t: Dict<Int, AbiContract> = Dict.new()
-
-  // I/O (rt.core) — all take (ref null $String) → void
-  t = register_abi(t, reg, "print",   abi([str_n()], []))
-  t = register_abi(t, reg, "println", abi([str_n()], []))
-  t = register_abi(t, reg, "error",   abi([str_n()], []))
-  t = register_abi(t, reg, "eprint",  abi([str_n()], []))
-  t = register_abi(t, reg, "eprintln",abi([str_n()], []))
-
-  // String conversion (rt.str)
-  t = register_abi(t, reg, "int_to_string",   abi([.I64], [str_()]))
-  t = register_abi(t, reg, "float_to_string", abi([.F64], [str_()]))
-  t = register_abi(t, reg, "bool_to_string",  abi([.I32], [str_()]))
-  t = register_abi(t, reg, "string_len",      abi([str_n()], [.I32]))
-  t = register_abi(t, reg, "string_concat",   abi([str_n(), str_n()], [str_()]))
-  t = register_abi(t, reg, "string_substring",abi([str_n(), .I32, .I32], [str_()]))
-
-  // Vector/Array (rt.arr)
-  t = register_abi(t, reg, "vector_len",          abi([arr_n()], [.I32]))
-  t = register_abi(t, reg, "vector_set_unsafe",   abi([arr_n(), .I32, .Anyref], [arr_()]))
-  t = register_abi(t, reg, "vector_concat",       abi([arr_n(), arr_n()], [arr_()]))
-  t = register_abi(t, reg, "vector_slice",        abi([arr_n(), .I32, .I32], [arr_()]))
-  t = register_abi(t, reg, "vector_builder_new",  abi([], [arr_()]))
-  t = register_abi(t, reg, "vector_builder_push", abi([arr_n(), .Anyref], []))
-  t = register_abi(t, reg, "vector_builder_freeze",abi([arr_n()], [arr_()]))
-  t = register_abi(t, reg, "vector_builder_from", abi([arr_n()], [arr_()]))
-
-  // Dict (rt.dict)
-  t = register_abi(t, reg, "dict_new",           abi([], [dict_()]))
-  t = register_abi(t, reg, "dict_set",           abi([dict_n(), .Anyref, .Anyref], [dict_()]))
-  t = register_abi(t, reg, "dict_keys",          abi([dict_n()], [arr_()]))
-  t = register_abi(t, reg, "dict_get",           abi([dict_n(), .Anyref], [variant_()]))
-  t = register_abi(t, reg, "dict_len",           abi([dict_n()], [.I32]))
-  t = register_abi(t, reg, "dict_has",           abi([dict_n(), .Anyref], [.I32]))
-  t = register_abi(t, reg, "dict_remove",        abi([dict_n(), .Anyref], [dict_()]))
-  t = register_abi(t, reg, "dict_set_in_place",  abi([dict_n(), .Anyref, .Anyref], [dict_()]))
-  t = register_abi(t, reg, "dict_remove_in_place",abi([dict_n(), .Anyref], [dict_()]))
-
-  // Host
-  t = register_abi(t, reg, "host_read_file",  abi([str_n()], [.Anyref]))
-  t = register_abi(t, reg, "host_write_file", abi([str_n(), str_n()], []))
-  t = register_abi(t, reg, "host_write_bytes",abi([str_n(), arr_n()], []))
-  t = register_abi(t, reg, "host_mkdirp",     abi([str_n()], []))
-  t = register_abi(t, reg, "host_list_dir",   abi([str_n()], [arr_n()]))
-  t = register_abi(t, reg, "host_exists",     abi([str_n()], [.I32]))
-  t = register_abi(t, reg, "host_args",       abi([], [arr_n()]))
-  t = register_abi(t, reg, "host_env",        abi([str_n()], [arr_n()]))
-  t = register_abi(t, reg, "host_cwd",        abi([], [str_n()]))
-  t = register_abi(t, reg, "host_exit",       abi([.I64], []))
-
+  for entry in reg.entries {
+    if has_abi(entry.abi) {
+      t[entry.func_id.id] = entry.abi
+    }
+  }
   t
 }
 
@@ -163,11 +121,10 @@ pub fn insert_boundaries(
   anf: AnfModule,
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
 ) AnfModule {
   new_funcs := collect func in anf.functions {
-    rewrite_func(func, registry, builtins, abi_table, env)
+    rewrite_func(func, registry, builtins, env)
   }
   AnfModule.{ functions: new_funcs, init_func_id: anf.init_func_id }
 }
@@ -176,7 +133,6 @@ fn rewrite_func(
   func: AnfFunctionDef,
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
 ) AnfFunctionDef {
   // Build local type map from params + op_result_mono
@@ -201,7 +157,6 @@ fn rewrite_func(
   ctx := BCtx.{
     registry: registry,
     builtins: builtins,
-    abi_table: abi_table,
     env: env,
     local_types: local_types,
     next_local: next,
@@ -309,7 +264,10 @@ fn rewrite_call(
 ) RewriteResult {
   // Only rewrite calls to builtins with ABI contracts
   abi_contract: AbiContract? = case callee {
-    .AGlobalFunc(fid) => ctx.abi_table[fid.id],
+    .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
+      .Some(entry) => if has_abi(entry.abi) { .Some(entry.abi) } else { .None },
+      .None => .None,
+    },
     _ => .None,
   }
 
@@ -339,8 +297,7 @@ fn rewrite_call(
             pair := alloc_local(cur_ctx)
             wrap_local := pair.local
             cur_ctx = pair.ctx
-            // Record the wrapped local type (it's anyref, but we track the source mono)
-            cur_ctx.local_types[wrap_local.id] = mono
+            cur_ctx.local_types[wrap_local.id] = .Anyref_
             // Build: let wrap_local = AWrapAnyref(arg, mono); ...
             // We'll prepend these lets before the call
             new_args = new_args.push(.ALocal(wrap_local))
@@ -379,6 +336,7 @@ fn rewrite_call(
         raw_local := pair.local
         final_ctx = pair.ctx
         mono: MonoType = case result_mono { .Some(m) => m, .None => .Void }
+        final_ctx.local_types[raw_local.id] = .Anyref_
         // let result_local = AUnwrapAnyref(ALocal(raw_local), mono); inner_expr
         inner_expr = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), mono), inner_expr)
         call_result_local = raw_local
@@ -440,6 +398,7 @@ fn rewrite_index(
         pair := alloc_local(ctx)
         raw_local := pair.local
         new_ctx := pair.ctx
+        new_ctx.local_types[raw_local.id] = .Anyref_
         body_r := rewrite_expr(body, new_ctx)
         inner := AnfExpr.Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), result_mono), body_r.expr)
         RewriteResult.{
@@ -466,7 +425,7 @@ fn rewrite_index(
         key_local := pair.local
         cur_ctx = pair.ctx
         mono: MonoType = case index_mono { .Some(m) => m, .None => .Void }
-        cur_ctx.local_types[key_local.id] = mono
+        cur_ctx.local_types[key_local.id] = .Anyref_
         new_index = .ALocal(key_local)
         wrap_expr = .Some(.Let(key_local, .AWrapAnyref(index, mono), .Atom(.ALitVoid)))
       }
@@ -482,6 +441,7 @@ fn rewrite_index(
         pair := alloc_local(body_r.ctx)
         raw_local := pair.local
         final_ctx := pair.ctx
+        final_ctx.local_types[raw_local.id] = .Anyref_
         inner = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), result_mono), inner)
         index_local = raw_local
 

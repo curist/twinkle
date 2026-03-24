@@ -9,7 +9,7 @@ use compiler.codegen.wasm_layout.{
   WasmLayout, WasmSumLayout, WasmVariantLayout, WasmValType,
   layout_of, val_type_of, mono_to_key,
 }
-use compiler.codegen.emit_pattern.{EmitCtx, LocalEntry, emit_match}
+use compiler.codegen.emit_pattern.{EmitCtx, LocalEntry, emit_match, emit_match_with_body_emitter}
 use lib.source.span
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -168,6 +168,39 @@ pub fn suite() runner.Suite {
       try assert.ok(
         has_instr(result.instrs, is_local_set),
         "expected LocalSet for var binding",
+      )
+      .Ok({})
+    })
+
+    .test("custom body emitter can handle non-default arm bodies", fn() Result<Void, String> {
+      env := empty_env()
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Wildcard,
+          body: .Let(lid(11), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALitInt(7))),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, .I64),
+        le(10, 1, .I64),
+      ])
+      result := emit_match_with_body_emitter(
+        scrutinee,
+        .Int,
+        arms,
+        1,
+        .I64,
+        fn(_expr: AnfExpr, _ctx: EmitCtx) Vector<Instr> {
+          [Instr.Call("$stub_body"), Instr.I64Const(7)]
+        },
+        ctx,
+      )
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .Call("$stub_body") => true, _ => false }
+        }),
+        "expected custom arm body emitter to be used",
       )
       .Ok({})
     })

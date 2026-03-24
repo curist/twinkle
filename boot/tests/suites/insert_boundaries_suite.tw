@@ -26,6 +26,7 @@ fn empty_registry() WasmTypeRegistry {
   WasmTypeRegistry.{
     type_defs: [],
     layout_cache: Dict.new(),
+    in_progress: Dict.new(),
     type_index: Dict.new(),
     concrete_func_sigs: Dict.new(),
     capture_layouts: Dict.new(),
@@ -48,8 +49,6 @@ fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
 fn empty_builtins() BuiltinRegistry {
   BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 100 }
 }
-
-fn empty_abi() Dict<Int, AbiContract> { Dict.new() }
 
 fn mk_param(id: Int, ty: MonoType) Param {
   Param.{ local: lid(id), ty: ty }
@@ -184,7 +183,7 @@ pub fn suite() runner.Suite {
 
     .test("empty module passthrough", fn() {
       anf := mk_module([])
-      result := insert_boundaries(anf, empty_registry(), empty_builtins(), empty_abi(), empty_env())
+      result := insert_boundaries(anf, empty_registry(), empty_builtins(), empty_env())
       try assert.int_eq(result.functions.len(), 0)
       .Ok({})
     })
@@ -201,7 +200,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int])
-      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
       try assert.int_eq(count_wraps_expr(result_body), 0)
       try assert.int_eq(count_unwraps_expr(result_body), 0)
@@ -225,10 +224,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int, MonoType.String])
-      builtins := empty_builtins().runtime("test_builtin", "rt.test", "test")
-      builtin_fid := builtins.id("test_builtin").id
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[builtin_fid] = mk_abi([.Anyref, .Anyref], [.Anyref])
+      builtins := empty_builtins().runtime_with_abi("test_builtin", "rt.test", "test", mk_abi([.Anyref, .Anyref], [.Anyref]))
       // Reconstruct with correct fid in the body
       body2: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(builtins.id("test_builtin")), [.ALocal(lid(0)), .ALocal(lid(1))]),
@@ -239,7 +235,7 @@ pub fn suite() runner.Suite {
         .String, body2, mono2)
       anf2 := mk_module([func2])
 
-      result := insert_boundaries(anf2, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf2, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       // Int arg should be wrapped (String arg should not)
@@ -256,10 +252,8 @@ pub fn suite() runner.Suite {
 
     .test("unwraps anyref result to concrete type", fn() {
       // Simulates: let t0 = builtin#50(str_arg) where result is anyref but expected Int
-      builtins := empty_builtins().runtime("get_val", "rt.test", "get")
+      builtins := empty_builtins().runtime_with_abi("get_val", "rt.test", "get", mk_abi([.Anyref], [.Anyref]))
       get_fid := builtins.id("get_val")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[get_fid.id] = mk_abi([.Anyref], [.Anyref])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
@@ -269,7 +263,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int, MonoType.String])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       // Result should be unwrapped from anyref to Int
@@ -285,10 +279,8 @@ pub fn suite() runner.Suite {
 
     .test("no wrap for String at anyref position", fn() {
       // String maps to anyref already — no boundary needed
-      builtins := empty_builtins().runtime("str_fn", "rt.test", "str_fn")
+      builtins := empty_builtins().runtime_with_abi("str_fn", "rt.test", "str_fn", mk_abi([.Anyref], [.Anyref]))
       str_fid := builtins.id("str_fn")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[str_fid.id] = mk_abi([.Anyref], [.Anyref])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(str_fid), [.ALocal(lid(0))]),
@@ -298,7 +290,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.String])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       // String → anyref needs no wrap, anyref → String needs no unwrap
@@ -322,7 +314,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
-      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_unwraps_expr(result_body), 1)
@@ -347,7 +339,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.String, MonoType.Vector(.String)])
-      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_unwraps_expr(result_body), 0)
@@ -368,7 +360,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.String, MonoType.Byte, MonoType.Int])
-      result := insert_boundaries(anf, reg, empty_builtins(), empty_abi(), empty_env())
+      result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_wraps_expr(result_body), 0)
@@ -383,10 +375,8 @@ pub fn suite() runner.Suite {
       // ABI: (anyref) → (anyref)
       // int_arg: Int → needs wrap
       // result: anyref → Int needs unwrap
-      builtins := empty_builtins().runtime("roundtrip", "rt.test", "roundtrip")
+      builtins := empty_builtins().runtime_with_abi("roundtrip", "rt.test", "roundtrip", mk_abi([.Anyref], [.Anyref]))
       rt_fid := builtins.id("roundtrip")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[rt_fid.id] = mk_abi([.Anyref], [.Anyref])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]),
@@ -396,7 +386,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_wraps_expr(result_body), 1)
@@ -408,12 +398,9 @@ pub fn suite() runner.Suite {
 
     .test("no wrap when ABI param is not anyref", fn() {
       // builtin(vec, idx) where ABI is (ref $Array, i32) → no anyref positions
-      builtins := empty_builtins().runtime("vec_len", "rt.arr", "len")
+      builtins := empty_builtins().runtime_with_abi("vec_len", "rt.arr", "len",
+        mk_abi([.Ref(true, .Named("$Array"))], [.I32]))
       len_fid := builtins.id("vec_len")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[len_fid.id] = mk_abi(
-        [.Ref(true, .Named("$Array"))],
-        [.I32])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(len_fid), [.ALocal(lid(0))]),
@@ -425,7 +412,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_wraps_expr(result_body), 0)
@@ -441,12 +428,9 @@ pub fn suite() runner.Suite {
       // vec: Vector<Int> → ref $Array (no wrap, non-anyref ABI)
       // idx: Int → i32 (no wrap, non-anyref ABI)
       // elem: Int → anyref (WRAP needed)
-      builtins := empty_builtins().runtime("arr_set", "rt.arr", "set")
+      builtins := empty_builtins().runtime_with_abi("arr_set", "rt.arr", "set",
+        mk_abi([.Ref(true, .Named("$Array")), .I32, .Anyref], [.Ref(false, .Named("$Array"))]))
       set_fid := builtins.id("arr_set")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[set_fid.id] = mk_abi(
-        [.Ref(true, .Named("$Array")), .I32, .Anyref],
-        [.Ref(false, .Named("$Array"))])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(set_fid), [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))]),
@@ -458,7 +442,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       // Only elem (3rd arg, Int at anyref position) should be wrapped
@@ -473,10 +457,8 @@ pub fn suite() runner.Suite {
     .test("multi-arg wrap + result unwrap: no local ID collision", fn() {
       // builtin(anyref, anyref) → anyref
       // Two Int args need wrapping, result needs unwrapping
-      builtins := empty_builtins().runtime("combine", "rt.test", "combine")
+      builtins := empty_builtins().runtime_with_abi("combine", "rt.test", "combine", mk_abi([.Anyref, .Anyref], [.Anyref]))
       combine_fid := builtins.id("combine")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[combine_fid.id] = mk_abi([.Anyref, .Anyref], [.Anyref])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(combine_fid), [.ALocal(lid(0)), .ALocal(lid(1))]),
@@ -488,7 +470,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Int])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       // Should have 2 wraps + 1 unwrap
@@ -505,6 +487,38 @@ pub fn suite() runner.Suite {
         }
       }
       .Ok({})
+    })
+
+    .test("inserted boundary temps are recorded as Anyref", fn() {
+      builtins := empty_builtins().runtime_with_abi("roundtrip", "rt.test", "roundtrip", mk_abi([.Anyref], [.Anyref]))
+      rt_fid := builtins.id("roundtrip")
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f", [mk_param(0, .Int)], .Int, body, mono)
+      reg := registry_with_layouts([MonoType.Int])
+      result := insert_boundaries(mk_module([func]), reg, builtins, empty_env())
+
+      case result.functions[0].op_result_mono[11] {
+        .Some(ty) => {
+          case ty {
+            .Anyref_ => {},
+            _ => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
+          }
+        },
+        .None => { return assert.fail("missing wrap temp local 11") },
+      }
+      case result.functions[0].op_result_mono[12] {
+        .Some(ty) => {
+          case ty {
+            .Anyref_ => .Ok({}),
+            _ => assert.fail("expected raw result temp local 12 to be typed as Anyref_"),
+          }
+        },
+        .None => assert.fail("missing raw result temp local 12"),
+      }
     })
 
     .test("make_abi_table covers all runtime builtins", fn() {
@@ -558,10 +572,8 @@ pub fn suite() runner.Suite {
     })
 
     .test("wraps Bool arg at anyref position", fn() {
-      builtins := empty_builtins().runtime("store_bool", "rt.test", "store")
+      builtins := empty_builtins().runtime_with_abi("store_bool", "rt.test", "store", mk_abi([.Anyref], [.Anyref]))
       store_fid := builtins.id("store_bool")
-      abi: Dict<Int, AbiContract> = Dict.new()
-      abi[store_fid.id] = mk_abi([.Anyref], [.Anyref])
 
       body: AnfExpr = .Let(lid(10),
         .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
@@ -571,7 +583,7 @@ pub fn suite() runner.Suite {
       anf := mk_module([func])
 
       reg := registry_with_layouts([MonoType.Bool, MonoType.String])
-      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
       try assert.int_eq(count_wraps_expr(result_body), 1)

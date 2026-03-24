@@ -60,6 +60,7 @@ pub fn mono_to_string(ty: resolver.MonoType) String {
     .Byte => "Byte",
     .String => "String",
     .Void => "Void",
+    .Anyref_ => "Anyref",
     .Var(name) => "Var(${name})",
     .Named(tid, args) => {
       if args.len() == 0 {

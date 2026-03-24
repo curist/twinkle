@@ -2,6 +2,7 @@ use tests.runner
 use tests.assert
 use compiler.builtins.{BuiltinRegistry, BuiltinKind, make_builtin_registry}
 use compiler.core_ir.{FuncId}
+use compiler.codegen.wasm_ir.{ValType, AbiContract}
 
 fn empty_registry() BuiltinRegistry {
   BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 0 }
@@ -46,6 +47,34 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("runtime entry carries builtin ABI", fn() {
+      reg := empty_registry().runtime("println", "rt.core", "println")
+      entry := try reg.entry(reg.id("println")).ok_or("missing")
+      try assert.int_eq(entry.abi.param_types.len(), 1)
+      case entry.abi.param_types[0] {
+        .Ref(nullable, .Named(name)) => {
+          try assert.bool_eq(nullable, true)
+          try assert.str_eq(name, "rt_types__String")
+          .Ok({})
+        },
+        _ => .Err("expected println ABI param to be ref null $String"),
+      }
+    })
+
+    .test("intrinsic vector_set_in_place carries array ABI result", fn() {
+      reg := empty_registry().intrinsic("vector_set_in_place")
+      entry := try reg.entry(reg.id("vector_set_in_place")).ok_or("missing")
+      try assert.int_eq(entry.abi.result_types.len(), 1)
+      case entry.abi.result_types[0] {
+        .Ref(nullable, .Named(name)) => {
+          try assert.bool_eq(nullable, false)
+          try assert.str_eq(name, "rt_types__Array")
+          .Ok({})
+        },
+        _ => .Err("expected vector_set_in_place ABI result to be non-null rt_types__Array"),
+      }
+    })
+
     // ── intrinsic registration ──
 
     .test("intrinsic registration assigns auto-incremented id", fn() {
@@ -63,6 +92,19 @@ pub fn suite() runner.Suite {
       case entry.kind {
         .Intrinsic => .Ok({}),
         .Runtime(_) => .Err("expected Intrinsic, got Runtime"),
+      }
+    })
+
+    .test("custom runtime_with_abi overrides default ABI", fn() {
+      reg := empty_registry().runtime_with_abi("custom", "rt.test", "custom", AbiContract.{
+        param_types: [.Anyref],
+        result_types: [.I64],
+      })
+      entry := try reg.entry(reg.id("custom")).ok_or("missing")
+      try assert.int_eq(entry.abi.param_types.len(), 1)
+      case entry.abi.result_types[0] {
+        .I64 => .Ok({}),
+        _ => .Err("expected custom ABI result to be I64"),
       }
     })
 

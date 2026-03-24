@@ -50,8 +50,20 @@ pub fn emit_match(
   result_type: ValType,
   ctx: EmitCtx,
 ) EmitResult {
+  emit_match_with_body_emitter(scrutinee, scrutinee_mono, arms, result_local, result_type, emit_anf_expr_default, ctx)
+}
+
+pub fn emit_match_with_body_emitter(
+  scrutinee: Atom,
+  scrutinee_mono: MonoType,
+  arms: Vector<AnfMatchArm>,
+  result_local: Int,
+  result_type: ValType,
+  body_emitter: fn(AnfExpr, EmitCtx) Vector<Instr>,
+  ctx: EmitCtx,
+) EmitResult {
   scrutinee_instrs := emit_atom(scrutinee, ctx)
-  chain := emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_local, result_type, ctx)
+  chain := emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_local, result_type, body_emitter, ctx)
   chain
 }
 
@@ -83,6 +95,7 @@ fn emit_arm_chain(
   arms: Vector<AnfMatchArm>,
   result_local: Int,
   result_type: ValType,
+  body_emitter: fn(AnfExpr, EmitCtx) Vector<Instr>,
   ctx: EmitCtx,
 ) EmitResult {
   if arms.len() == 0 {
@@ -101,7 +114,7 @@ fn emit_arm_chain(
 
   // Then body: bindings + body expression + store result
   bindings := emit_pattern_bindings(head.pattern, scrutinee_instrs, scrutinee_mono, ctx)
-  body_instrs := emit_anf_expr(head.body, ctx)
+  body_instrs := body_emitter(head.body, ctx)
   head_diverges := expr_always_diverges(head.body)
 
   then_body: Vector<Instr> = []
@@ -112,7 +125,7 @@ fn emit_arm_chain(
   }
 
   // Else body: recurse on tail
-  tail_result := emit_arm_chain(scrutinee_instrs, scrutinee_mono, tail, result_local, result_type, ctx)
+  tail_result := emit_arm_chain(scrutinee_instrs, scrutinee_mono, tail, result_local, result_type, body_emitter, ctx)
   else_body := tail_result.instrs
   tail_diverges := all_arms_diverge(tail)
 
@@ -286,7 +299,7 @@ fn emit_variant_bindings(
 
 // ── ANF expression emission (minimal for match bodies) ─────────────
 
-fn emit_anf_expr(expr: AnfExpr, ctx: EmitCtx) Vector<Instr> {
+fn emit_anf_expr_default(expr: AnfExpr, ctx: EmitCtx) Vector<Instr> {
   case expr {
     .Atom(atom) => emit_atom(atom, ctx),
     .Return(.Some(atom)) => {
@@ -310,7 +323,7 @@ fn emit_anf_expr(expr: AnfExpr, ctx: EmitCtx) Vector<Instr> {
           case ctx.local_map[lid.id] {
             .Some(entry) => {
               out = out.push(Instr.LocalSet(entry.index))
-              body_instrs := emit_anf_expr(body, ctx)
+              body_instrs := emit_anf_expr_default(body, ctx)
               for i in body_instrs { out = out.push(i) }
               out
             },

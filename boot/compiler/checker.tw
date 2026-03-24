@@ -267,6 +267,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnos
     .Byte => { case zb { .Byte => { return .{ ctx, diags } }, _ => {} } },
     .String => { case zb { .String => { return .{ ctx, diags } }, _ => {} } },
     .Void => { case zb { .Void => { return .{ ctx, diags } }, _ => {} } },
+    .Anyref_ => { case zb { .Anyref_ => { return .{ ctx, diags } }, _ => {} } },
     .Vector(ia) => {
       case zb {
         .Vector(ib) => { return ctx.unify(ia, ib, s, diags) },

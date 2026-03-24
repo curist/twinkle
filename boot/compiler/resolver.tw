@@ -25,6 +25,7 @@ pub type MonoType = {
   Byte,
   String,
   Void,
+  Anyref_,   // backend-internal explicit anyref carrier (inserted after ANF lowering)
   Var(String),
   Named(TypeId, Vector<MonoType>),
   Vector(MonoType),
@@ -981,6 +982,7 @@ pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
     .Byte => "Byte",
     .String => "String",
     .Void => "Void",
+    .Anyref_ => "Anyref",
     .Never => "Never",
     .Var(n) => n,
     .MetaVar(id) => "?${id}",
@@ -1018,6 +1020,7 @@ pub fn ty_to_string(ty: MonoType) String {
     .Byte => "Byte",
     .String => "String",
     .Void => "Void",
+    .Anyref_ => "Anyref",
     .Never => "Never",
     .Var(n) => n,
     .MetaVar(id) => "?${id}",

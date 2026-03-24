@@ -75,6 +75,7 @@ pub fn mono_to_key(ty: MonoType) String {
     .Byte => "i32b",
     .String => "str",
     .Void => "void",
+    .Anyref_ => "anyref",
     .Never => "never",
     .Named(tid, args) => {
       base := "t${tid.id}"
@@ -105,17 +106,27 @@ pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
     .Bool => .Scalar(.WI32),
     .Byte => .Scalar(.WI32),
     .Void => .Scalar(.WAnyref),
+    .Anyref_ => .Scalar(.WAnyref),
     .String => .Scalar(.WAnyref),
     .Never => error("layout_of called on Never — must be handled as unreachable"),
     .Named(tid, args) => layout_of_named(tid, args, env),
-    .Vector(elem) => .Vector_(layout_of(elem, env)),
-    .Dict(k, v) => .Dict_(layout_of(k, env), layout_of(v, env)),
+    .Vector(elem) => .Vector_(layout_hint_of(elem, env)),
+    .Dict(k, v) => .Dict_(layout_hint_of(k, env), layout_hint_of(v, env)),
     .Function(params, ret) => layout_of_function(params, ret, env),
     .Optional(inner) => layout_of_optional(inner, env),
     .Result(ok, err) => layout_of_result(ok, err, env),
     .Var(_) => error("layout_of called on Var — must be monomorphized"),
     .MetaVar(_) => error("layout_of called on MetaVar — must be resolved"),
     .ErrorType => error("layout_of called on ErrorType"),
+  }
+}
+
+fn layout_hint_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
+  case val_type_of_mono(ty, env) {
+    .I32 => .Scalar(.WI32),
+    .I64 => .Scalar(.WI64),
+    .F64 => .Scalar(.WF64),
+    _ => .Scalar(.WAnyref),
   }
 }
 
@@ -143,7 +154,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
         WasmFieldLayout.{
           field_id: FieldId.{ id: i },
           name: f.name,
-          val_type: val_type_of(layout_of(field_ty, env)),
+          val_type: val_type_of_mono(field_ty, env),
         }
       }
       .Record(WasmRecordLayout.{
@@ -155,9 +166,9 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
     .Sum(name, type_params, variants) => {
       layout_of_sum_def(tid, args, name, type_params, variants, env)
     },
-    .Alias(_, _, target) => {
+    .Alias(_, type_params, target) => {
       // Resolve alias and compute layout of the target
-      layout_of(subst_type_params(target, [], args), env)
+      layout_of(subst_type_params(target, type_params, args), env)
     },
   }
 }
@@ -176,7 +187,7 @@ fn layout_of_sum_def(
   var_layouts := collect v,i in variants {
     payload_types := collect f in v.fields {
       field_ty := subst_type_params(f, type_params, args)
-      val_type_of(layout_of(field_ty, env))
+      val_type_of_mono(field_ty, env)
     }
     vl := WasmVariantLayout.{
       variant_id: VariantId.{ id: i },
@@ -196,7 +207,7 @@ fn layout_of_sum_def(
 }
 
 fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
-  inner_vt := val_type_of(layout_of(inner, env))
+  inner_vt := val_type_of_mono(inner, env)
   sym := "$Option_${mono_to_key(.Optional(inner))}"
   .Sum(WasmSumLayout.{
     type_id: TypeId.{ id: -1 },
@@ -220,8 +231,8 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
 }
 
 fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
-  ok_vt := val_type_of(layout_of(ok, env))
-  err_vt := val_type_of(layout_of(err, env))
+  ok_vt := val_type_of_mono(ok, env)
+  err_vt := val_type_of_mono(err, env)
   sym := "$Result_${mono_to_key(.Result(ok, err))}"
   .Sum(WasmSumLayout.{
     type_id: TypeId.{ id: -1 },
@@ -245,9 +256,11 @@ fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
 }
 
 fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv) WasmLayout {
-  param_vts := collect p in params { val_type_of(layout_of(p, env)) }
-  ret_layout := layout_of(ret, env)
-  ret_vt: ValType? = .Some(val_type_of(ret_layout))
+  param_vts := collect p in params { val_type_of_mono(p, env) }
+  ret_vt: ValType? = case ret {
+    .Never => .None,
+    _ => .Some(val_type_of_mono(ret, env)),
+  }
   key := mono_to_key(.Function(params, ret))
   .Closure(WasmClosureLayout.{
     closure_sym: "$closure_${key}",
@@ -329,6 +342,35 @@ fn val_type_key(layout: WasmLayout) String {
 pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
   case ty {
     .Never => error("val_type_of_mono called on Never — callers must check first"),
-    _ => val_type_of(layout_of(ty, env)),
+    .Int => .I64,
+    .Float => .F64,
+    .Bool => .I32,
+    .Byte => .I32,
+    .Void => .Anyref,
+    .Anyref_ => .Anyref,
+    .String => .Anyref,
+    .Named(tid, args) => {
+      entry := find_type_entry(env, tid)
+      def := case entry.def {
+        .Some(d) => d,
+        .None => error("val_type_of_mono: TypeId ${tid.id} has no definition"),
+      }
+      case def {
+        .Record(name, _, _) => .Ref(false, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Sum(name, _, _) => .Ref(false, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Alias(_, type_params, target) => val_type_of_mono(subst_type_params(target, type_params, args), env),
+      }
+    },
+    .Vector(_) => .Ref(false, .Named("rt_types__Array")),
+    .Dict(_, _) => .Ref(false, .Named("rt_types__Dict")),
+    .Function(params, ret) => {
+      key := mono_to_key(.Function(params, ret))
+      .Ref(false, .Named("$closure_${key}"))
+    },
+    .Optional(inner) => .Ref(false, .Named("$Option_${mono_to_key(.Optional(inner))}")),
+    .Result(ok, err) => .Ref(false, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
+    .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
+    .MetaVar(_) => error("val_type_of_mono called on MetaVar — must be resolved"),
+    .ErrorType => error("val_type_of_mono called on ErrorType"),
   }
 }

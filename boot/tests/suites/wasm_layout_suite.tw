@@ -35,6 +35,16 @@ fn env_with_sum(name: String, type_id: Int, variants: Vector<ResolvedVariant>) R
   resolver.empty_env().add_type(entry, name)
 }
 
+fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, target: MonoType) ResolvedEnv {
+  entry := TypeEntry.{
+    id: TypeId.{ id: type_id },
+    arity: type_params.len(),
+    def: .Some(ResolvedTypeDef.Alias(name, type_params, target)),
+    span: dummy_span(),
+  }
+  resolver.empty_env().add_type(entry, name)
+}
+
 // ── WasmValType construction ────────────────────────────────────────
 
 fn test_wasm_val_type_variants() Result<Void, String> {
@@ -221,6 +231,37 @@ fn test_layout_closure() Result<Void, String> {
   }
 }
 
+fn test_layout_generic_alias_substitutes_args() Result<Void, String> {
+  env := env_with_alias("Wrapped", 20, ["T"], .Result(.Var("T"), .String))
+  l := layout_of(.Named(TypeId.{ id: 20 }, [.Int]), env)
+  case l {
+    .Sum(sum) => {
+      try assert.int_eq(sum.variants.len(), 2)
+      ok_payload := sum.variants[0].payload_types
+      try assert.int_eq(ok_payload.len(), 1)
+      case ok_payload[0] {
+        .I64 => .Ok({}),
+        _ => assert.fail("expected generic alias payload to substitute Int -> I64"),
+      }
+    },
+    _ => assert.fail("expected alias to resolve to Result sum layout"),
+  }
+}
+
+fn test_layout_closure_never_return() Result<Void, String> {
+  env := resolver.empty_env()
+  l := layout_of(.Function([.Int], .Never), env)
+  case l {
+    .Closure(c) => {
+      case c.result_type {
+        .None => .Ok({}),
+        .Some(_) => assert.fail("expected closure with Never return to have no result type"),
+      }
+    },
+    _ => assert.fail("expected Closure layout"),
+  }
+}
+
 // ── val_type_of ─────────────────────────────────────────────────────
 
 fn test_val_type_of_scalar_i64() Result<Void, String> {
@@ -293,6 +334,12 @@ fn test_val_type_of_mono_bool() Result<Void, String> {
   env := resolver.empty_env()
   vt := val_type_of_mono(.Bool, env)
   case vt { .I32 => .Ok({}), _ => assert.fail("expected I32") }
+}
+
+fn test_val_type_of_mono_anyref_marker() Result<Void, String> {
+  env := resolver.empty_env()
+  vt := val_type_of_mono(.Anyref_, env)
+  case vt { .Anyref => .Ok({}), _ => assert.fail("expected Anyref") }
 }
 
 // ── mono_to_key ─────────────────────────────────────────────────────
@@ -374,6 +421,8 @@ pub fn suite() runner.Suite {
     .test("layout_of Vector", test_layout_vector)
     .test("layout_of Dict", test_layout_dict)
     .test("layout_of Closure", test_layout_closure)
+    .test("layout_of generic Alias substitutes args", test_layout_generic_alias_substitutes_args)
+    .test("layout_of Closure handles Never return", test_layout_closure_never_return)
 
     // val_type_of
     .test("val_type_of Scalar I64", test_val_type_of_scalar_i64)
@@ -387,6 +436,7 @@ pub fn suite() runner.Suite {
     // val_type_of_mono
     .test("val_type_of_mono Int", test_val_type_of_mono_int)
     .test("val_type_of_mono Bool", test_val_type_of_mono_bool)
+    .test("val_type_of_mono Anyref marker", test_val_type_of_mono_anyref_marker)
 
     // mono_to_key
     .test("mono_to_key primitives", test_mono_to_key_primitives)
