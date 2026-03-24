@@ -91,6 +91,18 @@ emit_wat(linked) → String
     - Serializes to WAT S-expressions
 ```
 
+## Current Status
+
+As of 2026-03-24:
+
+- M1-M5 are implemented in the boot compiler and have dedicated boot test
+  suites.
+- `BuiltinEntry` now owns the Wasm ABI contract used by planning and boundary
+  insertion; Phase D no longer depends on a separately threaded ABI side table.
+- Recursive type planning now uses an in-progress registration guard so
+  self-recursive and mutually recursive type graphs terminate during registry
+  construction.
+
 ## Input Types
 
 Phase D consumes these existing types:
@@ -102,7 +114,7 @@ Phase D consumes these existing types:
 | `AnfExpr`, `AnfOp`, `Atom` | `anf.tw` | IR nodes to translate |
 | `MonoType` | `resolver.tw` | Concrete types for layout computation |
 | `ResolvedEnv` | `resolver.tw` | Type definitions (records, sums, aliases) |
-| `BuiltinRegistry` | `builtins.tw` | FuncId → runtime dispatch info |
+| `BuiltinRegistry` | `builtins.tw` | FuncId → runtime dispatch info + Wasm ABI contracts |
 | `LocalId`, `FuncId`, `TypeId`, etc. | `core_ir.tw` | Identity types |
 | `CorePattern` | `core_ir.tw` | Match arm patterns |
 
@@ -409,9 +421,17 @@ specialization policy. The intended end state is to replace shared
 `rt_types__Array` / `rt_types__Dict` with per-instantiation container
 families, as described in [backend-anyref-elimination.md](backend-anyref-elimination.md).
 
-**`val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType`** — shorthand
-composition, with explicit `Never → unreachable` handling: this function
-must trap/error if called on Never (callers must check first).
+For recursive references inside aggregate fields/payloads, the field's Wasm
+value type must be derived directly from `val_type_of_mono(...)`, not by
+structurally re-entering `layout_of(...)` on the entire named type. This keeps
+recursive named fields as direct named refs and avoids infinite expansion.
+
+**`val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType`** — direct
+MonoType→ValType lowering, with explicit `Never → unreachable` handling: this
+function must trap/error if called on Never (callers must check first). For
+named records/sums/closures/options/results, it may synthesize the final named
+ref type directly rather than round-tripping through a fully expanded
+`WasmLayout`.
 
 **Test:** `layout_of(Int)` → `Scalar(WI64)`. `layout_of(Optional(Int))` →
 `Sum(...)` with two variants. `layout_of(Named(Point, []))` → `Record(...)`.
@@ -432,6 +452,11 @@ pub type WasmTypeRegistry = .{
 
   // Lookup: MonoType → layout (cached from layout_of)
   layout_cache: Dict<String, WasmLayout>,
+
+  // Registration guard: MonoType keys currently being expanded.
+  // Required so recursive type graphs do not re-enter layout registration
+  // indefinitely before the outer type is cached.
+  in_progress: Dict<String, Bool>,
 
   // Lookup: layout symbol → TypeDef index
   type_index: Dict<String, Int>,
@@ -498,7 +523,9 @@ pub fn plan_wasm_types(
 1. Walk all `AnfFunctionDef` bodies, collecting every `MonoType` referenced
    (from `op_result_mono`, params, return types, and inline type annotations
    on `ARecord`, `AVariant`, `ARecordGet`, `ARecordUpdate`, `AIndex`).
-2. For each unique MonoType, compute `layout_of` and cache it.
+2. For each unique MonoType, compute `layout_of` and cache it. Registration
+   must mark a key as in-progress before descending into dependencies, so
+   recursive record/sum/alias graphs terminate.
 3. For each layout that requires a Wasm struct/functype definition, register
    the `TypeDef` in the output.
 4. Scan for `AMakeClosure` → build `capture_layouts` and `concrete_func_sigs`.
@@ -509,7 +536,9 @@ pub fn plan_wasm_types(
 
 **Dependency order:** Type definitions must be emitted in dependency order
 (a struct referencing another struct must appear after it). Topological sort
-on type symbol references.
+on type symbol references handles the emission order, but it is not enough on
+its own: recursive graphs must first be made registration-safe via the
+in-progress guard above.
 
 **Test:** Plan a module with a record type, a closure, and an Option variant.
 Verify all three type definitions appear in `type_defs`. Verify no duplicate
