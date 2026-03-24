@@ -1468,6 +1468,11 @@ fn parse_case_expr(c: Cursor) ExprParse {
 
     if c.kind() == .Comma {
       c = c.advance()
+    } else if c.kind() != .RBrace {
+      diagnostics_out = diagnostics_out.push(diagnostic.error(
+        c.span(),
+        "Expected ,",
+      ))
     }
   }
 
@@ -1866,6 +1871,19 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
 
   for c.pos < c.tokens.len() {
     k := c.kind()
+
+    if c.preceded_by_newline() and k != .Dot {
+      break
+    }
+
+    if k == .Dot and c.preceded_by_newline() {
+      if c.at(1).kind() == .LBrace {
+        break
+      }
+      if c.at(1).kind() == .Ident and is_upper_ascii_name(c.at(1).text()) {
+        break
+      }
+    }
 
     if k == .LParen {
       parsed_args := parse_expr_list_ctx(c.advance(), TokenKind.RParen, "expected ',' or ')' in call arguments", .Some("call argument"))

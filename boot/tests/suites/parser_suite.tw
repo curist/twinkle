@@ -1266,6 +1266,65 @@ pub fn suite() runner.Suite {
         _ => assert.fail("expected Field, got ${expr.kind.name()}"),
       }
     })
+    .test("postfix: newline before [ or ( starts a new statement", fn() {
+      block := try parse_first_fn_body("fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }")
+      try assert.int_eq(block.stmts.len(), 3)
+
+      case block.stmts[0] {
+        .Let(_) => {},
+        _ => try assert.fail("expected let stmt"),
+      }
+
+      case block.stmts[1] {
+        .Expr(es) => {
+          case es.expr.kind {
+            .Array(items) => try assert.int_eq(items.len(), 3),
+            _ => try assert.fail("expected array expr stmt"),
+          }
+        },
+        _ => try assert.fail("expected expr stmt"),
+      }
+
+      case block.stmts[2] {
+        .Expr(es) => {
+          case es.expr.kind {
+            .Ident(name) => try assert.str_eq(name, "bar"),
+            _ => try assert.fail("expected ident expr stmt"),
+          }
+        },
+        _ => try assert.fail("expected expr stmt"),
+      }
+
+      case block.tail {
+        .Some(expr) => {
+          case expr.kind {
+            .IntLit(n) => try assert.int_eq(n, 1),
+            _ => try assert.fail("expected grouped int tail expr"),
+          }
+        },
+        .None => try assert.fail("expected tail expr"),
+      }
+
+      .Ok({})
+    })
+    .test("postfix: newline before lowercase . keeps method chaining in boot", fn() {
+      expr := try parse_body_tail("fn f() { foo\n.bar() }")
+      case expr.kind {
+        .Call(callee, args) => {
+          try assert.int_eq(args.len(), 0)
+          case callee.kind {
+            .Field(base, name) => {
+              try assert.str_eq(name, "bar")
+              try assert_expr_kind(base, "Ident")
+            },
+            _ => try assert.fail("expected field callee"),
+          }
+        },
+        _ => try assert.fail("expected call expr"),
+      }
+
+      .Ok({})
+    })
 
     // ── Pub Top-Level Let ────────────────────────────────────────
 

@@ -720,6 +720,15 @@ impl Parser {
                     break;
                 }
 
+                let op_token = self.tokens.get(self.pos).unwrap();
+
+                // Calls and indexing are same-line only. Lowercase dot chains
+                // may continue across lines to keep multiline method chaining
+                // readable.
+                if op_token.preceded_by_newline && op_kind != TokenKind::Dot {
+                    break;
+                }
+
                 // `.Upper` in postfix position is a hard error when the uppercase
                 // identifier is *terminal* (not followed by another `.`).
                 // An intermediate `.Upper.` is allowed as a qualified type prefix
@@ -727,20 +736,23 @@ impl Parser {
                 // `.Upper` (`.Upper(...)` or `.Upper` at end) is a constructor and
                 // must appear in prefix form only.
                 if op_kind == TokenKind::Dot {
-                    let dot_tok = self.tokens.get(self.pos).unwrap();
                     if let Some(next_tok) = self.tokens.get(self.pos + 1) {
-                        // `.{` on a new line — break so it parses as a new
-                        // statement (anonymous record literal in prefix position).
-                        if next_tok.kind == TokenKind::LBrace && dot_tok.preceded_by_newline {
-                            break;
+                        // `.{` and `.Upper` on a new line start a fresh
+                        // expression instead of extending the previous one.
+                        if op_token.preceded_by_newline {
+                            if next_tok.kind == TokenKind::LBrace {
+                                break;
+                            }
+                            if next_tok.kind == TokenKind::Ident
+                                && next_tok.text.starts_with(|c: char| c.is_uppercase())
+                            {
+                                break;
+                            }
                         }
+
                         if next_tok.kind == TokenKind::Ident
                             && next_tok.text.starts_with(|c: char| c.is_uppercase())
                         {
-                            // `.Upper` on a new line — break so it parses as a new statement.
-                            if dot_tok.preceded_by_newline {
-                                break;
-                            }
                             // Same line: if followed by another `.`, it's an intermediate
                             // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise check
                             // if the base is a type path (has an uppercase segment like
@@ -2155,6 +2167,72 @@ mod tests {
         match expr.kind {
             ExprKind::FieldAccess { field, .. } => assert_eq!(field, "x"),
             _ => panic!("Expected field access"),
+        }
+    }
+
+    #[test]
+    fn test_call_and_index_require_same_line() {
+        let source = r#"fn f() {
+foo := "asdf"
+[1, 22, 3]
+bar
+(1)
+}"#;
+        let file = parse_source(source).unwrap();
+
+        let body = match &file.items[0] {
+            Item::Function(func) => &func.body,
+            _ => panic!("Expected function item"),
+        };
+
+        assert_eq!(body.stmts.len(), 4);
+
+        match &body.stmts[0] {
+            Stmt::Let { .. } => {}
+            _ => panic!("Expected first statement to be let binding"),
+        }
+        match &body.stmts[1] {
+            Stmt::Expr(expr) => assert!(matches!(expr.kind, ExprKind::Array { .. })),
+            _ => panic!("Expected second statement to be array literal"),
+        }
+        match &body.stmts[2] {
+            Stmt::Expr(expr) => {
+                assert!(matches!(expr.kind, ExprKind::Ident(ref name) if name == "bar"))
+            }
+            _ => panic!("Expected third statement to be identifier expression"),
+        }
+        match &body.stmts[3] {
+            Stmt::Expr(expr) => assert!(matches!(expr.kind, ExprKind::Literal(Literal::Int(1)))),
+            _ => panic!("Expected fourth statement to be grouped integer expression"),
+        }
+    }
+
+    #[test]
+    fn test_lowercase_method_chain_can_cross_newline() {
+        let source = r#"fn f() {
+foo
+.bar()
+}"#;
+
+        let file = parse_source(source).unwrap();
+        let body = match &file.items[0] {
+            Item::Function(func) => &func.body,
+            _ => panic!("Expected function item"),
+        };
+
+        assert_eq!(body.stmts.len(), 1);
+        match &body.stmts[0] {
+            Stmt::Expr(expr) => match &expr.kind {
+                ExprKind::Call { callee, args } => {
+                    assert!(args.is_empty());
+                    assert!(matches!(
+                        callee.kind,
+                        ExprKind::FieldAccess { ref field, .. } if field == "bar"
+                    ));
+                }
+                _ => panic!("Expected method call expression"),
+            },
+            _ => panic!("Expected expression statement"),
         }
     }
 

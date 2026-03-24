@@ -584,13 +584,18 @@ TypeName =
      - Function declarations, let bindings, parameters, record fields → LowerIdent.
 
    Postfix disambiguation (same-line rule):
-     - expr.lowerIdent    → field access or method call (always valid in postfix).
+     - expr(args)         → call only when "(" is on the same line as expr.
+     - expr[index]        → index only when "[" is on the same line as expr.
+     - expr.lowerIdent    → field access or method call (valid in postfix, even
+                            across a newline for multiline chaining).
      - expr.UpperIdent.   → allowed only as an intermediate qualifier when followed
                             immediately by another "." (e.g. pt.Point.{ ... }).
      - expr.UpperIdent    → PARSE ERROR if UpperIdent is the terminal segment on the
                             same line (ConstructorInPostfix error).
-     - \n.UpperIdent      → NOT postfix; the leading "." on a new line starts a fresh
-                            statement (VariantExpr or constructor path). *)
+     - \n( / \n[         → NOT postfix; the newline ends the preceding expression.
+     - \n.lowerIdent      → still postfix (multiline method/field chain).
+     - \n.UpperIdent      → the leading "." on a new line starts a fresh statement
+                            (VariantExpr or constructor path). *)
 
 Identifier =
     Letter { Letter | Digit | "_" } ;

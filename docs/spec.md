@@ -1510,7 +1510,18 @@ enforced by the parser via the first character of each identifier:
   consumed greedily until a lowercase segment or non-ident token is reached.
   Examples: `Result.Ok(1)`, `http.Header.ContentType`.
 
-**Postfix position** — `.name` after an expression on the **same line**:
+**Postfix position**:
+
+* `expr(args)` and `expr[index]` are postfix only when the `(` or `[` appears on the
+  same line as the preceding expression.
+* `expr.name` remains postfix for lowercase field/method segments even across a newline.
+  This supports multiline chains like:
+
+```tw
+value
+  .trim()
+  .slice(0, 3)
+```
 
 * `.foo` → field access or method call (lowercase required).
 * `.Foo` on the **same line**, not followed by another `.` → **parse error**
@@ -1522,9 +1533,10 @@ enforced by the parser via the first character of each identifier:
 
 **Newline boundary**:
 
-* `.Foo` that begins on a **new line** (the `.` has a newline before it) is **never**
-  treated as postfix. It is parsed as the start of a new statement — a variant literal
-  or qualified constructor path.
+* `(` or `[` that begins on a **new line** is **never** treated as postfix.
+* `.` on a new line is postfix only for lowercase field/method segments.
+* `.{` and `.Foo` that begin on a new line start a fresh dot-prefix expression instead
+  (record literal, variant literal, or qualified constructor path).
 
 This rule makes the following code unambiguous:
 
@@ -1537,9 +1549,10 @@ fn double_parsed(s: String) Result<Int, String> {
 
 ### Rationale
 
-Capitalisation-based disambiguation removes the need for newline-sensitive parsing
-in the common case. Programs that place a `.Variant` on a new line after a `let`
-always work as intended. The only rule a user needs to remember is:
+Capitalisation-based disambiguation still handles constructor-vs-field ambiguity.
+The stricter newline rule on calls and indexing prevents accidental statement
+continuation, while lowercase dot chaining stays newline-friendly for readability.
+The main naming rule remains:
 **types and variants are PascalCase; everything else is lowercase**.
 
 ---

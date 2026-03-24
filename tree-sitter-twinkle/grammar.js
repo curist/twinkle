@@ -76,8 +76,7 @@ module.exports = grammar({
     ),
 
     // Optional explicit semicolon separator. Newlines are whitespace (in extras)
-    // and statement boundaries are determined by grammar structure — this allows
-    // method-chain continuation across newlines (e.g. foo\n  .bar()).
+    // and statement boundaries are determined by grammar structure.
     _terminator: $ => ';',
 
     // ===== Type Declarations =====
@@ -304,10 +303,10 @@ module.exports = grammar({
       $._primary_expression,
     ),
 
-    call_expression: $ => prec.dynamic(1, prec('postfix', seq(
+    call_expression: $ => prec.left('postfix', seq(
       field('function', $._postfix_expression),
       field('arguments', $.argument_list),
-    ))),
+    )),
 
     argument_list: $ => seq(
       '(',
@@ -324,10 +323,10 @@ module.exports = grammar({
     field_access: $ => prec('postfix', seq(
       field('object', $._postfix_expression),
       '.',
-      field('field', $.identifier),
+      field('field', alias($._lower_identifier, $.identifier)),
     )),
 
-    index_access: $ => prec('postfix', seq(
+    index_access: $ => prec.left('postfix', seq(
       field('object', $._postfix_expression),
       '[',
       field('index', $._expression),
@@ -354,7 +353,7 @@ module.exports = grammar({
 
     variant_expression: $ => prec.dynamic(-1, seq(
       '.',
-      field('variant', alias(token(/[A-Z][a-zA-Z0-9_]*/), $.identifier)),
+      field('variant', alias($._upper_identifier, $.identifier)),
       optional(seq('(', $.arguments, ')')),
     )),
 
@@ -679,6 +678,8 @@ module.exports = grammar({
 
     // ===== Lexical Rules =====
 
+    _lower_identifier: _ => token(prec(1, /[a-z][a-zA-Z0-9_]*/)),
+    _upper_identifier: _ => token(prec(1, /[A-Z][a-zA-Z0-9_]*/)),
     identifier: $ => /[a-zA-Z][a-zA-Z0-9_]*/,
 
     comment: $ => token(seq('//', /.*/)),
@@ -711,8 +712,8 @@ module.exports = grammar({
     // Binary precedence edge cases
     [$.shift_expression, $.additive_expression],
     // Postfix vs unary (e.g. -x.y, -f(), -a[0])
-    [$.unary_expression, $.field_access],
     [$.unary_expression, $.call_expression],
+    [$.unary_expression, $.field_access],
     [$.unary_expression, $.index_access],
   ],
 });
