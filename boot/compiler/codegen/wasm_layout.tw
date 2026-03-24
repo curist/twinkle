@@ -251,8 +251,8 @@ fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv)
   key := mono_to_key(.Function(params, ret))
   .Closure(WasmClosureLayout.{
     closure_sym: "$closure_${key}",
-    universal_func_type_sym: "$ClosureFunc",
-    env_sym: "$ClosureEnv",
+    universal_func_type_sym: "rt_types__ClosureFunc",
+    env_sym: "rt_types__ClosureEnv",
     typed_func_type_sym: "$ft_${key}",
     param_types: param_vts,
     result_type: ret_vt,
@@ -298,8 +298,8 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Record(r) => .Ref(false, .Named(r.sym)),
     .Sum(s) => .Ref(false, .Named(s.sym)),
     .Closure(c) => .Ref(false, .Named(c.closure_sym)),
-    .Vector_(_) => .Ref(false, .Named("$Array")),
-    .Dict_(_, _) => .Ref(false, .Named("$Dict")),
+    .Vector_(_) => .Ref(false, .Named("rt_types__Array")),
+    .Dict_(_, _) => .Ref(false, .Named("rt_types__Dict")),
     .Iterator_(it) => .Ref(false, .Named(it.state_sym)),
     .Cell_(inner) => {
       key := val_type_key(inner)

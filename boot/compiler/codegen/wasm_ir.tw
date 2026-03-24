@@ -196,3 +196,10 @@ pub type WasmModule = .{
   data: Vector<DataSegment>,
   start: String?,
 }
+
+// ── ABI contract ─────────────────────────────────────────────────────
+
+pub type AbiContract = .{
+  param_types: Vector<ValType>,    // exact Wasm param types per position
+  result_types: Vector<ValType>,   // exact Wasm result types
+}

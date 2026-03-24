@@ -9,12 +9,12 @@ use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,
 }
-use compiler.codegen.wasm_ir.{ValType, HeapType}
+use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
 use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, val_type_of, mono_to_key}
 use compiler.codegen.wasm_plan.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
 }
-use compiler.codegen.insert_boundaries.{AbiContract, insert_boundaries}
+use compiler.codegen.insert_boundaries.{insert_boundaries, make_abi_table}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -130,6 +130,14 @@ fn count_unwraps_op(op: AnfOp) Int {
     .ALoop(inner) => count_unwraps_expr(inner),
     .ADefer(inner) => count_unwraps_expr(inner),
     _ => 0,
+  }
+}
+
+// Collect all let-bound local IDs (to check for duplicates)
+fn collect_let_locals(expr: AnfExpr) Vector<Int> {
+  case expr {
+    .Let(local, _, body) => [local.id].concat(collect_let_locals(body)),
+    _ => [],
   }
 }
 
@@ -461,6 +469,93 @@ pub fn suite() runner.Suite {
     })
 
     // ── Wraps Bool at anyref position ──
+
+    .test("multi-arg wrap + result unwrap: no local ID collision", fn() {
+      // builtin(anyref, anyref) → anyref
+      // Two Int args need wrapping, result needs unwrapping
+      builtins := empty_builtins().runtime("combine", "rt.test", "combine")
+      combine_fid := builtins.id("combine")
+      abi: Dict<Int, AbiContract> = Dict.new()
+      abi[combine_fid.id] = mk_abi([.Anyref, .Anyref], [.Anyref])
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(combine_fid), [.ALocal(lid(0)), .ALocal(lid(1))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      func := mk_func_def(1, "f",
+        [mk_param(0, .Int), mk_param(1, .Int)],
+        .Int, body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int])
+      result := insert_boundaries(anf, reg, builtins, abi, empty_env())
+      result_body := result.functions[0].body
+
+      // Should have 2 wraps + 1 unwrap
+      try assert.int_eq(count_wraps_expr(result_body), 2)
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
+
+      // All let-bound locals should be unique (no ID collision)
+      locals := collect_let_locals(result_body)
+      seen: Dict<Int, Bool> = Dict.new()
+      for id in locals {
+        case seen[id] {
+          .Some(_) => { return assert.fail("duplicate local ID: ${id}") },
+          .None => { seen[id] = true },
+        }
+      }
+      .Ok({})
+    })
+
+    .test("make_abi_table covers all runtime builtins", fn() {
+      builtins := bi.make_builtin_registry()
+      table := make_abi_table(builtins)
+
+      // Spot-check a few key entries
+      // println: (ref null $String) → void
+      println_fid := bi.id(builtins, "println")
+      case table[println_fid.id] {
+        .Some(abi) => {
+          try assert.int_eq(abi.param_types.len(), 1)
+          try assert.int_eq(abi.result_types.len(), 0)
+        },
+        .None => { return assert.fail("missing abi for println") },
+      }
+
+      // dict_set: (ref null $Dict, anyref, anyref) → (ref $Dict)
+      dict_set_fid := bi.id(builtins, "dict_set")
+      case table[dict_set_fid.id] {
+        .Some(abi) => {
+          try assert.int_eq(abi.param_types.len(), 3)
+          try assert.int_eq(abi.result_types.len(), 1)
+          // Second param should be anyref (key)
+          case abi.param_types[1] { .Anyref => {}, _ => { return assert.fail("dict_set param 1 should be anyref") } }
+        },
+        .None => { return assert.fail("missing abi for dict_set") },
+      }
+
+      // int_to_string: (i64) → (ref $String)
+      its_fid := bi.id(builtins, "int_to_string")
+      case table[its_fid.id] {
+        .Some(abi) => {
+          try assert.int_eq(abi.param_types.len(), 1)
+          case abi.param_types[0] { .I64 => {}, _ => { return assert.fail("int_to_string param should be I64") } }
+        },
+        .None => { return assert.fail("missing abi for int_to_string") },
+      }
+
+      // vector_set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
+      vs_fid := bi.id(builtins, "vector_set_unsafe")
+      case table[vs_fid.id] {
+        .Some(abi) => {
+          try assert.int_eq(abi.param_types.len(), 3)
+          case abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector_set_unsafe param 2 should be anyref") } }
+        },
+        .None => { return assert.fail("missing abi for vector_set_unsafe") },
+      }
+
+      .Ok({})
+    })
 
     .test("wraps Bool arg at anyref position", fn() {
       builtins := empty_builtins().runtime("store_bool", "rt.test", "store")

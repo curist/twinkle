@@ -9,7 +9,8 @@ use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,
 }
-use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
+use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef, AbiContract}
+use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
 use compiler.codegen.wasm_layout.{
   WasmLayout, WasmValType, WasmRecordLayout, WasmFieldLayout,
   WasmSumLayout, WasmVariantLayout, WasmClosureLayout, WasmIteratorLayout,
@@ -53,6 +54,7 @@ pub fn plan_wasm_types(
   input: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
+  abi_table: Dict<Int, AbiContract>,
 ) WasmTypeRegistry {
   reg := WasmTypeRegistry.{
     type_defs: [],
@@ -63,6 +65,12 @@ pub fn plan_wasm_types(
     module_globals: Dict.new(),
     string_pool: Dict.new(),
     runtime_imports: [],
+  }
+
+  // Build FuncId → AnfFunctionDef lookup for closure sig resolution
+  func_map: Dict<Int, AnfFunctionDef> = Dict.new()
+  for func in input.functions {
+    func_map[func.func_id.id] = func
   }
 
   // Walk all functions to collect types, strings, closures, and runtime calls
@@ -81,7 +89,32 @@ pub fn plan_wasm_types(
       reg = register_mono(reg, mono_val, env)
     }
     // Walk function body
-    reg = walk_expr(reg, func.body, env, builtins)
+    reg = walk_expr(reg, func.body, env, builtins, func_map, func, abi_table)
+  }
+
+  // Compute module globals: locals bound in __init__ and referenced by other functions
+  case input.init_func_id {
+    .Some(init_fid) => {
+      init_bound: Dict<Int, Bool> = Dict.new()
+      for f in input.functions {
+        if f.func_id.id == init_fid.id {
+          init_bound = collect_bound_locals(f.body)
+        }
+      }
+      for f in input.functions {
+        if f.func_id.id != init_fid.id {
+          declared: Dict<Int, Bool> = Dict.new()
+          for p in f.params { declared[p.local.id] = true }
+          free := collect_free_locals(f.body, declared)
+          for k in free.keys() {
+            if set_has(init_bound, k) {
+              reg.module_globals[k] = "global_local_${k}"
+            }
+          }
+        }
+      }
+    },
+    .None => {},
   }
 
   reg
@@ -152,7 +185,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
             FieldDef.{ name: .Some("env"), mutable: false, ty: .Anyref },
             FieldDef.{ name: .Some("typed_func"), mutable: false, ty: .Funcref },
           ]
-          td: TypeDef = .Struct(c.closure_sym, fields, .Some("$Closure"), true)
+          td: TypeDef = .Struct(c.closure_sym, fields, .Some("rt_types__Closure"), true)
           reg.type_index[c.closure_sym] = reg.type_defs.len()
           reg.type_defs = reg.type_defs.push(td)
           reg
@@ -165,11 +198,11 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
 
 // ── ANF walking ─────────────────────────────────────────────────────
 
-fn walk_expr(reg: WasmTypeRegistry, expr: AnfExpr, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+fn walk_expr(reg: WasmTypeRegistry, expr: AnfExpr, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, AnfFunctionDef>, current_func: AnfFunctionDef, abi_table: Dict<Int, AbiContract>) WasmTypeRegistry {
   case expr {
     .Let(local, op, body) => {
-      reg = walk_op(reg, op, env, builtins)
-      walk_expr(reg, body, env, builtins)
+      reg = walk_op(reg, op, env, builtins, func_map, current_func, abi_table)
+      walk_expr(reg, body, env, builtins, func_map, current_func, abi_table)
     },
     .Atom(a) => walk_atom(reg, a),
     .Return(a_opt) => {
@@ -195,7 +228,7 @@ fn walk_atom(reg: WasmTypeRegistry, atom: Atom) WasmTypeRegistry {
   }
 }
 
-fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, AnfFunctionDef>, current_func: AnfFunctionDef, abi_table: Dict<Int, AbiContract>) WasmTypeRegistry {
   case op {
     .ACall(callee, args) => {
       reg = walk_atom(reg, callee)
@@ -207,7 +240,7 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
             .Some(entry) => {
               case entry.kind {
                 .Runtime(info) => {
-                  reg = register_runtime_import(reg, entry, info)
+                  reg = register_runtime_import(reg, entry, info, abi_table)
                 },
                 .Intrinsic => {},
               }
@@ -221,28 +254,39 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
     },
     .AIf(cond, then_body, else_body) => {
       reg = walk_atom(reg, cond)
-      reg = walk_expr(reg, then_body, env, builtins)
-      walk_expr(reg, else_body, env, builtins)
+      reg = walk_expr(reg, then_body, env, builtins, func_map, current_func, abi_table)
+      walk_expr(reg, else_body, env, builtins, func_map, current_func, abi_table)
     },
     .AMatch(scrutinee, arms) => {
       reg = walk_atom(reg, scrutinee)
       for arm in arms {
-        reg = walk_expr(reg, arm.body, env, builtins)
+        reg = walk_expr(reg, arm.body, env, builtins, func_map, current_func, abi_table)
       }
       reg
     },
-    .ALoop(body) => walk_expr(reg, body, env, builtins),
+    .ALoop(body) => walk_expr(reg, body, env, builtins, func_map, current_func, abi_table),
     .ABinOp(_, left, right, _) => {
       reg = walk_atom(reg, left)
       walk_atom(reg, right)
     },
     .AUnOp(_, operand, _) => walk_atom(reg, operand),
     .AMakeClosure(fid, free_vars) => {
-      // Register capture layout
+      // Register capture layout with resolved types
       captures := collect fv in free_vars {
-        CaptureEntry.{ local_id: fv, ty: MonoType.Void }
+        CaptureEntry.{ local_id: fv, ty: resolve_local_type(current_func, fv) }
       }
       reg.capture_layouts[fid.id] = captures
+      // Register concrete function signature from target function
+      case func_map[fid.id] {
+        .Some(target) => {
+          sig := FuncSigEntry.{
+            param_types: collect p in target.params { p.ty },
+            return_type: target.return_ty,
+          }
+          reg.concrete_func_sigs[fid.id] = sig
+        },
+        .None => {},
+      }
       reg
     },
     .ARecord(tid, fields) => {
@@ -289,11 +333,19 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
     .Some(_) => reg,
     .None => {
       idx := reg.string_pool.len()
+      // Compute byte offset: sum of all existing entries' byte_len
+      offset := 0
+      for k in reg.string_pool.keys() {
+        case reg.string_pool[k] {
+          .Some(existing) => { offset = offset + existing.byte_len },
+          .None => {},
+        }
+      }
       entry := StringPoolEntry.{
         global_sym: "$str_${idx}",
         getter_sym: "$str_${idx}_get",
         data_segment_name: "$data_strings",
-        byte_offset: 0,
+        byte_offset: offset,
         byte_len: s.len(),
       }
       reg.string_pool[s] = entry
@@ -304,23 +356,44 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
 
 // ── Runtime imports ─────────────────────────────────────────────────
 
-fn register_runtime_import(reg: WasmTypeRegistry, entry: BuiltinEntry, info: RuntimeInfo) WasmTypeRegistry {
+fn register_runtime_import(reg: WasmTypeRegistry, entry: BuiltinEntry, info: RuntimeInfo, abi_table: Dict<Int, AbiContract>) WasmTypeRegistry {
   // Check if already registered
   for imp in reg.runtime_imports {
     if imp.as_sym == "${info.wasm_module}__${info.wasm_name}" {
       return reg
     }
   }
-  // Create import with placeholder signature (will be refined in M4 with AbiContract)
+  // Use ABI contract for exact Wasm-level param/result types
+  params: Vector<ValType> = []
+  results: Vector<ValType> = []
+  case abi_table[entry.func_id.id] {
+    .Some(abi) => {
+      params = abi.param_types
+      results = abi.result_types
+    },
+    .None => {},
+  }
   imp := ImportDef.{
     module: info.wasm_module,
     name: info.wasm_name,
     as_sym: "${info.wasm_module}__${info.wasm_name}",
-    params: [],
-    results: [],
+    params: params,
+    results: results,
   }
   reg.runtime_imports = reg.runtime_imports.push(imp)
   reg
+}
+
+fn resolve_local_type(func: AnfFunctionDef, local: LocalId) MonoType {
+  // Check params first
+  for p in func.params {
+    if p.local.id == local.id { return p.ty }
+  }
+  // Then op_result_mono
+  case func.op_result_mono[local.id] {
+    .Some(ty) => ty,
+    .None => MonoType.Void,
+  }
 }
 
 fn unwrap_or(opt: MonoType?, default: MonoType) MonoType {
