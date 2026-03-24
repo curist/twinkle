@@ -98,14 +98,6 @@
 (parameter
   name: (identifier) @variable.parameter)
 
-; Function calls
-(call_expression
-  function: (identifier) @function.call)
-
-(call_expression
-  function: (field_access
-    field: (identifier) @function.method.call))
-
 ; Fields
 (field_access
   field: (identifier) @property)
@@ -115,6 +107,14 @@
 
 (record_field_declaration
   name: (identifier) @property)
+
+; Function calls - after fields so method calls take priority over property
+(call_expression
+  function: (identifier) @function.call)
+
+(call_expression
+  function: (field_access
+    field: (identifier) @function.method.call))
 
 ; Variants - high priority for constructors
 (variant_expression
@@ -150,9 +150,11 @@
 
 ; Punctuation
 [
+  "("
   ")"
   "{"
   "}"
+  "["
   "]"
 ] @punctuation.bracket
 

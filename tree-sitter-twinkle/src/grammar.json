@@ -1511,28 +1511,32 @@
       ]
     },
     "call_expression": {
-      "type": "PREC_LEFT",
-      "value": "postfix",
+      "type": "PREC_DYNAMIC",
+      "value": 1,
       "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "FIELD",
-            "name": "function",
-            "content": {
-              "type": "SYMBOL",
-              "name": "_postfix_expression"
+        "type": "PREC",
+        "value": "postfix",
+        "content": {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "function",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_postfix_expression"
+              }
+            },
+            {
+              "type": "FIELD",
+              "name": "arguments",
+              "content": {
+                "type": "SYMBOL",
+                "name": "argument_list"
+              }
             }
-          },
-          {
-            "type": "FIELD",
-            "name": "arguments",
-            "content": {
-              "type": "SYMBOL",
-              "name": "argument_list"
-            }
-          }
-        ]
+          ]
+        }
       }
     },
     "argument_list": {
@@ -1619,20 +1623,15 @@
             "type": "FIELD",
             "name": "field",
             "content": {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_lower_identifier"
-              },
-              "named": true,
-              "value": "identifier"
+              "type": "SYMBOL",
+              "name": "identifier"
             }
           }
         ]
       }
     },
     "index_access": {
-      "type": "PREC_LEFT",
+      "type": "PREC",
       "value": "postfix",
       "content": {
         "type": "SEQ",
@@ -1738,8 +1737,11 @@
             "content": {
               "type": "ALIAS",
               "content": {
-                "type": "SYMBOL",
-                "name": "_upper_identifier"
+                "type": "TOKEN",
+                "content": {
+                  "type": "PATTERN",
+                  "value": "[A-Z][a-zA-Z0-9_]*"
+                }
               },
               "named": true,
               "value": "identifier"
@@ -3138,28 +3140,6 @@
         }
       ]
     },
-    "_lower_identifier": {
-      "type": "TOKEN",
-      "content": {
-        "type": "PREC",
-        "value": 1,
-        "content": {
-          "type": "PATTERN",
-          "value": "[a-z][a-zA-Z0-9_]*"
-        }
-      }
-    },
-    "_upper_identifier": {
-      "type": "TOKEN",
-      "content": {
-        "type": "PREC",
-        "value": 1,
-        "content": {
-          "type": "PATTERN",
-          "value": "[A-Z][a-zA-Z0-9_]*"
-        }
-      }
-    },
     "identifier": {
       "type": "PATTERN",
       "value": "[a-zA-Z][a-zA-Z0-9_]*"
@@ -3211,11 +3191,11 @@
     ],
     [
       "unary_expression",
-      "call_expression"
+      "field_access"
     ],
     [
       "unary_expression",
-      "field_access"
+      "call_expression"
     ],
     [
       "unary_expression",

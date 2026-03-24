@@ -13,7 +13,7 @@ result := add(1, 2)
 
 // Method calls
 text := str.len()
-//          ^^^ property
+//          ^^^ function.method.call
 
 // Anonymous functions
 mapper := fn(x: Int) Int { x * 2 }
@@ -22,4 +22,4 @@ mapper := fn(x: Int) Int { x * 2 }
 // Higher-order functions
 nums := [1, 2, 3]
 doubled := nums.map(fn(x) { x * 2 })
-//              ^^^ property
+//              ^^^ function.method.call
