@@ -1,0 +1,335 @@
+use tests.runner
+use tests.assert
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef, ExportDef, WasmModule,
+}
+use compiler.codegen.wat.{emit_wat}
+use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.runtime.core as rt_core
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn contains(haystack: String, needle: String) Bool {
+  if needle.len() > haystack.len() { return false }
+  if needle.len() == 0 { return true }
+  for i in range(haystack.len() - needle.len() + 1) {
+    if haystack.slice(i, i + needle.len()) == needle { return true }
+  }
+  false
+}
+
+fn find_type(types: Vector<TypeDef>, name: String) TypeDef? {
+  for td in types {
+    case td {
+      .Struct(n, _, _, _) => { if n == name { return .Some(td) } },
+      .Array(n, _) => { if n == name { return .Some(td) } },
+      .FuncType(n, _, _) => { if n == name { return .Some(td) } },
+    }
+  }
+  .None
+}
+
+fn type_count(m: WasmModule) Int { m.types.len() }
+
+// ── rt.types tests ──────────────────────────────────────────────────
+
+fn test_rt_types_namespace() Result<Void, String> {
+  m := rt_types.module()
+  try assert.str_eq(m.namespace, "rt.types")
+  .Ok({})
+}
+
+fn test_rt_types_count() Result<Void, String> {
+  m := rt_types.module()
+  try assert.int_eq(type_count(m), 11)
+  .Ok({})
+}
+
+fn test_rt_types_no_funcs() Result<Void, String> {
+  m := rt_types.module()
+  try assert.int_eq(m.funcs.len(), 0)
+  try assert.int_eq(m.imports.len(), 0)
+  try assert.int_eq(m.exports.len(), 0)
+  .Ok({})
+}
+
+fn test_rt_types_array() Result<Void, String> {
+  m := rt_types.module()
+  // First type should be Array
+  td := m.types[0]
+  case td {
+    .Array(name, elem) => {
+      try assert.str_eq(name, "Array")
+      try assert.ok(elem.mutable, "Array should be mutable")
+      try assert.ok(case elem.ty { .Anyref => true, _ => false }, "Array elem should be anyref")
+    },
+    _ => { return assert.fail("first type should be Array") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_string() Result<Void, String> {
+  m := rt_types.module()
+  // Second type should be String
+  td := m.types[1]
+  case td {
+    .Array(name, elem) => {
+      try assert.str_eq(name, "String")
+      try assert.ok(elem.mutable, "String should be mutable")
+      try assert.ok(case elem.ty { .I8 => true, _ => false }, "String elem should be i8")
+    },
+    _ => { return assert.fail("second type should be String array") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_dict_entry() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "DictEntry") {
+    .Some(.Struct(_, fields, _, _)) => {
+      try assert.int_eq(fields.len(), 2)
+      try assert.ok(case fields[0].name { .Some(n) => n == "key", .None => false }, "field 0 should be key")
+      try assert.ok(case fields[1].name { .Some(n) => n == "val", .None => false }, "field 1 should be val")
+    },
+    _ => { return assert.fail("missing DictEntry type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_closure_non_final() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "Closure") {
+    .Some(.Struct(_, fields, _, is_final)) => {
+      try assert.ok(!is_final, "Closure should be non-final (sub)")
+      try assert.int_eq(fields.len(), 2)
+    },
+    _ => { return assert.fail("missing Closure type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_variant() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "Variant") {
+    .Some(.Struct(_, fields, _, _)) => {
+      try assert.int_eq(fields.len(), 3)
+      try assert.ok(case fields[0].ty { .I32 => true, _ => false }, "type_id should be i32")
+      try assert.ok(case fields[1].ty { .I32 => true, _ => false }, "variant_id should be i32")
+    },
+    _ => { return assert.fail("missing Variant type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_boxed_int() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "BoxedInt") {
+    .Some(.Struct(_, fields, _, _)) => {
+      try assert.int_eq(fields.len(), 1)
+      try assert.ok(case fields[0].ty { .I64 => true, _ => false }, "BoxedInt.v should be i64")
+    },
+    _ => { return assert.fail("missing BoxedInt type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_boxed_float() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "BoxedFloat") {
+    .Some(.Struct(_, fields, _, _)) => {
+      try assert.int_eq(fields.len(), 1)
+      try assert.ok(case fields[0].ty { .F64 => true, _ => false }, "BoxedFloat.v should be f64")
+    },
+    _ => { return assert.fail("missing BoxedFloat type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_iter_state_non_final() Result<Void, String> {
+  m := rt_types.module()
+  case find_type(m.types, "IterState") {
+    .Some(.Struct(_, fields, _, is_final)) => {
+      try assert.ok(!is_final, "IterState should be non-final (sub)")
+      try assert.int_eq(fields.len(), 2)
+    },
+    _ => { return assert.fail("missing IterState type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_emits_wat() Result<Void, String> {
+  m := rt_types.module()
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(module"), "WAT should contain (module")
+  try assert.ok(contains(wat, "$Array"), "WAT should contain Array type")
+  try assert.ok(contains(wat, "$Closure"), "WAT should contain Closure type")
+  try assert.ok(contains(wat, "$String"), "WAT should contain String type")
+  .Ok({})
+}
+
+// ── rt.core tests ───────────────────────────────────────────────────
+
+fn test_rt_core_namespace() Result<Void, String> {
+  m := rt_core.module()
+  try assert.str_eq(m.namespace, "rt.core")
+  .Ok({})
+}
+
+fn test_rt_core_func_count() Result<Void, String> {
+  m := rt_core.module()
+  try assert.int_eq(m.funcs.len(), 6)
+  .Ok({})
+}
+
+fn test_rt_core_exports_all_funcs() Result<Void, String> {
+  m := rt_core.module()
+  try assert.int_eq(m.exports.len(), m.funcs.len())
+  for f in m.funcs {
+    found := false
+    for exp in m.exports {
+      if exp.func_sym == f.name { found = true }
+    }
+    try assert.ok(found, "function ${f.name} should be exported")
+  }
+  .Ok({})
+}
+
+fn test_rt_core_host_imports() Result<Void, String> {
+  m := rt_core.module()
+  host_count := 0
+  found_print := false
+  found_println := false
+  found_error := false
+  found_eprint := false
+  found_eprintln := false
+  for imp in m.imports {
+    if imp.module == "host" {
+      host_count = host_count + 1
+      if imp.name == "print" { found_print = true }
+      if imp.name == "println" { found_println = true }
+      if imp.name == "error" { found_error = true }
+      if imp.name == "eprint" { found_eprint = true }
+      if imp.name == "eprintln" { found_eprintln = true }
+    }
+  }
+  try assert.int_eq(host_count, 5)
+  try assert.ok(found_print, "should import host.print")
+  try assert.ok(found_println, "should import host.println")
+  try assert.ok(found_error, "should import host.error")
+  try assert.ok(found_eprint, "should import host.eprint")
+  try assert.ok(found_eprintln, "should import host.eprintln")
+  .Ok({})
+}
+
+fn test_rt_core_str_eq_import() Result<Void, String> {
+  m := rt_core.module()
+  found := false
+  for imp in m.imports {
+    if imp.module == "rt.str" and imp.name == "eq" {
+      found = true
+      try assert.str_eq(imp.as_sym, "rt_str__eq")
+      try assert.int_eq(imp.params.len(), 2)
+      try assert.int_eq(imp.results.len(), 1)
+    }
+  }
+  try assert.ok(found, "should import rt.str.eq")
+  .Ok({})
+}
+
+fn find_func(funcs: Vector<FuncDef>, name: String) FuncDef? {
+  for f in funcs {
+    if f.name == name { return .Some(f) }
+  }
+  .None
+}
+
+fn test_rt_core_print_delegates() Result<Void, String> {
+  m := rt_core.module()
+  f := try find_func(m.funcs, "print").ok_or("missing print func")
+  try assert.int_eq(f.params.len(), 1)
+  // Body should call host_print
+  found := false
+  for instr in f.body {
+    case instr {
+      .Call(sym) => { if sym == "host_print" { found = true } },
+      _ => {},
+    }
+  }
+  try assert.ok(found, "print should call host_print")
+  .Ok({})
+}
+
+fn test_rt_core_trap_unreachable() Result<Void, String> {
+  m := rt_core.module()
+  f := try find_func(m.funcs, "trap").ok_or("missing trap func")
+  found_call := false
+  found_unreachable := false
+  for instr in f.body {
+    case instr {
+      .Call(sym) => { if sym == "host_error" { found_call = true } },
+      .Unreachable => { found_unreachable = true },
+      _ => {},
+    }
+  }
+  try assert.ok(found_call, "trap should call host_error")
+  try assert.ok(found_unreachable, "trap should end with unreachable")
+  .Ok({})
+}
+
+fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
+  m := rt_core.module()
+  f := try find_func(m.funcs, "eq").ok_or("missing eq func")
+  try assert.int_eq(f.params.len(), 2)
+  try assert.int_eq(f.results.len(), 1)
+  // Should contain RefTest for BoxedInt
+  found_ref_test := false
+  found_ref_eq := false
+  for instr in f.body {
+    case instr {
+      .RefTest(_, .Named(n)) => { if n == "rt_types__BoxedInt" { found_ref_test = true } },
+      .RefEq => { found_ref_eq = true },
+      _ => {},
+    }
+  }
+  try assert.ok(found_ref_test, "eq should use ref.test for BoxedInt")
+  try assert.ok(found_ref_eq, "eq should use ref.eq for identity check")
+  .Ok({})
+}
+
+fn test_rt_core_emits_wat() Result<Void, String> {
+  m := rt_core.module()
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(func $print"), "WAT should contain print func")
+  try assert.ok(contains(wat, "(func $eq"), "WAT should contain eq func")
+  try assert.ok(contains(wat, "ref.test"), "WAT should contain ref.test")
+  .Ok({})
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("runtime modules (M10)")
+    // rt.types
+    .test("rt.types: namespace", test_rt_types_namespace)
+    .test("rt.types: 11 type definitions", test_rt_types_count)
+    .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
+    .test("rt.types: Array is mutable anyref array", test_rt_types_array)
+    .test("rt.types: String is mutable i8 array", test_rt_types_string)
+    .test("rt.types: DictEntry has key/val fields", test_rt_types_dict_entry)
+    .test("rt.types: Closure is non-final", test_rt_types_closure_non_final)
+    .test("rt.types: Variant has 3 fields", test_rt_types_variant)
+    .test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int)
+    .test("rt.types: BoxedFloat has f64 field", test_rt_types_boxed_float)
+    .test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final)
+    .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
+    // rt.core
+    .test("rt.core: namespace", test_rt_core_namespace)
+    .test("rt.core: 6 functions", test_rt_core_func_count)
+    .test("rt.core: exports all funcs", test_rt_core_exports_all_funcs)
+    .test("rt.core: 5 host imports", test_rt_core_host_imports)
+    .test("rt.core: imports rt.str.eq", test_rt_core_str_eq_import)
+    .test("rt.core: print delegates to host", test_rt_core_print_delegates)
+    .test("rt.core: trap ends with unreachable", test_rt_core_trap_unreachable)
+    .test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test)
+    .test("rt.core: emits valid WAT", test_rt_core_emits_wat)
+}

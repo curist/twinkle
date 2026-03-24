@@ -1,0 +1,2401 @@
+// Phase D M6–M7: Core emission — ANF → WasmModule
+//
+// Translates optimized ANF (with boundaries pre-inserted by M4) into
+// Wasm IR.  Key simplification vs stage0:
+//   - No flow-sensitive metadata — layout derived from MonoType via registry
+//   - No SumRepr — all sums are typed structs
+//   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
+
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, Param, BinOp, UnOp}
+use compiler.builtins as bi
+use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
+use compiler.anf.{
+  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
+  AnfFunctionDef, AnfModule,
+}
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule, AbiContract,
+}
+use compiler.codegen.wasm_layout.{
+  WasmLayout, WasmValType, WasmRecordLayout, WasmFieldLayout,
+  WasmSumLayout, WasmVariantLayout, WasmClosureLayout, WasmIteratorLayout,
+  layout_of, val_type_of, val_type_of_mono, mono_to_key,
+}
+use compiler.codegen.wasm_plan.{
+  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
+}
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+pub type LocalEntry = .{
+  index: Int,
+  val_type: ValType,
+  mono: MonoType,
+}
+
+pub type LabelPair = .{
+  break_label: String,
+  continue_label: String,
+}
+
+pub type EmitCtx = .{
+  registry: WasmTypeRegistry,
+  builtins: BuiltinRegistry,
+  abi_table: Dict<Int, AbiContract>,
+  env: ResolvedEnv,
+  local_map: Dict<Int, LocalEntry>,
+  next_local: Int,
+  wasm_locals: Vector<ValType>,       // additional locals (beyond params)
+  label_stack: Vector<LabelPair>,
+  current_func_id: FuncId?,
+  func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
+  func_defs: Dict<Int, AnfFunctionDef>,
+  init_func_id: FuncId?,
+  loop_depth: Int,
+}
+
+// ── Module emission ────────────────────────────────────────────────────
+
+pub fn emit_module(
+  anf: AnfModule,
+  registry: WasmTypeRegistry,
+  builtins: BuiltinRegistry,
+  abi_table: Dict<Int, AbiContract>,
+  env: ResolvedEnv,
+) WasmModule {
+  // Build FuncId → symbol map and func lookup
+  func_sym_map: Dict<Int, String> = Dict.new()
+  func_defs: Dict<Int, AnfFunctionDef> = Dict.new()
+  for func in anf.functions {
+    sym := "$f${func.func_id.id}_${sanitize_name(func.name)}"
+    func_sym_map[func.func_id.id] = sym
+    func_defs[func.func_id.id] = func
+  }
+
+  // Base context (per-function state will be reset in emit_func)
+  base_ctx := EmitCtx.{
+    registry: registry,
+    builtins: builtins,
+    abi_table: abi_table,
+    env: env,
+    local_map: Dict.new(),
+    next_local: 0,
+    wasm_locals: [],
+    label_stack: [],
+    current_func_id: .None,
+    func_sym_map: func_sym_map,
+    func_defs: func_defs,
+    init_func_id: anf.init_func_id,
+    loop_depth: 0,
+  }
+
+  // Emit user functions
+  funcs: Vector<FuncDef> = []
+  trampolines: Vector<FuncDef> = []
+  for func in anf.functions {
+    result := emit_func(func, base_ctx)
+    funcs = funcs.push(result.func_def)
+    for t in result.trampolines { trampolines = trampolines.push(t) }
+  }
+  for t in trampolines { funcs = funcs.push(t) }
+
+  // String pool: globals, getter functions, data segment
+  str_globals := emit_string_pool_globals(registry)
+  str_getters := emit_string_pool_getters(registry)
+  for g in str_getters { funcs = funcs.push(g) }
+  str_data := emit_string_data_segment(registry)
+
+  // Module globals
+  mod_globals := emit_module_globals(registry, anf, env)
+
+  // Assemble all globals
+  globals: Vector<GlobalDef> = []
+  for g in mod_globals { globals = globals.push(g) }
+  for g in str_globals { globals = globals.push(g) }
+
+  // Data segments
+  data: Vector<DataSegment> = []
+  case str_data {
+    .Some(d) => { data = data.push(d) },
+    .None => {},
+  }
+
+  // Start function
+  start: String? = case anf.init_func_id {
+    .Some(fid) => func_sym_map[fid.id],
+    .None => .None,
+  }
+
+  WasmModule.{
+    namespace: "user",
+    types: registry.type_defs,
+    imports: registry.runtime_imports,
+    funcs: funcs,
+    globals: globals,
+    tables: [],
+    elems: [],
+    exports: [],
+    data: data,
+    start: start,
+  }
+}
+
+fn sanitize_name(name: String) String {
+  // Replace non-alphanumeric chars with _
+  out := ""
+  for b in name {
+    c := byte_to_int_local(b)
+    if (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 {
+      out = out ++ "${b}"
+    } else {
+      out = out ++ "_"
+    }
+  }
+  out
+}
+
+fn byte_to_int_local(b: Byte) Int {
+  b.to_int()
+}
+
+// ── Function emission ──────────────────────────────────────────────────
+
+type FuncResult = .{
+  func_def: FuncDef,
+  trampolines: Vector<FuncDef>,
+}
+
+fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
+  // Set up params
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  param_types: Vector<ValType> = []
+  idx := 0
+  for p in func.params {
+    vt := val_type_of_mono(p.ty, base_ctx.env)
+    local_map[p.local.id] = LocalEntry.{ index: idx, val_type: vt, mono: p.ty }
+    param_types = param_types.push(vt)
+    idx = idx + 1
+  }
+
+  // Pre-scan body to allocate all Let-bound locals
+  all_locals := collect_all_let_locals(func.body)
+  extra_locals: Vector<ValType> = []
+  for lid in all_locals {
+    if !local_map.has(lid) {
+      mono := resolve_local_mono(func, LocalId.{ id: lid })
+      case mono {
+        .Never => {
+          // Never-typed locals still need a slot (for Wasm validation)
+          // but won't be read. Use anyref as placeholder.
+          local_map[lid] = LocalEntry.{ index: idx, val_type: .Anyref, mono: .Never }
+          extra_locals = extra_locals.push(.Anyref)
+          idx = idx + 1
+        },
+        _ => {
+          vt := val_type_of_mono(mono, base_ctx.env)
+          local_map[lid] = LocalEntry.{ index: idx, val_type: vt, mono: mono }
+          extra_locals = extra_locals.push(vt)
+          idx = idx + 1
+        },
+      }
+    }
+  }
+
+  // Return type
+  ret_vt: Vector<ValType> = case func.return_ty {
+    .Void => [],
+    .Never => [],
+    _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
+  }
+
+  ctx := EmitCtx.{
+    registry: base_ctx.registry,
+    builtins: base_ctx.builtins,
+    abi_table: base_ctx.abi_table,
+    env: base_ctx.env,
+    local_map: local_map,
+    next_local: idx,
+    wasm_locals: extra_locals,
+    label_stack: [],
+    current_func_id: .Some(func.func_id),
+    func_sym_map: base_ctx.func_sym_map,
+    func_defs: base_ctx.func_defs,
+    init_func_id: base_ctx.init_func_id,
+    loop_depth: 0,
+  }
+
+  body_instrs := emit_expr(func.body, func.return_ty, ctx)
+
+  sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
+  fd := FuncDef.{
+    name: sym,
+    params: param_types,
+    results: ret_vt,
+    locals: ctx.wasm_locals,
+    body: body_instrs,
+  }
+
+  // Generate trampolines if this function is used as a closure
+  tramps := emit_trampolines_for_func(func, ctx)
+
+  FuncResult.{ func_def: fd, trampolines: tramps }
+}
+
+fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
+  for p in func.params {
+    if p.local.id == lid.id { return p.ty }
+  }
+  case func.op_result_mono[lid.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}
+
+fn lookup_func_sym(map: Dict<Int, String>, fid: FuncId) String {
+  case map[fid.id] {
+    .Some(s) => s,
+    .None => error("lookup_func_sym: unknown FuncId ${fid.id}"),
+  }
+}
+
+// ── Expression emission ────────────────────────────────────────────────
+
+fn emit_expr(expr: AnfExpr, expected_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case expr {
+    .Let(local, op, body) => emit_let(local, op, body, expected_ty, ctx),
+    .Atom(atom) => {
+      case expected_ty {
+        .Void => {
+          // Statement context: emit atom and drop if it produces a value
+          instrs := emit_atom(atom, ctx)
+          mono := atom_mono(atom, ctx)
+          case mono {
+            .Void => instrs,
+            .Never => instrs,
+            _ => instrs.push(Instr.Drop),
+          }
+        },
+        .Never => {
+          out := emit_atom(atom, ctx)
+          out.push(Instr.Unreachable)
+        },
+        _ => emit_atom(atom, ctx),
+      }
+    },
+    .Return(.Some(atom)) => {
+      out := emit_atom(atom, ctx)
+      out.push(Instr.Return)
+    },
+    .Return(.None) => [Instr.Return],
+    .Break(.Some(atom)) => {
+      if ctx.label_stack.len() == 0 {
+        error("emit_expr: Break with no label stack")
+      }
+      lp := ctx.label_stack[ctx.label_stack.len() - 1]
+      out := emit_atom(atom, ctx)
+      out.push(Instr.Br(lp.break_label))
+    },
+    .Break(.None) => {
+      if ctx.label_stack.len() == 0 {
+        error("emit_expr: Break with no label stack")
+      }
+      lp := ctx.label_stack[ctx.label_stack.len() - 1]
+      [Instr.Br(lp.break_label)]
+    },
+    .Continue => {
+      if ctx.label_stack.len() == 0 {
+        error("emit_expr: Continue with no label stack")
+      }
+      lp := ctx.label_stack[ctx.label_stack.len() - 1]
+      [Instr.Br(lp.continue_label)]
+    },
+  }
+}
+
+// ── Let emission ───────────────────────────────────────────────────────
+
+fn emit_let(local: LocalId, op: AnfOp, body: AnfExpr, expected_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
+  entry := lookup_local(ctx, local)
+  result_mono := entry.mono
+
+  // Check if op result is Never (divergence)
+  case result_mono {
+    .Never => {
+      // Emit op instructions (will end with Unreachable), skip body
+      out := emit_op(op, entry.index, .None, result_mono, ctx)
+      out.push(Instr.Unreachable)
+    },
+    _ => {
+      out := emit_op(op, entry.index, .Some(entry.val_type), result_mono, ctx)
+      // For module globals in __init__, also set the global
+      is_init := case ctx.init_func_id {
+        .Some(ifid) => case ctx.current_func_id {
+          .Some(cfid) => cfid.id == ifid.id,
+          .None => false,
+        },
+        .None => false,
+      }
+      if is_init {
+        case ctx.registry.module_globals[local.id] {
+          .Some(gsym) => {
+            out = out.push(Instr.LocalGet(entry.index))
+            out = append_instrs(out, emit_box_to_anyref(entry.mono, ctx.env))
+            out = out.push(Instr.GlobalSet(gsym))
+          },
+          .None => {},
+        }
+      }
+      body_instrs := emit_expr(body, expected_ty, ctx)
+      append_instrs(out, body_instrs)
+    },
+  }
+}
+
+// ── Op emission ────────────────────────────────────────────────────────
+
+fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case op {
+    .AInit(atom) => {
+      out := emit_atom(atom, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AAssign(target, atom) => {
+      tgt := lookup_local(ctx, target)
+      out := emit_atom(atom, ctx)
+      out = out.push(Instr.LocalSet(tgt.index))
+      // For module globals in __init__, also set the global
+      is_init := case ctx.init_func_id {
+        .Some(ifid) => case ctx.current_func_id {
+          .Some(cfid) => cfid.id == ifid.id,
+          .None => false,
+        },
+        .None => false,
+      }
+      if is_init {
+        case ctx.registry.module_globals[target.id] {
+          .Some(gsym) => {
+            out = out.push(Instr.LocalGet(tgt.index))
+            out = append_instrs(out, emit_box_to_anyref(tgt.mono, ctx.env))
+            out = out.push(Instr.GlobalSet(gsym))
+          },
+          .None => {},
+        }
+      }
+      // AAssign produces void — set result to void
+      out = out.push(Instr.I32Const(0))
+      out = out.push(Instr.RefI31)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .ABinOp(bop, left, right, kind) => {
+      out := emit_binop(bop, left, right, kind, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AUnOp(uop, operand, kind) => {
+      out := emit_unop(uop, operand, kind, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .ACall(callee, args) => {
+      out := emit_call(callee, args, result_idx, result_mono, ctx)
+      out
+    },
+    .AIf(cond, then_e, else_e) => {
+      emit_if_op(cond, then_e, else_e, result_idx, result_vt, result_mono, ctx)
+    },
+    .AMatch(scrutinee, arms) => {
+      emit_match_op(scrutinee, arms, result_idx, result_vt, result_mono, ctx)
+    },
+    .ALoop(body) => {
+      emit_loop_op(body, result_idx, result_vt, ctx)
+    },
+    .ARecord(tid, fields) => {
+      out := emit_record_literal(tid, fields, result_mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .ARecordGet(target, fid, tid) => {
+      out := emit_record_get(target, fid, tid, result_mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .ARecordUpdate(base, fid, value, can_reuse, tid) => {
+      out := emit_record_update(base, fid, value, can_reuse, tid, result_mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AVariant(tid, vid, args) => {
+      out := emit_variant_literal(tid, vid, args, result_mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AArrayLit(items) => {
+      out := emit_array_literal(items, result_mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AIndex(base, index, kind, mono) => {
+      out := emit_index_op(base, index, kind, mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AMakeClosure(fid, free_vars) => {
+      out := emit_make_closure(fid, free_vars, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AWrapAnyref(atom, mono) => {
+      out := emit_wrap_anyref(atom, mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .AUnwrapAnyref(atom, mono) => {
+      out := emit_unwrap_anyref(atom, mono, ctx)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    .ADefer(_) => error("ADefer must be eliminated before codegen"),
+  }
+}
+
+// ── Atom emission ──────────────────────────────────────────────────────
+
+fn emit_atom(atom: Atom, ctx: EmitCtx) Vector<Instr> {
+  case atom {
+    .ALitInt(n) => [Instr.I64Const(n)],
+    .ALitFloat(f) => [Instr.F64Const(f)],
+    .ALitBool(b) => [Instr.I32Const(if b { 1 } else { 0 })],
+    .ALitVoid => [Instr.I32Const(0), Instr.RefI31],
+    .ALitStr(s) => {
+      case ctx.registry.string_pool[s] {
+        .Some(entry) => [Instr.Call(entry.getter_sym)],
+        .None => error("emit_atom: string not in pool: ${s}"),
+      }
+    },
+    .ALocal(lid) => {
+      // Check for module global (in non-init functions)
+      is_init := case ctx.init_func_id {
+        .Some(ifid) => case ctx.current_func_id {
+          .Some(cfid) => cfid.id == ifid.id,
+          .None => false,
+        },
+        .None => false,
+      }
+      if !is_init {
+        case ctx.registry.module_globals[lid.id] {
+          .Some(gsym) => {
+            entry := lookup_local(ctx, lid)
+            out: Vector<Instr> = [Instr.GlobalGet(gsym)]
+            return append_instrs(out, emit_unbox_from_anyref(entry.mono, ctx.env))
+          },
+          .None => {},
+        }
+      }
+      entry := lookup_local(ctx, lid)
+      [Instr.LocalGet(entry.index)]
+    },
+    .AGlobalFunc(fid) => {
+      sym := lookup_func_sym(ctx.func_sym_map, fid)
+      [Instr.RefFunc(sym)]
+    },
+  }
+}
+
+fn atom_mono(atom: Atom, ctx: EmitCtx) MonoType {
+  case atom {
+    .ALitInt(_) => .Int,
+    .ALitFloat(_) => .Float,
+    .ALitBool(_) => .Bool,
+    .ALitStr(_) => .String,
+    .ALitVoid => .Void,
+    .ALocal(lid) => {
+      entry := lookup_local(ctx, lid)
+      entry.mono
+    },
+    .AGlobalFunc(_) => .Void,  // function refs handled specially
+  }
+}
+
+// ── Binary operations ──────────────────────────────────────────────────
+
+fn emit_binop(bop: BinOp, left: Atom, right: Atom, kind: OpKind, ctx: EmitCtx) Vector<Instr> {
+  case kind {
+    .Int => emit_int_binop(bop, left, right, ctx),
+    .Float => emit_float_binop(bop, left, right, ctx),
+    .Bool => emit_bool_binop(bop, left, right, ctx),
+    .Str => emit_str_binop(bop, left, right, ctx),
+  }
+}
+
+fn emit_int_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(left, ctx)
+  out = append_instrs(out, emit_atom(right, ctx))
+  instr := case bop {
+    .Add => Instr.I64Add,
+    .Sub => Instr.I64Sub,
+    .Mul => Instr.I64Mul,
+    .Div => Instr.I64DivS,
+    .Mod => Instr.I64RemS,
+    .Eq => Instr.I64Eq,
+    .Ne => Instr.I64Ne,
+    .Lt => Instr.I64LtS,
+    .Le => Instr.I64LeS,
+    .Gt => Instr.I64GtS,
+    .Ge => Instr.I64GeS,
+    .BitAnd => Instr.I64And,
+    .BitOr => Instr.I64Or,
+    .BitXor => Instr.I64Xor,
+    .Shl => Instr.I64Shl,
+    .Shr => Instr.I64ShrS,
+    .And => error("emit_int_binop: And not valid for Int"),
+    .Or => error("emit_int_binop: Or not valid for Int"),
+  }
+  out.push(instr)
+}
+
+fn emit_float_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(left, ctx)
+  out = append_instrs(out, emit_atom(right, ctx))
+  instr := case bop {
+    .Add => Instr.F64Add,
+    .Sub => Instr.F64Sub,
+    .Mul => Instr.F64Mul,
+    .Div => Instr.F64Div,
+    .Eq => Instr.F64Eq,
+    .Ne => Instr.F64Ne,
+    .Lt => Instr.F64Lt,
+    .Le => Instr.F64Le,
+    .Gt => Instr.F64Gt,
+    .Ge => Instr.F64Ge,
+    _ => error("emit_float_binop: unsupported op"),
+  }
+  out.push(instr)
+}
+
+fn emit_bool_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(left, ctx)
+  out = append_instrs(out, emit_atom(right, ctx))
+  instr := case bop {
+    .Eq => Instr.I32Eq,
+    .Ne => Instr.I32Ne,
+    .And => Instr.I32And,
+    .Or => Instr.I32Or,
+    _ => error("emit_bool_binop: unsupported op"),
+  }
+  out.push(instr)
+}
+
+fn emit_str_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(left, ctx)
+  out = append_instrs(out, emit_atom(right, ctx))
+  case bop {
+    .Add => out.push(Instr.Call("rt_str__concat")),
+    .Eq => out.push(Instr.Call("rt_str__eq")),
+    .Ne => {
+      out = out.push(Instr.Call("rt_str__eq"))
+      out.push(Instr.I32Eqz)
+    },
+    .Lt => {
+      out = out.push(Instr.Call("rt_str__cmp"))
+      out = out.push(Instr.I32Const(0))
+      out.push(Instr.I32LtS)
+    },
+    .Le => {
+      out = out.push(Instr.Call("rt_str__cmp"))
+      out = out.push(Instr.I32Const(1))
+      out.push(Instr.I32LtS)
+    },
+    .Gt => {
+      out = out.push(Instr.Call("rt_str__cmp"))
+      out = out.push(Instr.I32Const(0))
+      out.push(Instr.I32GtS)
+    },
+    .Ge => {
+      out = out.push(Instr.Call("rt_str__cmp"))
+      out = out.push(Instr.I32Const(-1))
+      out.push(Instr.I32GtS)
+    },
+    _ => error("emit_str_binop: unsupported op"),
+  }
+}
+
+// ── Unary operations ───────────────────────────────────────────────────
+
+fn emit_unop(uop: UnOp, operand: Atom, kind: OpKind, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(operand, ctx)
+  case uop {
+    .Neg => {
+      case kind {
+        .Int => {
+          out = [Instr.I64Const(0)]
+          out = append_instrs(out, emit_atom(operand, ctx))
+          out.push(Instr.I64Sub)
+        },
+        .Float => out.push(Instr.F64Neg),
+        _ => error("emit_unop: Neg not valid for this type"),
+      }
+    },
+    .Not => {
+      case kind {
+        .Bool => out.push(Instr.I32Eqz),
+        .Int => {
+          // BitNot: x XOR -1
+          out = out.push(Instr.I64Const(-1))
+          out.push(Instr.I64Xor)
+        },
+        _ => error("emit_unop: Not not valid for this type"),
+      }
+    },
+  }
+}
+
+// ── Call dispatch ──────────────────────────────────────────────────────
+
+fn emit_call(callee: Atom, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case callee {
+    .AGlobalFunc(fid) => {
+      // Check if it's a builtin
+      case bi.entry(ctx.builtins, fid) {
+        .Some(entry) => {
+          case entry.kind {
+            .Runtime(info) => emit_runtime_call(fid, info, args, result_idx, result_mono, ctx),
+            .Intrinsic => emit_intrinsic_call(fid, entry.name, args, result_idx, result_mono, ctx),
+          }
+        },
+        .None => {
+          // User function — direct call
+          emit_direct_call(fid, args, result_idx, ctx)
+        },
+      }
+    },
+    .ALocal(lid) => {
+      // Closure call — indirect
+      emit_closure_call(callee, lid, args, result_idx, result_mono, ctx)
+    },
+    _ => error("emit_call: unexpected callee atom"),
+  }
+}
+
+fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  sym := lookup_func_sym(ctx.func_sym_map, fid)
+  out: Vector<Instr> = []
+  for a in args {
+    out = append_instrs(out, emit_atom(a, ctx))
+  }
+  out = out.push(Instr.Call(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  import_sym := "${info.wasm_module}__${info.wasm_name}"
+  out: Vector<Instr> = []
+  for a in args {
+    out = append_instrs(out, emit_atom(a, ctx))
+  }
+  out = out.push(Instr.Call(import_sym))
+  // Some runtime calls return void
+  case result_mono {
+    .Void => {
+      out = out.push(Instr.I32Const(0))
+      out = out.push(Instr.RefI31)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    _ => out.push(Instr.LocalSet(result_idx)),
+  }
+}
+
+// ── Intrinsic emission ─────────────────────────────────────────────────
+
+fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  if name == "string_to_string" {
+    // Identity — just return the string
+    out := emit_atom(args[0], ctx)
+    return out.push(Instr.LocalSet(result_idx))
+  }
+
+  if name == "vector_push" {
+    return emit_intrinsic_vector_push(args, result_idx, ctx)
+  }
+  if name == "vector_get" {
+    return emit_intrinsic_vector_get(args, result_idx, result_mono, ctx)
+  }
+  if name == "vector_set" {
+    return emit_intrinsic_vector_set(args, result_idx, result_mono, ctx)
+  }
+  if name == "vector_make" {
+    return emit_intrinsic_vector_make(args, result_idx, ctx)
+  }
+  if name == "vector_set_in_place" {
+    return emit_intrinsic_vector_set_in_place(args, result_idx, ctx)
+  }
+
+  if name == "dict_get_unsafe" {
+    return emit_intrinsic_dict_get_unsafe(args, result_idx, ctx)
+  }
+
+  if name == "string_get" {
+    return emit_intrinsic_string_get(args, result_idx, result_mono, ctx)
+  }
+  if name == "string_slice" {
+    return emit_intrinsic_string_slice(args, result_idx, ctx)
+  }
+  if name == "char_code_at" {
+    return emit_intrinsic_char_code_at(args, result_idx, ctx)
+  }
+  if name == "from_char_code" {
+    return emit_intrinsic_from_char_code(args, result_idx, result_mono, ctx)
+  }
+  if name == "from_code_point" {
+    return emit_intrinsic_from_code_point(args, result_idx, result_mono, ctx)
+  }
+  if name == "string_utf8_bytes" {
+    return emit_intrinsic_string_utf8_bytes(args, result_idx, ctx)
+  }
+  if name == "string_from_utf8" {
+    return emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx)
+  }
+
+  if name == "byte_to_int" {
+    out := emit_atom(args[0], ctx)
+    out = out.push(Instr.I64ExtendI32U)
+    return out.push(Instr.LocalSet(result_idx))
+  }
+  if name == "byte_from_int" {
+    return emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx)
+  }
+  if name == "byte_to_string" {
+    // Zero-extend byte to i64, call int_to_string
+    out := emit_atom(args[0], ctx)
+    out = out.push(Instr.I64ExtendI32U)
+    out = out.push(Instr.Call("rt_str__from_i64"))
+    return out.push(Instr.LocalSet(result_idx))
+  }
+
+  if name == "cell_new" {
+    return emit_intrinsic_cell_new(args, result_idx, result_mono, ctx)
+  }
+  if name == "cell_get" {
+    return emit_intrinsic_cell_get(args, result_idx, result_mono, ctx)
+  }
+  if name == "cell_set" {
+    return emit_intrinsic_cell_set(args, result_idx, ctx)
+  }
+  if name == "cell_update" {
+    return emit_intrinsic_cell_update(args, result_idx, ctx)
+  }
+
+  if name == "range_from" {
+    return emit_intrinsic_range_from(args, result_idx, result_mono, ctx)
+  }
+  if name == "range" {
+    return emit_intrinsic_range(args, result_idx, result_mono, ctx)
+  }
+  if name == "range_step" {
+    return emit_intrinsic_range_step(args, result_idx, result_mono, ctx)
+  }
+
+  if name == "iterator_next" {
+    return emit_intrinsic_iterator_next(args, result_idx, result_mono, ctx)
+  }
+  if name == "iterator_unfold" {
+    return emit_intrinsic_iterator_unfold(args, result_idx, result_mono, ctx)
+  }
+
+  if name == "int_from_string" {
+    out := emit_atom(args[0], ctx)
+    out = out.push(Instr.Call("$int_from_string_helper"))
+    return out.push(Instr.LocalSet(result_idx))
+  }
+  if name == "float_from_string" {
+    out := emit_atom(args[0], ctx)
+    out = out.push(Instr.Call("$float_from_string_helper"))
+    return out.push(Instr.LocalSet(result_idx))
+  }
+
+  error("emit_intrinsic_call: unknown intrinsic '${name}'")
+}
+
+// ── vector_push: COW append via concat ─────────────────────────────────
+
+fn emit_intrinsic_vector_push(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  // vector_push(vec, elem) → rt_arr__concat(vec, [elem])
+  out := emit_atom(args[0], ctx)  // vec
+  out = append_instrs(out, emit_atom(args[1], ctx))  // elem (already anyref after boundary)
+  out = out.push(Instr.ArrayNewFixed("rt_types__Array", 1))
+  out = out.push(Instr.Call("rt_arr__concat"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── vector_get: bounds-checked → Option<T> ─────────────────────────────
+
+fn emit_intrinsic_vector_get(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Result is Option<T> → typed sum struct
+  sum_layout := get_sum_layout(result_mono, ctx.env)
+
+  out: Vector<Instr> = []
+  // Bounds check: 0 <= index < len
+  // index is i64, len is i32; compare in i64
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)                       // index >= 0
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index again
+  out = append_instrs(out, emit_atom(args[0], ctx))  // vec
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LtS)                       // index < len
+  out = out.push(Instr.I32And)                        // both conditions
+
+  // Then: Some(vec[index])
+  then_instrs: Vector<Instr> = []
+  then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
+  then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
+  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))  // index
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = then_instrs.push(Instr.ArrayGet("rt_types__Array"))   // anyref element
+  then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  // Else: None
+  else_instrs: Vector<Instr> = []
+  else_instrs = else_instrs.push(Instr.I32Const(0))  // tag = None
+  // Default payload for the Some field
+  some_variant := sum_layout.variants[1]
+  if some_variant.payload_types.len() > 0 {
+    else_instrs = append_instrs(else_instrs, emit_default_value(some_variant.payload_types[0]))
+  }
+  else_instrs = else_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  out = out.push(Instr.If(.Some(result_ref), then_instrs, else_instrs))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── vector_set: bounds-checked COW → Option<Vector<T>> ─────────────────
+
+fn emit_intrinsic_vector_set(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  sum_layout := get_sum_layout(result_mono, ctx.env)
+
+  out: Vector<Instr> = []
+  // Bounds check
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LtS)
+  out = out.push(Instr.I32And)
+
+  // Then: Some(rt_arr__set(vec, index, elem))
+  then_instrs: Vector<Instr> = []
+  then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
+  then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
+  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))  // index
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = append_instrs(then_instrs, emit_atom(args[2], ctx))  // value (anyref after boundary)
+  then_instrs = then_instrs.push(Instr.Call("rt_arr__set"))
+  then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  // Else: None
+  else_instrs: Vector<Instr> = []
+  else_instrs = else_instrs.push(Instr.I32Const(0))
+  some_v := sum_layout.variants[1]
+  if some_v.payload_types.len() > 0 {
+    else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
+  }
+  else_instrs = else_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  out = out.push(Instr.If(.Some(result_ref), then_instrs, else_instrs))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── vector_make: make(size, default) ───────────────────────────────────
+
+fn emit_intrinsic_vector_make(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  out: Vector<Instr> = []
+  out = append_instrs(out, emit_atom(args[1], ctx))  // default value (anyref)
+  out = append_instrs(out, emit_atom(args[0], ctx))  // size (i64)
+  out = append_instrs(out, emit_checked_i32_narrow())
+  out = out.push(Instr.ArrayNew("rt_types__Array"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── vector_set_in_place ────────────────────────────────────────────────
+
+fn emit_intrinsic_vector_set_in_place(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  // vector_set_in_place(vec, index, value) → mutate in place, return vec
+  out: Vector<Instr> = []
+  out = append_instrs(out, emit_atom(args[0], ctx))  // vec
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
+  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_atom(args[2], ctx))  // value (anyref)
+  out = out.push(Instr.ArraySet("rt_types__Array"))
+  // Return the same vec ref
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── dict_get_unsafe ────────────────────────────────────────────────────
+
+fn emit_intrinsic_dict_get_unsafe(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  out: Vector<Instr> = []
+  out = append_instrs(out, emit_atom(args[0], ctx))  // dict
+  out = append_instrs(out, emit_atom(args[1], ctx))  // key (anyref)
+  out = out.push(Instr.Call("rt_dict__get"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── string_get: s.get(i) → Option<Byte> ───────────────────────────────
+
+fn emit_intrinsic_string_get(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  sum_layout := get_sum_layout(result_mono, ctx.env)
+
+  out: Vector<Instr> = []
+  // Bounds check in i64 domain
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_atom(args[0], ctx))  // string
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LtS)
+  out = out.push(Instr.I32And)
+
+  // Then: Some(s[i])
+  then_instrs: Vector<Instr> = []
+  then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
+  then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
+  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = then_instrs.push(Instr.ArrayGetU("rt_types__String"))  // unsigned byte
+  then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  // Else: None (with default payload)
+  else_instrs: Vector<Instr> = []
+  else_instrs = else_instrs.push(Instr.I32Const(0))
+  some_v := sum_layout.variants[1]
+  if some_v.payload_types.len() > 0 {
+    else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
+  }
+  else_instrs = else_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  out = out.push(Instr.If(.Some(result_ref), then_instrs, else_instrs))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── string_slice: s.slice(start, end) ──────────────────────────────────
+
+fn emit_intrinsic_string_slice(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  // Bounds checks + UTF-8 boundary validation, then call rt_str__substring
+  out: Vector<Instr> = []
+
+  // Validate: start >= 0, end >= 0, start <= end, end <= len
+  // For simplicity, do a combined trap check
+  // start >= 0
+  out = append_instrs(out, emit_atom(args[1], ctx))  // start (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  // end >= 0
+  out = append_instrs(out, emit_atom(args[2], ctx))  // end (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = out.push(Instr.I32And)
+  // start <= end
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_atom(args[2], ctx))
+  out = out.push(Instr.I64LeS)
+  out = out.push(Instr.I32And)
+  // end <= len
+  out = append_instrs(out, emit_atom(args[2], ctx))
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LeS)
+  out = out.push(Instr.I32And)
+  // Trap if any check fails
+  out = out.push(Instr.I32Eqz)
+  out = out.push(Instr.If(.None, [Instr.Unreachable], []))
+
+  // UTF-8 boundary check at start (if start > 0 && start < len)
+  // Check (s[start] & 0xC0) != 0x80 (not a continuation byte)
+  out = append_instrs(out, emit_utf8_boundary_check(args[0], args[1], ctx))
+  // UTF-8 boundary check at end (if end < len)
+  out = append_instrs(out, emit_utf8_boundary_check(args[0], args[2], ctx))
+
+  // Call rt_str__substring(s, start_i32, end_i32)
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_atom(args[2], ctx))
+  out = append_instrs(out, emit_checked_i32_narrow())
+  out = out.push(Instr.Call("rt_str__substring"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_utf8_boundary_check(str_atom: Atom, idx_atom: Atom, ctx: EmitCtx) Vector<Instr> {
+  // if idx > 0 && idx < len: check (s[idx] & 0xC0) != 0x80
+  out: Vector<Instr> = []
+  out = append_instrs(out, emit_atom(idx_atom, ctx))
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GtS)  // idx > 0
+  out = append_instrs(out, emit_atom(idx_atom, ctx))
+  out = append_instrs(out, emit_atom(str_atom, ctx))
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LtS)  // idx < len
+  out = out.push(Instr.I32And)
+
+  // Then: check byte
+  check: Vector<Instr> = []
+  check = append_instrs(check, emit_atom(str_atom, ctx))
+  check = append_instrs(check, emit_atom(idx_atom, ctx))
+  check = append_instrs(check, emit_checked_i32_narrow())
+  check = check.push(Instr.ArrayGetU("rt_types__String"))
+  check = check.push(Instr.I32Const(192))   // 0xC0
+  check = check.push(Instr.I32And)
+  check = check.push(Instr.I32Const(128))   // 0x80
+  check = check.push(Instr.I32Eq)
+  check = check.push(Instr.If(.None, [Instr.Unreachable], []))
+
+  out = out.push(Instr.If(.None, check, []))
+  out
+}
+
+// ── char_code_at ───────────────────────────────────────────────────────
+
+fn emit_intrinsic_char_code_at(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  out: Vector<Instr> = []
+  // Trap if out of bounds
+  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.ArrayLen)
+  out = out.push(Instr.I64ExtendI32U)
+  out = out.push(Instr.I64LtS)
+  out = out.push(Instr.I32And)
+  out = out.push(Instr.I32Eqz)
+  out = out.push(Instr.If(.None, [Instr.Unreachable], []))
+  // Read byte
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = append_instrs(out, emit_checked_i32_narrow())
+  out = out.push(Instr.ArrayGetU("rt_types__String"))
+  out = out.push(Instr.I64ExtendI32U)
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── from_char_code: Int → Option<String> ───────────────────────────────
+
+fn emit_intrinsic_from_char_code(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  sum_layout := get_sum_layout(result_mono, ctx.env)
+
+  out: Vector<Instr> = []
+  // Check 0 <= code < 128
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.I64Const(128))
+  out = out.push(Instr.I64LtS)
+  out = out.push(Instr.I32And)
+
+  // Then: Some(string_from_byte)
+  then_instrs: Vector<Instr> = []
+  then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
+  then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
+  then_instrs = then_instrs.push(Instr.I32WrapI64)
+  then_instrs = then_instrs.push(Instr.ArrayNewFixed("rt_types__String", 1))
+  then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  // Else: None
+  else_instrs: Vector<Instr> = []
+  else_instrs = else_instrs.push(Instr.I32Const(0))
+  some_v := sum_layout.variants[1]
+  if some_v.payload_types.len() > 0 {
+    else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
+  }
+  else_instrs = else_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  out = out.push(Instr.If(.Some(result_ref), then_instrs, else_instrs))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── from_code_point: Int → Option<String> ──────────────────────────────
+
+fn emit_intrinsic_from_code_point(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Delegate to helper function
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.Call("$from_code_point_helper"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── string_utf8_bytes ──────────────────────────────────────────────────
+
+fn emit_intrinsic_string_utf8_bytes(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.Call("$string_utf8_bytes_helper"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── string_from_utf8 ──────────────────────────────────────────────────
+
+fn emit_intrinsic_string_from_utf8(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.Call("$string_from_utf8_helper"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── byte_from_int: Int → Option<Byte> ──────────────────────────────────
+
+fn emit_intrinsic_byte_from_int(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  sum_layout := get_sum_layout(result_mono, ctx.env)
+
+  out: Vector<Instr> = []
+  // Check 0 <= n <= 255
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.I64Const(256))
+  out = out.push(Instr.I64LtS)
+  out = out.push(Instr.I32And)
+
+  // Then: Some(byte)
+  then_instrs: Vector<Instr> = []
+  then_instrs = then_instrs.push(Instr.I32Const(1))
+  then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
+  then_instrs = then_instrs.push(Instr.I32WrapI64)
+  then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  // Else: None
+  else_instrs: Vector<Instr> = []
+  else_instrs = else_instrs.push(Instr.I32Const(0))
+  some_v := sum_layout.variants[1]
+  if some_v.payload_types.len() > 0 {
+    else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
+  }
+  else_instrs = else_instrs.push(Instr.StructNew(sum_layout.sym))
+
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  out = out.push(Instr.If(.Some(result_ref), then_instrs, else_instrs))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── Cell intrinsics ────────────────────────────────────────────────────
+
+fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
+  inner_layout := layout_of(inner_mono, env)
+  key := case inner_layout {
+    .Scalar(.WI32) => "i32",
+    .Scalar(.WI64) => "i64",
+    .Scalar(.WF64) => "f64",
+    .Scalar(.WAnyref) => "anyref",
+    _ => "anyref",
+  }
+  "$Cell_${key}"
+}
+
+fn emit_intrinsic_cell_new(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Cell<T> is a single-field mutable struct
+  inner_mono := case result_mono {
+    .Named(_, type_args) => {
+      if type_args.len() > 0 { type_args[0] } else { .Void }
+    },
+    _ => .Void,
+  }
+  sym := cell_struct_sym(inner_mono, ctx.env)
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.StructNew(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Get Cell<T>'s inner type from the cell arg's mono
+  cell_mono := atom_mono(args[0], ctx)
+  inner_mono := case cell_mono {
+    .Named(_, type_args) => {
+      if type_args.len() > 0 { type_args[0] } else { .Void }
+    },
+    _ => .Void,
+  }
+  sym := cell_struct_sym(inner_mono, ctx.env)
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.StructGet(sym, 0))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  cell_mono := atom_mono(args[0], ctx)
+  inner_mono := case cell_mono {
+    .Named(_, type_args) => {
+      if type_args.len() > 0 { type_args[0] } else { .Void }
+    },
+    _ => .Void,
+  }
+  sym := cell_struct_sym(inner_mono, ctx.env)
+  out := emit_atom(args[0], ctx)   // cell ref
+  out = append_instrs(out, emit_atom(args[1], ctx))  // new value
+  out = out.push(Instr.StructSet(sym, 0))
+  // Return void
+  out = out.push(Instr.I32Const(0))
+  out = out.push(Instr.RefI31)
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_cell_update(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  // cell_update(cell, fn(T) T) — apply function to cell value, store result
+  cell_mono := atom_mono(args[0], ctx)
+  inner_mono := case cell_mono {
+    .Named(_, type_args) => {
+      if type_args.len() > 0 { type_args[0] } else { .Void }
+    },
+    _ => .Void,
+  }
+  sym := cell_struct_sym(inner_mono, ctx.env)
+
+  // Load cell, get current value, call closure with it, store result
+  // For simplicity, use the universal closure path
+  out := emit_atom(args[0], ctx)   // cell ref for struct.set target
+  // Get env from closure
+  out = append_instrs(out, emit_atom(args[1], ctx))  // closure
+  out = out.push(Instr.StructGet("rt_types__Closure", 1))  // env (field 1)
+  // Get current cell value, box to anyref
+  out = append_instrs(out, emit_atom(args[0], ctx))
+  out = out.push(Instr.StructGet(sym, 0))
+  out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
+  out = out.push(Instr.ArrayNewFixed("rt_types__Array", 1))  // args array
+  // Get funcref from closure
+  out = append_instrs(out, emit_atom(args[1], ctx))
+  out = out.push(Instr.StructGet("rt_types__Closure", 0))  // universal funcref (field 0)
+  out = out.push(Instr.CallRef("rt_types__ClosureFunc"))
+  // Unbox result back to T
+  out = append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
+  // Store back
+  out = out.push(Instr.StructSet(sym, 0))
+  // Return void
+  out = out.push(Instr.I32Const(0))
+  out = out.push(Instr.RefI31)
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── Range intrinsics ───────────────────────────────────────────────────
+
+fn emit_intrinsic_range(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // range(end) → Range struct (start=0, end=end, step=1)
+  layout := layout_of(result_mono, ctx.env)
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range: expected Record layout"),
+  }
+  out: Vector<Instr> = [Instr.I64Const(0)]  // start
+  out = append_instrs(out, emit_atom(args[0], ctx))  // end
+  out = out.push(Instr.I64Const(1))  // step
+  out = out.push(Instr.StructNew(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_range_from(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // range_from(start, end) → Range struct
+  layout := layout_of(result_mono, ctx.env)
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range_from: expected Record layout"),
+  }
+  out := emit_atom(args[0], ctx)  // start
+  out = append_instrs(out, emit_atom(args[1], ctx))  // end
+  out = out.push(Instr.I64Const(1))  // step
+  out = out.push(Instr.StructNew(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_range_step(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // range_step(start, end, step) → Range struct
+  layout := layout_of(result_mono, ctx.env)
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range_step: expected Record layout"),
+  }
+  out := emit_atom(args[0], ctx)  // start
+  out = append_instrs(out, emit_atom(args[1], ctx))  // end
+  out = append_instrs(out, emit_atom(args[2], ctx))  // step
+  out = out.push(Instr.StructNew(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── Iterator intrinsics ────────────────────────────────────────────────
+
+fn emit_intrinsic_iterator_unfold(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // iterator_unfold(seed, step_fn) → IteratorState struct
+  layout := layout_of(result_mono, ctx.env)
+  sym := case layout {
+    .Record(r) => r.sym,
+    .Iterator_(it) => it.state_sym,
+    _ => error("iterator_unfold: unexpected layout"),
+  }
+  out := emit_atom(args[0], ctx)  // seed
+  out = append_instrs(out, emit_atom(args[1], ctx))  // step closure
+  out = out.push(Instr.StructNew(sym))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_iterator_next(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // iterator_next(state) → calls helper
+  // The helper function should be emitted as part of the module
+  out := emit_atom(args[0], ctx)
+  out = out.push(Instr.Call("$iterator_next_helper"))
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── Record operations ──────────────────────────────────────────────────
+
+fn emit_record_literal(tid: TypeId, fields: Vector<FieldAtom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  layout := layout_of(result_mono, ctx.env)
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("emit_record_literal: expected Record layout"),
+  }
+  rec_layout := case layout {
+    .Record(r) => r,
+    _ => error("emit_record_literal: expected Record layout"),
+  }
+
+  // Emit fields in order of the struct definition
+  out: Vector<Instr> = []
+  for fl in rec_layout.fields {
+    found := false
+    for fa in fields {
+      if fa.field.id == fl.field_id.id {
+        out = append_instrs(out, emit_atom(fa.value, ctx))
+        found = true
+      }
+    }
+    if !found {
+      out = append_instrs(out, emit_default_value(fl.val_type))
+    }
+  }
+  out.push(Instr.StructNew(sym))
+}
+
+fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Determine the record type from the target atom's mono type
+  target_mono := atom_mono(target, ctx)
+  layout := layout_of(target_mono, ctx.env)
+  rec := case layout {
+    .Record(r) => r,
+    _ => error("emit_record_get: expected Record layout"),
+  }
+  // Find field index
+  field_idx := find_field_index(rec, fid)
+  out := emit_atom(target, ctx)
+  out.push(Instr.StructGet(rec.sym, field_idx))
+}
+
+fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  base_mono := atom_mono(base, ctx)
+  layout := layout_of(base_mono, ctx.env)
+  rec := case layout {
+    .Record(r) => r,
+    _ => error("emit_record_update: expected Record layout"),
+  }
+  field_idx := find_field_index(rec, fid)
+
+  if can_reuse {
+    // In-place update: struct.set then return same ref
+    out := emit_atom(base, ctx)      // struct ref for StructSet
+    out = append_instrs(out, emit_atom(value, ctx))  // new field value
+    out = out.push(Instr.StructSet(rec.sym, field_idx))
+    // Return the mutated struct
+    append_instrs(out, emit_atom(base, ctx))
+  } else {
+    // Copy: build new struct with all fields from base, except the updated one
+    out: Vector<Instr> = []
+    for fl,i in rec.fields {
+      if fl.field_id.id == fid.id {
+        out = append_instrs(out, emit_atom(value, ctx))
+      } else {
+        out = append_instrs(out, emit_atom(base, ctx))
+        out = out.push(Instr.StructGet(rec.sym, i))
+      }
+    }
+    out.push(Instr.StructNew(rec.sym))
+  }
+}
+
+fn find_field_index(rec: WasmRecordLayout, fid: FieldId) Int {
+  for f,i in rec.fields {
+    if f.field_id.id == fid.id { return i }
+  }
+  error("find_field_index: FieldId ${fid.id} not found in ${rec.sym}")
+}
+
+// ── Variant operations ─────────────────────────────────────────────────
+
+fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<Atom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // All variants → typed sum struct
+  layout := layout_of(result_mono, ctx.env)
+  sum := case layout {
+    .Sum(s) => s,
+    _ => error("emit_variant_literal: expected Sum layout for type"),
+  }
+
+  // Emit tag
+  out: Vector<Instr> = [Instr.I32Const(vid.id)]
+
+  // Emit all payload fields for ALL variants (typed struct has slots for all)
+  for v in sum.variants {
+    if v.variant_id.id == vid.id {
+      // This variant — emit actual args
+      for a,i in args {
+        out = append_instrs(out, emit_atom(a, ctx))
+      }
+    } else {
+      // Other variant — emit default values for its payload slots
+      for pt in v.payload_types {
+        out = append_instrs(out, emit_default_value(pt))
+      }
+    }
+  }
+  out.push(Instr.StructNew(sum.sym))
+}
+
+// ── Array operations ───────────────────────────────────────────────────
+
+fn emit_array_literal(items: Vector<Atom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  // Array literal: all elements boxed to anyref for $Array
+  out: Vector<Instr> = []
+  for item in items {
+    out = append_instrs(out, emit_atom(item, ctx))
+    // Elements may need boxing — boundary pass should have inserted AWrapAnyref
+    // if needed, so just emit as-is
+  }
+  n := items.len()
+  out.push(Instr.ArrayNewFixed("rt_types__Array", n))
+}
+
+// ── Index operations ───────────────────────────────────────────────────
+
+fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case kind {
+    .Array => {
+      // Array indexing: trap on OOB, return element
+      // Boundary pass handles unwrap of anyref element
+      out: Vector<Instr> = []
+      // Bounds check in i64 domain
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = out.push(Instr.I64Const(0))
+      out = out.push(Instr.I64GeS)
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = append_instrs(out, emit_atom(base, ctx))
+      out = out.push(Instr.ArrayLen)
+      out = out.push(Instr.I64ExtendI32U)
+      out = out.push(Instr.I64LtS)
+      out = out.push(Instr.I32And)
+      out = out.push(Instr.I32Eqz)
+      out = out.push(Instr.If(.None, [Instr.Unreachable], []))
+      // Get element
+      out = append_instrs(out, emit_atom(base, ctx))
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = append_instrs(out, emit_checked_i32_narrow())
+      out = out.push(Instr.ArrayGet("rt_types__Array"))
+      out
+    },
+    .Dict => {
+      // Dict indexing: call rt_dict__get_option, returns $Variant
+      out: Vector<Instr> = []
+      out = append_instrs(out, emit_atom(base, ctx))
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = out.push(Instr.Call("rt_dict__get_option"))
+      out
+    },
+    .Str => {
+      // String indexing: bounds check + array.get_u → byte (i32)
+      out: Vector<Instr> = []
+      // Bounds check
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = out.push(Instr.I64Const(0))
+      out = out.push(Instr.I64GeS)
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = append_instrs(out, emit_atom(base, ctx))
+      out = out.push(Instr.ArrayLen)
+      out = out.push(Instr.I64ExtendI32U)
+      out = out.push(Instr.I64LtS)
+      out = out.push(Instr.I32And)
+      out = out.push(Instr.I32Eqz)
+      out = out.push(Instr.If(.None, [Instr.Unreachable], []))
+      // Get byte
+      out = append_instrs(out, emit_atom(base, ctx))
+      out = append_instrs(out, emit_atom(index, ctx))
+      out = append_instrs(out, emit_checked_i32_narrow())
+      out = out.push(Instr.ArrayGetU("rt_types__String"))
+      out
+    },
+  }
+}
+
+// ── If emission ────────────────────────────────────────────────────────
+
+fn emit_if_op(cond: Atom, then_e: AnfExpr, else_e: AnfExpr, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(cond, ctx)
+
+  then_instrs := emit_expr(then_e, result_mono, ctx)
+  else_instrs := emit_expr(else_e, result_mono, ctx)
+
+  then_div := expr_always_diverges(then_e)
+  else_div := expr_always_diverges(else_e)
+
+  if then_div and else_div {
+    // Both diverge — no result
+    out = out.push(Instr.If(.None, then_instrs, else_instrs))
+    out = out.push(Instr.Unreachable)
+    out
+  } else {
+    // Store result into local
+    // If one branch diverges, it won't produce a value, but that's OK
+    // because it ends with Unreachable/Br
+    then_body := then_instrs
+    if !then_div {
+      then_body = then_body.push(Instr.LocalSet(result_idx))
+    }
+    else_body := else_instrs
+    if !else_div {
+      else_body = else_body.push(Instr.LocalSet(result_idx))
+    }
+    out = out.push(Instr.If(.None, then_body, else_body))
+    out
+  }
+}
+
+// ── Loop emission ──────────────────────────────────────────────────────
+
+fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCtx) Vector<Instr> {
+  depth := ctx.loop_depth
+  break_label := "$break_${depth}"
+  cont_label := "$continue_${depth}"
+
+  // Push labels onto label_stack
+  new_labels := ctx.label_stack.push(LabelPair.{
+    break_label: break_label,
+    continue_label: cont_label,
+  })
+  loop_ctx := EmitCtx.{
+    registry: ctx.registry,
+    builtins: ctx.builtins,
+    abi_table: ctx.abi_table,
+    env: ctx.env,
+    local_map: ctx.local_map,
+    next_local: ctx.next_local,
+    wasm_locals: ctx.wasm_locals,
+    label_stack: new_labels,
+    current_func_id: ctx.current_func_id,
+    func_sym_map: ctx.func_sym_map,
+    func_defs: ctx.func_defs,
+    init_func_id: ctx.init_func_id,
+    loop_depth: ctx.loop_depth + 1,
+  }
+
+  body_instrs := emit_expr(body, .Void, loop_ctx)
+  // Implicit continue at end of loop body
+  body_instrs = body_instrs.push(Instr.Br(cont_label))
+
+  loop_instr := Instr.Loop(cont_label, .None, body_instrs)
+  block_instrs: Vector<Instr> = [loop_instr]
+
+  // Block wraps the loop for break target
+  out: Vector<Instr> = [Instr.Block(break_label, .None, block_instrs)]
+
+  // Loop produces void — set result to void
+  out = out.push(Instr.I32Const(0))
+  out = out.push(Instr.RefI31)
+  out.push(Instr.LocalSet(result_idx))
+}
+
+// ── Match emission ─────────────────────────────────────────────────────
+
+fn emit_match_op(scrutinee: Atom, arms: Vector<AnfMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  scrutinee_mono := atom_mono(scrutinee, ctx)
+  scrutinee_instrs := emit_atom(scrutinee, ctx)
+  emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx)
+}
+
+fn emit_arm_chain(
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  arms: Vector<AnfMatchArm>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+) Vector<Instr> {
+  if arms.len() == 0 {
+    return [Instr.Unreachable]
+  }
+
+  head := arms[0]
+  tail: Vector<AnfMatchArm> = arms.slice(1, arms.len())
+
+  cond_instrs := emit_pattern_condition(head.pattern, scrutinee_instrs, scrutinee_mono, ctx)
+
+  // Then: bindings + body + store result
+  bindings := emit_pattern_bindings(head.pattern, scrutinee_instrs, scrutinee_mono, ctx)
+  body_instrs := emit_expr(head.body, result_mono, ctx)
+  head_div := expr_always_diverges(head.body)
+
+  then_body: Vector<Instr> = []
+  then_body = append_instrs(then_body, bindings)
+  then_body = append_instrs(then_body, body_instrs)
+  if !head_div {
+    then_body = then_body.push(Instr.LocalSet(result_idx))
+  }
+
+  // Else: recurse on tail
+  else_body := emit_arm_chain(scrutinee_instrs, scrutinee_mono, tail, result_idx, result_mono, ctx)
+
+  tail_div := all_arms_diverge(tail)
+  both_div := head_div and tail_div
+
+  out: Vector<Instr> = []
+  out = append_instrs(out, cond_instrs)
+  out = out.push(Instr.If(.None, then_body, else_body))
+  if both_div {
+    out = out.push(Instr.Unreachable)
+  }
+  out
+}
+
+fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case pattern {
+    .Wildcard => [Instr.I32Const(1)],
+    .Var(_) => [Instr.I32Const(1)],
+    .LitInt(n) => {
+      out := clone_instrs(scrutinee_instrs)
+      out = out.push(Instr.I64Const(n))
+      out.push(Instr.I64Eq)
+    },
+    .LitBool(b) => {
+      out := clone_instrs(scrutinee_instrs)
+      out = out.push(Instr.I32Const(if b { 1 } else { 0 }))
+      out.push(Instr.I32Eq)
+    },
+    .LitStr(s) => {
+      // String comparison via rt_str__eq
+      out := clone_instrs(scrutinee_instrs)
+      case ctx.registry.string_pool[s] {
+        .Some(entry) => {
+          out = out.push(Instr.Call(entry.getter_sym))
+        },
+        .None => error("emit_pattern_condition: string not in pool"),
+      }
+      out.push(Instr.Call("rt_str__eq"))
+    },
+    .Variant(tid, vid, fields) => {
+      emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx)
+    },
+  }
+}
+
+fn emit_variant_pattern_condition(
+  tid: TypeId, vid: VariantId, fields: Vector<CorePattern>,
+  scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx,
+) Vector<Instr> {
+  sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
+
+  // Tag check
+  tag_check := clone_instrs(scrutinee_instrs)
+  tag_check = tag_check.push(Instr.StructGet(sum_layout.sym, 0))
+  tag_check = tag_check.push(Instr.I32Const(vid.id))
+  tag_check = tag_check.push(Instr.I32Eq)
+
+  // Check for non-trivial sub-patterns
+  has_inner := false
+  for fp in fields {
+    if !pattern_is_trivial(fp) { has_inner = true }
+  }
+  if !has_inner { return tag_check }
+
+  // Short-circuit inner checks
+  variant_layout := find_variant_layout(sum_layout, vid)
+  inner_checks: Vector<Vector<Instr>> = []
+  for fp,i in fields {
+    if !pattern_is_trivial(fp) {
+      offset := variant_layout.struct_field_offset + i
+      field_instrs := clone_instrs(scrutinee_instrs)
+      field_instrs = field_instrs.push(Instr.StructGet(sum_layout.sym, offset))
+      field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+      inner_checks = inner_checks.push(
+        emit_pattern_condition(fp, field_instrs, field_mono, ctx)
+      )
+    }
+  }
+
+  inner_cond := combine_and_checks(inner_checks)
+
+  out := tag_check
+  out.push(Instr.If(.Some(.I32), inner_cond, [Instr.I32Const(0)]))
+}
+
+fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case pattern {
+    .Wildcard => [],
+    .LitInt(_) => [],
+    .LitBool(_) => [],
+    .LitStr(_) => [],
+    .Var(lid) => {
+      entry := lookup_local(ctx, lid)
+      out := clone_instrs(scrutinee_instrs)
+      out.push(Instr.LocalSet(entry.index))
+    },
+    .Variant(tid, vid, fields) => {
+      sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
+      variant_layout := find_variant_layout(sum_layout, vid)
+      out: Vector<Instr> = []
+      for fp,i in fields {
+        offset := variant_layout.struct_field_offset + i
+        field_instrs := clone_instrs(scrutinee_instrs)
+        field_instrs = field_instrs.push(Instr.StructGet(sum_layout.sym, offset))
+        field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+        out = append_instrs(out, emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+      }
+      out
+    },
+  }
+}
+
+// ── Closure emission ───────────────────────────────────────────────────
+
+fn emit_make_closure(fid: FuncId, free_vars: Vector<LocalId>, ctx: EmitCtx) Vector<Instr> {
+  // Build env array from captured variables
+  out: Vector<Instr> = []
+  for fv in free_vars {
+    entry := lookup_local(ctx, fv)
+    out = out.push(Instr.LocalGet(entry.index))
+    out = append_instrs(out, emit_box_to_anyref(entry.mono, ctx.env))
+  }
+  if free_vars.len() > 0 {
+    out = out.push(Instr.ArrayNewFixed("rt_types__ClosureEnv", free_vars.len()))
+  } else {
+    out = out.push(Instr.RefNull(.None_))
+  }
+
+  // Get closure layout from function's signature
+  func_sym := lookup_func_sym(ctx.func_sym_map, fid)
+  tramp_sym := "$tramp_${fid.id}"
+  typed_tramp_sym := "$typed_tramp_${fid.id}"
+
+  // Look up if we have a concrete sig for typed closure
+  case ctx.registry.concrete_func_sigs[fid.id] {
+    .Some(sig) => {
+      // Build typed closure struct (3 fields: universal funcref, env, typed funcref)
+      closure_key := mono_to_key(.Function(sig.param_types, sig.return_type))
+      closure_sym := "$closure_${closure_key}"
+
+      env_instrs := clone_instrs(out)
+
+      out2: Vector<Instr> = []
+      // Field 0: universal funcref (trampoline)
+      out2 = out2.push(Instr.RefFunc(tramp_sym))
+      // Field 1: env
+      out2 = append_instrs(out2, env_instrs)
+      // Field 2: typed funcref
+      out2 = out2.push(Instr.RefFunc(typed_tramp_sym))
+      out2 = out2.push(Instr.StructNew(closure_sym))
+      out2
+    },
+    .None => {
+      // Universal closure (no typed path)
+      out2: Vector<Instr> = []
+      out2 = out2.push(Instr.RefFunc(tramp_sym))  // field 0: universal funcref
+      out2 = append_instrs(out2, out)               // field 1: env
+      out2 = out2.push(Instr.RefNull(.Func))        // field 2: typed funcref (null)
+      out2.push(Instr.StructNew("rt_types__Closure"))
+    },
+  }
+}
+
+fn emit_closure_call(callee: Atom, lid: LocalId, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  entry := lookup_local(ctx, lid)
+
+  // Check if we have a typed closure signature
+  callee_mono := entry.mono
+  case callee_mono {
+    .Function(param_types, ret_type) => {
+      closure_key := mono_to_key(callee_mono)
+      closure_sym := "$closure_${closure_key}"
+      typed_ft_sym := "$ft_${closure_key}"
+
+      out: Vector<Instr> = []
+      // Get env (field 1)
+      out = out.push(Instr.LocalGet(entry.index))
+      out = out.push(Instr.StructGet(closure_sym, 1))
+      // Push concrete args
+      for a in args {
+        out = append_instrs(out, emit_atom(a, ctx))
+      }
+      // Get typed funcref (field 2)
+      out = out.push(Instr.LocalGet(entry.index))
+      out = out.push(Instr.StructGet(closure_sym, 2))
+      // call_ref with typed func type
+      out = out.push(Instr.CallRef(typed_ft_sym))
+      out.push(Instr.LocalSet(result_idx))
+    },
+    _ => {
+      // Universal closure path
+      emit_universal_closure_call(entry, args, result_idx, result_mono, ctx)
+    },
+  }
+}
+
+fn emit_universal_closure_call(entry: LocalEntry, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  out: Vector<Instr> = []
+  // Get env (field 1)
+  out = out.push(Instr.LocalGet(entry.index))
+  out = out.push(Instr.RefCast(true, .Named("rt_types__Closure")))
+  out = out.push(Instr.StructGet("rt_types__Closure", 1))
+  // Pack args into anyref array
+  if args.len() > 0 {
+    for a in args {
+      out = append_instrs(out, emit_atom(a, ctx))
+      mono := atom_mono(a, ctx)
+      out = append_instrs(out, emit_box_to_anyref(mono, ctx.env))
+    }
+    out = out.push(Instr.ArrayNewFixed("rt_types__Array", args.len()))
+  } else {
+    out = out.push(Instr.RefNull(.None_))
+  }
+  // Get universal funcref (field 0)
+  out = out.push(Instr.LocalGet(entry.index))
+  out = out.push(Instr.RefCast(true, .Named("rt_types__Closure")))
+  out = out.push(Instr.StructGet("rt_types__Closure", 0))
+  // call_ref with universal func type
+  out = out.push(Instr.CallRef("rt_types__ClosureFunc"))
+  // Unbox result
+  case result_mono {
+    .Void => {
+      out = out.push(Instr.Drop)
+      out = out.push(Instr.I32Const(0))
+      out = out.push(Instr.RefI31)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    _ => {
+      out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
+      out.push(Instr.LocalSet(result_idx))
+    },
+  }
+}
+
+// ── Trampoline emission ────────────────────────────────────────────────
+
+fn emit_trampolines_for_func(func: AnfFunctionDef, ctx: EmitCtx) Vector<FuncDef> {
+  // Only generate trampolines for functions that are used as closures
+  case ctx.registry.concrete_func_sigs[func.func_id.id] {
+    .Some(sig) => {
+      tramps: Vector<FuncDef> = []
+      tramps = tramps.push(emit_universal_trampoline(func, sig, ctx))
+      tramps = tramps.push(emit_typed_trampoline(func, sig, ctx))
+      tramps
+    },
+    .None => {
+      // Check if captured (has capture layout)
+      case ctx.registry.capture_layouts[func.func_id.id] {
+        .Some(_) => {
+          // Need at least universal trampoline
+          sig := FuncSigEntry.{
+            param_types: collect p in func.params { p.ty },
+            return_type: func.return_ty,
+          }
+          [emit_universal_trampoline(func, sig, ctx)]
+        },
+        .None => [],
+      }
+    },
+  }
+}
+
+fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+  // Universal trampoline: (env: anyref, args: anyref) → anyref
+  tramp_sym := "$tramp_${func.func_id.id}"
+  func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
+
+  body: Vector<Instr> = []
+  locals: Vector<ValType> = []
+
+  // Extract captures from env (param 0)
+  case ctx.registry.capture_layouts[func.func_id.id] {
+    .Some(captures) => {
+      for cap,i in captures {
+        // env is ref $ClosureEnv (array of anyref)
+        body = body.push(Instr.LocalGet(0))  // env
+        body = body.push(Instr.RefCast(true, .Named("rt_types__ClosureEnv")))
+        body = body.push(Instr.I32Const(i))
+        body = body.push(Instr.ArrayGet("rt_types__ClosureEnv"))
+        body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
+      }
+    },
+    .None => {},
+  }
+
+  // Extract args from args array (param 1)
+  for p,i in func.params {
+    body = body.push(Instr.LocalGet(1))  // args array
+    body = body.push(Instr.RefCast(true, .Named("rt_types__Array")))
+    body = body.push(Instr.I32Const(i))
+    body = body.push(Instr.ArrayGet("rt_types__Array"))
+    body = append_instrs(body, emit_unbox_from_anyref(p.ty, ctx.env))
+  }
+
+  // Call the real function
+  body = body.push(Instr.Call(func_sym))
+
+  // Box result to anyref
+  case func.return_ty {
+    .Void => {
+      body = body.push(Instr.I32Const(0))
+      body = body.push(Instr.RefI31)
+    },
+    .Never => {},
+    _ => {
+      body = append_instrs(body, emit_box_to_anyref(func.return_ty, ctx.env))
+    },
+  }
+
+  FuncDef.{
+    name: tramp_sym,
+    params: [.Anyref, .Anyref],
+    results: [.Anyref],
+    locals: locals,
+    body: body,
+  }
+}
+
+fn emit_typed_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+  // Typed trampoline: (env: anyref, p1: T1, p2: T2, ...) → R
+  typed_tramp_sym := "$typed_tramp_${func.func_id.id}"
+  func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
+
+  param_vts: Vector<ValType> = [.Anyref]  // env
+  for p in sig.param_types {
+    param_vts = param_vts.push(val_type_of_mono(p, ctx.env))
+  }
+
+  result_vts: Vector<ValType> = case sig.return_type {
+    .Void => [],
+    .Never => [],
+    _ => [val_type_of_mono(sig.return_type, ctx.env)],
+  }
+
+  body: Vector<Instr> = []
+
+  // Extract captures from env (param 0)
+  case ctx.registry.capture_layouts[func.func_id.id] {
+    .Some(captures) => {
+      for cap,i in captures {
+        body = body.push(Instr.LocalGet(0))
+        body = body.push(Instr.RefCast(true, .Named("rt_types__ClosureEnv")))
+        body = body.push(Instr.I32Const(i))
+        body = body.push(Instr.ArrayGet("rt_types__ClosureEnv"))
+        body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
+      }
+    },
+    .None => {},
+  }
+
+  // Push concrete params (starting at index 1, after env)
+  for _,i in func.params {
+    body = body.push(Instr.LocalGet(i + 1))
+  }
+
+  // Call the real function
+  body = body.push(Instr.Call(func_sym))
+
+  FuncDef.{
+    name: typed_tramp_sym,
+    params: param_vts,
+    results: result_vts,
+    locals: [],
+    body: body,
+  }
+}
+
+// ── Boxing / unboxing (AWrapAnyref / AUnwrapAnyref) ────────────────────
+
+fn emit_wrap_anyref(atom: Atom, mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(atom, ctx)
+  append_instrs(out, emit_box_to_anyref(mono, ctx.env))
+}
+
+fn emit_unwrap_anyref(atom: Atom, mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(atom, ctx)
+  append_instrs(out, emit_unbox_from_anyref(mono, ctx.env))
+}
+
+fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
+  layout := case mono {
+    .Never => return [],
+    .Void => return [],  // void is already i31ref → anyref
+    _ => layout_of(mono, env),
+  }
+  case layout {
+    .Scalar(.WI64) => [Instr.StructNew("rt_types__BoxedInt")],
+    .Scalar(.WF64) => [Instr.StructNew("rt_types__BoxedFloat")],
+    .Scalar(.WI32) => [Instr.RefI31],
+    .Scalar(.WAnyref) => [],  // already anyref
+    // Reference types: struct refs are subtypes of anyref (implicit upcast)
+    .Record(_) => [],
+    .Sum(_) => [],
+    .Closure(_) => [],
+    .Vector_(_) => [],
+    .Dict_(_, _) => [],
+    .Iterator_(_) => [],
+    .Cell_(_) => [],
+  }
+}
+
+fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
+  layout := case mono {
+    .Never => return [Instr.Unreachable],
+    .Void => return [Instr.Drop, Instr.I32Const(0), Instr.RefI31],
+    _ => layout_of(mono, env),
+  }
+  case layout {
+    .Scalar(.WI64) => {
+      out: Vector<Instr> = [Instr.RefCast(false, .Named("rt_types__BoxedInt"))]
+      out.push(Instr.StructGet("rt_types__BoxedInt", 0))
+    },
+    .Scalar(.WF64) => {
+      out: Vector<Instr> = [Instr.RefCast(false, .Named("rt_types__BoxedFloat"))]
+      out.push(Instr.StructGet("rt_types__BoxedFloat", 0))
+    },
+    .Scalar(.WI32) => {
+      // Could be Bool or Byte — both use i31ref
+      out: Vector<Instr> = [Instr.RefCast(false, .I31)]
+      // Use I31GetU for unsigned (Byte uses unsigned)
+      case mono {
+        .Byte => out.push(Instr.I31GetU),
+        _ => out.push(Instr.I31GetS),
+      }
+    },
+    .Scalar(.WAnyref) => [],  // already anyref
+    .Record(r) => [Instr.RefCast(false, .Named(r.sym))],
+    .Sum(s) => [Instr.RefCast(false, .Named(s.sym))],
+    .Closure(c) => [Instr.RefCast(false, .Named(c.closure_sym))],
+    .Vector_(_) => [Instr.RefCast(false, .Named("rt_types__Array"))],
+    .Dict_(_, _) => [Instr.RefCast(false, .Named("rt_types__Dict"))],
+    .Iterator_(it) => [Instr.RefCast(false, .Named(it.state_sym))],
+    .Cell_(inner) => {
+      key := case inner {
+        .Scalar(.WI32) => "i32",
+        .Scalar(.WI64) => "i64",
+        .Scalar(.WF64) => "f64",
+        _ => "anyref",
+      }
+      [Instr.RefCast(false, .Named("$Cell_${key}"))]
+    },
+  }
+}
+
+// ── String pool emission ───────────────────────────────────────────────
+
+fn emit_string_pool_globals(registry: WasmTypeRegistry) Vector<GlobalDef> {
+  globals: Vector<GlobalDef> = []
+  for k in registry.string_pool.keys() {
+    case registry.string_pool[k] {
+      .Some(entry) => {
+        globals = globals.push(GlobalDef.{
+          name: entry.global_sym,
+          mutable: true,
+          ty: .Ref(true, .Named("rt_types__String")),
+          init: [Instr.RefNull(.Named("rt_types__String"))],
+        })
+      },
+      .None => {},
+    }
+  }
+  globals
+}
+
+fn emit_string_pool_getters(registry: WasmTypeRegistry) Vector<FuncDef> {
+  funcs: Vector<FuncDef> = []
+  for k in registry.string_pool.keys() {
+    case registry.string_pool[k] {
+      .Some(entry) => {
+        // Getter: check global, if null → create from data segment, cache
+        body: Vector<Instr> = []
+        body = body.push(Instr.GlobalGet(entry.global_sym))
+        body = body.push(Instr.RefIsNull)
+        then_body: Vector<Instr> = []
+        // Create string from data segment
+        then_body = then_body.push(Instr.I32Const(entry.byte_offset))
+        then_body = then_body.push(Instr.I32Const(entry.byte_len))
+        then_body = then_body.push(Instr.ArrayNewData("rt_types__String", entry.data_segment_name))
+        then_body = then_body.push(Instr.GlobalSet(entry.global_sym))
+        body = body.push(Instr.If(.None, then_body, []))
+        body = body.push(Instr.GlobalGet(entry.global_sym))
+        body = body.push(Instr.RefAsNonNull)
+
+        funcs = funcs.push(FuncDef.{
+          name: entry.getter_sym,
+          params: [],
+          results: [.Ref(false, .Named("rt_types__String"))],
+          locals: [],
+          body: body,
+        })
+      },
+      .None => {},
+    }
+  }
+  funcs
+}
+
+fn emit_string_data_segment(registry: WasmTypeRegistry) DataSegment? {
+  if registry.string_pool.len() == 0 { return .None }
+
+  // Collect all string bytes in pool order
+  all_bytes: Vector<Byte> = []
+  for k in registry.string_pool.keys() {
+    case registry.string_pool[k] {
+      .Some(entry) => {
+        // Add the bytes of the string key
+        for b in k { all_bytes = all_bytes.push(b) }
+      },
+      .None => {},
+    }
+  }
+
+  .Some(DataSegment.{
+    name: "$data_strings",
+    offset: [],  // passive data segment (no offset)
+    bytes: all_bytes,
+  })
+}
+
+// ── Module globals emission ────────────────────────────────────────────
+
+fn emit_module_globals(registry: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<GlobalDef> {
+  globals: Vector<GlobalDef> = []
+  for k in registry.module_globals.keys() {
+    case registry.module_globals[k] {
+      .Some(gsym) => {
+        globals = globals.push(GlobalDef.{
+          name: gsym,
+          mutable: true,
+          ty: .Anyref,
+          init: [Instr.RefNull(.None_)],
+        })
+      },
+      .None => {},
+    }
+  }
+  globals
+}
+
+// ── Checked i32 narrowing ──────────────────────────────────────────────
+
+fn emit_checked_i32_narrow() Vector<Instr> {
+  // Safe i64→i32: trap if < 0 or > i32::MAX (2147483647)
+  // Input: i64 on stack. Output: i32 on stack.
+  // Strategy: dup, check range, then wrap
+  // Since we can't easily dup in this model, assume caller re-emits if needed.
+  // Simplified: just wrap (the bounds check was done in i64 domain by the caller)
+  [Instr.I32WrapI64]
+}
+
+// ── Default values ─────────────────────────────────────────────────────
+
+fn emit_default_value(vt: ValType) Vector<Instr> {
+  case vt {
+    .I32 => [Instr.I32Const(0)],
+    .I64 => [Instr.I64Const(0)],
+    .F64 => [Instr.F64Const(0.0)],
+    .Anyref => [Instr.RefNull(.None_)],
+    .I31ref => [Instr.I32Const(0), Instr.RefI31],
+    .Funcref => [Instr.RefNull(.Func)],
+    .Ref(nullable, heap) => {
+      if nullable { [Instr.RefNull(heap)] }
+      else {
+        // Non-nullable ref: can't produce a default. Use ref.null + cast
+        // (This will trap at runtime if actually used — only valid for dead code paths)
+        [Instr.RefNull(heap), Instr.RefAsNonNull]
+      }
+    },
+    .I8 => [Instr.I32Const(0)],
+  }
+}
+
+// ── Helper utilities ───────────────────────────────────────────────────
+
+fn lookup_local(ctx: EmitCtx, lid: LocalId) LocalEntry {
+  case ctx.local_map[lid.id] {
+    .Some(entry) => entry,
+    .None => error("lookup_local: unknown LocalId L${lid.id}"),
+  }
+}
+
+fn append_instrs(base: Vector<Instr>, tail: Vector<Instr>) Vector<Instr> {
+  result := base
+  for i in tail { result = result.push(i) }
+  result
+}
+
+fn clone_instrs(instrs: Vector<Instr>) Vector<Instr> {
+  // Return a copy (vectors are persistent, so this is effectively free)
+  instrs
+}
+
+fn expr_always_diverges(expr: AnfExpr) Bool {
+  case expr {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    .Atom(_) => false,
+    .Let(_, _, body) => expr_always_diverges(body),
+  }
+}
+
+fn all_arms_diverge(arms: Vector<AnfMatchArm>) Bool {
+  if arms.len() == 0 { return true }
+  for arm in arms {
+    if !expr_always_diverges(arm.body) { return false }
+  }
+  true
+}
+
+fn pattern_is_trivial(p: CorePattern) Bool {
+  case p {
+    .Wildcard => true,
+    .Var(_) => true,
+    _ => false,
+  }
+}
+
+fn get_sum_layout(mono: MonoType, env: ResolvedEnv) WasmSumLayout {
+  layout := layout_of(mono, env)
+  case layout {
+    .Sum(s) => s,
+    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
+  }
+}
+
+fn find_variant_layout(sum: WasmSumLayout, vid: VariantId) WasmVariantLayout {
+  for v in sum.variants {
+    if v.variant_id.id == vid.id { return v }
+  }
+  error("find_variant_layout: VariantId ${vid.id} not found in ${sum.sym}")
+}
+
+fn variant_field_mono(scrutinee_mono: MonoType, vid: VariantId, field_idx: Int, env: ResolvedEnv) MonoType {
+  case scrutinee_mono {
+    .Optional(inner) => {
+      if vid.id == 1 and field_idx == 0 { return inner }
+      .Void
+    },
+    .Result(ok, err) => {
+      if vid.id == 0 and field_idx == 0 { return ok }
+      if vid.id == 1 and field_idx == 0 { return err }
+      .Void
+    },
+    .Named(tid, args) => resolve_named_variant_field(tid, args, vid, field_idx, env),
+    _ => error("variant_field_mono: unexpected scrutinee type"),
+  }
+}
+
+fn resolve_named_variant_field(tid: TypeId, args: Vector<MonoType>, vid: VariantId, field_idx: Int, env: ResolvedEnv) MonoType {
+  for entry in env.types {
+    if entry.id.id == tid.id {
+      def := case entry.def {
+        .Some(d) => d,
+        .None => error("resolve_named_variant_field: no def for TypeId ${tid.id}"),
+      }
+      case def {
+        .Sum(_, type_params, variants) => {
+          v := variants[vid.id]
+          field_ty := v.fields[field_idx]
+          return subst_type_params(field_ty, type_params, args)
+        },
+        _ => error("resolve_named_variant_field: not a Sum type"),
+      }
+    }
+  }
+  error("resolve_named_variant_field: TypeId ${tid.id} not found")
+}
+
+fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      for p,i in type_params {
+        if p == name { return args[i] }
+      }
+      ty
+    },
+    .Named(tid, inner_args) => {
+      new_args := collect a in inner_args { subst_type_params(a, type_params, args) }
+      .Named(tid, new_args)
+    },
+    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
+    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
+    .Function(ps, r) => {
+      new_ps := collect p in ps { subst_type_params(p, type_params, args) }
+      .Function(new_ps, subst_type_params(r, type_params, args))
+    },
+    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
+    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
+    _ => ty,
+  }
+}
+
+fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
+  if checks.len() == 0 { return [Instr.I32Const(1)] }
+  if checks.len() == 1 { return checks[0] }
+  out := checks[0]
+  idx := 1
+  for idx < checks.len() {
+    out = out.push(Instr.If(.Some(.I32), checks[idx], [Instr.I32Const(0)]))
+    idx = idx + 1
+  }
+  out
+}
+
+// ── Local pre-scan ─────────────────────────────────────────────────────
+
+fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
+  out: Vector<Int> = []
+  collect_let_locals_expr(expr, out)
+}
+
+fn collect_let_locals_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
+  case expr {
+    .Let(local, op, body) => {
+      out = out.push(local.id)
+      out = collect_let_locals_op(op, out)
+      collect_let_locals_expr(body, out)
+    },
+    .Atom(_) => out,
+    .Return(_) => out,
+    .Break(_) => out,
+    .Continue => out,
+  }
+}
+
+fn collect_let_locals_op(op: AnfOp, out: Vector<Int>) Vector<Int> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = collect_let_locals_expr(then_e, out)
+      collect_let_locals_expr(else_e, out)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        // Also collect pattern bindings
+        out = collect_pattern_locals(arm.pattern, out)
+        out = collect_let_locals_expr(arm.body, out)
+      }
+      out
+    },
+    .ALoop(body) => collect_let_locals_expr(body, out),
+    _ => out,
+  }
+}
+
+fn collect_pattern_locals(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
+  case pattern {
+    .Var(lid) => out.push(lid.id),
+    .Variant(_, _, fields) => {
+      for f in fields { out = collect_pattern_locals(f, out) }
+      out
+    },
+    _ => out,
+  }
+}

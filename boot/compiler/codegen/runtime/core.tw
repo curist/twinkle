@@ -1,0 +1,114 @@
+// rt.core — equality, trap, and host I/O bindings.
+//
+// Mirrors stage0 src/runtime/core.rs.
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+
+// Cross-module qualified names (already linked form)
+fn str_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__String")) }
+fn str_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__String")) }
+
+pub fn module() WasmModule {
+  funcs := [
+    print_fn(), println_fn(), eprint_fn(), eprintln_fn(), trap_fn(), eq_fn(),
+  ]
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
+  WasmModule.{
+    namespace: "rt.core",
+    types: [],
+    imports: [
+      ImportDef.{ module: "host", name: "print", as_sym: "host_print", params: [str_null()], results: [] },
+      ImportDef.{ module: "host", name: "println", as_sym: "host_println", params: [str_null()], results: [] },
+      ImportDef.{ module: "host", name: "error", as_sym: "host_error", params: [str_null()], results: [] },
+      ImportDef.{ module: "host", name: "eprint", as_sym: "host_eprint", params: [str_null()], results: [] },
+      ImportDef.{ module: "host", name: "eprintln", as_sym: "host_eprintln", params: [str_null()], results: [] },
+      // Import rt.str.eq for structural string comparison
+      ImportDef.{ module: "rt.str", name: "eq", as_sym: "rt_str__eq", params: [str_ref(), str_ref()], results: [.I32] },
+    ],
+    funcs: funcs,
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: exports,
+    data: [],
+    start: .None,
+  }
+}
+
+fn print_fn() FuncDef {
+  FuncDef.{ name: "print", params: [str_null()], results: [], locals: [], body: [
+    Instr.LocalGet(0), Instr.Call("host_print"),
+  ] }
+}
+
+fn println_fn() FuncDef {
+  FuncDef.{ name: "println", params: [str_null()], results: [], locals: [], body: [
+    Instr.LocalGet(0), Instr.Call("host_println"),
+  ] }
+}
+
+fn eprint_fn() FuncDef {
+  FuncDef.{ name: "eprint", params: [str_null()], results: [], locals: [], body: [
+    Instr.LocalGet(0), Instr.Call("host_eprint"),
+  ] }
+}
+
+fn eprintln_fn() FuncDef {
+  FuncDef.{ name: "eprintln", params: [str_null()], results: [], locals: [], body: [
+    Instr.LocalGet(0), Instr.Call("host_eprintln"),
+  ] }
+}
+
+fn trap_fn() FuncDef {
+  FuncDef.{ name: "trap", params: [str_null()], results: [], locals: [], body: [
+    Instr.LocalGet(0), Instr.Call("host_error"), Instr.Unreachable,
+  ] }
+}
+
+fn eq_fn() FuncDef {
+  bi := "rt_types__BoxedInt"
+  st := "rt_types__String"
+  FuncDef.{
+    name: "eq",
+    params: [.Anyref, .Anyref],
+    results: [.I32],
+    locals: [],
+    body: [
+      // Fast path: identity check (cast to eqref for ref.eq)
+      Instr.LocalGet(0), Instr.RefCast(true, HeapType.Eq),
+      Instr.LocalGet(1), Instr.RefCast(true, HeapType.Eq),
+      Instr.RefEq,
+      Instr.If(.None, [Instr.I32Const(1), Instr.Return], []),
+
+      // Path 1: both BoxedInt → compare i64 fields
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(bi)),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(bi)),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(bi)), Instr.StructGet(bi, 0),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(bi)), Instr.StructGet(bi, 0),
+        Instr.I64Eq, Instr.Return,
+      ], []),
+
+      // Path 2: both String → call rt.str.eq
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(st)),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(st)),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(st)),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(st)),
+        Instr.Call("rt_str__eq"), Instr.Return,
+      ], []),
+
+      // Fallback: identity
+      Instr.LocalGet(0), Instr.RefCast(true, HeapType.Eq),
+      Instr.LocalGet(1), Instr.RefCast(true, HeapType.Eq),
+      Instr.RefEq,
+    ],
+  }
+}

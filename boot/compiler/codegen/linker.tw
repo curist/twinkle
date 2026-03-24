@@ -1,0 +1,427 @@
+// Phase D M9: Linker — merge user module with runtime modules.
+//
+// Takes a list of WasmModules (each with a namespace), qualifies all
+// symbols with namespace prefixes, resolves inter-module imports
+// against exports, and produces a flat LinkedModule.
+//
+// Algorithm (mirrors stage0 src/wasm/linker.rs):
+//   1. Build export map: (namespace, wasm_name) → qualified func sym
+//   2. Build per-module rename maps for funcs, types, globals
+//   3. Resolve inter-module imports against export map
+//   4. Merge & rewrite all artifacts with qualified names
+//   5. Synthesize __linked_init if multiple start functions
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+pub type LinkedModule = .{
+  types: Vector<TypeDef>,
+  imports: Vector<ImportDef>,
+  funcs: Vector<FuncDef>,
+  globals: Vector<GlobalDef>,
+  tables: Vector<TableDef>,
+  elems: Vector<ElemDef>,
+  exports: Vector<ExportDef>,
+  data: Vector<DataSegment>,
+  start: String?,
+}
+
+pub type LinkError = {
+  MissingExport(String, String),  // (module, name)
+}
+
+// ── Naming helpers ─────────────────────────────────────────────────────
+
+fn ns_prefix(ns: String) String {
+  // "rt.arr" → "rt_arr"
+  out := ""
+  for i in range(ns.len()) {
+    ch := ns.slice(i, i + 1)
+    if ch == "." {
+      out = "${out}_"
+    } else {
+      out = "${out}${ch}"
+    }
+  }
+  out
+}
+
+fn qualify(ns: String, sym: String) String {
+  "${ns_prefix(ns)}__${sym}"
+}
+
+// ── Rename map helpers ─────────────────────────────────────────────────
+
+fn rename(map: Dict<String, String>, sym: String) String {
+  case map[sym] {
+    .Some(new) => new,
+    .None => sym,
+  }
+}
+
+// ── ValType rewriting ──────────────────────────────────────────────────
+
+fn rewrite_val_type(type_renames: Dict<String, String>, vt: ValType) ValType {
+  case vt {
+    .Ref(nullable, .Named(name)) => ValType.Ref(nullable, HeapType.Named(rename(type_renames, name))),
+    _ => vt,
+  }
+}
+
+fn rewrite_val_types(type_renames: Dict<String, String>, vts: Vector<ValType>) Vector<ValType> {
+  collect vt in vts { rewrite_val_type(type_renames, vt) }
+}
+
+fn rewrite_val_type_opt(type_renames: Dict<String, String>, vt: ValType?) ValType? {
+  case vt {
+    .Some(v) => .Some(rewrite_val_type(type_renames, v)),
+    .None => .None,
+  }
+}
+
+// ── HeapType rewriting ─────────────────────────────────────────────────
+
+fn rewrite_heap_type(type_renames: Dict<String, String>, ht: HeapType) HeapType {
+  case ht {
+    .Named(name) => HeapType.Named(rename(type_renames, name)),
+    _ => ht,
+  }
+}
+
+// ── Instruction rewriting ──────────────────────────────────────────────
+
+fn rewrite_instrs(
+  func_renames: Dict<String, String>,
+  type_renames: Dict<String, String>,
+  instrs: Vector<Instr>,
+) Vector<Instr> {
+  collect instr in instrs { rewrite_instr(func_renames, type_renames, instr) }
+}
+
+fn rewrite_instr(
+  func_renames: Dict<String, String>,
+  type_renames: Dict<String, String>,
+  instr: Instr,
+) Instr {
+  case instr {
+    // Calls — func renames
+    .Call(sym) => Instr.Call(rename(func_renames, sym)),
+    .ReturnCall(sym) => Instr.ReturnCall(rename(func_renames, sym)),
+    .RefFunc(sym) => Instr.RefFunc(rename(func_renames, sym)),
+    .CallRef(sym) => Instr.CallRef(rename(type_renames, sym)),
+    .CallIndirect(sym, idx) => Instr.CallIndirect(rename(type_renames, sym), idx),
+    .ReturnCallRef(sym) => Instr.ReturnCallRef(rename(type_renames, sym)),
+
+    // Globals — func renames (globals share the func rename map)
+    .GlobalGet(sym) => Instr.GlobalGet(rename(func_renames, sym)),
+    .GlobalSet(sym) => Instr.GlobalSet(rename(func_renames, sym)),
+
+    // Struct — type renames
+    .StructNew(sym) => Instr.StructNew(rename(type_renames, sym)),
+    .StructGet(sym, idx) => Instr.StructGet(rename(type_renames, sym), idx),
+    .StructGetS(sym, idx) => Instr.StructGetS(rename(type_renames, sym), idx),
+    .StructSet(sym, idx) => Instr.StructSet(rename(type_renames, sym), idx),
+
+    // Array — type renames
+    .ArrayNew(sym) => Instr.ArrayNew(rename(type_renames, sym)),
+    .ArrayNewDefault(sym) => Instr.ArrayNewDefault(rename(type_renames, sym)),
+    .ArrayNewFixed(sym, n) => Instr.ArrayNewFixed(rename(type_renames, sym), n),
+    .ArrayNewData(ty_sym, data_sym) =>
+      Instr.ArrayNewData(rename(type_renames, ty_sym), rename(func_renames, data_sym)),
+    .ArrayGet(sym) => Instr.ArrayGet(rename(type_renames, sym)),
+    .ArrayGetU(sym) => Instr.ArrayGetU(rename(type_renames, sym)),
+    .ArraySet(sym) => Instr.ArraySet(rename(type_renames, sym)),
+    .ArrayCopy(dst, src) => Instr.ArrayCopy(rename(type_renames, dst), rename(type_renames, src)),
+
+    // References — type renames for heap types
+    .RefNull(ht) => Instr.RefNull(rewrite_heap_type(type_renames, ht)),
+    .RefCast(nullable, ht) => Instr.RefCast(nullable, rewrite_heap_type(type_renames, ht)),
+    .RefTest(nullable, ht) => Instr.RefTest(nullable, rewrite_heap_type(type_renames, ht)),
+
+    // Control flow — recurse into bodies, rewrite result types
+    .If(result, then_body, else_body) =>
+      Instr.If(
+        rewrite_val_type_opt(type_renames, result),
+        rewrite_instrs(func_renames, type_renames, then_body),
+        rewrite_instrs(func_renames, type_renames, else_body),
+      ),
+    .Block(label, result, body) =>
+      Instr.Block(label, rewrite_val_type_opt(type_renames, result),
+        rewrite_instrs(func_renames, type_renames, body)),
+    .Loop(label, result, body) =>
+      Instr.Loop(label, rewrite_val_type_opt(type_renames, result),
+        rewrite_instrs(func_renames, type_renames, body)),
+
+    // Everything else passes through unchanged
+    _ => instr,
+  }
+}
+
+// ── TypeDef rewriting ──────────────────────────────────────────────────
+
+fn rewrite_field_def(type_renames: Dict<String, String>, fd: FieldDef) FieldDef {
+  FieldDef.{ name: fd.name, mutable: fd.mutable, ty: rewrite_val_type(type_renames, fd.ty) }
+}
+
+fn rewrite_type_def(type_renames: Dict<String, String>, td: TypeDef) TypeDef {
+  case td {
+    .Struct(name, fields, supertype, is_final) => {
+      new_fields := collect f in fields { rewrite_field_def(type_renames, f) }
+      new_super: String? = case supertype {
+        .Some(s) => .Some(rename(type_renames, s)),
+        .None => .None,
+      }
+      TypeDef.Struct(rename(type_renames, name), new_fields, new_super, is_final)
+    },
+    .Array(name, elem) =>
+      TypeDef.Array(rename(type_renames, name), rewrite_field_def(type_renames, elem)),
+    .FuncType(name, params, results) =>
+      TypeDef.FuncType(
+        rename(type_renames, name),
+        rewrite_val_types(type_renames, params),
+        rewrite_val_types(type_renames, results),
+      ),
+  }
+}
+
+// ── Public API ─────────────────────────────────────────────────────────
+
+pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Vector<LinkError>> {
+  // Phase 1: Build export map — (namespace, wasm_name) → qualified func sym
+  export_map: Dict<String, String> = Dict.new()
+  for m in modules {
+    for exp in m.exports {
+      key := "${m.namespace}\x00${exp.wasm_name}"
+      export_map[key] = qualify(m.namespace, exp.func_sym)
+    }
+  }
+
+  // Phase 2: Build per-module rename maps
+  all_func_renames: Vector<Dict<String, String>> = []
+  all_type_renames: Vector<Dict<String, String>> = []
+
+  for m in modules {
+    func_renames: Dict<String, String> = Dict.new()
+    type_renames: Dict<String, String> = Dict.new()
+
+    // Functions
+    for f in m.funcs {
+      func_renames[f.name] = qualify(m.namespace, f.name)
+    }
+    // Globals
+    for g in m.globals {
+      func_renames[g.name] = qualify(m.namespace, g.name)
+    }
+    // Data segments
+    for d in m.data {
+      func_renames[d.name] = qualify(m.namespace, d.name)
+    }
+    // Tables
+    for t in m.tables {
+      func_renames[t.name] = qualify(m.namespace, t.name)
+    }
+    // Import as_syms (local aliases for imports)
+    for imp in m.imports {
+      func_renames[imp.as_sym] = qualify(m.namespace, imp.as_sym)
+    }
+
+    // Types
+    for td in m.types {
+      case td {
+        .Struct(name, _, _, _) => { type_renames[name] = qualify(m.namespace, name) },
+        .Array(name, _) => { type_renames[name] = qualify(m.namespace, name) },
+        .FuncType(name, _, _) => { type_renames[name] = qualify(m.namespace, name) },
+      }
+    }
+
+    all_func_renames = all_func_renames.push(func_renames)
+    all_type_renames = all_type_renames.push(type_renames)
+  }
+
+  // Phase 3: Resolve inter-module imports
+  errors: Vector<LinkError> = []
+  all_import_redirects: Vector<Dict<String, String>> = []
+
+  for m, mi in modules {
+    redirects: Dict<String, String> = Dict.new()
+    for imp in m.imports {
+      if imp.module == "host" {
+        // Host imports are preserved, not resolved
+        continue
+      }
+      key := "${imp.module}\x00${imp.name}"
+      case export_map[key] {
+        .Some(qualified_export) => {
+          // Both the local alias and the qualified alias redirect to the export
+          redirects[imp.as_sym] = qualified_export
+          redirects[qualify(m.namespace, imp.as_sym)] = qualified_export
+        },
+        .None => {
+          errors = errors.push(LinkError.MissingExport(imp.module, imp.name))
+        },
+      }
+    }
+    all_import_redirects = all_import_redirects.push(redirects)
+  }
+
+  if errors.len() > 0 {
+    return .Err(errors)
+  }
+
+  // Phase 4: Merge & rewrite all artifacts
+  out_types: Vector<TypeDef> = []
+  out_imports: Vector<ImportDef> = []
+  out_funcs: Vector<FuncDef> = []
+  out_globals: Vector<GlobalDef> = []
+  out_tables: Vector<TableDef> = []
+  out_elems: Vector<ElemDef> = []
+  out_exports: Vector<ExportDef> = []
+  out_data: Vector<DataSegment> = []
+  start_funcs: Vector<String> = []
+
+  for m, mi in modules {
+    func_renames := all_func_renames[mi]
+    type_renames := all_type_renames[mi]
+    import_redirects := all_import_redirects[mi]
+
+    // Build combined rename map: func_renames + import_redirects
+    combined: Dict<String, String> = Dict.new()
+    for k in func_renames.keys() {
+      case func_renames[k] {
+        .Some(v) => { combined[k] = v },
+        .None => {},
+      }
+    }
+    for k in import_redirects.keys() {
+      case import_redirects[k] {
+        .Some(v) => { combined[k] = v },
+        .None => {},
+      }
+    }
+
+    // Types
+    for td in m.types {
+      out_types = out_types.push(rewrite_type_def(type_renames, td))
+    }
+
+    // Imports — only host imports survive
+    for imp in m.imports {
+      if imp.module == "host" {
+        out_imports = out_imports.push(ImportDef.{
+          module: imp.module,
+          name: imp.name,
+          as_sym: qualify(m.namespace, imp.as_sym),
+          params: rewrite_val_types(type_renames, imp.params),
+          results: rewrite_val_types(type_renames, imp.results),
+        })
+      }
+    }
+
+    // Functions
+    for f in m.funcs {
+      out_funcs = out_funcs.push(FuncDef.{
+        name: rename(combined, f.name),
+        params: rewrite_val_types(type_renames, f.params),
+        results: rewrite_val_types(type_renames, f.results),
+        locals: rewrite_val_types(type_renames, f.locals),
+        body: rewrite_instrs(combined, type_renames, f.body),
+      })
+    }
+
+    // Globals
+    for g in m.globals {
+      out_globals = out_globals.push(GlobalDef.{
+        name: rename(combined, g.name),
+        mutable: g.mutable,
+        ty: rewrite_val_type(type_renames, g.ty),
+        init: rewrite_instrs(combined, type_renames, g.init),
+      })
+    }
+
+    // Tables
+    for t in m.tables {
+      out_tables = out_tables.push(TableDef.{
+        name: qualify(m.namespace, t.name),
+        elem_type: rewrite_val_type(type_renames, t.elem_type),
+        min: t.min,
+        max: t.max,
+      })
+    }
+
+    // Elem segments
+    for e in m.elems {
+      out_elems = out_elems.push(ElemDef.{
+        table: qualify(m.namespace, e.table),
+        offset: rewrite_instrs(combined, type_renames, e.offset),
+        func_syms: collect sym in e.func_syms { rename(combined, sym) },
+      })
+    }
+
+    // Exports
+    for exp in m.exports {
+      out_exports = out_exports.push(ExportDef.{
+        wasm_name: exp.wasm_name,
+        func_sym: rename(combined, exp.func_sym),
+      })
+    }
+
+    // Data segments
+    for d in m.data {
+      out_data = out_data.push(DataSegment.{
+        name: rename(combined, d.name),
+        offset: rewrite_instrs(combined, type_renames, d.offset),
+        bytes: d.bytes,
+      })
+    }
+
+    // Collect start functions
+    case m.start {
+      .Some(s) => { start_funcs = start_funcs.push(rename(combined, s)) },
+      .None => {},
+    }
+  }
+
+  // Phase 5: Synthesize start function
+  start: String? = .None
+
+  // Collect all call targets: start funcs + entry
+  init_calls: Vector<String> = start_funcs
+  case entry {
+    .Some(e) => { init_calls = init_calls.push(e) },
+    .None => {},
+  }
+
+  if init_calls.len() == 0 {
+    start = .None
+  } else if init_calls.len() == 1 and case entry { .None => true, _ => false } {
+    // Single start, no entry → just use it directly
+    start = .Some(init_calls[0])
+  } else {
+    // Multiple starts or entry specified → synthesize __linked_init
+    init_body: Vector<Instr> = collect sym in init_calls { Instr.Call(sym) }
+    out_funcs = out_funcs.push(FuncDef.{
+      name: "__linked_init",
+      params: [],
+      results: [],
+      locals: [],
+      body: init_body,
+    })
+    start = .Some("__linked_init")
+  }
+
+  .Ok(LinkedModule.{
+    types: out_types,
+    imports: out_imports,
+    funcs: out_funcs,
+    globals: out_globals,
+    tables: out_tables,
+    elems: out_elems,
+    exports: out_exports,
+    data: out_data,
+    start: start,
+  })
+}

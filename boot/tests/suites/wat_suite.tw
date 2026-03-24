@@ -1,0 +1,328 @@
+use tests.runner
+use tests.assert
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+use compiler.codegen.wat.{emit_wat}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn empty_module() WasmModule {
+  WasmModule.{
+    namespace: "test",
+    types: [],
+    imports: [],
+    funcs: [],
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: [],
+    data: [],
+    start: .None,
+  }
+}
+
+fn mod_with_types(types: Vector<TypeDef>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: types, imports: m.imports, funcs: m.funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start }
+}
+
+fn mod_with_imports(imports: Vector<ImportDef>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: imports, funcs: m.funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start }
+}
+
+fn mod_with_funcs(funcs: Vector<FuncDef>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: m.imports, funcs: funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start }
+}
+
+fn mod_with_globals(globals: Vector<GlobalDef>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: m.imports, funcs: m.funcs, globals: globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start }
+}
+
+fn mod_with_data(data: Vector<DataSegment>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: m.imports, funcs: m.funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: data, start: m.start }
+}
+
+fn mod_with_exports(exports: Vector<ExportDef>) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: m.imports, funcs: m.funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: exports, data: m.data, start: m.start }
+}
+
+fn mod_with_funcs_and_start(funcs: Vector<FuncDef>, start: String?) WasmModule {
+  m := empty_module()
+  WasmModule.{ namespace: m.namespace, types: m.types, imports: m.imports, funcs: funcs, globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: start }
+}
+
+fn contains(haystack: String, needle: String) Bool {
+  if needle.len() > haystack.len() { return false }
+  if needle.len() == 0 { return true }
+  for i in range(haystack.len() - needle.len() + 1) {
+    if haystack.slice(i, i + needle.len()) == needle { return true }
+  }
+  false
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+fn test_empty_module() Result<Void, String> {
+  wat := emit_wat(empty_module())
+  try assert.ok(contains(wat, "(module"), "should contain (module")
+  .Ok({})
+}
+
+fn test_struct_type_def() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.Struct("Point", [
+      FieldDef.{ name: .Some("x"), mutable: true, ty: .I64 },
+      FieldDef.{ name: .Some("y"), mutable: true, ty: .I64 },
+    ], .None, true),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(type $Point (struct"), "should have struct type")
+  try assert.ok(contains(wat, "(field $x (mut i64))"), "should have mutable field x")
+  try assert.ok(contains(wat, "(field $y (mut i64))"), "should have mutable field y")
+  .Ok({})
+}
+
+fn test_struct_type_with_supertype() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.Struct("Child", [
+      FieldDef.{ name: .None, mutable: false, ty: .Anyref },
+    ], .Some("Parent"), false),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(sub $Parent"), "should have sub Parent")
+  .Ok({})
+}
+
+fn test_non_final_struct_without_supertype() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.Struct("Base", [
+      FieldDef.{ name: .None, mutable: false, ty: .I32 },
+    ], .None, false),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(type $Base (sub (struct"), "non-final should have sub wrapper")
+  .Ok({})
+}
+
+fn test_array_type_def() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.Array("MyArr", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(type $MyArr (array (mut anyref)))"), "should have array type")
+  .Ok({})
+}
+
+fn test_func_type_def() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.FuncType("MySig", [.I64, .I64], [.I64]),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(type $MySig (func (param i64 i64) (result i64)))"), "should have functype")
+  .Ok({})
+}
+
+fn test_import_emission() Result<Void, String> {
+  m := mod_with_imports([
+    ImportDef.{ module: "host", name: "print", as_sym: "host_print", params: [.Anyref], results: [] },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(import \"host\" \"print\" (func $host_print"), "should have import")
+  .Ok({})
+}
+
+fn test_function_with_body() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{
+      name: "add",
+      params: [.I64, .I64],
+      results: [.I64],
+      locals: [],
+      body: [Instr.LocalGet(0), Instr.LocalGet(1), Instr.I64Add],
+    },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(func $add"), "should have func name")
+  try assert.ok(contains(wat, "local.get $p0"), "should get param 0")
+  try assert.ok(contains(wat, "local.get $p1"), "should get param 1")
+  try assert.ok(contains(wat, "i64.add"), "should have i64.add")
+  .Ok({})
+}
+
+fn test_function_with_extra_locals() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{
+      name: "f",
+      params: [.I64],
+      results: [.I64],
+      locals: [.I64, .Anyref],
+      body: [Instr.LocalGet(0)],
+    },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(param $p0 i64)"), "param p0")
+  try assert.ok(contains(wat, "(local $p1 i64)"), "local p1")
+  try assert.ok(contains(wat, "(local $p2 anyref)"), "local p2")
+  .Ok({})
+}
+
+fn test_global_emission() Result<Void, String> {
+  m := mod_with_globals([
+    GlobalDef.{ name: "g1", mutable: true, ty: .I64, init: [Instr.I64Const(42)] },
+    GlobalDef.{ name: "g2", mutable: false, ty: .I32, init: [Instr.I32Const(0)] },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(global $g1 (mut i64) (i64.const 42))"), "mutable global")
+  try assert.ok(contains(wat, "(global $g2 i32 (i32.const 0))"), "immutable global")
+  .Ok({})
+}
+
+fn test_data_segment_passive() Result<Void, String> {
+  m := mod_with_data([
+    DataSegment.{ name: "d0", offset: [], bytes: [65, 66, 67] },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(data $d0 \"\\41\\42\\43\")"), "passive data with hex bytes")
+  .Ok({})
+}
+
+fn test_export_emission() Result<Void, String> {
+  m := mod_with_exports([
+    ExportDef.{ wasm_name: "main", func_sym: "f_main" },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(export \"main\" (func $f_main))"), "should have export")
+  .Ok({})
+}
+
+fn test_start_function() Result<Void, String> {
+  m := mod_with_funcs_and_start(
+    [FuncDef.{ name: "init", params: [], results: [], locals: [], body: [] }],
+    .Some("init"),
+  )
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(start $init)"), "should have start")
+  .Ok({})
+}
+
+fn test_if_block_loop_emission() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{
+      name: "ctrl",
+      params: [],
+      results: [],
+      locals: [],
+      body: [
+        Instr.Block("b0", .None, [
+          Instr.Loop("l0", .None, [
+            Instr.I32Const(1),
+            Instr.If(.Some(.I64), [Instr.I64Const(1)], [Instr.I64Const(2)]),
+            Instr.Drop,
+            Instr.Br("l0"),
+          ]),
+        ]),
+      ],
+    },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(block $b0"), "should have block")
+  try assert.ok(contains(wat, "(loop $l0"), "should have loop")
+  try assert.ok(contains(wat, "(if (result i64)"), "should have if with result")
+  try assert.ok(contains(wat, "(then"), "should have then")
+  try assert.ok(contains(wat, "(else"), "should have else")
+  try assert.ok(contains(wat, "br $l0"), "should have br")
+  .Ok({})
+}
+
+fn test_ref_func_declarative_elem() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{
+      name: "f",
+      params: [],
+      results: [],
+      locals: [],
+      body: [Instr.RefFunc("target")],
+    },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(elem declare func $target)"), "should have declarative elem")
+  .Ok({})
+}
+
+fn test_functype_deduplication() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{ name: "f1", params: [.I64], results: [.I64], locals: [], body: [Instr.LocalGet(0)] },
+    FuncDef.{ name: "f2", params: [.I64], results: [.I64], locals: [], body: [Instr.LocalGet(0)] },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "$functype_0"), "should have functype_0")
+  try assert.ok(!contains(wat, "$functype_1"), "should NOT have functype_1 (deduped)")
+  .Ok({})
+}
+
+fn test_ref_types_in_val_type() Result<Void, String> {
+  m := mod_with_types([
+    TypeDef.Struct("S", [
+      FieldDef.{ name: .None, mutable: false, ty: ValType.Ref(true, HeapType.Named("Foo")) },
+      FieldDef.{ name: .None, mutable: false, ty: ValType.Ref(false, HeapType.Eq) },
+    ], .None, true),
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(ref null $Foo)"), "nullable ref")
+  try assert.ok(contains(wat, "(ref eq)"), "non-nullable ref")
+  .Ok({})
+}
+
+fn test_struct_array_instructions() Result<Void, String> {
+  m := mod_with_funcs([
+    FuncDef.{
+      name: "ops",
+      params: [],
+      results: [.Anyref],
+      locals: [],
+      body: [
+        Instr.I64Const(1),
+        Instr.I64Const(2),
+        Instr.StructNew("Pt"),
+        Instr.StructGet("Pt", 0),
+        Instr.ArrayLen,
+      ],
+    },
+  ])
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "struct.new $Pt"), "struct.new")
+  try assert.ok(contains(wat, "struct.get $Pt 0"), "struct.get")
+  try assert.ok(contains(wat, "array.len"), "array.len")
+  .Ok({})
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("wat (M8)")
+    .test("empty module emits (module)", test_empty_module)
+    .test("struct type def", test_struct_type_def)
+    .test("struct type with supertype", test_struct_type_with_supertype)
+    .test("non-final struct without supertype", test_non_final_struct_without_supertype)
+    .test("array type def", test_array_type_def)
+    .test("func type def", test_func_type_def)
+    .test("import emission", test_import_emission)
+    .test("function with body", test_function_with_body)
+    .test("function with extra locals", test_function_with_extra_locals)
+    .test("global emission", test_global_emission)
+    .test("data segment passive", test_data_segment_passive)
+    .test("export emission", test_export_emission)
+    .test("start function", test_start_function)
+    .test("if/block/loop emission", test_if_block_loop_emission)
+    .test("ref.func generates declarative elem segment", test_ref_func_declarative_elem)
+    .test("functype deduplication", test_functype_deduplication)
+    .test("ref types in val_type", test_ref_types_in_val_type)
+    .test("struct/array instructions", test_struct_array_instructions)
+}

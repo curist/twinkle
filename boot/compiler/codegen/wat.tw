@@ -1,0 +1,681 @@
+// Phase D M8: WAT Emission — WasmModule to WAT text format
+//
+// Serializes the Wasm IR into S-expression text format.
+// Uses Vector<String> line buffer to avoid quadratic string concatenation.
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+// Wasm symbols are $-prefixed. Since "$" before interpolation "${" is
+// ambiguous in Twinkle strings, we build the prefix via code point 36.
+fn sym(s: String) String {
+  case String.from_code_point(36) {
+    .Some(dollar) => "${dollar}${s}",
+    .None => s,
+  }
+}
+
+// Wrap a single string into a Vector<String>.
+// Needed because `x := ...; ["${x}"]` is misparsed as string indexing.
+fn line(s: String) Vector<String> { [s] }
+
+fn make_pad(indent: Int) String {
+  out := ""
+  for _ in range(indent) { out = "${out} " }
+  out
+}
+
+fn join_lines(lines: Vector<String>) String {
+  parts: Vector<String> = []
+  for l in lines { parts = parts.push(l) }
+  result := ""
+  first := true
+  for l in parts {
+    if first {
+      result = l
+      first = false
+    } else {
+      result = "${result}\n${l}"
+    }
+  }
+  "${result}\n"
+}
+
+// ── Public entry point ─────────────────────────────────────────────────
+
+pub fn emit_wat(module: WasmModule) String {
+  lines: Vector<String> = ["(module"]
+
+  // 1. Named type definitions
+  for td in module.types {
+    lines = lines.push(emit_typedef(td))
+  }
+
+  // 2. Anonymous functype dedup for imports + functions
+  ft_registry := build_functype_registry(module)
+  for i in range(ft_registry.entries.len()) {
+    entry := ft_registry.entries[i]
+    lines = lines.push(emit_functype_def(i, entry.params, entry.results))
+  }
+
+  // 3. Imports
+  for imp in module.imports {
+    idx := lookup_functype(ft_registry, imp.params, imp.results)
+    s := sym(imp.as_sym)
+    ft := sym("functype_${idx}")
+    lines = lines.push("  (import \"${imp.module}\" \"${imp.name}\" (func ${s} (type ${ft})))")
+  }
+
+  // 4. Tables
+  for tbl in module.tables {
+    max_str := case tbl.max {
+      .Some(m) => " ${m}",
+      .None => "",
+    }
+    s := sym(tbl.name)
+    vt := emit_val_type(tbl.elem_type)
+    lines = lines.push("  (table ${s} ${tbl.min}${max_str} ${vt})")
+  }
+
+  // 5. Globals
+  for g in module.globals {
+    init_str := emit_instrs_inline(g.init)
+    s := sym(g.name)
+    vt := emit_val_type(g.ty)
+    if g.mutable {
+      lines = lines.push("  (global ${s} (mut ${vt}) (${init_str}))")
+    } else {
+      lines = lines.push("  (global ${s} ${vt} (${init_str}))")
+    }
+  }
+
+  // 6. Functions
+  for f in module.funcs {
+    idx := lookup_functype(ft_registry, f.params, f.results)
+    func_lines := emit_func_def(f, idx)
+    for fl in func_lines { lines = lines.push(fl) }
+  }
+
+  // 7. Element segments
+  for elem in module.elems {
+    offset_str := emit_instrs_inline(elem.offset)
+    syms_str := ""
+    for s in elem.func_syms {
+      ss := sym(s)
+      syms_str = "${syms_str} ${ss}"
+    }
+    ts := sym(elem.table)
+    lines = lines.push("  (elem (table ${ts}) (${offset_str}) func${syms_str})")
+  }
+
+  // 7b. Declarative element segment for ref.func
+  ref_func_syms := collect_ref_func_syms(module)
+  if ref_func_syms.len() > 0 {
+    syms_str := ""
+    for s in ref_func_syms {
+      ss := sym(s)
+      syms_str = "${syms_str} ${ss}"
+    }
+    lines = lines.push("  (elem declare func${syms_str})")
+  }
+
+  // 8. Data segments
+  for d in module.data {
+    hex_str := bytes_to_hex(d.bytes)
+    ds := sym(d.name)
+    if d.offset.len() == 0 {
+      lines = lines.push("  (data ${ds} \"${hex_str}\")")
+    } else {
+      offset_str := emit_instrs_inline(d.offset)
+      lines = lines.push("  (data ${ds} (${offset_str}) \"${hex_str}\")")
+    }
+  }
+
+  // 9. Exports
+  for e in module.exports {
+    fs := sym(e.func_sym)
+    lines = lines.push("  (export \"${e.wasm_name}\" (func ${fs}))")
+  }
+
+  // 10. Start
+  case module.start {
+    .Some(s) => {
+      ss := sym(s)
+      lines = lines.push("  (start ${ss})")
+    },
+    .None => {},
+  }
+
+  lines = lines.push(")")
+  join_lines(lines)
+}
+
+// ── Type definition emission ───────────────────────────────────────────
+
+fn emit_typedef(td: TypeDef) String {
+  case td {
+    .Struct(name, fields, super_type, is_final) => {
+      fields_str := ""
+      for f in fields {
+        fd := emit_field_def(f)
+        fields_str = "${fields_str} ${fd}"
+      }
+      body := "(struct${fields_str})"
+      ns := sym(name)
+      case super_type {
+        .Some(parent) => {
+          ps := sym(parent)
+          "  (type ${ns} (sub ${ps} ${body}))"
+        },
+        .None => {
+          if is_final {
+            "  (type ${ns} ${body})"
+          } else {
+            "  (type ${ns} (sub ${body}))"
+          }
+        },
+      }
+    },
+    .Array(name, field) => {
+      inner := if field.mutable {
+        vt := emit_val_type(field.ty)
+        "(mut ${vt})"
+      } else {
+        emit_val_type(field.ty)
+      }
+      ns := sym(name)
+      "  (type ${ns} (array ${inner}))"
+    },
+    .FuncType(name, params, results) => {
+      sig := emit_func_sig(params, results)
+      ns := sym(name)
+      "  (type ${ns} (func${sig}))"
+    },
+  }
+}
+
+fn emit_field_def(f: FieldDef) String {
+  ty_str := if f.mutable {
+    vt := emit_val_type(f.ty)
+    "(mut ${vt})"
+  } else {
+    emit_val_type(f.ty)
+  }
+  case f.name {
+    .Some(n) => {
+      ns := sym(n)
+      "(field ${ns} ${ty_str})"
+    },
+    .None => "(field ${ty_str})",
+  }
+}
+
+// ── Functype registry (deduplication) ──────────────────────────────────
+
+type FuncSigPair = .{
+  params: Vector<ValType>,
+  results: Vector<ValType>,
+}
+
+type FuncTypeRegistry = .{
+  entries: Vector<FuncSigPair>,
+  keys: Dict<String, Int>,
+}
+
+fn build_functype_registry(module: WasmModule) FuncTypeRegistry {
+  reg := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
+  for imp in module.imports {
+    reg = register_functype(reg, imp.params, imp.results)
+  }
+  for f in module.funcs {
+    reg = register_functype(reg, f.params, f.results)
+  }
+  reg
+}
+
+fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) FuncTypeRegistry {
+  key := sig_key(params, results)
+  if reg.keys.has(key) { return reg }
+  idx := reg.entries.len()
+  FuncTypeRegistry.{
+    entries: reg.entries.push(FuncSigPair.{ params: params, results: results }),
+    keys: reg.keys.set(key, idx),
+  }
+}
+
+fn lookup_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) Int {
+  key := sig_key(params, results)
+  case reg.keys[key] {
+    .Some(idx) => idx,
+    .None => error("lookup_functype: unknown sig ${key}"),
+  }
+}
+
+fn sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
+  p := ""
+  for vt in params {
+    v := emit_val_type(vt)
+    p = "${p}${v},"
+  }
+  r := ""
+  for vt in results {
+    v := emit_val_type(vt)
+    r = "${r}${v},"
+  }
+  "P(${p})R(${r})"
+}
+
+fn emit_functype_def(idx: Int, params: Vector<ValType>, results: Vector<ValType>) String {
+  sig := emit_func_sig(params, results)
+  ft := sym("functype_${idx}")
+  "  (type ${ft} (func${sig}))"
+}
+
+fn emit_func_sig(params: Vector<ValType>, results: Vector<ValType>) String {
+  out := ""
+  if params.len() > 0 {
+    ps := ""
+    for vt in params {
+      v := emit_val_type(vt)
+      if ps.len() > 0 { ps = "${ps} ${v}" } else { ps = v }
+    }
+    out = "${out} (param ${ps})"
+  }
+  if results.len() > 0 {
+    rs := ""
+    for vt in results {
+      v := emit_val_type(vt)
+      if rs.len() > 0 { rs = "${rs} ${v}" } else { rs = v }
+    }
+    out = "${out} (result ${rs})"
+  }
+  out
+}
+
+// ── Function definition emission ───────────────────────────────────────
+
+fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
+  ns := sym(f.name)
+  ft := sym("functype_${type_idx}")
+  lines: Vector<String> = ["  (func ${ns} (type ${ft})"]
+
+  // Params
+  idx := 0
+  for vt in f.params {
+    ps := sym("p${idx}")
+    v := emit_val_type(vt)
+    lines = lines.push("    (param ${ps} ${v})")
+    idx = idx + 1
+  }
+
+  // Results
+  for vt in f.results {
+    v := emit_val_type(vt)
+    lines = lines.push("    (result ${v})")
+  }
+
+  // Locals (beyond params)
+  for vt in f.locals {
+    ps := sym("p${idx}")
+    v := emit_val_type(vt)
+    lines = lines.push("    (local ${ps} ${v})")
+    idx = idx + 1
+  }
+
+  // Body instructions
+  for instr in f.body {
+    instr_lines := emit_instr(instr, 4)
+    for il in instr_lines { lines = lines.push(il) }
+  }
+
+  lines = lines.push("  )")
+  lines
+}
+
+// ── Instruction emission ───────────────────────────────────────────────
+
+fn emit_instr(instr: Instr, indent: Int) Vector<String> {
+  pad := make_pad(indent)
+  case instr {
+    // Locals & globals
+    .LocalGet(i) => line("${pad}local.get ${sym("p${i}")}"),
+    .LocalSet(i) => line("${pad}local.set ${sym("p${i}")}"),
+    .LocalTee(i) => line("${pad}local.tee ${sym("p${i}")}"),
+    .GlobalGet(s) => line("${pad}global.get ${sym(s)}"),
+    .GlobalSet(s) => line("${pad}global.set ${sym(s)}"),
+
+    // Constants
+    .I32Const(v) => ["${pad}i32.const ${v}"],
+    .I64Const(v) => ["${pad}i64.const ${v}"],
+    .F64Const(v) => line("${pad}f64.const ${emit_f64(v)}"),
+
+    // i32 arithmetic
+    .I32Add => ["${pad}i32.add"],
+    .I32Sub => ["${pad}i32.sub"],
+    .I32Mul => ["${pad}i32.mul"],
+    .I32DivS => ["${pad}i32.div_s"],
+    .I32RemS => ["${pad}i32.rem_s"],
+    .I32Eqz => ["${pad}i32.eqz"],
+    .I32Eq => ["${pad}i32.eq"],
+    .I32Ne => ["${pad}i32.ne"],
+    .I32LtS => ["${pad}i32.lt_s"],
+    .I32GtS => ["${pad}i32.gt_s"],
+    .I32LeS => ["${pad}i32.le_s"],
+    .I32GeS => ["${pad}i32.ge_s"],
+    .I32LtU => ["${pad}i32.lt_u"],
+    .I32GtU => ["${pad}i32.gt_u"],
+    .I32LeU => ["${pad}i32.le_u"],
+    .I32GeU => ["${pad}i32.ge_u"],
+    .I32And => ["${pad}i32.and"],
+    .I32Or => ["${pad}i32.or"],
+    .I32ShrU => ["${pad}i32.shr_u"],
+
+    // i64 arithmetic
+    .I64Add => ["${pad}i64.add"],
+    .I64Sub => ["${pad}i64.sub"],
+    .I64Mul => ["${pad}i64.mul"],
+    .I64DivS => ["${pad}i64.div_s"],
+    .I64RemS => ["${pad}i64.rem_s"],
+    .I64Eqz => ["${pad}i64.eqz"],
+    .I64Eq => ["${pad}i64.eq"],
+    .I64Ne => ["${pad}i64.ne"],
+    .I64LtS => ["${pad}i64.lt_s"],
+    .I64GtS => ["${pad}i64.gt_s"],
+    .I64LeS => ["${pad}i64.le_s"],
+    .I64GeS => ["${pad}i64.ge_s"],
+    .I64And => ["${pad}i64.and"],
+    .I64Or => ["${pad}i64.or"],
+    .I64Xor => ["${pad}i64.xor"],
+    .I64Shl => ["${pad}i64.shl"],
+    .I64ShrS => ["${pad}i64.shr_s"],
+    .I64ShrU => ["${pad}i64.shr_u"],
+
+    // f64 arithmetic
+    .F64Add => ["${pad}f64.add"],
+    .F64Sub => ["${pad}f64.sub"],
+    .F64Mul => ["${pad}f64.mul"],
+    .F64Div => ["${pad}f64.div"],
+    .F64Eq => ["${pad}f64.eq"],
+    .F64Ne => ["${pad}f64.ne"],
+    .F64Lt => ["${pad}f64.lt"],
+    .F64Gt => ["${pad}f64.gt"],
+    .F64Le => ["${pad}f64.le"],
+    .F64Ge => ["${pad}f64.ge"],
+    .F64Neg => ["${pad}f64.neg"],
+    .F64Abs => ["${pad}f64.abs"],
+    .F64Ceil => ["${pad}f64.ceil"],
+    .F64Floor => ["${pad}f64.floor"],
+    .F64Sqrt => ["${pad}f64.sqrt"],
+
+    // Misc
+    .Select => ["${pad}select"],
+
+    // Conversions
+    .I32WrapI64 => ["${pad}i32.wrap_i64"],
+    .I64ExtendI32S => ["${pad}i64.extend_i32_s"],
+    .I64ExtendI32U => ["${pad}i64.extend_i32_u"],
+    .F64ConvertI64S => ["${pad}f64.convert_i64_s"],
+    .I64TruncF64S => ["${pad}i64.trunc_f64_s"],
+    .F64ReinterpretI32 => ["${pad}f64.reinterpret_i32"],
+
+    // References
+    .RefNull(ht) => line("${pad}ref.null ${emit_heap_type(ht)}"),
+    .RefIsNull => ["${pad}ref.is_null"],
+    .RefAsNonNull => ["${pad}ref.as_non_null"],
+    .RefEq => ["${pad}ref.eq"],
+    .RefI31 => ["${pad}ref.i31"],
+    .I31GetS => ["${pad}i31.get_s"],
+    .I31GetU => ["${pad}i31.get_u"],
+    .RefCast(nullable, ht) => {
+      h := emit_heap_type(ht)
+      if nullable { line("${pad}ref.cast (ref null ${h})") }
+      else { line("${pad}ref.cast (ref ${h})") }
+    },
+    .RefTest(nullable, ht) => {
+      h := emit_heap_type(ht)
+      if nullable { line("${pad}ref.test (ref null ${h})") }
+      else { line("${pad}ref.test (ref ${h})") }
+    },
+    .RefFunc(s) => line("${pad}ref.func ${sym(s)}"),
+
+    // Struct
+    .StructNew(ty) => line("${pad}struct.new ${sym(ty)}"),
+    .StructGet(ty, idx) => line("${pad}struct.get ${sym(ty)} ${idx}"),
+    .StructGetS(ty, idx) => line("${pad}struct.get_s ${sym(ty)} ${idx}"),
+    .StructSet(ty, idx) => line("${pad}struct.set ${sym(ty)} ${idx}"),
+
+    // Array
+    .ArrayNew(ty) => line("${pad}array.new ${sym(ty)}"),
+    .ArrayNewDefault(ty) => line("${pad}array.new_default ${sym(ty)}"),
+    .ArrayNewFixed(ty, n) => line("${pad}array.new_fixed ${sym(ty)} ${n}"),
+    .ArrayNewData(ty, data_name) => line("${pad}array.new_data ${sym(ty)} ${sym(data_name)}"),
+    .ArrayGet(ty) => line("${pad}array.get ${sym(ty)}"),
+    .ArrayGetU(ty) => line("${pad}array.get_u ${sym(ty)}"),
+    .ArraySet(ty) => line("${pad}array.set ${sym(ty)}"),
+    .ArrayLen => ["${pad}array.len"],
+    .ArrayCopy(dst, src) => line("${pad}array.copy ${sym(dst)} ${sym(src)}"),
+
+    // Calls
+    .Call(f) => line("${pad}call ${sym(f)}"),
+    .CallRef(ty) => line("${pad}call_ref ${sym(ty)}"),
+    .CallIndirect(ty, table) => line("${pad}call_indirect (type ${sym(ty)}) (table ${table})"),
+    .ReturnCall(f) => line("${pad}return_call ${sym(f)}"),
+    .ReturnCallRef(ty) => line("${pad}return_call_ref ${sym(ty)}"),
+
+    // Control flow
+    .Drop => ["${pad}drop"],
+    .Return => ["${pad}return"],
+    .Unreachable => ["${pad}unreachable"],
+    .Nop => ["${pad}nop"],
+    .Br(label) => line("${pad}br ${sym(label)}"),
+    .BrIf(label) => line("${pad}br_if ${sym(label)}"),
+    .BrTable(labels, default_label) => {
+      lbl_str := ""
+      for l in labels {
+        ls := sym(l)
+        lbl_str = "${lbl_str} ${ls}"
+      }
+      ds := sym(default_label)
+      line("${pad}br_table${lbl_str} ${ds}")
+    },
+
+    // Structured control flow
+    .If(result_ty, then_body, else_body) => {
+      result_str := case result_ty {
+        .Some(vt) => " (result ${emit_val_type(vt)})",
+        .None => "",
+      }
+      lines: Vector<String> = [
+        "${pad}(if${result_str}",
+        "${pad}  (then",
+      ]
+      for i in then_body {
+        inner := emit_instr(i, indent + 4)
+        for il in inner { lines = lines.push(il) }
+      }
+      lines = lines.push("${pad}  )")
+      if else_body.len() > 0 {
+        lines = lines.push("${pad}  (else")
+        for i in else_body {
+          inner := emit_instr(i, indent + 4)
+          for il in inner { lines = lines.push(il) }
+        }
+        lines = lines.push("${pad}  )")
+      }
+      lines = lines.push("${pad})")
+      lines
+    },
+    .Block(label, result_ty, body) => {
+      result_str := case result_ty {
+        .Some(vt) => " (result ${emit_val_type(vt)})",
+        .None => "",
+      }
+      ls := sym(label)
+      lines: Vector<String> = ["${pad}(block ${ls}${result_str}"]
+      for i in body {
+        inner := emit_instr(i, indent + 2)
+        for il in inner { lines = lines.push(il) }
+      }
+      lines = lines.push("${pad})")
+      lines
+    },
+    .Loop(label, result_ty, body) => {
+      result_str := case result_ty {
+        .Some(vt) => " (result ${emit_val_type(vt)})",
+        .None => "",
+      }
+      ls := sym(label)
+      lines: Vector<String> = ["${pad}(loop ${ls}${result_str}"]
+      for i in body {
+        inner := emit_instr(i, indent + 2)
+        for il in inner { lines = lines.push(il) }
+      }
+      lines = lines.push("${pad})")
+      lines
+    },
+  }
+}
+
+// ── ValType / HeapType emission ────────────────────────────────────────
+
+fn emit_val_type(vt: ValType) String {
+  case vt {
+    .I8 => "i8",
+    .I32 => "i32",
+    .I64 => "i64",
+    .F64 => "f64",
+    .Anyref => "anyref",
+    .I31ref => "i31ref",
+    .Funcref => "funcref",
+    .Ref(nullable, ht) => {
+      h := emit_heap_type(ht)
+      if nullable {
+        "(ref null ${h})"
+      } else {
+        "(ref ${h})"
+      }
+    },
+  }
+}
+
+fn emit_heap_type(ht: HeapType) String {
+  case ht {
+    .Named(s) => sym(s),
+    .Any => "any",
+    .Eq => "eq",
+    .I31 => "i31",
+    .Func => "func",
+    .None_ => "none",
+    .Extern => "extern",
+  }
+}
+
+// ── Float formatting ───────────────────────────────────────────────────
+
+fn emit_f64(v: Float) String {
+  // NaN check: NaN != NaN
+  if v != v { return "nan" }
+  // Check string repr for infinity
+  s := v.to_string()
+  if s == "inf" or s == "Infinity" { return "inf" }
+  if s == "-inf" or s == "-Infinity" { return "-inf" }
+  if s == "NaN" { return "nan" }
+  s
+}
+
+// ── Hex encoding for data segments ─────────────────────────────────────
+
+fn bytes_to_hex(bytes: Vector<Byte>) String {
+  parts: Vector<String> = []
+  for b in bytes {
+    n := b.to_int()
+    hi := n / 16
+    lo := n % 16
+    h := hex_digit(hi)
+    l := hex_digit(lo)
+    parts = parts.push("\\${h}${l}")
+  }
+  result := ""
+  for p in parts { result = "${result}${p}" }
+  result
+}
+
+fn hex_digit(n: Int) String {
+  if n < 10 { "${n}" }
+  else if n == 10 { "a" }
+  else if n == 11 { "b" }
+  else if n == 12 { "c" }
+  else if n == 13 { "d" }
+  else if n == 14 { "e" }
+  else { "f" }
+}
+
+// ── ref.func declarative segment collection ────────────────────────────
+
+fn collect_ref_func_syms(module: WasmModule) Vector<String> {
+  seen: Dict<String, Bool> = Dict.new()
+
+  for f in module.funcs {
+    for instr in f.body {
+      seen = collect_ref_funcs_instr(instr, seen)
+    }
+  }
+
+  // Remove syms already in active elem segments
+  for elem in module.elems {
+    for s in elem.func_syms {
+      seen = seen.remove(s)
+    }
+  }
+
+  seen.keys().sort_by(String.compare)
+}
+
+fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, Bool> {
+  case instr {
+    .RefFunc(s) => seen.set(s, true),
+    .If(_, then_body, else_body) => {
+      s := seen
+      for i in then_body { s = collect_ref_funcs_instr(i, s) }
+      for i in else_body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    .Block(_, _, body) => {
+      s := seen
+      for i in body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    .Loop(_, _, body) => {
+      s := seen
+      for i in body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    _ => seen,
+  }
+}
+
+// ── Inline instruction emission (for globals, data offsets, etc.) ──────
+
+fn emit_instrs_inline(instrs: Vector<Instr>) String {
+  out := ""
+  for instr in instrs {
+    s := emit_instr_flat(instr)
+    if out.len() > 0 { out = "${out} ${s}" } else { out = s }
+  }
+  out
+}
+
+fn emit_instr_flat(instr: Instr) String {
+  lines := emit_instr(instr, 0)
+  if lines.len() == 0 { return "" }
+  out := ""
+  for l in lines {
+    t := l.trim()
+    if out.len() > 0 { out = "${out} ${t}" } else { out = t }
+  }
+  out
+}
