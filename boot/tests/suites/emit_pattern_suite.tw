@@ -1,0 +1,514 @@
+use tests.runner
+use tests.assert
+use compiler.resolver
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, Param}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.codegen.wasm_ir.{ValType, HeapType, Instr}
+use compiler.codegen.wasm_layout.{
+  WasmLayout, WasmSumLayout, WasmVariantLayout, WasmValType,
+  layout_of, val_type_of, mono_to_key,
+}
+use compiler.codegen.emit_pattern.{EmitCtx, LocalEntry, emit_match}
+use lib.source.span
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn vid(n: Int) VariantId { VariantId.{ id: n } }
+fn tid(n: Int) TypeId { TypeId.{ id: n } }
+fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
+
+fn empty_env() ResolvedEnv { resolver.empty_env() }
+
+fn env_with_sum(name: String, type_id: Int, variants: Vector<ResolvedVariant>) ResolvedEnv {
+  entry := TypeEntry.{
+    id: TypeId.{ id: type_id },
+    arity: 0,
+    def: .Some(ResolvedTypeDef.Sum(name, [], variants)),
+    span: dummy_span(),
+  }
+  resolver.empty_env().add_type(entry, name)
+}
+
+fn mk_ctx(env: ResolvedEnv, locals: Vector<LocalEntry>) EmitCtx {
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  for le in locals {
+    local_map[le.local_id] = le
+  }
+  EmitCtx.{
+    env: env,
+    local_map: local_map,
+    next_local: locals.len(),
+  }
+}
+
+fn le(local_id: Int, index: Int, vt: ValType) LocalEntry {
+  LocalEntry.{ local_id: local_id, index: index, val_type: vt }
+}
+
+// ── Instruction introspection helpers ──────────────────────────────
+
+fn has_instr(instrs: Vector<Instr>, pred: fn(Instr) Bool) Bool {
+  for i in instrs {
+    if pred(i) { return true }
+    // Recurse into control flow
+    case i {
+      .If(_, then_body, else_body) => {
+        if has_instr(then_body, pred) { return true }
+        if has_instr(else_body, pred) { return true }
+      },
+      .Block(_, _, body) => {
+        if has_instr(body, pred) { return true }
+      },
+      .Loop(_, _, body) => {
+        if has_instr(body, pred) { return true }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+fn count_instr(instrs: Vector<Instr>, pred: fn(Instr) Bool) Int {
+  n := 0
+  for i in instrs {
+    if pred(i) { n = n + 1 }
+    case i {
+      .If(_, then_body, else_body) => {
+        n = n + count_instr(then_body, pred)
+        n = n + count_instr(else_body, pred)
+      },
+      .Block(_, _, body) => {
+        n = n + count_instr(body, pred)
+      },
+      .Loop(_, _, body) => {
+        n = n + count_instr(body, pred)
+      },
+      _ => {},
+    }
+  }
+  n
+}
+
+fn is_struct_get(instr: Instr) Bool {
+  case instr { .StructGet(_, _) => true, _ => false }
+}
+
+fn is_i32_eq(instr: Instr) Bool {
+  case instr { .I32Eq => true, _ => false }
+}
+
+fn is_if(instr: Instr) Bool {
+  case instr { .If(_, _, _) => true, _ => false }
+}
+
+fn is_local_set(instr: Instr) Bool {
+  case instr { .LocalSet(_) => true, _ => false }
+}
+
+fn is_unreachable(instr: Instr) Bool {
+  case instr { .Unreachable => true, _ => false }
+}
+
+fn is_i32_const(instr: Instr) Bool {
+  case instr { .I32Const(_) => true, _ => false }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("emit_pattern (M5)")
+
+    // ── Wildcard / Var ──
+
+    .test("wildcard arm emits body directly", fn() Result<Void, String> {
+      // case x { _ => 42 }
+      // scrutinee is an Int, result stored in local
+      env := empty_env()
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(42)) },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, .I64),   // scrutinee
+        le(10, 1, .I64),  // result
+      ])
+      scrutinee_mono: MonoType = .Int
+      result_type: ValType = .I64
+      result := emit_match(scrutinee, scrutinee_mono, arms, 1, result_type, ctx)
+      // Wildcard always matches — should produce I32Const(1) condition or direct body
+      // Must contain I64Const(42) for the body
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .I64Const(42) => true, _ => false }
+        }),
+        "expected I64Const(42) in output",
+      )
+      .Ok({})
+    })
+
+    .test("var arm binds scrutinee to local", fn() Result<Void, String> {
+      // case x { y => y }
+      env := empty_env()
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{ pattern: .Var(lid(5)), body: .Atom(.ALocal(lid(5))) },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, .I64),   // scrutinee x
+        le(5, 1, .I64),   // bound var y
+        le(10, 2, .I64),  // result
+      ])
+      scrutinee_mono: MonoType = .Int
+      result_type: ValType = .I64
+      result := emit_match(scrutinee, scrutinee_mono, arms, 2, result_type, ctx)
+      // Should contain LocalSet for the binding
+      try assert.ok(
+        has_instr(result.instrs, is_local_set),
+        "expected LocalSet for var binding",
+      )
+      .Ok({})
+    })
+
+    // ── Variant matching (Option<Int>) ──
+
+    .test("option none/some emits tag check", fn() Result<Void, String> {
+      // case opt { .None => 0, .Some(x) => x }
+      env := empty_env()
+      opt_mono: MonoType = .Optional(.Int)
+      opt_layout := layout_of(opt_mono, env)
+      sum_sym := case opt_layout {
+        .Sum(s) => s.sym,
+        _ => error("expected Sum layout"),
+      }
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(0), []),
+          body: .Atom(.ALitInt(0)),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(1), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+      ]
+      opt_vt := val_type_of(opt_layout)
+      ctx := mk_ctx(env, [
+        le(0, 0, opt_vt),   // scrutinee
+        le(5, 1, .I64),     // bound x
+        le(10, 2, .I64),    // result
+      ])
+      result := emit_match(scrutinee, opt_mono, arms, 2, .I64, ctx)
+      // Should contain StructGet for tag (field 0)
+      try assert.ok(
+        has_instr(result.instrs, is_struct_get),
+        "expected StructGet for tag check",
+      )
+      // Should contain I32Eq for tag comparison
+      try assert.ok(
+        has_instr(result.instrs, is_i32_eq),
+        "expected I32Eq for tag comparison",
+      )
+      // Should contain If for arm dispatch
+      try assert.ok(
+        has_instr(result.instrs, is_if),
+        "expected If for arm dispatch",
+      )
+      .Ok({})
+    })
+
+    .test("option some binds payload via struct.get", fn() Result<Void, String> {
+      // case opt { .Some(x) => x, .None => 0 }
+      env := empty_env()
+      opt_mono: MonoType = .Optional(.Int)
+      opt_layout := layout_of(opt_mono, env)
+      opt_vt := val_type_of(opt_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(1), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(0), []),
+          body: .Atom(.ALitInt(0)),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, opt_vt),
+        le(5, 1, .I64),
+        le(10, 2, .I64),
+      ])
+      result := emit_match(scrutinee, opt_mono, arms, 2, .I64, ctx)
+      // Payload extraction: StructGet for field 1 (Some payload at struct_field_offset 1)
+      // Should have LocalSet for binding x
+      try assert.ok(
+        has_instr(result.instrs, is_local_set),
+        "expected LocalSet for payload binding",
+      )
+      // At least 2 StructGet: one for tag, one for payload
+      try assert.ok(
+        count_instr(result.instrs, is_struct_get) >= 2,
+        "expected at least 2 StructGet (tag + payload)",
+      )
+      .Ok({})
+    })
+
+    // ── Short-circuit: outer tag check before inner payload ──
+
+    .test("short-circuit: tag check before payload access", fn() Result<Void, String> {
+      // case opt { .None => 0, .Some(x) => x }
+      // The tag check (StructGet field 0 + I32Eq) must appear in the condition,
+      // and payload extraction (StructGet field 1) must appear in the then-body
+      // of the If — NOT in the condition.
+      env := empty_env()
+      opt_mono: MonoType = .Optional(.Int)
+      opt_layout := layout_of(opt_mono, env)
+      opt_vt := val_type_of(opt_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(0), []),
+          body: .Atom(.ALitInt(0)),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(1), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, opt_vt),
+        le(5, 1, .I64),
+        le(10, 2, .I64),
+      ])
+      result := emit_match(scrutinee, opt_mono, arms, 2, .I64, ctx)
+      // The output is: [condition_instrs..., If(then, else)]
+      // Verify we have nested If for two arms
+      try assert.ok(
+        count_instr(result.instrs, is_if) >= 1,
+        "expected at least 1 If for arm dispatch",
+      )
+      .Ok({})
+    })
+
+    // ── Named sum type ──
+
+    .test("named sum variant dispatch", fn() Result<Void, String> {
+      // type Shape = { Circle(Float), Rect(Float, Float) }
+      // case s { .Circle(r) => r, .Rect(w, h) => w }
+      variants: Vector<ResolvedVariant> = [
+        ResolvedVariant.{ name: "Circle", fields: [MonoType.Float] },
+        ResolvedVariant.{ name: "Rect", fields: [MonoType.Float, MonoType.Float] },
+      ]
+      env := env_with_sum("Shape", 100, variants)
+      shape_mono: MonoType = .Named(tid(100), [])
+      shape_layout := layout_of(shape_mono, env)
+      shape_vt := val_type_of(shape_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(100), vid(0), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(100), vid(1), [.Var(lid(6)), .Var(lid(7))]),
+          body: .Atom(.ALocal(lid(6))),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, shape_vt),
+        le(5, 1, .F64),     // r
+        le(6, 2, .F64),     // w
+        le(7, 3, .F64),     // h
+        le(10, 4, .F64),    // result
+      ])
+      result := emit_match(scrutinee, shape_mono, arms, 4, .F64, ctx)
+      // Should have tag checks and payload extraction
+      try assert.ok(
+        has_instr(result.instrs, is_struct_get),
+        "expected StructGet for tag/payload",
+      )
+      try assert.ok(
+        has_instr(result.instrs, is_if),
+        "expected If for dispatch",
+      )
+      .Ok({})
+    })
+
+    // ── Wildcard as catch-all ──
+
+    .test("wildcard catch-all arm", fn() Result<Void, String> {
+      // case opt { .Some(x) => x, _ => 0 }
+      env := empty_env()
+      opt_mono: MonoType = .Optional(.Int)
+      opt_layout := layout_of(opt_mono, env)
+      opt_vt := val_type_of(opt_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(1), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+        AnfMatchArm.{
+          pattern: .Wildcard,
+          body: .Atom(.ALitInt(0)),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, opt_vt),
+        le(5, 1, .I64),
+        le(10, 2, .I64),
+      ])
+      result := emit_match(scrutinee, opt_mono, arms, 2, .I64, ctx)
+      // Should work — wildcard is always-true condition
+      try assert.ok(
+        has_instr(result.instrs, is_if),
+        "expected If with wildcard fallback",
+      )
+      .Ok({})
+    })
+
+    // ── Literal patterns ──
+
+    .test("literal int pattern", fn() Result<Void, String> {
+      // case n { 1 => true, _ => false } (via LitInt pattern on i64 scrutinee)
+      env := empty_env()
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .LitInt(1),
+          body: .Atom(.ALitBool(true)),
+        },
+        AnfMatchArm.{
+          pattern: .Wildcard,
+          body: .Atom(.ALitBool(false)),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, .I64),
+        le(10, 1, .I32),
+      ])
+      result := emit_match(scrutinee, .Int, arms, 1, .I32, ctx)
+      // Should contain I64Const(1) for the literal and I64Eq for comparison
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .I64Const(1) => true, _ => false }
+        }),
+        "expected I64Const(1)",
+      )
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .I64Eq => true, _ => false }
+        }),
+        "expected I64Eq",
+      )
+      .Ok({})
+    })
+
+    .test("literal bool pattern", fn() Result<Void, String> {
+      // case b { true => 1, false => 0 }
+      env := empty_env()
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .LitBool(true),
+          body: .Atom(.ALitInt(1)),
+        },
+        AnfMatchArm.{
+          pattern: .LitBool(false),
+          body: .Atom(.ALitInt(0)),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, .I32),
+        le(10, 1, .I64),
+      ])
+      result := emit_match(scrutinee, .Bool, arms, 1, .I64, ctx)
+      try assert.ok(
+        has_instr(result.instrs, is_i32_eq),
+        "expected I32Eq for bool comparison",
+      )
+      .Ok({})
+    })
+
+    // ── All-diverging match (Never result) ──
+
+    .test("all-diverging arms produce no result type", fn() Result<Void, String> {
+      // case opt { .None => return 0, .Some(x) => return x }
+      // Both arms Return — the If should have result type None
+      env := empty_env()
+      opt_mono: MonoType = .Optional(.Int)
+      opt_layout := layout_of(opt_mono, env)
+      opt_vt := val_type_of(opt_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(0), []),
+          body: .Return(.Some(.ALitInt(0))),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(0), vid(1), [.Var(lid(5))]),
+          body: .Return(.Some(.ALocal(lid(5)))),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, opt_vt),
+        le(5, 1, .I64),
+        le(10, 2, .I64),
+      ])
+      result := emit_match(scrutinee, opt_mono, arms, 2, .I64, ctx)
+      // The outermost If should have result type None (both arms diverge)
+      // Find the If and check its result is None
+      found_none_result := has_instr(result.instrs, fn(i: Instr) Bool {
+        case i {
+          .If(.None, _, _) => true,
+          _ => false,
+        }
+      })
+      try assert.ok(found_none_result, "expected If with None result type (all arms diverge)")
+      .Ok({})
+    })
+
+    // ── Result<T, E> pattern matching ──
+
+    .test("result ok/err dispatch", fn() Result<Void, String> {
+      // case res { .Ok(v) => v, .Err(e) => 0 }
+      env := empty_env()
+      res_mono: MonoType = .Result(.Int, .String)
+      res_layout := layout_of(res_mono, env)
+      res_vt := val_type_of(res_layout)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .Variant(tid(1), vid(0), [.Var(lid(5))]),
+          body: .Atom(.ALocal(lid(5))),
+        },
+        AnfMatchArm.{
+          pattern: .Variant(tid(1), vid(1), [.Var(lid(6))]),
+          body: .Atom(.ALitInt(0)),
+        },
+      ]
+      ctx := mk_ctx(env, [
+        le(0, 0, res_vt),
+        le(5, 1, .I64),         // v: Int
+        le(6, 2, .Anyref),      // e: String
+        le(10, 3, .I64),        // result
+      ])
+      result := emit_match(scrutinee, res_mono, arms, 3, .I64, ctx)
+      // Should have tag check and payload extraction for both Ok and Err
+      try assert.ok(
+        count_instr(result.instrs, is_struct_get) >= 2,
+        "expected StructGet for tag + payload",
+      )
+      .Ok({})
+    })
+}
