@@ -6,6 +6,9 @@ use compiler.codegen.wasm_ir.{
 use compiler.codegen.wat.{emit_wat}
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.runtime.core as rt_core
+use compiler.codegen.runtime.str as rt_str
+use compiler.codegen.runtime.arr as rt_arr
+use compiler.codegen.runtime.dict as rt_dict
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -305,6 +308,579 @@ fn test_rt_core_emits_wat() Result<Void, String> {
   .Ok({})
 }
 
+// ── rt.str tests ────────────────────────────────────────────────────
+
+fn test_rt_str_namespace() Result<Void, String> {
+  m := rt_str.module()
+  try assert.str_eq(m.namespace, "rt.str")
+  .Ok({})
+}
+
+fn test_rt_str_func_count() Result<Void, String> {
+  m := rt_str.module()
+  try assert.int_eq(m.funcs.len(), 8)
+  .Ok({})
+}
+
+fn test_rt_str_exports_all_funcs() Result<Void, String> {
+  m := rt_str.module()
+  try assert.int_eq(m.exports.len(), m.funcs.len())
+  for f in m.funcs {
+    found := false
+    for exp in m.exports {
+      if exp.func_sym == f.name { found = true }
+    }
+    try assert.ok(found, "function ${f.name} should be exported")
+  }
+  .Ok({})
+}
+
+fn test_rt_str_host_f64_import() Result<Void, String> {
+  m := rt_str.module()
+  found := false
+  for imp in m.imports {
+    if imp.module == "host" and imp.name == "f64_to_string" {
+      found = true
+      try assert.str_eq(imp.as_sym, "host_f64_to_string")
+    }
+  }
+  try assert.ok(found, "should import host.f64_to_string")
+  .Ok({})
+}
+
+fn test_rt_str_len() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "len").ok_or("missing len func")
+  try assert.int_eq(f.params.len(), 1)
+  try assert.int_eq(f.results.len(), 1)
+  // Body should contain ArrayLen
+  found := false
+  for instr in f.body {
+    case instr { .ArrayLen => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "len should use array.len")
+  .Ok({})
+}
+
+fn test_rt_str_concat_uses_array_copy() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "concat").ok_or("missing concat func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should contain ArrayCopy
+  count := 0
+  for instr in f.body {
+    case instr { .ArrayCopy(_, _) => { count = count + 1 }, _ => {} }
+  }
+  try assert.ok(count >= 2, "concat should use array.copy twice (for a and b)")
+  .Ok({})
+}
+
+fn test_rt_str_substring_clamps() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "substring").ok_or("missing substring func")
+  try assert.int_eq(f.params.len(), 3)
+  // Should contain If for clamping
+  if_count := 0
+  for instr in f.body {
+    case instr { .If(_, _, _) => { if_count = if_count + 1 }, _ => {} }
+  }
+  try assert.ok(if_count >= 4, "substring should have clamping ifs")
+  .Ok({})
+}
+
+fn test_rt_str_eq_loop() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "eq").ok_or("missing eq func")
+  try assert.int_eq(f.params.len(), 2)
+  try assert.int_eq(f.results.len(), 1)
+  // Should contain a Loop for byte comparison
+  found_loop := false
+  for instr in f.body {
+    case instr { .Block(_, _, body) => {
+      for inner in body {
+        case inner { .Loop(_, _, _) => { found_loop = true }, _ => {} }
+      }
+    }, _ => {} }
+  }
+  try assert.ok(found_loop, "eq should have a comparison loop")
+  .Ok({})
+}
+
+fn test_rt_str_cmp_returns_ordering() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "cmp").ok_or("missing cmp func")
+  try assert.int_eq(f.params.len(), 2)
+  try assert.int_eq(f.results.len(), 1)
+  // Should have locals for min_len, i, byte_a, byte_b, len_a, len_b
+  try assert.int_eq(f.locals.len(), 6)
+  .Ok({})
+}
+
+fn test_rt_str_from_i64_special_cases() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "from_i64").ok_or("missing from_i64 func")
+  // Should have I64Eqz check for zero and a digit loop
+  found_eqz := false
+  found_loop := false
+  for instr in f.body {
+    case instr {
+      .If(_, then_body, _) => {
+        for t in then_body {
+          case t {
+            .ArrayNewFixed(_, 1) => { found_eqz = true },
+            _ => {},
+          }
+        }
+      },
+      .Loop(_, _, _) => { found_loop = true },
+      _ => {},
+    }
+  }
+  try assert.ok(found_eqz, "from_i64 should handle zero case with ArrayNewFixed 1")
+  try assert.ok(found_loop, "from_i64 should have digit extraction loop")
+  .Ok({})
+}
+
+fn test_rt_str_from_f64_delegates() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "from_f64").ok_or("missing from_f64 func")
+  found := false
+  for instr in f.body {
+    case instr { .Call(sym) => { if sym == "host_f64_to_string" { found = true } }, _ => {} }
+  }
+  try assert.ok(found, "from_f64 should call host_f64_to_string")
+  .Ok({})
+}
+
+fn test_rt_str_from_bool_literals() Result<Void, String> {
+  m := rt_str.module()
+  f := try find_func(m.funcs, "from_bool").ok_or("missing from_bool func")
+  // Should contain ArrayNewFixed for "true" (4 bytes) and "false" (5 bytes)
+  found_4 := false
+  found_5 := false
+  for instr in f.body {
+    case instr {
+      .If(_, then_body, else_body) => {
+        for t in then_body {
+          case t { .ArrayNewFixed(_, 4) => { found_4 = true }, _ => {} }
+        }
+        for e in else_body {
+          case e { .ArrayNewFixed(_, 5) => { found_5 = true }, _ => {} }
+        }
+      },
+      _ => {},
+    }
+  }
+  try assert.ok(found_4, "from_bool should emit 'true' (4 bytes)")
+  try assert.ok(found_5, "from_bool should emit 'false' (5 bytes)")
+  .Ok({})
+}
+
+fn test_rt_str_emits_wat() Result<Void, String> {
+  m := rt_str.module()
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(func $len"), "WAT should contain len func")
+  try assert.ok(contains(wat, "(func $concat"), "WAT should contain concat func")
+  try assert.ok(contains(wat, "(func $from_i64"), "WAT should contain from_i64 func")
+  .Ok({})
+}
+
+// ── rt.arr tests ────────────────────────────────────────────────────
+
+fn test_rt_arr_namespace() Result<Void, String> {
+  m := rt_arr.module()
+  try assert.str_eq(m.namespace, "rt.arr")
+  .Ok({})
+}
+
+fn test_rt_arr_func_count() Result<Void, String> {
+  m := rt_arr.module()
+  try assert.int_eq(m.funcs.len(), 10)
+  .Ok({})
+}
+
+fn test_rt_arr_exports_all_funcs() Result<Void, String> {
+  m := rt_arr.module()
+  try assert.int_eq(m.exports.len(), m.funcs.len())
+  for f in m.funcs {
+    found := false
+    for exp in m.exports {
+      if exp.func_sym == f.name { found = true }
+    }
+    try assert.ok(found, "function ${f.name} should be exported")
+  }
+  .Ok({})
+}
+
+fn test_rt_arr_no_imports() Result<Void, String> {
+  m := rt_arr.module()
+  try assert.int_eq(m.imports.len(), 0)
+  .Ok({})
+}
+
+fn test_rt_arr_make() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "make").ok_or("missing make func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should use ArrayNew
+  found := false
+  for instr in f.body {
+    case instr { .ArrayNew(_) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "make should use array.new")
+  .Ok({})
+}
+
+fn test_rt_arr_get() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "get").ok_or("missing get func")
+  try assert.int_eq(f.params.len(), 2)
+  found := false
+  for instr in f.body {
+    case instr { .ArrayGet(_) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "get should use array.get")
+  .Ok({})
+}
+
+fn test_rt_arr_set_cow() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "set").ok_or("missing set func")
+  try assert.int_eq(f.params.len(), 3)
+  // COW: should have ArrayNew + ArrayCopy + ArraySet
+  found_new := false
+  found_copy := false
+  found_set := false
+  for instr in f.body {
+    case instr {
+      .ArrayNew(_) => { found_new = true },
+      .ArrayCopy(_, _) => { found_copy = true },
+      .ArraySet(_) => { found_set = true },
+      _ => {},
+    }
+  }
+  try assert.ok(found_new, "set should allocate new array (COW)")
+  try assert.ok(found_copy, "set should copy old array")
+  try assert.ok(found_set, "set should set the new value")
+  .Ok({})
+}
+
+fn test_rt_arr_len() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "len").ok_or("missing len func")
+  try assert.int_eq(f.params.len(), 1)
+  found := false
+  for instr in f.body {
+    case instr { .ArrayLen => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "len should use array.len")
+  .Ok({})
+}
+
+fn test_rt_arr_concat_copies_both() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "concat").ok_or("missing concat func")
+  try assert.int_eq(f.params.len(), 2)
+  copy_count := 0
+  for instr in f.body {
+    case instr { .ArrayCopy(_, _) => { copy_count = copy_count + 1 }, _ => {} }
+  }
+  try assert.ok(copy_count >= 2, "concat should use array.copy twice")
+  .Ok({})
+}
+
+fn test_rt_arr_slice() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "slice").ok_or("missing slice func")
+  try assert.int_eq(f.params.len(), 3)
+  found_copy := false
+  for instr in f.body {
+    case instr { .ArrayCopy(_, _) => { found_copy = true }, _ => {} }
+  }
+  try assert.ok(found_copy, "slice should use array.copy")
+  .Ok({})
+}
+
+fn test_rt_arr_builder_new_layout() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "builder_new").ok_or("missing builder_new func")
+  try assert.int_eq(f.params.len(), 0)
+  // Should create [buf, len, cap] via ArrayNewFixed(_, 3)
+  found := false
+  for instr in f.body {
+    case instr { .ArrayNewFixed(_, 3) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "builder_new should create 3-element array")
+  .Ok({})
+}
+
+fn test_rt_arr_builder_from() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "builder_from").ok_or("missing builder_from func")
+  try assert.int_eq(f.params.len(), 1)
+  // Should create [buf, len, cap] via ArrayNewFixed(_, 3)
+  found := false
+  for instr in f.body {
+    case instr { .ArrayNewFixed(_, 3) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "builder_from should create 3-element array")
+  .Ok({})
+}
+
+fn test_rt_arr_builder_push_grows() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "builder_push").ok_or("missing builder_push func")
+  try assert.int_eq(f.params.len(), 2)
+  try assert.int_eq(f.results.len(), 0)
+  // Should have If for capacity check (then=in-place, else=grow)
+  found_if := false
+  for instr in f.body {
+    case instr { .If(_, _, else_body) => {
+      if else_body.len() > 0 { found_if = true }
+    }, _ => {} }
+  }
+  try assert.ok(found_if, "builder_push should have capacity check with grow path")
+  .Ok({})
+}
+
+fn test_rt_arr_builder_freeze() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "builder_freeze").ok_or("missing builder_freeze func")
+  try assert.int_eq(f.params.len(), 1)
+  found_copy := false
+  for instr in f.body {
+    case instr { .ArrayCopy(_, _) => { found_copy = true }, _ => {} }
+  }
+  try assert.ok(found_copy, "builder_freeze should copy elements to exact-sized array")
+  .Ok({})
+}
+
+fn test_rt_arr_emits_wat() Result<Void, String> {
+  m := rt_arr.module()
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(func $make"), "WAT should contain make func")
+  try assert.ok(contains(wat, "(func $builder_push"), "WAT should contain builder_push func")
+  try assert.ok(contains(wat, "(func $slice"), "WAT should contain slice func")
+  .Ok({})
+}
+
+// ── rt.dict tests ───────────────────────────────────────────────────
+
+fn test_rt_dict_namespace() Result<Void, String> {
+  m := rt_dict.module()
+  try assert.str_eq(m.namespace, "rt.dict")
+  .Ok({})
+}
+
+fn test_rt_dict_func_count() Result<Void, String> {
+  m := rt_dict.module()
+  try assert.int_eq(m.funcs.len(), 10)
+  .Ok({})
+}
+
+fn test_rt_dict_exports_all_funcs() Result<Void, String> {
+  m := rt_dict.module()
+  try assert.int_eq(m.exports.len(), m.funcs.len())
+  for f in m.funcs {
+    found := false
+    for exp in m.exports {
+      if exp.func_sym == f.name { found = true }
+    }
+    try assert.ok(found, "function ${f.name} should be exported")
+  }
+  .Ok({})
+}
+
+fn test_rt_dict_imports_core_eq() Result<Void, String> {
+  m := rt_dict.module()
+  found := false
+  for imp in m.imports {
+    if imp.module == "rt.core" and imp.name == "eq" {
+      found = true
+      try assert.str_eq(imp.as_sym, "core_eq")
+    }
+  }
+  try assert.ok(found, "should import rt.core.eq")
+  .Ok({})
+}
+
+fn test_rt_dict_make_empty() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "make").ok_or("missing make func")
+  try assert.int_eq(f.params.len(), 0)
+  // Should use ArrayNewFixed(_, 0) for empty dict
+  found := false
+  for instr in f.body {
+    case instr { .ArrayNewFixed(_, 0) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "make should create empty dict with ArrayNewFixed 0")
+  .Ok({})
+}
+
+fn test_rt_dict_len() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "len").ok_or("missing len func")
+  try assert.int_eq(f.params.len(), 1)
+  found := false
+  for instr in f.body {
+    case instr { .ArrayLen => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "len should use array.len")
+  .Ok({})
+}
+
+fn test_rt_dict_keys_loop() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "keys").ok_or("missing keys func")
+  try assert.int_eq(f.params.len(), 1)
+  // Should have a loop extracting keys
+  found_loop := false
+  for instr in f.body {
+    case instr { .Block(_, _, body) => {
+      for inner in body {
+        case inner { .Loop(_, _, _) => { found_loop = true }, _ => {} }
+      }
+    }, _ => {} }
+  }
+  try assert.ok(found_loop, "keys should have extraction loop")
+  .Ok({})
+}
+
+fn test_rt_dict_has_calls_core_eq() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "has").ok_or("missing has func")
+  try assert.int_eq(f.params.len(), 2)
+  found := false
+  for instr in f.body {
+    case instr { .Block(_, _, body) => {
+      for b in body {
+        case b { .Loop(_, _, loop_body) => {
+          for li in loop_body {
+            case li { .Call(sym) => { if sym == "core_eq" { found = true } }, _ => {} }
+          }
+        }, _ => {} }
+      }
+    }, _ => {} }
+  }
+  try assert.ok(found, "has should call core_eq in scan loop")
+  .Ok({})
+}
+
+fn test_rt_dict_get_returns_null_on_miss() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "get").ok_or("missing get func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should end with RefNull(Any) for miss case
+  found := false
+  for instr in f.body {
+    case instr { .RefNull(.Any) => { found = true }, _ => {} }
+  }
+  try assert.ok(found, "get should return ref.null any on miss")
+  .Ok({})
+}
+
+fn test_rt_dict_get_option_returns_variant() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "get_option").ok_or("missing get_option func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should create Variant structs (StructNew for Variant type)
+  found_variant := false
+  for instr in f.body {
+    case instr { .StructNew(name) => {
+      if name == "rt_types__Variant" { found_variant = true }
+    }, _ => {} }
+  }
+  try assert.ok(found_variant, "get_option should create Variant structs")
+  .Ok({})
+}
+
+fn test_rt_dict_set_cow() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "set").ok_or("missing set func")
+  try assert.int_eq(f.params.len(), 3)
+  // Should create DictEntry and allocate new Dict
+  found_entry := false
+  found_dict_new := false
+  for instr in f.body {
+    case instr {
+      .StructNew(name) => { if name == "rt_types__DictEntry" { found_entry = true } },
+      .ArrayNew(name) => { if name == "rt_types__Dict" { found_dict_new = true } },
+      _ => {},
+    }
+  }
+  try assert.ok(found_entry, "set should create new DictEntry")
+  try assert.ok(found_dict_new, "set should allocate new Dict array")
+  .Ok({})
+}
+
+fn test_rt_dict_remove_two_pass() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "remove").ok_or("missing remove func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should have two Block/Loop pairs (scan and copy)
+  block_count := 0
+  for instr in f.body {
+    case instr { .Block(_, _, _) => { block_count = block_count + 1 }, _ => {} }
+  }
+  try assert.ok(block_count >= 2, "remove should have scan and copy loops (2+ blocks)")
+  .Ok({})
+}
+
+fn test_rt_dict_set_in_place() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "set_in_place").ok_or("missing set_in_place func")
+  try assert.int_eq(f.params.len(), 3)
+  // Should have ArraySet for in-place update and ArrayCopy for fallback append
+  found_arr_set := false
+  found_arr_copy := false
+  for instr in f.body {
+    case instr {
+      .ArraySet(name) => { if name == "rt_types__Dict" { found_arr_set = true } },
+      .ArrayCopy(a, _) => { if a == "rt_types__Dict" { found_arr_copy = true } },
+      _ => {},
+    }
+  }
+  try assert.ok(found_arr_set, "set_in_place should use array.set for in-place path")
+  try assert.ok(found_arr_copy, "set_in_place should use array.copy for append fallback")
+  .Ok({})
+}
+
+fn test_rt_dict_remove_in_place() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "remove_in_place").ok_or("missing remove_in_place func")
+  try assert.int_eq(f.params.len(), 2)
+  // Should return early if not found, and do prefix/suffix copies if found
+  found_return := false
+  copy_count := 0
+  for instr in f.body {
+    case instr {
+      .If(_, then_body, _) => {
+        for t in then_body {
+          case t { .Return => { found_return = true }, _ => {} }
+        }
+      },
+      .If(_, _, else_body) => {
+        for e in else_body {
+          case e { .ArrayCopy(_, _) => { copy_count = copy_count + 1 }, _ => {} }
+        }
+      },
+      _ => {},
+    }
+  }
+  try assert.ok(found_return, "remove_in_place should early-return if not found")
+  .Ok({})
+}
+
+fn test_rt_dict_emits_wat() Result<Void, String> {
+  m := rt_dict.module()
+  wat := emit_wat(m)
+  try assert.ok(contains(wat, "(func $make"), "WAT should contain make func")
+  try assert.ok(contains(wat, "(func $set"), "WAT should contain set func")
+  try assert.ok(contains(wat, "(func $remove"), "WAT should contain remove func")
+  try assert.ok(contains(wat, "core_eq"), "WAT should reference core_eq")
+  .Ok({})
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -332,4 +908,50 @@ pub fn suite() runner.Suite {
     .test("rt.core: trap ends with unreachable", test_rt_core_trap_unreachable)
     .test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test)
     .test("rt.core: emits valid WAT", test_rt_core_emits_wat)
+    // rt.str
+    .test("rt.str: namespace", test_rt_str_namespace)
+    .test("rt.str: 8 functions", test_rt_str_func_count)
+    .test("rt.str: exports all funcs", test_rt_str_exports_all_funcs)
+    .test("rt.str: imports host.f64_to_string", test_rt_str_host_f64_import)
+    .test("rt.str: len uses array.len", test_rt_str_len)
+    .test("rt.str: concat uses array.copy twice", test_rt_str_concat_uses_array_copy)
+    .test("rt.str: substring clamps bounds", test_rt_str_substring_clamps)
+    .test("rt.str: eq has comparison loop", test_rt_str_eq_loop)
+    .test("rt.str: cmp returns ordering", test_rt_str_cmp_returns_ordering)
+    .test("rt.str: from_i64 handles zero and digit loop", test_rt_str_from_i64_special_cases)
+    .test("rt.str: from_f64 delegates to host", test_rt_str_from_f64_delegates)
+    .test("rt.str: from_bool emits true/false literals", test_rt_str_from_bool_literals)
+    .test("rt.str: emits valid WAT", test_rt_str_emits_wat)
+    // rt.arr
+    .test("rt.arr: namespace", test_rt_arr_namespace)
+    .test("rt.arr: 10 functions", test_rt_arr_func_count)
+    .test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs)
+    .test("rt.arr: no imports", test_rt_arr_no_imports)
+    .test("rt.arr: make uses array.new", test_rt_arr_make)
+    .test("rt.arr: get uses array.get", test_rt_arr_get)
+    .test("rt.arr: set is COW", test_rt_arr_set_cow)
+    .test("rt.arr: len uses array.len", test_rt_arr_len)
+    .test("rt.arr: concat copies both halves", test_rt_arr_concat_copies_both)
+    .test("rt.arr: slice uses array.copy", test_rt_arr_slice)
+    .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
+    .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
+    .test("rt.arr: builder_push has grow path", test_rt_arr_builder_push_grows)
+    .test("rt.arr: builder_freeze copies to exact size", test_rt_arr_builder_freeze)
+    .test("rt.arr: emits valid WAT", test_rt_arr_emits_wat)
+    // rt.dict
+    .test("rt.dict: namespace", test_rt_dict_namespace)
+    .test("rt.dict: 10 functions", test_rt_dict_func_count)
+    .test("rt.dict: exports all funcs", test_rt_dict_exports_all_funcs)
+    .test("rt.dict: imports rt.core.eq", test_rt_dict_imports_core_eq)
+    .test("rt.dict: make creates empty dict", test_rt_dict_make_empty)
+    .test("rt.dict: len uses array.len", test_rt_dict_len)
+    .test("rt.dict: keys has extraction loop", test_rt_dict_keys_loop)
+    .test("rt.dict: has calls core_eq in scan", test_rt_dict_has_calls_core_eq)
+    .test("rt.dict: get returns null on miss", test_rt_dict_get_returns_null_on_miss)
+    .test("rt.dict: get_option returns Variant", test_rt_dict_get_option_returns_variant)
+    .test("rt.dict: set is COW with DictEntry", test_rt_dict_set_cow)
+    .test("rt.dict: remove uses two-pass scan+copy", test_rt_dict_remove_two_pass)
+    .test("rt.dict: set_in_place has in-place and append paths", test_rt_dict_set_in_place)
+    .test("rt.dict: remove_in_place early-returns on miss", test_rt_dict_remove_in_place)
+    .test("rt.dict: emits valid WAT", test_rt_dict_emits_wat)
 }

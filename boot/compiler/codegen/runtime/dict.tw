@@ -1,0 +1,430 @@
+// rt.dict — persistent (COW) dictionary as unsorted association list.
+//
+// Mirrors stage0 src/runtime/dict.rs.
+// Key comparison uses rt.core.eq (structural equality).
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+
+fn dict_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Dict")) }
+fn dict_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Dict")) }
+fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
+fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+fn entry_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__DictEntry")) }
+fn entry_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__DictEntry")) }
+fn variant_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Variant")) }
+
+fn t_dict() String { "rt_types__Dict" }
+fn t_entry() String { "rt_types__DictEntry" }
+fn t_array() String { "rt_types__Array" }
+fn t_variant() String { "rt_types__Variant" }
+
+pub fn module() WasmModule {
+  funcs := [
+    make_fn(), len_fn(), keys_fn(), has_fn(), get_fn(), get_option_fn(),
+    set_fn(), remove_fn(), set_in_place_fn(), remove_in_place_fn(),
+  ]
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
+  WasmModule.{
+    namespace: "rt.dict",
+    types: [],
+    imports: [
+      ImportDef.{
+        module: "rt.core", name: "eq", as_sym: "core_eq",
+        params: [.Anyref, .Anyref], results: [.I32],
+      },
+    ],
+    funcs: funcs,
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: exports,
+    data: [],
+    start: .None,
+  }
+}
+
+// make() -> Dict — empty dict
+fn make_fn() FuncDef {
+  FuncDef.{ name: "make", params: [], results: [dict_ref()], locals: [], body: [
+    Instr.ArrayNewFixed(t_dict(), 0),
+  ] }
+}
+
+// len(dict: Dict?) -> i32
+fn len_fn() FuncDef {
+  FuncDef.{ name: "len", params: [dict_null()], results: [.I32], locals: [], body: [
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen,
+  ] }
+}
+
+// keys(dict: Dict?) -> Array
+fn keys_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  ta := t_array()
+  // Locals: p1=n, p2=i, p3=result, p4=entry
+  FuncDef.{ name: "keys", params: [dict_null()], results: [arr_ref()],
+    locals: [.I32, .I32, arr_null(), entry_null()],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(1),
+      Instr.RefNull(HeapType.None_), Instr.LocalGet(1), Instr.ArrayNew(ta), Instr.LocalSet(3),
+      Instr.I32Const(0), Instr.LocalSet(2),
+      Instr.Block("exit", .None, [
+        Instr.Loop("loop", .None, [
+          Instr.LocalGet(2), Instr.LocalGet(1), Instr.I32GeS, Instr.BrIf("exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(2),
+          Instr.ArrayGet(td), Instr.LocalSet(4),
+          Instr.LocalGet(3), Instr.RefAsNonNull, Instr.LocalGet(2),
+          Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.ArraySet(ta),
+          Instr.LocalGet(2), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(2),
+          Instr.Br("loop"),
+        ]),
+      ]),
+      Instr.LocalGet(3), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// has(dict: Dict?, key: anyref) -> i32
+fn has_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p2=n, p3=i, p4=entry
+  FuncDef.{ name: "has", params: [dict_null(), .Anyref], results: [.I32],
+    locals: [.I32, .I32, entry_null()],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.Block("exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(4),
+          Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [Instr.I32Const(1), Instr.Return], []),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      Instr.I32Const(0),
+    ],
+  }
+}
+
+// get(dict: Dict?, key: anyref) -> anyref — null if absent
+fn get_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p2=n, p3=i, p4=entry
+  FuncDef.{ name: "get", params: [dict_null(), .Anyref], results: [.Anyref],
+    locals: [.I32, .I32, entry_null()],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.Block("exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(4),
+          Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 1), Instr.Return,
+          ], []),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      Instr.RefNull(HeapType.Any),
+    ],
+  }
+}
+
+// get_option(dict: Dict?, key: anyref) -> Variant (Option)
+fn get_option_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  ta := t_array()
+  tv := t_variant()
+  // Locals: p2=n, p3=i, p4=entry
+  FuncDef.{ name: "get_option", params: [dict_null(), .Anyref], results: [variant_ref()],
+    locals: [.I32, .I32, entry_null()],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.Block("exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(4),
+          Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            // Some(value) = Variant(0, 1, [value])
+            Instr.I32Const(0), Instr.I32Const(1),
+            Instr.LocalGet(4), Instr.RefAsNonNull, Instr.StructGet(te, 1),
+            Instr.ArrayNewFixed(ta, 1),
+            Instr.StructNew(tv), Instr.Return,
+          ], []),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      // None = Variant(0, 0, null_array)
+      Instr.I32Const(0), Instr.I32Const(0),
+      Instr.RefNull(HeapType.Named(t_array())),
+      Instr.StructNew(tv),
+    ],
+  }
+}
+
+// set(dict: Dict?, key: anyref, val: anyref) -> Dict — COW insert/update
+fn set_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p3=n, p4=i, p5=found, p6=result, p7=new_entry, p8=entry, p9=result_len
+  FuncDef.{ name: "set", params: [dict_null(), .Anyref, .Anyref], results: [dict_ref()],
+    locals: [.I32, .I32, .I32, dict_null(), entry_ref(), entry_null(), .I32],
+    body: [
+      // n = len(dict)
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(3),
+      // new_entry = DictEntry { key, val }
+      Instr.LocalGet(1), Instr.LocalGet(2), Instr.StructNew(te), Instr.LocalSet(7),
+      // Scan for existing key
+      Instr.I32Const(0), Instr.LocalSet(4),
+      Instr.I32Const(0), Instr.LocalSet(5),
+      Instr.Block("found_exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(4), Instr.LocalGet(3), Instr.I32GeS, Instr.BrIf("found_exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(4),
+          Instr.ArrayGet(td), Instr.LocalSet(8),
+          Instr.LocalGet(8), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            Instr.I32Const(1), Instr.LocalSet(5), Instr.Br("found_exit"),
+          ], []),
+          Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(4),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      // result_len = found ? n : n+1
+      Instr.LocalGet(5),
+      Instr.If(.Some(.I32),
+        [Instr.LocalGet(3)],
+        [Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add],
+      ),
+      Instr.LocalSet(9),
+      // result = array.new $Dict (null, result_len)
+      Instr.RefNull(HeapType.Named(t_entry())),
+      Instr.LocalGet(9), Instr.ArrayNew(td), Instr.LocalSet(6),
+      // Copy entries, replacing matched key
+      Instr.I32Const(0), Instr.LocalSet(4),
+      Instr.Block("copy_exit", .None, [
+        Instr.Loop("copy", .None, [
+          Instr.LocalGet(4), Instr.LocalGet(3), Instr.I32GeS, Instr.BrIf("copy_exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(4),
+          Instr.ArrayGet(td), Instr.LocalSet(8),
+          Instr.LocalGet(8), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None,
+            [
+              Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(4),
+              Instr.LocalGet(7), Instr.ArraySet(td),
+            ],
+            [
+              Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(4),
+              Instr.LocalGet(8), Instr.ArraySet(td),
+            ],
+          ),
+          Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(4),
+          Instr.Br("copy"),
+        ]),
+      ]),
+      // If not found: append at position n
+      Instr.LocalGet(5), Instr.I32Eqz,
+      Instr.If(.None, [
+        Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(3),
+        Instr.LocalGet(7), Instr.ArraySet(td),
+      ], []),
+      Instr.LocalGet(6), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// remove(dict: Dict?, key: anyref) -> Dict — two-pass COW
+fn remove_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p2=n, p3=i, p4=j, p5=result, p6=entry, p7=found, p8=result_len
+  FuncDef.{ name: "remove", params: [dict_null(), .Anyref], results: [dict_ref()],
+    locals: [.I32, .I32, .I32, dict_null(), entry_null(), .I32, .I32],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      // Pass 1: scan for key
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.I32Const(0), Instr.LocalSet(7),
+      Instr.Block("scan_exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("scan_exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(6),
+          Instr.LocalGet(6), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            Instr.I32Const(1), Instr.LocalSet(7), Instr.Br("scan_exit"),
+          ], []),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      // result_len = found ? n-1 : n
+      Instr.LocalGet(7),
+      Instr.If(.Some(.I32),
+        [Instr.LocalGet(2), Instr.I32Const(1), Instr.I32Sub],
+        [Instr.LocalGet(2)],
+      ),
+      Instr.LocalSet(8),
+      // result = array.new $Dict (null, result_len)
+      Instr.RefNull(HeapType.Named(t_entry())),
+      Instr.LocalGet(8), Instr.ArrayNew(td), Instr.LocalSet(5),
+      // Pass 2: copy non-matching entries
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.I32Const(0), Instr.LocalSet(4),
+      Instr.Block("copy_exit", .None, [
+        Instr.Loop("copy", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("copy_exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(6),
+          Instr.LocalGet(6), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None,
+            [], // skip matching entry
+            [
+              Instr.LocalGet(5), Instr.RefAsNonNull, Instr.LocalGet(4),
+              Instr.LocalGet(6), Instr.ArraySet(td),
+              Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(4),
+            ],
+          ),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("copy"),
+        ]),
+      ]),
+      Instr.LocalGet(5), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// set_in_place(dict: Dict?, key: anyref, val: anyref) -> Dict
+// If key exists, update slot in place. If absent, allocate+copy append.
+fn set_in_place_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p3=n, p4=i, p5=entry, p6=result, p7=new_entry
+  FuncDef.{ name: "set_in_place", params: [dict_null(), .Anyref, .Anyref], results: [dict_ref()],
+    locals: [.I32, .I32, entry_null(), dict_null(), entry_ref()],
+    body: [
+      // n = len(dict)
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(3),
+      // new_entry = DictEntry { key, val }
+      Instr.LocalGet(1), Instr.LocalGet(2), Instr.StructNew(te), Instr.LocalSet(7),
+      // Scan for existing key
+      Instr.I32Const(0), Instr.LocalSet(4),
+      Instr.Block("not_found", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(4), Instr.LocalGet(3), Instr.I32GeS, Instr.BrIf("not_found"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(4),
+          Instr.ArrayGet(td), Instr.LocalSet(5),
+          Instr.LocalGet(5), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            // In-place: dict[i] = new_entry; return dict
+            Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(4),
+            Instr.LocalGet(7), Instr.ArraySet(td),
+            Instr.LocalGet(0), Instr.RefAsNonNull, Instr.Return,
+          ], []),
+          Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(4),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      // Missing key: allocate n+1 and append
+      Instr.RefNull(HeapType.Named(t_entry())),
+      Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add,
+      Instr.ArrayNew(td), Instr.LocalSet(6),
+      // result[0..n] <- dict[0..n]
+      Instr.LocalGet(6), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(3),
+      Instr.ArrayCopy(td, td),
+      // result[n] = new_entry
+      Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(3),
+      Instr.LocalGet(7), Instr.ArraySet(td),
+      Instr.LocalGet(6), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// remove_in_place(dict: Dict?, key: anyref) -> Dict
+// If absent, return original. If present, allocate n-1 and copy prefix/suffix.
+fn remove_in_place_fn() FuncDef {
+  td := t_dict()
+  te := t_entry()
+  // Locals: p2=n, p3=i, p4=found_idx, p5=entry, p6=result, p7=tail_len
+  FuncDef.{ name: "remove_in_place", params: [dict_null(), .Anyref], results: [dict_ref()],
+    locals: [.I32, .I32, .I32, entry_null(), dict_null(), .I32],
+    body: [
+      // n = len(dict)
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      // found_idx = -1
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.I32Const(-1), Instr.LocalSet(4),
+      // Scan for key
+      Instr.Block("scan_exit", .None, [
+        Instr.Loop("scan", .None, [
+          Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("scan_exit"),
+          Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3),
+          Instr.ArrayGet(td), Instr.LocalSet(5),
+          Instr.LocalGet(5), Instr.RefAsNonNull, Instr.StructGet(te, 0),
+          Instr.LocalGet(1), Instr.Call("core_eq"),
+          Instr.If(.None, [
+            Instr.LocalGet(3), Instr.LocalSet(4), Instr.Br("scan_exit"),
+          ], []),
+          Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+          Instr.Br("scan"),
+        ]),
+      ]),
+      // If not found (found_idx == -1), return original dict
+      Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.I32Eqz,
+      Instr.If(.None, [Instr.LocalGet(0), Instr.RefAsNonNull, Instr.Return], []),
+      // result = new dict of length n-1
+      Instr.RefNull(HeapType.Named(t_entry())),
+      Instr.LocalGet(2), Instr.I32Const(1), Instr.I32Sub,
+      Instr.ArrayNew(td), Instr.LocalSet(6),
+      // Copy prefix [0..found_idx) when found_idx > 0
+      Instr.LocalGet(4), Instr.I32Const(0), Instr.I32GtS,
+      Instr.If(.None, [
+        Instr.LocalGet(6), Instr.RefAsNonNull, Instr.I32Const(0),
+        Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(4),
+        Instr.ArrayCopy(td, td),
+      ], []),
+      // tail_len = n - found_idx - 1
+      Instr.LocalGet(2), Instr.LocalGet(4), Instr.I32Sub, Instr.I32Const(1), Instr.I32Sub,
+      Instr.LocalSet(7),
+      // Copy suffix [found_idx+1..n) into result[found_idx..]
+      Instr.LocalGet(7), Instr.I32Const(0), Instr.I32GtS,
+      Instr.If(.None, [
+        Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(4),
+        Instr.LocalGet(0), Instr.RefAsNonNull,
+        Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add,
+        Instr.LocalGet(7),
+        Instr.ArrayCopy(td, td),
+      ], []),
+      Instr.LocalGet(6), Instr.RefAsNonNull,
+    ],
+  }
+}

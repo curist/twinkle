@@ -1,0 +1,263 @@
+// rt.arr — persistent (COW) array operations.
+//
+// Mirrors stage0 src/runtime/arr.rs.
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+
+fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
+fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+fn t_array() String { "rt_types__Array" }
+fn t_boxed_int() String { "rt_types__BoxedInt" }
+
+fn builder_initial_cap() Int { 8 }
+
+pub fn module() WasmModule {
+  funcs := [
+    make_fn(), get_fn(), set_fn(), len_fn(), concat_fn(), slice_fn(),
+    builder_new_fn(), builder_from_fn(), builder_push_fn(), builder_freeze_fn(),
+  ]
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
+  WasmModule.{
+    namespace: "rt.arr",
+    types: [],
+    imports: [],
+    funcs: funcs,
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: exports,
+    data: [],
+    start: .None,
+  }
+}
+
+// make(len: i32, fill: anyref) -> Array
+fn make_fn() FuncDef {
+  ta := t_array()
+  FuncDef.{ name: "make", params: [.I32, .Anyref], results: [arr_ref()], locals: [], body: [
+    Instr.LocalGet(1), Instr.LocalGet(0), Instr.ArrayNew(ta),
+  ] }
+}
+
+// get(arr: Array?, i: i32) -> anyref
+fn get_fn() FuncDef {
+  ta := t_array()
+  FuncDef.{ name: "get", params: [arr_null(), .I32], results: [.Anyref], locals: [], body: [
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(1), Instr.ArrayGet(ta),
+  ] }
+}
+
+// set(arr: Array?, i: i32, val: anyref) -> Array — COW
+fn set_fn() FuncDef {
+  ta := t_array()
+  // Locals: p3=new_arr, p4=len
+  FuncDef.{ name: "set", params: [arr_null(), .I32, .Anyref], results: [arr_ref()],
+    locals: [arr_null(), .I32],
+    body: [
+      // p4 = len(arr)
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(4),
+      // p3 = array.new (null, len)
+      Instr.RefNull(HeapType.None_), Instr.LocalGet(4), Instr.ArrayNew(ta), Instr.LocalSet(3),
+      // copy old → new
+      Instr.LocalGet(3), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(4),
+      Instr.ArrayCopy(ta, ta),
+      // set new[i] = val
+      Instr.LocalGet(3), Instr.RefAsNonNull, Instr.LocalGet(1), Instr.LocalGet(2),
+      Instr.ArraySet(ta),
+      // return new
+      Instr.LocalGet(3), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// len(arr: Array?) -> i32
+fn len_fn() FuncDef {
+  FuncDef.{ name: "len", params: [arr_null()], results: [.I32], locals: [], body: [
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen,
+  ] }
+}
+
+// concat(a: Array?, b: Array?) -> Array
+fn concat_fn() FuncDef {
+  ta := t_array()
+  // Locals: p2=len_a, p3=len_b, p4=total, p5=result
+  FuncDef.{ name: "concat", params: [arr_null(), arr_null()], results: [arr_ref()],
+    locals: [.I32, .I32, .I32, arr_null()],
+    body: [
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      Instr.LocalGet(1), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(3),
+      Instr.LocalGet(2), Instr.LocalGet(3), Instr.I32Add, Instr.LocalSet(4),
+      Instr.RefNull(HeapType.None_), Instr.LocalGet(4), Instr.ArrayNew(ta), Instr.LocalSet(5),
+      // copy a
+      Instr.LocalGet(5), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(2),
+      Instr.ArrayCopy(ta, ta),
+      // copy b
+      Instr.LocalGet(5), Instr.RefAsNonNull, Instr.LocalGet(2),
+      Instr.LocalGet(1), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(3),
+      Instr.ArrayCopy(ta, ta),
+      Instr.LocalGet(5), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// slice(arr: Array?, start: i32, end: i32) -> Array
+fn slice_fn() FuncDef {
+  ta := t_array()
+  // Locals: p3=new_len, p4=result
+  FuncDef.{ name: "slice", params: [arr_null(), .I32, .I32], results: [arr_ref()],
+    locals: [.I32, arr_null()],
+    body: [
+      Instr.LocalGet(2), Instr.LocalGet(1), Instr.I32Sub, Instr.LocalSet(3),
+      Instr.RefNull(HeapType.None_), Instr.LocalGet(3), Instr.ArrayNew(ta), Instr.LocalSet(4),
+      Instr.LocalGet(4), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(1), Instr.LocalGet(3),
+      Instr.ArrayCopy(ta, ta),
+      Instr.LocalGet(4), Instr.RefAsNonNull,
+    ],
+  }
+}
+
+// builder_new() -> Array — layout: [buf, len, cap]
+fn builder_new_fn() FuncDef {
+  ta := t_array()
+  bi := t_boxed_int()
+  cap := builder_initial_cap()
+  FuncDef.{ name: "builder_new", params: [], results: [arr_ref()], locals: [], body: [
+    // buf = array.new $Array (null, initial_cap)
+    Instr.RefNull(HeapType.None_), Instr.I32Const(cap), Instr.ArrayNew(ta),
+    // len = BoxedInt(0)
+    Instr.I64Const(0), Instr.StructNew(bi),
+    // cap = BoxedInt(initial_cap)
+    Instr.I64Const(cap), Instr.StructNew(bi),
+    // [buf, len, cap]
+    Instr.ArrayNewFixed(ta, 3),
+  ] }
+}
+
+// builder_from(vec: Array?) -> Array — seed from existing vector
+fn builder_from_fn() FuncDef {
+  ta := t_array()
+  bi := t_boxed_int()
+  // Locals: p1=len, p2=cap
+  FuncDef.{ name: "builder_from", params: [arr_null()], results: [arr_ref()],
+    locals: [.I32, .I32],
+    body: [
+      // len = array.len(vec)
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(1),
+      // cap = len
+      Instr.LocalGet(1), Instr.LocalSet(2),
+      // [buf=vec, len=BoxedInt(len), cap=BoxedInt(cap)]
+      Instr.LocalGet(0), Instr.RefAsNonNull,
+      Instr.LocalGet(1), Instr.I64ExtendI32S, Instr.StructNew(bi),
+      Instr.LocalGet(2), Instr.I64ExtendI32S, Instr.StructNew(bi),
+      Instr.ArrayNewFixed(ta, 3),
+    ],
+  }
+}
+
+// builder_push(builder: Array?, elem: anyref) -> void
+fn builder_push_fn() FuncDef {
+  ta := t_array()
+  bi := t_boxed_int()
+  cap := builder_initial_cap()
+  // Params: p0=builder, p1=elem
+  // Locals: p2=buf, p3=len, p4=cap, p5=new_cap, p6=new_buf
+  then_body := [
+    // buf[len] = elem
+    Instr.LocalGet(2), Instr.RefAsNonNull, Instr.LocalGet(3), Instr.LocalGet(1),
+    Instr.ArraySet(ta),
+    // len += 1
+    Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+    // builder[1] = BoxedInt(len)
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(1),
+    Instr.LocalGet(3), Instr.I64ExtendI32S, Instr.StructNew(bi),
+    Instr.ArraySet(ta),
+  ]
+  else_body := [
+    // new_cap = if cap == 0 { 8 } else { cap * 2 }
+    Instr.LocalGet(4), Instr.I32Eqz,
+    Instr.If(.Some(.I32),
+      [Instr.I32Const(cap)],
+      [Instr.LocalGet(4), Instr.I32Const(2), Instr.I32Mul],
+    ),
+    Instr.LocalSet(5),
+    // new_buf = array.new $Array (null, new_cap)
+    Instr.RefNull(HeapType.None_), Instr.LocalGet(5), Instr.ArrayNew(ta), Instr.LocalSet(6),
+    // copy old buf → new_buf
+    Instr.LocalGet(6), Instr.RefAsNonNull, Instr.I32Const(0),
+    Instr.LocalGet(2), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(3),
+    Instr.ArrayCopy(ta, ta),
+    // new_buf[len] = elem
+    Instr.LocalGet(6), Instr.RefAsNonNull, Instr.LocalGet(3), Instr.LocalGet(1),
+    Instr.ArraySet(ta),
+    // len += 1
+    Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+    // cap = new_cap
+    Instr.LocalGet(5), Instr.LocalSet(4),
+    // builder[0] = new_buf
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0),
+    Instr.LocalGet(6), Instr.ArraySet(ta),
+    // builder[1] = BoxedInt(len)
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(1),
+    Instr.LocalGet(3), Instr.I64ExtendI32S, Instr.StructNew(bi),
+    Instr.ArraySet(ta),
+    // builder[2] = BoxedInt(cap)
+    Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(2),
+    Instr.LocalGet(4), Instr.I64ExtendI32S, Instr.StructNew(bi),
+    Instr.ArraySet(ta),
+  ]
+  FuncDef.{ name: "builder_push", params: [arr_null(), .Anyref], results: [],
+    locals: [arr_null(), .I32, .I32, .I32, arr_null()],
+    body: [
+      // p2 = builder[0] as Array
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0), Instr.ArrayGet(ta),
+      Instr.RefCast(true, HeapType.Named(t_array())), Instr.LocalSet(2),
+      // p3 = unbox(builder[1])
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(1), Instr.ArrayGet(ta),
+      Instr.RefCast(false, HeapType.Named(t_boxed_int())),
+      Instr.StructGet(bi, 0), Instr.I32WrapI64, Instr.LocalSet(3),
+      // p4 = unbox(builder[2])
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(2), Instr.ArrayGet(ta),
+      Instr.RefCast(false, HeapType.Named(t_boxed_int())),
+      Instr.StructGet(bi, 0), Instr.I32WrapI64, Instr.LocalSet(4),
+      // if len < cap: in-place, else: grow
+      Instr.LocalGet(3), Instr.LocalGet(4), Instr.I32LtS,
+      Instr.If(.None, then_body, else_body),
+    ],
+  }
+}
+
+// builder_freeze(builder: Array?) -> Array
+fn builder_freeze_fn() FuncDef {
+  ta := t_array()
+  bi := t_boxed_int()
+  // Locals: p1=buf, p2=len, p3=out
+  FuncDef.{ name: "builder_freeze", params: [arr_null()], results: [arr_ref()],
+    locals: [arr_null(), .I32, arr_null()],
+    body: [
+      // p1 = builder[0] as Array
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(0), Instr.ArrayGet(ta),
+      Instr.RefCast(true, HeapType.Named(t_array())), Instr.LocalSet(1),
+      // p2 = unbox(builder[1])
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.I32Const(1), Instr.ArrayGet(ta),
+      Instr.RefCast(false, HeapType.Named(t_boxed_int())),
+      Instr.StructGet(bi, 0), Instr.I32WrapI64, Instr.LocalSet(2),
+      // p3 = array.new (null, len)
+      Instr.RefNull(HeapType.None_), Instr.LocalGet(2), Instr.ArrayNew(ta), Instr.LocalSet(3),
+      // copy buf[0..len] → out
+      Instr.LocalGet(3), Instr.RefAsNonNull, Instr.I32Const(0),
+      Instr.LocalGet(1), Instr.RefAsNonNull, Instr.I32Const(0), Instr.LocalGet(2),
+      Instr.ArrayCopy(ta, ta),
+      // return out
+      Instr.LocalGet(3), Instr.RefAsNonNull,
+    ],
+  }
+}
