@@ -1,0 +1,144 @@
+use @std.fs
+use compiler.parser
+use compiler.resolver
+use compiler.checker
+use compiler.lower_core
+use compiler.monomorphize
+use compiler.lower_anf
+use compiler.opt.pipeline.{optimize_module}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.resolver.{ResolvedEnv}
+use compiler.core_ir.{CoreModule}
+use compiler.anf.{AnfModule}
+
+pub type PipelineArtifacts = .{
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  core: CoreModule,
+  mono: CoreModule,
+  anf: AnfModule,
+  opt: AnfModule,
+}
+
+fn builtin_sig(
+  name: String,
+  type_params: Vector<String>,
+  param_names: Vector<String>,
+  param_tys: Vector<resolver.MonoType>,
+  ret: resolver.MonoType?,
+) resolver.FunctionSig {
+  resolver.FunctionSig.{
+    name: name,
+    type_params: type_params,
+    param_names: param_names,
+    params: param_tys,
+    ret: ret,
+  }
+}
+
+fn builtin_env() ResolvedEnv {
+  t := resolver.MonoType.Var("T")
+  k := resolver.MonoType.Var("K")
+  v := resolver.MonoType.Var("V")
+
+  fns: Vector<resolver.FunctionSig> = [
+    builtin_sig("print", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("println", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("error", [], ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
+    builtin_sig("eprint", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("eprintln", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("int_to_string", [], ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
+    builtin_sig("float_to_string", [], ["n"], [resolver.MonoType.Float], .Some(resolver.MonoType.String)),
+    builtin_sig("bool_to_string", [], ["b"], [resolver.MonoType.Bool], .Some(resolver.MonoType.String)),
+    builtin_sig("byte_to_string", [], ["b"], [resolver.MonoType.Byte], .Some(resolver.MonoType.String)),
+    builtin_sig("string_len", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Int)),
+    builtin_sig("string_concat", [], ["lhs", "rhs"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.String)),
+    builtin_sig("string_substring", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
+    builtin_sig("string_get", [], ["s", "i"], [resolver.MonoType.String, resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.Byte))),
+    builtin_sig("string_slice", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
+    builtin_sig("vector_len", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Int)),
+    builtin_sig("vector_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_get", ["T"], ["xs", "index"], [resolver.MonoType.Vector(t), resolver.MonoType.Int], .Some(t)),
+    builtin_sig("vector_set", ["T"], ["xs", "index", "value"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, t], .Some(resolver.MonoType.Optional(resolver.MonoType.Vector(t)))),
+    builtin_sig("vector_concat", ["T"], ["lhs", "rhs"], [resolver.MonoType.Vector(t), resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_slice", ["T"], ["xs", "start", "end"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_builder_new", ["T"], [], [], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_builder_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Void)),
+    builtin_sig("vector_builder_freeze", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_builder_from", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("dict_new", ["K", "V"], [], [], .Some(resolver.MonoType.Dict(k, v))),
+    builtin_sig("dict_set", ["K", "V"], ["dict", "key", "value"], [resolver.MonoType.Dict(k, v), k, v], .Some(resolver.MonoType.Dict(k, v))),
+    builtin_sig("dict_keys", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Vector(k))),
+    builtin_sig("dict_get", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Optional(v))),
+    builtin_sig("dict_len", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Int)),
+    builtin_sig("dict_has", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Bool)),
+    builtin_sig("dict_remove", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Dict(k, v))),
+    builtin_sig("host_read_file", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.String)),
+    builtin_sig("host_write_file", [], ["path", "text"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("host_mkdirp", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("host_list_dir", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_exists", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Bool)),
+    builtin_sig("host_args", [], [], [], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_env", [], ["name"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_cwd", [], [], [], .Some(resolver.MonoType.String)),
+    builtin_sig("host_exit", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Never)),
+  ]
+
+  resolver.empty_env().with_functions(fns).register_builtin_methods()
+}
+
+fn fs_error_message(err: fs.FsError) String {
+  case err {
+    .NotFound => "file not found",
+    .PermissionDenied => "permission denied",
+    .InvalidUtf8 => "input is not valid UTF-8",
+    .Other(msg) => msg,
+  }
+}
+
+pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
+  parsed := parser.parse(src, 0)
+  if parsed.diagnostics.len() > 0 {
+    return .Err("parse: ${parsed.diagnostics[0].message}")
+  }
+
+  resolved := builtin_env().resolve(parsed.value)
+  if resolved.diagnostics.len() > 0 {
+    return .Err("resolve: ${resolved.diagnostics[0].message}")
+  }
+
+  check_result := checker.check(parsed.value, resolved.env)
+  if check_result.diagnostics.len() > 0 {
+    return .Err("check: ${check_result.diagnostics[0].message}")
+  }
+
+  builtins := make_builtin_registry()
+  lowered := lower_core.lower_module(parsed.value, check_result, builtins)
+  if lowered.diagnostics.len() > 0 {
+    return .Err("lower_core: ${lowered.diagnostics[0].message}")
+  }
+
+  core := lowered.module
+  mono := monomorphize.monomorphize(core)
+  anf := lower_anf.lower_module(mono)
+  opt := optimize_module(anf)
+
+  .Ok(PipelineArtifacts.{
+    env: resolved.env,
+    builtins: builtins,
+    core: core,
+    mono: mono,
+    anf: anf,
+    opt: opt,
+  })
+}
+
+pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
+  source := case fs.read_text(path) {
+    .Ok(text) => text,
+    .Err(err) => {
+      return .Err("read '${path}': ${fs_error_message(err)}")
+    },
+  }
+  compile_source(source)
+}

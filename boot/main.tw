@@ -1,10 +1,15 @@
 use @std.proc
 use @std.fs
+use lib.argparse.app
 use lib.argparse.app.{App, ParseResult}
+use lib.argparse.command
 use lib.argparse.command.{Command}
+use lib.source.registry
 use lib.source.registry.{FileRegistry}
 use lib.source.diagnostic.{Severity, Diagnostic}
 use compiler.parser
+use compiler.pipeline
+use compiler.ir_print
 
 fn file_command(name: String, help: String) Command {
   command.make(name, help).add_required_positional("file", "Path to the .tw source file")
@@ -18,17 +23,13 @@ fn check_cmd() Command {
   file_command("check", "Type-check source (placeholder)")
 }
 
-fn lower_cmd() Command {
-  file_command("lower", "Lower to Core IR (placeholder)")
-}
-
-fn lower_anf_cmd() Command {
-  file_command("lower-anf", "Lower to ANF IR (placeholder)")
-}
-
-fn opt_cmd() Command {
-  file_command("opt", "Optimize ANF IR (placeholder)")
-    .add_short_flag("show-original", "s", "Also print unoptimized ANF")
+fn ir_cmd() Command {
+  file_command("ir", "Compile and print boot compiler IR")
+    .add_flag("core", "Print lowered Core IR")
+    .add_flag("mono", "Print monomorphized Core IR")
+    .add_flag("anf", "Print unoptimized ANF IR")
+    .add_flag("opt", "Print optimized ANF IR")
+    .add_flag("all", "Print all available IR stages")
 }
 
 fn run_cmd() Command {
@@ -50,9 +51,7 @@ fn twk_app() App {
   app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
     parse_cmd(),
     check_cmd(),
-    lower_cmd(),
-    lower_anf_cmd(),
-    opt_cmd(),
+    ir_cmd(),
     run_cmd(),
     build_cmd(),
     runtime_dump_cmd(),
@@ -201,20 +200,69 @@ fn run_parse_command(parsed: ParseResult) {
   }
 }
 
+fn has_any_ir_flag(parsed: ParseResult) Bool {
+  app.has_flag(parsed, "core")
+    or app.has_flag(parsed, "mono")
+    or app.has_flag(parsed, "anf")
+    or app.has_flag(parsed, "opt")
+    or app.has_flag(parsed, "all")
+}
+
+fn should_show_ir(parsed: ParseResult, name: String) Bool {
+  if app.has_flag(parsed, "all") {
+    return true
+  }
+  if has_any_ir_flag(parsed) {
+    return app.has_flag(parsed, name)
+  }
+  name == "opt"
+}
+
+fn print_ir_stage(title: String, body: String, first: Bool) Bool {
+  if !first {
+    println("")
+  }
+  println("// ── ${title} ─────────────────────────────────────────────────────────")
+  print(body)
+  false
+}
+
+fn run_ir_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  artifacts := case pipeline.compile_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  first := true
+  if should_show_ir(parsed, "core") {
+    first = print_ir_stage("Core IR", ir_print.render_core_module(artifacts.core), first)
+  }
+  if should_show_ir(parsed, "mono") {
+    first = print_ir_stage("Monomorphized Core IR", ir_print.render_core_module(artifacts.mono), first)
+  }
+  if should_show_ir(parsed, "anf") {
+    first = print_ir_stage("ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.anf), first)
+  }
+  if should_show_ir(parsed, "opt") {
+    first = print_ir_stage("Optimized ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.opt), first)
+  }
+}
+
 fn build_command_plan(parsed: ParseResult) CommandPlan!String {
   case parsed.command {
     .Some(cmd) => {
       detail := case cmd {
         "parse" => try file_detail(parsed, fn(file) { "Would parse '${file}'." }),
         "check" => try file_detail(parsed, fn(file) { "Would type-check '${file}'." }),
-        "lower" => try file_detail(parsed, fn(file) { "Would lower '${file}' to Core IR." }),
-        "lower-anf" => try file_detail(parsed, fn(file) { "Would lower '${file}' to ANF IR." }),
-        "opt" => {
-          show := app.has_flag(parsed, "show-original")
-          try file_detail(parsed, fn(file) {
-            "Would optimize '${file}' (show-original=${show})."
-          })
-        },
+        "ir" => try file_detail(parsed, fn(file) { "Would print IR for '${file}'." }),
         "run" => {
           interp := app.has_flag(parsed, "interpreter")
           mode := if interp { "interpreter" } else { "wasm" }
@@ -244,6 +292,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
 fn run_command(parsed: ParseResult) {
   case parsed.command {
     .Some("parse") => run_parse_command(parsed),
+    .Some("ir") => run_ir_command(parsed),
     _ => {
       case build_command_plan(parsed) {
         .Ok(plan) => not_implemented(plan.cmd, plan.detail),

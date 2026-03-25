@@ -1,0 +1,438 @@
+use compiler.resolver
+use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, MonoType, TypeId}
+use compiler.core_ir.{
+  CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
+  LocalId, FieldId, VariantId, BinOp, UnOp, FieldInit, MatchArm, CorePattern,
+}
+use compiler.anf.{
+  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
+  AnfFunctionDef, AnfModule,
+}
+use compiler.codegen.wasm_ir.{WasmModule}
+use compiler.codegen.linker.{LinkedModule}
+use compiler.codegen.wat.{emit_wat, emit_wat_unlinked_for_test}
+
+fn pad(indent: Int) String {
+  collect _ in range(indent) { " " }.join("")
+}
+
+fn line(lines: Vector<String>, indent: Int, text: String) Vector<String> {
+  lines.push("${pad(indent)}${text}")
+}
+
+fn join_lines(lines: Vector<String>) String {
+  if lines.len() == 0 {
+    ""
+  } else {
+    "${lines.join("\n")}\n"
+  }
+}
+
+fn bool_name(v: Bool) String {
+  if v { "true" } else { "false" }
+}
+
+fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
+  for entry in env.types {
+    if entry.id.id == tid.id {
+      return entry.def
+    }
+  }
+  .None
+}
+
+fn type_name(env: ResolvedEnv, tid: TypeId) String {
+  case env.find_type_name(tid) {
+    .Some(name) => name,
+    .None => "Type#${tid.id}",
+  }
+}
+
+fn field_name(env: ResolvedEnv, tid: TypeId, fid: FieldId) String {
+  case lookup_type_def(env, tid) {
+    .Some(.Record(_, _, fields)) => {
+      if fid.id >= 0 and fid.id < fields.len() {
+        fields[fid.id].name
+      } else {
+        "field#${fid.id}"
+      }
+    },
+    _ => "field#${fid.id}",
+  }
+}
+
+fn variant_name(env: ResolvedEnv, tid: TypeId, vid: VariantId) String {
+  case lookup_type_def(env, tid) {
+    .Some(.Sum(_, _, variants)) => {
+      if vid.id >= 0 and vid.id < variants.len() {
+        variants[vid.id].name
+      } else {
+        "variant#${vid.id}"
+      }
+    },
+    _ => "variant#${vid.id}",
+  }
+}
+
+fn mono(ty_env: ResolvedEnv, ty: MonoType) String {
+  resolver.ty_to_string_env(ty_env, ty)
+}
+
+fn param_strings(ty_env: ResolvedEnv, params: Vector<Param>) Vector<String> {
+  collect p in params { "L${p.local.id}: ${mono(ty_env, p.ty)}" }
+}
+
+fn atom_string(atom: Atom) String {
+  case atom {
+    .ALocal(local) => "L${local.id}",
+    .AGlobalFunc(func_id) => "Fn${func_id.id}",
+    .ALitInt(n) => n.to_string(),
+    .ALitFloat(f) => f.to_string(),
+    .ALitBool(v) => bool_name(v),
+    .ALitStr(s) => "\"${s}\"",
+    .ALitVoid => "void",
+  }
+}
+
+fn core_pattern_string(env: ResolvedEnv, pattern: CorePattern) String {
+  case pattern {
+    .Wildcard => "_",
+    .Var(local) => "L${local.id}",
+    .LitInt(n) => n.to_string(),
+    .LitBool(v) => bool_name(v),
+    .LitStr(s) => "\"${s}\"",
+    .Variant(tid, vid, args) => {
+      vname := variant_name(env, tid, vid)
+      tname := type_name(env, tid)
+      if args.len() == 0 {
+        "${tname}.${vname}"
+      } else {
+        inner := collect arg in args { core_pattern_string(env, arg) }
+        "${tname}.${vname}(${inner.join(", ")})"
+      }
+    },
+  }
+}
+
+fn binop_name(op: BinOp) String {
+  case op {
+    .Add => "add",
+    .Sub => "sub",
+    .Mul => "mul",
+    .Div => "div",
+    .Mod => "mod",
+    .Eq => "eq",
+    .Ne => "ne",
+    .Lt => "lt",
+    .Le => "le",
+    .Gt => "gt",
+    .Ge => "ge",
+    .And => "and",
+    .Or => "or",
+    .BitAnd => "bitand",
+    .BitOr => "bitor",
+    .BitXor => "bitxor",
+    .Shl => "shl",
+    .Shr => "shr",
+  }
+}
+
+fn unop_name(op: UnOp) String {
+  case op {
+    .Neg => "neg",
+    .Not => "not",
+  }
+}
+
+fn op_kind_name(kind: OpKind) String {
+  case kind {
+    .Int => "int",
+    .Float => "float",
+    .Bool => "bool",
+    .Str => "string",
+  }
+}
+
+fn index_kind_name(kind: IndexKind) String {
+  case kind {
+    .Array => "array",
+    .Dict => "dict",
+    .Str => "string",
+  }
+}
+
+fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, indent: Int) Vector<String> {
+  ty := mono(env, expr.ty)
+  case expr.kind {
+    .LitInt(n) => line(lines, indent, "LitInt(${n}) : ${ty}"),
+    .LitFloat(f) => line(lines, indent, "LitFloat(${f}) : ${ty}"),
+    .LitBool(v) => line(lines, indent, "LitBool(${bool_name(v)}) : ${ty}"),
+    .LitStr(s) => line(lines, indent, "LitStr(\"${s}\") : ${ty}"),
+    .LitVoid => line(lines, indent, "LitVoid"),
+    .Local(local) => line(lines, indent, "Local(L${local.id}) : ${ty}"),
+    .GlobalLocal(local) => line(lines, indent, "GlobalLocal(L${local.id}) : ${ty}"),
+    .GlobalFunc(func_id) => line(lines, indent, "GlobalFunc(Fn${func_id.id}) : ${ty}"),
+    .Let(local, value, body) => {
+      out := line(lines, indent, "Let L${local.id} =")
+      out = render_core_expr(out, env, value, indent + 2)
+      out = line(out, indent, "in")
+      render_core_expr(out, env, body, indent + 2)
+    },
+    .Assign(local, value) => {
+      out := line(lines, indent, "Assign L${local.id} =")
+      render_core_expr(out, env, value, indent + 2)
+    },
+    .BinOp(op, left, right) => {
+      out := line(lines, indent, "BinOp(${binop_name(op)}) : ${ty}")
+      out = render_core_expr(out, env, left, indent + 2)
+      render_core_expr(out, env, right, indent + 2)
+    },
+    .UnOp(op, inner) => {
+      out := line(lines, indent, "UnOp(${unop_name(op)}) : ${ty}")
+      render_core_expr(out, env, inner, indent + 2)
+    },
+    .Call(callee, args) => {
+      out := line(lines, indent, "Call : ${ty}")
+      out = render_core_expr(out, env, callee, indent + 2)
+      for arg in args {
+        out = render_core_expr(out, env, arg, indent + 4)
+      }
+      out
+    },
+    .MakeClosure(func_id, free_vars) => {
+      captures := collect local in free_vars { "L${local.id}" }
+      line(lines, indent, "MakeClosure Fn${func_id.id} free_vars=[${captures.join(", ")}]")
+    },
+    .If(cond, then_branch, else_branch) => {
+      out := line(lines, indent, "If : ${ty}")
+      out = line(out, indent, "  cond:")
+      out = render_core_expr(out, env, cond, indent + 4)
+      out = line(out, indent, "  then:")
+      out = render_core_expr(out, env, then_branch, indent + 4)
+      out = line(out, indent, "  else:")
+      render_core_expr(out, env, else_branch, indent + 4)
+    },
+    .Match(scrutinee, arms) => {
+      out := line(lines, indent, "Match : ${ty}")
+      out = render_core_expr(out, env, scrutinee, indent + 2)
+      for arm in arms {
+        out = line(out, indent, "  arm ${core_pattern_string(env, arm.pattern)} =>")
+        out = render_core_expr(out, env, arm.body, indent + 4)
+      }
+      out
+    },
+    .Loop(body) => {
+      out := line(lines, indent, "Loop : ${ty}")
+      render_core_expr(out, env, body, indent + 2)
+    },
+    .Break(value_opt) => {
+      case value_opt {
+        .Some(value) => {
+          out := line(lines, indent, "Break :")
+          render_core_expr(out, env, value, indent + 2)
+        },
+        .None => line(lines, indent, "Break"),
+      }
+    },
+    .Continue => line(lines, indent, "Continue"),
+    .Return(value_opt) => {
+      case value_opt {
+        .Some(value) => {
+          out := line(lines, indent, "Return:")
+          render_core_expr(out, env, value, indent + 2)
+        },
+        .None => line(lines, indent, "Return void"),
+      }
+    },
+    .Defer(inner) => {
+      out := line(lines, indent, "Defer:")
+      render_core_expr(out, env, inner, indent + 2)
+    },
+    .Record(tid, fields) => {
+      out := line(lines, indent, "Record(${type_name(env, tid)}) : ${ty}")
+      for init in fields {
+        out = line(out, indent, "  field ${field_name(env, tid, init.field)}:")
+        out = render_core_expr(out, env, init.value, indent + 4)
+      }
+      out
+    },
+    .RecordGet(target, field) => {
+      out := line(lines, indent, "RecordGet .${field.id} : ${ty}")
+      render_core_expr(out, env, target, indent + 2)
+    },
+    .RecordUpdate(base, field, value) => {
+      out := line(lines, indent, "RecordUpdate .${field.id} : ${ty}")
+      out = render_core_expr(out, env, base, indent + 2)
+      out = line(out, indent, "  value:")
+      render_core_expr(out, env, value, indent + 4)
+    },
+    .Variant(tid, vid, args) => {
+      out := line(lines, indent, "Variant(${type_name(env, tid)}.${variant_name(env, tid, vid)}) : ${ty}")
+      for arg in args {
+        out = render_core_expr(out, env, arg, indent + 2)
+      }
+      out
+    },
+    .ArrayLit(elements) => {
+      out := line(lines, indent, "ArrayLit[${elements.len()}] : ${ty}")
+      for elem in elements {
+        out = render_core_expr(out, env, elem, indent + 2)
+      }
+      out
+    },
+    .Index(base, index) => {
+      out := line(lines, indent, "Index : ${ty}")
+      out = render_core_expr(out, env, base, indent + 2)
+      render_core_expr(out, env, index, indent + 2)
+    },
+  }
+}
+
+fn render_anf_expr(lines: Vector<String>, env: ResolvedEnv, func: AnfFunctionDef, expr: AnfExpr, indent: Int) Vector<String> {
+  case expr {
+    .Let(local, op, body) => {
+      ty_suffix := case func.op_result_mono[local.id] {
+        .Some(ty) => ": ${mono(env, ty)}",
+        .None => "",
+      }
+      out := line(lines, indent, "let L${local.id}${ty_suffix} =")
+      out = render_anf_op(out, env, func, op, indent + 2)
+      render_anf_expr(out, env, func, body, indent)
+    },
+    .Atom(atom) => line(lines, indent, atom_string(atom)),
+    .Return(atom_opt) => {
+      case atom_opt {
+        .Some(atom) => line(lines, indent, "return ${atom_string(atom)}"),
+        .None => line(lines, indent, "return"),
+      }
+    },
+    .Break(atom_opt) => {
+      case atom_opt {
+        .Some(atom) => line(lines, indent, "break ${atom_string(atom)}"),
+        .None => line(lines, indent, "break"),
+      }
+    },
+    .Continue => line(lines, indent, "continue"),
+  }
+}
+
+fn render_anf_op(lines: Vector<String>, env: ResolvedEnv, func: AnfFunctionDef, op: AnfOp, indent: Int) Vector<String> {
+  case op {
+    .ACall(callee, args) => {
+      arg_text := collect arg in args { atom_string(arg) }
+      line(lines, indent, "call ${atom_string(callee)}(${arg_text.join(", ")})")
+    },
+    .AIf(cond, then_expr, else_expr) => {
+      out := line(lines, indent, "if ${atom_string(cond)}")
+      out = line(out, indent, "then")
+      out = render_anf_expr(out, env, func, then_expr, indent + 2)
+      out = line(out, indent, "else")
+      render_anf_expr(out, env, func, else_expr, indent + 2)
+    },
+    .AMatch(scrutinee, arms) => {
+      out := line(lines, indent, "match ${atom_string(scrutinee)}")
+      for arm in arms {
+        out = line(out, indent, "  arm ${core_pattern_string(env, arm.pattern)} =>")
+        out = render_anf_expr(out, env, func, arm.body, indent + 4)
+      }
+      out
+    },
+    .ALoop(body) => {
+      out := line(lines, indent, "loop")
+      render_anf_expr(out, env, func, body, indent + 2)
+    },
+    .ABinOp(op, left, right, kind) => line(lines, indent, "${op_kind_name(kind)}.${binop_name(op)} ${atom_string(left)}, ${atom_string(right)}"),
+    .AUnOp(op, atom, kind) => line(lines, indent, "${op_kind_name(kind)}.${unop_name(op)} ${atom_string(atom)}"),
+    .AMakeClosure(func_id, free_vars) => {
+      captures := collect local in free_vars { "L${local.id}" }
+      line(lines, indent, "make_closure Fn${func_id.id} [${captures.join(", ")}]")
+    },
+    .ARecord(tid, fields) => {
+      parts := collect field in fields { "${field_name(env, tid, field.field)}=${atom_string(field.value)}" }
+      line(lines, indent, "record ${type_name(env, tid)} { ${parts.join(", ")} }")
+    },
+    .ARecordGet(atom, field, tid) => line(lines, indent, "record_get ${atom_string(atom)} .${field_name(env, tid, field)}"),
+    .ARecordUpdate(atom, field, value, in_place, tid) =>
+      line(lines, indent, "record_update ${atom_string(atom)} .${field_name(env, tid, field)} = ${atom_string(value)} [in_place=${bool_name(in_place)}]"),
+    .AVariant(tid, vid, args) => {
+      rendered := collect arg in args { atom_string(arg) }
+      line(lines, indent, "variant ${type_name(env, tid)}.${variant_name(env, tid, vid)}(${rendered.join(", ")})")
+    },
+    .AArrayLit(elements) => {
+      rendered := collect elem in elements { atom_string(elem) }
+      line(lines, indent, "[${rendered.join(", ")}]")
+    },
+    .AIndex(base, index, kind, base_ty) =>
+      line(lines, indent, "index[${index_kind_name(kind)}] ${atom_string(base)}, ${atom_string(index)} : ${mono(env, base_ty)}"),
+    .AInit(atom) => line(lines, indent, "init ${atom_string(atom)}"),
+    .AAssign(local, atom) => line(lines, indent, "assign L${local.id} = ${atom_string(atom)}"),
+    .ADefer(expr) => {
+      out := line(lines, indent, "defer")
+      render_anf_expr(out, env, func, expr, indent + 2)
+    },
+    .AWrapAnyref(atom, ty) => line(lines, indent, "wrap_anyref ${atom_string(atom)} as ${mono(env, ty)}"),
+    .AUnwrapAnyref(atom, ty) => line(lines, indent, "unwrap_anyref ${atom_string(atom)} as ${mono(env, ty)}"),
+  }
+}
+
+fn render_anf_function(lines: Vector<String>, env: ResolvedEnv, func: AnfFunctionDef) Vector<String> {
+  params := param_strings(env, func.params)
+  out := line(lines, 0, "fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
+  out = line(out, 2, "return_ty: ${mono(env, func.return_ty)}")
+  out = line(out, 2, "body:")
+  out = render_anf_expr(out, env, func, func.body, 4)
+  out.push("")
+}
+
+pub fn render_core_module(module: CoreModule) String {
+  lines: Vector<String> = [
+    "// Core IR",
+    "// ${module.functions.len()} function(s)",
+  ]
+  case module.init_func_id {
+    .Some(init_id) => {
+      lines = lines.push("// init = FuncId(${init_id.id})")
+    },
+    .None => {},
+  }
+  lines = lines.push("")
+
+  for func in module.functions {
+    params := param_strings(module.type_env, func.params)
+    lines = lines.push("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
+    lines = lines.push("  return_ty: ${mono(module.type_env, func.return_ty)}")
+    lines = lines.push("  body:")
+    lines = render_core_expr(lines, module.type_env, func.body, 4)
+    lines = lines.push("")
+  }
+
+  join_lines(lines)
+}
+
+pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
+  lines: Vector<String> = [
+    "// ANF IR",
+    "// ${module.functions.len()} function(s)",
+  ]
+  case module.init_func_id {
+    .Some(init_id) => {
+      lines = lines.push("// init = FuncId(${init_id.id})")
+    },
+    .None => {},
+  }
+  lines = lines.push("")
+
+  for func in module.functions {
+    lines = render_anf_function(lines, env, func)
+  }
+
+  join_lines(lines)
+}
+
+pub fn render_user_module_wat(module: WasmModule) String {
+  emit_wat_unlinked_for_test(module)
+}
+
+pub fn render_linked_module_wat(linked: LinkedModule) String {
+  emit_wat(linked)
+}

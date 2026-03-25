@@ -1,0 +1,26 @@
+use compiler.anf.{AnfModule}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.resolver.{ResolvedEnv}
+use compiler.codegen.codegen.{codegen}
+use compiler.pipeline
+
+pub type CodegenInputs = .{
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+}
+
+pub fn codegen_inputs(src: String) Result<CodegenInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  .Ok(CodegenInputs.{ anf: artifacts.opt, env: artifacts.env, builtins: artifacts.builtins })
+}
+
+pub fn codegen_src(src: String) Result<String, String> {
+  inputs := try codegen_inputs(src)
+  .Ok(codegen(inputs.anf, inputs.env, inputs.builtins))
+}
+
+pub fn codegen_path(path: String) Result<String, String> {
+  artifacts := try pipeline.compile_path(path)
+  .Ok(codegen(artifacts.opt, artifacts.env, artifacts.builtins))
+}
