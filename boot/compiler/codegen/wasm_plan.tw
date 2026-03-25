@@ -252,7 +252,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
         .Some(_) => reg,
         .None => {
           fields := collect f in rec.fields {
-            FieldDef.{ name: .Some(f.name), mutable: false, ty: f.val_type }
+            FieldDef.{ name: .Some(f.name), mutable: true, ty: f.val_type }
           }
           td: TypeDef = .Struct(rec.sym, fields, .None, false)
           reg.type_index[rec.sym] = reg.type_defs.len()

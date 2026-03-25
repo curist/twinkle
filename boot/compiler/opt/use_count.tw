@@ -171,12 +171,13 @@ pub fn is_pure(op: AnfOp) Bool {
 }
 
 // Check if an entire expression is pure (all ops in the let-chain are pure).
+// Return/Break/Continue are control-flow effects — dropping them changes behavior.
 fn expr_is_pure(expr: AnfExpr) Bool {
   case expr {
     .Let(_, op, body) => is_pure(op) and expr_is_pure(body),
     .Atom(_) => true,
-    .Return(_) => true,
-    .Break(_) => true,
-    .Continue => true,
+    .Return(_) => false,
+    .Break(_) => false,
+    .Continue => false,
   }
 }

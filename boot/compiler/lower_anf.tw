@@ -403,6 +403,9 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       r := fresh(va.state)
       tmp := r.local
       st := r.state
+      // Record the assign target's type in op_result_mono so the emitter
+      // can determine the mono type of module globals.
+      st.op_result_mono[local.id] = value.ty
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
       ExprAccumResult.{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
     },
@@ -647,6 +650,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       r := fresh(va.state)
       tmp := r.local
       st := r.state
+      st.op_result_mono[local.id] = value.ty
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
       AtomAccumResult.{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
     },

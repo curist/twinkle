@@ -1,0 +1,247 @@
+use tests.runner
+use tests.assert
+use tests.helpers.codegen_harness
+use compiler.codegen.linker.{link}
+use compiler.codegen.wat.{emit_wat}
+use compiler.codegen.codegen.{runtime_modules, codegen}
+use compiler.codegen.runtime.types as rt_types
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn codegen_src(src: String) Result<String, String> {
+  inputs := try codegen_harness.codegen_inputs(src)
+  .Ok(codegen(inputs.anf, inputs.env, inputs.builtins))
+}
+
+fn assert_module_wat(wat: String, label: String) Result<Void, String> {
+  try assert.str_contains(wat, "(module")
+  .Ok({})
+}
+
+fn assert_codegen_src_compiles(src: String, label: String) Result<String, String> {
+  wat := try codegen_src(src)
+  try assert_module_wat(wat, label)
+  .Ok(wat)
+}
+
+fn assert_codegen_path_compiles(path: String, label: String) Result<String, String> {
+  wat := try codegen_harness.codegen_path(path)
+  try assert_module_wat(wat, label)
+  .Ok(wat)
+}
+
+// ── Linked WAT emission tests ───────────────────────────────────────
+
+fn test_emit_wat_basic() Result<Void, String> {
+  // Link a single trivial module and emit WAT
+  m := rt_types.module()
+  case link([m], .None) {
+    .Ok(linked) => {
+      wat := emit_wat(linked)
+      try assert.str_contains(wat, "(module")
+      try assert.str_contains(wat, "$rt_types__Array")
+      try assert.str_contains(wat, "$rt_types__String")
+    },
+    .Err(_) => { return assert.fail("link should succeed for single module") },
+  }
+  .Ok({})
+}
+
+fn test_codegen_end_to_end_simple_program() Result<Void, String> {
+  wat := try assert_codegen_src_compiles("fn main() Int { 42 }", "simple program")
+  try assert.str_contains(wat, "user__")
+  try assert.str_contains(wat, "i64.const 42")
+  try assert.str_contains(wat, "rt_types__String")
+  .Ok({})
+}
+
+fn test_phase1_option_boundary_fixture() Result<Void, String> {
+  wat := try assert_codegen_path_compiles("tests/run/option_boundary_call.tw", "phase 1 option boundary fixture")
+  try assert.str_contains(wat, "rt_types__Variant")
+  .Ok({})
+}
+
+fn test_phase2_return_inside_if() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn choose(b: Bool) String {\n  if b { return \"yes\" }\n  \"no\"\n}\nprintln(choose(true))\nprintln(choose(false))\n",
+    "phase 2 return inside if",
+  )
+  try assert.str_contains(wat, "return")
+  .Ok({})
+}
+
+fn test_phase2_return_inside_for() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn first_gt(xs: Vector<Int>, limit: Int) String {\n  for x in xs {\n    if x > limit { return \"found\" }\n  }\n  \"none\"\n}\nprintln(first_gt([1, 3, 7], 6))\nprintln(first_gt([1, 3], 6))\n",
+    "phase 2 return inside for",
+  )
+  try assert.str_contains(wat, "loop")
+  .Ok({})
+}
+
+fn test_phase3_string_get_fixture() Result<Void, String> {
+  wat := try assert_codegen_path_compiles("tests/run/string_get.tw", "phase 3 string.get fixture")
+  try assert.str_contains(wat, "Option_opt_i32b")
+  .Ok({})
+}
+
+fn test_phase3_bool_case() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "b := true\ncase b {\n  true => println(\"t\"),\n  false => println(\"f\"),\n}\n",
+    "phase 3 bool case",
+  )
+  try assert.str_contains(wat, "i32.eq")
+  .Ok({})
+}
+
+fn test_phase4_record_field_access() Result<Void, String> {
+  dollar: String = case String.from_code_point(36) {
+    .Some(d) => d,
+    .None => { return .Err("failed to create dollar sign") },
+  }
+  src: String =
+    "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\""
+      .concat(dollar)
+      .concat("{p.x}\")\nprintln(\"")
+      .concat(dollar)
+      .concat("{p.y}\") }\nmain()\n")
+  wat := try assert_codegen_src_compiles(
+    src,
+    "phase 4 record field access",
+  )
+  try assert.str_contains(wat, "struct.get")
+  .Ok({})
+}
+
+fn test_phase3_large_string_index_fixture() Result<Void, String> {
+  wat := try assert_codegen_path_compiles(
+    "tests/run/string_large_index_semantics.tw",
+    "phase 3 large string index fixture",
+  )
+  try assert.str_contains(wat, "Option_opt_i32b")
+  .Ok({})
+}
+
+// ── runtime_modules tests ───────────────────────────────────────────
+
+fn test_runtime_modules_count() Result<Void, String> {
+  mods := runtime_modules()
+  try assert.int_eq(mods.len(), 5)
+  .Ok({})
+}
+
+fn test_runtime_modules_namespaces() Result<Void, String> {
+  mods := runtime_modules()
+  names := collect m in mods { m.namespace }
+  try assert.ok(names[0] == "rt.types", "first module should be rt.types")
+  try assert.ok(names[1] == "rt.str", "second module should be rt.str")
+  try assert.ok(names[2] == "rt.arr", "third module should be rt.arr")
+  try assert.ok(names[3] == "rt.dict", "fourth module should be rt.dict")
+  try assert.ok(names[4] == "rt.core", "fifth module should be rt.core")
+  .Ok({})
+}
+
+// ── Link runtime modules together ───────────────────────────────────
+
+fn test_link_runtime_resolves_imports() Result<Void, String> {
+  // rt.core imports rt.str.eq — linking all runtime modules should resolve it
+  mods := runtime_modules()
+  case link(mods, .None) {
+    .Ok(linked) => {
+      // rt.core's import of rt.str.eq should be resolved (not in linked imports)
+      for imp in linked.imports {
+        // Only host imports should survive
+        try assert.ok(imp.module == "host",
+          "non-host import survived linking: ${imp.module}.${imp.name}")
+      }
+    },
+    .Err(errors) => {
+      case errors[0] {
+        .MissingExport(m, n) => {
+          return assert.fail("link failed: missing ${m}.${n}")
+        },
+      }
+    },
+  }
+  .Ok({})
+}
+
+fn test_link_runtime_emits_valid_wat() Result<Void, String> {
+  mods := runtime_modules()
+  case link(mods, .None) {
+    .Ok(linked) => {
+      wat := emit_wat(linked)
+      try assert.str_contains(wat, "(module")
+      // Should contain qualified runtime function names
+      try assert.str_contains(wat, "rt_core__print")
+      try assert.str_contains(wat, "rt_str__len")
+      try assert.str_contains(wat, "rt_arr__make")
+      try assert.str_contains(wat, "rt_dict__set")
+      // Should contain qualified type names
+      try assert.str_contains(wat, "rt_types__Array")
+      try assert.str_contains(wat, "rt_types__String")
+    },
+    .Err(_) => { return assert.fail("link should succeed") },
+  }
+  .Ok({})
+}
+
+fn test_link_runtime_host_imports_preserved() Result<Void, String> {
+  mods := runtime_modules()
+  case link(mods, .None) {
+    .Ok(linked) => {
+      // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
+      host_names: Vector<String> = []
+      for imp in linked.imports {
+        host_names = host_names.push(imp.name)
+      }
+      found_print := false
+      found_println := false
+      found_f64 := false
+      for n in host_names {
+        if n == "print" { found_print = true }
+        if n == "println" { found_println = true }
+        if n == "f64_to_string" { found_f64 = true }
+      }
+      try assert.ok(found_print, "should preserve host.print import")
+      try assert.ok(found_println, "should preserve host.println import")
+      try assert.ok(found_f64, "should preserve host.f64_to_string import")
+    },
+    .Err(_) => { return assert.fail("link should succeed") },
+  }
+  .Ok({})
+}
+
+fn test_link_runtime_no_start_function() Result<Void, String> {
+  // Runtime modules alone have no start function
+  mods := runtime_modules()
+  case link(mods, .None) {
+    .Ok(linked) => {
+      try assert.ok(case linked.start { .None => true, _ => false },
+        "runtime-only link should have no start function")
+    },
+    .Err(_) => { return assert.fail("link should succeed") },
+  }
+  .Ok({})
+}
+
+// ── Suite ───────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("codegen integration (M11)")
+    .test("emit_wat produces valid linked WAT", test_emit_wat_basic)
+    .test("codegen compiles a simple source program end to end", test_codegen_end_to_end_simple_program)
+    .test("phase 1 option boundary fixture compiles through boot codegen", test_phase1_option_boundary_fixture)
+    .test("phase 2 return inside if compiles through boot codegen", test_phase2_return_inside_if)
+    .test("phase 2 return inside for compiles through boot codegen", test_phase2_return_inside_for)
+    .test("phase 3 string.get fixture compiles through boot codegen", test_phase3_string_get_fixture)
+    .test("phase 3 bool case compiles through boot codegen", test_phase3_bool_case)
+    .test("phase 3 large string index fixture compiles through boot codegen", test_phase3_large_string_index_fixture)
+    .test("phase 4 record field access compiles through boot codegen", test_phase4_record_field_access)
+    .test("runtime_modules returns 5 modules", test_runtime_modules_count)
+    .test("runtime_modules has correct namespaces", test_runtime_modules_namespaces)
+    .test("linking runtime resolves all inter-module imports", test_link_runtime_resolves_imports)
+    .test("linked runtime emits valid WAT with qualified names", test_link_runtime_emits_valid_wat)
+    .test("linked runtime preserves host imports", test_link_runtime_host_imports_preserved)
+    .test("runtime-only link has no start function", test_link_runtime_no_start_function)
+}

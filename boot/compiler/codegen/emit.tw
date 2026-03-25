@@ -60,7 +60,7 @@ pub type EmitCtx = .{
 
 pub fn emit_module(
   anf: AnfModule,
-  registry: WasmTypeRegistry,
+  reg: WasmTypeRegistry,
   builtins: BuiltinRegistry,
   abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
@@ -76,7 +76,7 @@ pub fn emit_module(
 
   // Base context (per-function state will be reset in emit_func)
   base_ctx := EmitCtx.{
-    registry: registry,
+    registry: reg,
     builtins: builtins,
     abi_table: abi_table,
     env: env,
@@ -102,13 +102,13 @@ pub fn emit_module(
   for t in trampolines { funcs = funcs.push(t) }
 
   // String pool: globals, getter functions, data segment
-  str_globals := emit_string_pool_globals(registry)
-  str_getters := emit_string_pool_getters(registry)
+  str_globals := emit_string_pool_globals(reg)
+  str_getters := emit_string_pool_getters(reg)
   for g in str_getters { funcs = funcs.push(g) }
-  str_data := emit_string_data_segment(registry)
+  str_data := emit_string_data_segment(reg)
 
   // Module globals
-  mod_globals := emit_module_globals(registry, anf, env)
+  mod_globals := emit_module_globals(reg, anf, env)
 
   // Assemble all globals
   globals: Vector<GlobalDef> = []
@@ -128,10 +128,13 @@ pub fn emit_module(
     .None => .None,
   }
 
+  type_defs: Vector<TypeDef> = reg.type_defs
+  runtime_imports: Vector<ImportDef> = reg.runtime_imports
+
   WasmModule.{
     namespace: "user",
-    types: registry.type_defs,
-    imports: registry.runtime_imports,
+    types: type_defs,
+    imports: runtime_imports,
     funcs: funcs,
     globals: globals,
     tables: [],
@@ -148,9 +151,9 @@ fn sanitize_name(name: String) String {
   for b in name {
     c := byte_to_int_local(b)
     if (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 {
-      out = out ++ "${b}"
+      out = "${out}${b}"
     } else {
-      out = out ++ "_"
+      out = "${out}_"
     }
   }
   out
@@ -179,12 +182,20 @@ fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
     idx = idx + 1
   }
 
-  // Pre-scan body to allocate all Let-bound locals
+  // Pre-scan body to allocate all Let-bound locals (including AAssign targets)
+  pattern_local_monos := collect_pattern_local_monos(func.body, func, base_ctx.env, Dict.new())
+  assign_target_monos := collect_assign_target_monos(func.body, func)
   all_locals := collect_all_let_locals(func.body)
   extra_locals: Vector<ValType> = []
   for lid in all_locals {
     if !local_map.has(lid) {
-      mono := resolve_local_mono(func, LocalId.{ id: lid })
+      mono := case pattern_local_monos[lid] {
+        .Some(pattern_mono) => pattern_mono,
+        .None => case assign_target_monos[lid] {
+          .Some(assign_mono) => assign_mono,
+          .None => resolve_local_mono(func, LocalId.{ id: lid }),
+        },
+      }
       case mono {
         .Never => {
           // Never-typed locals still need a slot (for Wasm validation)
@@ -268,11 +279,12 @@ fn emit_expr(expr: AnfExpr, expected_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
     .Atom(atom) => {
       case expected_ty {
         .Void => {
-          // Statement context: emit atom and drop if it produces a value
+          // In ANF, side effects happen in the enclosing Let op; a trailing
+          // Void atom is just the pure sentinel value for that statement.
           instrs := emit_atom(atom, ctx)
           mono := atom_mono(atom, ctx)
           case mono {
-            .Void => instrs,
+            .Void => [],
             .Never => instrs,
             _ => instrs.push(Instr.Drop),
           }
@@ -655,7 +667,7 @@ fn emit_call(callee: Atom, args: Vector<Atom>, result_idx: Int, result_mono: Mon
         },
         .None => {
           // User function — direct call
-          emit_direct_call(fid, args, result_idx, ctx)
+          emit_direct_call(fid, args, result_idx, result_mono, ctx)
         },
       }
     },
@@ -667,14 +679,21 @@ fn emit_call(callee: Atom, args: Vector<Atom>, result_idx: Int, result_mono: Mon
   }
 }
 
-fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out: Vector<Instr> = []
   for a in args {
     out = append_instrs(out, emit_atom(a, ctx))
   }
   out = out.push(Instr.Call(sym))
-  out.push(Instr.LocalSet(result_idx))
+  case result_mono {
+    .Void => {
+      out = out.push(Instr.I32Const(0))
+      out = out.push(Instr.RefI31)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    _ => out.push(Instr.LocalSet(result_idx)),
+  }
 }
 
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -691,7 +710,31 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_
       out = out.push(Instr.RefI31)
       out.push(Instr.LocalSet(result_idx))
     },
-    _ => out.push(Instr.LocalSet(result_idx)),
+    _ => {
+      out = append_instrs(out, adapt_runtime_result(fid, result_mono, ctx))
+      out.push(Instr.LocalSet(result_idx))
+    },
+  }
+}
+
+fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  case ctx.abi_table[fid.id] {
+    .Some(abi) => {
+      if abi.result_types.len() == 1 {
+        case result_mono {
+          .Int => {
+            case abi.result_types[0] {
+              .I32 => [Instr.I64ExtendI32S],
+              _ => [],
+            }
+          },
+          _ => [],
+        }
+      } else {
+        []
+      }
+    },
+    .None => [],
   }
 }
 
@@ -1194,7 +1237,7 @@ fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
 
 fn emit_intrinsic_cell_new(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Cell<T> is a single-field mutable struct
-  inner_mono := case result_mono {
+  inner_mono : MonoType = case result_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { .Void }
     },
@@ -1202,8 +1245,8 @@ fn emit_intrinsic_cell_new(args: Vector<Atom>, result_idx: Int, result_mono: Mon
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)
-  out = out.push(Instr.StructNew(sym))
-  out.push(Instr.LocalSet(result_idx))
+  out = out.push(.StructNew(sym))
+  out.push(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1211,9 +1254,9 @@ fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: Mon
   cell_mono := atom_mono(args[0], ctx)
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
-      if type_args.len() > 0 { type_args[0] } else { .Void }
+      if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
     },
-    _ => .Void,
+    _ => MonoType.Void,
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)
@@ -1225,9 +1268,9 @@ fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Ve
   cell_mono := atom_mono(args[0], ctx)
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
-      if type_args.len() > 0 { type_args[0] } else { .Void }
+      if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
     },
-    _ => .Void,
+    _ => MonoType.Void,
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)   // cell ref
@@ -1244,9 +1287,9 @@ fn emit_intrinsic_cell_update(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx)
   cell_mono := atom_mono(args[0], ctx)
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
-      if type_args.len() > 0 { type_args[0] } else { .Void }
+      if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
     },
-    _ => .Void,
+    _ => MonoType.Void,
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
 
@@ -1462,8 +1505,7 @@ fn emit_array_literal(items: Vector<Atom>, result_mono: MonoType, ctx: EmitCtx) 
   out: Vector<Instr> = []
   for item in items {
     out = append_instrs(out, emit_atom(item, ctx))
-    // Elements may need boxing — boundary pass should have inserted AWrapAnyref
-    // if needed, so just emit as-is
+    out = append_instrs(out, emit_box_to_anyref(atom_mono(item, ctx), ctx.env))
   }
   n := items.len()
   out.push(Instr.ArrayNewFixed("rt_types__Array", n))
@@ -1551,11 +1593,11 @@ fn emit_if_op(cond: Atom, then_e: AnfExpr, else_e: AnfExpr, result_idx: Int, res
     // because it ends with Unreachable/Br
     then_body := then_instrs
     if !then_div {
-      then_body = then_body.push(Instr.LocalSet(result_idx))
+      then_body = append_result_store(then_body, result_idx, result_mono)
     }
     else_body := else_instrs
     if !else_div {
-      else_body = else_body.push(Instr.LocalSet(result_idx))
+      else_body = append_result_store(else_body, result_idx, result_mono)
     }
     out = out.push(Instr.If(.None, then_body, else_body))
     out
@@ -1606,6 +1648,17 @@ fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCt
   out.push(Instr.LocalSet(result_idx))
 }
 
+fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoType) Vector<Instr> {
+  case result_mono {
+    .Void => {
+      out := body.push(Instr.I32Const(0))
+      out = out.push(Instr.RefI31)
+      out.push(Instr.LocalSet(result_idx))
+    },
+    _ => body.push(Instr.LocalSet(result_idx)),
+  }
+}
+
 // ── Match emission ─────────────────────────────────────────────────────
 
 fn emit_match_op(scrutinee: Atom, arms: Vector<AnfMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1640,7 +1693,7 @@ fn emit_arm_chain(
   then_body = append_instrs(then_body, bindings)
   then_body = append_instrs(then_body, body_instrs)
   if !head_div {
-    then_body = then_body.push(Instr.LocalSet(result_idx))
+    then_body = append_result_store(then_body, result_idx, result_mono)
   }
 
   // Else: recurse on tail
@@ -1831,7 +1884,14 @@ fn emit_closure_call(callee: Atom, lid: LocalId, args: Vector<Atom>, result_idx:
       out = out.push(Instr.StructGet(closure_sym, 2))
       // call_ref with typed func type
       out = out.push(Instr.CallRef(typed_ft_sym))
-      out.push(Instr.LocalSet(result_idx))
+      case result_mono {
+        .Void => {
+          out = out.push(Instr.I32Const(0))
+          out = out.push(Instr.RefI31)
+          out.push(Instr.LocalSet(result_idx))
+        },
+        _ => out.push(Instr.LocalSet(result_idx)),
+      }
     },
     _ => {
       // Universal closure path
@@ -2024,11 +2084,12 @@ fn emit_unwrap_anyref(atom: Atom, mono: MonoType, ctx: EmitCtx) Vector<Instr> {
 }
 
 fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
-  layout := case mono {
-    .Never => return [],
-    .Void => return [],  // void is already i31ref → anyref
-    _ => layout_of(mono, env),
+  case mono {
+    .Never => { return [] },
+    .Void => { return [] },  // void is already i31ref → anyref
+    _ => {},
   }
+  layout := layout_of(mono, env)
   case layout {
     .Scalar(.WI64) => [Instr.StructNew("rt_types__BoxedInt")],
     .Scalar(.WF64) => [Instr.StructNew("rt_types__BoxedFloat")],
@@ -2046,11 +2107,12 @@ fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
 }
 
 fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
-  layout := case mono {
-    .Never => return [Instr.Unreachable],
-    .Void => return [Instr.Drop, Instr.I32Const(0), Instr.RefI31],
-    _ => layout_of(mono, env),
+  case mono {
+    .Never => { return [Instr.Unreachable] },
+    .Void => { return [Instr.Drop, Instr.I32Const(0), Instr.RefI31] },
+    _ => {},
   }
+  layout := layout_of(mono, env)
   case layout {
     .Scalar(.WI64) => {
       out: Vector<Instr> = [Instr.RefCast(false, .Named("rt_types__BoxedInt"))]
@@ -2090,10 +2152,11 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
 
 // ── String pool emission ───────────────────────────────────────────────
 
-fn emit_string_pool_globals(registry: WasmTypeRegistry) Vector<GlobalDef> {
+fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
-  for k in registry.string_pool.keys() {
-    case registry.string_pool[k] {
+  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
+  for k in string_pool.keys() {
+    case string_pool[k] {
       .Some(entry) => {
         globals = globals.push(GlobalDef.{
           name: entry.global_sym,
@@ -2108,10 +2171,11 @@ fn emit_string_pool_globals(registry: WasmTypeRegistry) Vector<GlobalDef> {
   globals
 }
 
-fn emit_string_pool_getters(registry: WasmTypeRegistry) Vector<FuncDef> {
+fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
   funcs: Vector<FuncDef> = []
-  for k in registry.string_pool.keys() {
-    case registry.string_pool[k] {
+  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
+  for k in string_pool.keys() {
+    case string_pool[k] {
       .Some(entry) => {
         // Getter: check global, if null → create from data segment, cache
         body: Vector<Instr> = []
@@ -2141,13 +2205,14 @@ fn emit_string_pool_getters(registry: WasmTypeRegistry) Vector<FuncDef> {
   funcs
 }
 
-fn emit_string_data_segment(registry: WasmTypeRegistry) DataSegment? {
-  if registry.string_pool.len() == 0 { return .None }
+fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
+  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
+  if string_pool.len() == 0 { return .None }
 
   // Collect all string bytes in pool order
   all_bytes: Vector<Byte> = []
-  for k in registry.string_pool.keys() {
-    case registry.string_pool[k] {
+  for k in string_pool.keys() {
+    case string_pool[k] {
       .Some(entry) => {
         // Add the bytes of the string key
         for b in k { all_bytes = all_bytes.push(b) }
@@ -2165,10 +2230,11 @@ fn emit_string_data_segment(registry: WasmTypeRegistry) DataSegment? {
 
 // ── Module globals emission ────────────────────────────────────────────
 
-fn emit_module_globals(registry: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<GlobalDef> {
+fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
-  for k in registry.module_globals.keys() {
-    case registry.module_globals[k] {
+  module_globals: Dict<Int, String> = reg.module_globals
+  for k in module_globals.keys() {
+    case module_globals[k] {
       .Some(gsym) => {
         globals = globals.push(GlobalDef.{
           name: gsym,
@@ -2384,6 +2450,10 @@ fn collect_let_locals_op(op: AnfOp, out: Vector<Int>) Vector<Int> {
       }
       out
     },
+    .AAssign(target, _) => {
+      out = out.push(target.id)
+      out
+    },
     .ALoop(body) => collect_let_locals_expr(body, out),
     _ => out,
   }
@@ -2396,6 +2466,99 @@ fn collect_pattern_locals(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
       for f in fields { out = collect_pattern_locals(f, out) }
       out
     },
+    _ => out,
+  }
+}
+
+fn collect_pattern_local_monos(expr: AnfExpr, func: AnfFunctionDef, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case expr {
+    .Let(_, op, body) => {
+      out = collect_pattern_local_monos_op(op, func, env, out)
+      collect_pattern_local_monos(body, func, env, out)
+    },
+    _ => out,
+  }
+}
+
+fn collect_pattern_local_monos_op(op: AnfOp, func: AnfFunctionDef, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = collect_pattern_local_monos(then_e, func, env, out)
+      collect_pattern_local_monos(else_e, func, env, out)
+    },
+    .AMatch(scrutinee, arms) => {
+      scrutinee_mono := atom_mono_for_scan(func, scrutinee)
+      for arm in arms {
+        out = collect_pattern_binding_monos(arm.pattern, scrutinee_mono, env, out)
+        out = collect_pattern_local_monos(arm.body, func, env, out)
+      }
+      out
+    },
+    .ALoop(body) => collect_pattern_local_monos(body, func, env, out),
+    _ => out,
+  }
+}
+
+fn collect_pattern_binding_monos(pattern: CorePattern, scrutinee_mono: MonoType, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case pattern {
+    .Var(lid) => {
+      out[lid.id] = scrutinee_mono
+      out
+    },
+    .Variant(_, vid, fields) => {
+      for field,i in fields {
+        field_mono := variant_field_mono(scrutinee_mono, vid, i, env)
+        out = collect_pattern_binding_monos(field, field_mono, env, out)
+      }
+      out
+    },
+    _ => out,
+  }
+}
+
+fn atom_mono_for_scan(func: AnfFunctionDef, atom: Atom) MonoType {
+  case atom {
+    .ALocal(lid) => resolve_local_mono(func, lid),
+    .AGlobalFunc(_) => .Anyref_,
+    .ALitInt(_) => .Int,
+    .ALitFloat(_) => .Float,
+    .ALitBool(_) => .Bool,
+    .ALitStr(_) => .String,
+    .ALitVoid => .Void,
+  }
+}
+
+// Collect mono types for AAssign targets by looking at the source atom.
+fn collect_assign_target_monos(expr: AnfExpr, func: AnfFunctionDef) Dict<Int, MonoType> {
+  out: Dict<Int, MonoType> = Dict.new()
+  collect_assign_monos_expr(expr, func, out)
+}
+
+fn collect_assign_monos_expr(expr: AnfExpr, func: AnfFunctionDef, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case expr {
+    .Let(_, op, body) => {
+      out = collect_assign_monos_op(op, func, out)
+      collect_assign_monos_expr(body, func, out)
+    },
+    _ => out,
+  }
+}
+
+fn collect_assign_monos_op(op: AnfOp, func: AnfFunctionDef, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case op {
+    .AAssign(target, value) => {
+      out[target.id] = atom_mono_for_scan(func, value)
+      out
+    },
+    .AIf(_, then_e, else_e) => {
+      out = collect_assign_monos_expr(then_e, func, out)
+      collect_assign_monos_expr(else_e, func, out)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms { out = collect_assign_monos_expr(arm.body, func, out) }
+      out
+    },
+    .ALoop(body) => collect_assign_monos_expr(body, func, out),
     _ => out,
   }
 }

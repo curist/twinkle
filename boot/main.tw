@@ -29,6 +29,7 @@ fn ir_cmd() Command {
     .add_flag("mono", "Print monomorphized Core IR")
     .add_flag("anf", "Print unoptimized ANF IR")
     .add_flag("opt", "Print optimized ANF IR")
+    .add_flag("wat", "Print final linked WAT")
     .add_flag("all", "Print all available IR stages")
 }
 
@@ -202,9 +203,10 @@ fn run_parse_command(parsed: ParseResult) {
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
   app.has_flag(parsed, "core")
-    or app.has_flag(parsed, "mono")
-    or app.has_flag(parsed, "anf")
-    or app.has_flag(parsed, "opt")
+  or app.has_flag(parsed, "mono")
+  or app.has_flag(parsed, "anf")
+  or app.has_flag(parsed, "opt")
+  or app.has_flag(parsed, "wat")
     or app.has_flag(parsed, "all")
 }
 
@@ -253,6 +255,9 @@ fn run_ir_command(parsed: ParseResult) {
   }
   if should_show_ir(parsed, "opt") {
     first = print_ir_stage("Optimized ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.opt), first)
+  }
+  if should_show_ir(parsed, "wat") {
+    first = print_ir_stage("Linked WAT", pipeline.emit_wat(artifacts), first)
   }
 }
 

@@ -35,6 +35,7 @@ use tests.suites.emit_pattern_suite
 use tests.suites.wat_suite
 use tests.suites.linker_suite
 use tests.suites.runtime_suite
+use tests.suites.codegen_integration_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -73,4 +74,5 @@ runner.run_all([
   wat_suite.suite(),
   linker_suite.suite(),
   runtime_suite.suite(),
+  codegen_integration_suite.suite(),
 ])

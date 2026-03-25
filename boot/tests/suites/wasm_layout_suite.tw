@@ -293,7 +293,7 @@ fn test_val_type_of_record() Result<Void, String> {
   vt := val_type_of(.Record(rec))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, false)
+      try assert.bool_eq(nullable, true)
       case ht { .Named(s) => assert.str_eq(s, "$Point"), _ => assert.fail("expected Named") }
     },
     _ => assert.fail("expected Ref"),
@@ -304,7 +304,7 @@ fn test_val_type_of_vector() Result<Void, String> {
   vt := val_type_of(.Vector_(.Scalar(.WI64)))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, false)
+      try assert.bool_eq(nullable, true)
       case ht { .Named(s) => assert.str_eq(s, "rt_types__Array"), _ => assert.fail("expected Named rt_types__Array") }
     },
     _ => assert.fail("expected Ref"),
@@ -315,7 +315,7 @@ fn test_val_type_of_dict() Result<Void, String> {
   vt := val_type_of(.Dict_(.Scalar(.WAnyref), .Scalar(.WI64)))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, false)
+      try assert.bool_eq(nullable, true)
       case ht { .Named(s) => assert.str_eq(s, "rt_types__Dict"), _ => assert.fail("expected Named rt_types__Dict") }
     },
     _ => assert.fail("expected Ref"),

@@ -7,6 +7,7 @@ use compiler.codegen.wasm_ir.{
   ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
   GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
 }
+use compiler.codegen.linker.{LinkedModule}
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -19,51 +20,72 @@ fn sym(s: String) String {
   }
 }
 
-// Wrap a single string into a Vector<String>.
-// Needed because `x := ...; ["${x}"]` is misparsed as string indexing.
-fn line(s: String) Vector<String> { [s] }
-
 fn make_pad(indent: Int) String {
-  out := ""
-  for _ in range(indent) { out = "${out} " }
-  out
+  collect _ in range(indent) { " " }.join("")
 }
 
 fn join_lines(lines: Vector<String>) String {
-  parts: Vector<String> = []
-  for l in lines { parts = parts.push(l) }
-  result := ""
-  first := true
-  for l in parts {
-    if first {
-      result = l
-      first = false
-    } else {
-      result = "${result}\n${l}"
-    }
-  }
-  "${result}\n"
+  "${lines.join("\n")}\n"
 }
 
-// ── Public entry point ─────────────────────────────────────────────────
+// ── Public entry points ────────────────────────────────────────────────
 
-pub fn emit_wat(module: WasmModule) String {
+pub fn emit_wat(linked: LinkedModule) String {
+  emit_wat_parts(
+    linked.types,
+    linked.imports,
+    linked.funcs,
+    linked.globals,
+    linked.tables,
+    linked.elems,
+    linked.exports,
+    linked.data,
+    linked.start,
+  )
+}
+
+// Test helper for M8/M10 fixture-based suites that build raw WasmModule IR.
+pub fn emit_wat_unlinked_for_test(module: WasmModule) String {
+  emit_wat_parts(
+    module.types,
+    module.imports,
+    module.funcs,
+    module.globals,
+    module.tables,
+    module.elems,
+    module.exports,
+    module.data,
+    module.start,
+  )
+}
+
+fn emit_wat_parts(
+  types: Vector<TypeDef>,
+  imports: Vector<ImportDef>,
+  funcs: Vector<FuncDef>,
+  globals: Vector<GlobalDef>,
+  tables: Vector<TableDef>,
+  elems: Vector<ElemDef>,
+  exports: Vector<ExportDef>,
+  data: Vector<DataSegment>,
+  start: String?,
+) String {
   lines: Vector<String> = ["(module"]
 
   // 1. Named type definitions
-  for td in module.types {
+  for td in types {
     lines = lines.push(emit_typedef(td))
   }
 
   // 2. Anonymous functype dedup for imports + functions
-  ft_registry := build_functype_registry(module)
+  ft_registry := build_functype_registry(imports, funcs)
   for i in range(ft_registry.entries.len()) {
     entry := ft_registry.entries[i]
     lines = lines.push(emit_functype_def(i, entry.params, entry.results))
   }
 
   // 3. Imports
-  for imp in module.imports {
+  for imp in imports {
     idx := lookup_functype(ft_registry, imp.params, imp.results)
     s := sym(imp.as_sym)
     ft := sym("functype_${idx}")
@@ -71,7 +93,7 @@ pub fn emit_wat(module: WasmModule) String {
   }
 
   // 4. Tables
-  for tbl in module.tables {
+  for tbl in tables {
     max_str := case tbl.max {
       .Some(m) => " ${m}",
       .None => "",
@@ -82,7 +104,7 @@ pub fn emit_wat(module: WasmModule) String {
   }
 
   // 5. Globals
-  for g in module.globals {
+  for g in globals {
     init_str := emit_instrs_inline(g.init)
     s := sym(g.name)
     vt := emit_val_type(g.ty)
@@ -94,37 +116,33 @@ pub fn emit_wat(module: WasmModule) String {
   }
 
   // 6. Functions
-  for f in module.funcs {
+  for f in funcs {
     idx := lookup_functype(ft_registry, f.params, f.results)
     func_lines := emit_func_def(f, idx)
     for fl in func_lines { lines = lines.push(fl) }
   }
 
   // 7. Element segments
-  for elem in module.elems {
+  for elem in elems {
     offset_str := emit_instrs_inline(elem.offset)
-    syms_str := ""
-    for s in elem.func_syms {
-      ss := sym(s)
-      syms_str = "${syms_str} ${ss}"
-    }
+    syms_str := collect s in elem.func_syms { sym(s) }.join(" ")
     ts := sym(elem.table)
-    lines = lines.push("  (elem (table ${ts}) (${offset_str}) func${syms_str})")
+    if syms_str.len() > 0 {
+      lines = lines.push("  (elem (table ${ts}) (${offset_str}) func ${syms_str})")
+    } else {
+      lines = lines.push("  (elem (table ${ts}) (${offset_str}) func)")
+    }
   }
 
   // 7b. Declarative element segment for ref.func
-  ref_func_syms := collect_ref_func_syms(module)
+  ref_func_syms := collect_ref_func_syms(funcs, elems)
   if ref_func_syms.len() > 0 {
-    syms_str := ""
-    for s in ref_func_syms {
-      ss := sym(s)
-      syms_str = "${syms_str} ${ss}"
-    }
-    lines = lines.push("  (elem declare func${syms_str})")
+    syms_str := collect s in ref_func_syms { sym(s) }.join(" ")
+    lines = lines.push("  (elem declare func ${syms_str})")
   }
 
   // 8. Data segments
-  for d in module.data {
+  for d in data {
     hex_str := bytes_to_hex(d.bytes)
     ds := sym(d.name)
     if d.offset.len() == 0 {
@@ -136,13 +154,13 @@ pub fn emit_wat(module: WasmModule) String {
   }
 
   // 9. Exports
-  for e in module.exports {
+  for e in exports {
     fs := sym(e.func_sym)
     lines = lines.push("  (export \"${e.wasm_name}\" (func ${fs}))")
   }
 
   // 10. Start
-  case module.start {
+  case start {
     .Some(s) => {
       ss := sym(s)
       lines = lines.push("  (start ${ss})")
@@ -159,12 +177,12 @@ pub fn emit_wat(module: WasmModule) String {
 fn emit_typedef(td: TypeDef) String {
   case td {
     .Struct(name, fields, super_type, is_final) => {
-      fields_str := ""
-      for f in fields {
-        fd := emit_field_def(f)
-        fields_str = "${fields_str} ${fd}"
+      field_defs := collect f in fields { emit_field_def(f) }
+      body := if field_defs.len() > 0 {
+        "(struct ${field_defs.join(" ")})"
+      } else {
+        "(struct)"
       }
-      body := "(struct${fields_str})"
       ns := sym(name)
       case super_type {
         .Some(parent) => {
@@ -226,12 +244,12 @@ type FuncTypeRegistry = .{
   keys: Dict<String, Int>,
 }
 
-fn build_functype_registry(module: WasmModule) FuncTypeRegistry {
+fn build_functype_registry(imports: Vector<ImportDef>, funcs: Vector<FuncDef>) FuncTypeRegistry {
   reg := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
-  for imp in module.imports {
+  for imp in imports {
     reg = register_functype(reg, imp.params, imp.results)
   }
-  for f in module.funcs {
+  for f in funcs {
     reg = register_functype(reg, f.params, f.results)
   }
   reg
@@ -256,17 +274,9 @@ fn lookup_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vect
 }
 
 fn sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
-  p := ""
-  for vt in params {
-    v := emit_val_type(vt)
-    p = "${p}${v},"
-  }
-  r := ""
-  for vt in results {
-    v := emit_val_type(vt)
-    r = "${r}${v},"
-  }
-  "P(${p})R(${r})"
+  p := collect vt in params { emit_val_type(vt) }
+  r := collect vt in results { emit_val_type(vt) }
+  "P(${p.join(",")})R(${r.join(",")})"
 }
 
 fn emit_functype_def(idx: Int, params: Vector<ValType>, results: Vector<ValType>) String {
@@ -278,20 +288,12 @@ fn emit_functype_def(idx: Int, params: Vector<ValType>, results: Vector<ValType>
 fn emit_func_sig(params: Vector<ValType>, results: Vector<ValType>) String {
   out := ""
   if params.len() > 0 {
-    ps := ""
-    for vt in params {
-      v := emit_val_type(vt)
-      if ps.len() > 0 { ps = "${ps} ${v}" } else { ps = v }
-    }
-    out = "${out} (param ${ps})"
+    ps := collect vt in params { emit_val_type(vt) }
+    out = "${out} (param ${ps.join(" ")})"
   }
   if results.len() > 0 {
-    rs := ""
-    for vt in results {
-      v := emit_val_type(vt)
-      if rs.len() > 0 { rs = "${rs} ${v}" } else { rs = v }
-    }
-    out = "${out} (result ${rs})"
+    rs := collect vt in results { emit_val_type(vt) }
+    out = "${out} (result ${rs.join(" ")})"
   }
   out
 }
@@ -342,16 +344,16 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
   pad := make_pad(indent)
   case instr {
     // Locals & globals
-    .LocalGet(i) => line("${pad}local.get ${sym("p${i}")}"),
-    .LocalSet(i) => line("${pad}local.set ${sym("p${i}")}"),
-    .LocalTee(i) => line("${pad}local.tee ${sym("p${i}")}"),
-    .GlobalGet(s) => line("${pad}global.get ${sym(s)}"),
-    .GlobalSet(s) => line("${pad}global.set ${sym(s)}"),
+    .LocalGet(i) => ["${pad}local.get ${sym("p${i}")}"],
+    .LocalSet(i) => ["${pad}local.set ${sym("p${i}")}"],
+    .LocalTee(i) => ["${pad}local.tee ${sym("p${i}")}"],
+    .GlobalGet(s) => ["${pad}global.get ${sym(s)}"],
+    .GlobalSet(s) => ["${pad}global.set ${sym(s)}"],
 
     // Constants
     .I32Const(v) => ["${pad}i32.const ${v}"],
     .I64Const(v) => ["${pad}i64.const ${v}"],
-    .F64Const(v) => line("${pad}f64.const ${emit_f64(v)}"),
+    .F64Const(v) => ["${pad}f64.const ${emit_f64(v)}"],
 
     // i32 arithmetic
     .I32Add => ["${pad}i32.add"],
@@ -423,7 +425,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .F64ReinterpretI32 => ["${pad}f64.reinterpret_i32"],
 
     // References
-    .RefNull(ht) => line("${pad}ref.null ${emit_heap_type(ht)}"),
+    .RefNull(ht) => ["${pad}ref.null ${emit_heap_type(ht)}"],
     .RefIsNull => ["${pad}ref.is_null"],
     .RefAsNonNull => ["${pad}ref.as_non_null"],
     .RefEq => ["${pad}ref.eq"],
@@ -432,55 +434,55 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .I31GetU => ["${pad}i31.get_u"],
     .RefCast(nullable, ht) => {
       h := emit_heap_type(ht)
-      if nullable { line("${pad}ref.cast (ref null ${h})") }
-      else { line("${pad}ref.cast (ref ${h})") }
+      if nullable { ["${pad}ref.cast (ref null ${h})"] }
+      else { ["${pad}ref.cast (ref ${h})"] }
     },
     .RefTest(nullable, ht) => {
       h := emit_heap_type(ht)
-      if nullable { line("${pad}ref.test (ref null ${h})") }
-      else { line("${pad}ref.test (ref ${h})") }
+      if nullable { ["${pad}ref.test (ref null ${h})"] }
+      else { ["${pad}ref.test (ref ${h})"] }
     },
-    .RefFunc(s) => line("${pad}ref.func ${sym(s)}"),
+    .RefFunc(s) => ["${pad}ref.func ${sym(s)}"],
 
     // Struct
-    .StructNew(ty) => line("${pad}struct.new ${sym(ty)}"),
-    .StructGet(ty, idx) => line("${pad}struct.get ${sym(ty)} ${idx}"),
-    .StructGetS(ty, idx) => line("${pad}struct.get_s ${sym(ty)} ${idx}"),
-    .StructSet(ty, idx) => line("${pad}struct.set ${sym(ty)} ${idx}"),
+    .StructNew(ty) => ["${pad}struct.new ${sym(ty)}"],
+    .StructGet(ty, idx) => ["${pad}struct.get ${sym(ty)} ${idx}"],
+    .StructGetS(ty, idx) => ["${pad}struct.get_s ${sym(ty)} ${idx}"],
+    .StructSet(ty, idx) => ["${pad}struct.set ${sym(ty)} ${idx}"],
 
     // Array
-    .ArrayNew(ty) => line("${pad}array.new ${sym(ty)}"),
-    .ArrayNewDefault(ty) => line("${pad}array.new_default ${sym(ty)}"),
-    .ArrayNewFixed(ty, n) => line("${pad}array.new_fixed ${sym(ty)} ${n}"),
-    .ArrayNewData(ty, data_name) => line("${pad}array.new_data ${sym(ty)} ${sym(data_name)}"),
-    .ArrayGet(ty) => line("${pad}array.get ${sym(ty)}"),
-    .ArrayGetU(ty) => line("${pad}array.get_u ${sym(ty)}"),
-    .ArraySet(ty) => line("${pad}array.set ${sym(ty)}"),
+    .ArrayNew(ty) => ["${pad}array.new ${sym(ty)}"],
+    .ArrayNewDefault(ty) => ["${pad}array.new_default ${sym(ty)}"],
+    .ArrayNewFixed(ty, n) => ["${pad}array.new_fixed ${sym(ty)} ${n}"],
+    .ArrayNewData(ty, data_name) => ["${pad}array.new_data ${sym(ty)} ${sym(data_name)}"],
+    .ArrayGet(ty) => ["${pad}array.get ${sym(ty)}"],
+    .ArrayGetU(ty) => ["${pad}array.get_u ${sym(ty)}"],
+    .ArraySet(ty) => ["${pad}array.set ${sym(ty)}"],
     .ArrayLen => ["${pad}array.len"],
-    .ArrayCopy(dst, src) => line("${pad}array.copy ${sym(dst)} ${sym(src)}"),
+    .ArrayCopy(dst, src) => ["${pad}array.copy ${sym(dst)} ${sym(src)}"],
 
     // Calls
-    .Call(f) => line("${pad}call ${sym(f)}"),
-    .CallRef(ty) => line("${pad}call_ref ${sym(ty)}"),
-    .CallIndirect(ty, table) => line("${pad}call_indirect (type ${sym(ty)}) (table ${table})"),
-    .ReturnCall(f) => line("${pad}return_call ${sym(f)}"),
-    .ReturnCallRef(ty) => line("${pad}return_call_ref ${sym(ty)}"),
+    .Call(f) => ["${pad}call ${sym(f)}"],
+    .CallRef(ty) => ["${pad}call_ref ${sym(ty)}"],
+    .CallIndirect(ty, table) => ["${pad}call_indirect (type ${sym(ty)}) (table ${table})"],
+    .ReturnCall(f) => ["${pad}return_call ${sym(f)}"],
+    .ReturnCallRef(ty) => ["${pad}return_call_ref ${sym(ty)}"],
 
     // Control flow
     .Drop => ["${pad}drop"],
     .Return => ["${pad}return"],
     .Unreachable => ["${pad}unreachable"],
     .Nop => ["${pad}nop"],
-    .Br(label) => line("${pad}br ${sym(label)}"),
-    .BrIf(label) => line("${pad}br_if ${sym(label)}"),
+    .Br(label) => ["${pad}br ${sym(label)}"],
+    .BrIf(label) => ["${pad}br_if ${sym(label)}"],
     .BrTable(labels, default_label) => {
-      lbl_str := ""
-      for l in labels {
-        ls := sym(l)
-        lbl_str = "${lbl_str} ${ls}"
-      }
+      lbl_str := collect l in labels { sym(l) }.join(" ")
       ds := sym(default_label)
-      line("${pad}br_table${lbl_str} ${ds}")
+      if lbl_str.len() > 0 {
+        ["${pad}br_table ${lbl_str} ${ds}"]
+      } else {
+        ["${pad}br_table ${ds}"]
+      }
     },
 
     // Structured control flow
@@ -590,43 +592,44 @@ fn emit_f64(v: Float) String {
 // ── Hex encoding for data segments ─────────────────────────────────────
 
 fn bytes_to_hex(bytes: Vector<Byte>) String {
-  parts: Vector<String> = []
-  for b in bytes {
+  parts := collect b in bytes {
     n := b.to_int()
     hi := n / 16
     lo := n % 16
     h := hex_digit(hi)
     l := hex_digit(lo)
-    parts = parts.push("\\${h}${l}")
+    "\\${h}${l}"
   }
-  result := ""
-  for p in parts { result = "${result}${p}" }
-  result
+  parts.join("")
 }
 
 fn hex_digit(n: Int) String {
   if n < 10 { "${n}" }
-  else if n == 10 { "a" }
-  else if n == 11 { "b" }
-  else if n == 12 { "c" }
-  else if n == 13 { "d" }
-  else if n == 14 { "e" }
-  else { "f" }
+  else {
+    case n {
+      10 => "a",
+      11 => "b",
+      12 => "c",
+      13 => "d",
+      14 => "e",
+      _ => "f",
+    }
+  }
 }
 
 // ── ref.func declarative segment collection ────────────────────────────
 
-fn collect_ref_func_syms(module: WasmModule) Vector<String> {
+fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<String> {
   seen: Dict<String, Bool> = Dict.new()
 
-  for f in module.funcs {
+  for f in funcs {
     for instr in f.body {
       seen = collect_ref_funcs_instr(instr, seen)
     }
   }
 
   // Remove syms already in active elem segments
-  for elem in module.elems {
+  for elem in elems {
     for s in elem.func_syms {
       seen = seen.remove(s)
     }
@@ -661,21 +664,11 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
 // ── Inline instruction emission (for globals, data offsets, etc.) ──────
 
 fn emit_instrs_inline(instrs: Vector<Instr>) String {
-  out := ""
-  for instr in instrs {
-    s := emit_instr_flat(instr)
-    if out.len() > 0 { out = "${out} ${s}" } else { out = s }
-  }
-  out
+  collect instr in instrs { emit_instr_flat(instr) }.join(" ")
 }
 
 fn emit_instr_flat(instr: Instr) String {
   lines := emit_instr(instr, 0)
   if lines.len() == 0 { return "" }
-  out := ""
-  for l in lines {
-    t := l.trim()
-    if out.len() > 0 { out = "${out} ${t}" } else { out = t }
-  }
-  out
+  collect l in lines { l.trim() }.join(" ")
 }

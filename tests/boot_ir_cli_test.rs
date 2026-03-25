@@ -60,6 +60,7 @@ fn ir_command_all_prints_all_stages() {
             "Monomorphized Core IR",
             "ANF IR",
             "Optimized ANF IR",
+            "Linked WAT",
         ] {
             assert!(
                 stdout.contains(header),
@@ -79,6 +80,23 @@ fn ir_command_core_flag_handles_option_boundary_fixture() {
         assert!(
             stdout.contains("fn show [FuncId(") && stdout.contains("Match : Void"),
             "core dump should include the option match body:\n{stdout}"
+        );
+    });
+}
+
+#[test]
+fn ir_command_wat_flag_prints_module() {
+    run_with_large_stack(|| {
+        let (stdout, stderr) = run_boot_main(&["ir", "--wat", "tests/run/hello.tw"]);
+
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        assert!(
+            stdout.contains("Linked WAT"),
+            "wat output should include the stage header:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("(module") && stdout.contains("call $rt_core__println"),
+            "wat output should contain the final linked module:\n{stdout}"
         );
     });
 }

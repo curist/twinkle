@@ -54,6 +54,13 @@ fn qualify(ns: String, sym: String) String {
   "${ns_prefix(ns)}__${sym}"
 }
 
+fn retain_final_exports(ns: String) Bool {
+  // Runtime module exports are only a linker-internal resolution surface.
+  // Keeping them in the final flat module creates duplicate public export
+  // names like `len` across rt.str / rt.arr / rt.dict.
+  !ns.starts_with("rt.")
+}
+
 // ── Rename map helpers ─────────────────────────────────────────────────
 
 fn rename(map: Dict<String, String>, sym: String) String {
@@ -362,11 +369,13 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     // Exports
-    for exp in m.exports {
-      out_exports = out_exports.push(ExportDef.{
-        wasm_name: exp.wasm_name,
-        func_sym: rename(combined, exp.func_sym),
-      })
+    if retain_final_exports(m.namespace) {
+      for exp in m.exports {
+        out_exports = out_exports.push(ExportDef.{
+          wasm_name: exp.wasm_name,
+          func_sym: rename(combined, exp.func_sym),
+        })
+      }
     }
 
     // Data segments

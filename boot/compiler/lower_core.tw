@@ -125,6 +125,17 @@ fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
   .None
 }
 
+// Lookup a local or module global — used for lvalue assign targets.
+fn lookup_local_or_global(ctx: LowerCtx, name: String) LocalId? {
+  case ctx.lookup_local(name) {
+    .Some(id) => .Some(id),
+    .None => case ctx.module_globals[name] {
+      .Some(id) => .Some(id),
+      .None => .None,
+    },
+  }
+}
+
 fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
   case ctx.func_table[name] {
     .Some(id) => .Some(id),
@@ -313,10 +324,92 @@ fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
   }
 }
 
+// Resolve variant index for any MonoType (including builtin Optional/Result).
+fn variant_index(ty: MonoType, name: String, env: ResolvedEnv) Int {
+  case ty {
+    .Optional(_) => {
+      if name == "None" { 0 } else if name == "Some" { 1 } else { -1 }
+    },
+    .Result(_, _) => {
+      if name == "Ok" { 0 } else if name == "Err" { 1 } else { -1 }
+    },
+    .Named(tid, _) => find_variant_index(env, tid, name),
+    _ => -1,
+  }
+}
+
 fn type_id_from_mono(ty: MonoType) TypeId? {
   case ty {
     .Named(tid, _) => .Some(tid),
+    .Optional(_) => .Some(TypeId.{ id: 0 }),
+    .Result(_, _) => .Some(TypeId.{ id: 1 }),
     _ => .None,
+  }
+}
+
+fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+  m: Dict<String, MonoType> = Dict.new()
+  for i in range(type_params.len()) {
+    if i < type_args.len() { m[type_params[i]] = type_args[i] }
+  }
+  m
+}
+
+fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      case var_map[name] {
+        .Some(replacement) => replacement,
+        .None => ty,
+      }
+    },
+    .Vector(inner) => MonoType.Vector(subst_vars(inner, var_map)),
+    .Dict(k, v) => MonoType.Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
+    .Function(params, ret) => {
+      MonoType.Function(params.map(fn(p) { subst_vars(p, var_map) }), subst_vars(ret, var_map))
+    },
+    .Optional(inner) => MonoType.Optional(subst_vars(inner, var_map)),
+    .Result(ok, err) => MonoType.Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
+    .Named(tid, args) => {
+      MonoType.Named(tid, args.map(fn(a) { subst_vars(a, var_map) }))
+    },
+    _ => ty,
+  }
+}
+
+// Extract variant field types for Option/Result given the MonoType.
+// User-defined sums go through the env; builtins have hard-coded field types.
+fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<MonoType> {
+  case ty {
+    .Optional(inner) => {
+      if name == "Some" { return [inner] }
+      []
+    },
+    .Result(ok_ty, err_ty) => {
+      if name == "Ok" { return [ok_ty] }
+      if name == "Err" { return [err_ty] }
+      []
+    },
+    .Named(tid, type_args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Sum(_, type_params, variants) => {
+              for v in variants {
+                if v.name == name {
+                  var_map := build_var_map(type_params, type_args)
+                  return v.fields.map(fn(ft) { subst_vars(ft, var_map) })
+                }
+              }
+              []
+            },
+            _ => [],
+          }
+        },
+        .None => [],
+      }
+    },
+    _ => [],
   }
 }
 
@@ -379,6 +472,24 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
 }
 
 fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: String, ty: MonoType, s: Span) ExprOut {
+  // TypeName.Variant (zero-arg variant construction)
+  case base_expr.kind {
+    .Ident(name) => {
+      case ctx.env.lookup_type(name) {
+        .Some(entry) => {
+          vid_idx := find_variant_index(ctx.env, entry.id, field_name)
+          if vid_idx >= 0 {
+            return ExprOut.{
+              expr: CoreExpr.{ kind: .Variant(entry.id, VariantId.{ id: vid_idx }, []), ty, span: s },
+              ctx,
+            }
+          }
+        },
+        .None => {},
+      }
+    },
+    _ => {},
+  }
   br := ctx.lower_expr(base_expr)
   base_ty := br.ctx.expr_type(base_expr)
   tid := case type_id_from_mono(base_ty) {
@@ -405,7 +516,7 @@ fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoType, 
       return ExprOut.{ expr: void_expr(s), ctx }
     },
   }
-  vid_idx := find_variant_index(ctx.env, tid, name)
+  vid_idx := variant_index(ty, name, ctx.env)
   lowered_args: Vector<CoreExpr> = []
   cur_ctx := ctx
   for arg in args {
@@ -467,11 +578,13 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
         .Some(id) => id,
         .None => { return PatternOut.{ pattern: .Wildcard, ctx } },
       }
-      vid_idx := find_variant_index(ctx.env, tid, name)
+      vid_idx := variant_index(scrut_ty, name, ctx.env)
+      field_tys := variant_field_types(scrut_ty, name, ctx.env)
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
-      for sp in sub_pats {
-        pr := cur_ctx.lower_pattern(sp, MonoType.Void)
+      for i in range(sub_pats.len()) {
+        sub_ty := if i < field_tys.len() { field_tys[i] } else { MonoType.Void }
+        pr := cur_ctx.lower_pattern(sub_pats[i], sub_ty)
         lowered_pats = lowered_pats.push(pr.pattern)
         cur_ctx = pr.ctx
       }
@@ -492,11 +605,13 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
           }
         },
       }
-      vid_idx := find_variant_index(ctx.env, tid, name)
+      vid_idx := variant_index(scrut_ty, name, ctx.env)
+      field_tys := variant_field_types(scrut_ty, name, ctx.env)
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
-      for sp in sub_pats {
-        pr := cur_ctx.lower_pattern(sp, MonoType.Void)
+      for i in range(sub_pats.len()) {
+        sub_ty := if i < field_tys.len() { field_tys[i] } else { MonoType.Void }
+        pr := cur_ctx.lower_pattern(sub_pats[i], sub_ty)
         lowered_pats = lowered_pats.push(pr.pattern)
         cur_ctx = pr.ctx
       }
@@ -537,6 +652,36 @@ fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: 
 // ── Call lowering ───────────────────────────────────────────────────
 
 fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
+  // TypeName.Variant(args) — qualified variant construction
+  case callee_expr.kind {
+    .Field(base, field_name) => {
+      case base.kind {
+        .Ident(name) => {
+          case ctx.env.lookup_type(name) {
+            .Some(entry) => {
+              vid_idx := find_variant_index(ctx.env, entry.id, field_name)
+              if vid_idx >= 0 {
+                lowered_args: Vector<CoreExpr> = []
+                cur_ctx := ctx
+                for arg in args {
+                  r := cur_ctx.lower_expr(arg)
+                  lowered_args = lowered_args.push(r.expr)
+                  cur_ctx = r.ctx
+                }
+                return ExprOut.{
+                  expr: CoreExpr.{ kind: .Variant(entry.id, VariantId.{ id: vid_idx }, lowered_args), ty, span: s },
+                  ctx: cur_ctx,
+                }
+              }
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
   // Check if this is a method/module-qualified call resolved by the checker
   case ctx.method_calls[callee_expr.id] {
     .Some(info) => {
@@ -1115,6 +1260,7 @@ type IterSetup = .{
   len_local: LocalId,
   idx_local: LocalId,
   elem_local: LocalId,
+  elem_ty: MonoType,
   idx_user_local: LocalId?,
   index_source: LocalId,
   index_source_ty: MonoType,
@@ -1123,10 +1269,29 @@ type IterSetup = .{
   body_core: CoreExpr,
 }
 
+fn iter_elem_type(ty: MonoType, env: ResolvedEnv) MonoType {
+  case ty {
+    .Vector(elem) => elem,
+    .String => .Byte,
+    .Dict(key, _) => key,
+    .Named(tid, args) => {
+      case env.find_type_name(tid) {
+        .Some("Range") => .Int,
+        .Some("Iterator") => {
+          if args.len() > 0 { args[0] } else { .Void }
+        },
+        _ => .Void,
+      }
+    },
+    _ => .Void,
+  }
+}
+
 fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: String?, body: Block, s: Span) IterSetup {
   ctx = ctx.push_scope()
   ar := ctx.lower_expr(iter_expr)
   ctx = ar.ctx
+  elem_ty := iter_elem_type(ar.expr.ty, ctx.env)
   arr_lo := ctx.alloc_anon_local()
   arr_local := arr_lo.local
   ctx = arr_lo.ctx
@@ -1169,7 +1334,7 @@ fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: S
   ctx = body_r.ctx
   ctx = ctx.pop_scope()
   IterSetup.{
-    ctx, arr_local, len_local, idx_local, elem_local,
+    ctx, arr_local, len_local, idx_local, elem_local, elem_ty,
     idx_user_local, index_source, index_source_ty,
     dict_keys_local, iter_core: ar.expr, body_core: body_r.expr,
   }
@@ -1219,7 +1384,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         CoreExpr.{ kind: .Local(setup.index_source), ty: setup.index_source_ty, span: s },
         CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s },
       ),
-      ty: void_ty,
+      ty: setup.elem_ty,
       span: s,
     }, body_or_idx),
     ty: void_ty,
@@ -1439,19 +1604,19 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
 // ── For-loop lowering ──────────────────────────────────────────────
 
-fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
-  s := fs.span
-  case fs.iter {
+fn lower_for(ctx: LowerCtx, for_stmt: ForStmt) ExprOut {
+  s := for_stmt.span
+  case for_stmt.iter {
     .Some(iter_expr) => {
-      setup := setup_indexed_iter(ctx, iter_expr, fs.pattern, fs.index, fs.body, s)
+      setup := setup_indexed_iter(ctx, iter_expr, for_stmt.pattern, for_stmt.index, for_stmt.body, s)
       build_indexed_loop(setup, setup.body_core, s)
     },
     .None => {
       // for cond { body }  →  Loop(If(!cond, Break, body))
-      case fs.condition {
+      case for_stmt.condition {
         .Some(cond_expr) => {
           cr := ctx.lower_expr(cond_expr)
-          body_r := cr.ctx.lower_block(fs.body)
+          body_r := cr.ctx.lower_block(for_stmt.body)
           void_ty := MonoType.Void
           loop_body := CoreExpr.{
             kind: .If(
@@ -1469,7 +1634,7 @@ fn lower_for(ctx: LowerCtx, fs: ForStmt) ExprOut {
         },
         .None => {
           // Infinite loop: for { body }  →  Loop(body)
-          body_r := ctx.lower_block(fs.body)
+          body_r := ctx.lower_block(for_stmt.body)
           ExprOut.{
             expr: CoreExpr.{ kind: .Loop(body_r.expr), ty: MonoType.Void, span: s },
             ctx: body_r.ctx,
@@ -1492,7 +1657,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
       // r.field = val → Assign(r_local, RecordUpdate(Local(r), field_id, val))
       case base.kind {
         .Ident(name) => {
-          case ctx.lookup_local(name) {
+          case ctx.lookup_local_or_global(name) {
             .Some(root_local) => {
               base_ty := ctx.expr_type(base)
               tid := case type_id_from_mono(base_ty) {
@@ -1501,9 +1666,14 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
               }
               fid_idx := find_field_index(ctx.env, tid, field_name)
               fid := FieldId.{ id: fid_idx }
+              // Use GlobalLocal for module globals, Local for function locals
+              base_kind: CoreExprKind = case ctx.module_globals[name] {
+                .Some(_) => .GlobalLocal(root_local),
+                .None => .Local(root_local),
+              }
               update := CoreExpr.{
                 kind: .RecordUpdate(
-                  CoreExpr.{ kind: .Local(root_local), ty: base_ty, span: s },
+                  CoreExpr.{ kind: base_kind, ty: base_ty, span: s },
                   fid,
                   rhs_core,
                 ),
@@ -1739,15 +1909,15 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
           ctx: ao.ctx,
         }
       },
-      .For(fs) => {
-        r := ctx.lower_for(fs)
+      .For(for_stmt) => {
+        r := ctx.lower_for(for_stmt)
         rest := r.ctx.lower_stmts(stmts, idx + 1, tail, block_span)
         ao := rest.ctx.alloc_anon_local()
         ExprOut.{
           expr: CoreExpr.{
             kind: .Let(ao.local, r.expr, rest.expr),
             ty: rest.expr.ty,
-            span: fs.span,
+            span: for_stmt.span,
           },
           ctx: ao.ctx,
         }
@@ -1881,6 +2051,9 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     }
   }
 
+  // Ensure local IDs don't collide with module globals
+  if ctx.next_local < ctx.next_global { ctx.next_local = ctx.next_global }
+
   // Lower module-level lets into __init__ function
   init_stmts: Vector<CoreExpr> = []
   has_init := false
@@ -1905,9 +2078,33 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
           },
           .Expr(es) => {
             has_init = true
-            r := ctx.lower_expr(es.expr)
-            ctx = r.ctx
-            init_stmts = init_stmts.push(r.expr)
+            // Handle lvalue assigns at module level (x.field = val)
+            case es.expr.kind {
+              .Binary(.Assign, lhs, rhs) => {
+                rhs_r := ctx.lower_expr(rhs)
+                ctx = rhs_r.ctx
+                case ctx.lower_lvalue_assign(lhs, rhs_r.expr, es.span) {
+                  .Some(lv) => {
+                    ctx = lv.ctx
+                    init_stmts = init_stmts.push(CoreExpr.{
+                      kind: .Assign(lv.root, lv.update),
+                      ty: MonoType.Void,
+                      span: es.span,
+                    })
+                  },
+                  .None => {
+                    r := ctx.lower_expr(es.expr)
+                    ctx = r.ctx
+                    init_stmts = init_stmts.push(r.expr)
+                  },
+                }
+              },
+              _ => {
+                r := ctx.lower_expr(es.expr)
+                ctx = r.ctx
+                init_stmts = init_stmts.push(r.expr)
+              },
+            }
           },
           _ => {},
         }

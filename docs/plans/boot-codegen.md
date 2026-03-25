@@ -95,13 +95,19 @@ emit_wat(linked) → String
 
 As of 2026-03-24:
 
-- M1-M5 are implemented in the boot compiler and have dedicated boot test
-  suites.
+- the full Phase D pipeline exists in boot:
+  `plan_wasm_types -> insert_boundaries -> emit_module -> link -> emit_wat`
+- dedicated boot suites exist for the earlier milestones, and the M11-focused
+  integration suite is now registered from `boot/tests/main.tw`
+- a focused Rust integration harness compares stage0 vs boot behavior and
+  validates emitted WAT by compiling it with Wasmtime
 - `BuiltinEntry` now owns the Wasm ABI contract used by planning and boundary
-  insertion; Phase D no longer depends on a separately threaded ABI side table.
-- Recursive type planning now uses an in-progress registration guard so
+  insertion; Phase D no longer depends on a separately threaded ABI side table
+- recursive type planning now uses an in-progress registration guard so
   self-recursive and mutually recursive type graphs terminate during registry
-  construction.
+  construction
+- M11 is not fully closed yet; the remaining broken shapes and closure work are
+  tracked in [boot-codegen-m11-gap-closure.md](boot-codegen-m11-gap-closure.md)
 
 ## Input Types
 

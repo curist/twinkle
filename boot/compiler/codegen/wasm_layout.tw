@@ -308,15 +308,15 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Scalar(.WI64) => .I64,
     .Scalar(.WF64) => .F64,
     .Scalar(.WAnyref) => .Anyref,
-    .Record(r) => .Ref(false, .Named(r.sym)),
-    .Sum(s) => .Ref(false, .Named(s.sym)),
-    .Closure(c) => .Ref(false, .Named(c.closure_sym)),
-    .Vector_(_) => .Ref(false, .Named("rt_types__Array")),
-    .Dict_(_, _) => .Ref(false, .Named("rt_types__Dict")),
-    .Iterator_(it) => .Ref(false, .Named(it.state_sym)),
+    .Record(r) => .Ref(true, .Named(r.sym)),
+    .Sum(s) => .Ref(true, .Named(s.sym)),
+    .Closure(c) => .Ref(true, .Named(c.closure_sym)),
+    .Vector_(_) => .Ref(true, .Named("rt_types__Array")),
+    .Dict_(_, _) => .Ref(true, .Named("rt_types__Dict")),
+    .Iterator_(it) => .Ref(true, .Named(it.state_sym)),
     .Cell_(inner) => {
       key := val_type_key(inner)
-      .Ref(false, .Named("$Cell_${key}"))
+      .Ref(true, .Named("$Cell_${key}"))
     },
   }
 }
@@ -348,7 +348,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .Byte => .I32,
     .Void => .Anyref,
     .Anyref_ => .Anyref,
-    .String => .Anyref,
+    .String => .Ref(true, .Named("rt_types__String")),
     .Named(tid, args) => {
       entry := find_type_entry(env, tid)
       def := case entry.def {
@@ -356,19 +356,19 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
         .None => error("val_type_of_mono: TypeId ${tid.id} has no definition"),
       }
       case def {
-        .Record(name, _, _) => .Ref(false, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
-        .Sum(name, _, _) => .Ref(false, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Record(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Sum(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
         .Alias(_, type_params, target) => val_type_of_mono(subst_type_params(target, type_params, args), env),
       }
     },
-    .Vector(_) => .Ref(false, .Named("rt_types__Array")),
-    .Dict(_, _) => .Ref(false, .Named("rt_types__Dict")),
+    .Vector(_) => .Ref(true, .Named("rt_types__Array")),
+    .Dict(_, _) => .Ref(true, .Named("rt_types__Dict")),
     .Function(params, ret) => {
       key := mono_to_key(.Function(params, ret))
-      .Ref(false, .Named("$closure_${key}"))
+      .Ref(true, .Named("$closure_${key}"))
     },
-    .Optional(inner) => .Ref(false, .Named("$Option_${mono_to_key(.Optional(inner))}")),
-    .Result(ok, err) => .Ref(false, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
+    .Optional(inner) => .Ref(true, .Named("$Option_${mono_to_key(.Optional(inner))}")),
+    .Result(ok, err) => .Ref(true, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
     .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
     .MetaVar(_) => error("val_type_of_mono called on MetaVar — must be resolved"),
     .ErrorType => error("val_type_of_mono called on ErrorType"),

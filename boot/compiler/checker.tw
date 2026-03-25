@@ -568,6 +568,38 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
         _ => {},
       }
 
+      // Qualified variant constructor form: TypeName.Variant(args)
+      case try_resolve_type_from_expr(base, clean_ctx) {
+        .Some(resolved) => {
+          named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+          case resolve_variant_info(method_name, named_ty, resolved.ctx.env) {
+            .Some(.Ok(info)) => {
+              if args.len() != info.field_types.len() {
+                return .{
+                  ty: named_ty,
+                  ctx: resolved.ctx,
+                  diags: diags.push(diag.error(s, ".${method_name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
+                }
+              }
+              cur_ctx := resolved.ctx
+              cur_diags := diags
+              for i in range(args.len()) {
+                ar := cur_ctx.synth(args[i], cur_diags)
+                u := ar.ctx.unify(ar.ty, info.field_types[i], args[i].span, ar.diags)
+                cur_ctx = u.ctx
+                cur_diags = u.diags
+              }
+              callee_ty := MonoType.Function(info.field_types, named_ty)
+              cur_ctx = set_type_map(cur_ctx, base.id, named_ty)
+              cur_ctx = set_type_map_span(cur_ctx, callee.id, callee.span.start, callee_ty)
+              return .{ ty: named_ty, ctx: cur_ctx, diags: cur_diags }
+            },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+
       // Receiver method call form: receiver.method(...)
       method_call := try_synth_method_call(base, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
       case method_call {
@@ -829,6 +861,12 @@ type VariantInfo = .{
   field_types: Vector<MonoType>,
 }
 
+type ResolvedTypeExpr = .{
+  tid: TypeId,
+  type_args: Vector<MonoType>,
+  ctx: InferCtx,
+}
+
 // Resolve a variant name against a zonked type, returning substituted field types.
 // Returns .Ok(info) if found, .Err(message) on error, .None if not a sum type.
 fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
@@ -863,7 +901,67 @@ fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result
   }
 }
 
+// Try to resolve an expression as a type name, returning a named type plus fresh meta args.
+fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
+  case expr.kind {
+    .Ident(name) => {
+      case ctx.env.lookup_type(name) {
+        .Some(entry) => {
+          // Build fresh meta type args for generic types
+          cur_ctx := ctx
+          type_args: Vector<MonoType> = []
+          case entry.def {
+            .Some(def) => {
+              case def {
+                .Sum(_, type_params, _) => {
+                  for _ in type_params {
+                    m := fresh_meta(cur_ctx)
+                    cur_ctx = m.ctx
+                    type_args = type_args.push(m.ty)
+                  }
+                },
+                .Record(_, type_params, _) => {
+                  for _ in type_params {
+                    m := fresh_meta(cur_ctx)
+                    cur_ctx = m.ctx
+                    type_args = type_args.push(m.ty)
+                  }
+                },
+                _ => {},
+              }
+            },
+            .None => {},
+          }
+          .Some(.{ tid: entry.id, type_args, ctx: cur_ctx })
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
 fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  // Check if base is a type name with a variant (TypeName.VariantName)
+  case try_resolve_type_from_expr(base, ctx) {
+    .Some(resolved) => {
+      named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+      case resolve_variant_info(field_name, named_ty, resolved.ctx.env) {
+        .Some(.Ok(info)) => {
+          // Zero-arg variant: value of the named type; otherwise: constructor function
+          new_ctx := set_type_map(resolved.ctx, base.id, named_ty)
+          if info.field_types.len() == 0 {
+            return .{ ty: named_ty, ctx: new_ctx, diags }
+          } else {
+            return .{ ty: MonoType.Function(info.field_types, named_ty), ctx: new_ctx, diags }
+          }
+        },
+        _ => {},
+      }
+    },
+    .None => {},
+  }
+
   br := ctx.synth(base, diags)
   zonked_base := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
 
@@ -1474,17 +1572,17 @@ fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
   }
 }
 
-fn check_for(fs: ForStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
 
-  cond_r := check_optional_condition(fs.condition, cur_ctx, cur_diags)
+  cond_r := check_optional_condition(for_stmt.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
 
-  case fs.iter {
+  case for_stmt.iter {
     .Some(iter_expr) => {
-      ib := bind_iterable_vars(cur_ctx, iter_expr, fs.pattern, fs.index, "for-loop", cur_diags)
+      ib := bind_iterable_vars(cur_ctx, iter_expr, for_stmt.pattern, for_stmt.index, "for-loop", cur_diags)
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },
@@ -1492,7 +1590,7 @@ fn check_for(fs: ForStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   }
 
   // Check the body
-  body_stmts := synth_block(fs.body, cur_ctx, cur_diags)
+  body_stmts := synth_block(for_stmt.body, cur_ctx, cur_diags)
   .{ ctx: pop_scope(body_stmts.ctx), diags: body_stmts.diags }
 }
 

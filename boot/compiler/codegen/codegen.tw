@@ -1,0 +1,66 @@
+// Phase D M11: Integration — full codegen pipeline.
+//
+// Wires plan_wasm_types → insert_boundaries → emit_module → link → emit_wat.
+
+use compiler.resolver.{ResolvedEnv}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.anf.{AnfModule}
+use compiler.codegen.wasm_ir.{WasmModule, AbiContract}
+use compiler.codegen.wasm_plan.{plan_wasm_types}
+use compiler.codegen.insert_boundaries.{insert_boundaries, make_abi_table}
+use compiler.codegen.emit.{emit_module}
+use compiler.codegen.linker.{link, LinkedModule, LinkError}
+use compiler.codegen.wat.{emit_wat}
+use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.runtime.core as rt_core
+use compiler.codegen.runtime.str as rt_str
+use compiler.codegen.runtime.arr as rt_arr
+use compiler.codegen.runtime.dict as rt_dict
+
+pub fn runtime_modules() Vector<WasmModule> {
+  [
+    rt_types.module(),
+    rt_str.module(),
+    rt_arr.module(),
+    rt_dict.module(),
+    rt_core.module(),
+  ]
+}
+
+pub fn codegen(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) String {
+  // 1. Plan Wasm types
+  registry := plan_wasm_types(anf, env, builtins)
+
+  // 2. Insert boundary conversions
+  anf2 := insert_boundaries(anf, registry, builtins, env)
+
+  // 3. Build ABI table
+  abi_table := make_abi_table(builtins)
+
+  // 4. Emit user module
+  user_module := emit_module(anf2, registry, builtins, abi_table, env)
+
+  // 5. Link with runtime
+  modules := runtime_modules().push(user_module)
+  linked := case link(modules, .None) {
+    .Ok(l) => l,
+    .Err(errors) => {
+      msg := "Link errors:"
+      for e in errors {
+        case e {
+          .MissingExport(mod, name) => {
+            msg = "${msg}\n  missing export: ${mod}.${name}"
+          },
+        }
+      }
+      error(msg)
+    },
+  }
+
+  // 6. Emit WAT
+  emit_wat(linked)
+}

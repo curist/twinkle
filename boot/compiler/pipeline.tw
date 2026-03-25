@@ -10,6 +10,7 @@ use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.resolver.{ResolvedEnv}
 use compiler.core_ir.{CoreModule}
 use compiler.anf.{AnfModule}
+use compiler.codegen.codegen.{codegen}
 
 pub type PipelineArtifacts = .{
   env: ResolvedEnv,
@@ -141,4 +142,8 @@ pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
     },
   }
   compile_source(source)
+}
+
+pub fn emit_wat(artifacts: PipelineArtifacts) String {
+  codegen(artifacts.opt, artifacts.env, artifacts.builtins)
 }
