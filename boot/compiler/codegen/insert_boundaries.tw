@@ -9,7 +9,7 @@ use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
-use compiler.codegen.wasm_layout.{layout_of, val_type_of, mono_to_key}
+use compiler.codegen.wasm_layout.{layout_of, val_type_of, val_type_of_mono, mono_to_key}
 use compiler.codegen.wasm_plan.{WasmTypeRegistry}
 use compiler.anf.{
   Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom,
@@ -64,7 +64,7 @@ fn is_anyref(vt: ValType) Bool {
 }
 
 fn mono_val_type(ty: MonoType, env: ResolvedEnv) ValType {
-  val_type_of(layout_of(ty, env))
+  val_type_of_mono(ty, env)
 }
 
 fn needs_wrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bool {

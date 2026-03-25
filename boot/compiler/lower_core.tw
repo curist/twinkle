@@ -186,13 +186,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .BoolLit(b) => {
       ExprOut.{ expr: CoreExpr.{ kind: .LitBool(b), ty, span: s }, ctx }
     },
-    .StringLit(raw) => {
-      // Strip surrounding quotes
-      val := if raw.len() >= 2 {
-        raw.slice(1, raw.len() - 1)
-      } else {
-        raw
-      }
+    .StringLit(val) => {
       ExprOut.{ expr: CoreExpr.{ kind: .LitStr(val), ty, span: s }, ctx }
     },
     .Ident(name) => {
@@ -566,8 +560,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
       case expr.kind {
         .IntLit(n) => PatternOut.{ pattern: .LitInt(n), ctx },
         .BoolLit(b) => PatternOut.{ pattern: .LitBool(b), ctx },
-        .StringLit(raw) => {
-          val := if raw.len() >= 2 { raw.slice(1, raw.len() - 1) } else { raw }
+        .StringLit(val) => {
           PatternOut.{ pattern: .LitStr(val), ctx }
         },
         _ => PatternOut.{ pattern: .Wildcard, ctx },
@@ -1529,7 +1522,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
           .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
           [],
         ),
-        ty: void_ty,
+        ty,
         span: s,
       }
 
@@ -1586,7 +1579,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
               .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
               [],
             ),
-            ty: void_ty,
+            ty,
             span: s,
           }
 
@@ -1767,7 +1760,7 @@ fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_
         if ls.is_rebind {
           // x = expr  →  Let(_, Assign(x_local, lower(expr)), rest)
           r := ctx.lower_expr(ls.value)
-          target := case r.ctx.lookup_local(ls.name) {
+          target := case r.ctx.lookup_local_or_global(ls.name) {
             .Some(id) => id,
             .None => {
               r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
@@ -2105,6 +2098,12 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
                 init_stmts = init_stmts.push(r.expr)
               },
             }
+          },
+          .For(for_stmt) => {
+            has_init = true
+            r := ctx.lower_for(for_stmt)
+            ctx = r.ctx
+            init_stmts = init_stmts.push(r.expr)
           },
           _ => {},
         }

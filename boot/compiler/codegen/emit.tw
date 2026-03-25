@@ -530,9 +530,18 @@ fn emit_binop(bop: BinOp, left: Atom, right: Atom, kind: OpKind, ctx: EmitCtx) V
   }
 }
 
+// Emit an atom and coerce to i64 if the atom is Byte-typed (i32).
+fn emit_atom_as_i64(atom: Atom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(atom, ctx)
+  case atom_mono(atom, ctx) {
+    .Byte => out.push(Instr.I64ExtendI32S),
+    _ => out,
+  }
+}
+
 fn emit_int_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
-  out := emit_atom(left, ctx)
-  out = append_instrs(out, emit_atom(right, ctx))
+  out := emit_atom_as_i64(left, ctx)
+  out = append_instrs(out, emit_atom_as_i64(right, ctx))
   instr := case bop {
     .Add => Instr.I64Add,
     .Sub => Instr.I64Sub,
@@ -631,7 +640,7 @@ fn emit_unop(uop: UnOp, operand: Atom, kind: OpKind, ctx: EmitCtx) Vector<Instr>
       case kind {
         .Int => {
           out = [Instr.I64Const(0)]
-          out = append_instrs(out, emit_atom(operand, ctx))
+          out = append_instrs(out, emit_atom_as_i64(operand, ctx))
           out.push(Instr.I64Sub)
         },
         .Float => out.push(Instr.F64Neg),
@@ -643,6 +652,7 @@ fn emit_unop(uop: UnOp, operand: Atom, kind: OpKind, ctx: EmitCtx) Vector<Instr>
         .Bool => out.push(Instr.I32Eqz),
         .Int => {
           // BitNot: x XOR -1
+          out = emit_atom_as_i64(operand, ctx)
           out = out.push(Instr.I64Const(-1))
           out.push(Instr.I64Xor)
         },
@@ -682,8 +692,31 @@ fn emit_call(callee: Atom, args: Vector<Atom>, result_idx: Int, result_mono: Mon
 fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out: Vector<Instr> = []
-  for a in args {
-    out = append_instrs(out, emit_atom(a, ctx))
+  // Look up callee's param types for closure wrapping
+  callee_params: Vector<MonoType> = case ctx.func_defs[fid.id] {
+    .Some(fdef) => collect p in fdef.params { p.ty },
+    .None => [],
+  }
+  for a,i in args {
+    // If arg is AGlobalFunc and param expects a function type, wrap as closure
+    wrapped := false
+    case a {
+      .AGlobalFunc(arg_fid) => {
+        if i < callee_params.len() {
+          case callee_params[i] {
+            .Function(_, _) => {
+              out = append_instrs(out, emit_make_closure(arg_fid, [], ctx))
+              wrapped = true
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+    if !wrapped {
+      out = append_instrs(out, emit_atom(a, ctx))
+    }
   }
   out = out.push(Instr.Call(sym))
   case result_mono {
@@ -699,8 +732,27 @@ fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mon
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   import_sym := "${info.wasm_module}__${info.wasm_name}"
   out: Vector<Instr> = []
-  for a in args {
+  abi: AbiContract? = ctx.abi_table[fid.id]
+  for a,i in args {
     out = append_instrs(out, emit_atom(a, ctx))
+    // Narrow i64 → i32 when ABI expects i32 and the arg is Int/Byte-typed
+    case abi {
+      .Some(ab) => {
+        if i < ab.param_types.len() {
+          case ab.param_types[i] {
+            .I32 => {
+              arg_mono := atom_mono(a, ctx)
+              case arg_mono {
+                .Int => { out = out.push(Instr.I32WrapI64) },
+                _ => {},
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      .None => {},
+    }
   }
   out = out.push(Instr.Call(import_sym))
   // Some runtime calls return void
@@ -2027,7 +2079,7 @@ fn emit_typed_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) 
   typed_tramp_sym := "$typed_tramp_${func.func_id.id}"
   func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
 
-  param_vts: Vector<ValType> = [.Anyref]  // env
+  param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]  // env
   for p in sig.param_types {
     param_vts = param_vts.push(val_type_of_mono(p, ctx.env))
   }
@@ -2110,6 +2162,7 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
   case mono {
     .Never => { return [Instr.Unreachable] },
     .Void => { return [Instr.Drop, Instr.I32Const(0), Instr.RefI31] },
+    .String => { return [Instr.RefCast(true, .Named("rt_types__String"))] },
     _ => {},
   }
   layout := layout_of(mono, env)

@@ -52,6 +52,82 @@ fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id:
 }
 
 
+fn unescape_string(raw: String) String {
+  // Fast path: no backslash → return as-is
+  has_escape := false
+  k := 0
+  for k < raw.len() {
+    if is_byte(raw[k].to_int(), "\\") {
+      has_escape = true
+      break
+    }
+    k = k + 1
+  }
+  if !has_escape { return raw }
+
+  // Build unescaped parts, then join via interpolation
+  parts: Vector<String> = []
+  i := 0
+  seg_start := 0
+  n := raw.len()
+  for i < n {
+    ch := raw[i].to_int()
+    if is_byte(ch, "\\") and i + 1 < n {
+      // Flush segment before this escape
+      if i > seg_start {
+        parts = parts.push(raw.slice(seg_start, i))
+      }
+      next := raw[i + 1].to_int()
+      if is_byte(next, "n") { parts = parts.push("\n") }
+      else if is_byte(next, "t") { parts = parts.push("\t") }
+      else if is_byte(next, "r") { parts = parts.push("\r") }
+      else if is_byte(next, "\\") { parts = parts.push("\\") }
+      else if is_byte(next, "\"") { parts = parts.push("\"") }
+      else if is_byte(next, "\$") { parts = parts.push("\$") }
+      else if is_byte(next, "e") { parts = parts.push("\e") }
+      else if is_byte(next, "x") and i + 3 < n {
+        hi := hex_digit_value(raw[i + 2].to_int())
+        lo := hex_digit_value(raw[i + 3].to_int())
+        if hi >= 0 and lo >= 0 {
+          code := hi * 16 + lo
+          case String.from_code_point(code) {
+            .Some(s) => {
+              parts = parts.push(s)
+              i = i + 4
+              seg_start = i
+              continue
+            },
+            .None => {
+              parts = parts.push(raw.slice(i, i + 2))
+            },
+          }
+        } else {
+          parts = parts.push(raw.slice(i, i + 2))
+        }
+      } else {
+        // Unknown escape — keep both chars
+        parts = parts.push(raw.slice(i, i + 2))
+      }
+      i = i + 2
+      seg_start = i
+    } else {
+      i = i + 1
+    }
+  }
+  // Flush trailing segment
+  if seg_start < n {
+    parts = parts.push(raw.slice(seg_start, n))
+  }
+  parts.join("")
+}
+
+fn hex_digit_value(ch: Int) Int {
+  if ch >= 48 and ch <= 57 { ch - 48 }       // '0'-'9'
+  else if ch >= 65 and ch <= 70 { ch - 55 }   // 'A'-'F'
+  else if ch >= 97 and ch <= 102 { ch - 87 }  // 'a'-'f'
+  else { -1 }
+}
+
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
   i := from
   n := source.len()
@@ -72,7 +148,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
     if is_byte(ch, "\"") {
       return .{
         next_index: i + 1,
-        text: source.slice(content_start, i),
+        text: unescape_string(source.slice(content_start, i)),
         terminated: true,
         found_interp: false,
       }
@@ -80,7 +156,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
     if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1].to_int(), "{") {
       return .{
         next_index: i + 2,
-        text: source.slice(content_start, i),
+        text: unescape_string(source.slice(content_start, i)),
         terminated: false,
         found_interp: true,
       }
@@ -252,7 +328,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         ))
       }
 
-      out = out.push(make_token(.StringLit, source, token_start, i, file_id, preceded_by_newline))
+      out = out.push(make_token_text(.StringLit, scanned.text, token_start, i, file_id, preceded_by_newline))
       continue
     }
 

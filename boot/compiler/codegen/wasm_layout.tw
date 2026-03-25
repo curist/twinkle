@@ -259,6 +259,7 @@ fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv)
   param_vts := collect p in params { val_type_of_mono(p, env) }
   ret_vt: ValType? = case ret {
     .Never => .None,
+    .Void => .None,
     _ => .Some(val_type_of_mono(ret, env)),
   }
   key := mono_to_key(.Function(params, ret))

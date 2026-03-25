@@ -309,7 +309,10 @@ fn register_closure_func_type(reg: WasmTypeRegistry, layout: WasmClosureLayout) 
         .Some(vt) => { results = [vt] },
         .None => {},
       }
-      td: TypeDef = .FuncType(layout.typed_func_type_sym, layout.param_types, results)
+      // Typed closure functype includes env as first param (ref null ClosureEnv)
+      params: Vector<ValType> = [ValType.Ref(true, HeapType.Named(layout.env_sym))]
+      params = params.concat(layout.param_types)
+      td: TypeDef = .FuncType(layout.typed_func_type_sym, params, results)
       reg.type_index[layout.typed_func_type_sym] = reg.type_defs.len()
       reg.type_defs = reg.type_defs.push(td)
       reg
@@ -349,35 +352,106 @@ fn walk_atom(reg: WasmTypeRegistry, atom: Atom) WasmTypeRegistry {
   }
 }
 
-fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, AnfFunctionDef>, current_func: AnfFunctionDef) WasmTypeRegistry {
-  case op {
-    .ACall(callee, args) => {
-      reg = walk_atom(reg, callee)
-      for a in args { reg = walk_atom(reg, a) }
-      // Check if callee is a runtime builtin — register import
-      case callee {
-        .AGlobalFunc(fid) => {
-          case bi.entry(builtins, fid) {
-            .Some(entry) => {
-              case entry.kind {
-                .Runtime(info) => {
-                  reg = register_runtime_import(reg, entry, info)
-                },
-                .Intrinsic => {},
-              }
-            },
-            .None => {},
-          }
-        },
-        _ => {},
+fn walk_atoms(reg: WasmTypeRegistry, atoms: Vector<Atom>) WasmTypeRegistry {
+  for a in atoms { reg = walk_atom(reg, a) }
+  reg
+}
+
+// ── Call analysis helpers ─────────────────────────────────────────────
+
+fn register_func_sig(reg: WasmTypeRegistry, fid: FuncId, func_map: Dict<Int, AnfFunctionDef>) WasmTypeRegistry {
+  case func_map[fid.id] {
+    .Some(target) => {
+      sig := FuncSigEntry.{
+        param_types: collect p in target.params { p.ty },
+        return_type: target.return_ty,
+      }
+      reg.concrete_func_sigs[fid.id] = sig
+      reg
+    },
+    .None => reg,
+  }
+}
+
+fn register_empty_capture_layout(reg: WasmTypeRegistry, fid: FuncId) WasmTypeRegistry {
+  captures: Vector<CaptureEntry> = []
+  reg.capture_layouts[fid.id] = captures
+  reg
+}
+
+fn param_expects_function(callee_def: AnfFunctionDef, index: Int) Bool {
+  if index >= callee_def.params.len() { return false }
+  case callee_def.params[index].ty {
+    .Function(_, _) => true,
+    _ => false,
+  }
+}
+
+fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegistry {
+  case entry.kind {
+    .Runtime(info) => register_runtime_import(reg, entry, info),
+    .Intrinsic => reg,
+  }
+}
+
+fn analyze_user_func_call(reg: WasmTypeRegistry, callee_fid: FuncId, args: Vector<Atom>, func_map: Dict<Int, AnfFunctionDef>) WasmTypeRegistry {
+  case func_map[callee_fid.id] {
+    .Some(callee_def) => {
+      for arg,i in args {
+        reg = maybe_register_closure_arg(reg, arg, i, callee_def, func_map)
       }
       reg
     },
+    .None => reg,
+  }
+}
+
+fn maybe_register_closure_arg(reg: WasmTypeRegistry, arg: Atom, index: Int, callee_def: AnfFunctionDef, func_map: Dict<Int, AnfFunctionDef>) WasmTypeRegistry {
+  case arg {
+    .AGlobalFunc(arg_fid) => {
+      if !param_expects_function(callee_def, index) { return reg }
+      reg = register_func_sig(reg, arg_fid, func_map)
+      register_empty_capture_layout(reg, arg_fid)
+    },
+    _ => reg,
+  }
+}
+
+fn walk_call(reg: WasmTypeRegistry, callee: Atom, args: Vector<Atom>, builtins: BuiltinRegistry, func_map: Dict<Int, AnfFunctionDef>) WasmTypeRegistry {
+  reg = walk_atom(reg, callee)
+  reg = walk_atoms(reg, args)
+  case callee {
+    .AGlobalFunc(fid) => {
+      case bi.entry(builtins, fid) {
+        .Some(entry) => analyze_builtin_call(reg, entry),
+        .None => analyze_user_func_call(reg, fid, args, func_map),
+      }
+    },
+    _ => reg,
+  }
+}
+
+fn register_made_closure(reg: WasmTypeRegistry, fid: FuncId, free_vars: Vector<LocalId>, func_map: Dict<Int, AnfFunctionDef>, current_func: AnfFunctionDef) WasmTypeRegistry {
+  captures := collect fv in free_vars {
+    CaptureEntry.{ local_id: fv, ty: resolve_local_type(current_func, fv) }
+  }
+  reg.capture_layouts[fid.id] = captures
+  register_func_sig(reg, fid, func_map)
+}
+
+// ── Main traversal ───────────────────────────────────────────────────
+
+fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, AnfFunctionDef>, current_func: AnfFunctionDef) WasmTypeRegistry {
+  case op {
+    .ACall(callee, args) =>
+      walk_call(reg, callee, args, builtins, func_map),
+
     .AIf(cond, then_body, else_body) => {
       reg = walk_atom(reg, cond)
       reg = walk_expr(reg, then_body, env, builtins, func_map, current_func)
       walk_expr(reg, else_body, env, builtins, func_map, current_func)
     },
+
     .AMatch(scrutinee, arms) => {
       reg = walk_atom(reg, scrutinee)
       for arm in arms {
@@ -385,61 +459,60 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
       }
       reg
     },
-    .ALoop(body) => walk_expr(reg, body, env, builtins, func_map, current_func),
+
+    .ALoop(body) =>
+      walk_expr(reg, body, env, builtins, func_map, current_func),
+
     .ABinOp(_, left, right, _) => {
       reg = walk_atom(reg, left)
       walk_atom(reg, right)
     },
-    .AUnOp(_, operand, _) => walk_atom(reg, operand),
-    .AMakeClosure(fid, free_vars) => {
-      // Register capture layout with resolved types
-      captures := collect fv in free_vars {
-        CaptureEntry.{ local_id: fv, ty: resolve_local_type(current_func, fv) }
-      }
-      reg.capture_layouts[fid.id] = captures
-      // Register concrete function signature from target function
-      case func_map[fid.id] {
-        .Some(target) => {
-          sig := FuncSigEntry.{
-            param_types: collect p in target.params { p.ty },
-            return_type: target.return_ty,
-          }
-          reg.concrete_func_sigs[fid.id] = sig
-        },
-        .None => {},
-      }
-      reg
-    },
+
+    .AUnOp(_, operand, _) =>
+      walk_atom(reg, operand),
+
+    .AMakeClosure(fid, free_vars) =>
+      register_made_closure(reg, fid, free_vars, func_map, current_func),
+
     .ARecord(tid, fields) => {
       for f in fields { reg = walk_atom(reg, f.value) }
       reg
     },
-    .ARecordGet(target, _, _) => walk_atom(reg, target),
+
+    .ARecordGet(target, _, _) =>
+      walk_atom(reg, target),
+
     .ARecordUpdate(base, _, value, _, _) => {
       reg = walk_atom(reg, base)
       walk_atom(reg, value)
     },
-    .AVariant(tid, vid, args) => {
-      for a in args { reg = walk_atom(reg, a) }
-      reg
-    },
-    .AArrayLit(items) => {
-      for a in items { reg = walk_atom(reg, a) }
-      reg
-    },
+
+    .AVariant(tid, vid, args) =>
+      walk_atoms(reg, args),
+
+    .AArrayLit(items) =>
+      walk_atoms(reg, items),
+
     .AIndex(base, index, _, result_ty) => {
       reg = walk_atom(reg, base)
       reg = walk_atom(reg, index)
-      reg = register_mono(reg, result_ty, env)
-      reg
+      register_mono(reg, result_ty, env)
     },
-    .AInit(atom) => walk_atom(reg, atom),
-    .AAssign(_, atom) => walk_atom(reg, atom),
-    .ADefer(_) => error("ADefer must be eliminated before codegen"),
+
+    .AInit(atom) =>
+      walk_atom(reg, atom),
+
+    .AAssign(_, atom) =>
+      walk_atom(reg, atom),
+
+    .ADefer(_) =>
+      error("ADefer must be eliminated before codegen"),
+
     .AWrapAnyref(atom, mono) => {
       reg = walk_atom(reg, atom)
       register_mono(reg, mono, env)
     },
+
     .AUnwrapAnyref(atom, mono) => {
       reg = walk_atom(reg, atom)
       register_mono(reg, mono, env)
