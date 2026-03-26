@@ -1,0 +1,192 @@
+use tests.runner
+use tests.assert
+use lib.module.loader
+use @std.proc
+use @std.path
+use @std.fs
+
+pub fn suite() runner.Suite {
+  root := loader.find_project_root(".")
+
+  runner.suite("module loader")
+
+    // -- find_project_root --
+
+    .test("find_project_root returns TWINKLE_ROOT when set", fn() {
+      case proc.env("TWINKLE_ROOT") {
+        .Some(expected) => {
+          try assert.str_eq(loader.find_project_root("/some/arbitrary/path"), expected)
+          .Ok({})
+        },
+        .None => {
+          result := loader.find_project_root(root)
+          try assert.str_eq(result, root)
+          .Ok({})
+        },
+      }
+    })
+
+    // -- resolve_module_path --
+
+    .test("resolve_module_path joins root and segments", fn() {
+      try assert.str_eq(
+        loader.resolve_module_path("/project", ["math", "vector"]),
+        "/project/math/vector.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_module_path single segment", fn() {
+      try assert.str_eq(
+        loader.resolve_module_path("/project", ["main"]),
+        "/project/main.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_module_path empty segments", fn() {
+      try assert.str_eq(loader.resolve_module_path("/project", []), "/project.tw")
+      .Ok({})
+    })
+
+    // -- resolve_relative_module_path --
+
+    .test("resolve_relative_module_path from parent dir", fn() {
+      try assert.str_eq(
+        loader.resolve_relative_module_path("/project/lib/argparse/app.tw", ["helper"]),
+        "/project/lib/argparse/helper.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_relative_module_path nested segments", fn() {
+      try assert.str_eq(
+        loader.resolve_relative_module_path("/project/src/main.tw", ["utils", "parse"]),
+        "/project/src/utils/parse.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_relative_module_path bare filename", fn() {
+      try assert.str_eq(
+        loader.resolve_relative_module_path("file.tw", ["sibling"]),
+        "./sibling.tw",
+      )
+      .Ok({})
+    })
+
+    // -- resolve_stdlib_root / resolve_prelude_root --
+
+    .test("resolve_stdlib_root is project_root/stdlib", fn() {
+      try assert.str_eq(loader.resolve_stdlib_root("/project"), "/project/stdlib")
+      .Ok({})
+    })
+
+    .test("resolve_prelude_root is project_root/prelude", fn() {
+      try assert.str_eq(loader.resolve_prelude_root("/project"), "/project/prelude")
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_root from real project root exists", fn() {
+      try assert.is_true(fs.exists(loader.resolve_stdlib_root(root)))
+      .Ok({})
+    })
+
+    .test("resolve_prelude_root from real project root exists", fn() {
+      try assert.is_true(fs.exists(loader.resolve_prelude_root(root)))
+      .Ok({})
+    })
+
+    // -- resolve_stdlib_module_path --
+
+    .test("resolve_stdlib_module_path strips std prefix", fn() {
+      try assert.str_eq(
+        loader.resolve_stdlib_module_path("/stdlib", ["std", "path"]),
+        "/stdlib/path.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_module_path without std prefix", fn() {
+      try assert.str_eq(
+        loader.resolve_stdlib_module_path("/stdlib", ["fs"]),
+        "/stdlib/fs.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_module_path nested module", fn() {
+      try assert.str_eq(
+        loader.resolve_stdlib_module_path("/stdlib", ["std", "io", "buf"]),
+        "/stdlib/io/buf.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_module_path std-only segment", fn() {
+      try assert.str_eq(
+        loader.resolve_stdlib_module_path("/stdlib", ["std"]),
+        "/stdlib.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_module_path empty segments", fn() {
+      try assert.str_eq(
+        loader.resolve_stdlib_module_path("/stdlib", []),
+        "/stdlib.tw",
+      )
+      .Ok({})
+    })
+
+    .test("resolve_stdlib_module_path resolves real module", fn() {
+      stdlib := loader.resolve_stdlib_root(root)
+      result := loader.resolve_stdlib_module_path(stdlib, ["std", "path"])
+      try assert.str_ends_with(result, "/stdlib/path.tw")
+      try assert.is_true(fs.exists(result))
+      .Ok({})
+    })
+
+    // -- list_prelude_modules --
+
+    .test("list_prelude_modules returns sorted .tw files", fn() {
+      prelude := loader.resolve_prelude_root(root)
+      preludes := loader.list_prelude_modules(prelude)
+      try assert.is_true(preludes.len() > 0)
+      for p in preludes {
+        try assert.str_ends_with(p, ".tw")
+      }
+      .Ok({})
+    })
+
+    .test("list_prelude_modules includes known files", fn() {
+      prelude := loader.resolve_prelude_root(root)
+      preludes := loader.list_prelude_modules(prelude)
+      names := collect p in preludes { path.basename(p) }
+      try assert.vec_contains(names, "vector.tw")
+      try assert.vec_contains(names, "string.tw")
+      try assert.vec_contains(names, "option.tw")
+      try assert.vec_contains(names, "result.tw")
+      try assert.vec_contains(names, "int.tw")
+      try assert.vec_contains(names, "float.tw")
+      try assert.vec_contains(names, "dict.tw")
+      .Ok({})
+    })
+
+    .test("list_prelude_modules is sorted", fn() {
+      prelude := loader.resolve_prelude_root(root)
+      preludes := loader.list_prelude_modules(prelude)
+      i := 1
+      for i < preludes.len() {
+        try assert.is_true(preludes[i - 1] <= preludes[i])
+        i = i + 1
+      }
+      .Ok({})
+    })
+
+    .test("list_prelude_modules returns empty for nonexistent dir", fn() {
+      result := loader.list_prelude_modules("/no/such/directory")
+      try assert.vec_len(result, 0)
+      .Ok({})
+    })
+}

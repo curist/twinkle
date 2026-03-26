@@ -6,19 +6,14 @@ Phase E (Integration + Self-Hosting) of the [self-hosting plan](self-hosting.md)
 **`boot/lib/source`** was split into its own plan: [boot-source-lib.md](boot-source-lib.md)
 (immediate prerequisite for Phase A Frontend).
 
-## Why Deferred
+## Status
 
-These libraries have no consumer until Phase E:
+- **Milestone B (`boot/lib/module`)** — In progress
+- **Milestone C (`boot/lib/graph`)** — Not started
+- **Milestone D (`boot/lib/query`)** — Deferred until multi-module pipeline is working
 
-- **module** — single-source compilation in Phases A-D works with source strings
-  passed directly; path resolution and project-root detection are only needed
-  when wiring up multi-module compilation.
-- **graph** — dependency ordering and invalidation serve `ProjectState`, which
-  is a Phase E concern.
-- **query** — stage caching requires stable stage artifacts to exist first.
-
-Building them before their consumers exist risks designing APIs against
-assumptions that won't survive contact with the actual compiler stages.
+Phases A–D of the self-hosted compiler are complete (2026-03-26), so all
+compiler stages now exist as consumers. Milestones B and C are ready to build.
 
 ## Milestone B — `boot/lib/module`
 
@@ -30,6 +25,7 @@ Reference: `src/module/loader.rs`.
 - Honor env overrides (`TWINKLE_ROOT`, `TWINKLE_STDLIB_ROOT`) consistently.
 - Resolve module paths to `.tw` source paths.
 - Resolve stdlib imports (`@std.*`) to `stdlib/*.tw`.
+- Resolve relative imports (`.sibling`) from the importing file's parent directory.
 - Discover prelude modules from prelude root, with deterministic ordering.
 
 ### Target API Shape (Twinkle)
@@ -39,6 +35,7 @@ Reference: `src/module/loader.rs`.
 - `fn resolve_stdlib_root_default() String`
 - `fn resolve_prelude_root_default() String`
 - `fn resolve_stdlib_module_path_from_root(stdlib_root: String, module_path: Vector<String>) String`
+- `fn resolve_relative_module_path(importing_file: String, module_path: Vector<String>) String`
 - `fn list_prelude_modules(prelude_root: String) Vector<String>`
 
 ### Tests
