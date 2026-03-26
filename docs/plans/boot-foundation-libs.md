@@ -8,124 +8,102 @@ Phase E (Integration + Self-Hosting) of the [self-hosting plan](self-hosting.md)
 
 ## Status
 
-- **Milestone B (`boot/lib/module`)** — Done
-- **Milestone C (`boot/lib/graph`)** — Done
-- **Milestone D (`boot/lib/query`)** — Deferred until multi-module pipeline is working
+- **Milestone B (`boot/lib/module`)** — Done (2026-03-26)
+- **Milestone C (`boot/lib/graph`)** — Done (2026-03-26)
+- **Milestone D (`boot/lib/query`)** — `keys.tw` done (2026-03-26); `cache.tw` deferred until Phase E multi-module pipeline defines what gets cached
 
-Phases A–D of the self-hosted compiler are complete (2026-03-26), so all
-compiler stages now exist as consumers. Milestones B and C are ready to build.
+Phases A–D of the self-hosted compiler are complete. All foundation
+libraries except `cache.tw` are implemented and tested.
 
 ## Milestone B — `boot/lib/module`
 
-Reference: `src/module/loader.rs`.
+Reference: `src/module/loader.rs`. **Status: Done.**
 
-### Responsibilities
+### Design Decision
 
-- Find project root by walking up from a start directory until `twinkle.toml`.
-- Honor env overrides (`TWINKLE_ROOT`, `TWINKLE_STDLIB_ROOT`) consistently.
-- Resolve module paths to `.tw` source paths.
-- Resolve stdlib imports (`@std.*`) to `stdlib/*.tw`.
-- Resolve relative imports (`.sibling`) from the importing file's parent directory.
-- Discover prelude modules from prelude root, with deterministic ordering.
+`stdlib/` and `prelude/` are symlinked into `boot/` so they're always
+resolvable relative to the boot project root. No env var fallback chains
+or `cwd()` guessing needed — just `path.join(project_root, "stdlib")`.
 
-### Target API Shape (Twinkle)
+### Implemented API
 
-- `fn find_project_root(start: String) String`
+- `fn find_project_root(start: String) String` — walks up for `twinkle.toml`, honors `TWINKLE_ROOT`
 - `fn resolve_module_path(root: String, module_path: Vector<String>) String`
-- `fn resolve_stdlib_root_default() String`
-- `fn resolve_prelude_root_default() String`
-- `fn resolve_stdlib_module_path_from_root(stdlib_root: String, module_path: Vector<String>) String`
 - `fn resolve_relative_module_path(importing_file: String, module_path: Vector<String>) String`
+- `fn resolve_stdlib_root(project_root: String) String`
+- `fn resolve_prelude_root(project_root: String) String`
+- `fn resolve_stdlib_module_path(stdlib_root: String, module_path: Vector<String>) String`
 - `fn list_prelude_modules(prelude_root: String) Vector<String>`
 
 ### Tests
 
-- New suite: `boot/tests/suites/module_loader_suite.tw`.
-- Use temporary fixture trees under `boot/tests/fixtures/` for deterministic path behavior.
-- Verify root walk, env override precedence, stdlib `@std.*` mapping, and sorted prelude listing.
-
-### Done Criteria
-
-- Behavior matches stage0 loader semantics for supported cases.
-- Path output uses Twinkle logical path conventions (`/`).
-- No nondeterministic filesystem ordering leaks.
+- Suite: `boot/tests/suites/module_loader_suite.tw` — 21 tests
+- Covers: root walk, env override, path resolution, relative imports, stdlib mapping, sorted prelude listing, edge cases (bare filename, empty segments)
 
 ## Milestone C — `boot/lib/graph`
 
-Reference: `src/query/graph.rs` plus additional topo/cycle checks required for module planning.
+Reference: `src/query/graph.rs` plus topo sort / cycle detection. **Status: Done.**
 
-### Responsibilities
+### Implemented API
 
-- Maintain forward and reverse dependency maps.
-- Update graph incrementally (`set_dependencies` style).
-- Compute reverse-dependent closure for invalidation.
-- Produce topological order for module compilation.
-- Detect dependency cycles and return structured cycle diagnostics.
-
-### Target API Shape (Twinkle)
-
-- `type DependencyGraph = ...`
-- `fn empty() DependencyGraph`
-- `fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>) DependencyGraph`
-- `fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<String>`
-- `fn topo_sort(g: DependencyGraph, roots: Vector<String>) Vector<String>!GraphError`
+- `type DependencyGraph = .{ forward: Dict<String, Vector<String>>, reverse: Dict<String, Vector<String>> }`
 - `type GraphError = { Cycle(Vector<String>) }`
+- `fn empty() DependencyGraph`
+- `fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>) DependencyGraph` — incremental update with dedup, maintains forward/reverse consistency
+- `fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<String>` — BFS transitive closure, sorted output
+- `fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String>, GraphError>` — Kahn's algorithm, deterministic ordering, cycle detection
 
 ### Tests
 
-- New suite: `boot/tests/suites/dependency_graph_suite.tw`.
-- Cases: add/remove deps, multi-hop reverse closure, disconnected graphs, stable topo order, self-cycle and multi-node cycle diagnostics.
+- Suite: `boot/tests/suites/dependency_graph_suite.tw` — 20 tests
+- Covers: add/remove/update deps, dedup, idempotency, single/multi-hop reverse closure, sorted output, linear/diamond/multi-root topo sort, self-cycle, multi-node cycle, cycle with blocked non-cyclic nodes
 
-### Done Criteria
+### Known Limitation
 
-- Deterministic ordering for equivalent graphs.
-- Correct cycle detection with actionable cycle path output.
-- Ready to back module compile planner in `boot/`.
+Cycle diagnostics report all nodes blocked by a cycle (not just the minimal cycle). Nodes that depend on a cyclic component are included in `GraphError.Cycle`. Acceptable for current use; could be refined to extract the minimal strongly-connected component if needed.
 
-## Milestone D — `boot/lib/query` (Later)
+## Milestone D — `boot/lib/query`
 
 References: `src/query/keys.rs`, `src/query/cache.rs`.
 
-### Responsibilities
+### `keys.tw` — Done
 
-- Deterministic keying/hashing helpers for parse/resolve/typecheck/lower stages.
-- Cache records keyed by canonical module path + stage key.
-- Stage hit/miss stats.
-- Invalidation driven by dependency graph reverse closure.
+FNV-1a hashing with hash values verified against the Rust reference implementation via cross-implementation tests.
 
-### Target API Shape (Twinkle)
+**Implemented API:**
+- `fn hash_text(text: String) Int` — FNV-1a over UTF-8 bytes
+- `fn parse_key(path, source_hash) Int`
+- `fn resolve_key(path, source_hash, deps_hash) Int`
+- `fn typecheck_key(path, source_hash, deps_hash, allow_host_builtins) Int`
+- `fn lower_key(path, source_hash, deps_hash, next_global_local_id) Int`
+- `fn deps_hash(entries: Vector<DepEntry>) Int` — order-independent
+- `fn module_hash(source_hash, deps_hash) Int`
+- `fn context_hash(entries: Vector<DepEntry>) Int` — order-independent
+- `fn with_context(base_key, ctx_hash) Int`
+- `type DepEntry = .{ path: String, hash: Int }`
 
-- `boot/lib/query/keys.tw`
-  - `CACHE_SCHEMA_VERSION`
-  - `hash_text`, `parse_key`, `resolve_key`, `typecheck_key`, `lower_key`
-  - `deps_hash`, `module_hash`, `context_hash`, `with_context`
-- `boot/lib/query/cache.tw`
-  - `type CacheStats = ...`
-  - `type QueryStageCache = ...`
-  - `fn clear(cache: QueryStageCache) QueryStageCache`
-  - `fn get_*`/`put_*` per stage
-  - `fn invalidate_changed_module(cache: QueryStageCache, module: String) QueryStageCache`
+**Tests:** `boot/tests/suites/query_keys_suite.tw` — 20 tests. Includes cross-reference checks against Rust FNV-1a output values.
 
-### Tests
+**Implementation note:** Twinkle `Int` is i64 with wrapping arithmetic, which produces identical bit patterns to Rust's `u64::wrapping_mul`. Hex literals above `0x7fffffffffffffff` are out of range for i64; use `(high << 32) | low` to express them.
 
-- New suite: `boot/tests/suites/query_cache_suite.tw`.
-- Cases: hit/miss accounting, key stability, context-hash sensitivity, invalidation closure behavior, schema version bump behavior.
+### `cache.tw` — Deferred
 
-### Done Criteria
+Cache storage depends on how Phase E's multi-module pipeline threads state. Building it before the consumer exists risks designing against wrong assumptions. Will implement once the multi-module compilation loop takes shape.
 
-- Stable hashing and key semantics across runs.
-- Correct invalidation for changed modules and dependents.
-- No global mutable singleton requirement in Twinkle.
+**Planned API (from `src/query/cache.rs`):**
+- `type QueryStageCache` — per-stage `Dict<String, CacheEntry>` with key-gated lookup
+- `fn get_*/put_*` per stage (parse, resolve, typecheck, lower)
+- `fn invalidate_changed_module(cache, module)` — uses `reverse_dependents_closure`
+- `type CacheStats` — hit/miss counters
 
 ## Cross-Cutting Constraints
 
 - Determinism first: explicit sorting at API boundaries where order is observable.
 - Canonical paths as cache identity keys.
 - Keep host interaction isolated to `module` and explicit callers.
-- Avoid hidden global state in early Twinkle implementation; pass state values explicitly.
-- Diagnostic messages should include enough location data to match stage0 quality.
+- Avoid hidden global state; pass state values explicitly.
 
-## Suggested File Layout
+## File Layout
 
 ```text
 boot/lib/
@@ -139,14 +117,14 @@ boot/lib/
     dependency.tw
   query/
     keys.tw
-    cache.tw         # lands in Milestone D
+    cache.tw         # deferred to Phase E
 ```
 
 ## Exit Criteria
 
 This plan is complete when:
 
-1. Milestones A-C are implemented and used by initial self-hosted compiler modules.
-2. Corresponding suites pass in both backends (`run -i`, `run`).
-3. Milestone D is implemented once parse/resolve/typecheck/lower artifacts are available in `boot/`.
-4. Stage0 parity checks for path resolution, graph behavior, and cache key semantics are documented and green.
+1. ~~Milestones B-C are implemented~~ — Done.
+2. ~~Corresponding suites pass in both backends (`run -i`, `run`)~~ — Done (61 tests total).
+3. ~~`keys.tw` implemented with stage0 parity~~ — Done (20 tests, cross-reference verified).
+4. `cache.tw` is implemented once Phase E multi-module pipeline defines caching needs.
