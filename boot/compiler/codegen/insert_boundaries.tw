@@ -65,6 +65,14 @@ fn is_anyref(vt: ValType) Bool {
   }
 }
 
+fn is_raw_anyref_mono(ty: MonoType) Bool {
+  case ty {
+    .Anyref_ => true,
+    .Void => true,
+    _ => false,
+  }
+}
+
 fn mono_val_type(ty: MonoType, env: ResolvedEnv) ValType {
   val_type_of_mono(ty, env)
 }
@@ -387,9 +395,8 @@ fn rewrite_index(
   case kind {
     .Array => {
       // Array get returns anyref; unwrap if element type is not anyref
-      result_vt := mono_val_type(result_mono, ctx.env)
-      if is_anyref(result_vt) {
-        // String elements etc. — no unwrap needed
+      if is_raw_anyref_mono(result_mono) {
+        // Raw anyref payloads can flow through directly.
         body_r := rewrite_expr(body, ctx)
         RewriteResult.{
           expr: .Let(result_local, .AIndex(base, index, kind, result_mono), body_r.expr),

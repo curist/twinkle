@@ -283,11 +283,6 @@ fn boot_wat(path: &Path) -> String {
     String::from_utf8(interp.into_output()).expect("boot helper output should be valid UTF-8")
 }
 
-fn validated_module(engine: &wasmtime::Engine, label: &str, wat: &str) -> Module {
-    let wasm = wat::parse_str(wat).unwrap_or_else(|e| panic!("{label} WAT parse failed: {e}"));
-    Module::new(engine, &wasm).unwrap_or_else(|e| panic!("{label} validation failed: {e}"))
-}
-
 fn run_with_large_stack(f: impl FnOnce() + Send + 'static) {
     thread::Builder::new()
         .name("boot-codegen-integration".to_string())
