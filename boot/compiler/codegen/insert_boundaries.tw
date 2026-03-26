@@ -59,6 +59,8 @@ fn atom_mono(atom: Atom, ctx: BCtx) MonoType? {
 fn is_anyref(vt: ValType) Bool {
   case vt {
     .Anyref => true,
+    .I31ref => true,
+    .Ref(_, _) => true,
     _ => false,
   }
 }

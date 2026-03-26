@@ -299,6 +299,27 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("no wrap for Vector at anyref position", fn() {
+      // Typed GC refs can flow through an anyref ABI slot without boxing
+      builtins := empty_builtins().runtime_with_abi("vec_fn", "rt.test", "vec_fn", mk_abi([.Anyref], [.Anyref]))
+      vec_fid := builtins.id("vec_fn")
+
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(vec_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Vector(.Int)])
+      func := mk_func_def(1, "f", [mk_param(0, .Vector(.Int))], .Vector(.Int), body, mono)
+      anf := mk_module([func])
+
+      reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
+      result := insert_boundaries(anf, reg, builtins, empty_env())
+      result_body := result.functions[0].body
+
+      try assert.int_eq(count_wraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    })
+
     // ── Array index: unwrap element ──
 
     .test("array index unwraps non-anyref element", fn() {
