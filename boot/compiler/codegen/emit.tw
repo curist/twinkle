@@ -24,7 +24,7 @@ use compiler.codegen.wasm_layout.{
   layout_of, val_type_of, val_type_of_mono, mono_to_key,
 }
 use compiler.codegen.wasm_plan.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
+  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -351,10 +351,9 @@ fn emit_let(local: LocalId, op: AnfOp, body: AnfExpr, expected_ty: MonoType, ctx
       }
       if is_init {
         case ctx.registry.module_globals[local.id] {
-          .Some(gsym) => {
+          .Some(gentry) => {
             out = out.push(Instr.LocalGet(entry.index))
-            out = append_instrs(out, emit_box_to_anyref(entry.mono, ctx.env))
-            out = out.push(Instr.GlobalSet(gsym))
+            out = out.push(Instr.GlobalSet(gentry.sym))
           },
           .None => {},
         }
@@ -387,10 +386,9 @@ fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoTyp
       }
       if is_init {
         case ctx.registry.module_globals[target.id] {
-          .Some(gsym) => {
+          .Some(gentry) => {
             out = out.push(Instr.LocalGet(tgt.index))
-            out = append_instrs(out, emit_box_to_anyref(tgt.mono, ctx.env))
-            out = out.push(Instr.GlobalSet(gsym))
+            out = out.push(Instr.GlobalSet(gentry.sym))
           },
           .None => {},
         }
@@ -486,10 +484,8 @@ fn emit_atom(atom: Atom, ctx: EmitCtx) Vector<Instr> {
       }
       if !is_init {
         case ctx.registry.module_globals[lid.id] {
-          .Some(gsym) => {
-            entry := lookup_local(ctx, lid)
-            out: Vector<Instr> = [Instr.GlobalGet(gsym)]
-            return append_instrs(out, emit_unbox_from_anyref(entry.mono, ctx.env))
+          .Some(gentry) => {
+            return [Instr.GlobalGet(gentry.sym)]
           },
           .None => {},
         }
@@ -734,24 +730,24 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_
   out: Vector<Instr> = []
   abi: AbiContract? = ctx.abi_table[fid.id]
   for a,i in args {
-    out = append_instrs(out, emit_atom(a, ctx))
-    // Narrow i64 → i32 when ABI expects i32 and the arg is Int/Byte-typed
-    case abi {
+    // Check if ABI expects i32 and the arg is Int-typed → checked narrowing
+    needs_narrow := case abi {
       .Some(ab) => {
         if i < ab.param_types.len() {
           case ab.param_types[i] {
-            .I32 => {
-              arg_mono := atom_mono(a, ctx)
-              case arg_mono {
-                .Int => { out = out.push(Instr.I32WrapI64) },
-                _ => {},
-              }
-            },
-            _ => {},
+            .I32 => case atom_mono(a, ctx) { .Int => true, _ => false },
+            _ => false,
           }
+        } else {
+          false
         }
       },
-      .None => {},
+      .None => false,
+    }
+    if needs_narrow {
+      out = append_instrs(out, emit_checked_i32_narrow(a, ctx))
+    } else {
+      out = append_instrs(out, emit_atom(a, ctx))
     }
   }
   out = out.push(Instr.Call(import_sym))
@@ -935,8 +931,7 @@ fn emit_intrinsic_vector_get(args: Vector<Atom>, result_idx: Int, result_mono: M
   then_instrs: Vector<Instr> = []
   then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
-  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))  // index
-  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
   then_instrs = then_instrs.push(Instr.ArrayGet("rt_types__Array"))   // anyref element
   then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
 
@@ -976,8 +971,7 @@ fn emit_intrinsic_vector_set(args: Vector<Atom>, result_idx: Int, result_mono: M
   then_instrs: Vector<Instr> = []
   then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
-  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))  // index
-  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
   then_instrs = append_instrs(then_instrs, emit_atom(args[2], ctx))  // value (anyref after boundary)
   then_instrs = then_instrs.push(Instr.Call("rt_arr__set"))
   then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
@@ -1001,8 +995,7 @@ fn emit_intrinsic_vector_set(args: Vector<Atom>, result_idx: Int, result_mono: M
 fn emit_intrinsic_vector_make(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(args[1], ctx))  // default value (anyref)
-  out = append_instrs(out, emit_atom(args[0], ctx))  // size (i64)
-  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_checked_i32_narrow(args[0], ctx))  // size (i64)
   out = out.push(Instr.ArrayNew("rt_types__Array"))
   out.push(Instr.LocalSet(result_idx))
 }
@@ -1013,8 +1006,7 @@ fn emit_intrinsic_vector_set_in_place(args: Vector<Atom>, result_idx: Int, ctx: 
   // vector_set_in_place(vec, index, value) → mutate in place, return vec
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(args[0], ctx))  // vec
-  out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
-  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))  // index (i64)
   out = append_instrs(out, emit_atom(args[2], ctx))  // value (anyref)
   out = out.push(Instr.ArraySet("rt_types__Array"))
   // Return the same vec ref
@@ -1053,8 +1045,7 @@ fn emit_intrinsic_string_get(args: Vector<Atom>, result_idx: Int, result_mono: M
   then_instrs: Vector<Instr> = []
   then_instrs = then_instrs.push(Instr.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
-  then_instrs = append_instrs(then_instrs, emit_atom(args[1], ctx))
-  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow())
+  then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))
   then_instrs = then_instrs.push(Instr.ArrayGetU("rt_types__String"))  // unsigned byte
   then_instrs = then_instrs.push(Instr.StructNew(sum_layout.sym))
 
@@ -1113,10 +1104,8 @@ fn emit_intrinsic_string_slice(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx
 
   // Call rt_str__substring(s, start_i32, end_i32)
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = append_instrs(out, emit_atom(args[1], ctx))
-  out = append_instrs(out, emit_checked_i32_narrow())
-  out = append_instrs(out, emit_atom(args[2], ctx))
-  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))
+  out = append_instrs(out, emit_checked_i32_narrow(args[2], ctx))
   out = out.push(Instr.Call("rt_str__substring"))
   out.push(Instr.LocalSet(result_idx))
 }
@@ -1137,8 +1126,7 @@ fn emit_utf8_boundary_check(str_atom: Atom, idx_atom: Atom, ctx: EmitCtx) Vector
   // Then: check byte
   check: Vector<Instr> = []
   check = append_instrs(check, emit_atom(str_atom, ctx))
-  check = append_instrs(check, emit_atom(idx_atom, ctx))
-  check = append_instrs(check, emit_checked_i32_narrow())
+  check = append_instrs(check, emit_checked_i32_narrow(idx_atom, ctx))
   check = check.push(Instr.ArrayGetU("rt_types__String"))
   check = check.push(Instr.I32Const(192))   // 0xC0
   check = check.push(Instr.I32And)
@@ -1168,8 +1156,7 @@ fn emit_intrinsic_char_code_at(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx
   out = out.push(Instr.If(.None, [Instr.Unreachable], []))
   // Read byte
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = append_instrs(out, emit_atom(args[1], ctx))
-  out = append_instrs(out, emit_checked_i32_narrow())
+  out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))
   out = out.push(Instr.ArrayGetU("rt_types__String"))
   out = out.push(Instr.I64ExtendI32U)
   out.push(Instr.LocalSet(result_idx))
@@ -1585,8 +1572,7 @@ fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, 
       out = out.push(Instr.If(.None, [Instr.Unreachable], []))
       // Get element
       out = append_instrs(out, emit_atom(base, ctx))
-      out = append_instrs(out, emit_atom(index, ctx))
-      out = append_instrs(out, emit_checked_i32_narrow())
+      out = append_instrs(out, emit_checked_i32_narrow(index, ctx))
       out = out.push(Instr.ArrayGet("rt_types__Array"))
       out
     },
@@ -1615,8 +1601,7 @@ fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, 
       out = out.push(Instr.If(.None, [Instr.Unreachable], []))
       // Get byte
       out = append_instrs(out, emit_atom(base, ctx))
-      out = append_instrs(out, emit_atom(index, ctx))
-      out = append_instrs(out, emit_checked_i32_narrow())
+      out = append_instrs(out, emit_checked_i32_narrow(index, ctx))
       out = out.push(Instr.ArrayGetU("rt_types__String"))
       out
     },
@@ -1902,11 +1887,11 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<LocalId>, ctx: EmitCtx) Vect
       out2
     },
     .None => {
-      // Universal closure (no typed path)
+      // Universal closure (no typed path available).
+      // rt_types__Closure is a 2-field struct (funcref, env) — push exactly 2.
       out2: Vector<Instr> = []
       out2 = out2.push(Instr.RefFunc(tramp_sym))  // field 0: universal funcref
       out2 = append_instrs(out2, out)               // field 1: env
-      out2 = out2.push(Instr.RefNull(.Func))        // field 2: typed funcref (null)
       out2.push(Instr.StructNew("rt_types__Closure"))
     },
   }
@@ -2207,9 +2192,8 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
 
 fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
-  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
-  for k in string_pool.keys() {
-    case string_pool[k] {
+  for k in reg.string_pool_order {
+    case reg.string_pool[k] {
       .Some(entry) => {
         globals = globals.push(GlobalDef.{
           name: entry.global_sym,
@@ -2226,9 +2210,8 @@ fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
 
 fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
   funcs: Vector<FuncDef> = []
-  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
-  for k in string_pool.keys() {
-    case string_pool[k] {
+  for k in reg.string_pool_order {
+    case reg.string_pool[k] {
       .Some(entry) => {
         // Getter: check global, if null → create from data segment, cache
         body: Vector<Instr> = []
@@ -2259,19 +2242,12 @@ fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
 }
 
 fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
-  string_pool: Dict<String, StringPoolEntry> = reg.string_pool
-  if string_pool.len() == 0 { return .None }
+  if reg.string_pool_order.len() == 0 { return .None }
 
-  // Collect all string bytes in pool order
+  // Collect all string bytes in insertion order
   all_bytes: Vector<Byte> = []
-  for k in string_pool.keys() {
-    case string_pool[k] {
-      .Some(entry) => {
-        // Add the bytes of the string key
-        for b in k { all_bytes = all_bytes.push(b) }
-      },
-      .None => {},
-    }
+  for k in reg.string_pool_order {
+    for b in k { all_bytes = all_bytes.push(b) }
   }
 
   .Some(DataSegment.{
@@ -2285,15 +2261,15 @@ fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
 
 fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
-  module_globals: Dict<Int, String> = reg.module_globals
-  for k in module_globals.keys() {
-    case module_globals[k] {
-      .Some(gsym) => {
+  for k in reg.module_globals_order {
+    case reg.module_globals[k] {
+      .Some(gentry) => {
+        vt := val_type_of_mono(gentry.mono, env)
         globals = globals.push(GlobalDef.{
-          name: gsym,
+          name: gentry.sym,
           mutable: true,
-          ty: .Anyref,
-          init: [Instr.RefNull(.None_)],
+          ty: vt,
+          init: emit_default_value(vt),
         })
       },
       .None => {},
@@ -2304,13 +2280,27 @@ fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) 
 
 // ── Checked i32 narrowing ──────────────────────────────────────────────
 
-fn emit_checked_i32_narrow() Vector<Instr> {
-  // Safe i64→i32: trap if < 0 or > i32::MAX (2147483647)
-  // Input: i64 on stack. Output: i32 on stack.
-  // Strategy: dup, check range, then wrap
-  // Since we can't easily dup in this model, assume caller re-emits if needed.
-  // Simplified: just wrap (the bounds check was done in i64 domain by the caller)
-  [Instr.I32WrapI64]
+fn emit_checked_i32_narrow(atom: Atom, ctx: EmitCtx) Vector<Instr> {
+  // Safe i64→i32: trap if < 0 or > i32::MAX (2147483647).
+  // Emits the atom three times: twice for the range check, once for the wrap.
+  // Atoms are cheap (local.get / const), so re-emission is fine.
+  out: Vector<Instr> = []
+  // Check: value >= 0
+  out = append_instrs(out, emit_atom(atom, ctx))
+  out = out.push(Instr.I64Const(0))
+  out = out.push(Instr.I64GeS)
+  // Check: value <= 2147483647
+  out = append_instrs(out, emit_atom(atom, ctx))
+  out = out.push(Instr.I64Const(2147483647))
+  out = out.push(Instr.I64LeS)
+  // Both must hold
+  out = out.push(Instr.I32And)
+  out = out.push(Instr.I32Eqz)
+  out = out.push(Instr.If(.None, [Instr.Unreachable], []))
+  // Actual narrowing
+  out = append_instrs(out, emit_atom(atom, ctx))
+  out = out.push(Instr.I32WrapI64)
+  out
 }
 
 // ── Default values ─────────────────────────────────────────────────────

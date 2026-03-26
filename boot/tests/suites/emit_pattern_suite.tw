@@ -41,6 +41,7 @@ fn mk_ctx(env: ResolvedEnv, locals: Vector<LocalEntry>) EmitCtx {
     env: env,
     local_map: local_map,
     next_local: locals.len(),
+    string_getter: fn(s: String) String? { .None },
   }
 }
 
@@ -511,6 +512,49 @@ pub fn suite() runner.Suite {
     })
 
     // ── Result<T, E> pattern matching ──
+
+    .test("literal string pattern emits rt_str__eq call", fn() Result<Void, String> {
+      // case s { "hello" => 1, _ => 0 }
+      str_getter := fn(s: String) String? {
+        if s == "hello" { .Some("$str_0_get") }
+        else { .None }
+      }
+      ctx := EmitCtx.{
+        env: resolver.empty_env(),
+        local_map: Dict.new(),
+        next_local: 2,
+        string_getter: str_getter,
+      }
+      ctx.local_map[0] = le(0, 0, .Ref(true, .Named("rt_types__String")))
+      ctx.local_map[10] = le(10, 1, .I64)
+
+      scrutinee: Atom = .ALocal(lid(0))
+      arms: Vector<AnfMatchArm> = [
+        AnfMatchArm.{
+          pattern: .LitStr("hello"),
+          body: .Atom(.ALitInt(1)),
+        },
+        AnfMatchArm.{
+          pattern: .Wildcard,
+          body: .Atom(.ALitInt(0)),
+        },
+      ]
+      result := emit_match(scrutinee, .String, arms, 1, .I64, ctx)
+      // Should contain a Call to the string getter and rt_str__eq
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .Call(s) => s == "$str_0_get", _ => false }
+        }),
+        "expected Call($str_0_get) for string pool lookup",
+      )
+      try assert.ok(
+        has_instr(result.instrs, fn(i: Instr) Bool {
+          case i { .Call(s) => s == "rt_str__eq", _ => false }
+        }),
+        "expected Call(rt_str__eq) for string comparison",
+      )
+      .Ok({})
+    })
 
     .test("result ok/err dispatch", fn() Result<Void, String> {
       // case res { .Ok(v) => v, .Err(e) => 0 }

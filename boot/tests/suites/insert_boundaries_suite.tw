@@ -31,7 +31,9 @@ fn empty_registry() WasmTypeRegistry {
     concrete_func_sigs: Dict.new(),
     capture_layouts: Dict.new(),
     module_globals: Dict.new(),
+    module_globals_order: [],
     string_pool: Dict.new(),
+    string_pool_order: [],
     runtime_imports: [],
   }
 }

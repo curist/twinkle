@@ -1,0 +1,6 @@
+// Tests index narrowing path.
+// Expected output:
+//   42
+
+xs: Vector<Int> = [42, 99]
+println("${xs[0]}")

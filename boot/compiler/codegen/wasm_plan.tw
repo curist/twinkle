@@ -37,6 +37,11 @@ pub type StringPoolEntry = .{
   byte_len: Int,
 }
 
+pub type ModuleGlobalEntry = .{
+  sym: String,
+  mono: MonoType,
+}
+
 pub type WasmTypeRegistry = .{
   type_defs: Vector<TypeDef>,
   layout_cache: Dict<String, WasmLayout>,
@@ -44,8 +49,10 @@ pub type WasmTypeRegistry = .{
   type_index: Dict<String, Int>,
   concrete_func_sigs: Dict<Int, FuncSigEntry>,
   capture_layouts: Dict<Int, Vector<CaptureEntry>>,
-  module_globals: Dict<Int, String>,
+  module_globals: Dict<Int, ModuleGlobalEntry>,
+  module_globals_order: Vector<Int>,
   string_pool: Dict<String, StringPoolEntry>,
+  string_pool_order: Vector<String>,
   runtime_imports: Vector<ImportDef>,
 }
 
@@ -64,7 +71,9 @@ pub fn plan_wasm_types(
     concrete_func_sigs: Dict.new(),
     capture_layouts: Dict.new(),
     module_globals: Dict.new(),
+    module_globals_order: [],
     string_pool: Dict.new(),
+    string_pool_order: [],
     runtime_imports: [],
   }
 
@@ -97,9 +106,11 @@ pub fn plan_wasm_types(
   case input.init_func_id {
     .Some(init_fid) => {
       init_bound: Dict<Int, Bool> = Dict.new()
+      init_func_ref: AnfFunctionDef? = .None
       for f in input.functions {
         if f.func_id.id == init_fid.id {
           init_bound = collect_bound_locals(f.body)
+          init_func_ref = .Some(f)
         }
       }
       for f in input.functions {
@@ -109,7 +120,21 @@ pub fn plan_wasm_types(
           free := collect_free_locals(f.body, declared)
           for k in free.keys() {
             if set_has(init_bound, k) {
-              reg.module_globals[k] = "global_local_${k}"
+              // Resolve the local's MonoType from the init function
+              mono: MonoType = case init_func_ref {
+                .Some(ifn) => case ifn.op_result_mono[k] {
+                  .Some(ty) => ty,
+                  .None => error("module global L${k} has no MonoType in op_result_mono"),
+                },
+                .None => error("module global L${k} but no init function found"),
+              }
+              if !reg.module_globals.has(k) {
+                reg.module_globals_order = reg.module_globals_order.push(k)
+              }
+              reg.module_globals[k] = ModuleGlobalEntry.{
+                sym: "global_local_${k}",
+                mono: mono,
+              }
             }
           }
         }
@@ -526,11 +551,11 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
   case reg.string_pool[s] {
     .Some(_) => reg,
     .None => {
-      idx := reg.string_pool.len()
-      // Compute byte offset: sum of all existing entries' byte_len
+      idx := reg.string_pool_order.len()
+      // Compute byte offset from ordered entries
       offset := 0
-      for k in reg.string_pool.keys() {
-        case reg.string_pool[k] {
+      for prev in reg.string_pool_order {
+        case reg.string_pool[prev] {
           .Some(existing) => { offset = offset + existing.byte_len },
           .None => {},
         }
@@ -543,6 +568,7 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
         byte_len: s.len(),
       }
       reg.string_pool[s] = entry
+      reg.string_pool_order = reg.string_pool_order.push(s)
       reg
     },
   }
@@ -645,7 +671,9 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
     concrete_func_sigs: reg.concrete_func_sigs,
     capture_layouts: reg.capture_layouts,
     module_globals: reg.module_globals,
+    module_globals_order: reg.module_globals_order,
     string_pool: reg.string_pool,
+    string_pool_order: reg.string_pool_order,
     runtime_imports: reg.runtime_imports,
   }
 }

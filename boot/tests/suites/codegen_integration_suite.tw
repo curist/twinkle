@@ -225,6 +225,76 @@ fn test_link_runtime_no_start_function() Result<Void, String> {
   .Ok({})
 }
 
+// ── Checked narrowing tests ─────────────────────────────────────────
+
+fn test_checked_narrowing_vector_index() Result<Void, String> {
+  // Vector indexing should emit a checked i64→i32 narrowing with trap,
+  // not a bare i32.wrap_i64.  The hallmark is the upper-bound constant.
+  wat := try assert_codegen_src_compiles(
+    "xs: Vector<Int> = [10, 20, 30]\n_ := xs[1]\n",
+    "checked narrowing vector index",
+  )
+  try assert.str_contains(wat, "i64.const 2147483647")
+  .Ok({})
+}
+
+fn test_checked_narrowing_runtime_call() Result<Void, String> {
+  // Runtime calls that narrow Int→i32 (e.g. vector.set) should be checked.
+  wat := try assert_codegen_src_compiles(
+    "xs: Vector<Int> = [10, 20]\ncase xs.set(0, 99) {\n  .Some(ys) => println(\"ok\"),\n  .None => println(\"fail\"),\n}\n",
+    "checked narrowing runtime call",
+  )
+  try assert.str_contains(wat, "i64.const 2147483647")
+  .Ok({})
+}
+
+fn test_checked_narrowing_string_index() Result<Void, String> {
+  // String byte indexing should emit checked narrowing.
+  wat := try assert_codegen_src_compiles(
+    "s := \"hello\"\nb := s[0]\nprintln(b.to_string())\n",
+    "checked narrowing string index",
+  )
+  try assert.str_contains(wat, "i64.const 2147483647")
+  .Ok({})
+}
+
+// ── Closure representation tests ────────────────────────────────────
+
+fn test_closure_first_class_function_arg() Result<Void, String> {
+  // Passing a named function as an argument should wrap it as a closure.
+  // This goes through the typed closure path (emit_make_closure with concrete_func_sigs).
+  wat := try assert_codegen_src_compiles(
+    "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(double, 5)))\n",
+    "first-class function arg",
+  )
+  // Typed closure struct: 3 fields (universal funcref, env, typed funcref)
+  try assert.str_contains(wat, "$closure_fn_i64_i64")
+  try assert.str_contains(wat, "struct.new $user__$closure_fn_i64_i64")
+  // Should have typed trampoline
+  try assert.str_contains(wat, "$typed_tramp_")
+  .Ok({})
+}
+
+fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
+  // Typed closure struct should declare as subtype of rt_types__Closure.
+  wat := try assert_codegen_src_compiles(
+    "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(inc, 5)))\n",
+    "closure subtype",
+  )
+  try assert.str_contains(wat, "sub $rt_types__Closure")
+  .Ok({})
+}
+
+fn test_closure_call_uses_typed_funcref() Result<Void, String> {
+  // Closure call should access typed funcref (field 2) and call_ref.
+  wat := try assert_codegen_src_compiles(
+    "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(neg, 5)))\n",
+    "closure typed call",
+  )
+  try assert.str_contains(wat, "call_ref $user__$ft_fn_i64_i64")
+  .Ok({})
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -244,4 +314,10 @@ pub fn suite() runner.Suite {
     .test("linked runtime emits valid WAT with qualified names", test_link_runtime_emits_valid_wat)
     .test("linked runtime preserves host imports", test_link_runtime_host_imports_preserved)
     .test("runtime-only link has no start function", test_link_runtime_no_start_function)
+    .test("vector index emits checked i64→i32 narrowing", test_checked_narrowing_vector_index)
+    .test("runtime call emits checked i64→i32 narrowing", test_checked_narrowing_runtime_call)
+    .test("string index emits checked i64→i32 narrowing", test_checked_narrowing_string_index)
+    .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
+    .test("typed closure struct is subtype of base", test_closure_struct_is_subtype_of_base)
+    .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
 }

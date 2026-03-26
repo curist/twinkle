@@ -143,6 +143,10 @@ const REGRESSION_CASES: &[RegressionCase] = &[
         input: RegressionInput::Fixture("tests/run/hello.tw"),
     },
     RegressionCase {
+        name: "large_index_narrowing",
+        input: RegressionInput::Fixture("tests/run/large_index_narrowing.tw"),
+    },
+    RegressionCase {
         name: "loops",
         input: RegressionInput::Fixture("tests/run/loops.tw"),
     },

@@ -13,7 +13,7 @@ use compiler.anf.{
 use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, ImportDef}
 use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, mono_to_key}
 use compiler.codegen.wasm_plan.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
+  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
   plan_wasm_types,
 }
 
@@ -522,7 +522,9 @@ fn test_registry_empty() Result<Void, String> {
     concrete_func_sigs: Dict.new(),
     capture_layouts: Dict.new(),
     module_globals: Dict.new(),
+    module_globals_order: [],
     string_pool: Dict.new(),
+    string_pool_order: [],
     runtime_imports: [],
   }
   try assert.int_eq(reg.type_defs.len(), 0)
@@ -559,7 +561,14 @@ fn test_plan_module_globals() Result<Void, String> {
 
   // local 0 should be a module global (referenced outside init, bound in init)
   case reg.module_globals[0] {
-    .Some(sym) => try assert.str_contains(sym, "0"),
+    .Some(gentry) => {
+      try assert.str_contains(gentry.sym, "0")
+      result: Result<Void, String> = case gentry.mono {
+        .Int => .Ok({}),
+        _ => assert.fail("expected Int mono for global 0"),
+      }
+      result
+    },
     .None => { return assert.fail("expected local 0 in module_globals") },
   }
   // local 1 should NOT be a module global (not referenced outside init)

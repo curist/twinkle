@@ -7,6 +7,12 @@
 // Design: all sums are typed structs after monomorphization.
 // No erased Variant fallback, no flow-sensitive metadata.
 // Layout comes from MonoType via layout_of, looked up once.
+//
+// Note: emit.tw contains a parallel implementation with identical semantics
+// that operates on emit.tw's richer EmitCtx (which includes the full
+// WasmTypeRegistry). This module uses a callback-based EmitCtx so it can
+// be unit-tested independently. Both implementations must stay in sync —
+// any pattern type supported in emit.tw must also be supported here.
 
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
 use compiler.core_ir.{LocalId, VariantId, CorePattern}
@@ -29,6 +35,7 @@ pub type EmitCtx = .{
   env: ResolvedEnv,
   local_map: Dict<Int, LocalEntry>,
   next_local: Int,
+  string_getter: fn(String) String?,
 }
 
 // ── Result type ────────────────────────────────────────────────────
@@ -82,7 +89,12 @@ fn emit_atom(atom: Atom, ctx: EmitCtx) Vector<Instr> {
     .ALitBool(b) => [Instr.I32Const(if b { 1 } else { 0 })],
     .ALitVoid => [Instr.I32Const(0), Instr.RefI31],
     .AGlobalFunc(fid) => error("emit_atom: AGlobalFunc not supported in pattern context"),
-    .ALitStr(s) => error("emit_atom: ALitStr not yet supported in pattern context"),
+    .ALitStr(s) => {
+      case ctx.string_getter(s) {
+        .Some(getter_sym) => [Instr.Call(getter_sym)],
+        .None => error("emit_atom: string not in pool: ${s}"),
+      }
+    },
   }
 }
 
@@ -173,8 +185,15 @@ fn emit_pattern_condition(
       out
     },
     .LitStr(s) => {
-      // String comparison would need rt_str__eq import — punt for now
-      error("LitStr pattern not yet implemented in boot codegen")
+      out: Vector<Instr> = []
+      for i in scrutinee_instrs { out = out.push(i) }
+      case ctx.string_getter(s) {
+        .Some(getter_sym) => {
+          out = out.push(Instr.Call(getter_sym))
+        },
+        .None => error("emit_pattern_condition: string not in pool: ${s}"),
+      }
+      out.push(Instr.Call("rt_str__eq"))
     },
     .Variant(type_id, variant_id, fields) => {
       emit_variant_condition(type_id, variant_id, fields, scrutinee_instrs, scrutinee_mono, ctx)
