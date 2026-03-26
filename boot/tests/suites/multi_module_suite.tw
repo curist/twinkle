@@ -1,0 +1,61 @@
+use tests.runner
+use tests.assert
+use @std.proc
+use compiler.module_compiler
+
+fn fixtures_dir() String {
+  root := case proc.env("TWINKLE_ROOT") {
+    .Some(r) => r,
+    .None => ".",
+  }
+  "${root}/tests/fixtures/multi"
+}
+
+pub fn suite() runner.Suite {
+  dir := fixtures_dir()
+
+  runner.suite("multi-module compilation")
+
+    .test("compile single file with no imports", fn() {
+      result := module_compiler.compile_entry("${dir}/math_lib.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("compile file importing relative module (functions)", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_math.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("compile file importing relative module (types)", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_types.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("compile transitive dependency chain (a -> b -> c)", fn() {
+      result := module_compiler.compile_entry("${dir}/transitive_a.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("circular import detected", fn() {
+      result := module_compiler.compile_entry("${dir}/circular_a.tw")
+      case result {
+        .Ok(_) => .Err("expected circular import error"),
+        .Err(msg) => {
+          try assert.is_true(msg.contains("Circular import"))
+          .Ok({})
+        },
+      }
+    })
+}

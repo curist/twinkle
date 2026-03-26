@@ -37,7 +37,7 @@ fn builtin_sig(
   }
 }
 
-fn builtin_env() ResolvedEnv {
+pub fn builtin_env() ResolvedEnv {
   t := resolver.MonoType.Var("T")
   k := resolver.MonoType.Var("K")
   v := resolver.MonoType.Var("V")

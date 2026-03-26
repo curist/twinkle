@@ -422,6 +422,14 @@ impl Lowerer {
         id
     }
 
+    fn resolves_as_value_binding(&self, name: &str) -> bool {
+        self.local_allocator.lookup(name).is_some() || self.module_globals.contains_key(name)
+    }
+
+    fn can_use_module_alias(&self, name: &str) -> bool {
+        self.module_aliases.contains(name) && !self.resolves_as_value_binding(name)
+    }
+
     /// Extract a dotted name from an Ident/FieldAccess chain and look it up as a type.
     /// Handles `TypeName` (bare Ident, if not a local/func) and `module.TypeName` (dotted path).
     fn try_resolve_type_from_expr(&self, expr: &Expr) -> Option<TypeId> {
@@ -2137,7 +2145,7 @@ impl Lowerer {
             ExprKind::FieldAccess { base, field } => {
                 // Module alias first-class function/value reference: Vector.len, math.pi, etc.
                 if let ExprKind::Ident(alias) = &base.kind {
-                    if self.module_aliases.contains(alias.as_str()) {
+                    if self.can_use_module_alias(alias) {
                         let qualified = format!("{}.{}", alias, field);
                         if self.qualified_func_targets.contains_key(&qualified)
                             || self.func_table.contains_key(&qualified)
@@ -2646,7 +2654,7 @@ impl Lowerer {
             // Module-qualified call: alias.func(args) — check before constructor
             // to match synth_call resolution order in the type checker.
             if let ExprKind::Ident(alias) = &base.kind {
-                if self.module_aliases.contains(alias.as_str()) {
+                if self.can_use_module_alias(alias) {
                     let qualified = format!("{}.{}", alias, field);
                     if self.qualified_func_targets.contains_key(&qualified)
                         || self.func_table.contains_key(&qualified)

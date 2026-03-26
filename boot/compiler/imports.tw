@@ -1,0 +1,139 @@
+// Import scanning and dependency planning for multi-module compilation.
+//
+// Scans a parsed module's UseDecl items, resolves file paths via the
+// module loader, and produces a DependencyPlan listing all dependencies
+// (explicit imports + auto-injected prelude modules).
+//
+// Reference: src/module/planner.rs
+
+use @std.fs
+use @std.path
+use lib.module.loader
+use .ast.{Module, Item, UseDecl, ImportItem}
+
+// ── Types ───────────────────────────────────────────────────────────
+
+pub type DependencyKind = { Import, Prelude }
+
+pub type PlannedDep = .{
+  canonical_path: String,
+  alias: String,
+  kind: DependencyKind,
+  items: Vector<ImportItem>?,
+}
+
+pub type DependencyPlan = .{
+  dependencies: Vector<PlannedDep>,
+  is_internal: Bool,
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+/// Scan a module's imports and produce a dependency plan.
+///
+/// Returns dependencies in source order (explicit imports first),
+/// then auto-injected prelude modules (sorted, deduplicated).
+/// Internal modules (stdlib/prelude) skip prelude injection.
+pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, String> {
+  stdlib_root := loader.resolve_stdlib_root(project_root)
+  prelude_root := loader.resolve_prelude_root(project_root)
+
+  deps: Vector<PlannedDep> = []
+  canonical_paths: Vector<String> = []
+
+  // Scan explicit imports
+  for item in module.items {
+    case item {
+      .Use(decl) => {
+        dep_path := resolve_import_path(decl, file_path, project_root, stdlib_root)
+        if !fs.exists(dep_path) {
+          label := format_import_path(decl)
+          return .Err("Cannot resolve module '${label}': expected file '${dep_path}'")
+        }
+        alias := module_alias(decl)
+        canonical_paths = canonical_paths.push(dep_path)
+        deps = deps.push(PlannedDep.{
+          canonical_path: dep_path,
+          alias,
+          kind: .Import,
+          items: decl.items,
+        })
+      },
+      _ => {},
+    }
+  }
+
+  // Determine if this file is internal (stdlib or prelude)
+  norm_file := path.normalize(file_path)
+  norm_stdlib := path.normalize(stdlib_root)
+  norm_prelude := path.normalize(prelude_root)
+  is_internal := norm_file.starts_with(norm_stdlib) or norm_file.starts_with(norm_prelude)
+
+  // Auto-inject prelude modules for non-internal files
+  if !is_internal {
+    prelude_modules := loader.list_prelude_modules(prelude_root)
+    for prelude_path in prelude_modules {
+      // Skip if already explicitly imported
+      if vec_contains(canonical_paths, prelude_path) { continue }
+      if !fs.exists(prelude_path) { continue }
+
+      stem := path.stem(prelude_path)
+      canonical_paths = canonical_paths.push(prelude_path)
+      deps = deps.push(PlannedDep.{
+        canonical_path: prelude_path,
+        alias: "__prelude_${stem}",
+        kind: .Prelude,
+        items: .None,
+      })
+    }
+  }
+
+  .Ok(DependencyPlan.{ dependencies: deps, is_internal })
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+/// Resolve a UseDecl to a file path based on its kind.
+fn resolve_import_path(decl: UseDecl, importing_file: String, project_root: String, stdlib_root: String) String {
+  if decl.is_stdlib {
+    loader.resolve_stdlib_module_path(stdlib_root, decl.path)
+  } else if decl.is_relative {
+    loader.resolve_relative_module_path(importing_file, decl.path)
+  } else {
+    loader.resolve_module_path(project_root, decl.path)
+  }
+}
+
+/// Compute the effective module alias from a UseDecl.
+/// Uses explicit `as alias` if present, otherwise the last path segment.
+fn module_alias(decl: UseDecl) String {
+  case decl.alias {
+    .Some(a) => a,
+    .None => {
+      if decl.path.len() > 0 {
+        decl.path[decl.path.len() - 1]
+      } else {
+        ""
+      }
+    },
+  }
+}
+
+/// Format an import path for error messages.
+fn format_import_path(decl: UseDecl) String {
+  joined := decl.path.join(".")
+  if decl.is_stdlib {
+    "@${joined}"
+  } else if decl.is_relative {
+    ".${joined}"
+  } else {
+    joined
+  }
+}
+
+fn vec_contains(v: Vector<String>, item: String) Bool {
+  for s in v {
+    if s == item { return true }
+  }
+  false
+}

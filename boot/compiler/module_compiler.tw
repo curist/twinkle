@@ -1,0 +1,236 @@
+// Multi-module compiler: recursive module loading with caching and cycle detection.
+//
+// Orchestrates the compilation of a module and all its transitive dependencies,
+// building up the resolved environment by merging each dependency's exports.
+//
+// Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
+
+use @std.fs
+use @std.path
+use compiler.parser
+use compiler.resolver.{
+  ResolvedEnv, ModuleExports, FunctionSig,
+  extract_exports, merge_module_exports, merge_selective_imports, merge_prelude_exports,
+}
+use compiler.checker
+use compiler.lower_core
+use compiler.monomorphize
+use compiler.lower_anf
+use compiler.opt.pipeline.{optimize_module}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.core_ir.{CoreModule}
+use compiler.anf.{AnfModule}
+use compiler.ast.{Module, ImportItem}
+use compiler.imports
+use compiler.pipeline.{PipelineArtifacts, builtin_env}
+use lib.module.loader
+
+// ── Types ───────────────────────────────────────────────────────────
+
+/// Accumulated state during multi-module compilation.
+pub type CompileState = .{
+  cache: Dict<String, ModuleExports>,       // canonical_path → exports
+  compiled_modules: Vector<CompiledModule>, // for linking
+  builtins: BuiltinRegistry,
+  project_root: String,
+}
+
+/// A single compiled module with its Core IR and resolved env.
+pub type CompiledModule = .{
+  path: String,
+  core: CoreModule,
+}
+
+/// Result of compiling a single module.
+type CompileModuleResult = .{
+  exports: ModuleExports,
+  state: CompileState,
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+/// Compile an entry file and all its transitive dependencies.
+///
+/// Returns PipelineArtifacts for the fully linked, monomorphized,
+/// and optimized program.
+pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
+  // Find project root
+  dir := path.dirname(entry_path)
+  project_root := loader.find_project_root(dir)
+
+  builtins := make_builtin_registry()
+  state := CompileState.{
+    cache: Dict.new(),
+    compiled_modules: [],
+    builtins,
+    project_root,
+  }
+
+  base_env := builtin_env()
+  importing_stack: Vector<String> = []
+
+  result := try compile_module(
+    entry_path,
+    "__entry",
+    base_env,
+    state,
+    importing_stack,
+  )
+  state = result.state
+
+  // For now, single-module pipeline (linking deferred to Step 4)
+  // Use the last compiled module (entry module) as the result
+  if state.compiled_modules.len() == 0 {
+    return .Err("no modules compiled")
+  }
+
+  entry_module := state.compiled_modules[state.compiled_modules.len() - 1]
+  core := entry_module.core
+  mono := monomorphize.monomorphize(core)
+  anf := lower_anf.lower_module(mono)
+  opt := optimize_module(anf)
+
+  .Ok(PipelineArtifacts.{
+    env: base_env,
+    builtins: state.builtins,
+    core,
+    mono,
+    anf,
+    opt,
+  })
+}
+
+// ── Internal ────────────────────────────────────────────────────────
+
+/// Compile a single module and all its dependencies recursively.
+///
+/// Each dependency is compiled against the base_env (builtins only), and
+/// only its exports are projected into the current module's environment.
+/// This mirrors the Rust stage0's snapshot/restore/project pattern.
+fn compile_module(
+  file_path: String,
+  alias: String,
+  base_env: ResolvedEnv,
+  state: CompileState,
+  importing_stack: Vector<String>,
+) Result<CompileModuleResult, String> {
+  // Normalize path for deduplication
+  canonical := path.normalize(file_path)
+
+  // Already compiled? Return cached exports.
+  case state.cache[canonical] {
+    .Some(exports) => {
+      return .Ok(CompileModuleResult.{ exports, state })
+    },
+    .None => {},
+  }
+
+  // Circular import detection
+  if vec_contains(importing_stack, canonical) {
+    return .Err("Circular import detected: '${file_path}' is already being compiled")
+  }
+
+  // Read and parse
+  source := case fs.read_text(file_path) {
+    .Ok(text) => text,
+    .Err(err) => {
+      return .Err("Cannot read '${file_path}': ${fs_error_message(err)}")
+    },
+  }
+
+  parsed := parser.parse(source, 0)
+  if parsed.diagnostics.len() > 0 {
+    return .Err("parse '${file_path}': ${parsed.diagnostics[0].message}")
+  }
+
+  // Plan dependencies
+  dep_plan := try imports.plan_dependencies(parsed.value, file_path, state.project_root)
+
+  // Push onto importing stack
+  stack := importing_stack.push(canonical)
+
+  // Compile dependencies and build up the env for this module
+  env := base_env
+  cur_state := state
+  for dep in dep_plan.dependencies {
+    // Compile dependency against base_env (isolation)
+    dep_result := try compile_module(
+      dep.canonical_path,
+      dep.alias,
+      base_env,
+      cur_state,
+      stack,
+    )
+    cur_state = dep_result.state
+
+    // Project exports into this module's env
+    case dep.kind {
+      .Import => {
+        case dep.items {
+          .Some(items) => {
+            env = env.merge_selective_imports(dep.alias, dep_result.exports, items)
+          },
+          .None => {
+            env = env.merge_module_exports(dep.alias, dep_result.exports)
+          },
+        }
+      },
+      .Prelude => {
+        env = env.merge_prelude_exports(dep_result.exports)
+      },
+    }
+  }
+
+  // Resolve this module with the accumulated env
+  resolved := env.resolve(parsed.value)
+  if resolved.diagnostics.len() > 0 {
+    return .Err("resolve '${file_path}': ${resolved.diagnostics[0].message}")
+  }
+
+  // Type-check
+  check_result := checker.check(parsed.value, resolved.env)
+  if check_result.diagnostics.len() > 0 {
+    return .Err("check '${file_path}': ${check_result.diagnostics[0].message}")
+  }
+
+  // Lower to Core IR
+  lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
+  if lowered.diagnostics.len() > 0 {
+    return .Err("lower '${file_path}': ${lowered.diagnostics[0].message}")
+  }
+
+  // Extract exports for importing modules
+  module_exports := extract_exports(resolved.env, parsed.value)
+
+  // Cache and accumulate
+  cur_state.cache[canonical] = module_exports
+  cur_state = CompileState.{
+    cache: cur_state.cache,
+    compiled_modules: cur_state.compiled_modules.push(CompiledModule.{
+      path: canonical,
+      core: lowered.module,
+    }),
+    builtins: cur_state.builtins,
+    project_root: cur_state.project_root,
+  }
+
+  .Ok(CompileModuleResult.{ exports: module_exports, state: cur_state })
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn vec_contains(v: Vector<String>, item: String) Bool {
+  for s in v {
+    if s == item { return true }
+  }
+  false
+}
+
+fn fs_error_message(err: fs.FsError) String {
+  case err {
+    .NotFound => "file not found",
+    .PermissionDenied => "permission denied",
+    .InvalidUtf8 => "input is not valid UTF-8",
+    .Other(msg) => msg,
+  }
+}

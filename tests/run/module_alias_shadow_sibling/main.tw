@@ -1,0 +1,7 @@
+use @std.path
+use .lib
+
+println("${lib.count_segments()}")
+
+// Expected output:
+//   2

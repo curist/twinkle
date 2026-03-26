@@ -52,6 +52,16 @@ fn run_wasm_string_methods() {
 }
 
 #[test]
+fn run_wasm_module_alias_shadow_local() {
+    check("tests/run/module_alias_shadow_local.tw");
+}
+
+#[test]
+fn run_wasm_module_alias_shadow_sibling() {
+    check("tests/run/module_alias_shadow_sibling/main.tw");
+}
+
+#[test]
 fn run_wasm_closures() {
     check("tests/run/closures.tw");
 }

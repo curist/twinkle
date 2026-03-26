@@ -12,6 +12,7 @@ use .ast.{
   Module, Item, TypeDecl, FunctionDecl, Param,
   TypeDef, TypeExpr, TypeExprKind, TypePath,
   RecordField, VariantDecl,
+  ImportItem,
 }
 
 // ── Resolved Types ──────────────────────────────────────────────────

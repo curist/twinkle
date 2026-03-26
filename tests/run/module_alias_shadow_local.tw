@@ -1,0 +1,13 @@
+use @std.path
+
+type Box = .{ segments: Vector<Int> }
+
+fn count_segments() Int {
+  path := Box.{ segments: [1, 2] }
+  path.segments.len()
+}
+
+println("${count_segments()}")
+
+// Expected output:
+//   2

@@ -668,10 +668,10 @@ pub fn suite() runner.Suite {
         .None => .Err("expected String.len after double registration"),
       }
     })
-    .test("T1 qualified type path not supported", fn() {
+    .test("T1 qualified type path resolves to undefined when module not imported", fn() {
       msgs := try resolve_errs("type Foo = .{ x: some_mod.SomeType }")
       found := false
-      for m in msgs { if m.contains("not yet supported") { found = true } }
+      for m in msgs { if m.contains("undefined type") { found = true } }
       try assert.is_true(found)
       .Ok({})
     })
@@ -1045,5 +1045,185 @@ pub fn suite() runner.Suite {
         },
         .None => .Err("String methods should exist"),
       }
+    })
+
+    // ── Module exports & merging ──
+
+    .test("extract_exports finds pub types", fn() {
+      src := "pub type Foo = .{ x: Int }\ntype Bar = .{ y: Bool }\npub type Baz = .{ z: String }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+      try assert.int_eq(exports.types.len(), 2)
+      // Should have Foo and Baz, not Bar
+      names: Vector<String> = collect et in exports.types { et.name }
+      try assert.vec_contains(names, "Foo")
+      try assert.vec_contains(names, "Baz")
+      .Ok({})
+    })
+
+    .test("extract_exports finds pub functions", fn() {
+      src := "pub fn add(a: Int, b: Int) Int { a + b }\nfn helper() { }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+      try assert.int_eq(exports.functions.len(), 1)
+      try assert.str_eq(exports.functions[0].name, "add")
+      .Ok({})
+    })
+
+    .test("extract_exports includes inherent methods", fn() {
+      src := "pub type Point = .{ x: Int, y: Int }\npub fn translate(p: Point, dx: Int) Point { Point.{ x: p.x + dx, y: p.y } }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+      case exports.methods["Point"] {
+        .Some(methods) => {
+          found := false
+          for m in methods { if m.method_name == "translate" { found = true } }
+          try assert.is_true(found)
+          .Ok({})
+        },
+        .None => .Err("Point should have methods"),
+      }
+    })
+
+    .test("merge_module_exports adds qualified types", fn() {
+      // Create exports with a type
+      src := "pub type Foo = .{ x: Int }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      // Merge into a fresh env under alias "m"
+      env := resolver.empty_env()
+      env = env.merge_module_exports("m", exports)
+
+      // Should be able to look up "m.Foo"
+      try assert.is_true(resolver.has_type(env, "m.Foo"))
+      // But not bare "Foo"
+      try assert.is_true(!resolver.has_type(env, "Foo"))
+      .Ok({})
+    })
+
+    .test("merge_module_exports adds qualified functions to method table", fn() {
+      src := "pub fn greet(name: String) String { name }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      env := resolver.empty_env()
+      env = env.merge_module_exports("mymod", exports)
+
+      // Should have "mymod.greet" as a function
+      try assert.is_true(resolver.has_function(env, "mymod.greet"))
+      // Should have method entry so mymod.greet(...) works via checker
+      case env.methods["mymod"] {
+        .Some(methods) => {
+          found := false
+          for m in methods { if m.method_name == "greet" { found = true } }
+          try assert.is_true(found)
+          .Ok({})
+        },
+        .None => .Err("mymod should have method entries"),
+      }
+    })
+
+    .test("merge_selective_imports adds unqualified bindings", fn() {
+      src := "pub fn add(a: Int, b: Int) Int { a + b }\npub fn sub(a: Int, b: Int) Int { a - b }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      items: Vector<ast.ImportItem> = [
+        .Value(ast.ImportValueItem.{ name: "add", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env()
+      env = env.merge_selective_imports("math", exports, items)
+
+      // "add" should be available unqualified
+      try assert.is_true(resolver.has_function(env, "add"))
+      // "sub" should only be qualified
+      try assert.is_true(!resolver.has_function(env, "sub"))
+      try assert.is_true(resolver.has_function(env, "math.sub"))
+      .Ok({})
+    })
+
+    .test("merge_selective_imports with alias renames", fn() {
+      src := "pub fn calculate(x: Int) Int { x }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      items: Vector<ast.ImportItem> = [
+        .Value(ast.ImportValueItem.{ name: "calculate", alias: .Some("calc"), span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env()
+      env = env.merge_selective_imports("mod", exports, items)
+
+      // Should be available as "calc", not "calculate"
+      try assert.is_true(resolver.has_function(env, "calc"))
+      try assert.is_true(!resolver.has_function(env, "calculate"))
+      .Ok({})
+    })
+
+    .test("merge_prelude_exports adds unqualified without alias", fn() {
+      src := "pub fn helper(x: Int) Int { x }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      env := resolver.empty_env()
+      env = env.merge_prelude_exports(exports)
+
+      // Should be available as unqualified "helper"
+      try assert.is_true(resolver.has_function(env, "helper"))
+      .Ok({})
+    })
+
+    .test("merge_prelude_exports does not shadow builtins", fn() {
+      // Pre-populate with a builtin "len"
+      builtin_sig := resolver.FunctionSig.{
+        name: "len", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.Int),
+      }
+      env := resolver.empty_env().with_functions([builtin_sig])
+
+      // Create prelude export with a different "len"
+      src := "pub fn len(x: Int) Int { x }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      env = env.merge_prelude_exports(exports)
+
+      // Should still have the builtin version (String param, not Int)
+      case resolver.lookup_function(env, "len") {
+        .Some(sig) => {
+          try assert.str_eq(mono_to_string(sig.params[0]), "String")
+          .Ok({})
+        },
+        .None => .Err("len should exist"),
+      }
+    })
+
+    .test("qualified type path resolves after merge", fn() {
+      // Create a module with a public type
+      src := "pub type Color = .{ r: Int, g: Int, b: Int }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      // Merge into env
+      env := resolver.empty_env()
+      env = env.merge_module_exports("gfx", exports)
+
+      // Now resolve a module that uses gfx.Color
+      src2 := "type Canvas = .{ bg: gfx.Color }"
+      r2 := env.resolve(parser.parse(src2, 0).value)
+      try assert.int_eq(r2.diagnostics.len(), 0)
+      .Ok({})
     })
 }

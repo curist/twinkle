@@ -156,6 +156,16 @@ fn string_methods() {
 }
 
 #[test]
+fn module_alias_shadow_local() {
+    check("tests/run/module_alias_shadow_local.tw");
+}
+
+#[test]
+fn module_alias_shadow_sibling() {
+    check("tests/run/module_alias_shadow_sibling/main.tw");
+}
+
+#[test]
 fn multi_module_alias() {
     check("tests/run/multi_module_alias/main.tw");
 }

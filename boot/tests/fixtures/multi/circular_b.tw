@@ -1,0 +1,4 @@
+// Circular import: b imports a.
+use .circular_a
+
+pub fn helper() Int { 1 }

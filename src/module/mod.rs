@@ -705,8 +705,11 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
     stage_trace: &mut Vec<CompileTraceEvent>,
     analysis_collector: &mut AnalysisCollector,
 ) -> Result<()> {
+    let compile_snapshot = snapshot_compile_env(state);
+    let mut projected_snapshot = compile_snapshot.clone();
+
     for dep in dependencies {
-        let env_snapshot = snapshot_compile_env(state);
+        restore_compile_env(state, compile_snapshot.clone());
         let result = compile_module_with_adapter(
             &dep.canonical_path,
             &dep.alias,
@@ -718,7 +721,7 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
             stage_trace,
             analysis_collector,
         );
-        restore_compile_env(state, env_snapshot);
+        restore_compile_env(state, projected_snapshot.clone());
         match result {
             Ok((dep_exports, _)) => {
                 let projection = match dep.kind {
@@ -729,6 +732,7 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
                     PlannedDependencyKind::Prelude => DependencyProjection::Prelude,
                 };
                 project_dependency_exports(state, projection, &dep_exports)?;
+                projected_snapshot = snapshot_compile_env(state);
             }
             Err(err) => {
                 if analysis_collector.is_enabled() {

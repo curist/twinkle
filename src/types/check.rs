@@ -197,6 +197,14 @@ impl TypeChecker {
         }
     }
 
+    fn resolves_as_value_binding(&self, name: &str) -> bool {
+        self.local_env.lookup(name).is_some() || self.value_env.has_value_binding(name)
+    }
+
+    fn can_use_module_alias(&self, name: &str) -> bool {
+        self.module_aliases.contains(name) && !self.resolves_as_value_binding(name)
+    }
+
     //
     // Top-level checking
     //
@@ -547,7 +555,7 @@ impl TypeChecker {
 
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind {
-                    if self.module_aliases.contains(alias.as_str()) {
+                    if self.can_use_module_alias(alias) {
                         let qualified = format!("{}.{}", alias, field);
                         if let Some(ty) = self.value_env.lookup(&qualified) {
                             // Plain pub value or monomorphic function: synthesize directly
@@ -893,7 +901,7 @@ impl TypeChecker {
             // First-class module method reference: Vector.len, String.concat, etc.
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind {
-                    if self.module_aliases.contains(alias.as_str()) {
+                    if self.can_use_module_alias(alias) {
                         let alias = alias.clone();
                         let field = field.clone();
                         return self
@@ -1217,7 +1225,7 @@ impl TypeChecker {
         {
             // Check for module-qualified call FIRST (before synthesising base type)
             if let ExprKind::Ident(alias) = &base.kind {
-                if self.module_aliases.contains(alias.as_str()) {
+                if self.can_use_module_alias(alias) {
                     let alias = alias.clone();
                     let method_name = method_name.clone();
                     let callee_id = callee.id;

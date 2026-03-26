@@ -1,0 +1,7 @@
+// Module that imports math_lib.
+use .math_lib
+
+fn main() {
+  result := math_lib.add(1, 2)
+  product := math_lib.multiply(3, 4)
+}

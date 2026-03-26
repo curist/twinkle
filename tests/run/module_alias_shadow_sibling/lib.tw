@@ -1,0 +1,6 @@
+type Box = .{ segments: Vector<Int> }
+
+pub fn count_segments() Int {
+  path := Box.{ segments: [1, 2] }
+  path.segments.len()
+}

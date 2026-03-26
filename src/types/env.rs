@@ -1051,6 +1051,11 @@ impl ValueEnv {
         self.functions.get(name)
     }
 
+    /// True when the name is bound by a top-level value (not a function/builtin).
+    pub fn has_value_binding(&self, name: &str) -> bool {
+        self.values.contains_key(name)
+    }
+
     /// Iterate all registered function signatures.
     pub fn all_functions(&self) -> impl Iterator<Item = (&str, &FunctionSignature)> {
         self.functions.iter().map(|(k, v)| (k.as_str(), v))

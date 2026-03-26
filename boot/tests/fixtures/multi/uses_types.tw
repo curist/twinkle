@@ -1,0 +1,7 @@
+// Module that imports types_lib and uses its type.
+use .types_lib
+
+fn main() {
+  p := types_lib.origin()
+  moved := types_lib.translate(p, 10, 20)
+}
