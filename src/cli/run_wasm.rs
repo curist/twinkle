@@ -14,10 +14,37 @@ use wasmtime::{
 struct HostOutput {
     stdout: String,
     stderr: String,
+    stream_output: bool,
     cwd: PathBuf,
     argv: Vec<String>,
     env: HashMap<String, String>,
     exit_code: Option<i64>,
+}
+
+impl HostOutput {
+    fn write_stdout(&mut self, text: &str) -> Result<()> {
+        self.stdout.push_str(text);
+        if self.stream_output {
+            let mut stdout = std::io::stdout().lock();
+            stdout
+                .write_all(text.as_bytes())
+                .context("failed to stream Wasm stdout")?;
+            stdout.flush().context("failed to flush Wasm stdout")?;
+        }
+        Ok(())
+    }
+
+    fn write_stderr(&mut self, text: &str) -> Result<()> {
+        self.stderr.push_str(text);
+        if self.stream_output {
+            let mut stderr = std::io::stderr().lock();
+            stderr
+                .write_all(text.as_bytes())
+                .context("failed to stream Wasm stderr")?;
+            stderr.flush().context("failed to flush Wasm stderr")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -210,7 +237,7 @@ impl HostImportTypes {
                 |mut caller, params, _results| {
                     ensure!(params.len() == 1, "host.print expected 1 argument");
                     let text = decode_runtime_string(&mut caller, &params[0])?;
-                    caller.data_mut().stdout.push_str(&text);
+                    caller.data_mut().write_stdout(&text)?;
                     Ok(())
                 },
             )?;
@@ -224,8 +251,7 @@ impl HostImportTypes {
                 |mut caller, params, _results| {
                     ensure!(params.len() == 1, "host.println expected 1 argument");
                     let text = decode_runtime_string(&mut caller, &params[0])?;
-                    caller.data_mut().stdout.push_str(&text);
-                    caller.data_mut().stdout.push('\n');
+                    caller.data_mut().write_stdout(&format!("{text}\n"))?;
                     Ok(())
                 },
             )?;
@@ -239,8 +265,7 @@ impl HostImportTypes {
                 |mut caller, params, _results| {
                     ensure!(params.len() == 1, "host.error expected 1 argument");
                     let text = decode_runtime_string(&mut caller, &params[0])?;
-                    caller.data_mut().stderr.push_str(&text);
-                    caller.data_mut().stderr.push('\n');
+                    caller.data_mut().write_stderr(&format!("{text}\n"))?;
                     Err(anyhow!("host.error: {text}"))
                 },
             )?;
@@ -254,7 +279,7 @@ impl HostImportTypes {
                 |mut caller, params, _results| {
                     ensure!(params.len() == 1, "host.eprint expected 1 argument");
                     let text = decode_runtime_string(&mut caller, &params[0])?;
-                    caller.data_mut().stderr.push_str(&text);
+                    caller.data_mut().write_stderr(&text)?;
                     Ok(())
                 },
             )?;
@@ -268,8 +293,7 @@ impl HostImportTypes {
                 |mut caller, params, _results| {
                     ensure!(params.len() == 1, "host.eprintln expected 1 argument");
                     let text = decode_runtime_string(&mut caller, &params[0])?;
-                    caller.data_mut().stderr.push_str(&text);
-                    caller.data_mut().stderr.push('\n');
+                    caller.data_mut().write_stderr(&format!("{text}\n"))?;
                     Ok(())
                 },
             )?;
@@ -979,6 +1003,7 @@ pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, Strin
         HostOutput {
             stdout: String::new(),
             stderr: String::new(),
+            stream_output: false,
             cwd,
             argv: vec![],
             env: HashMap::new(),
@@ -997,7 +1022,7 @@ pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, Strin
 }
 
 pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
-    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, &[])?;
+    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, &[], false)?;
     if let Some(code) = exit_code {
         if code != 0 {
             return Err(anyhow!("process exited with code {code}"));
@@ -1009,6 +1034,7 @@ pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
 fn run_wasm_capture_with_exit_code(
     path: &str,
     program_args: &[String],
+    stream_output: bool,
 ) -> Result<(String, String, Option<i64>)> {
     let wasm_input = load_wasm_input(path)?;
     let engine = build_engine()?;
@@ -1029,6 +1055,7 @@ fn run_wasm_capture_with_exit_code(
         HostOutput {
             stdout: String::new(),
             stderr: String::new(),
+            stream_output,
             cwd,
             argv,
             env,
@@ -1055,19 +1082,7 @@ pub fn run_wasm_file(path: &str) -> Result<()> {
 }
 
 pub fn run_wasm_file_with_args(path: &str, program_args: &[String]) -> Result<()> {
-    let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, program_args)?;
-    if !stdout.is_empty() {
-        print!("{stdout}");
-        std::io::stdout()
-            .flush()
-            .context("failed to flush stdout after Wasm execution")?;
-    }
-    if !stderr.is_empty() {
-        eprint!("{stderr}");
-        std::io::stderr()
-            .flush()
-            .context("failed to flush stderr after Wasm execution")?;
-    }
+    let (_stdout, _stderr, exit_code) = run_wasm_capture_with_exit_code(path, program_args, true)?;
     if let Some(code) = exit_code {
         if code != 0 {
             bail!("process exited with code {code}");
