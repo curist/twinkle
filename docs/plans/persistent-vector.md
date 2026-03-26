@@ -14,8 +14,16 @@ container/node types with typed element slots instead of boxing every element th
 
 - `Vector<T>` is backed by `rt.arr` using a flat Wasm GC array (`rt_types__Array`).
 - `set`, `concat`, and `slice` allocate and copy.
-- `push` is currently lowered via builder intrinsics to avoid worst-case O(N^2) patterns, but core representation is still flat.
-- Runtime implementation lives in `src/runtime/arr.rs`.
+- The boot compiler's current collection contract is split:
+  - user-facing `Vector.push/get/set/make` are compiler intrinsics
+  - raw runtime helpers are `len`, `set` (`vector_set_unsafe`), `concat`, `slice`
+  - `collect` and loop-push rewrites depend on `builder_new`, `builder_from`,
+    `builder_push`, and `builder_freeze`
+- Indexed assignment `xs[i] = v` currently lowers to the raw persistent update helper
+  (`vector_set_unsafe`), while safe `Vector.set` remains an intrinsic that wraps
+  bounds checks and returns `Option<Vector<T>>`.
+- Runtime implementation lives in `boot/compiler/codegen/runtime/arr.tw` and mirrors
+  stage0 `src/runtime/arr.rs`.
 - Element storage is erased through `anyref`, so scalar payloads are boxed at container
   boundaries and recovered on reads.
 
@@ -27,6 +35,10 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 - `push`: near O(1) amortized persistent update
 - Structural sharing across versions
 - Keep surface methods and indexing behavior unchanged
+- Preserve the current split between:
+  - safe user-facing operations (`Vector.get`, `Vector.set`)
+  - raw backend helpers used by lowering/optimization (`vector_set_unsafe`,
+    builders, optional in-place fast paths)
 - For concrete monomorphized instantiations, prefer typed container layouts over
   `Array<anyref>` payload storage:
   - `Vector<Int>` should store `i64` elements directly
@@ -76,11 +88,16 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 
 ### Task B: Rewrite `rt.arr` Operations for Tree Representation
 
-- Update `src/runtime/arr.rs`:
+- Update `boot/compiler/codegen/runtime/arr.tw` and stage0 `src/runtime/arr.rs`:
   - `make`, `get`, `set`, `concat`, `slice`, `len` to operate on persistent vector structure.
-  - Preserve exported names (`rt_arr__*`) initially to avoid broad call-site churn.
+  - Preserve the current boot compiler runtime surface:
+    - required raw helpers: `len`, `set`, `concat`, `slice`
+    - required builder helpers: `builder_new`, `builder_from`, `builder_push`,
+      `builder_freeze`
+    - parity helpers kept if still used by stage0 or future lowering: `make`, `get`
   - Implement path-copy update for `set`.
-  - Implement `push` path via tail buffering and root promotion logic.
+  - Keep `push` support compatible with the current intrinsic/builder split:
+    direct `vector_push` plus the builder fast path used by `collect` and loop rewrites.
   - Split helper families by concrete vector layout where needed (`*_i64`, `*_str`, etc.),
     or equivalent internal dispatch generated from the type key.
   - Avoid boxing/unboxing on element read/write paths for specialized families.
@@ -90,6 +107,10 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 - Rework `builder_new`, `builder_from`, `builder_push`, `builder_freeze` to build the new persistent vector efficiently.
 - Preserve current optimizer/lowerer contract:
   - `VECTOR_BUILDER_NEW/FROM/PUSH/FREEZE` in IR remains valid.
+- Treat builder ops as part of the current required backend surface, not an optional
+  optimization layer:
+  - `collect` lowering emits them directly
+  - loop-region uniqueness rewrites target them directly
 - Ensure builder paths also specialize by element layout so `push` into `Vector<Int>`
   does not route through `anyref`.
 
@@ -110,6 +131,8 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 
 - Verify `src/opt/uniqueness.rs` rewrite assumptions still hold.
 - Keep in-place rewrite legality tied to uniqueness proofs, but adjust runtime implementation of in-place helpers as needed.
+- Keep `vector_set_in_place` available as the optimizer-only fast path, even if it is
+  implemented as a thin wrapper over the persistent representation at first.
 - Verify uniqueness rewrites still target the correct specialized helper family.
 
 ### Task F: Specialization Policy
@@ -129,6 +152,10 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 - Existing vector tests continue to pass:
   - `tests/run/vectors.tw`
   - `tests/opt/*vector*`
+- Keep coverage for compiler hooks, not just user-visible methods:
+  - `collect` over vectors still lowers through builder ops correctly
+  - indexed assignment still preserves persistent semantics
+  - uniqueness rewrites still preserve semantics when switching to in-place helpers
 - Add performance-focused correctness tests:
   - Deep append chains
   - Repeated branching versions (structural sharing safety)

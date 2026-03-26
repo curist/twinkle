@@ -16,17 +16,63 @@ defines the contract any backend must satisfy.
 
 ---
 
-## Core Surface
+## Semantic Surface
 
-All sugar (`arr[i] = v`, `r.field = v`, `collect`, `for`) is lowered to these
-operations before codegen:
+This is the smallest collection API a backend should model semantically, even if the
+current boot compiler routes through a few extra helper symbols:
 
 - **Record update**: `RecordUpdate(r, field, expr)` — functional field replacement.
-- **Array**: `new`, `len`, `get`, `set`, `append`, `concat`, `slice`.
-- **Dict**: `new`, `len`, `get`, `set`, `remove`, `has`, `keys`.
-- **String**: `concat`, `substring`, `of_int`, `of_float`, `of_bool`.
-- **Option/Result**: nominal ADTs as in the language (no runtime tricks).
-- **Iterator helpers**: whatever `for`/`collect` lowering needs.
+- **Vector**: `new`, `len`, trap-on-OOB index read, safe `get`, persistent `set`,
+  `push`, `concat`, `slice`.
+- **Dict**: `new`, `len`, safe `get`, `set`, `remove`, `has`, `keys`.
+- **String**: `concat`, `substring`, byte indexing helpers, `of_int`, `of_float`,
+  `of_bool`.
+- **Option/Result**: nominal ADTs as in the language.
+
+## Current Boot Compiler Surface
+
+To plug into the current boot compiler without changing lowering/codegen, a backend
+needs a slightly larger operational surface than the semantic one above.
+
+User-visible collection methods are partly implemented as compiler intrinsics and
+partly as runtime calls:
+
+- **Vector runtime helpers**:
+  - `vector_len`
+  - `vector_set_unsafe`
+  - `vector_concat`
+  - `vector_slice`
+  - `vector_builder_new`
+  - `vector_builder_from`
+  - `vector_builder_push`
+  - `vector_builder_freeze`
+- **Vector intrinsics**:
+  - `vector_push`
+  - `vector_get`
+  - `vector_set`
+  - `vector_make`
+  - `vector_set_in_place` (optimizer fast path)
+- **Dict runtime helpers**:
+  - `dict_new`
+  - `dict_get` (`Option`-returning lookup)
+  - `dict_len`
+  - `dict_has`
+  - `dict_keys`
+  - `dict_set`
+  - `dict_remove`
+  - `dict_set_in_place` (optimizer fast path)
+  - `dict_remove_in_place` (optimizer fast path)
+- **Optional internal helper**:
+  - `dict_get_unsafe` if lowering/codegen still wants raw lookup without `Option`
+
+These extra helpers exist for current lowering and optimizer structure:
+
+- `collect` lowers through vector builder ops.
+- loop-region uniqueness rewrites target vector builder ops and in-place helpers.
+- `arr[i] = v` lowers to raw persistent update (`vector_set_unsafe`).
+- `m[k] = v` lowers to `dict_set`.
+- dict iteration currently depends on `Dict.keys`, so key order is observable through
+  `for`, `collect`, and prelude helpers like `Dict.values`.
 
 ---
 
@@ -36,6 +82,9 @@ operations before codegen:
 - Traps/errors match language semantics (OOB, div-by-zero, explicit `error`).
 - Types/shapes exposed to user code stay consistent (no leaking backend internals).
 - Structural sharing is allowed but not observable.
+- Optimizer-only in-place helpers are allowed, but they must only be used when the
+  compiler has already proved uniqueness. They are ABI hooks, not user-visible
+  semantic operations.
 
 ---
 
@@ -55,14 +104,21 @@ operations before codegen:
 ## Compiler Hooks
 
 - Target selection (e.g. `--target wasm-gc | js-immer | c-immer | jvm`).
-- A mapping table from core surface ops to backend symbols/imports.
-- One lowering pipeline that emits only the core surface; backends supply
-  implementations.
+- A mapping table from semantic ops to backend symbols/imports.
+- A second mapping layer, if needed, from current boot operational helpers
+  (`vector_builder_*`, `*_set_in_place`, etc.) to the backend's implementation.
+- One long-term lowering pipeline should ideally emit only the semantic surface, but
+  the current boot compiler still emits the larger operational surface listed above.
 
 ---
 
 ## Testing Strategy
 
-- Cross-backend conformance suite over the core surface.
+- Cross-backend conformance suite over the semantic surface.
 - Golden tests for traps/errors to ensure backend parity.
+- Backend-integration tests for the current operational hooks:
+  - builder-driven `collect`
+  - indexed assignment
+  - optimizer rewrites to in-place helpers
+  - dict iteration order via `keys`
 - Perf tests can be backend-specific but must not affect semantics.

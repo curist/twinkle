@@ -14,7 +14,16 @@ layouts and avoid boxing every key/value through `anyref`.
 - Runtime dict is an unsorted association list over array entries.
 - `get/has/set/remove` are linear scans in `src/runtime/dict.rs`.
 - Key comparison uses structural equality (`rt.core.eq`).
-- Type checker restricts keys to `Int | String`.
+- The current compiler/runtime contract is larger than the user-visible `Dict` method set:
+  - user-facing `Dict.get` is the safe `Option`-returning operation
+  - indexed assignment `m[k] = v` lowers directly to `dict_set`
+  - `for`/`collect` over dicts depend on `Dict.keys` and therefore observe its order
+  - the optimizer rewrites `dict_set` / `dict_remove` to `dict_set_in_place` /
+    `dict_remove_in_place` when uniqueness permits
+- Current implementations restrict dict keys to a small builtin family; the persistent
+  runtime should preserve those key semantics rather than broaden them implicitly.
+- Runtime implementation lives in `boot/compiler/codegen/runtime/dict.tw` and mirrors
+  stage0 `src/runtime/dict.rs`.
 - Key/value storage is erased through `anyref` slots, so concrete values cross boxing
   boundaries on lookup/update paths.
 
@@ -25,6 +34,9 @@ Adopt a persistent hash array mapped trie (HAMT):
 - `get/has/set/remove`: near O(1) average, O(log32 N) worst structural depth
 - Structural sharing for persistent updates
 - Stable semantics for iteration/key listing (`Dict.keys`)
+- Preserve the current split between:
+  - safe `Option`-returning lookup exposed to user code
+  - raw helpers used by lowering or optimizer fast paths
 - For concrete monomorphized instantiations, prefer typed dict/node layouts over
   universal `anyref` key/value fields:
   - `Dict<Int, Int>` stores direct `i64` keys and values
@@ -81,13 +93,17 @@ Adopt a persistent hash array mapped trie (HAMT):
 
 ### Task B: Reimplement `rt.dict`
 
-- Rewrite `src/runtime/dict.rs`:
+- Rewrite `boot/compiler/codegen/runtime/dict.tw` and stage0 `src/runtime/dict.rs`:
   - `make`: empty root, size 0
   - `get/has`: trie walk by hash fragments
   - `set`: path-copy insert/replace, size delta tracking
   - `remove`: path-copy delete + node compaction
   - `len`: O(1) from stored size
   - `keys`: deterministic traversal order (define and test)
+  - Preserve the current boot compiler runtime surface:
+    - semantic helpers: `make`, `len`, `keys`, `get_option`, `has`, `set`, `remove`
+    - optimizer helpers: `set_in_place`, `remove_in_place`
+    - optional raw lookup helper kept for parity/internal lowering: `get`
   - Split helper families by concrete `(K, V)` layout where needed, or generate internal
     dispatch from a type key.
   - Avoid boxing/unboxing on specialized key/value paths.
@@ -97,6 +113,8 @@ Adopt a persistent hash array mapped trie (HAMT):
 - Add internal hash helpers in runtime (likely `rt.core` or `rt.dict` local helpers).
 - Keep final key match guarded by existing equality semantics (`rt.core.eq`).
 - Ensure string hashing matches UTF-8 byte representation used in runtime strings.
+- `Dict.keys` order is part of today's observable behavior because dict iteration lowers
+  through `keys`; define the HAMT traversal order explicitly and keep it deterministic.
 - For specialized families, use typed key comparisons on hot paths where possible, falling
   back to structural equality only where semantics require it.
 
@@ -107,6 +125,7 @@ Adopt a persistent hash array mapped trie (HAMT):
   - `DICT_REMOVE` -> `DICT_REMOVE_IN_PLACE`
 - Redefine in-place helpers in HAMT runtime as safe destructive path mutation only when uniqueness guarantees hold.
 - Verify in-place helpers target the correct specialized dict family.
+- Treat those helpers as optimizer-only ABI, not user-visible surface API.
 
 ### Task E: Prelude and Snapshot Alignment
 
@@ -132,6 +151,10 @@ Adopt a persistent hash array mapped trie (HAMT):
   - `tests/run/dicts.tw`
   - `tests/run/dict_methods.tw`
   - `tests/opt/*dict*`
+- Keep coverage for compiler hooks:
+  - dict iteration order remains deterministic via `Dict.keys`
+  - `m[k] = v` still maps to the persistent update path
+  - uniqueness rewrites to in-place helpers preserve semantics
 - Add HAMT-specific tests:
   - Hash collision scenarios
   - Deep trie path updates/removes
