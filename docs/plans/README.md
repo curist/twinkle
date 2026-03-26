@@ -38,7 +38,7 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Codegen + linker | WAT emission, linking (Phase D) | In Progress | [boot-codegen.md](boot-codegen.md) |
+| Codegen + linker | WAT emission, linking (Phase D) | In Progress | [boot-codegen.md](boot-codegen.md), [boot-codegen-followup.md](boot-codegen-followup.md) |
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | Planned | — |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
