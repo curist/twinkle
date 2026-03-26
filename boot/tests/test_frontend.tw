@@ -1,0 +1,18 @@
+use tests.runner
+use tests.suites.parser_suite
+use tests.suites.resolver_suite
+use tests.suites.checker_suite
+use tests.suites.checker_coverage_suite
+use tests.suites.semantic_suite
+use tests.suites.semantic_closure_rebinding_suite
+use tests.suites.semantic_control_flow_suite
+
+runner.run_all([
+  parser_suite.suite(),
+  resolver_suite.suite(),
+  checker_suite.suite(),
+  checker_coverage_suite.suite(),
+  semantic_suite.suite(),
+  semantic_closure_rebinding_suite.suite(),
+  semantic_control_flow_suite.suite(),
+])
