@@ -11,6 +11,7 @@ use compiler.resolver.{ResolvedEnv}
 use compiler.core_ir.{CoreModule}
 use compiler.anf.{AnfModule}
 use compiler.codegen.codegen.{codegen}
+use compiler.util.{fs_error_message}
 use lib.source.span
 
 pub type PipelineArtifacts = .{
@@ -177,15 +178,6 @@ pub fn builtin_env() ResolvedEnv {
     .with_types(builtin_named_types.types, builtin_named_types.names)
     .with_functions(fns)
     .register_builtin_methods()
-}
-
-fn fs_error_message(err: fs.FsError) String {
-  case err {
-    .NotFound => "file not found",
-    .PermissionDenied => "permission denied",
-    .InvalidUtf8 => "input is not valid UTF-8",
-    .Other(msg) => msg,
-  }
 }
 
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {

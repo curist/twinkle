@@ -1144,9 +1144,10 @@ pub fn suite() runner.Suite {
 
       // "add" should be available unqualified
       try assert.is_true(resolver.has_function(env, "add"))
-      // "sub" should only be qualified
+      // Selective imports should not expose the parent module namespace.
       try assert.is_true(!resolver.has_function(env, "sub"))
-      try assert.is_true(resolver.has_function(env, "math.sub"))
+      try assert.is_true(!resolver.has_function(env, "math.add"))
+      try assert.is_true(!resolver.has_function(env, "math.sub"))
       .Ok({})
     })
 

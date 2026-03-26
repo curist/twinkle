@@ -2583,13 +2583,16 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
   for item in module.items {
     case item {
       .Use(decl) => {
-        alias := case decl.alias {
-          .Some(a) => a,
-          .None => {
-            if decl.path.len() > 0 { decl.path[decl.path.len() - 1] }
-            else { "" }
-          },
+        case decl.items {
+          .Some(_) => { continue },
+          .None => {},
         }
+        fallback := if decl.path.len() > 0 {
+          decl.path[decl.path.len() - 1]
+        } else {
+          ""
+        }
+        alias := decl.alias.unwrap_or(fallback)
         if alias != "" { aliases[alias] = true }
       },
       _ => {},

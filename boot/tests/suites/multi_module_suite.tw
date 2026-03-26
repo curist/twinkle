@@ -45,6 +45,17 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("selective import does not bring parent module into scope", fn() {
+      result := module_compiler.compile_entry("${dir}/selective_no_parent_scope.tw")
+      case result {
+        .Ok(_) => .Err("expected selective import to reject parent module access"),
+        .Err(msg) => {
+          try assert.is_true(msg.contains("math_lib.add") or msg.contains("math_lib"))
+          .Ok({})
+        },
+      }
+    })
+
     .test("circular import detected", fn() {
       result := module_compiler.compile_entry("${dir}/circular_a.tw")
       case result {

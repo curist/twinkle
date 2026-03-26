@@ -1,0 +1,10 @@
+use @std.fs
+
+pub fn fs_error_message(err: fs.FsError) String {
+  case err {
+    .NotFound => "file not found",
+    .PermissionDenied => "permission denied",
+    .InvalidUtf8 => "input is not valid UTF-8",
+    .Other(msg) => msg,
+  }
+}

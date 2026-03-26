@@ -114,3 +114,4 @@ Related historical context outside this folder:
 | [boot-codegen.md](boot-codegen.md) | Boot codegen Phase D — Wasm IR, type planning, boundary insertion, WAT emission, linker, runtime modules |
 | [boot-codegen-hardening.md](boot-codegen-hardening.md) | Boot codegen hardening — checked narrowing, closure repr, deterministic string pool, match unification, typed module globals, boundary tightening |
 | [boot-codegen-followup.md](boot-codegen-followup.md) | Boot codegen follow-up — ABI metadata consolidation, match-emitter unification, structural M11 validation, typed-ref boundary fix |
+| [boot-multi-module-cleanup.md](boot-multi-module-cleanup.md) | Follow-up cleanup after landing boot multi-module compilation steps 1–3; selective-import parity, canonical path caching, helper dedup, and snapshot/diagnostic polish |

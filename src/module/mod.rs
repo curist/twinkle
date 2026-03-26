@@ -709,6 +709,19 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
     let mut projected_snapshot = compile_snapshot.clone();
 
     for dep in dependencies {
+        // Two-phase snapshot/restore:
+        //
+        // compile_snapshot is the clean environment from before any dependency
+        // projections. Each dependency compiles against that same isolated base,
+        // so dependency N cannot observe projections from dependencies 1..N-1.
+        //
+        // projected_snapshot is the accumulated environment after projecting the
+        // previously compiled dependencies. Once recursive compilation returns, we
+        // restore that accumulated state and then project the current dependency on
+        // top of it.
+        //
+        // State outside the snapshot (for example global counters and hashes)
+        // continues to accumulate across both phases.
         restore_compile_env(state, compile_snapshot.clone());
         let result = compile_module_with_adapter(
             &dep.canonical_path,

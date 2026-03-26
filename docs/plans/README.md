@@ -39,7 +39,7 @@ from stage0, bootstrapping sequence)
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
-| Integration | Multi-module, CLI, compatibility suite | Planned | — |
+| Integration | Multi-module, CLI, compatibility suite | In Progress | [boot-multi-module.md](boot-multi-module.md) |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
 
 ### Later — Tooling & Ecosystem

@@ -23,7 +23,9 @@ use compiler.anf.{AnfModule}
 use compiler.ast.{Module, ImportItem}
 use compiler.imports
 use compiler.pipeline.{PipelineArtifacts, builtin_env}
+use compiler.util.{fs_error_message}
 use lib.module.loader
+use lib.source.diagnostic.{Diagnostic}
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -33,6 +35,7 @@ pub type CompileState = .{
   compiled_modules: Vector<CompiledModule>, // for linking
   builtins: BuiltinRegistry,
   project_root: String,
+  canonical_roots: imports.CanonicalRoots,
 }
 
 /// A single compiled module with its Core IR and resolved env.
@@ -44,6 +47,7 @@ pub type CompiledModule = .{
 /// Result of compiling a single module.
 type CompileModuleResult = .{
   exports: ModuleExports,
+  env: ResolvedEnv,
   state: CompileState,
 }
 
@@ -57,6 +61,8 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   // Find project root
   dir := path.dirname(entry_path)
   project_root := loader.find_project_root(dir)
+  canonical_roots := imports.make_canonical_roots(project_root)
+  canonical_entry := imports.canonical_module_path(entry_path, canonical_roots)
 
   builtins := make_builtin_registry()
   state := CompileState.{
@@ -64,13 +70,14 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     compiled_modules: [],
     builtins,
     project_root,
+    canonical_roots,
   }
 
   base_env := builtin_env()
   importing_stack: Vector<String> = []
 
   result := try compile_module(
-    entry_path,
+    canonical_entry,
     "__entry",
     base_env,
     state,
@@ -91,7 +98,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   opt := optimize_module(anf)
 
   .Ok(PipelineArtifacts.{
-    env: base_env,
+    env: result.env,
     builtins: state.builtins,
     core,
     mono,
@@ -115,36 +122,36 @@ fn compile_module(
   importing_stack: Vector<String>,
 ) Result<CompileModuleResult, String> {
   // Normalize path for deduplication
-  canonical := path.normalize(file_path)
+  canonical := imports.canonical_module_path(file_path, state.canonical_roots)
 
   // Already compiled? Return cached exports.
   case state.cache[canonical] {
     .Some(exports) => {
-      return .Ok(CompileModuleResult.{ exports, state })
+      return .Ok(CompileModuleResult.{ exports, env: base_env, state })
     },
     .None => {},
   }
 
   // Circular import detection
-  if vec_contains(importing_stack, canonical) {
+  if importing_stack.contains(canonical) {
     return .Err("Circular import detected: '${file_path}' is already being compiled")
   }
 
   // Read and parse
-  source := case fs.read_text(file_path) {
+  source := case fs.read_text(canonical) {
     .Ok(text) => text,
     .Err(err) => {
-      return .Err("Cannot read '${file_path}': ${fs_error_message(err)}")
+      return .Err("Cannot read '${canonical}': ${fs_error_message(err)}")
     },
   }
 
   parsed := parser.parse(source, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse '${file_path}': ${parsed.diagnostics[0].message}")
+    return .Err(format_stage_error("parse", canonical, parsed.diagnostics))
   }
 
   // Plan dependencies
-  dep_plan := try imports.plan_dependencies(parsed.value, file_path, state.project_root)
+  dep_plan := try imports.plan_dependencies(parsed.value, canonical, state.project_root)
 
   // Push onto importing stack
   stack := importing_stack.push(canonical)
@@ -184,19 +191,19 @@ fn compile_module(
   // Resolve this module with the accumulated env
   resolved := env.resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve '${file_path}': ${resolved.diagnostics[0].message}")
+    return .Err(format_stage_error("resolve", canonical, resolved.diagnostics))
   }
 
   // Type-check
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check '${file_path}': ${check_result.diagnostics[0].message}")
+    return .Err(format_stage_error("check", canonical, check_result.diagnostics))
   }
 
   // Lower to Core IR
   lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
   if lowered.diagnostics.len() > 0 {
-    return .Err("lower '${file_path}': ${lowered.diagnostics[0].message}")
+    return .Err(format_stage_error("lower", canonical, lowered.diagnostics))
   }
 
   // Extract exports for importing modules
@@ -212,25 +219,19 @@ fn compile_module(
     }),
     builtins: cur_state.builtins,
     project_root: cur_state.project_root,
+    canonical_roots: cur_state.canonical_roots,
   }
 
-  .Ok(CompileModuleResult.{ exports: module_exports, state: cur_state })
+  .Ok(CompileModuleResult.{ exports: module_exports, env: resolved.env, state: cur_state })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn vec_contains(v: Vector<String>, item: String) Bool {
-  for s in v {
-    if s == item { return true }
+fn format_stage_error(stage: String, file_path: String, diagnostics: Vector<Diagnostic>) String {
+  msg := diagnostics[0].message
+  if diagnostics.len() > 1 {
+    extra := diagnostics.len() - 1
+    return "${stage} '${file_path}': ${msg} (and ${extra} more)"
   }
-  false
-}
-
-fn fs_error_message(err: fs.FsError) String {
-  case err {
-    .NotFound => "file not found",
-    .PermissionDenied => "permission denied",
-    .InvalidUtf8 => "input is not valid UTF-8",
-    .Other(msg) => msg,
-  }
+  "${stage} '${file_path}': ${msg}"
 }

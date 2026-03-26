@@ -367,13 +367,14 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
 }
 
 pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
-  cur := env.merge_module_exports(alias, exports)
+  hidden_alias := hidden_import_alias(alias)
+  cur := env.merge_module_exports(hidden_alias, exports)
   methods := cur.methods
 
   for item in items {
     case item {
       .Value(value_item) => {
-        source_name := qualify_name(alias, value_item.name)
+        source_name := qualify_name(hidden_alias, value_item.name)
         binding_name := import_binding_name(value_item.name, value_item.alias)
         case cur.lookup_function(source_name) {
           .Some(sig) => {
@@ -383,7 +384,7 @@ pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleE
         }
       },
       .Type(type_item) => {
-        source_name := qualify_name(alias, type_item.name)
+        source_name := qualify_name(hidden_alias, type_item.name)
         binding_name := import_binding_name(type_item.name, type_item.alias)
         case cur.lookup_type(source_name) {
           .Some(entry) => {
@@ -837,6 +838,10 @@ fn import_binding_name(name: String, alias: String?) String {
     .Some(a) => a,
     .None => name,
   }
+}
+
+fn hidden_import_alias(alias: String) String {
+  if alias == "" { "$import$" } else { "$import$.${alias}" }
 }
 
 fn plan_export_type_ids(env: ResolvedEnv, exports: ModuleExports) Dict<Int, TypeId> {
