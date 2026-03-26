@@ -36,6 +36,7 @@ use tests.suites.linker_suite
 use tests.suites.runtime_suite
 use tests.suites.codegen_integration_suite
 use tests.suites.module_loader_suite
+use tests.suites.dependency_graph_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -75,4 +76,5 @@ runner.run_all([
   runtime_suite.suite(),
   codegen_integration_suite.suite(),
   module_loader_suite.suite(),
+  dependency_graph_suite.suite(),
 ])

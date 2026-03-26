@@ -1,0 +1,302 @@
+use tests.runner
+use tests.assert
+use lib.graph.dependency as graph
+
+fn get_vec(d: Dict<String, Vector<String>>, key: String) Vector<String> {
+  case d[key] {
+    .Some(v) => v,
+    .None => {
+      empty: Vector<String> = []
+      empty
+    },
+  }
+}
+
+fn unwrap_sorted(result: Result<Vector<String>, graph.GraphError>) Result<Vector<String>, String> {
+  case result {
+    .Ok(v) => .Ok(v),
+    .Err(e) => {
+      case e {
+        .Cycle(nodes) => .Err("unexpected cycle"),
+      }
+    },
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("dependency graph")
+
+    // -- empty --
+
+    .test("empty graph has no forward or reverse entries", fn() {
+      g := graph.empty()
+      try assert.int_eq(g.forward.len(), 0)
+      try assert.int_eq(g.reverse.len(), 0)
+      .Ok({})
+    })
+
+    // -- set_dependencies --
+
+    .test("set_dependencies adds forward entries", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b", "c"])
+      fwd := get_vec(g.forward, "a")
+      try assert.int_eq(fwd.len(), 2)
+      try assert.vec_contains(fwd, "b")
+      try assert.vec_contains(fwd, "c")
+      .Ok({})
+    })
+
+    .test("set_dependencies adds reverse entries", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b", "c"])
+      rev_b := get_vec(g.reverse, "b")
+      rev_c := get_vec(g.reverse, "c")
+      try assert.vec_contains(rev_b, "a")
+      try assert.vec_contains(rev_c, "a")
+      .Ok({})
+    })
+
+    .test("set_dependencies updates removes old deps", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b", "c"])
+        .set_dependencies("a", ["c", "d"])
+      fwd := get_vec(g.forward, "a")
+      try assert.int_eq(fwd.len(), 2)
+      try assert.vec_contains(fwd, "c")
+      try assert.vec_contains(fwd, "d")
+      // b should no longer have a as reverse dependent
+      rev_b := get_vec(g.reverse, "b")
+      try assert.int_eq(rev_b.len(), 0)
+      // d should have a as reverse dependent
+      rev_d := get_vec(g.reverse, "d")
+      try assert.vec_contains(rev_d, "a")
+      .Ok({})
+    })
+
+    .test("set_dependencies with empty deps removes forward entry", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b"])
+        .set_dependencies("a", [])
+      try assert.is_none(g.forward["a"])
+      rev_b := get_vec(g.reverse, "b")
+      try assert.int_eq(rev_b.len(), 0)
+      .Ok({})
+    })
+
+    .test("set_dependencies deduplicates deps", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b", "b", "c", "b"])
+      fwd := get_vec(g.forward, "a")
+      try assert.int_eq(fwd.len(), 2)
+      try assert.vec_contains(fwd, "b")
+      try assert.vec_contains(fwd, "c")
+      // reverse should have exactly one entry for a
+      rev_b := get_vec(g.reverse, "b")
+      try assert.int_eq(rev_b.len(), 1)
+      .Ok({})
+    })
+
+    .test("set_dependencies idempotent re-registration", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b", "c"])
+        .set_dependencies("a", ["b", "c"])
+      fwd := get_vec(g.forward, "a")
+      try assert.int_eq(fwd.len(), 2)
+      rev_b := get_vec(g.reverse, "b")
+      try assert.int_eq(rev_b.len(), 1)
+      rev_c := get_vec(g.reverse, "c")
+      try assert.int_eq(rev_c.len(), 1)
+      .Ok({})
+    })
+
+    .test("multiple modules with shared dependency", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["shared"])
+        .set_dependencies("b", ["shared"])
+      rev := get_vec(g.reverse, "shared")
+      try assert.int_eq(rev.len(), 2)
+      try assert.vec_contains(rev, "a")
+      try assert.vec_contains(rev, "b")
+      .Ok({})
+    })
+
+    // -- reverse_dependents_closure --
+
+    .test("reverse_dependents_closure single hop", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b"])
+      result := g.reverse_dependents_closure("b")
+      try assert.vec_contains(result, "b")
+      try assert.vec_contains(result, "a")
+      try assert.int_eq(result.len(), 2)
+      .Ok({})
+    })
+
+    .test("reverse_dependents_closure multi-hop", fn() {
+      // c depends on b, b depends on a
+      g := graph.empty()
+        .set_dependencies("c", ["b"])
+        .set_dependencies("b", ["a"])
+      result := g.reverse_dependents_closure("a")
+      try assert.vec_contains(result, "a")
+      try assert.vec_contains(result, "b")
+      try assert.vec_contains(result, "c")
+      try assert.int_eq(result.len(), 3)
+      .Ok({})
+    })
+
+    .test("reverse_dependents_closure returns sorted result", fn() {
+      g := graph.empty()
+        .set_dependencies("z", ["x"])
+        .set_dependencies("a", ["x"])
+        .set_dependencies("m", ["x"])
+      result := g.reverse_dependents_closure("x")
+      // Should be sorted: a, m, x, z
+      try assert.int_eq(result.len(), 4)
+      try assert.str_eq(result[0], "a")
+      try assert.str_eq(result[1], "m")
+      try assert.str_eq(result[2], "x")
+      try assert.str_eq(result[3], "z")
+      .Ok({})
+    })
+
+    .test("reverse_dependents_closure unchanged node returns only itself", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b"])
+      result := g.reverse_dependents_closure("a")
+      try assert.int_eq(result.len(), 1)
+      try assert.vec_contains(result, "a")
+      .Ok({})
+    })
+
+    .test("reverse_dependents_closure disconnected graph", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["b"])
+        .set_dependencies("x", ["y"])
+      result := g.reverse_dependents_closure("b")
+      try assert.int_eq(result.len(), 2)
+      try assert.vec_contains(result, "a")
+      try assert.vec_contains(result, "b")
+      .Ok({})
+    })
+
+    // -- topo_sort --
+
+    .test("topo_sort linear chain", fn() {
+      // c -> b -> a (c depends on b, b depends on a)
+      g := graph.empty()
+        .set_dependencies("c", ["b"])
+        .set_dependencies("b", ["a"])
+      result := try unwrap_sorted(g.topo_sort(["c"]))
+      // a first (no deps), then b, then c
+      try assert.int_eq(result.len(), 3)
+      try assert.str_eq(result[0], "a")
+      try assert.str_eq(result[1], "b")
+      try assert.str_eq(result[2], "c")
+      .Ok({})
+    })
+
+    .test("topo_sort diamond", fn() {
+      // d -> b, d -> c, b -> a, c -> a
+      g := graph.empty()
+        .set_dependencies("d", ["b", "c"])
+        .set_dependencies("b", ["a"])
+        .set_dependencies("c", ["a"])
+      result := try unwrap_sorted(g.topo_sort(["d"]))
+      try assert.int_eq(result.len(), 4)
+      try assert.str_eq(result[0], "a")
+      // b and c sorted deterministically
+      try assert.str_eq(result[1], "b")
+      try assert.str_eq(result[2], "c")
+      try assert.str_eq(result[3], "d")
+      .Ok({})
+    })
+
+    .test("topo_sort single node no deps", fn() {
+      g := graph.empty()
+      result := try unwrap_sorted(g.topo_sort(["a"]))
+      try assert.int_eq(result.len(), 1)
+      try assert.str_eq(result[0], "a")
+      .Ok({})
+    })
+
+    .test("topo_sort multiple roots", fn() {
+      // a -> shared, b -> shared
+      g := graph.empty()
+        .set_dependencies("a", ["shared"])
+        .set_dependencies("b", ["shared"])
+      result := try unwrap_sorted(g.topo_sort(["a", "b"]))
+      try assert.int_eq(result.len(), 3)
+      try assert.str_eq(result[0], "shared")
+      try assert.str_eq(result[1], "a")
+      try assert.str_eq(result[2], "b")
+      .Ok({})
+    })
+
+    .test("topo_sort detects self-cycle", fn() {
+      g := graph.empty()
+        .set_dependencies("a", ["a"])
+      result := g.topo_sort(["a"])
+      case result {
+        .Ok(_) => assert.fail("expected cycle error"),
+        .Err(e) => {
+          case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              .Ok({})
+            },
+          }
+        },
+      }
+    })
+
+    .test("topo_sort detects multi-node cycle", fn() {
+      // a -> b -> c -> a
+      g := graph.empty()
+        .set_dependencies("a", ["b"])
+        .set_dependencies("b", ["c"])
+        .set_dependencies("c", ["a"])
+      result := g.topo_sort(["a"])
+      case result {
+        .Ok(_) => assert.fail("expected cycle error"),
+        .Err(e) => {
+          case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              try assert.vec_contains(nodes, "b")
+              try assert.vec_contains(nodes, "c")
+              try assert.int_eq(nodes.len(), 3)
+              .Ok({})
+            },
+          }
+        },
+      }
+    })
+
+    .test("topo_sort cycle with non-cyclic parts", fn() {
+      // d -> a, a -> b -> c -> a (cycle)
+      // d is blocked by the cycle so also appears in unresolved nodes
+      g := graph.empty()
+        .set_dependencies("d", ["a"])
+        .set_dependencies("a", ["b"])
+        .set_dependencies("b", ["c"])
+        .set_dependencies("c", ["a"])
+      result := g.topo_sort(["d"])
+      case result {
+        .Ok(_) => assert.fail("expected cycle error"),
+        .Err(e) => {
+          case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              try assert.vec_contains(nodes, "b")
+              try assert.vec_contains(nodes, "c")
+              try assert.vec_contains(nodes, "d")
+              try assert.int_eq(nodes.len(), 4)
+              .Ok({})
+            },
+          }
+        },
+      }
+    })
+}

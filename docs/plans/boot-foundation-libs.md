@@ -8,8 +8,8 @@ Phase E (Integration + Self-Hosting) of the [self-hosting plan](self-hosting.md)
 
 ## Status
 
-- **Milestone B (`boot/lib/module`)** — In progress
-- **Milestone C (`boot/lib/graph`)** — Not started
+- **Milestone B (`boot/lib/module`)** — Done
+- **Milestone C (`boot/lib/graph`)** — Done
 - **Milestone D (`boot/lib/query`)** — Deferred until multi-module pipeline is working
 
 Phases A–D of the self-hosted compiler are complete (2026-03-26), so all

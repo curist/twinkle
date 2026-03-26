@@ -1,0 +1,238 @@
+// Dependency graph for module compilation ordering and invalidation.
+//
+// Reference: src/query/graph.rs
+
+pub type DependencyGraph = .{
+  forward: Dict<String, Vector<String>>,
+  reverse: Dict<String, Vector<String>>,
+}
+
+pub type GraphError = { Cycle(Vector<String>) }
+
+/// Create an empty dependency graph.
+pub fn empty() DependencyGraph {
+  DependencyGraph.{
+    forward: Dict.new(),
+    reverse: Dict.new(),
+  }
+}
+
+/// Set the dependencies for a module, updating forward and reverse maps.
+/// Returns a new graph with the updated state.
+pub fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>) DependencyGraph {
+  fwd := g.forward
+  rev := g.reverse
+
+  // Deduplicate incoming deps (match Rust HashSet semantics)
+  deps := dedup(deps)
+
+  // Get previous deps for this module (empty if new)
+  prev: Vector<String> = case fwd[module] {
+    .Some(v) => v,
+    .None => [],
+  }
+
+  // Remove reverse entries for deps no longer present
+  for old_dep in prev {
+    if !vec_contains(deps, old_dep) {
+      rev = remove_from_reverse(rev, old_dep, module)
+    }
+  }
+
+  // Add reverse entries for newly added deps
+  for new_dep in deps {
+    if !vec_contains(prev, new_dep) {
+      rev = add_to_reverse(rev, new_dep, module)
+    }
+  }
+
+  // Update forward map
+  if deps.len() == 0 {
+    fwd = fwd.remove(module)
+  } else {
+    fwd[module] = deps
+  }
+
+  DependencyGraph.{ forward: fwd, reverse: rev }
+}
+
+/// Compute the transitive closure of reverse dependents for a changed module.
+/// Returns all modules that (transitively) depend on `changed`, including
+/// `changed` itself. Result is sorted for determinism.
+pub fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<String> {
+  visited: Dict<String, Bool> = Dict.new()
+  visited[changed] = true
+  queue: Vector<String> = [changed]
+  qi := 0
+
+  for qi < queue.len() {
+    cur := queue[qi]
+    qi = qi + 1
+
+    case g.reverse[cur] {
+      .Some(dependents) => {
+        for dep in dependents {
+          if !visited.has(dep) {
+            visited[dep] = true
+            queue = queue.push(dep)
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+
+  queue.sort_by(fn(a: String, b: String) Order {
+    if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+  })
+}
+
+/// Topologically sort the graph starting from the given roots.
+/// Returns modules in dependency order (dependencies before dependents).
+/// Returns GraphError.Cycle if a cycle is detected.
+pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String>, GraphError> {
+  // Collect all reachable nodes from roots via forward edges
+  reachable: Dict<String, Bool> = Dict.new()
+  stack: Vector<String> = roots
+  si := 0
+  for si < stack.len() {
+    node := stack[si]
+    si = si + 1
+    if !reachable.has(node) {
+      reachable[node] = true
+      case g.forward[node] {
+        .Some(deps) => {
+          for dep in deps {
+            if !reachable.has(dep) {
+              stack = stack.push(dep)
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+
+  // Compute dep-count: how many reachable dependencies each node has.
+  // A node with dep_count 0 has no dependencies and can be processed first.
+  dep_count: Dict<String, Int> = Dict.new()
+  all_nodes := reachable.keys()
+  for node in all_nodes {
+    count := 0
+    case g.forward[node] {
+      .Some(deps) => {
+        for dep in deps {
+          if reachable.has(dep) {
+            count = count + 1
+          }
+        }
+      },
+      .None => {},
+    }
+    dep_count[node] = count
+  }
+
+  // Kahn's algorithm: process nodes with dep_count 0 (no dependencies)
+  // Use a sorted queue for deterministic output
+  queue: Vector<String> = collect node in all_nodes {
+    deg := case dep_count[node] { .Some(n) => n, .None => 0 }
+    if deg == 0 { node } else { continue }
+  }
+  queue = queue.sort_by(fn(a: String, b: String) Order {
+    if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+  })
+
+  result: Vector<String> = []
+  qi := 0
+
+  for qi < queue.len() {
+    node := queue[qi]
+    qi = qi + 1
+    result = result.push(node)
+
+    // Find nodes that depend on this node (via reverse map)
+    // and decrement their dep_count
+    case g.reverse[node] {
+      .Some(dependents) => {
+        freed: Vector<String> = []
+        for dep in dependents {
+          if reachable.has(dep) {
+            deg := case dep_count[dep] { .Some(n) => n, .None => 0 }
+            deg = deg - 1
+            dep_count[dep] = deg
+            if deg == 0 {
+              freed = freed.push(dep)
+            }
+          }
+        }
+        freed = freed.sort_by(fn(a: String, b: String) Order {
+          if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+        })
+        queue = queue.concat(freed)
+      },
+      .None => {},
+    }
+  }
+
+  if result.len() < reachable.keys().len() {
+    // Remaining nodes form a cycle — collect them for diagnostics
+    cycle_nodes := collect node in all_nodes {
+      deg := case dep_count[node] { .Some(n) => n, .None => 0 }
+      if deg > 0 { node } else { continue }
+    }
+    cycle_nodes = cycle_nodes.sort_by(fn(a: String, b: String) Order {
+      if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+    })
+    .Err(GraphError.Cycle(cycle_nodes))
+  } else {
+    .Ok(result)
+  }
+}
+
+// -- helpers --
+
+fn dedup(v: Vector<String>) Vector<String> {
+  seen: Dict<String, Bool> = Dict.new()
+  collect item in v {
+    if seen.has(item) { continue }
+    seen[item] = true
+    item
+  }
+}
+
+fn vec_contains(v: Vector<String>, item: String) Bool {
+  for s in v {
+    if s == item { return true }
+  }
+  false
+}
+
+fn remove_from_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<String, Vector<String>> {
+  case rev[dep] {
+    .Some(dependents) => {
+      filtered := collect d in dependents {
+        if d != module { d } else { continue }
+      }
+      if filtered.len() == 0 {
+        rev.remove(dep)
+      } else {
+        rev[dep] = filtered
+        rev
+      }
+    },
+    .None => rev,
+  }
+}
+
+fn add_to_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<String, Vector<String>> {
+  case rev[dep] {
+    .Some(dependents) => {
+      rev[dep] = dependents.push(module)
+      rev
+    },
+    .None => {
+      rev[dep] = [module]
+      rev
+    },
+  }
+}
