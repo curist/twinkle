@@ -11,11 +11,13 @@ use tests.suites.stdlib_host_suite
 use tests.suites.source_suite
 use tests.suites.module_loader_suite
 use tests.suites.dependency_graph_suite
+use tests.suites.query_keys_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
   module_loader_suite.suite(),
   dependency_graph_suite.suite(),
+  query_keys_suite.suite(),
   api_option_result_suite.suite(),
   api_cell_suite.suite(),
   api_vector_suite.suite(),
