@@ -387,6 +387,16 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    .test("if else pushes expected type into sum variants", fn() {
+      src := "type Cmp = { Lt, Eq, Gt }\nfn cmp(a: Int, b: Int) Cmp { if a < b { .Lt } else if a > b { .Gt } else { .Eq } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("collect continue branch diverges in check mode", fn() {
+      src := "fn f(xs: Vector<Int>) Vector<Int> { collect x in xs { if x > 0 { x } else { continue } } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
     .test("if no else is void", fn() {
       src := "fn f(x: Int) Void { if x > 0 { x } }"
       r := try check_ok(src)

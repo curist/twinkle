@@ -1,211 +1,192 @@
 # Phase E: Multi-Module Compilation for Boot Compiler
 
-## Context
+## Status
 
-The boot compiler (self-hosted in Twinkle) currently compiles only single files. The resolver skips `UseDecl` items, `builtin_env()` is the only source of bindings, and the pipeline takes a source string — not a module graph. Phase E adds multi-module support so the boot compiler can compile programs with `use` imports.
+Partially landed.
 
-Foundation libraries are ready: module loader (`boot/lib/module/loader.tw`), dependency graph (`boot/lib/graph/dependency.tw`), query keys (`boot/lib/query/keys.tw`).
+Implemented:
+- Import scanning and dependency planning
+- Module export extraction and env merging
+- Recursive multi-module compilation with cache and cycle detection
+- Qualified module calls through checker/lowerer
+- Import and end-to-end multi-module test coverage
 
-## Architecture Overview
+Not yet implemented:
+- Core IR linking across compiled modules
+- Pipeline entrypoint for multi-module compilation
+- `boot/main.tw` integration with the multi-module pipeline
 
-The Rust stage0 pattern:
-1. **Plan**: scan AST for imports → list of `PlannedDependency`
-2. **Compile recursively**: for each dep, snapshot env → compile → restore → project exports
-3. **Link**: merge Core IR modules, remap FuncIds to global namespace
+This doc now reflects current repository state instead of the original greenfield plan.
 
-The boot compiler will follow the same pattern, adapted to its functional env-threading style.
+## Current State
 
-## Implementation Plan
+The boot compiler no longer behaves as a strict single-file compiler at the frontend level.
+For a chosen entry file, it can:
 
-### Step 1: Import Scanner (`boot/compiler/imports.tw`)
+1. Parse the entry module
+2. Scan `use` imports
+3. Resolve transitive dependencies recursively
+4. Compile each dependency against the builtin/base env
+5. Project dependency exports into the importing module env
+6. Resolve, check, and lower each module
 
-New file. Scans parsed AST for `UseDecl` items, resolves file paths, produces a dependency plan.
+That work lives in:
+- [imports.tw](/Users/curist/playground/rust/twinkle/boot/compiler/imports.tw)
+- [resolver.tw](/Users/curist/playground/rust/twinkle/boot/compiler/resolver.tw)
+- [module_compiler.tw](/Users/curist/playground/rust/twinkle/boot/compiler/module_compiler.tw)
+- [checker.tw](/Users/curist/playground/rust/twinkle/boot/compiler/checker.tw)
+- [lower_core.tw](/Users/curist/playground/rust/twinkle/boot/compiler/lower_core.tw)
 
-**Types:**
-```
-type DependencyKind = { Import, Prelude }
+The missing piece is that the compiled modules are not yet linked into one global Core IR module. `module_compiler.compile_entry()` still returns the entry module's lowered Core IR and leaves linking deferred.
 
-type PlannedDep = .{
-  canonical_path: String,
-  alias: String,
-  kind: DependencyKind,
-  items: Vector<ImportItem>?,  // selective imports
-}
+## Landed Work
 
-type DependencyPlan = .{
-  dependencies: Vector<PlannedDep>,
-}
-```
+### Step 1: Import Scanner
 
-**Functions:**
-- `fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, String>`
-  - Iterates `module.items`, extracts `Item.Use(decl)` entries
-  - For each UseDecl:
-    - `is_stdlib` → resolve via `loader.resolve_stdlib_module_path()`
-    - `is_relative` → resolve via `loader.resolve_relative_module_path()`
-    - else → resolve via `loader.resolve_module_path()` from project root
-  - Compute alias from `decl.alias` or last path segment
-  - Auto-add prelude modules (for non-prelude/stdlib files) via `loader.list_prelude_modules()`
-  - Deduplicate prelude against explicit imports
+Implemented in [imports.tw](/Users/curist/playground/rust/twinkle/boot/compiler/imports.tw).
 
-**Key files:**
-- `boot/compiler/ast.tw:16-40` — `UseDecl`, `ImportItem` types (already exist)
-- `boot/lib/module/loader.tw` — path resolution functions
+Current behavior:
+- Scans `Item.Use(decl)` entries
+- Resolves:
+  - stdlib imports via `resolve_stdlib_module_path`
+  - relative imports via `resolve_relative_module_path`
+  - absolute imports via `resolve_module_path(project_root, ...)`
+- Computes import aliases from explicit `as` or last path segment
+- Auto-injects prelude modules for non-internal modules
+- Skips prelude injection for `prelude/` and `stdlib/`
+- Deduplicates prelude modules against explicit imports
+- Canonicalizes `boot/prelude` and `boot/stdlib` symlinked paths against the real top-level `prelude/` and `stdlib/`
 
-### Step 2: Module Exports & Environment Merging (extend `boot/compiler/resolver.tw`)
+Important cleanup already made:
+- The temporary boot-specific absolute-import-root remap was removed
+- Callers/tests now use the actual boot project root instead of relying on repo-root special casing
 
-Add types and functions for extracting what a module exports and merging those into an importing module's env.
+### Step 2: Module Exports and Environment Merging
 
-**New types in resolver.tw:**
-```
-type ModuleExports = .{
-  types: Vector<ExportedType>,
-  functions: Vector<FunctionSig>,
-  methods: Dict<String, Vector<MethodEntry>>,
-}
+Implemented in [resolver.tw](/Users/curist/playground/rust/twinkle/boot/compiler/resolver.tw).
 
-type ExportedType = .{
-  name: String,
-  entry: TypeEntry,
-}
-```
+Implemented pieces:
+- `ExportedType`
+- `ModuleExports`
+- `extract_exports`
+- `merge_module_exports`
+- `merge_selective_imports`
+- `merge_prelude_exports`
 
-**New functions in resolver.tw:**
-- `fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports`
-  - Scan module items for `pub` types and functions
-  - Collect their resolved entries from env
-  - Include inherent methods for exported types
+Behavior now supported:
+- Exporting `pub` types and functions from a module
+- Registering qualified imported names like `math.add` / `gfx.Point`
+- Registering unqualified selective imports
+- Registering prelude exports invisibly
+- Preserving inherent methods for imported/prelude-visible types
+- Resolving qualified type paths through the merged type namespace
 
-- `fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv`
-  - For each exported type: `add_type(entry, "alias.TypeName")`
-  - For each exported function: `add_function(sig_with_qualified_name)`
-  - Register in methods dict: `methods["alias"] += [MethodEntry.{ method_name: "func", function_name: "alias.func" }]`
-  - Register inherent methods for imported types (so dot syntax works)
+### Step 3: Recursive Multi-Module Compilation
 
-- `fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv`
-  - First call `merge_module_exports` for qualified access
-  - Then for each ImportItem: add unqualified binding too
+Implemented in [module_compiler.tw](/Users/curist/playground/rust/twinkle/boot/compiler/module_compiler.tw).
 
-- `fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv`
-  - Register functions directly (unqualified) — prelude functions are globally available
-  - Register inherent methods for prelude types
-  - No module alias (prelude is invisible)
+Implemented pieces:
+- `CompileState`
+- `compile_entry`
+- `compile_module`
+- export cache keyed by canonical module path
+- circular import detection via `importing_stack`
+- dependency isolation: deps compile against the base env, not the parent's merged env
 
-**Fix `resolve_type_path` for qualified types:**
-- Currently errors on multi-segment paths (line 646: "qualified type paths are not yet supported")
-- Change to: join segments with "." → look up `"alias.TypeName"` in `type_index`
+Current compile flow:
+1. Find project root from the entry file directory
+2. Parse the module
+3. Plan dependencies
+4. Recursively compile dependencies
+5. Merge dependency exports into a fresh env derived from builtins
+6. Resolve/check/lower the current module
+7. Cache exports and accumulate the lowered module
 
-### Step 3: Multi-Module Compiler (`boot/compiler/module_compiler.tw`)
+Additional support landed outside `module_compiler.tw`:
+- [lower_core.tw](/Users/curist/playground/rust/twinkle/boot/compiler/lower_core.tw) now assigns `FuncId`s for visible imported functions, so qualified imported calls lower correctly
+- [checker.tw](/Users/curist/playground/rust/twinkle/boot/compiler/checker.tw) and [resolver.tw](/Users/curist/playground/rust/twinkle/boot/compiler/resolver.tw) support module-qualified call/type resolution
 
-New file. Orchestrates recursive module compilation with caching and cycle detection.
-
-**Types:**
-```
-type CompileState = .{
-  cache: Dict<String, ModuleExports>,     // canonical_path → exports
-  compiled_modules: Vector<CompiledModule>,  // for linking
-  project_root: String,
-}
-
-type CompiledModule = .{
-  path: String,
-  core: CoreModule,
-  env: ResolvedEnv,
-}
-```
-
-**Functions:**
-- `fn compile_entry(path: String) Result<PipelineArtifacts, String>`
-  - Find project root via `loader.find_project_root()`
-  - Initialize CompileState with empty cache
-  - Call `compile_module()` for entry file
-  - Link all compiled modules
-  - Mono → ANF → optimize the linked result
-
-- `fn compile_module(file_path: String, alias: String, base_env: ResolvedEnv, state: CompileState, importing_stack: Vector<String>) Result<CompileModuleResult, String>`
-  - Canonicalize path, check cache → return cached exports
-  - Check `importing_stack` for cycles → error
-  - Read & parse source file
-  - Plan dependencies via `imports.plan_dependencies()`
-  - For each dependency:
-    - Recursively `compile_module(dep_path, dep_alias, base_env, state, stack.push(file_path))`
-    - Merge dep's exports into current env (qualified + selective)
-  - Resolve module with accumulated env
-  - Type-check
-  - Lower to Core IR
-  - Extract exports
-  - Cache exports, accumulate CompiledModule
-  - Return exports
-
-**Key insight from Rust stage0:** Dependencies are compiled against the **base** env (builtins only), not the parent's accumulated env. Each dependency gets a clean env plus its own transitive deps. Only the dependency's exports are projected into the parent.
+## Remaining Work
 
 ### Step 4: Core IR Linking
 
-New file or extend `boot/compiler/core_linker.tw`.
+Not implemented.
 
-- `fn link_core_modules(modules: Vector<CompiledModule>, entry_path: String, builtins: BuiltinRegistry) CoreModule`
-  - Topo-sort modules by dependency order
-  - For each module, remap local FuncIds to globally unique IDs
-  - Merge all function definitions
-  - Wire up entry module's init as the linked init
+This remains the main functional gap.
 
-**FuncId remapping approach (from Rust stage0 `src/module/mod.rs:856+`):**
-- Each module has local FuncIds starting at `USER_FUNC_START`
-- Linker assigns global IDs sequentially across modules (in topo order)
-- Builds `local_to_global: Dict<Int, Int>` per module
-- Walks all function bodies, remapping `GlobalFunc(local_id)` → `GlobalFunc(global_id)`
+What is missing:
+- A boot-side Core IR linker that combines all compiled modules
+- Global `FuncId` remapping across modules
+- Rewriting inter-module `GlobalFunc(...)` references to globally linked IDs
+- Producing a linked init/entry arrangement instead of just returning the entry module's Core IR
 
-### Step 5: Pipeline Integration
+Current evidence:
+- [module_compiler.tw](/Users/curist/playground/rust/twinkle/boot/compiler/module_compiler.tw) still contains the note `linking deferred to Step 4`
+- `compiled_modules` are accumulated but not linked
+- `compile_entry()` currently returns the last compiled module's `core`
 
-Update `boot/compiler/pipeline.tw`:
-- Add `compile_entry_path(path: String) Result<PipelineArtifacts, String>` that uses module_compiler
-- Keep `compile_source()` and `compile_path()` for single-file (test) usage
+Important nuance:
+- There is already a Wasm linker in [codegen/linker.tw](/Users/curist/playground/rust/twinkle/boot/compiler/codegen/linker.tw), but that is later in the pipeline and is not the Core IR linker described by this plan
 
-Update `boot/main.tw`:
-- Wire `ir` command to use `compile_entry_path` when multi-module is needed
-- Eventually wire `run` and `build` commands
+### Step 5: Pipeline and CLI Integration
 
-## File Changes Summary
+Not implemented.
 
-| File | Action |
-|------|--------|
-| `boot/compiler/imports.tw` | **New** — import scanning & dependency planning |
-| `boot/compiler/resolver.tw` | **Modify** — add ModuleExports, merge functions, fix qualified type paths |
-| `boot/compiler/module_compiler.tw` | **New** — recursive compile loop |
-| `boot/compiler/core_linker.tw` | **New** — Core IR linking with FuncId remapping |
-| `boot/compiler/pipeline.tw` | **Modify** — add `compile_entry_path()` |
-| `boot/main.tw` | **Modify** — wire multi-module compilation |
-| `boot/tests/suites/imports_suite.tw` | **New** — tests for import scanning |
-| `boot/tests/suites/multi_module_suite.tw` | **New** — end-to-end multi-module tests |
+Still missing:
+- `pipeline.compile_entry_path(...)`
+- pipeline selection between single-file and multi-module entry compilation
+- wiring `boot/main.tw` `ir`/`run`/`build` to the multi-module path
 
-## Phasing
+Current state:
+- [pipeline.tw](/Users/curist/playground/rust/twinkle/boot/compiler/pipeline.tw) still exposes only `compile_source` and `compile_path`
+- [main.tw](/Users/curist/playground/rust/twinkle/boot/main.tw) still calls `pipeline.compile_path(file)`
 
-**Batch 1 (Steps 1-2):** Import scanner + exports/merging. Testable in isolation with unit tests.
+## Tests
 
-**Batch 2 (Step 3):** Recursive compile loop. Testable with simple two-file programs.
+Implemented test coverage:
+- [imports_suite.tw](/Users/curist/playground/rust/twinkle/boot/tests/suites/imports_suite.tw)
+- [multi_module_suite.tw](/Users/curist/playground/rust/twinkle/boot/tests/suites/multi_module_suite.tw)
 
-**Batch 3 (Steps 4-5):** Core IR linking + pipeline integration. Full end-to-end multi-module compilation.
+These currently cover:
+- import planning
+- prelude injection behavior
+- stdlib/relative/absolute import resolution
+- selective import preservation
+- single-module compile via `compile_entry`
+- relative imports
+- transitive dependency chains
+- circular import detection
 
-## Verification
+## Verified State
+
+Currently verified passing:
 
 ```bash
-# Run existing tests (should still pass — no regressions)
+cargo run --release -- run -i boot/tests/test_api.tw
 cargo run --release -- run boot/tests/test_api.tw
-
-# Run new import/multi-module tests
-cargo run --release -- run boot/tests/test_api.tw
-# (after adding new suites to test_api.tw)
-
-# Manual test: create a two-file program and compile via boot compiler
-# boot/tests/fixtures/multi/a.tw imports boot/tests/fixtures/multi/b.tw
 ```
 
-## Key Reference Files
+Those include the landed import and multi-module suites.
 
-- `src/module/planner.rs` — Rust import scanning (reference for Step 1)
-- `src/module/context.rs` — Rust CompileState, export registration (reference for Step 2-3)
-- `src/module/mod.rs:412-696` — Rust compile_module loop (reference for Step 3)
-- `src/module/mod.rs:856-955` — Rust link() (reference for Step 4)
-- `boot/compiler/checker.tw:2516-2541` — `collect_module_aliases` (already reads UseDecl!)
-- `boot/compiler/checker.tw:746-773` — `try_synth_module_qualified_call` (uses method table for module calls)
-- `boot/compiler/lower_core.tw:678-717` — lowerer handles module-qualified calls via `method_calls` + `func_table`
+## Recommended Next Batch
+
+1. Add a boot Core IR linker, likely in `boot/compiler/core_linker.tw`
+2. Change `module_compiler.compile_entry()` to link `compiled_modules` instead of returning the entry module directly
+3. Add `pipeline.compile_entry_path(...)`
+4. Update `boot/main.tw` to use the multi-module entry pipeline for file-based commands
+5. Add end-to-end tests that require true cross-module linking rather than just successful per-module lowering
+
+## File Reality Check
+
+The original plan described several files as new. That is no longer true.
+
+Already present and active:
+- [imports.tw](/Users/curist/playground/rust/twinkle/boot/compiler/imports.tw)
+- [module_compiler.tw](/Users/curist/playground/rust/twinkle/boot/compiler/module_compiler.tw)
+- [imports_suite.tw](/Users/curist/playground/rust/twinkle/boot/tests/suites/imports_suite.tw)
+- [multi_module_suite.tw](/Users/curist/playground/rust/twinkle/boot/tests/suites/multi_module_suite.tw)
+
+Still effectively missing relative to the plan:
+- `boot/compiler/core_linker.tw`
+- multi-module pipeline entrypoint in [pipeline.tw](/Users/curist/playground/rust/twinkle/boot/compiler/pipeline.tw)
+- CLI wiring in [main.tw](/Users/curist/playground/rust/twinkle/boot/main.tw)

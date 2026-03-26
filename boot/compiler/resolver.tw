@@ -63,6 +63,17 @@ pub type FunctionSig = .{
   ret: MonoType?,
 }
 
+pub type ExportedType = .{
+  name: String,
+  entry: TypeEntry,
+}
+
+pub type ModuleExports = .{
+  types: Vector<ExportedType>,
+  functions: Vector<FunctionSig>,
+  methods: Dict<String, Vector<MethodEntry>>,
+}
+
 // ── Resolved Environment ────────────────────────────────────────────
 
 pub type TypeEntry = .{
@@ -183,8 +194,10 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   m := env.methods
   m = register_methods(m, "String", [
     me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
-    me("concat", "string_concat"), me("char_code_at", "string_char_code_at"),
+    me("concat", "string_concat"), me("char_code_at", "char_code_at"),
     me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
+    me("from_char_code", "from_char_code"), me("from_code_point", "from_code_point"),
+    me("from_utf8", "string_from_utf8"),
     me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
     me("starts_with", "starts_with"), me("ends_with", "ends_with"),
     me("split", "split"), me("trim", "trim"),
@@ -194,27 +207,31 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   m = register_methods(m, "Vector", [
     me("len", "vector_len"), me("push", "vector_push"), me("get", "vector_get"),
     me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
+    me("make", "vector_make"),
     me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
     me("any", "any"), me("all", "all"), me("contains", "contains"),
     me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
   ])
   m = register_methods(m, "Dict", [
-    me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
+    me("new", "dict_new"), me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
     me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
     me("remove", "dict_remove"),
   ])
   m = register_methods(m, "Cell", [
-    me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
+    me("new", "cell_new"), me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
   ])
   m = register_methods(m, "Int", [
-    me("to_string", "int_to_string"), me("to_float", "int_to_float"), me("compare", "compare"),
+    me("to_string", "int_to_string"), me("to_float", "int_to_float"),
+    me("from_string", "int_from_string"), me("compare", "compare"),
   ])
   m = register_methods(m, "Float", [
-    me("to_string", "float_to_string"), me("to_int", "float_to_int"), me("compare", "compare"),
+    me("to_string", "float_to_string"), me("to_int", "float_to_int"),
+    me("from_string", "float_from_string"), me("compare", "compare"),
   ])
   m = register_methods(m, "Bool", [me("to_string", "bool_to_string")])
   m = register_methods(m, "Byte", [
-    me("to_string", "byte_to_string"), me("to_int", "byte_to_int"), me("compare", "compare"),
+    me("to_string", "byte_to_string"), me("to_int", "byte_to_int"),
+    me("from_int", "byte_from_int"), me("compare", "compare"),
   ])
   m = register_methods(m, "Option", [
     me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
@@ -224,7 +241,8 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("map", "map"), me("and_then", "and_then"), me("transpose", "transpose"),
   ])
   m = register_methods(m, "Iterator", [
-    me("next", "next"), me("map", "map"), me("filter", "filter"),
+    me("next", "iterator_next"), me("unfold", "iterator_unfold"),
+    me("map", "map"), me("filter", "filter"),
     me("take", "take"), me("to_vector", "to_vector"),
   ])
   env.with_methods(m)
@@ -259,6 +277,168 @@ pub type ResolveResult = .{
 
 // ── Public API ──────────────────────────────────────────────────────
 
+pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
+  exported_types: Vector<ExportedType> = []
+  exported_functions: Vector<FunctionSig> = []
+  exported_function_names: Dict<String, Bool> = Dict.new()
+
+  for item in module.items {
+    case item {
+      .Type(decl) => {
+        if !decl.is_pub { continue }
+        case env.lookup_type(decl.name) {
+          .Some(entry) => {
+            exported_types = exported_types.push(ExportedType.{ name: decl.name, entry })
+          },
+          .None => {},
+        }
+      },
+      .Function(decl) => {
+        if !decl.is_pub { continue }
+        case env.lookup_function(decl.name) {
+          .Some(sig) => {
+            exported_functions = exported_functions.push(sig)
+            exported_function_names[sig.name] = true
+          },
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  exported_methods: Dict<String, Vector<MethodEntry>> = Dict.new()
+  for exported in exported_types {
+    case env.methods[exported.name] {
+      .Some(entries) => {
+        visible := collect entry in entries {
+          if !exported_function_names.has(entry.function_name) { continue }
+          entry
+        }
+        if visible.len() > 0 {
+          exported_methods[exported.name] = visible
+        }
+      },
+      .None => {},
+    }
+  }
+
+  ModuleExports.{ types: exported_types, functions: exported_functions, methods: exported_methods }
+}
+
+pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv {
+  type_ids := plan_export_type_ids(env, exports)
+  cur := env
+
+  for exported in exports.types {
+    qualified := qualify_name(alias, exported.name)
+    cur = cur.add_type(remap_type_entry(exported.entry, qualified, type_ids), qualified)
+  }
+
+  for sig in exports.functions {
+    qualified := qualify_name(alias, sig.name)
+    cur = cur.add_function(remap_function_sig(sig, qualified, type_ids))
+  }
+
+  methods := cur.methods
+  module_entries := collect sig in exports.functions {
+    me(sig.name, qualify_name(alias, sig.name))
+  }
+  if module_entries.len() > 0 {
+    methods = register_methods(methods, alias, module_entries)
+  }
+
+  for exported in exports.types {
+    qualified_type := qualify_name(alias, exported.name)
+    case exports.methods[exported.name] {
+      .Some(entries) => {
+        qualified_methods := collect entry in entries {
+          me(entry.method_name, qualify_name(alias, entry.function_name))
+        }
+        if qualified_methods.len() > 0 {
+          methods = register_methods(methods, qualified_type, qualified_methods)
+        }
+      },
+      .None => {},
+    }
+  }
+
+  cur.with_methods(methods)
+}
+
+pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+  cur := env.merge_module_exports(alias, exports)
+  methods := cur.methods
+
+  for item in items {
+    case item {
+      .Value(value_item) => {
+        source_name := qualify_name(alias, value_item.name)
+        binding_name := import_binding_name(value_item.name, value_item.alias)
+        case cur.lookup_function(source_name) {
+          .Some(sig) => {
+            cur = cur.add_function(remap_function_sig(sig, binding_name, Dict.new()))
+          },
+          .None => {},
+        }
+      },
+      .Type(type_item) => {
+        source_name := qualify_name(alias, type_item.name)
+        binding_name := import_binding_name(type_item.name, type_item.alias)
+        case cur.lookup_type(source_name) {
+          .Some(entry) => {
+            cur = cur.add_type(entry, binding_name)
+            case cur.methods[source_name] {
+              .Some(entries) => {
+                methods = register_methods(methods, binding_name, entries)
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+      },
+    }
+  }
+
+  cur.with_methods(methods)
+}
+
+pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv {
+  type_ids := plan_export_type_ids(env, exports)
+  cur := env
+  visible_functions: Dict<String, Bool> = Dict.new()
+
+  for exported in exports.types {
+    if cur.has_type(exported.name) { continue }
+    cur = cur.add_type(remap_type_entry(exported.entry, exported.name, type_ids), exported.name)
+  }
+
+  for sig in exports.functions {
+    if cur.has_function(sig.name) { continue }
+    cur = cur.add_function(remap_function_sig(sig, sig.name, type_ids))
+    visible_functions[sig.name] = true
+  }
+
+  methods := cur.methods
+  for exported in exports.types {
+    case exports.methods[exported.name] {
+      .Some(entries) => {
+        visible := collect entry in entries {
+          if !visible_functions.has(entry.function_name) { continue }
+          entry
+        }
+        if visible.len() > 0 {
+          methods = register_methods(methods, exported.name, visible)
+        }
+      },
+      .None => {},
+    }
+  }
+
+  cur.with_methods(methods)
+}
+
 pub fn resolve(env: ResolvedEnv, module: Module) ResolveResult {
   // Pass 1: collect declarations
   p1 := collect_declarations(env, module)
@@ -277,7 +457,8 @@ fn is_reserved_type_name(name: String) Bool {
     "Int" => true, "Float" => true, "Bool" => true, "Byte" => true,
     "String" => true, "Void" => true, "Never" => true,
     "Vector" => true, "Dict" => true, "Option" => true, "Result" => true,
-    "Cell" => true, "Range" => true, "Iterator" => true,
+    "Cell" => true, "Range" => true, "Iterator" => true, "IterItem" => true,
+    "UnfoldStep" => true, "Order" => true,
     _ => false,
   }
 }
@@ -644,7 +825,107 @@ fn resolve_type_path(env: ResolvedEnv, path: TypePath, args: Vector<MonoType>, t
   }
 
   // Multi-segment path: qualified type reference (e.g., module.Type)
-  type_err(diag.error(path.span, "qualified type paths are not yet supported"))
+  env.resolve_single_name(path.segments.join("."), args, type_vars, path.span)
+}
+
+fn qualify_name(prefix: String, name: String) String {
+  if prefix == "" { name } else { "${prefix}.${name}" }
+}
+
+fn import_binding_name(name: String, alias: String?) String {
+  case alias {
+    .Some(a) => a,
+    .None => name,
+  }
+}
+
+fn plan_export_type_ids(env: ResolvedEnv, exports: ModuleExports) Dict<Int, TypeId> {
+  ids: Dict<Int, TypeId> = Dict.new()
+  next_id := env.types.len()
+  for exported in exports.types {
+    ids[exported.entry.id.id] = TypeId.{ id: next_id }
+    next_id = next_id + 1
+  }
+  ids
+}
+
+fn remap_type_entry(entry: TypeEntry, new_name: String, type_ids: Dict<Int, TypeId>) TypeEntry {
+  new_entry := entry
+  case type_ids[entry.id.id] {
+    .Some(new_id) => { new_entry.id = new_id },
+    .None => {},
+  }
+  case entry.def {
+    .Some(def) => { new_entry.def = .Some(remap_type_def(def, new_name, type_ids)) },
+    .None => {},
+  }
+  new_entry
+}
+
+fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, TypeId>) ResolvedTypeDef {
+  case def {
+    .Record(_, type_params, fields) => {
+      remapped_fields := collect field in fields {
+        ResolvedField.{ name: field.name, ty: remap_mono_type(field.ty, type_ids) }
+      }
+      .Record(new_name, type_params, remapped_fields)
+    },
+    .Sum(_, type_params, variants) => {
+      remapped_variants := collect variant in variants {
+        fields := collect field in variant.fields {
+          remap_mono_type(field, type_ids)
+        }
+        ResolvedVariant.{ name: variant.name, fields }
+      }
+      .Sum(new_name, type_params, remapped_variants)
+    },
+    .Alias(_, type_params, target) => {
+      .Alias(new_name, type_params, remap_mono_type(target, type_ids))
+    },
+  }
+}
+
+fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, TypeId>) FunctionSig {
+  params := collect ty in sig.params {
+    remap_mono_type(ty, type_ids)
+  }
+  ret: MonoType? = case sig.ret {
+    .Some(ty) => .Some(remap_mono_type(ty, type_ids)),
+    .None => .None,
+  }
+  FunctionSig.{
+    name: new_name,
+    type_params: sig.type_params,
+    param_names: sig.param_names,
+    params,
+    ret,
+  }
+}
+
+fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
+  case ty {
+    .Named(tid, args) => {
+      remapped_args := collect arg in args {
+        remap_mono_type(arg, type_ids)
+      }
+      new_tid := case type_ids[tid.id] {
+        .Some(mapped) => mapped,
+        .None => tid,
+      }
+      MonoType.Named(new_tid, remapped_args)
+    },
+    .Vector(inner) => MonoType.Vector(remap_mono_type(inner, type_ids)),
+    .Dict(k, v) => MonoType.Dict(remap_mono_type(k, type_ids), remap_mono_type(v, type_ids)),
+    .Function(params, ret) => {
+      remapped_params := collect param in params {
+        remap_mono_type(param, type_ids)
+      }
+      MonoType.Function(remapped_params, remap_mono_type(ret, type_ids))
+    },
+    .Optional(inner) => MonoType.Optional(remap_mono_type(inner, type_ids)),
+    .Result(ok, err) => MonoType.Result(remap_mono_type(ok, type_ids), remap_mono_type(err, type_ids)),
+    _ => ty,
+  }
 }
 
 fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, type_vars: Vector<String>, s: span.Span) TypeResolveResult {

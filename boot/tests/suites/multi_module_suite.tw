@@ -1,13 +1,10 @@
 use tests.runner
 use tests.assert
-use @std.proc
 use compiler.module_compiler
+use lib.module.loader
 
 fn fixtures_dir() String {
-  root := case proc.env("TWINKLE_ROOT") {
-    .Some(r) => r,
-    .None => ".",
-  }
+  root := loader.find_project_root("boot")
   "${root}/tests/fixtures/multi"
 }
 

@@ -1114,10 +1114,9 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
       cur_ctx := ctx
       cur_diags := diags
       for i in range(args.len()) {
-        ar := cur_ctx.synth(args[i], cur_diags)
-        u := ar.ctx.unify(ar.ty, info.field_types[i], args[i].span, ar.diags)
-        cur_ctx = u.ctx
-        cur_diags = u.diags
+        ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
+        cur_ctx = ar.ctx
+        cur_diags = ar.diags
       }
       .{ ctx: cur_ctx, diags: cur_diags }
     },
@@ -1173,6 +1172,14 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
     _ => {},
   }
   case expr.kind {
+    .If(cond, then_block, else_expr) => {
+      r := check_if(cond, then_block, else_expr, expected, expr.span, ctx, diags)
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+    },
+    .Case(scrut, arms) => {
+      r := check_case(scrut, arms, expected, expr.span, ctx, diags)
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+    },
     .Record(entries) => {
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
@@ -1351,6 +1358,32 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
   }
 }
 
+fn check_if(cond: Expr, then_block: Block, else_expr: Expr?, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  cr := ctx.synth(cond, diags)
+  u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
+
+  case else_expr {
+    .Some(else_e) => {
+      then_r := check_block(then_block, expected, u.ctx, u.diags)
+      case else_e.kind {
+        .BlockExpr(block) => {
+          else_r := check_block(block, expected, then_r.ctx, then_r.diags)
+          .{ ctx: else_r.ctx, diags: else_r.diags }
+        },
+        _ => {
+          else_r := then_r.ctx.check_expr(else_e, expected, then_r.diags)
+          .{ ctx: else_r.ctx, diags: else_r.diags }
+        },
+      }
+    },
+    .None => {
+      then_r := synth_block(then_block, u.ctx, u.diags)
+      u2 := then_r.ctx.unify(MonoType.Void, expected, s, then_r.diags)
+      .{ ctx: u2.ctx, diags: u2.diags }
+    },
+  }
+}
+
 fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   case zonked {
@@ -1428,6 +1461,30 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
   }
 
   .{ ty: final_ty, ctx: cur_ctx, diags: cur_diags }
+}
+
+fn check_case(scrut: Expr, arms: Vector<CaseArm>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  sr := ctx.synth(scrut, diags)
+  cur_ctx := sr.ctx
+  cur_diags := sr.diags
+
+  if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
+    err := diag.error(scrut.span, "case scrutinee must be a sum type or primitive (Int, Bool, String)")
+    return .{ ctx: cur_ctx, diags: cur_diags.push(err) }
+  }
+
+  for arm in arms {
+    cur_ctx = push_scope(cur_ctx)
+    pr := check_pattern(arm.pattern, sr.ty, cur_ctx, cur_diags)
+    cur_ctx = pr.ctx
+    cur_diags = pr.diags
+
+    body_r := cur_ctx.check_expr(arm.expr, expected, cur_diags)
+    cur_ctx = pop_scope(body_r.ctx)
+    cur_diags = body_r.diags
+  }
+
+  .{ ctx: cur_ctx, diags: check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags) }
 }
 
 fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
@@ -2292,6 +2349,8 @@ fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<Di
 fn stmt_diverges(stmt: Stmt) Bool {
   case stmt {
     .Return(_) => true,
+    .Break(_) => true,
+    .Continue(_) => true,
     .Expr(es) => expr_diverges(es.expr),
     _ => false,
   }
@@ -2453,9 +2512,8 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckO
     .Some(ret_ty) => {
       case rs.value {
         .Some(val) => {
-          val_r := ctx.synth(val, diags)
-          u := val_r.ctx.unify(val_r.ty, ret_ty, rs.span, val_r.diags)
-          .{ ctx: u.ctx, diags: u.diags }
+          val_r := ctx.check_expr(val, ret_ty, diags)
+          .{ ctx: val_r.ctx, diags: val_r.diags }
         },
         .None => {
           u := ctx.unify(MonoType.Void, ret_ty, rs.span, diags)
