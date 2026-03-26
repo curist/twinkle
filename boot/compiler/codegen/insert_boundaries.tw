@@ -395,14 +395,7 @@ fn rewrite_index(
   case kind {
     .Array => {
       // Array get returns anyref; unwrap if element type is not anyref
-      if is_raw_anyref_mono(result_mono) {
-        // Raw anyref payloads can flow through directly.
-        body_r := rewrite_expr(body, ctx)
-        RewriteResult.{
-          expr: .Let(result_local, .AIndex(base, index, kind, result_mono), body_r.expr),
-          ctx: body_r.ctx,
-        }
-      } else {
+      if needs_unwrap(result_mono, .Anyref, ctx.env) {
         // Need to unwrap: raw_local = AIndex(...); result_local = AUnwrapAnyref(raw_local, mono)
         pair := alloc_local(ctx)
         raw_local := pair.local
@@ -412,6 +405,13 @@ fn rewrite_index(
         inner := AnfExpr.Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), result_mono), body_r.expr)
         RewriteResult.{
           expr: .Let(raw_local, .AIndex(base, index, kind, result_mono), inner),
+          ctx: body_r.ctx,
+        }
+      } else {
+        // Reference-typed payloads can flow through directly.
+        body_r := rewrite_expr(body, ctx)
+        RewriteResult.{
+          expr: .Let(result_local, .AIndex(base, index, kind, result_mono), body_r.expr),
           ctx: body_r.ctx,
         }
       }
