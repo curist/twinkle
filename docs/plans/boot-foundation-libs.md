@@ -58,10 +58,6 @@ Reference: `src/query/graph.rs` plus topo sort / cycle detection. **Status: Done
 - Suite: `boot/tests/suites/dependency_graph_suite.tw` — 20 tests
 - Covers: add/remove/update deps, dedup, idempotency, single/multi-hop reverse closure, sorted output, linear/diamond/multi-root topo sort, self-cycle, multi-node cycle, cycle with blocked non-cyclic nodes
 
-### Known Limitation
-
-Cycle diagnostics report all nodes blocked by a cycle (not just the minimal cycle). Nodes that depend on a cyclic component are included in `GraphError.Cycle`. Acceptable for current use; could be refined to extract the minimal strongly-connected component if needed.
-
 ## Milestone D — `boot/lib/query`
 
 References: `src/query/keys.rs`, `src/query/cache.rs`.

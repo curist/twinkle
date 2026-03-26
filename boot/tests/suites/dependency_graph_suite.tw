@@ -276,7 +276,7 @@ pub fn suite() runner.Suite {
 
     .test("topo_sort cycle with non-cyclic parts", fn() {
       // d -> a, a -> b -> c -> a (cycle)
-      // d is blocked by the cycle so also appears in unresolved nodes
+      // d is blocked by the cycle but not part of it
       g := graph.empty()
         .set_dependencies("d", ["a"])
         .set_dependencies("a", ["b"])
@@ -291,8 +291,8 @@ pub fn suite() runner.Suite {
               try assert.vec_contains(nodes, "a")
               try assert.vec_contains(nodes, "b")
               try assert.vec_contains(nodes, "c")
-              try assert.vec_contains(nodes, "d")
-              try assert.int_eq(nodes.len(), 4)
+              // d is NOT in the cycle — only blocked by it
+              try assert.int_eq(nodes.len(), 3)
               .Ok({})
             },
           }

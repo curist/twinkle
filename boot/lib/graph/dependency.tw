@@ -175,10 +175,18 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
   }
 
   if result.len() < reachable.keys().len() {
-    // Remaining nodes form a cycle — collect them for diagnostics
-    cycle_nodes := collect node in all_nodes {
+    // Collect unprocessed nodes (blocked or in a cycle)
+    unprocessed: Dict<String, Bool> = Dict.new()
+    for node in all_nodes {
       deg := case dep_count[node] { .Some(n) => n, .None => 0 }
-      if deg > 0 { node } else { continue }
+      if deg > 0 {
+        unprocessed[node] = true
+      }
+    }
+    // Filter to only nodes actually in a cycle: those that can reach
+    // themselves through forward edges restricted to unprocessed nodes.
+    cycle_nodes := collect node in unprocessed.keys() {
+      if can_reach_self(g, node, unprocessed) { node } else { continue }
     }
     cycle_nodes = cycle_nodes.sort_by(fn(a: String, b: String) Order {
       if a < b { .Lt } else if a > b { .Gt } else { .Eq }
@@ -190,6 +198,44 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
 }
 
 // -- helpers --
+
+/// Check if `start` can reach itself via forward edges restricted to `allowed` nodes.
+fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>) Bool {
+  visited: Dict<String, Bool> = Dict.new()
+  stack: Vector<String> = []
+
+  // Seed with forward deps of start (not start itself)
+  case g.forward[start] {
+    .Some(deps) => {
+      for dep in deps {
+        if allowed.has(dep) {
+          stack = stack.push(dep)
+        }
+      }
+    },
+    .None => {},
+  }
+
+  si := 0
+  for si < stack.len() {
+    cur := stack[si]
+    si = si + 1
+    if cur == start { return true }
+    if visited.has(cur) { continue }
+    visited[cur] = true
+    case g.forward[cur] {
+      .Some(deps) => {
+        for dep in deps {
+          if allowed.has(dep) and !visited.has(dep) {
+            stack = stack.push(dep)
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  false
+}
 
 fn dedup(v: Vector<String>) Vector<String> {
   seen: Dict<String, Bool> = Dict.new()
