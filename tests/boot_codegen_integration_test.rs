@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use twinkle::cli::build::build_wat;
 use twinkle::cli::run_wasm::{build_engine, execute_module};
 use twinkle::interp::Interpreter;
+use twinkle::ir::core::CoreModule;
 use twinkle::module::compile_entry;
 use wasmtime::Module;
 
@@ -228,6 +229,17 @@ fn helper_path() -> PathBuf {
     project_root().join("boot/tests/helpers/emit_boot_wat.tw")
 }
 
+fn compile_boot_helper() -> (String, CoreModule) {
+    let helper = helper_path();
+    let helper_text = helper
+        .to_str()
+        .expect("boot helper path should be valid UTF-8")
+        .to_string();
+    let (core_module, _registry) = compile_entry(&helper_text)
+        .unwrap_or_else(|e| panic!("failed to compile boot helper {}: {e}", helper.display()));
+    (helper_text, core_module)
+}
+
 fn temp_case_path(case: RegressionCase, source: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -253,21 +265,14 @@ fn stage0_wat(path: &Path) -> String {
         .unwrap_or_else(|e| panic!("stage0 build_wat failed for {}: {e}", path.display()))
 }
 
-fn boot_wat(path: &Path) -> String {
-    let helper = helper_path();
-    let helper_text = helper
-        .to_str()
-        .expect("boot helper path should be valid UTF-8");
-    let (core_module, _registry) = compile_entry(helper_text)
-        .unwrap_or_else(|e| panic!("failed to compile boot helper {}: {e}", helper.display()));
-
+fn boot_wat(path: &Path, helper_text: &str, core_module: &CoreModule) -> String {
     let argv = vec![
         helper_text.to_string(),
         path.to_str()
             .expect("fixture path should be valid UTF-8")
             .to_string(),
     ];
-    let mut interp = Interpreter::new_with_argv(core_module, Vec::<u8>::new(), argv);
+    let mut interp = Interpreter::new_with_argv(core_module.clone(), Vec::<u8>::new(), argv);
     interp
         .run()
         .unwrap_or_else(|e| panic!("boot helper failed for {}: {e}", path.display()));
@@ -297,12 +302,13 @@ fn run_with_large_stack(f: impl FnOnce() + Send + 'static) {
 fn boot_codegen_emits_valid_wat_for_m11_regression_matrix() {
     run_with_large_stack(|| {
         let engine = build_engine().expect("build Wasmtime engine");
+        let (helper_text, helper_module) = compile_boot_helper();
         let mut failures: Vec<String> = Vec::new();
 
         for &case in REGRESSION_CASES {
             let (path, is_temp) = case_path(case);
             let stage0 = stage0_wat(&path);
-            let boot = boot_wat(&path);
+            let boot = boot_wat(&path, &helper_text, &helper_module);
 
             if let Err(e) = (|| -> Result<(), String> {
                 let wasm = wat::parse_str(&stage0).map_err(|e| format!("stage0 WAT parse: {e}"))?;
@@ -333,6 +339,7 @@ fn boot_codegen_emits_valid_wat_for_m11_regression_matrix() {
 #[test]
 fn debug_dump_return_if_wat() {
     run_with_large_stack(|| {
+        let (helper_text, helper_module) = compile_boot_helper();
         let source = "fn choose(b: Bool) String {\n  if b { return \"yes\" }\n  \"no\"\n}\nprintln(choose(true))\nprintln(choose(false))\n";
         let path = temp_case_path(
             RegressionCase {
@@ -342,7 +349,7 @@ fn debug_dump_return_if_wat() {
             source,
         );
         let s0 = stage0_wat(&path);
-        let b0 = boot_wat(&path);
+        let b0 = boot_wat(&path, &helper_text, &helper_module);
         eprintln!("=== STAGE0 WAT ===\n{s0}");
         eprintln!("=== BOOT WAT ===\n{b0}");
         fs::remove_file(&path).ok();
@@ -353,6 +360,7 @@ fn debug_dump_return_if_wat() {
 fn boot_codegen_matches_stage0_runtime_behavior_for_m11_regression_matrix() {
     run_with_large_stack(|| {
         let engine = build_engine().expect("build Wasmtime engine");
+        let (helper_text, helper_module) = compile_boot_helper();
         let mut failures: Vec<String> = Vec::new();
 
         for &case in REGRESSION_CASES {
@@ -363,8 +371,8 @@ fn boot_codegen_matches_stage0_runtime_behavior_for_m11_regression_matrix() {
                     .map_err(|e| format!("stage0 WAT parse: {e}"))?;
                 let s0_mod =
                     Module::new(&engine, &s0_wasm).map_err(|e| format!("stage0 validate: {e}"))?;
-                let b_wasm =
-                    wat::parse_str(&boot_wat(&path)).map_err(|e| format!("boot WAT parse: {e}"))?;
+                let b_wasm = wat::parse_str(&boot_wat(&path, &helper_text, &helper_module))
+                    .map_err(|e| format!("boot WAT parse: {e}"))?;
                 let b_mod =
                     Module::new(&engine, &b_wasm).map_err(|e| format!("boot validate: {e}"))?;
 

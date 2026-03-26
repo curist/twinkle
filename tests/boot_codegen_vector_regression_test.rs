@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use twinkle::cli::build::build_wat;
 use twinkle::cli::run_wasm::{build_engine, execute_module};
 use twinkle::interp::Interpreter;
+use twinkle::ir::core::CoreModule;
 use twinkle::module::compile_entry;
 use wasmtime::Module;
 
@@ -14,26 +15,30 @@ fn helper_path() -> PathBuf {
     project_root().join("boot/tests/helpers/emit_boot_wat.tw")
 }
 
+fn compile_boot_helper() -> (String, CoreModule) {
+    let helper = helper_path();
+    let helper_text = helper
+        .to_str()
+        .expect("boot helper path should be valid UTF-8")
+        .to_string();
+    let (core_module, _registry) = compile_entry(&helper_text)
+        .unwrap_or_else(|e| panic!("failed to compile boot helper {}: {e}", helper.display()));
+    (helper_text, core_module)
+}
+
 fn stage0_wat(path: &Path) -> String {
     build_wat(path.to_str().expect("fixture path should be valid UTF-8"))
         .unwrap_or_else(|e| panic!("stage0 build_wat failed for {}: {e}", path.display()))
 }
 
-fn boot_wat(path: &Path) -> String {
-    let helper = helper_path();
-    let helper_text = helper
-        .to_str()
-        .expect("boot helper path should be valid UTF-8");
-    let (core_module, _registry) = compile_entry(helper_text)
-        .unwrap_or_else(|e| panic!("failed to compile boot helper {}: {e}", helper.display()));
-
+fn boot_wat(path: &Path, helper_text: &str, core_module: &CoreModule) -> String {
     let argv = vec![
         helper_text.to_string(),
         path.to_str()
             .expect("fixture path should be valid UTF-8")
             .to_string(),
     ];
-    let mut interp = Interpreter::new_with_argv(core_module, Vec::<u8>::new(), argv);
+    let mut interp = Interpreter::new_with_argv(core_module.clone(), Vec::<u8>::new(), argv);
     interp
         .run()
         .unwrap_or_else(|e| panic!("boot helper failed for {}: {e}", path.display()));
@@ -52,12 +57,13 @@ fn boot_wat(path: &Path) -> String {
 #[test]
 fn boot_codegen_regresses_vector_method_cases() {
     let engine = build_engine().expect("build Wasmtime engine");
+    let (helper_text, helper_module) = compile_boot_helper();
 
     for fixture in ["empty_vector.tw", "loops.tw", "method_chaining.tw"] {
         let path = project_root().join("tests/run").join(fixture);
 
         let s0_wat = stage0_wat(&path);
-        let b_wat = boot_wat(&path);
+        let b_wat = boot_wat(&path, &helper_text, &helper_module);
 
         let s0_wasm =
             wat::parse_str(&s0_wat).unwrap_or_else(|e| panic!("stage0 WAT parse failed: {e}"));
