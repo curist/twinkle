@@ -337,21 +337,21 @@ fn boot_codegen_emits_valid_wat_for_m11_regression_matrix() {
 }
 
 #[test]
-fn debug_dump_return_if_wat() {
+fn boot_codegen_return_inside_if_produces_valid_wat() {
     run_with_large_stack(|| {
+        let engine = build_engine().expect("build Wasmtime engine");
         let (helper_text, helper_module) = compile_boot_helper();
         let source = "fn choose(b: Bool) String {\n  if b { return \"yes\" }\n  \"no\"\n}\nprintln(choose(true))\nprintln(choose(false))\n";
         let path = temp_case_path(
             RegressionCase {
-                name: "debug_return_if",
+                name: "return_inside_if",
                 input: RegressionInput::Inline(source),
             },
             source,
         );
-        let s0 = stage0_wat(&path);
-        let b0 = boot_wat(&path, &helper_text, &helper_module);
-        eprintln!("=== STAGE0 WAT ===\n{s0}");
-        eprintln!("=== BOOT WAT ===\n{b0}");
+        let boot = boot_wat(&path, &helper_text, &helper_module);
+        let wasm = wat::parse_str(&boot).expect("boot WAT should parse");
+        Module::new(&engine, &wasm).expect("boot WAT should validate");
         fs::remove_file(&path).ok();
     });
 }

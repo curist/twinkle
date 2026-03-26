@@ -111,4 +111,6 @@ Related historical context outside this folder:
 | [method-resolution-spec-alignment.md](method-resolution-spec-alignment.md) | Align dot-method resolution with spec: defining-module inherent methods only (Phases 1–2 done; Phase 3–4 deferred) |
 | [method-resolution-via-type.md](method-resolution-via-type.md) | Method resolution via type origin — destructured/transitive imports resolve inherent methods without the defining module in scope |
 | [boot-codegen-m11-gap-closure.md](boot-codegen-m11-gap-closure.md) | Boot codegen M11 gap closure — sum/variant, control-flow, match, record parity fixes and regression matrix |
+| [boot-codegen.md](boot-codegen.md) | Boot codegen Phase D — Wasm IR, type planning, boundary insertion, WAT emission, linker, runtime modules |
 | [boot-codegen-hardening.md](boot-codegen-hardening.md) | Boot codegen hardening — checked narrowing, closure repr, deterministic string pool, match unification, typed module globals, boundary tightening |
+| [boot-codegen-followup.md](boot-codegen-followup.md) | Boot codegen follow-up — ABI metadata consolidation, match-emitter unification, structural M11 validation, typed-ref boundary fix |

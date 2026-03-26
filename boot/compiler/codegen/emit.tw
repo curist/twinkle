@@ -1,10 +1,11 @@
-// Phase D M6–M7: Core emission — ANF → WasmModule
+// Phase D: Core emission — ANF → WasmModule
 //
-// Translates optimized ANF (with boundaries pre-inserted by M4) into
-// Wasm IR.  Key simplification vs stage0:
+// Translates optimized ANF (with boundaries pre-inserted) into Wasm IR.
+// Key simplification vs stage0:
 //   - No flow-sensitive metadata — layout derived from MonoType via registry
 //   - No SumRepr — all sums are typed structs
 //   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
+//   - Pattern match emission is inline (single implementation)
 
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, Param, BinOp, UnOp}
@@ -43,7 +44,6 @@ pub type LabelPair = .{
 pub type EmitCtx = .{
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
   local_map: Dict<Int, LocalEntry>,
   next_local: Int,
@@ -62,7 +62,6 @@ pub fn emit_module(
   anf: AnfModule,
   reg: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  abi_table: Dict<Int, AbiContract>,
   env: ResolvedEnv,
 ) WasmModule {
   // Build FuncId → symbol map and func lookup
@@ -78,7 +77,6 @@ pub fn emit_module(
   base_ctx := EmitCtx.{
     registry: reg,
     builtins: builtins,
-    abi_table: abi_table,
     env: env,
     local_map: Dict.new(),
     next_local: 0,
@@ -224,7 +222,6 @@ fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
   ctx := EmitCtx.{
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
-    abi_table: base_ctx.abi_table,
     env: base_ctx.env,
     local_map: local_map,
     next_local: idx,
@@ -728,7 +725,10 @@ fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mon
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   import_sym := "${info.wasm_module}__${info.wasm_name}"
   out: Vector<Instr> = []
-  abi: AbiContract? = ctx.abi_table[fid.id]
+  abi: AbiContract? = case ctx.builtins.by_id[fid.id] {
+    .Some(entry) => .Some(entry.abi),
+    .None => .None,
+  }
   for a,i in args {
     // Check if ABI expects i32 and the arg is Int-typed → checked narrowing
     needs_narrow := case abi {
@@ -766,7 +766,11 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_
 }
 
 fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  case ctx.abi_table[fid.id] {
+  abi_opt: AbiContract? = case ctx.builtins.by_id[fid.id] {
+    .Some(entry) => .Some(entry.abi),
+    .None => .None,
+  }
+  case abi_opt {
     .Some(abi) => {
       if abi.result_types.len() == 1 {
         case result_mono {
@@ -1656,7 +1660,6 @@ fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCt
   loop_ctx := EmitCtx.{
     registry: ctx.registry,
     builtins: ctx.builtins,
-    abi_table: ctx.abi_table,
     env: ctx.env,
     local_map: ctx.local_map,
     next_local: ctx.next_local,

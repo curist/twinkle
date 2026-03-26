@@ -1,8 +1,9 @@
 use tests.runner
 use tests.assert
 use tests.helpers.codegen_harness
-use compiler.codegen.linker.{link}
+use compiler.codegen.linker.{link, LinkedModule}
 use compiler.codegen.wat.{emit_wat}
+use compiler.codegen.wasm_ir.{TypeDef, FuncDef, ExportDef, ValType, HeapType}
 use compiler.codegen.codegen.{runtime_modules, codegen}
 use compiler.codegen.runtime.types as rt_types
 
@@ -295,6 +296,174 @@ fn test_closure_call_uses_typed_funcref() Result<Void, String> {
   .Ok({})
 }
 
+// ── Match emission coverage ──────────────────────────────────────────
+// Ports focused match-emission cases from the former emit_pattern_suite,
+// now exercising the consolidated emit.tw path end-to-end.
+
+fn test_match_wildcard_and_var_binding() Result<Void, String> {
+  // Wildcard and var-binding patterns in a case expression
+  wat := try assert_codegen_src_compiles(
+    "fn id(x: Int) Int { case x { y => y } }\nprintln(int_to_string(id(42)))\n",
+    "match wildcard/var",
+  )
+  // Var binding emits local.set for the bound variable
+  try assert.str_contains(wat, "local.set")
+  .Ok({})
+}
+
+fn test_match_literal_string() Result<Void, String> {
+  // String literal pattern emits rt_str__eq comparison
+  wat := try assert_codegen_src_compiles(
+    "fn greet(s: String) String {\n  case s {\n    \"hello\" => \"hi\",\n    _ => \"huh\",\n  }\n}\nprintln(greet(\"hello\"))\n",
+    "match literal string",
+  )
+  try assert.str_contains(wat, "rt_str__eq")
+  .Ok({})
+}
+
+fn test_match_literal_int() Result<Void, String> {
+  // Int literal pattern emits i64 comparison
+  wat := try assert_codegen_src_compiles(
+    "fn describe(n: Int) String {\n  case n {\n    0 => \"zero\",\n    1 => \"one\",\n    _ => \"other\",\n  }\n}\nprintln(describe(1))\n",
+    "match literal int",
+  )
+  try assert.str_contains(wat, "i64.eq")
+  .Ok({})
+}
+
+fn test_match_result_ok_err() Result<Void, String> {
+  // Result<Int, String> dispatch: Ok/Err variant matching
+  wat := try assert_codegen_src_compiles(
+    "fn unwrap_or(r: Result<Int, String>, d: Int) Int {\n  case r {\n    .Ok(v) => v,\n    .Err(_) => d,\n  }\n}\nres: Result<Int, String> = .Ok(42)\nprintln(int_to_string(unwrap_or(res, 0)))\n",
+    "match result ok/err",
+  )
+  // Variant dispatch reads the tag field
+  try assert.str_contains(wat, "struct.get")
+  .Ok({})
+}
+
+fn test_match_wildcard_catch_all() Result<Void, String> {
+  // Wildcard as catch-all arm after specific variant
+  wat := try assert_codegen_src_compiles(
+    "fn is_some(opt: Int?) Bool {\n  case opt {\n    .Some(_) => true,\n    _ => false,\n  }\n}\nprintln(bool_to_string(is_some(.Some(1))))\n",
+    "match wildcard catch-all",
+  )
+  try assert.str_contains(wat, "struct.get")
+  .Ok({})
+}
+
+fn test_match_all_diverging_arms() Result<Void, String> {
+  // Every arm calls error() — both arms diverge, so emit_arm_chain must
+  // produce an if with no result type and append an outer unreachable.
+  wat := try assert_codegen_src_compiles(
+    "fn crash(opt: Int?) Int {\n  case opt {\n    .Some(_) => error(\"some\"),\n    .None => error(\"none\"),\n  }\n}\nprintln(int_to_string(crash(.Some(1))))\n",
+    "match all-diverging arms",
+  )
+  // Both arms trap; the if block should have no result type
+  try assert.str_contains(wat, "unreachable")
+  .Ok({})
+}
+
+fn test_match_named_sum_multi_variant() Result<Void, String> {
+  // Named sum type with variants of different arities
+  wat := try assert_codegen_src_compiles(
+    "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float {\n  case s {\n    .Circle(r) => 3.14 * r * r,\n    .Rect(w, h) => w * h,\n  }\n}\nprintln(float_to_string(area(.Circle(1.0))))\n",
+    "match named sum multi-variant",
+  )
+  // Tag check and payload extraction
+  try assert.str_contains(wat, "struct.get")
+  try assert.str_contains(wat, "f64.mul")
+  .Ok({})
+}
+
+// ── Structural validation (inspects LinkedModule, not WAT text) ─────
+
+fn has_func_named(linked: LinkedModule, name: String) Bool {
+  for f in linked.funcs {
+    if f.name == name { return true }
+  }
+  false
+}
+
+fn has_export_named(linked: LinkedModule, name: String) Bool {
+  for e in linked.exports {
+    if e.wasm_name == name { return true }
+  }
+  false
+}
+
+fn has_type_named(linked: LinkedModule, name: String) Bool {
+  for t in linked.types {
+    case t {
+      .Struct(n, _, _, _) => if n == name { return true },
+      .Array(n, _) => if n == name { return true },
+      .FuncType(n, _, _) => if n == name { return true },
+    }
+  }
+  false
+}
+
+fn test_structural_linked_module_has_start() Result<Void, String> {
+  // A program with top-level statements must produce a start function.
+  linked := try codegen_harness.codegen_linked("println(\"hello\")")
+  case linked.start {
+    .Some(_) => .Ok({}),
+    .None => assert.fail("expected start function for top-level program"),
+  }
+}
+
+fn test_structural_linked_module_has_runtime_types() Result<Void, String> {
+  // Any linked program must include core runtime type definitions.
+  linked := try codegen_harness.codegen_linked("x := 1")
+  try assert.ok(has_type_named(linked, "rt_types__String"), "missing rt_types__String type")
+  try assert.ok(has_type_named(linked, "rt_types__Array"), "missing rt_types__Array type")
+  try assert.ok(has_type_named(linked, "rt_types__Closure"), "missing rt_types__Closure type")
+  .Ok({})
+}
+
+fn test_structural_user_func_present() Result<Void, String> {
+  // A program with top-level code should produce at least one user-namespace function.
+  linked := try codegen_harness.codegen_linked("println(int_to_string(42))")
+  found := false
+  for f in linked.funcs {
+    if f.name.starts_with("user__") {
+      found = true
+    }
+  }
+  try assert.ok(found, "expected at least one user function in linked module")
+  .Ok({})
+}
+
+fn test_structural_host_imports_are_host_only() Result<Void, String> {
+  // After linking, all remaining imports must come from "host" module.
+  linked := try codegen_harness.codegen_linked("println(\"hi\")")
+  for imp in linked.imports {
+    try assert.ok(imp.module == "host",
+      "non-host import survived linking: ${imp.module}.${imp.name}")
+  }
+  .Ok({})
+}
+
+fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
+  // A program using Option<Int> should produce a typed sum struct type.
+  linked := try codegen_harness.codegen_linked(
+    "x: Int? = .Some(42)\ncase x { .Some(n) => println(int_to_string(n)), .None => println(\"none\") }"
+  )
+  found_option := false
+  for t in linked.types {
+    case t {
+      .Struct(name, _, _, _) => {
+        if name.starts_with("user__$Option_") {
+          found_option = true
+        }
+      },
+      _ => {},
+    }
+  }
+  try assert.ok(found_option, "expected a typed Option struct in linked module types")
+  .Ok({})
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -320,4 +489,18 @@ pub fn suite() runner.Suite {
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
     .test("typed closure struct is subtype of base", test_closure_struct_is_subtype_of_base)
     .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
+    // Match emission coverage (ports emit_pattern_suite cases)
+    .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
+    .test("match: string literal emits rt_str__eq", test_match_literal_string)
+    .test("match: int literal emits i64.eq", test_match_literal_int)
+    .test("match: Result Ok/Err dispatch", test_match_result_ok_err)
+    .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
+    .test("match: all-diverging arms", test_match_all_diverging_arms)
+    .test("match: named sum with multiple variants", test_match_named_sum_multi_variant)
+    // Structural validation (inspects LinkedModule fields, not WAT text)
+    .test("linked program has start function", test_structural_linked_module_has_start)
+    .test("linked program includes runtime type definitions", test_structural_linked_module_has_runtime_types)
+    .test("user function appears in linked module", test_structural_user_func_present)
+    .test("all imports are host-only after linking", test_structural_host_imports_are_host_only)
+    .test("Option usage produces typed sum struct", test_structural_option_produces_typed_sum_struct)
 }

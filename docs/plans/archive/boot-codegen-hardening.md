@@ -191,7 +191,7 @@ emission:
 
 No `Dict.keys()` calls remain on the string pool path.
 
-### Phase 4 — Unify Match Emission ✓ DONE
+### Phase 4 — Unify Match Emission ✓ PARTIAL
 
 Closed the feature gap between the two implementations rather than merging
 them, because the nominal type system makes ctx bridging impractical:
@@ -315,7 +315,9 @@ This hardening pass is complete when all of the following are true:
 3. String pool offsets are deterministic and derived from explicit ordered
    planning state.
 4. Pattern matching has one implementation path used by both unit tests and
-   production emission.
+   production emission. **Not yet met** — two implementations exist with
+   matching feature coverage but separate code. Tracked in
+   [boot-codegen-followup.md](boot-codegen-followup.md) Phase 3.
 5. Promoted module globals are typed by default rather than erased by default.
 6. Boundary insertion only emits wrappers where a real representation change
    occurs.

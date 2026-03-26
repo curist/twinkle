@@ -14,7 +14,7 @@ use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, val_type_o
 use compiler.codegen.wasm_plan.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
 }
-use compiler.codegen.insert_boundaries.{insert_boundaries, make_abi_table}
+use compiler.codegen.insert_boundaries.{insert_boundaries}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -280,7 +280,9 @@ pub fn suite() runner.Suite {
     // ── No wrap for String at anyref position ──
 
     .test("no wrap for String at anyref position", fn() {
-      // String maps to anyref already — no boundary needed
+      // String is a typed GC ref (ref null $rt_types__String), a subtype of anyref.
+      // Passing String → anyref needs no wrap (subtype).
+      // Receiving anyref → String needs unwrap (ref.cast).
       builtins := empty_builtins().runtime_with_abi("str_fn", "rt.test", "str_fn", mk_abi([.Anyref], [.Anyref]))
       str_fid := builtins.id("str_fn")
 
@@ -295,14 +297,16 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
-      // String → anyref needs no wrap, anyref → String needs no unwrap
+      // String → anyref needs no wrap (subtype), anyref → String needs unwrap (ref.cast)
       try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
     .test("no wrap for Vector at anyref position", fn() {
-      // Typed GC refs can flow through an anyref ABI slot without boxing
+      // Vector is a typed GC ref (ref null $rt_types__Array), a subtype of anyref.
+      // Passing Vector → anyref needs no wrap (subtype).
+      // Receiving anyref → Vector needs unwrap (ref.cast).
       builtins := empty_builtins().runtime_with_abi("vec_fn", "rt.test", "vec_fn", mk_abi([.Anyref], [.Anyref]))
       vec_fid := builtins.id("vec_fn")
 
@@ -317,8 +321,9 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
+      // Vector → anyref needs no wrap (subtype), anyref → Vector needs unwrap (ref.cast)
       try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -350,8 +355,9 @@ pub fn suite() runner.Suite {
 
     // ── Array index: no unwrap for String element ──
 
-    .test("array index no unwrap for String element", fn() {
-      // AIndex(vec, idx, Array, String) — String is already anyref
+    .test("array index unwraps String element", fn() {
+      // AIndex(vec, idx, Array, String) — array.get returns anyref,
+      // String is (ref null $rt_types__String) which needs ref.cast
       body: AnfExpr = .Let(lid(10),
         .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.String),
         .Atom(.ALocal(lid(10))))
@@ -365,7 +371,7 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.int_eq(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -544,51 +550,50 @@ pub fn suite() runner.Suite {
       }
     })
 
-    .test("make_abi_table covers all runtime builtins", fn() {
+    .test("builtin registry ABI covers all runtime builtins", fn() {
       builtins := bi.make_builtin_registry()
-      table := make_abi_table(builtins)
 
-      // Spot-check a few key entries
+      // Spot-check a few key entries via builtins.by_id
       // println: (ref null $String) → void
       println_fid := bi.id(builtins, "println")
-      case table[println_fid.id] {
-        .Some(abi) => {
-          try assert.int_eq(abi.param_types.len(), 1)
-          try assert.int_eq(abi.result_types.len(), 0)
+      case builtins.by_id[println_fid.id] {
+        .Some(entry) => {
+          try assert.int_eq(entry.abi.param_types.len(), 1)
+          try assert.int_eq(entry.abi.result_types.len(), 0)
         },
-        .None => { return assert.fail("missing abi for println") },
+        .None => { return assert.fail("missing entry for println") },
       }
 
       // dict_set: (ref null $Dict, anyref, anyref) → (ref $Dict)
       dict_set_fid := bi.id(builtins, "dict_set")
-      case table[dict_set_fid.id] {
-        .Some(abi) => {
-          try assert.int_eq(abi.param_types.len(), 3)
-          try assert.int_eq(abi.result_types.len(), 1)
+      case builtins.by_id[dict_set_fid.id] {
+        .Some(entry) => {
+          try assert.int_eq(entry.abi.param_types.len(), 3)
+          try assert.int_eq(entry.abi.result_types.len(), 1)
           // Second param should be anyref (key)
-          case abi.param_types[1] { .Anyref => {}, _ => { return assert.fail("dict_set param 1 should be anyref") } }
+          case entry.abi.param_types[1] { .Anyref => {}, _ => { return assert.fail("dict_set param 1 should be anyref") } }
         },
-        .None => { return assert.fail("missing abi for dict_set") },
+        .None => { return assert.fail("missing entry for dict_set") },
       }
 
       // int_to_string: (i64) → (ref $String)
       its_fid := bi.id(builtins, "int_to_string")
-      case table[its_fid.id] {
-        .Some(abi) => {
-          try assert.int_eq(abi.param_types.len(), 1)
-          case abi.param_types[0] { .I64 => {}, _ => { return assert.fail("int_to_string param should be I64") } }
+      case builtins.by_id[its_fid.id] {
+        .Some(entry) => {
+          try assert.int_eq(entry.abi.param_types.len(), 1)
+          case entry.abi.param_types[0] { .I64 => {}, _ => { return assert.fail("int_to_string param should be I64") } }
         },
-        .None => { return assert.fail("missing abi for int_to_string") },
+        .None => { return assert.fail("missing entry for int_to_string") },
       }
 
       // vector_set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
       vs_fid := bi.id(builtins, "vector_set_unsafe")
-      case table[vs_fid.id] {
-        .Some(abi) => {
-          try assert.int_eq(abi.param_types.len(), 3)
-          case abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector_set_unsafe param 2 should be anyref") } }
+      case builtins.by_id[vs_fid.id] {
+        .Some(entry) => {
+          try assert.int_eq(entry.abi.param_types.len(), 3)
+          case entry.abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector_set_unsafe param 2 should be anyref") } }
         },
-        .None => { return assert.fail("missing abi for vector_set_unsafe") },
+        .None => { return assert.fail("missing entry for vector_set_unsafe") },
       }
 
       .Ok({})

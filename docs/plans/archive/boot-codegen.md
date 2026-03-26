@@ -93,21 +93,33 @@ emit_wat(linked) → String
 
 ## Current Status
 
-As of 2026-03-24:
+As of 2026-03-26:
 
 - the full Phase D pipeline exists in boot:
   `plan_wasm_types -> insert_boundaries -> emit_module -> link -> emit_wat`
 - dedicated boot suites exist for the earlier milestones, and the M11-focused
   integration suite is now registered from `boot/tests/main.tw`
 - a focused Rust integration harness compares stage0 vs boot behavior and
-  validates emitted WAT by compiling it with Wasmtime
-- `BuiltinEntry` now owns the Wasm ABI contract used by planning and boundary
-  insertion; Phase D no longer depends on a separately threaded ABI side table
+  validates emitted WAT by compiling it with Wasmtime (45/45 cases green)
+- `BuiltinEntry.abi` is the single ABI metadata source; emission consults
+  `builtins.by_id` directly (no separate `abi_table`)
+- pattern match emission is a single implementation in `emit.tw`, with
+  end-to-end boot tests covering string/int/bool literals, Result dispatch,
+  wildcard/var binding, all-diverging arms, and multi-variant named sums
 - recursive type planning now uses an in-progress registration guard so
   self-recursive and mutually recursive type graphs terminate during registry
   construction
-- M11 is not fully closed yet; the remaining broken shapes and closure work are
-  tracked in [boot-codegen-m11-gap-closure.md](boot-codegen-m11-gap-closure.md)
+- the boot-side M11 suite includes structural validation of `LinkedModule`
+  fields (not just WAT substring matching)
+- the Rust regression harness has no debug-only or dead-code leftovers
+- structural cleanup completed per
+  [archive/boot-codegen-followup.md](archive/boot-codegen-followup.md);
+  a typed-ref boundary bug (`is_anyref` conflating `Ref` with `anyref`) was
+  fixed as part of closing this plan
+- closure-with-captures codegen remains a known limitation (separate plan
+  needed); see
+  [archive/boot-codegen-m11-gap-closure.md](archive/boot-codegen-m11-gap-closure.md)
+  for prior gap analysis
 
 ## Input Types
 
@@ -686,58 +698,33 @@ matches the semantic `Vector<Int>` — no unwrap needed.
 
 ---
 
-### M5: Pattern Match Emission (`boot/compiler/codegen/emit_pattern.tw`)
+### M5: Pattern Match Emission (inline in `boot/compiler/codegen/emit.tw`)
 
-Dedicated module for pattern match compilation. Extracted from the main
-emitter to isolate the complexity and ensure short-circuit correctness.
+Pattern match compilation is inline in the main emitter. Previously
+extracted into a separate `emit_pattern.tw` module, it was merged back
+into `emit.tw` to eliminate a duplicate implementation that had to be
+kept in sync manually.
 
 **Short-circuit rule (stage0 bug category 7):** Outer variant discriminant
 checks MUST execute before any inner payload access. Never emit a flat AND.
 
-**Functions:**
-
-```tw
-// Emit instructions for a complete AMatch operation
-pub fn emit_match(
-  scrutinee: Atom,
-  arms: Vector<AnfMatchArm>,
-  result_local: Int,
-  ctx: EmitCtx,
-) (Vector<Instr>, EmitCtx)
-
-// Emit condition + body for one arm
-fn emit_arm(
-  scrutinee_local: Int,
-  scrutinee_mono: MonoType,
-  pattern: CorePattern,
-  body: AnfExpr,
-  ctx: EmitCtx,
-) (Vector<Instr>, EmitCtx)
-
-// Emit pattern bindings (extract payload fields into locals)
-fn emit_pattern_bindings(
-  scrutinee_local: Int,
-  pattern: CorePattern,
-  layout: WasmSumLayout,
-  ctx: EmitCtx,
-) (Vector<Instr>, EmitCtx)
-```
+**Key functions (in `emit.tw`):**
+- `emit_match_op` — entry point for AMatch operations
+- `emit_arm_chain` — recursive arm dispatch via nested If
+- `emit_pattern_condition` — produces i32 condition for one pattern
+- `emit_pattern_bindings` — extracts payload fields into locals
 
 **Emission strategy:**
-- Nested `block`/`br_if` for variant dispatch (same as stage0).
-- Variant tag check: `struct.get $Sum 0` → `i32.const tag` → `i32.eq` → `br_if`.
-- Payload extraction: inside the matched block, AFTER the tag check succeeds.
+- Recursive If chain for variant dispatch.
+- Variant tag check: `struct.get $Sum 0` → `i32.const tag` → `i32.eq`.
+- Payload extraction: inside the then-body, AFTER the tag check succeeds.
   This ensures `struct.get` for payload fields only executes when the variant
   matches — **no eager evaluation of sub-patterns**.
-- Wildcard/catch-all: final block, no tag check.
+- Wildcard/catch-all: always-true condition (i32.const 1).
 
 **Never in match arms:** If all arms diverge (Return/Break/Continue), the
 match result type is `None` (no Wasm block result). Skip `local.set` for
 the result.
-
-**Test:** Pattern match on `Option<Int>` with None/Some arms. Verify tag
-check precedes payload extraction. Verify all-diverging arms produce no
-result type.
 
 ---
 
@@ -1069,8 +1056,7 @@ boot/compiler/codegen/
   wasm_layout.tw        # M2: WasmLayout, layout_of, val_type_of
   wasm_plan.tw          # M3: WasmTypeRegistry, plan_wasm_types
   insert_boundaries.tw  # M4: WrapAnyref/UnwrapAnyref insertion
-  emit_pattern.tw       # M5: Pattern match compilation
-  emit.tw               # M6–M7: Main emitter (ANF → WasmModule)
+  emit.tw               # M5–M7: Main emitter (ANF → WasmModule, includes pattern match)
   wat.tw                # M8: WasmModule → WAT text
   linker.tw             # M9: Module linking
   runtime/

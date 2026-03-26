@@ -56,11 +56,23 @@ fn atom_mono(atom: Atom, ctx: BCtx) MonoType? {
 
 // ── ValType helpers ─────────────────────────────────────────────────
 
-fn is_anyref(vt: ValType) Bool {
+// Typed GC refs (Ref) are subtypes of anyref — no boxing needed when passing
+// to an anyref slot. Used for wrap decisions.
+fn is_anyref_subtype(vt: ValType) Bool {
   case vt {
     .Anyref => true,
     .I31ref => true,
     .Ref(_, _) => true,
+    _ => false,
+  }
+}
+
+// Only true for untyped anyref — typed refs need ref.cast when extracted from
+// an anyref slot. Used for unwrap decisions.
+fn is_anyref_exact(vt: ValType) Bool {
+  case vt {
+    .Anyref => true,
+    .I31ref => true,
     _ => false,
   }
 }
@@ -78,51 +90,19 @@ fn mono_val_type(ty: MonoType, env: ResolvedEnv) ValType {
 }
 
 fn needs_wrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bool {
-  if !is_anyref(abi_type) { return false }
+  if !is_anyref_subtype(abi_type) { return false }
   vt := mono_val_type(semantic_mono, env)
-  !is_anyref(vt)
+  !is_anyref_subtype(vt)
 }
 
 fn needs_unwrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bool {
-  if !is_anyref(abi_type) { return false }
+  if !is_anyref_exact(abi_type) { return false }
   vt := mono_val_type(semantic_mono, env)
-  !is_anyref(vt)
+  !is_anyref_exact(vt)
 }
 
 fn has_abi(abi: AbiContract) Bool {
   abi.param_types.len() > 0 or abi.result_types.len() > 0
-}
-
-// ── ABI table constructor ───────────────────────────────────────────
-
-fn ref_null(name: String) ValType { .Ref(true, .Named(name)) }
-fn ref_nn(name: String) ValType { .Ref(false, .Named(name)) }
-fn str_n() ValType { ref_null("rt_types__String") }
-fn str_() ValType { ref_nn("rt_types__String") }
-fn arr_n() ValType { ref_null("rt_types__Array") }
-fn arr_() ValType { ref_nn("rt_types__Array") }
-fn dict_n() ValType { ref_null("rt_types__Dict") }
-fn dict_() ValType { ref_nn("rt_types__Dict") }
-fn variant_() ValType { ref_nn("rt_types__Variant") }
-
-fn abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
-  AbiContract.{ param_types: params, result_types: results }
-}
-
-fn register_abi(table: Dict<Int, AbiContract>, reg: BuiltinRegistry, name: String, contract: AbiContract) Dict<Int, AbiContract> {
-  fid := bi.id(reg, name)
-  table[fid.id] = contract
-  table
-}
-
-pub fn make_abi_table(reg: BuiltinRegistry) Dict<Int, AbiContract> {
-  t: Dict<Int, AbiContract> = Dict.new()
-  for entry in reg.entries {
-    if has_abi(entry.abi) {
-      t[entry.func_id.id] = entry.abi
-    }
-  }
-  t
 }
 
 // ── Entry point ─────────────────────────────────────────────────────
@@ -424,7 +404,7 @@ fn rewrite_index(
       index_mono := atom_mono(index, cur_ctx)
 
       wrap_key := case index_mono {
-        .Some(mono) => !is_anyref(mono_val_type(mono, cur_ctx.env)),
+        .Some(mono) => !is_anyref_subtype(mono_val_type(mono, cur_ctx.env)),
         .None => false,
       }
 
@@ -440,7 +420,7 @@ fn rewrite_index(
       }
 
       result_vt := mono_val_type(result_mono, cur_ctx.env)
-      unwrap_result := !is_anyref(result_vt)
+      unwrap_result := !is_anyref_exact(result_vt)
 
       body_r := rewrite_expr(body, cur_ctx)
       inner := body_r.expr

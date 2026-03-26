@@ -78,8 +78,9 @@ The following items are still open despite some docs implying otherwise:
 ### Known limitation still worth tracking
 
 `archive/boot-codegen-hardening.md` explicitly calls out closure-with-captures
-codegen failures as outside scope. That limitation should remain visible until
-it is either fixed or moved into a separate active plan.
+codegen failures as outside scope. This is feature-level backend work, not
+structural drift — it belongs in a separate active plan, not this follow-up.
+A dedicated plan should be created when we choose to tackle it.
 
 ---
 
@@ -126,15 +127,24 @@ Acceptance:
 
 Move from “two implementations kept in sync” to one production path.
 
-Preferred outcome:
+Direction: merge `emit_pattern.tw` into `emit.tw`. `emit_pattern.tw` exists only
+as a testable extraction — its sole caller is the boot test suite
+(`boot/tests/suites/emit_pattern_suite.tw`), not production emission. Rather than
+keeping a second module, fold its tested logic back into `emit.tw` and update or
+remove the test suite that depended on it.
 
-- `emit.tw` delegates match emission to `emit_pattern.tw`, or
-- shared logic is extracted so both call sites use the same implementation
-  bodies rather than mirrored copies.
+Steps:
+
+1. Review any coverage in `emit_pattern_suite.tw` that is not already covered by
+   the Rust integration harness or the boot M11 suite. Port missing cases.
+2. Merge `emit_pattern.tw` helpers into `emit.tw`, replacing the mirrored copies.
+3. Delete `emit_pattern.tw` and `emit_pattern_suite.tw`.
+4. Verify all pattern families (string, variant, scalar, wildcard) remain green.
 
 Acceptance:
 
-- one implementation path exists for match emission logic,
+- `emit_pattern.tw` no longer exists,
+- one implementation path exists for match emission logic in `emit.tw`,
 - string, variant, and scalar pattern coverage remains green,
 - hardening exit criterion 4 becomes true in code, not just in prose.
 
@@ -142,19 +152,32 @@ Acceptance:
 
 Upgrade the boot-side suite so it proves more than WAT text shape.
 
-Required additions:
+Prerequisite: the boot-side harness currently has no way to compile and execute
+generated WAT. `boot/tests/helpers/emit_boot_wat.tw` only prints WAT text. All
+actual WAT parsing, Wasmtime validation, and execution live on the Rust side
+(`tests/boot_codegen_integration_test.rs`). Behavior-level validation from
+Twinkle would require new host capabilities (e.g. a `run_wat` builtin or an
+external validator invocation).
 
-- at least one behavior-level execution path for the core M11 regression
-  families,
-- at least one structural validation path for emitted modules,
-- explicit runner verification in both interpreter mode and Wasm mode, using
-  the preferred release binaries.
+Achievable without new infrastructure:
+
+- structural checks on emitted WAT (e.g. asserting specific instruction
+  sequences, section presence, or export names in the text output),
+- verifying that `twk run boot/tests/main.tw` in Wasm mode covers the full
+  suite (this exercises the boot test code under stage0 Wasm execution, though
+  it does not validate boot-generated user WAT).
+
+Deferred until host support exists:
+
+- behavior-level execution of boot-generated WAT from within the boot suite,
+- structural validation via Wasmtime or equivalent from Twinkle code.
 
 Acceptance:
 
-- the boot-side suite exercises behavior, not just text output,
-- the boot-side suite provides a meaningful local signal when Rust integration
-  tests are too slow to run routinely.
+- the boot-side suite adds at least one structural validation path beyond
+  substring matching,
+- the scope boundary between "what boot tests can verify now" and "what needs
+  new host infra" is documented.
 
 ### Phase 5 — Clean Regression Harness Artifacts
 
@@ -190,6 +213,7 @@ This follow-up is complete when all of the following are true:
 2. `BuiltinEntry.abi` is the only ABI metadata channel used by planning,
    boundary insertion, and emission.
 3. Match emission has one implementation path.
-4. The boot-side M11 suite validates behavior and at least one structural path
-   in release mode.
+4. The boot-side M11 suite adds at least one structural validation path beyond
+   substring matching, and the scope boundary for future host-dependent
+   verification is documented.
 5. The Rust regression harness has no debug-only or dead-code leftovers.

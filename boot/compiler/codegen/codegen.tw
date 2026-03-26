@@ -7,7 +7,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.anf.{AnfModule}
 use compiler.codegen.wasm_ir.{WasmModule, AbiContract}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.insert_boundaries.{insert_boundaries, make_abi_table}
+use compiler.codegen.insert_boundaries.{insert_boundaries}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.linker.{link, LinkedModule, LinkError}
 use compiler.codegen.wat.{emit_wat}
@@ -38,13 +38,10 @@ pub fn codegen(
   // 2. Insert boundary conversions
   anf2 := insert_boundaries(anf, registry, builtins, env)
 
-  // 3. Build ABI table
-  abi_table := make_abi_table(builtins)
+  // 3. Emit user module
+  user_module := emit_module(anf2, registry, builtins, env)
 
-  // 4. Emit user module
-  user_module := emit_module(anf2, registry, builtins, abi_table, env)
-
-  // 5. Link with runtime
+  // 4. Link with runtime
   modules := runtime_modules().push(user_module)
   linked := case link(modules, .None) {
     .Ok(l) => l,
@@ -61,6 +58,6 @@ pub fn codegen(
     },
   }
 
-  // 6. Emit WAT
+  // 5. Emit WAT
   emit_wat(linked)
 }
