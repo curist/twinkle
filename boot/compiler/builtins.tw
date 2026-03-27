@@ -298,11 +298,13 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .runtime("host_cwd",        "host", "cwd")
     .runtime("host_exit",       "host", "exit")
     // ── Canonical name mappings (signature-backed surface) ──
-    // to_string family
-    .with_canonical("Int.to_string",   "int_to_string")
-    .with_canonical("Float.to_string", "float_to_string")
-    .with_canonical("Bool.to_string",  "bool_to_string")
-    .with_canonical("String.to_string","string_to_string")
+    // to_string / from_string family
+    .with_canonical("Int.to_string",     "int_to_string")
+    .with_canonical("Int.from_string",   "int_from_string")
+    .with_canonical("Float.to_string",   "float_to_string")
+    .with_canonical("Float.from_string", "float_from_string")
+    .with_canonical("Bool.to_string",    "bool_to_string")
+    .with_canonical("String.to_string",  "string_to_string")
     // String ops
     .with_canonical("String.len",          "string_len")
     .with_canonical("String.concat",       "string_concat")

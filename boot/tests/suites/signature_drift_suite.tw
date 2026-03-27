@@ -1,0 +1,240 @@
+// Phase 4 tests: validation and drift detection.
+//
+// These tests ensure that:
+//   - every function defined in prelude/signatures/*.tw appears in builtin_env()
+//     under its boot-internal name
+//   - every canonical name derivable from the signature files is registered in
+//     make_builtin_registry().by_canonical (drift fails fast when a new sig is
+//     added to prelude/signatures/ but the registry is not updated)
+//   - every canonical name in make_builtin_registry() traces back to a
+//     prelude/signatures/*.tw entry (catches registry entries that are no
+//     longer backed by a signature stub)
+//   - known internal-only builtins carry no canonical name
+//   - module-qualified, dot-method, and free-function builtin call forms each
+//     resolve and type-check without errors
+
+use tests.runner
+use tests.assert
+use compiler.signatures.{load_signatures, to_internal_name, SignatureGroup}
+use compiler.base_env.{builtin_env, builtin_type_env}
+use compiler.builtins.{make_builtin_registry}
+use compiler.resolver.{lookup_function, lookup_method}
+use compiler.parser
+use compiler.checker
+use lib.module.loader
+use @std.path
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+fn signatures_dir() String {
+  boot_root := loader.find_project_root(".")
+  twinkle_root := path.dirname(boot_root)
+  path.join(twinkle_root, "prelude/signatures")
+}
+
+fn canonical_name(receiver: String?, sig_name: String) String {
+  case receiver {
+    .None => sig_name,
+    .Some(recv) => "${recv}.${sig_name}",
+  }
+}
+
+fn resolve_ok_with_builtins(src: String) Result<Bool, String> {
+  parsed := parser.parse(src, 0)
+  result := builtin_env().resolve(parsed.value)
+  if result.diagnostics.len() > 0 {
+    return .Err("resolve error: ${result.diagnostics[0].message}")
+  }
+  .Ok(true)
+}
+
+fn check_ok_with_builtins(src: String) Result<Bool, String> {
+  parsed := parser.parse(src, 0)
+  resolved := builtin_env().resolve(parsed.value)
+  if resolved.diagnostics.len() > 0 {
+    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+  }
+  result := checker.check(parsed.value, resolved.env)
+  if result.diagnostics.len() > 0 {
+    return .Err("type error: ${result.diagnostics[0].message}")
+  }
+  .Ok(true)
+}
+
+// ── suite ─────────────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("signature drift")
+
+    // ── drift: sig files → builtin_env ───────────────────────────────────────
+
+    .test("every signature-file function appears in builtin_env by internal name", fn() {
+      groups := try load_signatures(signatures_dir(), builtin_type_env())
+      env := builtin_env()
+      missing: Vector<String> = []
+      for group in groups {
+        for sig in group.sigs {
+          internal := to_internal_name(group.receiver, sig.name)
+          case lookup_function(env, internal) {
+            .None => { missing = missing.push(internal) },
+            .Some(_) => {},
+          }
+        }
+      }
+      if missing.len() > 0 {
+        return .Err("builtin_env missing: ${missing[0]}")
+      }
+      .Ok({})
+    })
+
+    // ── drift: sig files → registry canonical index ───────────────────────────
+
+    .test("every signature-file canonical name is in make_builtin_registry", fn() {
+      groups := try load_signatures(signatures_dir(), builtin_type_env())
+      reg := make_builtin_registry()
+      missing: Vector<String> = []
+      for group in groups {
+        for sig in group.sigs {
+          cn := canonical_name(group.receiver, sig.name)
+          case reg.entry_by_canonical(cn) {
+            .None => { missing = missing.push(cn) },
+            .Some(_) => {},
+          }
+        }
+      }
+      if missing.len() > 0 {
+        return .Err("registry missing canonical: ${missing[0]}")
+      }
+      .Ok({})
+    })
+
+    // ── drift: registry canonical index → sig files ───────────────────────────
+
+    .test("every registry canonical name traces back to a signature-file entry", fn() {
+      groups := try load_signatures(signatures_dir(), builtin_type_env())
+      // Build set of all expected canonical names from signature files.
+      expected: Dict<String, Bool> = Dict.new()
+      for group in groups {
+        for sig in group.sigs {
+          cn := canonical_name(group.receiver, sig.name)
+          expected[cn] = true
+        }
+      }
+      // Every canonical in the registry must be in the expected set.
+      reg := make_builtin_registry()
+      spurious: Vector<String> = []
+      for cn in reg.by_canonical.keys() {
+        case expected[cn] {
+          .None => { spurious = spurious.push(cn) },
+          .Some(_) => {},
+        }
+      }
+      if spurious.len() > 0 {
+        return .Err("registry canonical '${spurious[0]}' has no matching prelude/signatures entry")
+      }
+      .Ok({})
+    })
+
+    // ── mapping: internal-only builtins have no canonical name ────────────────
+
+    .test("vector_set_unsafe has no canonical name (internal-only)", fn() {
+      reg := make_builtin_registry()
+      entry := try reg.entry(reg.id("vector_set_unsafe")).ok_or("missing vector_set_unsafe")
+      try assert.is_none(entry.canonical_name)
+      .Ok({})
+    })
+
+    .test("string_substring has no canonical name (internal-only)", fn() {
+      reg := make_builtin_registry()
+      entry := try reg.entry(reg.id("string_substring")).ok_or("missing string_substring")
+      try assert.is_none(entry.canonical_name)
+      .Ok({})
+    })
+
+    .test("vector_builder_new has no canonical name (internal-only)", fn() {
+      reg := make_builtin_registry()
+      entry := try reg.entry(reg.id("vector_builder_new")).ok_or("missing vector_builder_new")
+      try assert.is_none(entry.canonical_name)
+      .Ok({})
+    })
+
+    .test("dict_get_unsafe has no canonical name (internal-only)", fn() {
+      reg := make_builtin_registry()
+      entry := try reg.entry(reg.id("dict_get_unsafe")).ok_or("missing dict_get_unsafe")
+      try assert.is_none(entry.canonical_name)
+      .Ok({})
+    })
+
+    // ── regression: module-qualified builtin calls ────────────────────────────
+
+    .test("module-qualified String.len resolves without errors", fn() {
+      try resolve_ok_with_builtins("x := String.len(\"hi\")")
+      .Ok({})
+    })
+
+    .test("module-qualified Vector.push resolves without errors", fn() {
+      try resolve_ok_with_builtins("x: Vector<Int> = Vector.push([], 1)")
+      .Ok({})
+    })
+
+    .test("module-qualified Dict.new resolves without errors", fn() {
+      try resolve_ok_with_builtins("x: Dict<String, Int> = Dict.new()")
+      .Ok({})
+    })
+
+    .test("module-qualified Int.to_string resolves without errors", fn() {
+      try resolve_ok_with_builtins("x := Int.to_string(42)")
+      .Ok({})
+    })
+
+    .test("module-qualified Int.from_string resolves without errors", fn() {
+      try resolve_ok_with_builtins("x := Int.from_string(\"42\")")
+      .Ok({})
+    })
+
+    .test("module-qualified Float.from_string resolves without errors", fn() {
+      try resolve_ok_with_builtins("x := Float.from_string(\"3.14\")")
+      .Ok({})
+    })
+
+    // ── regression: dot-method builtin calls ─────────────────────────────────
+
+    .test("dot-method String.len resolves without errors", fn() {
+      try resolve_ok_with_builtins("x := \"hi\".len()")
+      .Ok({})
+    })
+
+    .test("dot-method Vector.push resolves without errors", fn() {
+      try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.push(1)")
+      .Ok({})
+    })
+
+    .test("dot-method Cell.get resolves without errors", fn() {
+      try resolve_ok_with_builtins("c := Cell.new(0)\nx := c.get()")
+      .Ok({})
+    })
+
+    .test("dot-method Iterator.unfold type-checks without errors", fn() {
+      try check_ok_with_builtins(
+        "it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })"
+      )
+      .Ok({})
+    })
+
+    // ── regression: free builtin functions ───────────────────────────────────
+
+    .test("free function range_from resolves without errors", fn() {
+      try resolve_ok_with_builtins("r := range_from(0, 10)")
+      .Ok({})
+    })
+
+    .test("free function range resolves without errors", fn() {
+      try resolve_ok_with_builtins("r := range(5)")
+      .Ok({})
+    })
+
+    .test("free function range_step resolves without errors", fn() {
+      try resolve_ok_with_builtins("r := range_step(0, 10, 2)")
+      .Ok({})
+    })
+}
