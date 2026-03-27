@@ -1,0 +1,6 @@
+pub type TokenKind = { Ident, Number, Plus }
+
+pub type Token = .{
+  kind: TokenKind,
+  text: String,
+}

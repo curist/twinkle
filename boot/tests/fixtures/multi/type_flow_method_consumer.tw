@@ -1,0 +1,7 @@
+use .type_flow_bridge
+use .type_flow_source.{Color, is_red}
+
+fn main() {
+  c := type_flow_bridge.get_color()
+  is_red(c)
+}

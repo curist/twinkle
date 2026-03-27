@@ -1,0 +1,10 @@
+use .type_flow_noise
+use .type_flow_source
+
+pub fn get_color() type_flow_source.Color {
+  type_flow_source.make_red()
+}
+
+pub fn noise_value() type_flow_noise.Noise1 {
+  type_flow_noise.Noise1.{ x: 0 }
+}

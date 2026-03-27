@@ -1,0 +1,15 @@
+use .type_flow_bridge
+use .type_flow_source.{Color}
+
+fn color_name(c: Color) String {
+  case c {
+    .Red => "red",
+    .Green => "green",
+    .Blue => "blue",
+  }
+}
+
+fn main() {
+  c := type_flow_bridge.get_color()
+  color_name(c)
+}

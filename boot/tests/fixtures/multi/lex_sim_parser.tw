@@ -1,0 +1,15 @@
+use .lex_sim_tokens.{Token, TokenKind}
+use .lex_sim_lexer
+
+fn is_ident(t: Token) Bool {
+  case t.kind {
+    .Ident => true,
+    .Number => false,
+    .Plus => false,
+  }
+}
+
+fn main() {
+  t := lex_sim_lexer.first_token("hello")
+  is_ident(t)
+}

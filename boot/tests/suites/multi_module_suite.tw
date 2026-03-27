@@ -62,6 +62,30 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("type from full import flows correctly through exported function signature", fn() {
+      result := module_compiler.compile_entry("${dir}/type_flow_consumer.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("function from source module accepts value obtained via full-import bridge", fn() {
+      result := module_compiler.compile_entry("${dir}/type_flow_method_consumer.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("type from full import flows through record type in lex/parse topology", fn() {
+      result := module_compiler.compile_entry("${dir}/lex_sim_parser.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
     .test("compile transitive dependency chain (a -> b -> c)", fn() {
       result := module_compiler.compile_entry("${dir}/transitive_a.tw")
       case result {
