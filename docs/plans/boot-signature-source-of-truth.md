@@ -26,7 +26,7 @@ This is the boot-side counterpart to the stage0 direction already implemented in
 
 ## Status
 
-Phases 0, 1, 2, and 3 complete. Phase 4 next.
+All phases complete.
 
 ### Phase 0 (complete)
 Guardrail test suite added in `boot/tests/suites/base_env_guardrail_suite.tw`.
@@ -313,6 +313,15 @@ Exit criteria:
 - changing a builtin method in
   [`prelude/signatures/*.tw`](../../prelude/signatures/) updates boot method
   shape without editing [`resolver.tw`](../../boot/compiler/resolver.tw)
+
+### Phase 4 (complete)
+Drift test suite added in `boot/tests/suites/signature_drift_suite.tw`.
+Three bidirectional drift tests close the loop between `prelude/signatures/*.tw`,
+`builtin_env()`, and `make_builtin_registry().by_canonical`.
+Drift detection caught that `Int.from_string` and `Float.from_string` were missing
+from the canonical registry — fixed in `builtins.tw`.
+Regression coverage added for module-qualified, dot-method, and free-function
+builtin call forms.
 
 ### Phase 3: Canonical-to-Internal Mapping in `builtins.tw`
 
