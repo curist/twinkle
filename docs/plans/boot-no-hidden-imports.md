@@ -14,7 +14,7 @@ replace it with a clearer import model where:
 - method lookup does not depend on whichever alias name happens to win
 
 This is a follow-on architecture plan to
-[boot-module-type-identity.md](boot-module-type-identity.md), not a replacement
+[archive/boot-module-type-identity.md](archive/boot-module-type-identity.md), not a replacement
 for the already-landed type-identity fixes.
 
 ## Status

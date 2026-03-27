@@ -9,8 +9,13 @@ fn fixtures_dir() String {
   "${root}/tests/fixtures/multi"
 }
 
+fn project_root() String {
+  loader.find_project_root("boot")
+}
+
 pub fn suite() runner.Suite {
   dir := fixtures_dir()
+  root := project_root()
 
   runner.suite("multi-module compilation")
 
@@ -83,6 +88,14 @@ pub fn suite() runner.Suite {
       case result {
         .Ok(_) => .Ok({}),
         .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("real boot lexer module typechecks through compiler import topology", fn() {
+      result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected boot compiler lexer module to compile, got: ${msg}"),
       }
     })
 

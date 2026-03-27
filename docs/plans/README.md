@@ -40,7 +40,6 @@ from stage0, bootstrapping sequence)
 |------|-------------|--------|---------|
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | In Progress | [boot-multi-module.md](boot-multi-module.md) |
-| Import type identity | Canonical imported nominal types across full/selective/transitive module boundaries | Planned | [boot-module-type-identity.md](boot-module-type-identity.md) |
 | Import binding model | Remove hidden selective-import namespaces by separating canonical imported types from local bindings | Planned | [boot-no-hidden-imports.md](boot-no-hidden-imports.md) |
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |

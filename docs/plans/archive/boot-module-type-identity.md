@@ -1,5 +1,7 @@
 # Boot Module Type Identity Plan
 
+Last updated: 2026-03-27
+
 ## Goal
 
 Make imported nominal types in the boot compiler keep a single semantic
@@ -23,7 +25,19 @@ This plan addresses the structural issue behind recent boot multi-module bugs:
 
 ## Status
 
-Phases 0–3 complete. Phases 4–5 planned.
+Complete.
+
+This plan's behavioral/type-identity goals are complete:
+
+- import topology no longer changes nominal imported type identity
+- public signatures referencing imported nominal types remain valid downstream
+- method and variant resolution are stable across the covered import topologies
+- stage0 Wasm/backend regression coverage now covers the key type-identity
+  canaries
+
+The remaining architecture cleanup around fully removing hidden
+selective-import namespaces is tracked separately in
+[boot-no-hidden-imports.md](../boot-no-hidden-imports.md).
 
 ## Why Now
 
@@ -39,9 +53,9 @@ model is still projection-based rather than canonical:
 That combination is workable for simple cases, but fragile for real compiler
 modules like:
 
-- [`boot/compiler/lexer.tw`](../../boot/compiler/lexer.tw)
-- [`boot/compiler/cursor.tw`](../../boot/compiler/cursor.tw)
-- [`boot/compiler/parser.tw`](../../boot/compiler/parser.tw)
+- [`boot/compiler/lexer.tw`](../../../boot/compiler/lexer.tw)
+- [`boot/compiler/cursor.tw`](../../../boot/compiler/cursor.tw)
+- [`boot/compiler/parser.tw`](../../../boot/compiler/parser.tw)
 
 Those modules mix:
 
@@ -61,9 +75,9 @@ explicitly.
 
 The current boot multi-module path lives primarily in:
 
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/checker.tw`](../../boot/compiler/checker.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/checker.tw`](../../../boot/compiler/checker.tw)
 
 Current behavior:
 
@@ -250,10 +264,10 @@ should preserve the same invariants.
 
 Files:
 
-- [`boot/tests/suites/multi_module_suite.tw`](../../boot/tests/suites/multi_module_suite.tw)
-- [`boot/compiler/lexer.tw`](../../boot/compiler/lexer.tw)
-- [`boot/compiler/cursor.tw`](../../boot/compiler/cursor.tw)
-- [`boot/compiler/parser.tw`](../../boot/compiler/parser.tw)
+- [`boot/tests/suites/multi_module_suite.tw`](../../../boot/tests/suites/multi_module_suite.tw)
+- [`boot/compiler/lexer.tw`](../../../boot/compiler/lexer.tw)
+- [`boot/compiler/cursor.tw`](../../../boot/compiler/cursor.tw)
+- [`boot/compiler/parser.tw`](../../../boot/compiler/parser.tw)
 
 Add/keep characterization coverage for:
 
@@ -279,8 +293,8 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
 
 Changes:
 
@@ -301,7 +315,7 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
 
 Changes:
 
@@ -322,8 +336,8 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/checker.tw`](../../boot/compiler/checker.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/checker.tw`](../../../boot/compiler/checker.tw)
 
 Changes:
 
@@ -341,8 +355,8 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
 
 Changes:
 
@@ -361,15 +375,15 @@ Exit criteria:
 
 Files:
 
-- [`boot/tests/suites/multi_module_suite.tw`](../../boot/tests/suites/multi_module_suite.tw)
-- [`boot/tests/suites/resolver_suite.tw`](../../boot/tests/suites/resolver_suite.tw)
-- targeted Rust/CLI integration tests where useful
+- [`boot/tests/suites/multi_module_suite.tw`](../../../boot/tests/suites/multi_module_suite.tw)
+- [`boot/tests/suites/resolver_suite.tw`](../../../boot/tests/suites/resolver_suite.tw)
+- targeted Rust/Wasm integration tests where useful
 
 Checks:
 
 1. boot compiler modules that previously exposed the bug now typecheck past the
    old failure site
-2. multi-module import tests all pass in both interpreter and Wasm boot modes
+2. key multi-module import canaries pass through the stage0 Wasm backend
 3. no regressions in method resolution for imported types
 4. no regressions in Core IR lowering/linking caused by canonicalized imported
    identities
@@ -419,5 +433,7 @@ This plan is complete when:
 - method and variant resolution for imported nominal types are stable under
   aliasing
 - boot compiler modules like
-  [`boot/compiler/parser.tw`](../../boot/compiler/parser.tw) no longer fail for
+  [`boot/compiler/lexer.tw`](../../../boot/compiler/lexer.tw),
+  [`boot/compiler/cursor.tw`](../../../boot/compiler/cursor.tw), and
+  [`boot/compiler/parser.tw`](../../../boot/compiler/parser.tw) no longer fail for
   structural import-identity reasons

@@ -62,6 +62,56 @@ fn run_wasm_module_alias_shadow_sibling() {
 }
 
 #[test]
+fn run_wasm_multi_module() {
+    check("tests/run/multi_module/main.tw");
+}
+
+#[test]
+fn run_wasm_multi_module_alias() {
+    check("tests/run/multi_module_alias/main.tw");
+}
+
+#[test]
+fn run_wasm_method_via_type_import() {
+    check("tests/run/method_via_type_import/main.tw");
+}
+
+#[test]
+fn run_wasm_method_via_type_import_selective() {
+    check("tests/run/method_via_type_import_selective/main.tw");
+}
+
+#[test]
+fn run_wasm_method_transitive_module() {
+    check("tests/run/method_transitive_module/main.tw");
+}
+
+#[test]
+fn run_wasm_method_via_type_import_aliased() {
+    check("tests/run/method_via_type_import_aliased/main.tw");
+}
+
+#[test]
+fn run_wasm_method_via_type_import_multi() {
+    check("tests/run/method_via_type_import_multi/main.tw");
+}
+
+#[test]
+fn run_wasm_method_via_type_import_first_class() {
+    check("tests/run/method_via_type_import_first_class/main.tw");
+}
+
+#[test]
+fn run_wasm_qualified_variant_constructor() {
+    check("tests/run/qualified_variant_constructor/main.tw");
+}
+
+#[test]
+fn run_wasm_qualified_variant_constructor_edge() {
+    check("tests/run/qualified_variant_constructor_edge/main.tw");
+}
+
+#[test]
 fn run_wasm_closures() {
     check("tests/run/closures.tw");
 }
