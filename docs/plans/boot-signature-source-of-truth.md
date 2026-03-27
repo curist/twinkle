@@ -13,7 +13,7 @@ In practice, this means:
 - parse + resolve [`prelude/signatures/*.tw`](../../prelude/signatures/) in a
   signature-only bootstrap path
 - seed boot `ResolvedEnv` from those resolved signatures instead of duplicating
-  them in [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw)
+  them in [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw)
 - derive builtin method registrations from the same signature sources instead of
   maintaining a separate hand-written method table in
   [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
@@ -33,7 +33,7 @@ Planned.
 The boot compiler is far enough along that signature duplication is now
 noticeable friction:
 
-- [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw) hardcodes a
+- [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw) hardcodes a
   large `builtin_env()` signature table
 - [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw) separately
   hardcodes builtin method registration
@@ -45,16 +45,17 @@ The boot compiler does **not** currently use those signature files. It still
 seeds signatures from hardcoded `builtin_sig(...)` calls and method mappings.
 
 This makes simple API edits expensive and drift-prone: adding or changing a
-builtin method can require touching the signature stub, boot `pipeline.tw`, boot
+builtin method can require touching the signature stub, boot `base_env.tw`, boot
 `resolver.tw`, and sometimes boot lowering/dispatch metadata.
 
 ## Current State
 
 ### What Boot Uses Today
 
-- [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw)
+- [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw)
   - seeds builtin named types directly
   - seeds user-visible builtin functions directly via `builtin_sig(...)`
+  - calls `register_builtin_methods()` at the end of `builtin_env()`
 - [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
   - registers builtin methods with a separate hardcoded table
 - [`boot/compiler/builtins.tw`](../../boot/compiler/builtins.tw)
@@ -177,7 +178,7 @@ only.
 
 Files:
 
-- [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw)
+- [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw)
 - [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
 - [`boot/compiler/builtins.tw`](../../boot/compiler/builtins.tw)
 - [`prelude/signatures/*.tw`](../../prelude/signatures/)
@@ -185,7 +186,7 @@ Files:
 Changes:
 
 1. Inventory the boot builtin signatures currently hardcoded in
-   `pipeline.tw`.
+   `base_env.tw`.
 2. Inventory the builtin method registrations currently hardcoded in
    `resolver.tw`.
 3. Classify each item into one of:
@@ -217,7 +218,7 @@ Exit criteria:
 Files:
 
 - [`boot/compiler/signatures.tw`](../../boot/compiler/signatures.tw) (new)
-- [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw)
+- [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw)
 
 Changes:
 
@@ -261,7 +262,7 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw)
+- [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw)
 - [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
 
 Changes:
@@ -279,7 +280,7 @@ Changes:
 
 Notes:
 
-- This phase should shrink `pipeline.tw` substantially.
+- This phase should shrink `base_env.tw` substantially.
 - `resolver.tw` should stop hand-maintaining method registrations for the
   signature-backed builtin surface.
 
@@ -287,7 +288,7 @@ Exit criteria:
 
 - changing a signature in [`prelude/signatures/*.tw`](../../prelude/signatures/)
   updates boot builtin env without editing
-  [`pipeline.tw`](../../boot/compiler/pipeline.tw)
+  [`base_env.tw`](../../boot/compiler/base_env.tw)
 - changing a builtin method in
   [`prelude/signatures/*.tw`](../../prelude/signatures/) updates boot method
   shape without editing [`resolver.tw`](../../boot/compiler/resolver.tw)
@@ -383,7 +384,7 @@ This plan is complete when:
    [`prelude/signatures/*.tw`](../../prelude/signatures/).
 2. Boot builtin method shape for that signature-backed surface comes from the
    same source.
-3. [`boot/compiler/pipeline.tw`](../../boot/compiler/pipeline.tw) no longer
+3. [`boot/compiler/base_env.tw`](../../boot/compiler/base_env.tw) no longer
    duplicates that signature surface by hand.
 4. [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw) no longer
    duplicates that method surface by hand.

@@ -1171,6 +1171,10 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
     _ => {},
   }
   case expr.kind {
+    .BlockExpr(block) => {
+      r := check_block(block, expected, ctx, diags)
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+    },
     .If(cond, then_block, else_expr) => {
       r := check_if(cond, then_block, else_expr, expected, expr.span, ctx, diags)
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }

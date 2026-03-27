@@ -1,0 +1,241 @@
+// Phase 1 tests: signature-only bootstrap loader.
+//
+// These tests verify that boot/compiler/signatures.tw can parse and resolve
+// prelude/signatures/*.tw files and return correct SignatureGroup data.
+//
+// They are written first (red) and should go green once load_signatures() is
+// fully implemented.
+
+use tests.runner
+use tests.assert
+use compiler.signatures.{load_signatures, SignatureGroup}
+use compiler.resolver.{FunctionSig, MonoType}
+use lib.module.loader
+use @std.path
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fn find_group(groups: Vector<SignatureGroup>, name: String) SignatureGroup? {
+  groups.find(fn(g) {
+    case g.receiver {
+      .Some(r) => r == name,
+      .None => false,
+    }
+  })
+}
+
+fn find_free_group(groups: Vector<SignatureGroup>) SignatureGroup? {
+  groups.find(fn(g) {
+    case g.receiver {
+      .None => true,
+      .Some(_) => false,
+    }
+  })
+}
+
+fn find_sig(sigs: Vector<FunctionSig>, name: String) FunctionSig? {
+  sigs.find(fn(s) { s.name == name })
+}
+
+// ── suite ─────────────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  // boot project root is boot/; signatures live one level up at prelude/signatures/
+  boot_root := loader.find_project_root(".")
+  twinkle_root := path.dirname(boot_root)
+  signatures_dir := path.join(twinkle_root, "prelude/signatures")
+
+  runner.suite("signature loader")
+
+    // ── basic loading ─────────────────────────────────────────────────────────
+
+    .test("load_signatures succeeds", fn() {
+      _ := try load_signatures(signatures_dir)
+      .Ok({})
+    })
+
+    .test("load_signatures returns one group per signature file", fn() {
+      groups := try load_signatures(signatures_dir)
+      // 10 files: string, vector, dict, cell, iterator, int, float, bool, byte, range
+      try assert.bool_eq(groups.len() >= 10, true)
+      .Ok({})
+    })
+
+    // ── receiver groups ───────────────────────────────────────────────────────
+
+    .test("String group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "String"))
+      .Ok({})
+    })
+
+    .test("Vector group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Vector"))
+      .Ok({})
+    })
+
+    .test("Dict group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Dict"))
+      .Ok({})
+    })
+
+    .test("Cell group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Cell"))
+      .Ok({})
+    })
+
+    .test("Iterator group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Iterator"))
+      .Ok({})
+    })
+
+    .test("Int group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Int"))
+      .Ok({})
+    })
+
+    .test("Byte group is present", fn() {
+      groups := try load_signatures(signatures_dir)
+      try assert.is_some(find_group(groups, "Byte"))
+      .Ok({})
+    })
+
+    // ── String signatures ─────────────────────────────────────────────────────
+
+    .test("String group has len: (String) -> Int, no type params", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "String").ok_or("no String group")
+      sig := try find_sig(group.sigs, "len").ok_or("no len sig")
+      try assert.int_eq(sig.type_params.len(), 0)
+      try assert.int_eq(sig.params.len(), 1)
+      case sig.params[0] {
+        .String => .Ok({}),
+        _ => .Err("expected first param to be String"),
+      }
+    })
+
+    .test("String group has get returning Option<Byte>", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "String").ok_or("no String group")
+      sig := try find_sig(group.sigs, "get").ok_or("no get sig")
+      try assert.int_eq(sig.params.len(), 2)
+      inner := try sig.ret.ok_or("expected Some return")
+      case inner {
+        .Optional(.Byte) => .Ok({}),
+        _ => .Err("expected Optional(Byte) return"),
+      }
+    })
+
+    .test("String group has concat with two String params", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "String").ok_or("no String group")
+      sig := try find_sig(group.sigs, "concat").ok_or("no concat sig")
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("String group has utf8_bytes returning Vector<Byte>", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "String").ok_or("no String group")
+      sig := try find_sig(group.sigs, "utf8_bytes").ok_or("no utf8_bytes sig")
+      inner := try sig.ret.ok_or("expected Some return")
+      case inner {
+        .Vector(.Byte) => .Ok({}),
+        _ => .Err("expected Vector(Byte) return"),
+      }
+    })
+
+    // ── Vector signatures ─────────────────────────────────────────────────────
+
+    .test("Vector group has push with type param T", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "Vector").ok_or("no Vector group")
+      sig := try find_sig(group.sigs, "push").ok_or("no push sig")
+      try assert.int_eq(sig.type_params.len(), 1)
+      try assert.str_eq(sig.type_params[0], "T")
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("Vector group has get returning Option<T>", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "Vector").ok_or("no Vector group")
+      sig := try find_sig(group.sigs, "get").ok_or("no get sig")
+      inner := try sig.ret.ok_or("expected Some return")
+      case inner {
+        .Optional(.Var(_)) => .Ok({}),
+        _ => .Err("expected Optional(Var(_)) return"),
+      }
+    })
+
+    // ── Range free functions ───────────────────────────────────────────────────
+
+    .test("range_from is in a free-function group (no receiver)", fn() {
+      groups := try load_signatures(signatures_dir)
+      range_group := groups.find(fn(g) {
+        case g.receiver {
+          .None => {
+            case find_sig(g.sigs, "range_from") {
+              .Some(_) => true,
+              .None => false,
+            }
+          },
+          .Some(_) => false,
+        }
+      })
+      try assert.is_some(range_group)
+      .Ok({})
+    })
+
+    .test("range group has range and range_step", fn() {
+      groups := try load_signatures(signatures_dir)
+      // find the group containing range_from
+      range_group := try groups.find(fn(g) {
+        case g.receiver {
+          .None => {
+            case find_sig(g.sigs, "range_from") {
+              .Some(_) => true,
+              .None => false,
+            }
+          },
+          .Some(_) => false,
+        }
+      }).ok_or("no range group")
+      _ := try find_sig(range_group.sigs, "range").ok_or("no range sig")
+      _ := try find_sig(range_group.sigs, "range_step").ok_or("no range_step sig")
+      .Ok({})
+    })
+
+    // ── Cell signatures ────────────────────────────────────────────────────────
+
+    .test("Cell group has new with one type param", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "Cell").ok_or("no Cell group")
+      sig := try find_sig(group.sigs, "new").ok_or("no new sig")
+      try assert.int_eq(sig.type_params.len(), 1)
+      .Ok({})
+    })
+
+    .test("Cell group has get and set", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "Cell").ok_or("no Cell group")
+      _ := try find_sig(group.sigs, "get").ok_or("no get sig")
+      _ := try find_sig(group.sigs, "set").ok_or("no set sig")
+      .Ok({})
+    })
+
+    // ── Byte signatures ────────────────────────────────────────────────────────
+
+    .test("Byte group has to_int and from_int", fn() {
+      groups := try load_signatures(signatures_dir)
+      group := try find_group(groups, "Byte").ok_or("no Byte group")
+      _ := try find_sig(group.sigs, "to_int").ok_or("no to_int sig")
+      _ := try find_sig(group.sigs, "from_int").ok_or("no from_int sig")
+      .Ok({})
+    })
+}

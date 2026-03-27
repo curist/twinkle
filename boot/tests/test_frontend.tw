@@ -6,6 +6,8 @@ use tests.suites.checker_coverage_suite
 use tests.suites.semantic_suite
 use tests.suites.semantic_closure_rebinding_suite
 use tests.suites.semantic_control_flow_suite
+use tests.suites.base_env_guardrail_suite
+use tests.suites.signature_loader_suite
 
 runner.run_all([
   parser_suite.suite(),
@@ -15,4 +17,6 @@ runner.run_all([
   semantic_suite.suite(),
   semantic_closure_rebinding_suite.suite(),
   semantic_control_flow_suite.suite(),
+  base_env_guardrail_suite.suite(),
+  signature_loader_suite.suite(),
 ])

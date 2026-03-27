@@ -1,0 +1,216 @@
+// Phase 0 guardrail tests: lock the current behaviour of builtin_env() and
+// register_builtin_methods() before the signature-source-of-truth refactor.
+//
+// These tests are meant to stay green throughout all phases so that any
+// unintended regression during the refactor is caught immediately.
+
+use tests.runner
+use tests.assert
+use compiler.base_env.{builtin_env}
+use compiler.resolver.{lookup_function, lookup_method, MonoType, FunctionSig, ty_to_string}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fn require_sig(name: String) Result<FunctionSig, String> {
+  case lookup_function(builtin_env(), name) {
+    .Some(sig) => .Ok(sig),
+    .None => .Err("builtin_env() missing function: ${name}"),
+  }
+}
+
+fn require_method(type_name: String, method_name: String) Result<String, String> {
+  case lookup_method(builtin_env(), type_name, method_name) {
+    .Some(fn_name) => .Ok(fn_name),
+    .None => .Err("builtin_env() missing method ${type_name}.${method_name}"),
+  }
+}
+
+// ── function signature presence ──────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("base_env guardrails")
+
+    // String builtins
+    .test("builtin_env has string_len", fn() {
+      sig := try require_sig("string_len")
+      try assert.int_eq(sig.params.len(), 1)
+      try assert.int_eq(sig.type_params.len(), 0)
+      .Ok({})
+    })
+
+    .test("builtin_env has string_concat with two params", fn() {
+      sig := try require_sig("string_concat")
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has string_get returning Option<Byte>", fn() {
+      sig := try require_sig("string_get")
+      try assert.int_eq(sig.params.len(), 2)
+      inner := try sig.ret.ok_or("expected Some")
+      case inner {
+        .Optional(.Byte) => .Ok({}),
+        _ => .Err("expected Optional(Byte)"),
+      }
+    })
+
+    // Vector builtins
+    .test("builtin_env has vector_push with type param T", fn() {
+      sig := try require_sig("vector_push")
+      try assert.int_eq(sig.type_params.len(), 1)
+      try assert.str_eq(sig.type_params[0], "T")
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has vector_get returning Option<T>", fn() {
+      sig := try require_sig("vector_get")
+      try assert.int_eq(sig.type_params.len(), 1)
+      inner := try sig.ret.ok_or("expected Some")
+      case inner {
+        .Optional(.Var(_)) => .Ok({}),
+        _ => .Err("expected Optional(Var(_))"),
+      }
+    })
+
+    // Dict builtins
+    .test("builtin_env has dict_new with two type params", fn() {
+      sig := try require_sig("dict_new")
+      try assert.int_eq(sig.type_params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has dict_set", fn() {
+      _ := try require_sig("dict_set")
+      .Ok({})
+    })
+
+    // Range free functions
+    .test("builtin_env has range_from", fn() {
+      sig := try require_sig("range_from")
+      try assert.int_eq(sig.params.len(), 2)
+      try assert.int_eq(sig.type_params.len(), 0)
+      .Ok({})
+    })
+
+    .test("builtin_env has range", fn() {
+      sig := try require_sig("range")
+      try assert.int_eq(sig.params.len(), 1)
+      .Ok({})
+    })
+
+    .test("builtin_env has range_step with three params", fn() {
+      sig := try require_sig("range_step")
+      try assert.int_eq(sig.params.len(), 3)
+      .Ok({})
+    })
+
+    // Cell builtins
+    .test("builtin_env has cell_new", fn() {
+      sig := try require_sig("cell_new")
+      try assert.int_eq(sig.type_params.len(), 1)
+      .Ok({})
+    })
+
+    .test("builtin_env has cell_set", fn() {
+      sig := try require_sig("cell_set")
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    // Iterator builtins
+    .test("builtin_env has iterator_unfold", fn() {
+      sig := try require_sig("iterator_unfold")
+      try assert.int_eq(sig.type_params.len(), 2)
+      .Ok({})
+    })
+
+    // Byte builtins
+    .test("builtin_env has byte_to_int", fn() {
+      sig := try require_sig("byte_to_int")
+      try assert.int_eq(sig.params.len(), 1)
+      .Ok({})
+    })
+
+    .test("builtin_env has byte_from_int returning Option<Byte>", fn() {
+      sig := try require_sig("byte_from_int")
+      inner := try sig.ret.ok_or("expected Some")
+      case inner {
+        .Optional(.Byte) => .Ok({}),
+        _ => .Err("expected Optional(Byte)"),
+      }
+    })
+
+    // Conversion builtins
+    .test("builtin_env has int_to_string", fn() {
+      _ := try require_sig("int_to_string")
+      .Ok({})
+    })
+
+    .test("builtin_env has float_to_string", fn() {
+      _ := try require_sig("float_to_string")
+      .Ok({})
+    })
+
+    // ── method registration ──────────────────────────────────────────────────
+
+    .test("String.len resolves to string_len", fn() {
+      fn_name := try require_method("String", "len")
+      try assert.str_eq(fn_name, "string_len")
+      .Ok({})
+    })
+
+    .test("String.get resolves to string_get", fn() {
+      fn_name := try require_method("String", "get")
+      try assert.str_eq(fn_name, "string_get")
+      .Ok({})
+    })
+
+    .test("String.concat resolves to string_concat", fn() {
+      fn_name := try require_method("String", "concat")
+      try assert.str_eq(fn_name, "string_concat")
+      .Ok({})
+    })
+
+    .test("Vector.len resolves to vector_len", fn() {
+      fn_name := try require_method("Vector", "len")
+      try assert.str_eq(fn_name, "vector_len")
+      .Ok({})
+    })
+
+    .test("Vector.push resolves to vector_push", fn() {
+      fn_name := try require_method("Vector", "push")
+      try assert.str_eq(fn_name, "vector_push")
+      .Ok({})
+    })
+
+    .test("Dict.get resolves to dict_get", fn() {
+      fn_name := try require_method("Dict", "get")
+      try assert.str_eq(fn_name, "dict_get")
+      .Ok({})
+    })
+
+    .test("Cell.set resolves to cell_set", fn() {
+      fn_name := try require_method("Cell", "set")
+      try assert.str_eq(fn_name, "cell_set")
+      .Ok({})
+    })
+
+    .test("Int.to_string resolves to int_to_string", fn() {
+      fn_name := try require_method("Int", "to_string")
+      try assert.str_eq(fn_name, "int_to_string")
+      .Ok({})
+    })
+
+    .test("Byte.to_int resolves to byte_to_int", fn() {
+      fn_name := try require_method("Byte", "to_int")
+      try assert.str_eq(fn_name, "byte_to_int")
+      .Ok({})
+    })
+
+    .test("Iterator.unfold resolves to iterator_unfold", fn() {
+      fn_name := try require_method("Iterator", "unfold")
+      try assert.str_eq(fn_name, "iterator_unfold")
+      .Ok({})
+    })
+}

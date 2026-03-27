@@ -40,6 +40,8 @@ use tests.suites.dependency_graph_suite
 use tests.suites.query_keys_suite
 use tests.suites.imports_suite
 use tests.suites.multi_module_suite
+use tests.suites.base_env_guardrail_suite
+use tests.suites.signature_loader_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -83,4 +85,6 @@ runner.run_all([
   query_keys_suite.suite(),
   imports_suite.suite(),
   multi_module_suite.suite(),
+  base_env_guardrail_suite.suite(),
+  signature_loader_suite.suite(),
 ])

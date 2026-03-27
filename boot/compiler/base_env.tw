@@ -78,6 +78,16 @@ fn builtin_types() BuiltinTypes {
   }
 }
 
+/// Returns a ResolvedEnv seeded with only the builtin named types (Option,
+/// Result, Cell, Range, Iterator, IterItem, UnfoldStep, Order).  No function
+/// signatures are added.  Used by the signature-only bootstrap loader to
+/// resolve TypeExprs in prelude/signatures/*.tw without creating a circular
+/// dependency.
+pub fn builtin_type_env() ResolvedEnv {
+  bt := builtin_types()
+  resolver.empty_env().with_types(bt.types, bt.names)
+}
+
 pub fn builtin_env() ResolvedEnv {
   t := resolver.MonoType.Var("T")
   k := resolver.MonoType.Var("K")

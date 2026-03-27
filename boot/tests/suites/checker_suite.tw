@@ -1457,12 +1457,12 @@ pub fn suite() runner.Suite {
     })
     // ── G13: If-else branch type unification ────────────────────────────
     .test("G13 if-else else branch resolves variant shorthand from then type", fn() {
-      src := "type Mono = { Void, Int }\nfn f(args: Vector<Mono>) Mono { if args.len() > 0 { args[0] } else { .Void } }"
+      src := "type Mono = { Void, Int }\nfn f(flag: Bool, args: Vector<Mono>) { if flag { args[0] } else { .Void } }"
       r := try check_ok(src)
       .Ok({})
     })
     .test("G13 if-else else branch resolves Option shorthand from then type", fn() {
-      src := "fn f(xs: Vector<Int>) Int? { if xs.len() > 0 { .Some(xs[0]) } else { .None } }"
+      src := "type MaybeInt = { Some(Int), None }\nfn f(flag: Bool, xs: Vector<Int>) { if flag { MaybeInt.Some(xs[0]) } else { .None } }"
       r := try check_ok(src)
       .Ok({})
     })

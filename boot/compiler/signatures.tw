@@ -1,0 +1,169 @@
+// Signature-only bootstrap loader.
+//
+// Parses and resolves prelude/signatures/*.tw files to derive FunctionSig
+// entries and method receiver groups.  Bodies in those files are stubs and are
+// never typechecked, lowered, or codegenned.
+//
+// This is the boot-side counterpart to src/intrinsics/signatures.rs.
+
+use @std.fs
+use @std.path
+use compiler.parser
+use compiler.ast.{Item, Param, TypeExpr}
+use compiler.resolver.{
+  FunctionSig, MonoType, ResolvedEnv,
+  resolve_type_expr, TypeResolveResult,
+}
+use compiler.base_env.{builtin_type_env}
+
+/// One file's worth of resolved signatures, tagged with an optional receiver
+/// type name.  receiver=None means the functions are free (e.g. range.tw).
+pub type SignatureGroup = .{
+  receiver: String?,
+  sigs: Vector<FunctionSig>,
+}
+
+// ── receiver mapping ─────────────────────────────────────────────────────────
+
+fn receiver_for_stem(stem: String) String? {
+  case stem {
+    "bool"     => .Some("Bool"),
+    "byte"     => .Some("Byte"),
+    "cell"     => .Some("Cell"),
+    "dict"     => .Some("Dict"),
+    "float"    => .Some("Float"),
+    "int"      => .Some("Int"),
+    "iterator" => .Some("Iterator"),
+    "range"    => .None,
+    "string"   => .Some("String"),
+    "vector"   => .Some("Vector"),
+    _          => .None,
+  }
+}
+
+// ── type resolution ──────────────────────────────────────────────────────────
+
+fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>) Result<MonoType, String> {
+  case param.ty {
+    .None => .Err("parameter '${param.name}' has no type annotation"),
+    .Some(ty_expr) => {
+      r := resolve_type_expr(env, ty_expr, type_vars)
+      case r.ty {
+        .Some(mono) => .Ok(mono),
+        .None => {
+          case r.diagnostics.get(0) {
+            .Some(d) => .Err("type error in param '${param.name}': ${d.message}"),
+            .None => .Err("unknown type error in param '${param.name}'"),
+          }
+        },
+      }
+    },
+  }
+}
+
+fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<String>) Result<MonoType?, String> {
+  case ret_expr {
+    .None => .Ok(.None),
+    .Some(ty_expr) => {
+      r := resolve_type_expr(env, ty_expr, type_vars)
+      case r.ty {
+        .Some(mono) => .Ok(.Some(mono)),
+        .None => {
+          case r.diagnostics.get(0) {
+            .Some(d) => .Err("type error in return type: ${d.message}"),
+            .None => .Err("unknown type error in return type"),
+          }
+        },
+      }
+    },
+  }
+}
+
+// ── per-file loading ─────────────────────────────────────────────────────────
+
+fn load_group_from_source(src: String, receiver: String?) Result<SignatureGroup, String> {
+  env := builtin_type_env()
+  parsed := parser.parse(src, 0)
+  if parsed.diagnostics.len() > 0 {
+    return .Err("parse error: ${parsed.diagnostics[0].message}")
+  }
+
+  sigs: Vector<FunctionSig> = []
+  for item in parsed.value.items {
+    case item {
+      .Function(decl) => {
+        if !decl.is_pub { continue }
+        type_vars := decl.type_params
+
+        param_tys: Vector<MonoType> = []
+        param_names: Vector<String> = []
+        ok := true
+        for param in decl.params {
+          case resolve_param_type(env, param, type_vars) {
+            .Ok(mono) => {
+              param_tys = param_tys.push(mono)
+              param_names = param_names.push(param.name)
+            },
+            .Err(msg) => {
+              ok = false
+              return .Err("in function '${decl.name}': ${msg}")
+            },
+          }
+        }
+        if !ok { continue }
+
+        ret := try resolve_return_type(env, decl.return_type, type_vars)
+        sig := FunctionSig.{
+          name: decl.name,
+          type_params: type_vars,
+          param_names: param_names,
+          params: param_tys,
+          ret: ret,
+        }
+        sigs = sigs.push(sig)
+      },
+      _ => {},
+    }
+  }
+
+  .Ok(SignatureGroup.{ receiver: receiver, sigs: sigs })
+}
+
+// ── public API ───────────────────────────────────────────────────────────────
+
+/// Load all prelude/signatures/*.tw files from the given signatures directory
+/// (e.g. "/path/to/twinkle/prelude/signatures").
+/// Returns one SignatureGroup per file, in sorted file-system order.
+/// Fails if the directory cannot be read or any file fails to parse/resolve.
+pub fn load_signatures(signatures_dir: String) Result<Vector<SignatureGroup>, String> {
+  entries := case fs.list_dir(signatures_dir) {
+    .Ok(es) => es,
+    .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
+  }
+
+  // collect .tw files and sort for determinism
+  tw_files: Vector<String> = []
+  for entry in entries {
+    if path.extension(entry.name) == ".tw" {
+      tw_files = tw_files.push(entry.name)
+    }
+  }
+  tw_files = tw_files.sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
+
+  groups: Vector<SignatureGroup> = []
+  for filename in tw_files {
+    stem := path.stem(filename)
+    receiver := receiver_for_stem(stem)
+    file_path := path.join(signatures_dir, filename)
+
+    src := case fs.read_text(file_path) {
+      .Ok(s) => s,
+      .Err(_) => { return .Err("cannot read ${file_path}") },
+    }
+
+    group := try load_group_from_source(src, receiver)
+    groups = groups.push(group)
+  }
+
+  .Ok(groups)
+}
