@@ -26,7 +26,7 @@ This is the boot-side counterpart to the stage0 direction already implemented in
 
 ## Status
 
-Phases 0, 1, and 2 complete. Phase 3 next.
+Phases 0, 1, 2, and 3 complete. Phase 4 next.
 
 ### Phase 0 (complete)
 Guardrail test suite added in `boot/tests/suites/base_env_guardrail_suite.tw`.
