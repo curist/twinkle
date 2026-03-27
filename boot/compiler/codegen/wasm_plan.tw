@@ -321,6 +321,23 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
         },
       }
     },
+    .Cell_(inner) => {
+      sym := case val_type_of(layout) {
+        .Ref(_, .Named(name)) => name,
+        _ => error("Cell layout must lower to a named ref"),
+      }
+      case reg.type_index[sym] {
+        .Some(_) => reg,
+        .None => {
+          td: TypeDef = .Struct(sym, [
+            FieldDef.{ name: .Some("value"), mutable: true, ty: val_type_of(inner) },
+          ], .None, false)
+          reg.type_index[sym] = reg.type_defs.len()
+          reg.type_defs = reg.type_defs.push(td)
+          reg
+        },
+      }
+    },
     _ => reg,
   }
 }

@@ -114,6 +114,19 @@ fn test_phase4_record_field_access() Result<Void, String> {
   .Ok({})
 }
 
+fn test_cell_record_field_uses_declared_typed_cell_symbol() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "type Inner = .{ value: Int }\ntype Outer = .{ slot: Cell<Inner> }\no := Outer.{ slot: Cell.new(Inner.{ value: 1 }) }\nprintln(int_to_string(Cell.get(o.slot).value))\n",
+    "cell record field typed symbol",
+  )
+  try assert.str_contains(wat, "(type $user__$Cell_anyref (sub (struct (field $value (mut anyref)))))")
+  try assert.str_contains(wat, "(field $slot (mut (ref null $user__$Cell_anyref)))")
+  try assert.str_contains(wat, "struct.new $user__$Cell_anyref")
+  try assert.str_contains(wat, "struct.get $user__$Cell_anyref 0")
+  try assert.ok(!wat.contains("$$Cell_anyref"), "cell codegen should not reference unqualified $$Cell_anyref")
+  .Ok({})
+}
+
 fn test_phase3_large_string_index_fixture() Result<Void, String> {
   wat := try assert_codegen_path_compiles(
     "tests/run/string_large_index_semantics.tw",
@@ -477,6 +490,7 @@ pub fn suite() runner.Suite {
     .test("phase 3 bool case compiles through boot codegen", test_phase3_bool_case)
     .test("phase 3 large string index fixture compiles through boot codegen", test_phase3_large_string_index_fixture)
     .test("phase 4 record field access compiles through boot codegen", test_phase4_record_field_access)
+    .test("cell record field uses declared typed cell symbol", test_cell_record_field_uses_declared_typed_cell_symbol)
     .test("runtime_modules returns 5 modules", test_runtime_modules_count)
     .test("runtime_modules has correct namespaces", test_runtime_modules_namespaces)
     .test("linking runtime resolves all inter-module imports", test_link_runtime_resolves_imports)
