@@ -86,6 +86,30 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("method call works: bridge full-import then source full-import", fn() {
+      result := module_compiler.compile_entry("${dir}/method_call_consumer_full.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("method call works: bridge full-import then source selective-import", fn() {
+      result := module_compiler.compile_entry("${dir}/method_call_consumer.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("method call works: source selective-import then bridge full-import", fn() {
+      result := module_compiler.compile_entry("${dir}/method_call_consumer_rev.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
     .test("compile transitive dependency chain (a -> b -> c)", fn() {
       result := module_compiler.compile_entry("${dir}/transitive_a.tw")
       case result {

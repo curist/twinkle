@@ -385,6 +385,15 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
         }
         if qualified_methods.len() > 0 {
           methods = register_methods(methods, qualified_type, qualified_methods)
+          // Also register under any existing canonical alias (e.g. $import$.X.Type
+          // registered by a prior bridge import). This ensures find_type_name(tid)
+          // always returns a name with methods, regardless of import order.
+          ck := canonical_type_key(qualified_type)
+          for other_name in cur.type_names {
+            if other_name != qualified_type and canonical_type_key(other_name) == ck {
+              methods = register_methods(methods, other_name, qualified_methods)
+            }
+          }
         }
       },
       .None => {},

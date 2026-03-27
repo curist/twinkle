@@ -1,0 +1,9 @@
+// bridge first, full source second
+use .method_call_bridge
+use .method_call_src
+
+fn main() {
+  p := method_call_bridge.origin()
+  p2 := p.add_x(5)
+  p2.sum()
+}

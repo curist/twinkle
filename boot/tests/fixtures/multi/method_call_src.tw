@@ -1,0 +1,3 @@
+pub type Point = .{ x: Int, y: Int }
+pub fn add_x(p: Point, dx: Int) Point { Point.{ x: p.x + dx, y: p.y } }
+pub fn sum(p: Point) Int { p.x + p.y }

@@ -1,0 +1,9 @@
+// selective source first, bridge second
+use .method_call_src.{Point}
+use .method_call_bridge
+
+fn main() {
+  p := method_call_bridge.origin()
+  p2 := p.add_x(5)
+  p2.sum()
+}
