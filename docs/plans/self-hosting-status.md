@@ -1,6 +1,6 @@
 # Self-Hosting Status Tracker
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ## Purpose
 
@@ -46,6 +46,7 @@ snapshot.
 | ANF lowering + optimization | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) — M1–M12 complete |
 | Codegen + linker | Done | [archive/boot-codegen.md](archive/boot-codegen.md), [archive/boot-codegen-followup.md](archive/boot-codegen-followup.md) |
 | Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
+| Builtin signature source of truth | Planned | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) — dedup boot builtin signatures/method shapes against `prelude/signatures/*.tw` while keeping `builtins.tw` as dispatch/FuncId registry |
 
 ---
 

@@ -5,7 +5,7 @@
 Implement a production-quality tree-sitter grammar for the Twinkle language based on the EBNF specification in `docs/grammar.ebnf`.
 
 **Current State:**
-- Tree-sitter infrastructure already exists at `/Users/curist/playground/rust/twinkle/tree-sitter-twinkle/`
+- Tree-sitter infrastructure already exists at `tree-sitter-twinkle/`
 - `grammar.js` has placeholder content that needs to be replaced
 - Need to create external scanner for ASI and string interpolation
 
@@ -121,15 +121,15 @@ Implement a production-quality tree-sitter grammar for the Twinkle language base
 ## Critical Files
 
 ### Files to Modify:
-- `/Users/curist/playground/rust/twinkle/tree-sitter-twinkle/grammar.js` - Complete rewrite with full grammar
-- `/Users/curist/playground/rust/twinkle/tree-sitter-twinkle/src/scanner.c` - Create new external scanner
+- `tree-sitter-twinkle/grammar.js` - Complete rewrite with full grammar
+- `tree-sitter-twinkle/src/scanner.c` - Create new external scanner
 
 ### Reference Files:
-- `/Users/curist/playground/rust/twinkle/docs/grammar.ebnf` - EBNF specification (source of truth)
-- `/Users/curist/playground/rust/twinkle/docs/spec.md` - Language semantics and examples
+- `docs/grammar.ebnf` - EBNF specification (source of truth)
+- `docs/spec.md` - Language semantics and examples
 
 ### Test Files:
-- `/Users/curist/playground/rust/twinkle/examples/*.tw` - Real-world examples for validation
+- `examples/*.tw` - Real-world examples for validation
 
 ## Key Challenges
 
@@ -156,7 +156,7 @@ Implement a production-quality tree-sitter grammar for the Twinkle language base
 ## Build & Test Commands
 
 ```bash
-cd /Users/curist/playground/rust/twinkle/tree-sitter-twinkle
+cd tree-sitter-twinkle
 
 # Generate parser from grammar
 tree-sitter generate
