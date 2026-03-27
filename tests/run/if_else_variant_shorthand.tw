@@ -1,0 +1,40 @@
+// If-else branch unification: concrete then-type provides context for else shorthand
+// Expected output:
+//   circle 1
+//   square 2
+//   point
+//   found 42
+//   empty
+
+type Shape = { Circle(Float), Square(Float), Point }
+
+fn pick(shapes: Vector<Shape>, i: Int) Shape {
+  if i >= 0 and i < shapes.len() { shapes[i] } else { .Point }
+}
+
+fn describe(s: Shape) String {
+  case s {
+    .Circle(r) => "circle ${r}",
+    .Square(s) => "square ${s}",
+    .Point => "point",
+  }
+}
+
+shapes := [Shape.Circle(1.0), Shape.Square(2.0)]
+println(describe(pick(shapes, 0)))
+println(describe(pick(shapes, 1)))
+println(describe(pick(shapes, 5)))
+
+// Option shorthand in else branch
+fn first(xs: Vector<Int>) Int? {
+  if xs.len() > 0 { .Some(xs[0]) } else { .None }
+}
+
+case first([42, 1]) {
+  .Some(v) => println("found ${v}"),
+  .None => println("empty"),
+}
+case first([]) {
+  .Some(v) => println("found ${v}"),
+  .None => println("empty"),
+}

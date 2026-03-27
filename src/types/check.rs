@@ -2038,13 +2038,22 @@ impl TypeChecker {
 
         // If there's an else branch, both branches must have the same type
         if let Some(else_expr) = else_branch {
-            let else_ty = self.synth_expr(else_expr)?;
-            self.unify(&then_ty, &else_ty, else_expr.span)?;
+            // If then_ty is concrete, use it as context for the else branch so that
+            // variant shorthands like `.Void` can be resolved.
+            let then_zonked = self.zonk(&then_ty);
+            let else_ty = if !contains_meta(&then_zonked) && then_zonked != MonoType::Never {
+                self.check_expr(else_expr, &then_zonked)?;
+                then_zonked.clone()
+            } else {
+                let else_ty = self.synth_expr(else_expr)?;
+                self.unify(&then_ty, &else_ty, else_expr.span)?;
+                else_ty
+            };
             // If one branch diverges (Never), use the other branch's type
-            if then_ty == MonoType::Never {
+            if then_zonked == MonoType::Never {
                 Ok(else_ty)
             } else {
-                Ok(then_ty)
+                Ok(then_zonked)
             }
         } else {
             // No else branch - result type is Void

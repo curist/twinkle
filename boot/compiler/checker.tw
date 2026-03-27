@@ -1342,13 +1342,23 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
 
   case else_expr {
     .Some(else_e) => {
-      // Synth else, unify with then
-      else_r := then_r.ctx.synth(else_e, then_r.diags)
-      // Skip Never arms for unification
-      if then_r.ty == .Never { return .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags } }
-      if else_r.ty == .Never { return .{ ty: then_r.ty, ctx: else_r.ctx, diags: else_r.diags } }
-      u2 := else_r.ctx.unify(then_r.ty, else_r.ty, s, else_r.diags)
-      .{ ty: then_r.ty, ctx: u2.ctx, diags: u2.diags }
+      if then_r.ty == .Never {
+        // Then diverges — synth else freely
+        else_r := then_r.ctx.synth(else_e, then_r.diags)
+        return .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags }
+      }
+      then_zonked := zonk(then_r.ty, then_r.ctx.subst)
+      if contains_meta(then_zonked) {
+        // Then type still ambiguous — synth else and unify
+        else_r := then_r.ctx.synth(else_e, then_r.diags)
+        if else_r.ty == .Never { return .{ ty: then_zonked, ctx: else_r.ctx, diags: else_r.diags } }
+        u2 := else_r.ctx.unify(then_zonked, else_r.ty, s, else_r.diags)
+        .{ ty: then_zonked, ctx: u2.ctx, diags: u2.diags }
+      } else {
+        // Then type is concrete — check else against it for variant shorthand resolution
+        else_r := then_r.ctx.check_expr(else_e, then_zonked, then_r.diags)
+        .{ ty: then_zonked, ctx: else_r.ctx, diags: else_r.diags }
+      }
     },
     .None => {
       // No else — result is Void
