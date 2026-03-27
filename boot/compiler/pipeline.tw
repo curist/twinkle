@@ -53,6 +53,13 @@ pub fn compile_entry_path(path: String) Result<PipelineArtifacts, String> {
   module_compiler.compile_entry(path)
 }
 
+pub fn check_entry_path(path: String) Result<Void, String> {
+  case compile_entry_path(path) {
+    .Ok(_) => .Ok({}),
+    .Err(msg) => .Err(msg),
+  }
+}
+
 pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
   compile_entry_path(path)
 }

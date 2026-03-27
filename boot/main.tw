@@ -21,7 +21,7 @@ fn parse_cmd() Command {
 }
 
 fn check_cmd() Command {
-  file_command("check", "Type-check source (placeholder)")
+  file_command("check", "Type-check source")
 }
 
 fn ir_cmd() Command {
@@ -44,10 +44,6 @@ fn build_cmd() Command {
     .add_short_option("output", "o", "Output path (.wat)")
 }
 
-fn runtime_dump_cmd() Command {
-  command.make("runtime-dump", "Dump linked runtime WAT (placeholder)")
-}
-
 fn twk_app() App {
   app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
     parse_cmd(),
@@ -55,7 +51,6 @@ fn twk_app() App {
     ir_cmd(),
     run_cmd(),
     build_cmd(),
-    runtime_dump_cmd(),
   ])
 }
 
@@ -261,6 +256,23 @@ fn run_ir_command(parsed: ParseResult) {
   }
 }
 
+fn run_check_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  case pipeline.check_entry_path(file) {
+    .Ok(_) => {
+      println("Type checking succeeded: ${file}")
+    },
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+}
+
 fn default_build_output(file: String) String {
   dir := path.dirname(file)
   stem := path.stem(file)
@@ -335,7 +347,6 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
           output := try resolve_build_output(parsed, file)
           "Would build '${file}' to '${output}'."
         },
-        "runtime-dump" => "Would print linked runtime WAT.",
         _ => { return .Err("internal error: unsupported command '${cmd}'") },
       }
       .Ok(.{ cmd: cmd, detail: detail })
@@ -347,6 +358,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
 fn run_command(parsed: ParseResult) {
   case parsed.command {
     .Some("parse") => run_parse_command(parsed),
+    .Some("check") => run_check_command(parsed),
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
     _ => {

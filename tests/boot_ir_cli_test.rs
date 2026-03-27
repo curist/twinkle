@@ -125,6 +125,19 @@ fn ir_command_handles_multi_module_fixture() {
 }
 
 #[test]
+fn check_command_handles_multi_module_fixture() {
+    run_with_large_stack(|| {
+        let (stdout, stderr) = run_boot_main(&["check", "tests/run/multi_module/main.tw"]);
+
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        assert!(
+            stdout.contains("Type checking succeeded: tests/run/multi_module/main.tw"),
+            "check output should report success:\n{stdout}"
+        );
+    });
+}
+
+#[test]
 fn build_command_writes_wat_for_multi_module_fixture() {
     run_with_large_stack(|| {
         let out = temp_path("boot_build_multi_module", "wat");
