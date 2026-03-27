@@ -9,21 +9,21 @@ pub type Arg = .{
 }
 
 pub fn positional(name: String, help: String) Arg {
-  .{ name, short_name: .None, help, kind: .Positional, is_required: false }
+  Arg.{ name, short_name: .None, help, kind: .Positional, is_required: false }
 }
 
 pub fn flag(name: String, help: String) Arg {
-  .{ name, short_name: .None, help, kind: .Flag, is_required: false }
+  Arg.{ name, short_name: .None, help, kind: .Flag, is_required: false }
 }
 
 pub fn option(name: String, help: String) Arg {
-  .{ name, short_name: .None, help, kind: .Opt, is_required: false }
+  Arg.{ name, short_name: .None, help, kind: .Opt, is_required: false }
 }
 
 pub fn short(a: Arg, s: String) Arg {
-  .{ name: a.name, short_name: .Some(s), help: a.help, kind: a.kind, is_required: a.is_required }
+  Arg.{ name: a.name, short_name: .Some(s), help: a.help, kind: a.kind, is_required: a.is_required }
 }
 
 pub fn required(a: Arg) Arg {
-  .{ name: a.name, short_name: a.short_name, help: a.help, kind: a.kind, is_required: true }
+  Arg.{ name: a.name, short_name: a.short_name, help: a.help, kind: a.kind, is_required: true }
 }

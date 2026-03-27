@@ -25,7 +25,7 @@ pub fn codegen_src(src: String) Result<String, String> {
 }
 
 pub fn codegen_path(path: String) Result<String, String> {
-  artifacts := try pipeline.compile_path(path)
+  artifacts := try pipeline.compile_entry_path(path)
   .Ok(codegen(artifacts.opt, artifacts.env, artifacts.builtins))
 }
 

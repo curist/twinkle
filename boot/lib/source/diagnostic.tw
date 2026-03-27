@@ -35,10 +35,35 @@ pub fn format_diagnostic(reg: registry.FileRegistry, d: Diagnostic) String {
   }
 }
 
+pub fn format_diagnostic_with_path(path: String, reg: registry.FileRegistry, d: Diagnostic) String {
+  case registry.line_col(reg, d.span) {
+    .Some(lc) => "${path}:${lc.line}:${lc.column}: ${d.message}",
+    .None => "${path}:?:?: ${d.message}",
+  }
+}
+
 pub fn format_diagnostics(reg: registry.FileRegistry, ds: Vector<Diagnostic>) String {
   lines: Vector<String> = []
   for d in ds {
     lines = lines.push(format_diagnostic(reg, d))
   }
   lines.join("\n")
+}
+
+pub fn format_diagnostics_with_path(
+  path: String,
+  reg: registry.FileRegistry,
+  ds: Vector<Diagnostic>,
+) String {
+  lines: Vector<String> = []
+  for d in ds {
+    lines = lines.push(format_diagnostic_with_path(path, reg, d))
+  }
+  lines.join("\n")
+}
+
+pub fn format_source_diagnostics(path: String, source: String, ds: Vector<Diagnostic>) String {
+  reg := registry.empty()
+  registry.add_file(reg, path, source)
+  format_diagnostics_with_path(path, reg, ds)
 }

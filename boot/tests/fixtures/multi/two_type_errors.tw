@@ -1,0 +1,5 @@
+fn main() Int {
+  first: Int = true
+  second: Int = false
+  0
+}

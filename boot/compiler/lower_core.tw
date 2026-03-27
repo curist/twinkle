@@ -47,6 +47,7 @@ type LowerCtx = .{
 pub type LowerResult = .{
   module: CoreModule,
   diagnostics: Vector<Diagnostic>,
+  func_table: Dict<String, FuncId>,
 }
 
 type ExprOut = .{ expr: CoreExpr, ctx: LowerCtx }
@@ -139,7 +140,13 @@ fn lookup_local_or_global(ctx: LowerCtx, name: String) LocalId? {
 fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
   case ctx.func_table[name] {
     .Some(id) => .Some(id),
-    .None => .None,
+    .None => {
+      if name.starts_with("__host_") {
+        ctx.func_table[name.slice(2, name.len())]
+      } else {
+        .None
+      }
+    },
   }
 }
 
@@ -2163,5 +2170,6 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       init_func_id,
     },
     diagnostics: ctx.errors,
+    func_table: ctx.func_table,
   }
 }

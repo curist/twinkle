@@ -1,205 +1,37 @@
-use @std.fs
 use compiler.parser
-use compiler.resolver
 use compiler.checker
 use compiler.lower_core
 use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.resolver.{ResolvedEnv}
-use compiler.core_ir.{CoreModule}
-use compiler.anf.{AnfModule}
+use compiler.builtins.{make_builtin_registry}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.base_env.{builtin_env}
+use compiler.module_compiler
 use compiler.codegen.codegen.{codegen}
-use compiler.util.{fs_error_message}
-use lib.source.span
-
-pub type PipelineArtifacts = .{
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-  core: CoreModule,
-  mono: CoreModule,
-  anf: AnfModule,
-  opt: AnfModule,
-}
-
-fn builtin_sig(
-  name: String,
-  type_params: Vector<String>,
-  param_names: Vector<String>,
-  param_tys: Vector<resolver.MonoType>,
-  ret: resolver.MonoType?,
-) resolver.FunctionSig {
-  resolver.FunctionSig.{
-    name: name,
-    type_params: type_params,
-    param_names: param_names,
-    params: param_tys,
-    ret: ret,
-  }
-}
-
-fn builtin_span() span.Span {
-  span.Span.{ file_id: 0, start: 0, end: 0 }
-}
-
-fn builtin_type_entry(id: Int, arity: Int, def: resolver.ResolvedTypeDef) resolver.TypeEntry {
-  resolver.TypeEntry.{
-    id: resolver.TypeId.{ id: id },
-    arity: arity,
-    def: .Some(def),
-    span: builtin_span(),
-  }
-}
-
-type BuiltinTypes = .{
-  types: Vector<resolver.TypeEntry>,
-  names: Vector<String>,
-}
-
-fn builtin_types() BuiltinTypes {
-  t := resolver.MonoType.Var("T")
-  e := resolver.MonoType.Var("E")
-  s := resolver.MonoType.Var("S")
-
-  types: Vector<resolver.TypeEntry> = [
-    builtin_type_entry(0, 1, .Sum("Option", ["T"], [
-      resolver.ResolvedVariant.{ name: "None", fields: [] },
-      resolver.ResolvedVariant.{ name: "Some", fields: [t] },
-    ])),
-    builtin_type_entry(1, 2, .Sum("Result", ["T", "E"], [
-      resolver.ResolvedVariant.{ name: "Ok", fields: [t] },
-      resolver.ResolvedVariant.{ name: "Err", fields: [e] },
-    ])),
-    builtin_type_entry(2, 1, .Record("Cell", ["T"], [])),
-    builtin_type_entry(3, 0, .Record("Range", [], [
-      resolver.ResolvedField.{ name: "start", ty: resolver.MonoType.Int },
-      resolver.ResolvedField.{ name: "end", ty: resolver.MonoType.Int },
-      resolver.ResolvedField.{ name: "step", ty: resolver.MonoType.Int },
-    ])),
-    builtin_type_entry(4, 1, .Record("Iterator", ["T"], [])),
-    builtin_type_entry(5, 1, .Record("IterItem", ["T"], [
-      resolver.ResolvedField.{ name: "value", ty: t },
-      resolver.ResolvedField.{ name: "rest", ty: resolver.MonoType.Named(resolver.TypeId.{ id: 4 }, [t]) },
-    ])),
-    builtin_type_entry(6, 2, .Sum("UnfoldStep", ["T", "S"], [
-      resolver.ResolvedVariant.{ name: "Done", fields: [] },
-      resolver.ResolvedVariant.{ name: "Yield", fields: [t, s] },
-    ])),
-    builtin_type_entry(7, 0, .Sum("Order", [], [
-      resolver.ResolvedVariant.{ name: "Lt", fields: [] },
-      resolver.ResolvedVariant.{ name: "Eq", fields: [] },
-      resolver.ResolvedVariant.{ name: "Gt", fields: [] },
-    ])),
-  ]
-
-  BuiltinTypes.{
-    types,
-    names: ["Option", "Result", "Cell", "Range", "Iterator", "IterItem", "UnfoldStep", "Order"],
-  }
-}
-
-pub fn builtin_env() ResolvedEnv {
-  t := resolver.MonoType.Var("T")
-  k := resolver.MonoType.Var("K")
-  v := resolver.MonoType.Var("V")
-  e := resolver.MonoType.Var("E")
-  s := resolver.MonoType.Var("S")
-  builtin_named_types := builtin_types()
-  iter_t := resolver.MonoType.Named(resolver.TypeId.{ id: 4 }, [t])
-  iter_item_t := resolver.MonoType.Named(resolver.TypeId.{ id: 5 }, [t])
-  unfold_step_t := resolver.MonoType.Named(resolver.TypeId.{ id: 6 }, [t, s])
-  cell_t := resolver.MonoType.Named(resolver.TypeId.{ id: 2 }, [t])
-  range_t := resolver.MonoType.Named(resolver.TypeId.{ id: 3 }, [])
-
-  fns: Vector<resolver.FunctionSig> = [
-    builtin_sig("print", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("println", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("error", [], ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
-    builtin_sig("eprint", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("eprintln", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("int_to_string", [], ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("int_from_string", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Optional(resolver.MonoType.Int))),
-    builtin_sig("float_to_string", [], ["n"], [resolver.MonoType.Float], .Some(resolver.MonoType.String)),
-    builtin_sig("float_from_string", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Optional(resolver.MonoType.Float))),
-    builtin_sig("bool_to_string", [], ["b"], [resolver.MonoType.Bool], .Some(resolver.MonoType.String)),
-    builtin_sig("byte_to_string", [], ["b"], [resolver.MonoType.Byte], .Some(resolver.MonoType.String)),
-    builtin_sig("byte_to_int", [], ["b"], [resolver.MonoType.Byte], .Some(resolver.MonoType.Int)),
-    builtin_sig("byte_from_int", [], ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.Byte))),
-    builtin_sig("string_len", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Int)),
-    builtin_sig("string_concat", [], ["lhs", "rhs"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.String)),
-    builtin_sig("string_substring", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("string_get", [], ["s", "i"], [resolver.MonoType.String, resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.Byte))),
-    builtin_sig("string_slice", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("char_code_at", [], ["s", "i"], [resolver.MonoType.String, resolver.MonoType.Int], .Some(resolver.MonoType.Int)),
-    builtin_sig("from_char_code", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("from_code_point", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("string_utf8_bytes", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.Byte))),
-    builtin_sig("string_from_utf8", [], ["bytes"], [resolver.MonoType.Vector(resolver.MonoType.Byte)], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("vector_len", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Int)),
-    builtin_sig("vector_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_get", ["T"], ["xs", "index"], [resolver.MonoType.Vector(t), resolver.MonoType.Int], .Some(t)),
-    builtin_sig("vector_set", ["T"], ["xs", "index", "value"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, t], .Some(resolver.MonoType.Optional(resolver.MonoType.Vector(t)))),
-    builtin_sig("vector_concat", ["T"], ["lhs", "rhs"], [resolver.MonoType.Vector(t), resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_slice", ["T"], ["xs", "start", "end"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_make", ["T"], ["len", "value"], [resolver.MonoType.Int, t], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_new", ["T"], [], [], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Void)),
-    builtin_sig("vector_builder_freeze", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_from", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("dict_new", ["K", "V"], [], [], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("dict_set", ["K", "V"], ["dict", "key", "value"], [resolver.MonoType.Dict(k, v), k, v], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("dict_keys", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Vector(k))),
-    builtin_sig("dict_get", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Optional(v))),
-    builtin_sig("dict_len", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Int)),
-    builtin_sig("dict_has", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Bool)),
-    builtin_sig("dict_remove", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("range_from", [], ["start", "end"], [resolver.MonoType.Int, resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("range", [], ["end"], [resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("range_step", [], ["start", "end", "step"], [resolver.MonoType.Int, resolver.MonoType.Int, resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("iterator_next", ["T"], ["it"], [iter_t], .Some(resolver.MonoType.Optional(iter_item_t))),
-    builtin_sig("iterator_unfold", ["T", "S"], ["seed", "step"], [s, resolver.MonoType.Function([s], unfold_step_t)], .Some(iter_t)),
-    builtin_sig("cell_new", ["T"], ["value"], [t], .Some(cell_t)),
-    builtin_sig("cell_get", ["T"], ["cell"], [cell_t], .Some(t)),
-    builtin_sig("cell_set", ["T"], ["cell", "value"], [cell_t, t], .Some(resolver.MonoType.Void)),
-    builtin_sig("cell_update", ["T"], ["cell", "f"], [cell_t, resolver.MonoType.Function([t], t)], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_read_file", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.String)),
-    builtin_sig("host_write_file", [], ["path", "text"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_mkdirp", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_list_dir", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_exists", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Bool)),
-    builtin_sig("host_args", [], [], [], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_env", [], ["name"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_cwd", [], [], [], .Some(resolver.MonoType.String)),
-    builtin_sig("host_exit", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Never)),
-  ]
-
-  resolver.empty_env()
-    .with_types(builtin_named_types.types, builtin_named_types.names)
-    .with_functions(fns)
-    .register_builtin_methods()
-}
+use lib.source.diagnostic.{format_source_diagnostics}
 
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
+  input_name := "<input>"
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse: ${parsed.diagnostics[0].message}")
+    return .Err("parse:\n${format_source_diagnostics(input_name, src, parsed.diagnostics)}")
   }
 
   resolved := builtin_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve: ${resolved.diagnostics[0].message}")
+    return .Err("resolve:\n${format_source_diagnostics(input_name, src, resolved.diagnostics)}")
   }
 
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check: ${check_result.diagnostics[0].message}")
+    return .Err("check:\n${format_source_diagnostics(input_name, src, check_result.diagnostics)}")
   }
 
   builtins := make_builtin_registry()
   lowered := lower_core.lower_module(parsed.value, check_result, builtins)
   if lowered.diagnostics.len() > 0 {
-    return .Err("lower_core: ${lowered.diagnostics[0].message}")
+    return .Err("lower_core:\n${format_source_diagnostics(input_name, src, lowered.diagnostics)}")
   }
 
   core := lowered.module
@@ -217,14 +49,12 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   })
 }
 
+pub fn compile_entry_path(path: String) Result<PipelineArtifacts, String> {
+  module_compiler.compile_entry(path)
+}
+
 pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
-  source := case fs.read_text(path) {
-    .Ok(text) => text,
-    .Err(err) => {
-      return .Err("read '${path}': ${fs_error_message(err)}")
-    },
-  }
-  compile_source(source)
+  compile_entry_path(path)
 }
 
 pub fn emit_wat(artifacts: PipelineArtifacts) String {

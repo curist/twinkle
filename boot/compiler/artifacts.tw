@@ -1,0 +1,18 @@
+// Shared pipeline artifact types.
+//
+// Extracted from pipeline.tw to break circular imports between
+// pipeline.tw and module_compiler.tw.
+
+use compiler.resolver.{ResolvedEnv}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{CoreModule}
+use compiler.anf.{AnfModule}
+
+pub type PipelineArtifacts = .{
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  core: CoreModule,
+  mono: CoreModule,
+  anf: AnfModule,
+  opt: AnfModule,
+}

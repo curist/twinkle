@@ -1,0 +1,472 @@
+// Core IR linker: combines multiple compiled modules into a single CoreModule.
+//
+// Each module independently assigns FuncIds starting from builtin_count,
+// so all user modules have overlapping FuncId spaces. The linker:
+// 1. Assigns globally unique FuncIds to all defined functions
+// 2. Remaps cross-module references (phantom FuncIds) to the correct targets
+// 3. Rewrites all GlobalFunc/MakeClosure references in expression trees
+// 4. Combines init functions in dependency order
+//
+// Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
+
+use compiler.core_ir.{
+  CoreModule, CoreExpr, CoreExprKind, FunctionDef, Param,
+  LocalId, FuncId, FieldId, VariantId,
+  BinOp, UnOp, FieldInit, MatchArm, CorePattern,
+  CompiledModule, ExternalRef,
+}
+use compiler.resolver.{MonoType, ResolvedEnv}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+/// Link all compiled modules into a single CoreModule.
+///
+/// Modules must be in dependency order (deps before dependents).
+/// The entry module should be last.
+pub fn link(
+  modules: Vector<CompiledModule>,
+  entry_path: String,
+  entry_env: ResolvedEnv,
+  builtin_count: Int,
+) CoreModule {
+  if modules.len() == 0 {
+    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None }
+  }
+
+  // Step 1: Assign globally unique FuncIds to all defined functions.
+  //         Build (module_path, func_name) → global_FuncId mapping.
+  next_global := builtin_count
+  global_ids: Dict<String, Dict<String, Int>> = Dict.new()  // path → (name → global_id)
+  for m in modules {
+    name_to_id: Dict<String, Int> = Dict.new()
+    for f in m.core.functions {
+      name_to_id[f.name] = next_global
+      next_global = next_global + 1
+    }
+    global_ids[m.path] = name_to_id
+  }
+
+  // Step 2: Build per-module remap tables and rewrite functions.
+  all_functions: Vector<FunctionDef> = []
+  all_init_ids: Vector<FuncId> = []
+  entry_init: FuncId? = .None
+  entry_func_ids: Vector<Int> = []
+
+  for m in modules {
+    remap: Dict<Int, Int> = Dict.new()
+
+    // Map defined functions: local FuncId → global FuncId
+    mod_globals: Dict<String, Int> = case global_ids[m.path] {
+      .Some(g) => g,
+      .None => Dict.new(),
+    }
+    for f in m.core.functions {
+      case mod_globals[f.name] {
+        .Some(gid) => { remap[f.func_id.id] = gid },
+        .None => {},
+      }
+    }
+
+    // Map external refs: phantom FuncId → target's global FuncId
+    ext_keys := m.external_refs.keys()
+    for local_id in ext_keys {
+      case m.external_refs[local_id] {
+        .Some(ext) => {
+          case global_ids[ext.module_path] {
+            .Some(target_globals) => {
+              case target_globals[ext.func_name] {
+                .Some(gid) => { remap[local_id] = gid },
+                .None => {},
+              }
+            },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
+    }
+
+    // Remap and collect functions
+    for f in m.core.functions {
+      remapped_id := remap_func_id(f.func_id, remap)
+      all_functions = all_functions.push(FunctionDef.{
+        func_id: remapped_id,
+        name: f.name,
+        params: f.params,
+        body: remap_expr(f.body, remap),
+        return_ty: f.return_ty,
+      })
+    }
+
+    // Track entry module's function IDs for DCE roots
+    if m.path == entry_path {
+      for f in m.core.functions {
+        entry_func_ids = entry_func_ids.push(remap_func_id(f.func_id, remap).id)
+      }
+    }
+
+    // Track init functions
+    case m.core.init_func_id {
+      .Some(init_id) => {
+        remapped_init := remap_func_id(init_id, remap)
+        all_init_ids = all_init_ids.push(remapped_init)
+        if m.path == entry_path {
+          entry_init = .Some(remapped_init)
+        }
+      },
+      .None => {},
+    }
+  }
+
+  // Step 3: Create combined init that calls all inits in dependency order.
+  combined_init := build_combined_init(all_init_ids, next_global)
+  linked_functions := all_functions.concat(combined_init.functions)
+
+  // Step 4: Dead code elimination — keep only reachable functions.
+  // Without this, unreachable prelude functions with generic types cause
+  // downstream passes (monomorphize, lower_anf) to trip on unresolved types.
+  // Roots: combined init + all entry module functions (the user's code).
+  reachable := compute_reachable(linked_functions, combined_init.init_func_id, entry_func_ids)
+  live_functions: Vector<FunctionDef> = []
+  for f in linked_functions {
+    if reachable.has(f.func_id.id) {
+      live_functions = live_functions.push(f)
+    }
+  }
+
+  CoreModule.{
+    functions: live_functions,
+    type_env: entry_env,
+    init_func_id: combined_init.init_func_id,
+  }
+}
+
+// ── Combined init ───────────────────────────────────────────────────
+
+type CombinedInit = .{
+  functions: Vector<FunctionDef>,
+  init_func_id: FuncId?,
+}
+
+/// Build a combined __init__ function that calls all module inits in order.
+fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit {
+  if init_ids.len() == 0 {
+    return CombinedInit.{ functions: [], init_func_id: .None }
+  }
+  if init_ids.len() == 1 {
+    // Single init — no wrapper needed
+    return CombinedInit.{ functions: [], init_func_id: .Some(init_ids[0]) }
+  }
+
+  // Multiple inits: create a combined function that calls each in order.
+  combined_id := FuncId.{ id: next_global }
+  s := dummy_span()
+
+  // Build body: Let(_, Call(init1), Let(_, Call(init2), ... Call(initN)))
+  body := make_call(init_ids[init_ids.len() - 1], s)
+  i := init_ids.len() - 2
+  for _ in range(init_ids.len() - 1) {
+    body = CoreExpr.{
+      kind: .Let(
+        LocalId.{ id: 9999900 + i },
+        make_call(init_ids[i], s),
+        body,
+      ),
+      ty: MonoType.Void,
+      span: s,
+    }
+    i = i - 1
+  }
+
+  combined := FunctionDef.{
+    func_id: combined_id,
+    name: "__combined_init__",
+    params: [],
+    body,
+    return_ty: MonoType.Void,
+  }
+
+  CombinedInit.{ functions: [combined], init_func_id: .Some(combined_id) }
+}
+
+fn make_call(func_id: FuncId, s: Span) CoreExpr {
+  CoreExpr.{
+    kind: .Call(
+      CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+      [],
+    ),
+    ty: MonoType.Void,
+    span: s,
+  }
+}
+
+// ── Reachability (lightweight DCE) ──────────────────────────────────
+
+/// Compute the set of reachable FuncIds starting from init + entry functions.
+fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_func_ids: Vector<Int>) Dict<Int, Bool> {
+  // Build FuncId → FunctionDef lookup
+  func_map: Dict<Int, FunctionDef> = Dict.new()
+  for f in functions {
+    func_map[f.func_id.id] = f
+  }
+
+  reachable: Dict<Int, Bool> = Dict.new()
+  queue: Vector<Int> = []
+
+  // Seed with init function
+  case init_id {
+    .Some(id) => {
+      queue = queue.push(id.id)
+      reachable[id.id] = true
+    },
+    .None => {},
+  }
+
+  // Seed with entry module functions
+  for fid in entry_func_ids {
+    if !reachable.has(fid) {
+      reachable[fid] = true
+      queue = queue.push(fid)
+    }
+  }
+
+  // BFS: find all reachable functions
+  // Use a helper to work around nested-scope mutation issues
+  bfs_result := bfs_reachable(func_map, queue, reachable)
+  reachable = bfs_result.reachable
+
+  reachable
+}
+
+type BfsState = .{
+  queue: Vector<Int>,
+  reachable: Dict<Int, Bool>,
+}
+
+/// BFS to find all reachable FuncIds.
+fn bfs_reachable(func_map: Dict<Int, FunctionDef>, queue: Vector<Int>, reachable: Dict<Int, Bool>) BfsState {
+  state := BfsState.{ queue, reachable }
+  qi := 0
+  for qi < state.queue.len() {
+    fid := state.queue[qi]
+    qi = qi + 1
+    refs := get_body_refs(func_map, fid)
+    state = add_refs(state, refs)
+  }
+  state
+}
+
+/// Add a single ref to BFS state if not already reachable.
+fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
+  if state.reachable.has(ref_id) {
+    return state
+  }
+  new_reachable := state.reachable
+  new_reachable[ref_id] = true
+  BfsState.{
+    queue: state.queue.push(ref_id),
+    reachable: new_reachable,
+  }
+}
+
+/// Add new refs to BFS state, avoiding duplicates.
+fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {
+  cur := state
+  for ref_id in refs {
+    cur = maybe_add_ref(cur, ref_id)
+  }
+  cur
+}
+
+/// Look up a function by FuncId and return its body's func refs, or empty.
+fn get_body_refs(func_map: Dict<Int, FunctionDef>, fid: Int) Vector<Int> {
+  case func_map[fid] {
+    .Some(func) => collect_func_refs(func.body),
+    .None => [],
+  }
+}
+
+/// Collect all FuncId references from an expression tree.
+fn collect_func_refs(expr: CoreExpr) Vector<Int> {
+  refs: Vector<Int> = []
+  collect_func_refs_into(expr, refs)
+}
+
+fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
+  case expr.kind {
+    .LitInt(_) => refs,
+    .LitFloat(_) => refs,
+    .LitBool(_) => refs,
+    .LitStr(_) => refs,
+    .LitVoid => refs,
+    .Local(_) => refs,
+    .GlobalLocal(_) => refs,
+
+    .GlobalFunc(id) => refs.push(id.id),
+
+    .Let(_, value, body) => {
+      r := collect_func_refs_into(value, refs)
+      collect_func_refs_into(body, r)
+    },
+    .Assign(_, value) => collect_func_refs_into(value, refs),
+
+    .BinOp(_, lhs, rhs) => {
+      r := collect_func_refs_into(lhs, refs)
+      collect_func_refs_into(rhs, r)
+    },
+    .UnOp(_, operand) => collect_func_refs_into(operand, refs),
+
+    .Call(callee, args) => {
+      r := collect_func_refs_into(callee, refs)
+      collect_func_refs_list(args, r)
+    },
+    .MakeClosure(func_id, _) => refs.push(func_id.id),
+
+    .If(cond, then_br, else_br) => {
+      r := collect_func_refs_into(cond, refs)
+      r = collect_func_refs_into(then_br, r)
+      collect_func_refs_into(else_br, r)
+    },
+    .Match(scrutinee, arms) => {
+      r := collect_func_refs_into(scrutinee, refs)
+      for arm in arms {
+        r = collect_func_refs_into(arm.body, r)
+      }
+      r
+    },
+    .Loop(body) => collect_func_refs_into(body, refs),
+    .Break(val) => {
+      case val {
+        .Some(v) => collect_func_refs_into(v, refs),
+        .None => refs,
+      }
+    },
+    .Continue => refs,
+    .Return(val) => {
+      case val {
+        .Some(v) => collect_func_refs_into(v, refs),
+        .None => refs,
+      }
+    },
+    .Defer(body) => collect_func_refs_into(body, refs),
+
+    .Record(_, fields) => {
+      r := refs
+      for fi in fields {
+        r = collect_func_refs_into(fi.value, r)
+      }
+      r
+    },
+    .RecordGet(rec, _) => collect_func_refs_into(rec, refs),
+    .RecordUpdate(rec, _, value) => {
+      r := collect_func_refs_into(rec, refs)
+      collect_func_refs_into(value, r)
+    },
+    .Variant(_, _, args) => collect_func_refs_list(args, refs),
+    .ArrayLit(elems) => collect_func_refs_list(elems, refs),
+    .Index(arr, idx) => {
+      r := collect_func_refs_into(arr, refs)
+      collect_func_refs_into(idx, r)
+    },
+  }
+}
+
+fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>) Vector<Int> {
+  r := refs
+  for e in exprs {
+    r = collect_func_refs_into(e, r)
+  }
+  r
+}
+
+// ── FuncId remapping ────────────────────────────────────────────────
+
+fn remap_func_id(id: FuncId, remap: Dict<Int, Int>) FuncId {
+  case remap[id.id] {
+    .Some(new_id) => FuncId.{ id: new_id },
+    .None => id,
+  }
+}
+
+fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>) CoreExpr {
+  new_kind: CoreExprKind = case expr.kind {
+    .LitInt(_) => expr.kind,
+    .LitFloat(_) => expr.kind,
+    .LitBool(_) => expr.kind,
+    .LitStr(_) => expr.kind,
+    .LitVoid => expr.kind,
+    .Local(_) => expr.kind,
+    .GlobalLocal(_) => expr.kind,
+
+    .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
+
+    .Let(local, value, body) => {
+      .Let(local, remap_expr(value, remap), remap_expr(body, remap))
+    },
+    .Assign(local, value) => .Assign(local, remap_expr(value, remap)),
+
+    .BinOp(op, lhs, rhs) => .BinOp(op, remap_expr(lhs, remap), remap_expr(rhs, remap)),
+    .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap)),
+
+    .Call(callee, args) => {
+      .Call(remap_expr(callee, remap), remap_exprs(args, remap))
+    },
+    .MakeClosure(func_id, captures) => {
+      .MakeClosure(remap_func_id(func_id, remap), captures)
+    },
+
+    .If(cond, then_br, else_br) => {
+      .If(remap_expr(cond, remap), remap_expr(then_br, remap), remap_expr(else_br, remap))
+    },
+    .Match(scrutinee, arms) => {
+      new_arms := collect arm in arms {
+        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap) }
+      }
+      .Match(remap_expr(scrutinee, remap), new_arms)
+    },
+    .Loop(body) => .Loop(remap_expr(body, remap)),
+    .Break(val) => {
+      case val {
+        .Some(v) => .Break(.Some(remap_expr(v, remap))),
+        .None => expr.kind,
+      }
+    },
+    .Continue => expr.kind,
+    .Return(val) => {
+      case val {
+        .Some(v) => .Return(.Some(remap_expr(v, remap))),
+        .None => expr.kind,
+      }
+    },
+    .Defer(body) => .Defer(remap_expr(body, remap)),
+
+    .Record(type_id, fields) => {
+      new_fields := collect fi in fields {
+        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap) }
+      }
+      .Record(type_id, new_fields)
+    },
+    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap), field),
+    .RecordUpdate(rec, field, value) => {
+      .RecordUpdate(remap_expr(rec, remap), field, remap_expr(value, remap))
+    },
+    .Variant(type_id, variant_id, args) => {
+      .Variant(type_id, variant_id, remap_exprs(args, remap))
+    },
+    .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap)),
+    .Index(arr, idx) => .Index(remap_expr(arr, remap), remap_expr(idx, remap)),
+  }
+  CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
+}
+
+fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>) Vector<CoreExpr> {
+  collect e in exprs { remap_expr(e, remap) }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+use lib.source.span.{Span}
+
+fn dummy_span() Span {
+  Span.{ file_id: 0, start: 0, end: 0 }
+}

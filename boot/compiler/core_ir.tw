@@ -105,3 +105,20 @@ pub type CoreModule = .{
   type_env: ResolvedEnv,
   init_func_id: FuncId?,
 }
+
+// ── Linker types ────────────────────────────────────────────────────
+
+/// A single compiled module with its Core IR and linker metadata.
+pub type CompiledModule = .{
+  path: String,
+  core: CoreModule,
+  func_table: Dict<String, FuncId>,
+  external_refs: Dict<Int, ExternalRef>,
+  builtin_count: Int,
+}
+
+/// Tracks where a phantom FuncId (imported function) lives.
+pub type ExternalRef = .{
+  module_path: String,
+  func_name: String,
+}

@@ -1,5 +1,6 @@
 use @std.proc
 use @std.fs
+use @std.path
 use lib.argparse.app
 use lib.argparse.app.{App, ParseResult}
 use lib.argparse.command
@@ -39,9 +40,8 @@ fn run_cmd() Command {
 }
 
 fn build_cmd() Command {
-  file_command("build", "Compile to Wasm/WAT (placeholder)")
-    .add_short_option("output", "o", "Output path (.wasm or .wat)")
-    .add_flag("emit-wat", "Emit sibling .wat when outputting .wasm")
+  file_command("build", "Compile to linked WAT")
+    .add_short_option("output", "o", "Output path (.wat)")
 }
 
 fn runtime_dump_cmd() Command {
@@ -235,7 +235,7 @@ fn run_ir_command(parsed: ParseResult) {
     .Err(msg) => { exit_usage_error(msg) },
   }
 
-  artifacts := case pipeline.compile_path(file) {
+  artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
     .Err(msg) => {
       eprintln(msg)
@@ -261,6 +261,61 @@ fn run_ir_command(parsed: ParseResult) {
   }
 }
 
+fn default_build_output(file: String) String {
+  dir := path.dirname(file)
+  stem := path.stem(file)
+  if dir == "." {
+    "${stem}.wat"
+  } else {
+    path.join(dir, "${stem}.wat")
+  }
+}
+
+fn resolve_build_output(parsed: ParseResult, file: String) String!String {
+  out := case app.get_option(parsed, "output") {
+    .Some(path) => path,
+    .None => default_build_output(file),
+  }
+  if path.extension(out) != ".wat" {
+    return .Err("boot build only supports .wat outputs")
+  }
+  .Ok(out)
+}
+
+fn run_build_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  out := case resolve_build_output(parsed, file) {
+    .Ok(path) => path,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+  wat := pipeline.emit_wat(artifacts)
+
+  case fs.write_text(out, wat) {
+    .Ok(_) => {
+      println("WAT output: ${out}")
+    },
+    .Err(err) => {
+      eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+      proc.exit(1)
+    },
+  }
+}
+
 fn build_command_plan(parsed: ParseResult) CommandPlan!String {
   case parsed.command {
     .Some(cmd) => {
@@ -276,14 +331,9 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
           })
         },
         "build" => {
-          emit_wat := app.has_flag(parsed, "emit-wat")
-          output := case app.get_option(parsed, "output") {
-            .Some(out) => out,
-            .None => "<default: <input>.wasm>",
-          }
-          try file_detail(parsed, fn(file) {
-            "Would build '${file}' to '${output}' (emit-wat=${emit_wat})."
-          })
+          file := try get_positional(parsed, 0, "file")
+          output := try resolve_build_output(parsed, file)
+          "Would build '${file}' to '${output}'."
         },
         "runtime-dump" => "Would print linked runtime WAT.",
         _ => { return .Err("internal error: unsupported command '${cmd}'") },
@@ -298,6 +348,7 @@ fn run_command(parsed: ParseResult) {
   case parsed.command {
     .Some("parse") => run_parse_command(parsed),
     .Some("ir") => run_ir_command(parsed),
+    .Some("build") => run_build_command(parsed),
     _ => {
       case build_command_plan(parsed) {
         .Ok(plan) => not_implemented(plan.cmd, plan.detail),

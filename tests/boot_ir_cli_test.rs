@@ -28,6 +28,16 @@ fn run_with_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("join test thread");
 }
 
+fn temp_path(case: &str, ext: &str) -> std::path::PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!("twinkle_{case}_{stamp}.{ext}"))
+}
+
 #[test]
 fn ir_command_defaults_to_optimized_anf() {
     run_with_large_stack(|| {
@@ -97,6 +107,55 @@ fn ir_command_wat_flag_prints_module() {
         assert!(
             stdout.contains("(module") && stdout.contains("call $rt_core__println"),
             "wat output should contain the final linked module:\n{stdout}"
+        );
+    });
+}
+
+#[test]
+fn ir_command_handles_multi_module_fixture() {
+    run_with_large_stack(|| {
+        let (stdout, stderr) = run_boot_main(&["ir", "--core", "tests/run/multi_module/main.tw"]);
+
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        assert!(
+            stdout.contains("fn make [FuncId(") && stdout.contains("fn __init__ [FuncId("),
+            "core dump should include linked dependency and entry init:\n{stdout}"
+        );
+    });
+}
+
+#[test]
+fn build_command_writes_wat_for_multi_module_fixture() {
+    run_with_large_stack(|| {
+        let out = temp_path("boot_build_multi_module", "wat");
+        let out_text = out.to_string_lossy().into_owned();
+
+        let (stdout, stderr) =
+            run_boot_main(&["build", "tests/run/multi_module/main.tw", "-o", &out_text]);
+
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        assert!(
+            stdout.contains("WAT output:"),
+            "build output should report the written path:\n{stdout}"
+        );
+
+        let wat = std::fs::read_to_string(&out).expect("boot build should write wat output");
+        assert!(
+            wat.contains("(module") && wat.contains("(start $user__"),
+            "written wat should look like a linked user module:\n{wat}"
+        );
+
+        let (program_stdout, program_stderr) =
+            twinkle::cli::run_wasm::run_wasm_capture(&out_text).expect("host should run built wat");
+        let _ = std::fs::remove_file(&out);
+
+        assert_eq!(
+            program_stderr, "",
+            "unexpected runtime stderr: {program_stderr}"
+        );
+        assert!(
+            program_stdout.contains("0\n3\n4\n3\n25\n"),
+            "running the built wat should preserve program behavior:\n{program_stdout}"
         );
     });
 }

@@ -146,7 +146,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
       continue
     }
     if is_byte(ch, "\"") {
-      return .{
+      return ScanStringResult.{
         next_index: i + 1,
         text: unescape_string(source.slice(content_start, i)),
         terminated: true,
@@ -154,7 +154,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
       }
     }
     if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1].to_int(), "{") {
-      return .{
+      return ScanStringResult.{
         next_index: i + 2,
         text: unescape_string(source.slice(content_start, i)),
         terminated: false,
@@ -167,7 +167,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
     i = i + 1
   }
 
-  .{
+  ScanStringResult.{
     next_index: i,
     text: source.slice(content_start, i),
     terminated: false,

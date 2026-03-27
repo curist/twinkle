@@ -1066,10 +1066,9 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
               .Some(field_ty) => {
                 case entry.value {
                   .Some(val) => {
-                    vr := cur_ctx.synth(val, cur_diags)
-                    u := vr.ctx.unify(vr.ty, field_ty, entry.span, vr.diags)
-                    cur_ctx = u.ctx
-                    cur_diags = u.diags
+                    vr := cur_ctx.check_expr(val, field_ty, cur_diags)
+                    cur_ctx = vr.ctx
+                    cur_diags = vr.diags
                   },
                   .None => {
                     // Punning: .{ name } means .{ name: name }
@@ -2476,14 +2475,14 @@ fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
     if ctx.pub_names.has(ls.name) {
       return .{ ctx, diags: diags.push(diag.error(ls.span, "cannot rebind public binding '${ls.name}'")) }
     }
-    // Assignment: x = value — look up existing type and unify
-    val_r := ctx.synth(ls.value, diags)
+    // Assignment: x = value — check against the existing binding type
     case lookup_local(ctx, ls.name) {
       .Some(existing_ty) => {
-        u := val_r.ctx.unify(val_r.ty, existing_ty, ls.span, val_r.diags)
-        return .{ ctx: u.ctx, diags: u.diags }
+        val_r := ctx.check_expr(ls.value, existing_ty, diags)
+        return .{ ctx: val_r.ctx, diags: val_r.diags }
       },
       .None => {
+        val_r := ctx.synth(ls.value, diags)
         return .{ ctx: val_r.ctx, diags: val_r.diags.push(diag.error(ls.span, "undefined variable: ${ls.name}")) }
       },
     }

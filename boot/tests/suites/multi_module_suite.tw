@@ -1,6 +1,7 @@
 use tests.runner
 use tests.assert
 use compiler.module_compiler
+use compiler.pipeline
 use lib.module.loader
 
 fn fixtures_dir() String {
@@ -62,6 +63,67 @@ pub fn suite() runner.Suite {
         .Ok(_) => .Err("expected circular import error"),
         .Err(msg) => {
           try assert.is_true(msg.contains("Circular import"))
+          .Ok({})
+        },
+      }
+    })
+
+    // ── Step 4: Core IR linking ──────────────────────────────────────────
+
+    .test("linked output contains functions from all modules", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_math.tw")
+      case result {
+        .Ok(artifacts) => {
+          // After linking, Core IR should have functions from both modules.
+          // math_lib defines: add, multiply, internal_helper
+          // uses_math defines: main (plus __init__)
+          names := collect f in artifacts.core.functions { f.name }
+          try assert.vec_contains(names, "add")
+          try assert.vec_contains(names, "multiply")
+          try assert.vec_contains(names, "main")
+          .Ok({})
+        },
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    // ── Step 5: Pipeline integration ────────────────────────────────────
+
+    .test("compile_entry handles program with init code calling cross-module functions", fn() {
+      result := module_compiler.compile_entry("${dir}/entry_calls_lib.tw")
+      case result {
+        .Ok(artifacts) => {
+          names := collect f in artifacts.core.functions { f.name }
+          try assert.vec_contains(names, "add")
+          try assert.vec_contains(names, "__init__")
+          .Ok({})
+        },
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("pipeline.compile_entry_path handles multi-module entry file", fn() {
+      result := pipeline.compile_entry_path("${dir}/entry_calls_lib.tw")
+      case result {
+        .Ok(artifacts) => {
+          names := collect f in artifacts.core.functions { f.name }
+          try assert.vec_contains(names, "add")
+          try assert.vec_contains(names, "__init__")
+          .Ok({})
+        },
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("compile_entry reports every diagnostic with source locations", fn() {
+      result := module_compiler.compile_entry("${dir}/two_type_errors.tw")
+      case result {
+        .Ok(_) => .Err("expected checker diagnostics"),
+        .Err(msg) => {
+          try assert.str_contains(msg, "check:\n")
+          try assert.str_contains(msg, "${dir}/two_type_errors.tw:2:")
+          try assert.str_contains(msg, "${dir}/two_type_errors.tw:3:")
+          try assert.is_false(msg.contains("(and "))
           .Ok({})
         },
       }

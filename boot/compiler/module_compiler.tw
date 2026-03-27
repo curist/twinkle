@@ -18,14 +18,16 @@ use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.core_ir.{CoreModule}
+use compiler.core_ir.{CoreModule, FuncId, CompiledModule, ExternalRef}
+use compiler.artifacts.{PipelineArtifacts}
 use compiler.anf.{AnfModule}
 use compiler.ast.{Module, ImportItem}
 use compiler.imports
-use compiler.pipeline.{PipelineArtifacts, builtin_env}
+use compiler.core_linker
+use compiler.base_env.{builtin_env, add_internal_host_builtins}
 use compiler.util.{fs_error_message}
 use lib.module.loader
-use lib.source.diagnostic.{Diagnostic}
+use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -36,12 +38,6 @@ pub type CompileState = .{
   builtins: BuiltinRegistry,
   project_root: String,
   canonical_roots: imports.CanonicalRoots,
-}
-
-/// A single compiled module with its Core IR and resolved env.
-pub type CompiledModule = .{
-  path: String,
-  core: CoreModule,
 }
 
 /// Result of compiling a single module.
@@ -85,14 +81,17 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   )
   state = result.state
 
-  // For now, single-module pipeline (linking deferred to Step 4)
-  // Use the last compiled module (entry module) as the result
   if state.compiled_modules.len() == 0 {
     return .Err("no modules compiled")
   }
 
-  entry_module := state.compiled_modules[state.compiled_modules.len() - 1]
-  core := entry_module.core
+  // Link all compiled modules into a single CoreModule
+  core := core_linker.link(
+    state.compiled_modules,
+    canonical_entry,
+    result.env,
+    state.builtins.next_id,
+  )
   mono := monomorphize.monomorphize(core)
   anf := lower_anf.lower_module(mono)
   opt := optimize_module(anf)
@@ -147,7 +146,7 @@ fn compile_module(
 
   parsed := parser.parse(source, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err(format_stage_error("parse", canonical, parsed.diagnostics))
+    return .Err(format_stage_error("parse", canonical, source, parsed.diagnostics))
   }
 
   // Plan dependencies
@@ -156,9 +155,11 @@ fn compile_module(
   // Push onto importing stack
   stack := importing_stack.push(canonical)
 
-  // Compile dependencies and build up the env for this module
+  // Compile dependencies and build up the env for this module.
+  // Also track function origins for the linker's external_refs.
   env := base_env
   cur_state := state
+  func_origin: Dict<String, ExternalRef> = Dict.new()
   for dep in dep_plan.dependencies {
     // Compile dependency against base_env (isolation)
     dep_result := try compile_module(
@@ -169,6 +170,9 @@ fn compile_module(
       stack,
     )
     cur_state = dep_result.state
+
+    // Track function origins for linker
+    func_origin = track_func_origins(func_origin, dep, dep_result.exports)
 
     // Project exports into this module's env
     case dep.kind {
@@ -188,23 +192,32 @@ fn compile_module(
     }
   }
 
+  if dep_plan.is_internal {
+    env = add_internal_host_builtins(env)
+  }
+
   // Resolve this module with the accumulated env
   resolved := env.resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err(format_stage_error("resolve", canonical, resolved.diagnostics))
+    return .Err(format_stage_error("resolve", canonical, source, resolved.diagnostics))
   }
 
   // Type-check
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err(format_stage_error("check", canonical, check_result.diagnostics))
+    return .Err(format_stage_error("check", canonical, source, check_result.diagnostics))
   }
 
   // Lower to Core IR
   lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
   if lowered.diagnostics.len() > 0 {
-    return .Err(format_stage_error("lower", canonical, lowered.diagnostics))
+    return .Err(format_stage_error("lower", canonical, source, lowered.diagnostics))
   }
+
+  // Build external_refs: phantom FuncIds → target module/function
+  external_refs := build_external_refs(
+    lowered.func_table, lowered.module, func_origin, cur_state.builtins.next_id,
+  )
 
   // Extract exports for importing modules
   module_exports := extract_exports(resolved.env, parsed.value)
@@ -216,6 +229,9 @@ fn compile_module(
     compiled_modules: cur_state.compiled_modules.push(CompiledModule.{
       path: canonical,
       core: lowered.module,
+      func_table: lowered.func_table,
+      external_refs,
+      builtin_count: cur_state.builtins.next_id,
     }),
     builtins: cur_state.builtins,
     project_root: cur_state.project_root,
@@ -225,13 +241,108 @@ fn compile_module(
   .Ok(CompileModuleResult.{ exports: module_exports, env: resolved.env, state: cur_state })
 }
 
+// ── Linker metadata helpers ──────────────────────────────────────────
+
+/// Record which imported function names come from which dependency module.
+/// Returns the updated func_origin dict (dicts are COW in Twinkle).
+fn track_func_origins(
+  func_origin: Dict<String, ExternalRef>,
+  dep: imports.PlannedDep,
+  exports: ModuleExports,
+) Dict<String, ExternalRef> {
+  case dep.kind {
+    .Import => {
+      case dep.items {
+        .Some(items) => {
+          // Selective import: register hidden-qualified and selected names
+          for sig in exports.functions {
+            hidden_name := "$import$.${dep.alias}.${sig.name}"
+            func_origin[hidden_name] = ExternalRef.{
+              module_path: dep.canonical_path,
+              func_name: sig.name,
+            }
+          }
+          for item in items {
+            case item {
+              .Value(v) => {
+                binding := case v.alias {
+                  .Some(a) => a,
+                  .None => v.name,
+                }
+                func_origin[binding] = ExternalRef.{
+                  module_path: dep.canonical_path,
+                  func_name: v.name,
+                }
+              },
+              .Type(_) => {},
+            }
+          }
+        },
+        .None => {
+          // Full import: qualified names "alias.func_name"
+          for sig in exports.functions {
+            func_origin["${dep.alias}.${sig.name}"] = ExternalRef.{
+              module_path: dep.canonical_path,
+              func_name: sig.name,
+            }
+          }
+        },
+      }
+    },
+    .Prelude => {
+      // Prelude: unqualified names (skip if already registered)
+      for sig in exports.functions {
+        if !func_origin.has(sig.name) {
+          func_origin[sig.name] = ExternalRef.{
+            module_path: dep.canonical_path,
+            func_name: sig.name,
+          }
+        }
+      }
+    },
+  }
+  func_origin
+}
+
+/// Build external_refs by matching phantom func_table entries to their origins.
+fn build_external_refs(
+  func_table: Dict<String, FuncId>,
+  core: CoreModule,
+  func_origin: Dict<String, ExternalRef>,
+  builtin_count: Int,
+) Dict<Int, ExternalRef> {
+  // Collect defined FuncIds
+  defined: Dict<Int, Bool> = Dict.new()
+  for f in core.functions {
+    defined[f.func_id.id] = true
+  }
+
+  refs: Dict<Int, ExternalRef> = Dict.new()
+  names := func_table.keys()
+  for name in names {
+    case func_table[name] {
+      .Some(fid) => {
+        if fid.id >= builtin_count and !defined.has(fid.id) {
+          // Phantom FuncId — look up origin
+          case func_origin[name] {
+            .Some(origin) => { refs[fid.id] = origin },
+            .None => {},
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  refs
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn format_stage_error(stage: String, file_path: String, diagnostics: Vector<Diagnostic>) String {
-  msg := diagnostics[0].message
-  if diagnostics.len() > 1 {
-    extra := diagnostics.len() - 1
-    return "${stage} '${file_path}': ${msg} (and ${extra} more)"
-  }
-  "${stage} '${file_path}': ${msg}"
+fn format_stage_error(
+  stage: String,
+  file_path: String,
+  source: String,
+  diagnostics: Vector<Diagnostic>,
+) String {
+  "${stage}:\n${format_source_diagnostics(file_path, source, diagnostics)}"
 }
