@@ -42,6 +42,7 @@ use tests.suites.imports_suite
 use tests.suites.multi_module_suite
 use tests.suites.base_env_guardrail_suite
 use tests.suites.signature_loader_suite
+use tests.suites.builtins_canonical_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -87,4 +88,5 @@ runner.run_all([
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),
+  builtins_canonical_suite.suite(),
 ])

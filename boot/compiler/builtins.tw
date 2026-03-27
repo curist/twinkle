@@ -16,6 +16,7 @@ pub type RuntimeInfo = .{
 
 pub type BuiltinEntry = .{
   name: String,
+  canonical_name: String?,
   func_id: FuncId,
   kind: BuiltinKind,
   abi: AbiContract,
@@ -24,6 +25,7 @@ pub type BuiltinEntry = .{
 pub type BuiltinRegistry = .{
   by_name: Dict<String, BuiltinEntry>,
   by_id: Dict<Int, BuiltinEntry>,
+  by_canonical: Dict<String, BuiltinEntry>,
   entries: Vector<BuiltinEntry>,
   next_id: Int,
 }
@@ -115,6 +117,7 @@ pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String,
   fid := FuncId.{ id: reg.next_id }
   entry := BuiltinEntry.{
     name: name,
+    canonical_name: .None,
     func_id: fid,
     kind: .Runtime(RuntimeInfo.{ wasm_module: wasm_module, wasm_name: wasm_name }),
     abi: builtin_abi,
@@ -126,6 +129,7 @@ pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String,
   BuiltinRegistry.{
     by_name: by_name,
     by_id: by_id,
+    by_canonical: reg.by_canonical,
     entries: reg.entries.push(entry),
     next_id: reg.next_id + 1,
   }
@@ -141,7 +145,7 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
     .None => {},
   }
   fid := FuncId.{ id: reg.next_id }
-  entry := BuiltinEntry.{ name: name, func_id: fid, kind: .Intrinsic, abi: builtin_abi }
+  entry := BuiltinEntry.{ name: name, canonical_name: .None, func_id: fid, kind: .Intrinsic, abi: builtin_abi }
   by_name := reg.by_name
   by_id := reg.by_id
   by_name[name] = entry
@@ -149,6 +153,7 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
   BuiltinRegistry.{
     by_name: by_name,
     by_id: by_id,
+    by_canonical: reg.by_canonical,
     entries: reg.entries.push(entry),
     next_id: reg.next_id + 1,
   }
@@ -169,10 +174,51 @@ pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? {
   reg.by_id[func_id.id]
 }
 
+pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String) BuiltinRegistry {
+  base_entry := case reg.by_name[internal] {
+    .Some(e) => e,
+    .None => error("with_canonical: unknown internal builtin: ${internal}"),
+  }
+  updated := BuiltinEntry.{
+    name: base_entry.name,
+    canonical_name: .Some(canonical),
+    func_id: base_entry.func_id,
+    kind: base_entry.kind,
+    abi: base_entry.abi,
+  }
+  by_name := reg.by_name
+  by_id := reg.by_id
+  by_canonical := reg.by_canonical
+  by_name[internal] = updated
+  by_id[updated.func_id.id] = updated
+  by_canonical[canonical] = updated
+  entries := collect e in reg.entries {
+    if e.name == internal { updated } else { e }
+  }
+  BuiltinRegistry.{
+    by_name: by_name,
+    by_id: by_id,
+    by_canonical: by_canonical,
+    entries: entries,
+    next_id: reg.next_id,
+  }
+}
+
+pub fn id_by_canonical(reg: BuiltinRegistry, canonical: String) FuncId {
+  case reg.by_canonical[canonical] {
+    .Some(entry) => entry.func_id,
+    .None => error("unknown canonical builtin: ${canonical}"),
+  }
+}
+
+pub fn entry_by_canonical(reg: BuiltinRegistry, canonical: String) BuiltinEntry? {
+  reg.by_canonical[canonical]
+}
+
 // ── Full registry ──
 
 pub fn make_builtin_registry() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 0 }
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
     // ── I/O ──
     .runtime("print",   "rt.core", "print")
     .runtime("println", "rt.core", "println")
@@ -251,4 +297,52 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .runtime("host_env",        "host", "env")
     .runtime("host_cwd",        "host", "cwd")
     .runtime("host_exit",       "host", "exit")
+    // ── Canonical name mappings (signature-backed surface) ──
+    // to_string family
+    .with_canonical("Int.to_string",   "int_to_string")
+    .with_canonical("Float.to_string", "float_to_string")
+    .with_canonical("Bool.to_string",  "bool_to_string")
+    .with_canonical("String.to_string","string_to_string")
+    // String ops
+    .with_canonical("String.len",          "string_len")
+    .with_canonical("String.concat",       "string_concat")
+    .with_canonical("String.get",          "string_get")
+    .with_canonical("String.slice",        "string_slice")
+    .with_canonical("String.char_code_at", "char_code_at")
+    .with_canonical("String.from_char_code","from_char_code")
+    .with_canonical("String.from_code_point","from_code_point")
+    .with_canonical("String.utf8_bytes",   "string_utf8_bytes")
+    .with_canonical("String.from_utf8",    "string_from_utf8")
+    // Vector ops
+    .with_canonical("Vector.len",    "vector_len")
+    .with_canonical("Vector.push",   "vector_push")
+    .with_canonical("Vector.concat", "vector_concat")
+    .with_canonical("Vector.slice",  "vector_slice")
+    .with_canonical("Vector.get",    "vector_get")
+    .with_canonical("Vector.set",    "vector_set")
+    .with_canonical("Vector.make",   "vector_make")
+    // Dict ops
+    .with_canonical("Dict.new",    "dict_new")
+    .with_canonical("Dict.set",    "dict_set")
+    .with_canonical("Dict.get",    "dict_get")
+    .with_canonical("Dict.keys",   "dict_keys")
+    .with_canonical("Dict.len",    "dict_len")
+    .with_canonical("Dict.has",    "dict_has")
+    .with_canonical("Dict.remove", "dict_remove")
+    // Cell ops
+    .with_canonical("Cell.new",    "cell_new")
+    .with_canonical("Cell.get",    "cell_get")
+    .with_canonical("Cell.set",    "cell_set")
+    .with_canonical("Cell.update", "cell_update")
+    // Range free functions
+    .with_canonical("range_from",  "range_from")
+    .with_canonical("range",       "range")
+    .with_canonical("range_step",  "range_step")
+    // Iterator ops
+    .with_canonical("Iterator.next",   "iterator_next")
+    .with_canonical("Iterator.unfold", "iterator_unfold")
+    // Byte ops
+    .with_canonical("Byte.to_int",    "byte_to_int")
+    .with_canonical("Byte.from_int",  "byte_from_int")
+    .with_canonical("Byte.to_string", "byte_to_string")
 }

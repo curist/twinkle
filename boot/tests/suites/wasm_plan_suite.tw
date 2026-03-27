@@ -22,7 +22,7 @@ use compiler.codegen.wasm_plan.{
 fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
 
 fn empty_builtins() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), entries: [], next_id: 0 }
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
 }
 
 fn simple_builtins() BuiltinRegistry {
