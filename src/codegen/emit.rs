@@ -118,7 +118,8 @@ pub(crate) fn build_module_emit_plan_impl(
     ctx.set_capture_mono_by_func(capture_mono_by_func.clone());
     let user_func_iterator_states =
         collect_user_func_iterator_states(anf, &closure_capture_layouts, &mut ctx);
-    let typed_cell_payloads = collect_typed_cell_payloads(anf, &closure_capture_layouts, &mut ctx);
+    let typed_cell_payloads =
+        collect_typed_cell_payloads(anf, type_env, &closure_capture_layouts, &mut ctx);
 
     crate::codegen::planner::ModuleEmitPlan {
         concrete_func_sigs,
@@ -7872,12 +7873,45 @@ fn collect_cell_payloads_from_mono(
     }
 }
 
+fn collect_typed_cell_payloads_from_type_defs(
+    type_env: &TypeEnv,
+    out: &mut std::collections::BTreeMap<String, MonoType>,
+) {
+    let mut next_type_id = 0_u32;
+    loop {
+        let type_id = TypeId(next_type_id);
+        let Some(def) = type_env.get_def(type_id) else {
+            break;
+        };
+        match def {
+            LangTypeDef::Record { fields, .. } => {
+                for field in fields {
+                    collect_cell_payloads_from_mono(&field.ty, out);
+                }
+            }
+            LangTypeDef::Sum { variants, .. } => {
+                for variant in variants {
+                    for field_ty in &variant.fields {
+                        collect_cell_payloads_from_mono(field_ty, out);
+                    }
+                }
+            }
+            LangTypeDef::Alias { target, .. } => {
+                collect_cell_payloads_from_mono(target, out);
+            }
+        }
+        next_type_id += 1;
+    }
+}
+
 fn collect_typed_cell_payloads(
     anf: &AnfModule,
+    type_env: &TypeEnv,
     closure_capture_layouts: &HashMap<FuncId, Vec<crate::ir::LocalId>>,
     ctx: &mut EmitCtx<'_>,
 ) -> std::collections::BTreeMap<String, MonoType> {
     let mut out = std::collections::BTreeMap::new();
+    collect_typed_cell_payloads_from_type_defs(type_env, &mut out);
     for func in &anf.functions {
         for ty in func
             .param_tys
@@ -8929,6 +8963,84 @@ mod tests {
                 if name == "UserRecord_3"
                     && fields.len() == 3
                     && fields.iter().all(|field| field.ty == ValType::I64)
+        )));
+    }
+
+    #[test]
+    fn emit_user_module_registers_typed_cells_referenced_only_from_record_fields() {
+        use crate::types::ty::{CELL_TYPE_ID, RecordField, TypeDef};
+
+        let mut type_env = TypeEnv::new();
+        let inner_id = type_env.add_type(TypeDef::Record {
+            name: "Inner".to_string(),
+            type_params: vec![],
+            fields: vec![RecordField {
+                name: "value".to_string(),
+                ty: MonoType::Int,
+            }],
+            doc: None,
+        });
+        let wrapper_id = type_env.add_type(TypeDef::Record {
+            name: "Wrapper".to_string(),
+            type_params: vec![],
+            fields: vec![RecordField {
+                name: "slot".to_string(),
+                ty: MonoType::Named {
+                    type_id: CELL_TYPE_ID,
+                    args: vec![MonoType::Named {
+                        type_id: inner_id,
+                        args: vec![],
+                    }],
+                },
+            }],
+            doc: None,
+        });
+        let anf = AnfModule {
+            functions: vec![
+                AnfFunctionDef {
+                    func_id: FuncId(1),
+                    name: "id".to_string(),
+                    params: vec![LocalId(1)],
+                    param_tys: vec![MonoType::Int],
+                    body: AnfExpr::Atom(Atom::ALocal(LocalId(1))),
+                    return_ty: MonoType::Int,
+                    op_result_mono: HashMap::new(),
+                },
+                AnfFunctionDef {
+                    func_id: FuncId(2),
+                    name: "capture_id".to_string(),
+                    params: vec![],
+                    param_tys: vec![],
+                    body: AnfExpr::Atom(Atom::AGlobalFunc(FuncId(1))),
+                    return_ty: MonoType::Function {
+                        params: vec![MonoType::Int],
+                        ret: Box::new(MonoType::Int),
+                    },
+                    op_result_mono: HashMap::new(),
+                },
+            ],
+            init_func_id: None,
+            all_init_func_ids: Vec::new(),
+        };
+
+        let module = emit_user_module(&anf, &type_env);
+        let typed_cell_sym = typed_cell_struct_sym(&MonoType::Named {
+            type_id: inner_id,
+            args: vec![],
+        });
+
+        assert!(module.types.iter().any(|t| matches!(
+            t,
+            WasmTypeDef::Struct { name, .. } if name == &typed_cell_sym
+        )));
+        assert!(module.types.iter().any(|t| matches!(
+            t,
+            WasmTypeDef::Struct { name, fields, .. }
+                if name == &user_record_type_sym(wrapper_id)
+                    && fields.iter().any(|field| field.ty == ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Named(typed_cell_sym.clone()),
+                    })
         )));
     }
 
