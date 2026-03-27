@@ -42,6 +42,22 @@ fn lower_src(src: String) Result<lower_core.LowerResult, String> {
   .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
 }
 
+fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.LowerResult, String> {
+  parsed := parser.parse(src, 0)
+  if parsed.diagnostics.len() > 0 {
+    return .Err("parse error: ${parsed.diagnostics[0].message}")
+  }
+  resolved := env.resolve(parsed.value)
+  if resolved.diagnostics.len() > 0 {
+    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+  }
+  check_result := checker.check(parsed.value, resolved.env)
+  if check_result.diagnostics.len() > 0 {
+    return .Err("check error: ${check_result.diagnostics[0].message}")
+  }
+  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
+}
+
 fn lower_fn_body(src: String) Result<core_ir.CoreExpr, String> {
   lr := try lower_src(src)
   if lr.module.functions.len() == 0 {
@@ -753,6 +769,26 @@ pub fn suite() runner.Suite {
       try assert.ok(has_loop(body), "expected Loop in string for-in")
       reg := make_builtin_registry()
       try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
+      .Ok({})
+    })
+    .test("lower for-in iterator loop follows type definition rather than preferred stored name", fn() Result<Void, String> {
+      iter_tid := resolver.TypeId.{ id: 62 }
+      iter_entry := resolver.TypeEntry.{
+        id: iter_tid,
+        arity: 1,
+        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+          resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      env := resolver.empty_env()
+        .register_type_entry(iter_entry, "dep.Iterator")
+        .bind_type("Iterator", iter_tid)
+
+      src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
+      lr := try lower_src_with_env(src, env)
+      body := lr.module.functions[0].body
+      try assert.ok(has_loop(body), "expected Loop in iterator for-in")
       .Ok({})
     })
     // Range for-loop test deferred — requires Range type in test env

@@ -696,24 +696,28 @@ fn method_owner_name(base_ty: MonoType, env: ResolvedEnv) String? {
   }
 }
 
-fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) FunctionSig? {
-  owner := case method_owner_name(base_ty, env) {
-    .Some(name) => name,
-    .None => { return .None },
+fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+  case base_ty {
+    .Int => env.lookup_method("Int", method_name),
+    .Float => env.lookup_method("Float", method_name),
+    .Bool => env.lookup_method("Bool", method_name),
+    .Byte => env.lookup_method("Byte", method_name),
+    .String => env.lookup_method("String", method_name),
+    .Vector(_) => env.lookup_method("Vector", method_name),
+    .Dict(_, _) => env.lookup_method("Dict", method_name),
+    .Optional(_) => env.lookup_method("Option", method_name),
+    .Result(_, _) => env.lookup_method("Result", method_name),
+    .Named(tid, _) => env.lookup_type_method(tid, method_name),
+    _ => .None,
   }
-  fn_name := case env.lookup_method(owner, method_name) {
-    .Some(name) => name,
-    .None => { return .None },
-  }
-  env.lookup_function(fn_name)
 }
 
-fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
-  owner := case method_owner_name(base_ty, env) {
+fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) FunctionSig? {
+  fn_name := case resolve_method_func_name(base_ty, method_name, env) {
     .Some(name) => name,
     .None => { return .None },
   }
-  env.lookup_method(owner, method_name)
+  env.lookup_registered_function(fn_name)
 }
 
 fn named_function_field_exists(base_ty: MonoType, field_name: String, env: ResolvedEnv) Bool {
@@ -743,12 +747,46 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
   }
 }
 
+fn type_def_name(env: ResolvedEnv, tid: TypeId) String? {
+  case env.lookup_type_def(tid) {
+    .Some(def) => {
+      case def {
+        .Record(name, _, _) => .Some(name),
+        .Sum(name, _, _) => .Some(name),
+        .Alias(name, _, _) => .Some(name),
+      }
+    },
+    .None => .None,
+  }
+}
+
+fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
+  entry := case env.lookup_type(name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+  case entry.def {
+    .Some(def) => {
+      case def {
+        .Alias(_, _, target) => {
+          case expand_alias(target, env, 0) {
+            .Named(tid, _) => .Some(tid),
+            _ => .Some(entry.id),
+          }
+        },
+        _ => .Some(entry.id),
+      }
+    },
+    .None => .Some(entry.id),
+  }
+}
+
 fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
     .None => { return .None },
   }
-  sig := case ctx.env.lookup_function(fn_name) {
+  sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(s) => s,
     .None => { return .None },
   }
@@ -1519,9 +1557,9 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
   }
 }
 
-// Returns the type name for a scrutinee type, if it's a named/sum type.
+// Returns a display name for a scrutinee type, if it's a named/sum type.
 fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
-  zonked := zonk(ty, ctx.subst)
+  zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   case zonked {
     .Optional(_) => .Some("Option"),
     .Result(_, _) => .Some("Result"),
@@ -1530,18 +1568,31 @@ fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
   }
 }
 
-// Validate that a qualified variant path (e.g., Color in Color.Red) matches the scrutinee type.
-fn validate_qualifier(path: Vector<String>, expected: MonoType, s: Span, ctx: InferCtx) Vector<Diagnostic> {
-  if path.len() != 1 { return [] }
-  qualifier := path[0]
-  case scrutinee_type_name(expected, ctx) {
-    .Some(type_name) => {
-      if qualifier != type_name {
-        [diag.error(s, "qualifier ${qualifier} does not match scrutinee type ${type_name}")]
-      } else {
-        []
+fn qualifier_matches_scrutinee(path: Vector<String>, expected: MonoType, ctx: InferCtx) Bool {
+  qualifier := path.join(".")
+  zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+  case zonked {
+    .Optional(_) => qualifier == "Option",
+    .Result(_, _) => qualifier == "Result",
+    .Named(tid, _) => {
+      case resolve_named_type_id(ctx.env, qualifier) {
+        .Some(qid) => qid.id == tid.id,
+        .None => false,
       }
     },
+    _ => false,
+  }
+}
+
+// Validate that a qualified variant path (e.g., Color in Color.Red) matches the scrutinee type.
+fn validate_qualifier(path: Vector<String>, expected: MonoType, s: Span, ctx: InferCtx) Vector<Diagnostic> {
+  if path.len() == 0 { return [] }
+  qualifier := path.join(".")
+  if qualifier_matches_scrutinee(path, expected, ctx) {
+    return []
+  }
+  case scrutinee_type_name(expected, ctx) {
+    .Some(type_name) => [diag.error(s, "qualifier ${qualifier} does not match scrutinee type ${type_name}")],
     .None => [],
   }
 }
@@ -1588,13 +1639,8 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx:
           .Variant(name, _) => name,
           .QualifiedVariant(path, name, _) => {
             // Only count as covered if qualifier matches scrutinee type
-            if path.len() == 1 {
-              case scrutinee_type_name(scrut_ty, ctx) {
-                .Some(type_name) => {
-                  if path[0] != type_name { continue }
-                },
-                .None => {},
-              }
+            if !qualifier_matches_scrutinee(path, scrut_ty, ctx) {
+              continue
             }
             name
           },
@@ -1711,18 +1757,16 @@ type IterableBindingInfo = .{
 }
 
 fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) IterableBindingInfo {
-  zonked := zonk(ty, ctx.subst)
+  zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   case zonked {
     .Vector(elem) => .{ elem_ty: elem, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
     .String => .{ elem_ty: MonoType.Byte, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
     .Dict(k, v) => .{ elem_ty: k, secondary_ty: .Some(v), secondary_allowed: true, diags },
     .Named(tid, args) => {
-      // Range (TypeId 3) iterates Int; Iterator (TypeId 4) iterates its element type
-      case ctx.env.find_type_name(tid) {
-        .Some(name) => {
-          if name == "Range" {
-            .{ elem_ty: MonoType.Int, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
-          } else if name == "Iterator" and args.len() > 0 {
+      case type_def_name(ctx.env, tid) {
+        .Some("Range") => .{ elem_ty: MonoType.Int, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
+        .Some("Iterator") => {
+          if args.len() > 0 {
             .{ elem_ty: args[0], secondary_ty: .None, secondary_allowed: false, diags }
           } else {
             .{
@@ -1733,7 +1777,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
             }
           }
         },
-        .None => .{
+        _ => .{
           elem_ty: MonoType.Int,
           secondary_ty: .Some(MonoType.Int),
           secondary_allowed: true,
@@ -2241,15 +2285,11 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
     .Byte => .{ ctx, diags },
     .String => .{ ctx, diags },
     .Named(tid, _) => {
-      type_name := case ctx.env.find_type_name(tid) {
+      fn_name := case ctx.env.lookup_type_method(tid, "to_string") {
         .Some(name) => name,
         .None => { return .{ ctx, diags: diags.push(missing_err) } },
       }
-      fn_name := case ctx.env.lookup_method(type_name, "to_string") {
-        .Some(name) => name,
-        .None => { return .{ ctx, diags: diags.push(missing_err) } },
-      }
-      sig := case ctx.env.lookup_function(fn_name) {
+      sig := case ctx.env.lookup_registered_function(fn_name) {
         .Some(s) => s,
         .None => { return .{ ctx, diags: diags.push(missing_err) } },
       }

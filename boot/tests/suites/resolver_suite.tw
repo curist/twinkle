@@ -489,6 +489,31 @@ pub fn suite() runner.Suite {
         .None => .Err("expected Some"),
       }
     })
+    .test("lookup_type_method follows receiver identity rather than preferred name", fn() {
+      tid := resolver.TypeId.{ id: 41 }
+      entry := resolver.TypeEntry.{
+        id: tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Point", [], [
+          resolver.ResolvedField.{ name: "x", ty: resolver.MonoType.Int },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+
+      env := resolver.empty_env()
+        .register_type_entry(entry, "dep.Point")
+        .bind_type("Point", tid)
+        .register_bound_methods("Point", [resolver.MethodEntry.{ method_name: "len", function_name: "len" }])
+
+      try assert.str_eq(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "dep.Point")
+      case resolver.lookup_type_method(env, tid, "len") {
+        .Some(fn_name) => {
+          try assert.str_eq(fn_name, "len")
+          .Ok({})
+        },
+        .None => .Err("expected type-id method lookup to succeed"),
+      }
+    })
     .test("builtin method: String.len", fn() {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "String", "len") {
@@ -770,6 +795,25 @@ pub fn suite() runner.Suite {
       try assert.is_true(resolver.has_type(env, "Bar"))
       try assert.int_eq(env.types.len(), 2)
       .Ok({})
+    })
+    .test("type entry can exist without a visible binding", fn() {
+      tid := resolver.TypeId.{ id: 7 }
+      entry := resolver.TypeEntry.{
+        id: tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Alias("geom.Support", [], resolver.MonoType.Int)),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+
+      env := resolver.empty_env().register_type_entry(entry, "geom.Support")
+
+      try assert.int_eq(env.types.len(), 1)
+      try assert.is_true(!resolver.has_type(env, "geom.Support"))
+      try assert.str_eq(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "geom.Support")
+      case resolver.lookup_type_def(env, tid) {
+        .Some(_) => .Ok({}),
+        .None => .Err("stored type entry should remain addressable by TypeId"),
+      }
     })
     .test("add_function incrementally builds env", fn() {
       env := resolver.empty_env()
@@ -1054,11 +1098,74 @@ pub fn suite() runner.Suite {
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
-      try assert.int_eq(exports.types.len(), 2)
+      try assert.int_eq(exports.visible_types.len(), 2)
+      try assert.int_eq(exports.support_types.len(), 0)
       // Should have Foo and Baz, not Bar
-      names: Vector<String> = collect et in exports.types { et.name }
+      names: Vector<String> = collect et in exports.visible_types { et.name }
       try assert.vec_contains(names, "Foo")
       try assert.vec_contains(names, "Baz")
+      .Ok({})
+    })
+
+    .test("extract_exports separates support-only imported types", fn() {
+      tid := resolver.TypeId.{ id: 11 }
+      entry := resolver.TypeEntry.{
+        id: tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], resolver.MonoType.Int)),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      sig := resolver.FunctionSig.{
+        name: "expose", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
+      }
+      parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
+      env := resolver.empty_env().register_type_entry(entry, "dep.Support").with_functions([sig])
+
+      exports := resolver.extract_exports(env, parsed.value)
+
+      try assert.int_eq(exports.visible_types.len(), 0)
+      try assert.int_eq(exports.support_types.len(), 1)
+      try assert.str_eq(exports.support_types[0].name, "dep.Support")
+      .Ok({})
+    })
+
+    .test("extract_exports includes transitive support-only imported types", fn() {
+      inner_tid := resolver.TypeId.{ id: 21 }
+      outer_tid := resolver.TypeId.{ id: 22 }
+      inner_entry := resolver.TypeEntry.{
+        id: inner_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Inner", [], [
+          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      outer_entry := resolver.TypeEntry.{
+        id: outer_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Outer", [], [
+          resolver.ResolvedField.{ name: "inner", ty: resolver.MonoType.Named(inner_tid, []) },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      sig := resolver.FunctionSig.{
+        name: "expose", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Named(outer_tid, [])], ret: .Some(resolver.MonoType.Named(outer_tid, [])),
+      }
+      parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
+      env := resolver.empty_env()
+        .register_type_entry(inner_entry, "dep.Inner")
+        .register_type_entry(outer_entry, "dep.Outer")
+        .with_functions([sig])
+
+      exports := resolver.extract_exports(env, parsed.value)
+
+      try assert.int_eq(exports.visible_types.len(), 0)
+      try assert.int_eq(exports.support_types.len(), 2)
+      names: Vector<String> = collect et in exports.support_types { et.name }
+      try assert.vec_contains(names, "dep.Inner")
+      try assert.vec_contains(names, "dep.Outer")
       .Ok({})
     })
 
@@ -1106,6 +1213,33 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("merge_module_exports registers support types without binding them", fn() {
+      tid := resolver.TypeId.{ id: 13 }
+      entry := resolver.TypeEntry.{
+        id: tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], resolver.MonoType.Int)),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      sig := resolver.FunctionSig.{
+        name: "expose", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
+      }
+      exports := resolver.ModuleExports.{
+        visible_types: [],
+        support_types: [resolver.ExportedType.{ name: "dep.Support", entry }],
+        functions: [sig],
+        methods: Dict.new(),
+      }
+
+      env := resolver.empty_env().merge_module_exports("mod", exports)
+
+      try assert.is_true(!resolver.has_type(env, "dep.Support"))
+      try assert.is_true(resolver.has_function(env, "mod.expose"))
+      try assert.str_eq(try resolver.find_type_name(env, resolver.TypeId.{ id: 0 }).ok_or("support type missing"), "dep.Support")
+      .Ok({})
+    })
+
     .test("merge_module_exports adds qualified functions to method table", fn() {
       src := "pub fn greet(name: String) String { name }"
       parsed := parser.parse(src, 0)
@@ -1148,6 +1282,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(!resolver.has_function(env, "sub"))
       try assert.is_true(!resolver.has_function(env, "math.add"))
       try assert.is_true(!resolver.has_function(env, "math.sub"))
+      try assert.is_true(!resolver.has_function(env, "$import$.math.add"))
       .Ok({})
     })
 
@@ -1170,8 +1305,44 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("standalone selective value import does not retain hidden function bindings", fn() {
+      src := "pub fn add(a: Int, b: Int) Int { a + b }\npub fn sub(a: Int, b: Int) Int { a - b }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      items: Vector<ast.ImportItem> = [
+        .Value(ast.ImportValueItem.{ name: "add", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env().merge_selective_imports("math", exports, items)
+
+      try assert.is_true(resolver.has_function(env, "add"))
+      try assert.is_true(!resolver.has_function(env, "math.add"))
+      try assert.is_true(!resolver.has_function(env, "$import$.math.add"))
+
+      found_registered := false
+      for sig in env.functions {
+        if sig.name == "math.add" {
+          found_registered = true
+        }
+        if sig.name.starts_with("$import$.math.") {
+          return .Err("unexpected hidden selective-import function retained: ${sig.name}")
+        }
+      }
+      try assert.is_true(found_registered)
+
+      for name in env.function_bindings.keys() {
+        if name.starts_with("$import$.math.") {
+          return .Err("unexpected hidden selective-import function binding retained: ${name}")
+        }
+      }
+
+      .Ok({})
+    })
+
     .test("standalone selective type import does not retain hidden import bindings", fn() {
-      src := "pub type Point = .{ x: Int }\npub fn id(p: Point) Point { p }"
+      src := "pub type Point = .{ x: Int }\npub type Line = .{ p: Point }\npub fn id(p: Point) Point { p }"
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
@@ -1185,8 +1356,18 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(resolver.has_type(env, "Point"))
       try assert.is_true(!resolver.has_type(env, "$import$.geom.Point"))
+      try assert.is_true(!resolver.has_type(env, "geom.Point"))
+      try assert.is_true(!resolver.has_type(env, "Line"))
+      try assert.is_true(!resolver.has_type(env, "geom.Line"))
+      try assert.str_eq(try resolver.find_type_name(env, resolver.TypeId.{ id: 1 }).ok_or("stored unselected type missing"), "geom.Line")
 
       for name in env.type_names {
+        if name.starts_with("$import$.geom.") {
+          return .Err("unexpected hidden selective-import stored type retained: ${name}")
+        }
+      }
+
+      for name in env.type_bindings.keys() {
         if name.starts_with("$import$.geom.") {
           return .Err("unexpected hidden selective-import binding retained: ${name}")
         }

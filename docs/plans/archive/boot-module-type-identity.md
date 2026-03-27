@@ -37,7 +37,7 @@ This plan's behavioral/type-identity goals are complete:
 
 The remaining architecture cleanup around fully removing hidden
 selective-import namespaces is tracked separately in
-[boot-no-hidden-imports.md](../boot-no-hidden-imports.md).
+[boot-no-hidden-imports.md](boot-no-hidden-imports.md).
 
 ## Why Now
 

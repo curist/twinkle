@@ -96,7 +96,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   anf := lower_anf.lower_module(mono)
   opt := optimize_module(anf)
 
-  .Ok(PipelineArtifacts.{
+  .Ok(.{
     env: result.env,
     builtins: state.builtins,
     core,
@@ -126,7 +126,7 @@ fn compile_module(
   // Already compiled? Return cached exports.
   case state.cache[canonical] {
     .Some(exports) => {
-      return .Ok(CompileModuleResult.{ exports, env: base_env, state })
+      return .Ok(.{ exports, env: base_env, state })
     },
     .None => {},
   }
@@ -224,21 +224,15 @@ fn compile_module(
 
   // Cache and accumulate
   cur_state.cache[canonical] = module_exports
-  cur_state = CompileState.{
-    cache: cur_state.cache,
-    compiled_modules: cur_state.compiled_modules.push(CompiledModule.{
-      path: canonical,
-      core: lowered.module,
-      func_table: lowered.func_table,
-      external_refs,
-      builtin_count: cur_state.builtins.next_id,
-    }),
-    builtins: cur_state.builtins,
-    project_root: cur_state.project_root,
-    canonical_roots: cur_state.canonical_roots,
-  }
+  cur_state.compiled_modules = cur_state.compiled_modules.push(.{
+    path: canonical,
+    core: lowered.module,
+    func_table: lowered.func_table,
+    external_refs,
+    builtin_count: cur_state.builtins.next_id,
+  })
 
-  .Ok(CompileModuleResult.{ exports: module_exports, env: resolved.env, state: cur_state })
+  .Ok(.{ exports: module_exports, env: resolved.env, state: cur_state })
 }
 
 // ── Linker metadata helpers ──────────────────────────────────────────
@@ -254,10 +248,10 @@ fn track_func_origins(
     .Import => {
       case dep.items {
         .Some(items) => {
-          // Selective import: register hidden-qualified and selected names
+          // Selective import: track canonical qualified origins plus any
+          // selected local bindings.
           for sig in exports.functions {
-            hidden_name := "$import$.${dep.alias}.${sig.name}"
-            func_origin[hidden_name] = ExternalRef.{
+            func_origin["${dep.alias}.${sig.name}"] = .{
               module_path: dep.canonical_path,
               func_name: sig.name,
             }
@@ -269,7 +263,7 @@ fn track_func_origins(
                   .Some(a) => a,
                   .None => v.name,
                 }
-                func_origin[binding] = ExternalRef.{
+                func_origin[binding] = .{
                   module_path: dep.canonical_path,
                   func_name: v.name,
                 }
@@ -281,7 +275,7 @@ fn track_func_origins(
         .None => {
           // Full import: qualified names "alias.func_name"
           for sig in exports.functions {
-            func_origin["${dep.alias}.${sig.name}"] = ExternalRef.{
+            func_origin["${dep.alias}.${sig.name}"] = .{
               module_path: dep.canonical_path,
               func_name: sig.name,
             }
@@ -293,7 +287,7 @@ fn track_func_origins(
       // Prelude: unqualified names (skip if already registered)
       for sig in exports.functions {
         if !func_origin.has(sig.name) {
-          func_origin[sig.name] = ExternalRef.{
+          func_origin[sig.name] = .{
             module_path: dep.canonical_path,
             func_name: sig.name,
           }

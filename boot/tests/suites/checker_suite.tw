@@ -14,6 +14,12 @@ fn check_src(src: String) checker.CheckResult {
   checker.check(parsed.value, resolved.env)
 }
 
+fn check_src_with_env(src: String, env: resolver.ResolvedEnv) checker.CheckResult {
+  parsed := parser.parse(src, 0)
+  resolved := env.resolve(parsed.value)
+  checker.check(parsed.value, resolved.env)
+}
+
 fn builtin_sig(name: String, params: Vector<String>, param_tys: Vector<resolver.MonoType>, ret: resolver.MonoType?) resolver.FunctionSig {
   resolver.FunctionSig.{
     name: name,
@@ -85,6 +91,14 @@ fn check_errs_builtins(src: String) Result<Vector<String>, String> {
 
 fn check_ok(src: String) Result<checker.CheckResult, String> {
   r := check_src(src)
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+  }
+  .Ok(r)
+}
+
+fn check_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<checker.CheckResult, String> {
+  r := check_src_with_env(src, env)
   if r.diagnostics.len() > 0 {
     return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
   }
@@ -677,6 +691,25 @@ pub fn suite() runner.Suite {
       try assert.is_true(msgs[0].contains("does not match"))
       .Ok({})
     })
+    .test("F5 qualifier follows visible binding rather than preferred stored name", fn() {
+      color_tid := resolver.TypeId.{ id: 61 }
+      color_entry := resolver.TypeEntry.{
+        id: color_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Sum("Color", [], [
+          resolver.ResolvedVariant.{ name: "Red", fields: [] },
+          resolver.ResolvedVariant.{ name: "Blue", fields: [] },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      env := resolver.empty_env()
+        .register_type_entry(color_entry, "dep.Color")
+        .bind_type("Color", color_tid)
+
+      src := "fn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Blue => 2,\n}\n}"
+      _ := try check_ok_with_env(src, env)
+      .Ok({})
+    })
     // ── C1: type alias expansion ──
     .test("C1 alias field access", fn() {
       src := "type Pt = .{ x: Int, y: Int }\ntype MyPt = Pt\nfn get_x(p: MyPt) Int { p.x }"
@@ -699,6 +732,24 @@ pub fn suite() runner.Suite {
       src := "fn f() Void { for x in 42 { x } }"
       msgs := try check_errs(src)
       try assert.is_true(msgs[0].contains("cannot iterate"))
+      .Ok({})
+    })
+    .test("C2 iterator recognition follows type definition rather than preferred stored name", fn() {
+      iter_tid := resolver.TypeId.{ id: 62 }
+      iter_entry := resolver.TypeEntry.{
+        id: iter_tid,
+        arity: 1,
+        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+          resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      env := resolver.empty_env()
+        .register_type_entry(iter_entry, "dep.Iterator")
+        .bind_type("Iterator", iter_tid)
+
+      src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
+      _ := try check_ok_with_env(src, env)
       .Ok({})
     })
     // ── C3: break, continue, defer, assign ──
@@ -1002,6 +1053,35 @@ pub fn suite() runner.Suite {
     .test("P2 receiver method call dispatches through method registry", fn() {
       src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn f(p: Point) Int { p.len() }"
       r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "p.len()"), "Int")
+      .Ok({})
+    })
+    .test("P2 receiver method lookup follows receiver identity rather than preferred name", fn() {
+      point_tid := resolver.TypeId.{ id: 41 }
+      point_entry := resolver.TypeEntry.{
+        id: point_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Point", [], [
+          resolver.ResolvedField.{ name: "x", ty: resolver.MonoType.Int },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      len_sig := resolver.FunctionSig.{
+        name: "len",
+        type_params: [],
+        param_names: ["p"],
+        params: [resolver.MonoType.Named(point_tid, [])],
+        ret: .Some(resolver.MonoType.Int),
+      }
+
+      env := resolver.empty_env()
+        .register_type_entry(point_entry, "dep.Point")
+        .bind_type("Point", point_tid)
+        .add_function(len_sig)
+        .register_bound_methods("Point", [resolver.MethodEntry.{ method_name: "len", function_name: "len" }])
+
+      src := "fn f(p: Point) Int { p.len() }"
+      r := try check_ok_with_env(src, env)
       try assert.str_eq(try type_at(r, src, "p.len()"), "Int")
       .Ok({})
     })

@@ -1,6 +1,6 @@
 # Boot No-Hidden-Imports Plan
 
-Last updated: 2026-03-27
+Last updated: 2026-03-28
 
 ## Goal
 
@@ -14,20 +14,23 @@ replace it with a clearer import model where:
 - method lookup does not depend on whichever alias name happens to win
 
 This is a follow-on architecture plan to
-[archive/boot-module-type-identity.md](archive/boot-module-type-identity.md), not a replacement
+[boot-module-type-identity.md](boot-module-type-identity.md), not a replacement
 for the already-landed type-identity fixes.
 
 ## Status
 
-Planned.
+Completed on 2026-03-28.
 
-Current code has partial phase-4 behavior but not the full end state:
+Phases 0 through 6 are now landed:
 
 - import topology bugs are fixed
-- standalone selective imports no longer need to retain hidden bindings for
-  explicitly selected types
-- hidden support bindings and hidden selective-import value plumbing still exist
-- `ResolvedEnv` still conflates type storage with type-name bindings
+- `ResolvedEnv` separates canonical type/function storage from visible bindings
+- standalone selective imports register interface closure first, then bind only
+  selected local names
+- support/interface types can exist without user-visible local bindings
+- selective-imported values no longer require hidden linker-origin names
+- method lookup follows receiver identity
+- hidden selective-import type-name compatibility helpers are removed
 
 ## Why Now
 
@@ -35,8 +38,8 @@ The current resolver/module-import path is functionally much better than it was,
 but the implementation is still carrying compatibility structure from the older
 projection model.
 
-Today, the boot compiler still relies on hidden names like `$import$.alias.Type`
-or `$import$.alias.func` in a few places to bridge the gap between:
+Earlier revisions relied on hidden names like `$import$.alias.Type` or
+`$import$.alias.func` to bridge the gap between:
 
 - canonical imported identity
 - support-type closure needed for public signatures
@@ -91,27 +94,15 @@ evolving.
 
 The relevant code lives primarily in:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
-- [`boot/compiler/checker.tw`](../../boot/compiler/checker.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/checker.tw`](../../../boot/compiler/checker.tw)
 
-Current structural constraints:
-
-1. `ResolvedEnv` stores type identity and type-name bindings together via
-   `types`, `type_names`, and `type_index`
-2. `add_type(...)` inserts both storage and a binding in one operation
-3. standalone selective imports still pass through a hidden merge path before
-   selected names are rebound
-4. selective imported values still use hidden origin names in linker metadata
-5. method lookup still depends on type names rather than receiver identity
-
-That means the env cannot currently represent:
+The env now represents:
 
 - "this imported support type exists"
 - without also representing:
 - "this imported support type has some concrete local name binding"
-
-That missing representation is the real reason hidden bindings still exist.
 
 ## Design Direction
 
@@ -220,8 +211,8 @@ than part of semantic resolution.
 
 Files:
 
-- [`boot/tests/suites/resolver_suite.tw`](../../boot/tests/suites/resolver_suite.tw)
-- [`boot/tests/suites/multi_module_suite.tw`](../../boot/tests/suites/multi_module_suite.tw)
+- [`boot/tests/suites/resolver_suite.tw`](../../../boot/tests/suites/resolver_suite.tw)
+- [`boot/tests/suites/multi_module_suite.tw`](../../../boot/tests/suites/multi_module_suite.tw)
 
 Add/keep tests that make the architecture target observable:
 
@@ -243,7 +234,7 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
 
 Changes:
 
@@ -262,8 +253,8 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
 
 Changes:
 
@@ -283,7 +274,7 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
 
 Changes:
 
@@ -304,55 +295,55 @@ Exit criteria:
 
 Files:
 
-- [`boot/compiler/module_compiler.tw`](../../boot/compiler/module_compiler.tw)
-- [`boot/compiler/lower_core.tw`](../../boot/compiler/lower_core.tw)
+- [`boot/compiler/module_compiler.tw`](../../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/lower_core.tw`](../../../boot/compiler/lower_core.tw)
 
-Changes:
+Status: completed on 2026-03-28.
 
-1. stop using hidden function names as selective-import linker origins
-2. preserve direct origin tracking for selective imported values
-3. confirm external refs stay stable without synthetic hidden names
+Landed result:
 
-Exit criteria:
+1. selective imported values are registered canonically and bound separately
+2. linker origin tracking uses canonical qualified names plus selected local
+   bindings
+3. external refs stay stable without `$import$.alias.func` metadata entries
 
-- selective-imported values lower/link correctly without `$import$.alias.func`
-  metadata entries
+Exit criteria met.
 
 ### Phase 5: Move Method Lookup To Identity
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/resolver.tw)
-- [`boot/compiler/checker.tw`](../../boot/compiler/lower_core.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
+- [`boot/compiler/checker.tw`](../../../boot/compiler/checker.tw)
 
-Changes:
+Status: completed on 2026-03-28.
 
-1. register methods by receiver `TypeId`
-2. update checker lookup to resolve methods from receiver identity first
-3. keep any remaining name-based shims narrow and explicit
+Landed result:
 
-Exit criteria:
+1. `ResolvedEnv` now carries receiver-identity method storage keyed by `TypeId`
+2. checker method resolution for nominal receivers follows receiver identity
+   rather than `find_type_name(...)`
+3. name-keyed method tables remain only for builtins, module-qualified lookup,
+   and compatibility surfaces
 
-- method lookup is independent of alias choice and no longer depends on hidden
-  import names or preferred type-name selection
+Exit criteria met.
 
 ### Phase 6: Delete The Hidden Selective Namespace
 
 Files:
 
-- [`boot/compiler/resolver.tw`](../../boot/compiler/module_compiler.tw)
+- [`boot/compiler/resolver.tw`](../../../boot/compiler/resolver.tw)
 - targeted tests/docs
 
-Changes:
+Status: completed on 2026-03-28.
 
-1. remove the `$import$...` selective-import path entirely
-2. remove compatibility helpers that only existed for hidden-name migration
-3. update plan/status docs to describe the new import model directly
+Landed result:
 
-Exit criteria:
+1. selective imported types now register under exact canonical qualified names
+2. hidden selective-import compatibility helpers are removed from resolver logic
+3. tests/docs now assert the absence of hidden selective names directly
 
-- no hidden selective-import namespace remains in active boot compiler logic
-- selective imports are implemented as registration + binding only
+Exit criteria met.
 
 ## Risks
 

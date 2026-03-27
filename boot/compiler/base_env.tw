@@ -107,17 +107,17 @@ pub fn builtin_type_env() ResolvedEnv {
 // ── method registration from signature groups ────────────────────────────────
 
 fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.SignatureGroup>) ResolvedEnv {
-  m := env.methods
+  cur := env
   for group in groups {
     entries := signatures.group_method_entries(group)
     case group.receiver {
       .None => {},
       .Some(recv) => {
-        m = resolver.register_methods(m, recv, entries)
+        cur = cur.register_bound_methods(recv, entries)
       },
     }
   }
-  env.with_methods(m)
+  cur
 }
 
 pub fn builtin_env() ResolvedEnv {
