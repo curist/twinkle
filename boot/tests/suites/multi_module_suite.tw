@@ -38,6 +38,30 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("mixed full and selective import reuses exported type ids", fn() {
+      result := module_compiler.compile_entry("${dir}/duplicate_type_imports_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("vector get supports optional return annotations", fn() {
+      result := module_compiler.compile_entry("${dir}/vector_get_optional_return.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
+    .test("selective-only imported sum types resolve shorthand variants", fn() {
+      result := module_compiler.compile_entry("${dir}/selective_only_variants_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected success, got: ${msg}"),
+      }
+    })
+
     .test("compile transitive dependency chain (a -> b -> c)", fn() {
       result := module_compiler.compile_entry("${dir}/transitive_a.tw")
       case result {

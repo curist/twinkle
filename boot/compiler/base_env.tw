@@ -117,7 +117,7 @@ pub fn builtin_env() ResolvedEnv {
     builtin_sig("string_from_utf8", [], ["bytes"], [resolver.MonoType.Vector(resolver.MonoType.Byte)], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
     builtin_sig("vector_len", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Int)),
     builtin_sig("vector_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_get", ["T"], ["xs", "index"], [resolver.MonoType.Vector(t), resolver.MonoType.Int], .Some(t)),
+    builtin_sig("vector_get", ["T"], ["xs", "index"], [resolver.MonoType.Vector(t), resolver.MonoType.Int], .Some(resolver.MonoType.Optional(t))),
     builtin_sig("vector_set", ["T"], ["xs", "index", "value"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, t], .Some(resolver.MonoType.Optional(resolver.MonoType.Vector(t)))),
     builtin_sig("vector_concat", ["T"], ["lhs", "rhs"], [resolver.MonoType.Vector(t), resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
     builtin_sig("vector_slice", ["T"], ["xs", "start", "end"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(t))),

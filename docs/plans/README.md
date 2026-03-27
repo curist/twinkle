@@ -41,6 +41,7 @@ from stage0, bootstrapping sequence)
 | Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | In Progress | [boot-multi-module.md](boot-multi-module.md) |
 | Builtin signature dedup | Boot-side signature source of truth via `prelude/signatures/*.tw` plus `builtins.tw` mapping | Planned | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) |
+| Import type identity | Canonical imported nominal types across full/selective/transitive module boundaries | Planned | [boot-module-type-identity.md](boot-module-type-identity.md) |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
 
 ### Later — Tooling & Ecosystem

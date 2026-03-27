@@ -1,0 +1,16 @@
+use .selective_only_variants_noise
+use .selective_only_variants_tokens.{Token, TokenKind}
+use .selective_only_variants_cursor
+
+fn is_loop(kind: TokenKind) Bool {
+  case kind {
+    .For => true,
+    .Return => false,
+    .Ident => false,
+  }
+}
+
+fn main() {
+  token := Token.{ kind: .For }
+  is_loop(selective_only_variants_cursor.kind(token))
+}

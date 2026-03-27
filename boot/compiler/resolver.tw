@@ -281,6 +281,7 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
   exported_types: Vector<ExportedType> = []
   exported_functions: Vector<FunctionSig> = []
   exported_function_names: Dict<String, Bool> = Dict.new()
+  exported_type_names: Dict<String, Bool> = Dict.new()
 
   for item in module.items {
     case item {
@@ -289,6 +290,7 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
         case env.lookup_type(decl.name) {
           .Some(entry) => {
             exported_types = exported_types.push(ExportedType.{ name: decl.name, entry })
+            exported_type_names[decl.name] = true
           },
           .None => {},
         }
@@ -305,6 +307,29 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
       },
       _ => {},
     }
+  }
+
+  hidden_support_types: Dict<String, Bool> = Dict.new()
+  for sig in exported_functions {
+    for param_ty in sig.params {
+      hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)
+    }
+    case sig.ret {
+      .Some(ret_ty) => {
+        hidden_support_types = collect_hidden_support_types(env, ret_ty, hidden_support_types)
+      },
+      .None => {},
+    }
+  }
+
+  // Preserve the source env's declaration order for deterministic export order.
+  for i in range(env.type_names.len()) {
+    name := env.type_names[i]
+    if !hidden_support_types.has(name) or exported_type_names.has(name) {
+      continue
+    }
+    exported_types = exported_types.push(ExportedType.{ name, entry: env.types[i] })
+    exported_type_names[name] = true
   }
 
   exported_methods: Dict<String, Vector<MethodEntry>> = Dict.new()
@@ -327,12 +352,15 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
 }
 
 pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv {
-  type_ids := plan_export_type_ids(env, exports)
+  type_ids := plan_export_type_ids(env, alias, exports)
   cur := env
 
   for exported in exports.types {
-    qualified := qualify_name(alias, exported.name)
-    cur = cur.add_type(remap_type_entry(exported.entry, qualified, type_ids), qualified)
+    target_name := merged_export_type_name(alias, exported.name)
+    if cur.has_type(target_name) {
+      continue
+    }
+    cur = cur.add_type(remap_type_entry(exported.entry, target_name, type_ids), target_name)
   }
 
   for sig in exports.functions {
@@ -349,7 +377,7 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
   }
 
   for exported in exports.types {
-    qualified_type := qualify_name(alias, exported.name)
+    qualified_type := merged_export_type_name(alias, exported.name)
     case exports.methods[exported.name] {
       .Some(entries) => {
         qualified_methods := collect entry in entries {
@@ -367,6 +395,61 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
 }
 
 pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+  // Check if the module was already fully imported under `alias`.
+  // If so, reuse those type IDs instead of allocating duplicates.
+  already_merged := has_any_exported_type(env, alias, exports)
+
+  if already_merged {
+    merge_selective_from_existing(env, alias, items)
+  } else {
+    merge_selective_via_hidden(env, alias, exports, items)
+  }
+}
+
+// When the module was already fully imported, alias selected items from
+// the existing qualified names — no new type IDs needed.
+fn merge_selective_from_existing(env: ResolvedEnv, alias: String, items: Vector<ImportItem>) ResolvedEnv {
+  cur := env
+  methods := cur.methods
+
+  for item in items {
+    case item {
+      .Value(value_item) => {
+        qualified := qualify_name(alias, value_item.name)
+        binding_name := import_binding_name(value_item.name, value_item.alias)
+        case cur.lookup_function(qualified) {
+          .Some(sig) => {
+            cur = cur.add_function(remap_function_sig(sig, binding_name, Dict.new()))
+          },
+          .None => {},
+        }
+      },
+      .Type(type_item) => {
+        qualified := qualify_name(alias, type_item.name)
+        binding_name := import_binding_name(type_item.name, type_item.alias)
+        case cur.lookup_type(qualified) {
+          .Some(entry) => {
+            cur = cur.add_type(entry, binding_name)
+            case cur.methods[qualified] {
+              .Some(entries) => {
+                methods = register_methods(methods, binding_name, entries)
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+      },
+    }
+  }
+
+  cur.with_methods(methods)
+}
+
+// When this is a standalone selective import (no prior full import),
+// do a full hidden merge first so all type cross-references are consistent,
+// then alias selected items from the hidden namespace.
+fn merge_selective_via_hidden(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
   hidden_alias := hidden_import_alias(alias)
   cur := env.merge_module_exports(hidden_alias, exports)
   methods := cur.methods
@@ -405,8 +488,20 @@ pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleE
   cur.with_methods(methods)
 }
 
+fn has_any_exported_type(env: ResolvedEnv, alias: String, exports: ModuleExports) Bool {
+  for exported in exports.types {
+    if is_hidden_import_name(exported.name) {
+      continue
+    }
+    if env.has_type(qualify_name(alias, exported.name)) {
+      return true
+    }
+  }
+  false
+}
+
 pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv {
-  type_ids := plan_export_type_ids(env, exports)
+  type_ids := plan_export_type_ids(env, "", exports)
   cur := env
   visible_functions: Dict<String, Bool> = Dict.new()
 
@@ -844,14 +939,96 @@ fn hidden_import_alias(alias: String) String {
   if alias == "" { "$import$" } else { "$import$.${alias}" }
 }
 
-fn plan_export_type_ids(env: ResolvedEnv, exports: ModuleExports) Dict<Int, TypeId> {
+fn is_hidden_import_name(name: String) Bool {
+  name.starts_with("$import$.")
+}
+
+fn merged_export_type_name(alias: String, name: String) String {
+  if is_hidden_import_name(name) { name } else { qualify_name(alias, name) }
+}
+
+fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := env.types.len()
   for exported in exports.types {
-    ids[exported.entry.id.id] = TypeId.{ id: next_id }
-    next_id = next_id + 1
+    target_name := merged_export_type_name(alias, exported.name)
+    case env.lookup_type(target_name) {
+      .Some(existing) => {
+        ids[exported.entry.id.id] = existing.id
+      },
+      .None => {
+        ids[exported.entry.id.id] = TypeId.{ id: next_id }
+        next_id = next_id + 1
+      },
+    }
   }
   ids
+}
+
+fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<String, Bool>) Dict<String, Bool> {
+  case ty {
+    .Named(tid, args) => {
+      cur := needed
+      for arg in args {
+        cur = collect_hidden_support_types(env, arg, cur)
+      }
+
+      name := case env.find_type_name(tid) {
+        .Some(found) => found,
+        .None => { return cur },
+      }
+      if !is_hidden_import_name(name) or cur.has(name) {
+        return cur
+      }
+
+      cur[name] = true
+      case env.lookup_type(name) {
+        .Some(entry) => collect_hidden_support_types_from_entry(env, entry, cur),
+        .None => cur,
+      }
+    },
+    .Vector(inner) => collect_hidden_support_types(env, inner, needed),
+    .Dict(key, value) => collect_hidden_support_types(env, value, collect_hidden_support_types(env, key, needed)),
+    .Function(params, ret) => {
+      cur := needed
+      for param in params {
+        cur = collect_hidden_support_types(env, param, cur)
+      }
+      collect_hidden_support_types(env, ret, cur)
+    },
+    .Optional(inner) => collect_hidden_support_types(env, inner, needed),
+    .Result(ok, err) => collect_hidden_support_types(env, err, collect_hidden_support_types(env, ok, needed)),
+    _ => needed,
+  }
+}
+
+fn collect_hidden_support_types_from_entry(env: ResolvedEnv, entry: TypeEntry, needed: Dict<String, Bool>) Dict<String, Bool> {
+  case entry.def {
+    .Some(def) => collect_hidden_support_types_from_def(env, def, needed),
+    .None => needed,
+  }
+}
+
+fn collect_hidden_support_types_from_def(env: ResolvedEnv, def: ResolvedTypeDef, needed: Dict<String, Bool>) Dict<String, Bool> {
+  case def {
+    .Record(_, _, fields) => {
+      cur := needed
+      for field in fields {
+        cur = collect_hidden_support_types(env, field.ty, cur)
+      }
+      cur
+    },
+    .Sum(_, _, variants) => {
+      cur := needed
+      for variant in variants {
+        for field_ty in variant.fields {
+          cur = collect_hidden_support_types(env, field_ty, cur)
+        }
+      }
+      cur
+    },
+    .Alias(_, _, target) => collect_hidden_support_types(env, target, needed),
+  }
 }
 
 fn remap_type_entry(entry: TypeEntry, new_name: String, type_ids: Dict<Int, TypeId>) TypeEntry {
