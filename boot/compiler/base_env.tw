@@ -1,5 +1,8 @@
+use @std.path
+use lib.module.loader
 use compiler.resolver
-use compiler.resolver.{ResolvedEnv}
+use compiler.resolver.{ResolvedEnv, MethodEntry}
+use compiler.signatures
 use lib.source.span
 
 fn builtin_sig(
@@ -88,85 +91,82 @@ pub fn builtin_type_env() ResolvedEnv {
   resolver.empty_env().with_types(bt.types, bt.names)
 }
 
-pub fn builtin_env() ResolvedEnv {
-  t := resolver.MonoType.Var("T")
-  k := resolver.MonoType.Var("K")
-  v := resolver.MonoType.Var("V")
-  e := resolver.MonoType.Var("E")
-  s := resolver.MonoType.Var("S")
-  builtin_named_types := builtin_types()
-  iter_t := resolver.MonoType.Named(resolver.TypeId.{ id: 4 }, [t])
-  iter_item_t := resolver.MonoType.Named(resolver.TypeId.{ id: 5 }, [t])
-  unfold_step_t := resolver.MonoType.Named(resolver.TypeId.{ id: 6 }, [t, s])
-  cell_t := resolver.MonoType.Named(resolver.TypeId.{ id: 2 }, [t])
-  range_t := resolver.MonoType.Named(resolver.TypeId.{ id: 3 }, [])
+// ── method registration from signature groups ────────────────────────────────
 
-  fns: Vector<resolver.FunctionSig> = [
-    builtin_sig("print", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("println", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("error", [], ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
-    builtin_sig("eprint", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("eprintln", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("int_to_string", [], ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("int_from_string", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Optional(resolver.MonoType.Int))),
-    builtin_sig("float_to_string", [], ["n"], [resolver.MonoType.Float], .Some(resolver.MonoType.String)),
-    builtin_sig("float_from_string", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Optional(resolver.MonoType.Float))),
-    builtin_sig("bool_to_string", [], ["b"], [resolver.MonoType.Bool], .Some(resolver.MonoType.String)),
-    builtin_sig("byte_to_string", [], ["b"], [resolver.MonoType.Byte], .Some(resolver.MonoType.String)),
-    builtin_sig("byte_to_int", [], ["b"], [resolver.MonoType.Byte], .Some(resolver.MonoType.Int)),
-    builtin_sig("byte_from_int", [], ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.Byte))),
-    builtin_sig("string_len", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Int)),
-    builtin_sig("string_concat", [], ["lhs", "rhs"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.String)),
+fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.SignatureGroup>) ResolvedEnv {
+  m := env.methods
+  for group in groups {
+    entries := signatures.group_method_entries(group)
+    case group.receiver {
+      .None => {},
+      .Some(recv) => {
+        m = resolver.register_methods(m, recv, entries)
+      },
+    }
+  }
+  env.with_methods(m)
+}
+
+pub fn builtin_env() ResolvedEnv {
+  // Locate the signatures directory relative to the project root.
+  // find_project_root(".") returns "." when no twinkle.toml is found in or
+  // above the CWD (the common case when running from the twinkle root), or
+  // the boot project root when running from boot/.  In both cases
+  // "./prelude/signatures" resolves correctly because boot/prelude is a
+  // symlink to ../prelude.
+  root := loader.find_project_root(".")
+  sigs_dir := path.join(root, "prelude/signatures")
+
+  // Load and resolve signature stubs (parse + type-resolve only, no codegen).
+  groups := case signatures.load_signatures(sigs_dir, builtin_type_env()) {
+    .Ok(g) => g,
+    .Err(msg) => error("builtin_env: failed to load prelude signatures: ${msg}"),
+  }
+
+  // Derive FunctionSigs with internal names from the signature groups.
+  sig_fns := signatures.all_internal_sigs(groups)
+
+  // Functions NOT covered by any signature file: I/O builtins, string_substring,
+  // vector builders, and host ops.
+  t := resolver.MonoType.Var("T")
+
+  hardcoded: Vector<resolver.FunctionSig> = [
+    // ── I/O ──
+    builtin_sig("print",    [], ["s"],   [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("println",  [], ["s"],   [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("error",    [], ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
+    builtin_sig("eprint",   [], ["s"],   [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    builtin_sig("eprintln", [], ["s"],   [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
+    // ── String (internal-only, not in signature files) ──
     builtin_sig("string_substring", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("string_get", [], ["s", "i"], [resolver.MonoType.String, resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.Byte))),
-    builtin_sig("string_slice", [], ["s", "start", "end"], [resolver.MonoType.String, resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.String)),
-    builtin_sig("char_code_at", [], ["s", "i"], [resolver.MonoType.String, resolver.MonoType.Int], .Some(resolver.MonoType.Int)),
-    builtin_sig("from_char_code", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("from_code_point", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("string_utf8_bytes", [], ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.Byte))),
-    builtin_sig("string_from_utf8", [], ["bytes"], [resolver.MonoType.Vector(resolver.MonoType.Byte)], .Some(resolver.MonoType.Optional(resolver.MonoType.String))),
-    builtin_sig("vector_len", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Int)),
-    builtin_sig("vector_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_get", ["T"], ["xs", "index"], [resolver.MonoType.Vector(t), resolver.MonoType.Int], .Some(resolver.MonoType.Optional(t))),
-    builtin_sig("vector_set", ["T"], ["xs", "index", "value"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, t], .Some(resolver.MonoType.Optional(resolver.MonoType.Vector(t)))),
-    builtin_sig("vector_concat", ["T"], ["lhs", "rhs"], [resolver.MonoType.Vector(t), resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_slice", ["T"], ["xs", "start", "end"], [resolver.MonoType.Vector(t), resolver.MonoType.Int, resolver.MonoType.Int], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_make", ["T"], ["len", "value"], [resolver.MonoType.Int, t], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_new", ["T"], [], [], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_push", ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t], .Some(resolver.MonoType.Void)),
-    builtin_sig("vector_builder_freeze", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("vector_builder_from", ["T"], ["xs"], [resolver.MonoType.Vector(t)], .Some(resolver.MonoType.Vector(t))),
-    builtin_sig("dict_new", ["K", "V"], [], [], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("dict_set", ["K", "V"], ["dict", "key", "value"], [resolver.MonoType.Dict(k, v), k, v], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("dict_keys", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Vector(k))),
-    builtin_sig("dict_get", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Optional(v))),
-    builtin_sig("dict_len", ["K", "V"], ["dict"], [resolver.MonoType.Dict(k, v)], .Some(resolver.MonoType.Int)),
-    builtin_sig("dict_has", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Bool)),
-    builtin_sig("dict_remove", ["K", "V"], ["dict", "key"], [resolver.MonoType.Dict(k, v), k], .Some(resolver.MonoType.Dict(k, v))),
-    builtin_sig("range_from", [], ["start", "end"], [resolver.MonoType.Int, resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("range", [], ["end"], [resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("range_step", [], ["start", "end", "step"], [resolver.MonoType.Int, resolver.MonoType.Int, resolver.MonoType.Int], .Some(range_t)),
-    builtin_sig("iterator_next", ["T"], ["it"], [iter_t], .Some(resolver.MonoType.Optional(iter_item_t))),
-    builtin_sig("iterator_unfold", ["T", "S"], ["seed", "step"], [s, resolver.MonoType.Function([s], unfold_step_t)], .Some(iter_t)),
-    builtin_sig("cell_new", ["T"], ["value"], [t], .Some(cell_t)),
-    builtin_sig("cell_get", ["T"], ["cell"], [cell_t], .Some(t)),
-    builtin_sig("cell_set", ["T"], ["cell", "value"], [cell_t, t], .Some(resolver.MonoType.Void)),
-    builtin_sig("cell_update", ["T"], ["cell", "f"], [cell_t, resolver.MonoType.Function([t], t)], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_read_file", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.String)),
-    builtin_sig("host_write_file", [], ["path", "text"], [resolver.MonoType.String, resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_mkdirp", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
-    builtin_sig("host_list_dir", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_exists", [], ["path"], [resolver.MonoType.String], .Some(resolver.MonoType.Bool)),
-    builtin_sig("host_args", [], [], [], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_env", [], ["name"], [resolver.MonoType.String], .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
-    builtin_sig("host_cwd", [], [], [], .Some(resolver.MonoType.String)),
-    builtin_sig("host_exit", [], ["code"], [resolver.MonoType.Int], .Some(resolver.MonoType.Never)),
+    // ── Vector builders (internal, not in signature files) ──
+    builtin_sig("vector_builder_new",    ["T"], [],              [],                                        .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_builder_push",   ["T"], ["xs", "value"], [resolver.MonoType.Vector(t), t],          .Some(resolver.MonoType.Void)),
+    builtin_sig("vector_builder_freeze", ["T"], ["xs"],           [resolver.MonoType.Vector(t)],             .Some(resolver.MonoType.Vector(t))),
+    builtin_sig("vector_builder_from",   ["T"], ["xs"],           [resolver.MonoType.Vector(t)],             .Some(resolver.MonoType.Vector(t))),
+    // ── Host ops ──
+    builtin_sig("host_read_file",  [], ["path"],        [resolver.MonoType.String],                                         .Some(resolver.MonoType.String)),
+    builtin_sig("host_write_file", [], ["path", "text"],[resolver.MonoType.String, resolver.MonoType.String],                .Some(resolver.MonoType.Void)),
+    builtin_sig("host_mkdirp",     [], ["path"],        [resolver.MonoType.String],                                         .Some(resolver.MonoType.Void)),
+    builtin_sig("host_list_dir",   [], ["path"],        [resolver.MonoType.String],                                         .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_exists",     [], ["path"],        [resolver.MonoType.String],                                         .Some(resolver.MonoType.Bool)),
+    builtin_sig("host_args",       [], [],              [],                                                                  .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_env",        [], ["name"],        [resolver.MonoType.String],                                         .Some(resolver.MonoType.Vector(resolver.MonoType.String))),
+    builtin_sig("host_cwd",        [], [],              [],                                                                  .Some(resolver.MonoType.String)),
+    builtin_sig("host_exit",       [], ["code"],        [resolver.MonoType.Int],                                            .Some(resolver.MonoType.Never)),
   ]
 
-  resolver.empty_env()
+  builtin_named_types := builtin_types()
+
+  env := resolver.empty_env()
     .with_types(builtin_named_types.types, builtin_named_types.names)
-    .with_functions(fns)
-    .register_builtin_methods()
+    .with_functions(sig_fns.concat(hardcoded))
+
+  // First register methods derived from signature groups (these take priority
+  // under the deduplication rule in register_methods).
+  env = register_methods_from_groups(env, groups)
+  // Then register remaining prelude-backed methods (compare, map, filter, etc.).
+  env.register_builtin_methods()
 }
 
 pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {

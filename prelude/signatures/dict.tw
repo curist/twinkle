@@ -23,6 +23,11 @@ pub fn has<K, V>(d: Dict<K, V>, k: K) Bool {
   false
 }
 
+/// Return the value for key, or None if absent.
+pub fn get<K, V>(d: Dict<K, V>, k: K) Option<V> {
+  .None
+}
+
 /// Return a new dict with key removed.
 pub fn remove<K, V>(d: Dict<K, V>, k: K) Dict<K, V> {
   d

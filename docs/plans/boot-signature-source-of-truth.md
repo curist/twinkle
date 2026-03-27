@@ -26,7 +26,28 @@ This is the boot-side counterpart to the stage0 direction already implemented in
 
 ## Status
 
-Planned.
+Phases 0, 1, and 2 complete. Phase 3 next.
+
+### Phase 0 (complete)
+Guardrail test suite added in `boot/tests/suites/base_env_guardrail_suite.tw`.
+Locks current `builtin_env()` behaviour before the refactor.
+
+### Phase 1 (complete)
+Signature-only loader in `boot/compiler/signatures.tw`.
+`load_signatures(dir, type_env)` parses and resolves `prelude/signatures/*.tw`
+without running normal typecheck/lower/codegen.
+Test suite: `boot/tests/suites/signature_loader_suite.tw`.
+
+### Phase 2 (complete)
+`builtin_env()` in `boot/compiler/base_env.tw` now loads FunctionSigs from
+`prelude/signatures/*.tw` via `load_signatures` instead of a hardcoded table.
+Method registrations for the signature-backed surface are derived from the same
+groups and registered first (they win under `register_methods`'s dedup rule).
+The hardcoded list in `builtin_env()` is reduced to entries not covered by any
+signature file: I/O (`print/println/error/eprint/eprintln`), `string_substring`,
+vector builders, and host ops.
+`dict.tw` had a missing `get` entry — added as part of this phase.
+`register_methods` was made `pub` in `resolver.tw` so `base_env.tw` can call it.
 
 ## Why Now
 

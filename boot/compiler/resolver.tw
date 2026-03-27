@@ -118,7 +118,7 @@ fn me(method_name: String, function_name: String) MethodEntry {
   .{ method_name, function_name }
 }
 
-fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: String, entries: Vector<MethodEntry>) Dict<String, Vector<MethodEntry>> {
+pub fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: String, entries: Vector<MethodEntry>) Dict<String, Vector<MethodEntry>> {
   existing := case methods[type_name] {
     .Some(v) => v,
     .None => {

@@ -11,10 +11,9 @@ use @std.path
 use compiler.parser
 use compiler.ast.{Item, Param, TypeExpr}
 use compiler.resolver.{
-  FunctionSig, MonoType, ResolvedEnv,
+  FunctionSig, MethodEntry, MonoType, ResolvedEnv,
   resolve_type_expr, TypeResolveResult,
 }
-use compiler.base_env.{builtin_type_env}
 
 /// One file's worth of resolved signatures, tagged with an optional receiver
 /// type name.  receiver=None means the functions are free (e.g. range.tw).
@@ -38,6 +37,76 @@ fn receiver_for_stem(stem: String) String? {
     "string"   => .Some("String"),
     "vector"   => .Some("Vector"),
     _          => .None,
+  }
+}
+
+// ── canonical → internal name mapping ───────────────────────────────────────
+
+/// Map a canonical signature name to its boot-internal function name.
+/// For receiver groups the rule is <lowercase_receiver>_<canonical_name>,
+/// with a few String-receiver exceptions that keep their bare name.
+/// Free functions (receiver=None, e.g. range) are returned unchanged.
+pub fn to_internal_name(receiver: String?, canonical_name: String) String {
+  case receiver {
+    .None => canonical_name,
+    .Some(recv) => {
+      // String has a small set of functions that are registered without the
+      // string_ prefix because their canonical names are already globally
+      // unique (char_code_at, from_char_code, from_code_point).
+      if recv == "String" {
+        if canonical_name == "char_code_at" or canonical_name == "from_char_code" or canonical_name == "from_code_point" {
+          return canonical_name
+        }
+      }
+      prefix := case recv {
+        "String"   => "string",
+        "Vector"   => "vector",
+        "Dict"     => "dict",
+        "Cell"     => "cell",
+        "Iterator" => "iterator",
+        "Int"      => "int",
+        "Float"    => "float",
+        "Bool"     => "bool",
+        "Byte"     => "byte",
+        _          => recv,
+      }
+      "${prefix}_${canonical_name}"
+    },
+  }
+}
+
+/// Flatten all groups into a list of FunctionSigs with internal names.
+/// These can be concatenated onto the hardcoded builtin list in base_env.
+pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
+  result: Vector<FunctionSig> = []
+  for group in groups {
+    for sig in group.sigs {
+      internal := to_internal_name(group.receiver, sig.name)
+      result = result.push(FunctionSig.{
+        name: internal,
+        type_params: sig.type_params,
+        param_names: sig.param_names,
+        params: sig.params,
+        ret: sig.ret,
+      })
+    }
+  }
+  result
+}
+
+/// Return the method-table entries that should be registered for a group.
+/// For free-function groups (receiver=None) returns an empty vector.
+pub fn group_method_entries(group: SignatureGroup) Vector<MethodEntry> {
+  case group.receiver {
+    .None => [],
+    .Some(_) => {
+      collect sig in group.sigs {
+        MethodEntry.{
+          method_name: sig.name,
+          function_name: to_internal_name(group.receiver, sig.name),
+        }
+      }
+    },
   }
 }
 
@@ -81,8 +150,7 @@ fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<
 
 // ── per-file loading ─────────────────────────────────────────────────────────
 
-fn load_group_from_source(src: String, receiver: String?) Result<SignatureGroup, String> {
-  env := builtin_type_env()
+fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Result<SignatureGroup, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
     return .Err("parse error: ${parsed.diagnostics[0].message}")
@@ -133,9 +201,11 @@ fn load_group_from_source(src: String, receiver: String?) Result<SignatureGroup,
 
 /// Load all prelude/signatures/*.tw files from the given signatures directory
 /// (e.g. "/path/to/twinkle/prelude/signatures").
+/// `type_env` should be a ResolvedEnv seeded with builtin named types only
+/// (no function signatures) — use builtin_type_env() from base_env.
 /// Returns one SignatureGroup per file, in sorted file-system order.
 /// Fails if the directory cannot be read or any file fails to parse/resolve.
-pub fn load_signatures(signatures_dir: String) Result<Vector<SignatureGroup>, String> {
+pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vector<SignatureGroup>, String> {
   entries := case fs.list_dir(signatures_dir) {
     .Ok(es) => es,
     .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
@@ -161,7 +231,7 @@ pub fn load_signatures(signatures_dir: String) Result<Vector<SignatureGroup>, St
       .Err(_) => { return .Err("cannot read ${file_path}") },
     }
 
-    group := try load_group_from_source(src, receiver)
+    group := try load_group_from_source(src, receiver, type_env)
     groups = groups.push(group)
   }
 
