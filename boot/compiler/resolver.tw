@@ -462,6 +462,7 @@ fn merge_selective_via_hidden(env: ResolvedEnv, alias: String, exports: ModuleEx
   hidden_alias := hidden_import_alias(alias)
   cur := env.merge_module_exports(hidden_alias, exports)
   methods := cur.methods
+  hidden_type_bindings: Dict<String, Bool> = Dict.new()
 
   for item in items {
     case item {
@@ -481,6 +482,7 @@ fn merge_selective_via_hidden(env: ResolvedEnv, alias: String, exports: ModuleEx
         case cur.lookup_type(source_name) {
           .Some(entry) => {
             cur = cur.add_type(entry, binding_name)
+            hidden_type_bindings[source_name] = true
             case cur.methods[source_name] {
               .Some(entries) => {
                 methods = register_methods(methods, binding_name, entries)
@@ -494,7 +496,8 @@ fn merge_selective_via_hidden(env: ResolvedEnv, alias: String, exports: ModuleEx
     }
   }
 
-  cur.with_methods(methods)
+  cur = cur.with_methods(methods)
+  prune_hidden_selected_type_bindings(cur, hidden_type_bindings)
 }
 
 fn has_any_exported_type(env: ResolvedEnv, alias: String, exports: ModuleExports) Bool {
@@ -507,6 +510,36 @@ fn has_any_exported_type(env: ResolvedEnv, alias: String, exports: ModuleExports
     }
   }
   false
+}
+
+fn prune_hidden_selected_type_bindings(env: ResolvedEnv, hidden_type_bindings: Dict<String, Bool>) ResolvedEnv {
+  if hidden_type_bindings.len() == 0 {
+    return env
+  }
+
+  kept_types: Vector<TypeEntry> = []
+  kept_names: Vector<String> = []
+  for i in range(env.type_names.len()) {
+    name := env.type_names[i]
+    if hidden_type_bindings.has(name) {
+      continue
+    }
+    kept_types = kept_types.push(env.types[i])
+    kept_names = kept_names.push(name)
+  }
+
+  methods: Dict<String, Vector<MethodEntry>> = Dict.new()
+  for name in env.methods.keys() {
+    if hidden_type_bindings.has(name) {
+      continue
+    }
+    case env.methods[name] {
+      .Some(entries) => { methods[name] = entries },
+      .None => {},
+    }
+  }
+
+  env.with_types(kept_types, kept_names).with_methods(methods)
 }
 
 pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv {

@@ -1170,6 +1170,31 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("standalone selective type import does not retain hidden import bindings", fn() {
+      src := "pub type Point = .{ x: Int }\npub fn id(p: Point) Point { p }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      items: Vector<ast.ImportItem> = [
+        .Type(ast.ImportTypeItem.{ name: "Point", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env()
+      env = env.merge_selective_imports("geom", exports, items)
+
+      try assert.is_true(resolver.has_type(env, "Point"))
+      try assert.is_true(!resolver.has_type(env, "$import$.geom.Point"))
+
+      for name in env.type_names {
+        if name.starts_with("$import$.geom.") {
+          return .Err("unexpected hidden selective-import binding retained: ${name}")
+        }
+      }
+
+      .Ok({})
+    })
+
     .test("merge_prelude_exports adds unqualified without alias", fn() {
       src := "pub fn helper(x: Int) Int { x }"
       parsed := parser.parse(src, 0)
