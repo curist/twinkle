@@ -23,6 +23,10 @@ Grouped entry points for faster iteration:
 cargo run --release -- run -i boot/tests/test_opt.tw
 ```
 
+The default reporter is compact: passing tests print `.`, failing tests print `x`,
+and failures are listed at the end. Set `TWK_TEST_REPORT=verbose` to restore the
+per-suite, per-test output.
+
 ## Filtering
 
 Set `TWK_TEST_FILTER` to match test or suite names:
@@ -30,6 +34,7 @@ Set `TWK_TEST_FILTER` to match test or suite names:
 ```bash
 TWK_TEST_FILTER="module loader" cargo run --release -- run -i boot/tests/test_api.tw
 TWK_TEST_FILTER="resolve" cargo run --release -- run -i boot/tests/test_api.tw
+TWK_TEST_REPORT=verbose cargo run --release -- run -i boot/tests/test_api.tw
 ```
 
 ## Structure
