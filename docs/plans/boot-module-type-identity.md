@@ -23,7 +23,7 @@ This plan addresses the structural issue behind recent boot multi-module bugs:
 
 ## Status
 
-Phase 0 complete. Phases 1–5 planned.
+Phases 0–2 complete (combined in one pass). Phases 3–5 planned.
 
 ## Why Now
 

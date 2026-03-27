@@ -944,7 +944,38 @@ fn is_hidden_import_name(name: String) Bool {
 }
 
 fn merged_export_type_name(alias: String, name: String) String {
-  if is_hidden_import_name(name) { name } else { qualify_name(alias, name) }
+  if is_hidden_import_name(name) {
+    name
+  } else if name.contains(".") {
+    // Non-hidden qualified name (from a full import in the exporting module).
+    // Normalize to the hidden form so it unifies with the same type when the
+    // consumer imports the source module selectively, and so it does not
+    // falsely trigger the "already fully imported" check in merge_selective_imports.
+    "$import$.${name}"
+  } else {
+    qualify_name(alias, name)
+  }
+}
+
+// Strip the $import$. prefix to get the canonical module-qualified name.
+// "$import$.mod.Type" -> "mod.Type", "mod.Type" -> "mod.Type", "Type" -> "Type"
+fn canonical_type_key(name: String) String {
+  hidden_prefix := "$import$."
+  if name.starts_with(hidden_prefix) {
+    name.slice(hidden_prefix.len(), name.len())
+  } else {
+    name
+  }
+}
+
+// Find the first env entry whose canonical key matches the given key.
+fn find_by_canonical_key(env: ResolvedEnv, key: String) TypeId? {
+  for i in range(env.type_names.len()) {
+    if canonical_type_key(env.type_names[i]) == key {
+      return .Some(env.types[i].id)
+    }
+  }
+  .None
 }
 
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
@@ -952,9 +983,13 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
   next_id := env.types.len()
   for exported in exports.types {
     target_name := merged_export_type_name(alias, exported.name)
-    case env.lookup_type(target_name) {
-      .Some(existing) => {
-        ids[exported.entry.id.id] = existing.id
+    existing_id: TypeId? = case env.lookup_type(target_name) {
+      .Some(existing) => .Some(existing.id),
+      .None => find_by_canonical_key(env, canonical_type_key(target_name)),
+    }
+    case existing_id {
+      .Some(eid) => {
+        ids[exported.entry.id.id] = eid
       },
       .None => {
         ids[exported.entry.id.id] = TypeId.{ id: next_id }
@@ -977,7 +1012,7 @@ fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<Str
         .Some(found) => found,
         .None => { return cur },
       }
-      if !is_hidden_import_name(name) or cur.has(name) {
+      if !name.contains(".") or cur.has(name) {
         return cur
       }
 
