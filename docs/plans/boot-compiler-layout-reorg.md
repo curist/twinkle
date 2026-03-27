@@ -34,6 +34,7 @@ structure alive indefinitely.
 * No public compatibility layer that preserves both old and new import paths
   long-term
 * No attempt to redesign the compiler architecture in this plan
+* No reorganization of `boot/tests/suites/` file locations in this plan
 
 ---
 
@@ -215,10 +216,24 @@ Preferred end-state:
 - [ ] Rewrite `boot/main.tw`
 - [ ] Rewrite helper modules under `boot/tests/helpers/`
 - [ ] Rewrite all suites under `boot/tests/suites/`
+- [ ] Regroup `boot/tests/test_*.tw` entry points so they match the new compiler
+      layout more closely
+- [ ] Keep `boot/tests/suites/` flat for now; only the grouped entry points change
 - [ ] Search for stale `compiler.<old_name>` imports
 
 No compatibility re-exports should remain unless a specific cycle forces a
 temporary shim during the refactor.
+
+Suggested grouped entry points after the reorg:
+
+* `test_syntax.tw`
+* `test_sema.tw`
+* `test_bootstrap.tw`
+* `test_ir.tw`
+* `test_module.tw`
+* `test_opt.tw`
+* `test_codegen.tw`
+* `test_api.tw`
 
 ### Phase 6: Validation and cleanup
 
@@ -252,6 +267,8 @@ same commit.
 4. The refactor does not change compiler behavior.
 5. The resulting layout makes it obvious where a new file belongs without
    adding more root-level clutter.
+6. `boot/tests/test_*.tw` grouped entry points reflect the new compiler
+   subsystem boundaries without moving `boot/tests/suites/`.
 
 ---
 
