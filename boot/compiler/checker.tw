@@ -351,7 +351,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnos
   // Mismatch
   .{
     ctx,
-    diags: diags.push(diag.error(s, "type mismatch: expected ${ty_to_string(za)}, got ${ty_to_string(zb)}")),
+    diags: diags.push(diag.error(s, "type mismatch: expected ${ctx.env.ty_to_string_env(za)}, got ${ctx.env.ty_to_string_env(zb)}")),
   }
 }
 
@@ -823,7 +823,7 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
           if named_function_field_exists(base_ty, method_name, br.ctx.env) {
             return .None
           }
-          err := diag.error(callee_span, "type ${ty_to_string(base_ty)} has no method '${method_name}'")
+          err := diag.error(callee_span, "type ${br.ctx.env.ty_to_string_env(base_ty)} has no method '${method_name}'")
           return .Some(.{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(err) })
         },
       }
@@ -1045,7 +1045,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
         .Some(r) => r,
         .None => {
           m := fresh_meta(br.ctx)
-          err := diag.error(s, "cannot access field '${field_name}' on ${ty_to_string(zonked_base)}")
+          err := diag.error(s, "cannot access field '${field_name}' on ${br.ctx.env.ty_to_string_env(zonked_base)}")
           .{ ty: m.ty, ctx: m.ctx, diags: br.diags.push(err) }
         },
       }
@@ -1135,7 +1135,7 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
     },
     _ => .{
       ctx,
-      diags: diags.push(diag.error(s, "record literal requires a known record type, got ${ty_to_string(zonked)}")),
+      diags: diags.push(diag.error(s, "record literal requires a known record type, got ${ctx.env.ty_to_string_env(zonked)}")),
     },
   }
 }
@@ -1159,7 +1159,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
     },
     .Some(.Err(msg)) => .{ ctx, diags: diags.push(diag.error(s, msg)) },
     .None => {
-      err := diag.error(s, "variant .${name} used where ${ty_to_string(zonked)} expected")
+      err := diag.error(s, "variant .${name} used where ${ctx.env.ty_to_string_env(zonked)} expected")
       .{ ctx, diags: diags.push(err) }
     },
   }
@@ -1615,7 +1615,7 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
       .{ ctx: cur_ctx, diags: cur_diags }
     },
     .Some(.Err(msg)) => .{ ctx, diags: diags.push(diag.error(s, msg)) },
-    .None => .{ ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ty_to_string(zonked)}")) },
+    .None => .{ ctx, diags: diags.push(diag.error(s, "cannot match .${name} against ${ctx.env.ty_to_string_env(zonked)}")) },
   }
 }
 
@@ -1773,7 +1773,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
               elem_ty: MonoType.Int,
               secondary_ty: .Some(MonoType.Int),
               secondary_allowed: true,
-              diags: diags.push(diag.error(s, "cannot iterate over ${ty_to_string(zonked)}")),
+              diags: diags.push(diag.error(s, "cannot iterate over ${ctx.env.ty_to_string_env(zonked)}")),
             }
           }
         },
@@ -1781,7 +1781,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
           elem_ty: MonoType.Int,
           secondary_ty: .Some(MonoType.Int),
           secondary_allowed: true,
-          diags: diags.push(diag.error(s, "cannot iterate over ${ty_to_string(zonked)}")),
+          diags: diags.push(diag.error(s, "cannot iterate over ${ctx.env.ty_to_string_env(zonked)}")),
         },
       }
     },
@@ -1789,7 +1789,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
       elem_ty: MonoType.Int,
       secondary_ty: .Some(MonoType.Int),
       secondary_allowed: true,
-      diags: diags.push(diag.error(s, "cannot iterate over ${ty_to_string(zonked)}")),
+      diags: diags.push(diag.error(s, "cannot iterate over ${ctx.env.ty_to_string_env(zonked)}")),
     },
   }
 }
@@ -1945,7 +1945,7 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
         _ => .{
           ty: MonoType.Void,
           ctx: br.ctx,
-          diags: br.diags.push(diag.error(base.span, "cannot index into ${ty_to_string(zonked_base)}")),
+          diags: br.diags.push(diag.error(base.span, "cannot index into ${br.ctx.env.ty_to_string_env(zonked_base)}")),
         },
       }
     },
@@ -2003,7 +2003,7 @@ fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<
   }
 
   bad_ty := if !is_int_or_byte(left_final) { left_final } else { right_final }
-  err := diag.error(s, "bitwise operators require Int or Byte operands, got ${ty_to_string(bad_ty)}")
+  err := diag.error(s, "bitwise operators require Int or Byte operands, got ${cur_ctx.env.ty_to_string_env(bad_ty)}")
   .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags.push(err) }
 }
 
@@ -2026,7 +2026,7 @@ fn synth_cmp_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
   err_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
     u.diags
   } else {
-    u.diags.push(diag.error(s, "comparison not supported for ${ty_to_string(zonked)}"))
+    u.diags.push(diag.error(s, "comparison not supported for ${u.ctx.env.ty_to_string_env(zonked)}"))
   }
   .{ ty: MonoType.Bool, ctx: u.ctx, diags: err_diags }
 }
@@ -2106,7 +2106,7 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   .{
     ty: lr.ty,
     ctx: cur_ctx,
-    diags: cur_diags.push(diag.error(s, "operator not supported for ${ty_to_string(left_z)}")),
+    diags: cur_diags.push(diag.error(s, "operator not supported for ${cur_ctx.env.ty_to_string_env(left_z)}")),
   }
 }
 
@@ -2168,7 +2168,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
       result_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
         r.diags
       } else {
-        r.diags.push(diag.error(s, "cannot negate ${ty_to_string(zonked)}"))
+        r.diags.push(diag.error(s, "cannot negate ${r.ctx.env.ty_to_string_env(zonked)}"))
       }
       .{ ty: r.ty, ctx: r.ctx, diags: result_diags }
     },
@@ -2188,7 +2188,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
           .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {
-          err := diag.error(s, "bitwise not requires Int or Byte operand, got ${ty_to_string(zonked)}")
+          err := diag.error(s, "bitwise not requires Int or Byte operand, got ${r.ctx.env.ty_to_string_env(zonked)}")
           .{ ty: MonoType.Int, ctx: r.ctx, diags: r.diags.push(err) }
         },
       }
@@ -2238,7 +2238,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
           .{
             ty: m.ty,
             ctx: m.ctx,
-            diags: r.diags.push(diag.error(s, "try requires Option or Result, got ${ty_to_string(zonked)}")),
+            diags: r.diags.push(diag.error(s, "try requires Option or Result, got ${r.ctx.env.ty_to_string_env(zonked)}")),
           }
         },
       }
@@ -2269,7 +2269,7 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
       .{
         ty: m.ty,
         ctx: m.ctx,
-        diags: ir.diags.push(diag.error(s, "cannot index into ${ty_to_string(zonked_base)}")),
+        diags: ir.diags.push(diag.error(s, "cannot index into ${ir.ctx.env.ty_to_string_env(zonked_base)}")),
       }
     },
   }
@@ -2277,7 +2277,7 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
 
 fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expr_ty, ctx.subst), ctx.env, 0)
-  missing_err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: missing inherent to_string() -> String")
+  missing_err := diag.error(expr.span, "cannot interpolate ${ctx.env.ty_to_string_env(zonked)}: missing inherent to_string() -> String")
   case zonked {
     .Int => .{ ctx, diags },
     .Float => .{ ctx, diags },
@@ -2297,7 +2297,7 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
       cur_ctx := inst.ctx
       cur_diags := diags
       if inst.params.len() != 1 {
-        err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: to_string must be receiver-only")
+        err := diag.error(expr.span, "cannot interpolate ${cur_ctx.env.ty_to_string_env(zonked)}: to_string must be receiver-only")
         return .{ ctx: cur_ctx, diags: cur_diags.push(err) }
       }
 
@@ -2309,7 +2309,7 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
       case ret_ty {
         .String => .{ ctx: cur_ctx, diags: cur_diags },
         _ => {
-          err := diag.error(expr.span, "cannot interpolate ${ty_to_string(zonked)}: to_string must return String")
+          err := diag.error(expr.span, "cannot interpolate ${cur_ctx.env.ty_to_string_env(zonked)}: to_string must return String")
           .{ ctx: cur_ctx, diags: cur_diags.push(err) }
         },
       }
