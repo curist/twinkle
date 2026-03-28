@@ -44,6 +44,28 @@ fn cow_op_info(func_id: FuncId) -> Option<CowOpInfo> {
 
 fn is_no_retain_read_only(func_id: FuncId) -> bool {
     func_id == prelude::VECTOR_LEN
+        || func_id == prelude::DICT_LEN
+        || func_id == prelude::DICT_HAS
+        || func_id == prelude::DICT_GET
+        || func_id == prelude::DICT_GET_UNSAFE
+        || func_id == prelude::DICT_KEYS
+}
+
+/// Info for a COW op that can be rewritten to an in-place variant inside a loop
+/// by simply swapping the callee (no builder lifecycle needed).
+struct InPlaceSwapInfo {
+    in_place_id: FuncId,
+    base_arg: usize,
+}
+
+/// Check if a func_id is a COW op that can be rewritten to in-place by a simple
+/// callee swap (i.e., has an in_place_rewrite and doesn't need builder wrapping).
+fn in_place_swap_info(func_id: FuncId) -> Option<InPlaceSwapInfo> {
+    let info = cow_op_info(func_id)?;
+    Some(InPlaceSwapInfo {
+        in_place_id: info.in_place_rewrite?,
+        base_arg: info.base_arg,
+    })
 }
 
 fn alloc_local(next_local: &mut u32) -> LocalId {
@@ -284,10 +306,38 @@ fn analyze_loop_op_subexpr(op: &AnfOp, base: LocalId) -> Option<usize> {
     }
 }
 
-/// Analyze whether `base` is only used via consuming `VECTOR_PUSH(base, elem) + assign(base=tmp)`
-/// patterns inside the loop body.
+/// Check if a call op is a COW consume-reassign on `base`:
+///   let result = COW_OP(base, ...) ; assign(base = result)
+/// where none of the non-base args reference `base`.
+fn is_cow_consume_reassign(
+    func_id: FuncId,
+    args: &[Atom],
+    body: &AnfExpr,
+    base: LocalId,
+    result: LocalId,
+) -> bool {
+    let Some(info) = cow_op_info(func_id) else {
+        return false;
+    };
+    if info.base_arg >= args.len() {
+        return false;
+    }
+    if !atom_is_local(&args[info.base_arg], base) {
+        return false;
+    }
+    // No other arg should reference base
+    for (i, arg) in args.iter().enumerate() {
+        if i != info.base_arg && atom_is_local(arg, base) {
+            return false;
+        }
+    }
+    is_consume_reassign(body, base, result)
+}
+
+/// Analyze whether `base` is only used via consuming COW op + assign(base=result)
+/// patterns inside the loop body (vector push, dict set, dict remove, etc.).
 ///
-/// Returns the number of valid push sites if allowed, otherwise `None`.
+/// Returns the number of valid sites if allowed, otherwise `None`.
 fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
     match expr {
         AnfExpr::Let { local, op, body } => {
@@ -296,12 +346,7 @@ fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
                 args,
             } = op.as_ref()
             {
-                if *func_id == prelude::VECTOR_PUSH
-                    && args.len() == 2
-                    && atom_is_local(&args[0], base)
-                    && !atom_is_local(&args[1], base)
-                    && is_consume_reassign(body, base, *local)
-                {
+                if is_cow_consume_reassign(*func_id, args, body, base, *local) {
                     let AnfExpr::Let {
                         body: rest_after_assign,
                         ..
@@ -328,6 +373,137 @@ fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
         AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => Some(0),
     }
 }
+
+// ── Dict in-place loop rewrite (simple callee swap, no builder) ─────────────
+
+/// Analyze whether the loop body uses `base` only via in-place-swappable COW ops
+/// (dict set/remove). Returns the count of such sites, or None if base is used
+/// in any other way (including vector push, which needs builder wrapping).
+fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            if let AnfOp::ACall {
+                callee: Atom::AGlobalFunc(func_id),
+                args,
+            } = op.as_ref()
+            {
+                if in_place_swap_info(*func_id).is_some()
+                    && is_cow_consume_reassign(*func_id, args, body, base, *local)
+                {
+                    let AnfExpr::Let {
+                        body: rest_after_assign,
+                        ..
+                    } = body.as_ref()
+                    else {
+                        return None;
+                    };
+                    return Some(1 + analyze_loop_dict_sites(rest_after_assign, base)?);
+                }
+            }
+
+            // Allow read-only ops that reference base (e.g., dict.has, dict.get, dict.len)
+            if op_uses_local_non_recursive(op, base) {
+                let is_read_only = matches!(
+                    op.as_ref(),
+                    AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(fid),
+                        ..
+                    } if is_no_retain_read_only(*fid)
+                );
+                if !is_read_only {
+                    return None;
+                }
+            }
+            Some(analyze_loop_dict_sites_in_op(op, base)? + analyze_loop_dict_sites(body, base)?)
+        }
+        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
+            if atom_is_local(atom, base) {
+                None
+            } else {
+                Some(0)
+            }
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => Some(0),
+    }
+}
+
+fn analyze_loop_dict_sites_in_op(op: &AnfOp, base: LocalId) -> Option<usize> {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => Some(
+            analyze_loop_dict_sites(then_branch, base)?
+                + analyze_loop_dict_sites(else_branch, base)?,
+        ),
+        AnfOp::AMatch { arms, .. } => {
+            let mut sites = 0usize;
+            for arm in arms {
+                sites += analyze_loop_dict_sites(&arm.body, base)?;
+            }
+            Some(sites)
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => analyze_loop_dict_sites(body, base),
+        _ => Some(0),
+    }
+}
+
+/// Rewrite in-place-swappable COW ops in a loop body by swapping the callee ID.
+fn rewrite_loop_dict_expr(expr: &mut AnfExpr, base: LocalId, sites: &mut usize) {
+    let AnfExpr::Let { local, op, body } = expr else {
+        return;
+    };
+
+    if let AnfOp::ACall {
+        callee: Atom::AGlobalFunc(func_id),
+        args,
+    } = op.as_mut()
+    {
+        if let Some(swap) = in_place_swap_info(*func_id) {
+            if atom_is_local(&args[swap.base_arg], base) && is_consume_reassign(body, base, *local)
+            {
+                *func_id = swap.in_place_id;
+                *sites += 1;
+                if let AnfExpr::Let {
+                    body: rest_after_assign,
+                    ..
+                } = body.as_mut()
+                {
+                    rewrite_loop_dict_expr(rest_after_assign, base, sites);
+                    return;
+                }
+            }
+        }
+    }
+
+    rewrite_loop_dict_op_subexpr(op, base, sites);
+    rewrite_loop_dict_expr(body, base, sites);
+}
+
+fn rewrite_loop_dict_op_subexpr(op: &mut AnfOp, base: LocalId, sites: &mut usize) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            rewrite_loop_dict_expr(then_branch, base, sites);
+            rewrite_loop_dict_expr(else_branch, base, sites);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                rewrite_loop_dict_expr(&mut arm.body, base, sites);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            rewrite_loop_dict_expr(body, base, sites);
+        }
+        _ => {}
+    }
+}
+
+// ── Vector builder loop rewrite ─────────────────────────────────────────────
 
 fn rewrite_loop_op_subexpr(op: &mut AnfOp, base: LocalId, builder: LocalId, sites: &mut usize) {
     match op {
@@ -609,6 +785,35 @@ fn rewrite_expr(
                     }),
                 }),
             };
+            rewrite_expr(expr, tainted, unique, known_empty, next_local);
+            return;
+        }
+
+        // Dict in-place loop rewrite: for COW ops with a direct in-place swap
+        // (no builder lifecycle needed), just swap the callee inside the loop.
+        for base in unique
+            .iter()
+            .copied()
+            .filter(|id| !tainted.contains(id))
+            .collect::<Vec<_>>()
+        {
+            let Some(expected_sites) = analyze_loop_dict_sites(loop_body, base) else {
+                continue;
+            };
+            if expected_sites == 0 {
+                continue;
+            }
+
+            let mut rewritten_loop_body = (*loop_body.as_ref()).clone();
+            let mut rewritten_sites = 0usize;
+            rewrite_loop_dict_expr(&mut rewritten_loop_body, base, &mut rewritten_sites);
+            if rewritten_sites == 0 || rewritten_sites != expected_sites {
+                continue;
+            }
+
+            *op = Box::new(AnfOp::ALoop {
+                body: Box::new(rewritten_loop_body),
+            });
             rewrite_expr(expr, tainted, unique, known_empty, next_local);
             return;
         }

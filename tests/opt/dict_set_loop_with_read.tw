@@ -1,0 +1,16 @@
+// Dict set + read (has/get) in same loop — reads shouldn't block rewrite.
+// Expected output:
+//   5
+
+fn build(n: Int) Dict<Int, Int> {
+    d: Dict<Int, Int> = Dict.new()
+    for i in range(n) {
+        if !d.has(i) {
+            d[i] = i
+        }
+    }
+    d
+}
+
+result := build(5)
+println("${result.len()}")

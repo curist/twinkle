@@ -1,0 +1,15 @@
+// Multiple dict set ops per iteration on same base — all should rewrite.
+// Expected output:
+//   20
+
+fn build(n: Int) Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    for i in range(n) {
+        d["a_${i}"] = i
+        d["b_${i}"] = i * 10
+    }
+    d
+}
+
+result := build(10)
+println("${result.len()}")

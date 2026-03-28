@@ -1,0 +1,14 @@
+// Dict set in a loop on a unique dict should rewrite to __dict_set_in_place.
+// Expected output:
+//   10
+
+fn build(n: Int) Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    for i in range(n) {
+        d["key_${i}"] = i
+    }
+    d
+}
+
+result := build(10)
+println("${result.len()}")

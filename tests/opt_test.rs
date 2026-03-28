@@ -1145,23 +1145,29 @@ fn opt_dict_chain_unique_rewritten_to_in_place() {
 
 #[test]
 fn opt_dict_additional_negative_no_rewrite() {
-    let fixtures = [
-        "tests/opt/dict_after_user_call_not_rewritten.tw",
-        "tests/opt/dict_stored_in_array_not_rewritten.tw",
-    ];
-    for path in fixtures {
-        let module = compile_opt(path);
-        assert!(
-            has_call_to(&module, DICT_SET),
-            "Expected DICT_SET to remain in {}",
-            path
-        );
-        assert!(
-            !has_call_to(&module, DICT_SET_IN_PLACE),
-            "Expected no DICT_SET_IN_PLACE in {}",
-            path
-        );
-    }
+    // dict_after_user_call: dict passed to user function, can't prove uniqueness
+    let module = compile_opt("tests/opt/dict_after_user_call_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain in dict_after_user_call"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE in dict_after_user_call"
+    );
+
+    // dict_stored_in_array: probe() stores dict in array (tainted, stays COW),
+    // but top-level n is fresh+unique and only read after set (dict.len is
+    // now classified as read-only), so the point rewrite correctly applies.
+    let module = compile_opt("tests/opt/dict_stored_in_array_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain in probe() where dict is stored in array"
+    );
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET_IN_PLACE for top-level unique dict n"
+    );
 }
 
 #[test]
@@ -1200,6 +1206,122 @@ fn opt_dict_phase6_wasm_semantics() {
         "tests/opt/dict_chain_unique_rewritten.tw",
         &["1", "false", "true"],
     );
+}
+
+// ── Dict loop in-place rewrite ───────────────────────────────────────────────
+
+#[test]
+fn opt_dict_set_loop_unique_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/dict_set_loop_unique.tw");
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET in loop to rewrite to DICT_SET_IN_PLACE for unique dict"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET),
+        "Expected no remaining DICT_SET calls after loop rewrite"
+    );
+}
+
+#[test]
+fn opt_dict_remove_loop_unique_rewritten_to_in_place() {
+    let module = compile_opt("tests/opt/dict_remove_loop_unique.tw");
+    // The build loop has dict_set, the remove loop has dict_remove — both should be rewritten
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET in loop to rewrite to DICT_SET_IN_PLACE"
+    );
+    assert!(
+        has_call_to(&module, DICT_REMOVE_IN_PLACE),
+        "Expected DICT_REMOVE in loop to rewrite to DICT_REMOVE_IN_PLACE"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET),
+        "Expected no remaining DICT_SET calls"
+    );
+    assert!(
+        !has_call_to(&module, DICT_REMOVE),
+        "Expected no remaining DICT_REMOVE calls"
+    );
+}
+
+#[test]
+fn opt_dict_set_loop_aliased_not_rewritten() {
+    let module = compile_opt("tests/opt/dict_set_loop_aliased_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain when dict is aliased before loop"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE when dict is aliased"
+    );
+}
+
+#[test]
+fn opt_dict_set_loop_captured_not_rewritten() {
+    let module = compile_opt("tests/opt/dict_set_loop_captured_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain when dict is closure-captured in loop"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE when dict is closure-captured"
+    );
+}
+
+#[test]
+fn opt_dict_set_loop_multiple_ops_rewritten() {
+    let module = compile_opt("tests/opt/dict_set_loop_multiple_ops.tw");
+    assert_eq!(
+        count_calls_to(&module, DICT_SET_IN_PLACE),
+        2,
+        "Expected two DICT_SET_IN_PLACE calls (two sets per iteration)"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_SET),
+        0,
+        "Expected no DICT_SET calls after rewrite"
+    );
+}
+
+#[test]
+fn opt_dict_set_loop_with_read_rewritten() {
+    let module = compile_opt("tests/opt/dict_set_loop_with_read.tw");
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET to rewrite despite dict reads in same loop"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET),
+        "Expected no remaining DICT_SET calls"
+    );
+}
+
+#[test]
+fn opt_dict_loop_runtime_semantics() {
+    assert_runtime_output("tests/opt/dict_set_loop_unique.tw", &["10"]);
+    assert_runtime_output("tests/opt/dict_remove_loop_unique.tw", &["0"]);
+    assert_runtime_output(
+        "tests/opt/dict_set_loop_aliased_not_rewritten.tw",
+        &["0", "3"],
+    );
+    assert_runtime_output("tests/opt/dict_set_loop_captured_not_rewritten.tw", &["3"]);
+    assert_runtime_output("tests/opt/dict_set_loop_multiple_ops.tw", &["20"]);
+    assert_runtime_output("tests/opt/dict_set_loop_with_read.tw", &["5"]);
+}
+
+#[test]
+fn opt_dict_loop_wasm_semantics() {
+    assert_runtime_output_wasm("tests/opt/dict_set_loop_unique.tw", &["10"]);
+    assert_runtime_output_wasm("tests/opt/dict_remove_loop_unique.tw", &["0"]);
+    assert_runtime_output_wasm(
+        "tests/opt/dict_set_loop_aliased_not_rewritten.tw",
+        &["0", "3"],
+    );
+    assert_runtime_output_wasm("tests/opt/dict_set_loop_multiple_ops.tw", &["20"]);
+    assert_runtime_output_wasm("tests/opt/dict_set_loop_with_read.tw", &["5"]);
 }
 
 #[test]
