@@ -228,11 +228,7 @@ fn register_named_dependencies(reg: WasmTypeRegistry, tid: TypeId, args: Vector<
 }
 
 fn register_mono_list(reg: WasmTypeRegistry, types: Vector<MonoType>, env: ResolvedEnv) WasmTypeRegistry {
-  cur := reg
-  for ty in types {
-    cur = register_mono(cur, ty, env)
-  }
-  cur
+  types.fold(reg, fn(cur, ty) { register_mono(cur, ty, env) })
 }
 
 fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
@@ -495,11 +491,9 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
     },
 
     .AMatch(scrutinee, arms) => {
-      reg = walk_atom(reg, scrutinee)
-      for arm in arms {
-        reg = walk_expr(reg, arm.body, env, builtins, func_map, current_func)
-      }
-      reg
+      arms.fold(walk_atom(reg, scrutinee), fn(r, arm) {
+        walk_expr(r, arm.body, env, builtins, func_map, current_func)
+      })
     },
 
     .ALoop(body) =>

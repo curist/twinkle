@@ -271,11 +271,7 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
 
 /// Add new refs to BFS state, avoiding duplicates.
 fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {
-  cur := state
-  for ref_id in refs {
-    cur = maybe_add_ref(cur, ref_id)
-  }
-  cur
+  refs.fold(state, maybe_add_ref)
 }
 
 /// Look up a function by FuncId and return its body's func refs, or empty.
@@ -328,11 +324,9 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
       collect_func_refs_into(else_br, r)
     },
     .Match(scrutinee, arms) => {
-      r := collect_func_refs_into(scrutinee, refs)
-      for arm in arms {
-        r = collect_func_refs_into(arm.body, r)
-      }
-      r
+      arms.fold(collect_func_refs_into(scrutinee, refs), fn(r, arm) {
+        collect_func_refs_into(arm.body, r)
+      })
     },
     .Loop(body) => collect_func_refs_into(body, refs),
     .Break(val) => {
@@ -351,11 +345,7 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
     .Defer(body) => collect_func_refs_into(body, refs),
 
     .Record(_, fields) => {
-      r := refs
-      for fi in fields {
-        r = collect_func_refs_into(fi.value, r)
-      }
-      r
+      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r) })
     },
     .RecordGet(rec, _) => collect_func_refs_into(rec, refs),
     .RecordUpdate(rec, _, value) => {
@@ -372,11 +362,7 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
 }
 
 fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>) Vector<Int> {
-  r := refs
-  for e in exprs {
-    r = collect_func_refs_into(e, r)
-  }
-  r
+  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r) })
 }
 
 // ── FuncId remapping ────────────────────────────────────────────────

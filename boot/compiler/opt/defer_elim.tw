@@ -162,11 +162,7 @@ fn elim_op(op: AnfOp, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
 
 // Defers are in declaration order; fold so last-declared fires first.
 fn prepend_defers(defers: Vector<AnfExpr>, tail: AnfExpr) AnfExpr {
-  result := tail
-  for d in defers {
-    result = splice_defer_before(d, result)
-  }
-  result
+  defers.fold(tail, fn(acc, d) { splice_defer_before(d, acc) })
 }
 
 // Walk the let-chain of deferred and replace its terminal Atom with

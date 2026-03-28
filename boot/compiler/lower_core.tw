@@ -1186,11 +1186,9 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
       collect_free_vars_inner(inner, bound, captured, result)
     },
     .Call(callee, args) => {
-      st := collect_free_vars_inner(callee, bound, captured, result)
-      for arg in args {
-        st = collect_free_vars_inner(arg, st.bound, st.captured, st.result)
-      }
-      st
+      args.fold(collect_free_vars_inner(callee, bound, captured, result), fn(st, arg) {
+        collect_free_vars_inner(arg, st.bound, st.captured, st.result)
+      })
     },
     .If(cond, then_e, else_e) => {
       st := collect_free_vars_inner(cond, bound, captured, result)
@@ -1222,11 +1220,9 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
       }
     },
     .Record(_, fields) => {
-      st := FreeVarState.{ bound, captured, result }
-      for fi in fields {
-        st = collect_free_vars_inner(fi.value, st.bound, st.captured, st.result)
-      }
-      st
+      fields.fold(FreeVarState.{ bound, captured, result }, fn(st, fi) {
+        collect_free_vars_inner(fi.value, st.bound, st.captured, st.result)
+      })
     },
     .RecordGet(target, _) => {
       collect_free_vars_inner(target, bound, captured, result)
@@ -1236,18 +1232,14 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
       collect_free_vars_inner(value, st.bound, st.captured, st.result)
     },
     .Variant(_, _, args) => {
-      st := FreeVarState.{ bound, captured, result }
-      for a in args {
-        st = collect_free_vars_inner(a, st.bound, st.captured, st.result)
-      }
-      st
+      args.fold(FreeVarState.{ bound, captured, result }, fn(st, a) {
+        collect_free_vars_inner(a, st.bound, st.captured, st.result)
+      })
     },
     .ArrayLit(elems) => {
-      st := FreeVarState.{ bound, captured, result }
-      for e in elems {
-        st = collect_free_vars_inner(e, st.bound, st.captured, st.result)
-      }
-      st
+      elems.fold(FreeVarState.{ bound, captured, result }, fn(st, e) {
+        collect_free_vars_inner(e, st.bound, st.captured, st.result)
+      })
     },
     .Index(base, idx) => {
       st := collect_free_vars_inner(base, bound, captured, result)

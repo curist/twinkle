@@ -192,12 +192,9 @@ fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, ind
       render_core_expr(out, env, inner, indent + 2)
     },
     .Call(callee, args) => {
-      out := line(lines, indent, "Call : ${ty}")
-      out = render_core_expr(out, env, callee, indent + 2)
-      for arg in args {
-        out = render_core_expr(out, env, arg, indent + 4)
-      }
-      out
+      args.fold(render_core_expr(line(lines, indent, "Call : ${ty}"), env, callee, indent + 2), fn(out, arg) {
+        render_core_expr(out, env, arg, indent + 4)
+      })
     },
     .MakeClosure(func_id, free_vars) => {
       captures := collect local in free_vars { "L${local.id}" }
@@ -267,18 +264,14 @@ fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, ind
       render_core_expr(out, env, value, indent + 4)
     },
     .Variant(tid, vid, args) => {
-      out := line(lines, indent, "Variant(${type_name(env, tid)}.${variant_name(env, tid, vid)}) : ${ty}")
-      for arg in args {
-        out = render_core_expr(out, env, arg, indent + 2)
-      }
-      out
+      args.fold(line(lines, indent, "Variant(${type_name(env, tid)}.${variant_name(env, tid, vid)}) : ${ty}"), fn(out, arg) {
+        render_core_expr(out, env, arg, indent + 2)
+      })
     },
     .ArrayLit(elements) => {
-      out := line(lines, indent, "ArrayLit[${elements.len()}] : ${ty}")
-      for elem in elements {
-        out = render_core_expr(out, env, elem, indent + 2)
-      }
-      out
+      elements.fold(line(lines, indent, "ArrayLit[${elements.len()}] : ${ty}"), fn(out, elem) {
+        render_core_expr(out, env, elem, indent + 2)
+      })
     },
     .Index(base, index) => {
       out := line(lines, indent, "Index : ${ty}")

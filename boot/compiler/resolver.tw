@@ -1382,11 +1382,7 @@ fn collect_hidden_support_types_from_entry(env: ResolvedEnv, entry: TypeEntry, n
 fn collect_hidden_support_types_from_def(env: ResolvedEnv, def: ResolvedTypeDef, needed: Dict<String, Bool>) Dict<String, Bool> {
   case def {
     .Record(_, _, fields) => {
-      cur := needed
-      for field in fields {
-        cur = collect_hidden_support_types(env, field.ty, cur)
-      }
-      cur
+      fields.fold(needed, fn(cur, field) { collect_hidden_support_types(env, field.ty, cur) })
     },
     .Sum(_, _, variants) => {
       cur := needed

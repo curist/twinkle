@@ -174,18 +174,15 @@ fn collect_vars_in_order(ty: MonoType, seen: Dict<String, Bool>, result: Vector<
       collect_vars_in_order(v, st.seen, st.result)
     },
     .Function(params, ret) => {
-      st := VarCollectState.{ seen, result }
-      for p in params {
-        st = collect_vars_in_order(p, st.seen, st.result)
-      }
+      st := params.fold(VarCollectState.{ seen, result }, fn(st, p) {
+        collect_vars_in_order(p, st.seen, st.result)
+      })
       collect_vars_in_order(ret, st.seen, st.result)
     },
     .Named(_, args) => {
-      st := VarCollectState.{ seen, result }
-      for a in args {
-        st = collect_vars_in_order(a, st.seen, st.result)
-      }
-      st
+      args.fold(VarCollectState.{ seen, result }, fn(st, a) {
+        collect_vars_in_order(a, st.seen, st.result)
+      })
     },
     .Optional(inner) => collect_vars_in_order(inner, seen, result),
     .Result(ok, err) => {
@@ -284,11 +281,9 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
         },
         _ => {},
       }
-      queue = collect_instantiations(callee, generic_ids, func_map, queue)
-      for arg in args {
-        queue = collect_instantiations(arg, generic_ids, func_map, queue)
-      }
-      queue
+      args.fold(collect_instantiations(callee, generic_ids, func_map, queue), fn(q, arg) {
+        collect_instantiations(arg, generic_ids, func_map, q)
+      })
     },
     .GlobalFunc(fid) => {
       if generic_ids.has(fid.id) {
@@ -326,11 +321,9 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
       collect_instantiations(else_e, generic_ids, func_map, queue)
     },
     .Match(scrut, arms) => {
-      queue = collect_instantiations(scrut, generic_ids, func_map, queue)
-      for arm in arms {
-        queue = collect_instantiations(arm.body, generic_ids, func_map, queue)
-      }
-      queue
+      arms.fold(collect_instantiations(scrut, generic_ids, func_map, queue), fn(q, arm) {
+        collect_instantiations(arm.body, generic_ids, func_map, q)
+      })
     },
     .Loop(body) => collect_instantiations(body, generic_ids, func_map, queue),
     .Break(val) => {
@@ -346,10 +339,7 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
       }
     },
     .Record(_, fields) => {
-      for fi in fields {
-        queue = collect_instantiations(fi.value, generic_ids, func_map, queue)
-      }
-      queue
+      fields.fold(queue, fn(q, fi) { collect_instantiations(fi.value, generic_ids, func_map, q) })
     },
     .RecordGet(target, _) => collect_instantiations(target, generic_ids, func_map, queue),
     .RecordUpdate(base, _, value) => {
@@ -357,16 +347,10 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
       collect_instantiations(value, generic_ids, func_map, queue)
     },
     .Variant(_, _, args) => {
-      for a in args {
-        queue = collect_instantiations(a, generic_ids, func_map, queue)
-      }
-      queue
+      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q) })
     },
     .ArrayLit(elems) => {
-      for e in elems {
-        queue = collect_instantiations(e, generic_ids, func_map, queue)
-      }
-      queue
+      elems.fold(queue, fn(q, e) { collect_instantiations(e, generic_ids, func_map, q) })
     },
     .Index(base, idx) => {
       queue = collect_instantiations(base, generic_ids, func_map, queue)

@@ -245,14 +245,9 @@ type FuncTypeRegistry = .{
 }
 
 fn build_functype_registry(imports: Vector<ImportDef>, funcs: Vector<FuncDef>) FuncTypeRegistry {
-  reg := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
-  for imp in imports {
-    reg = register_functype(reg, imp.params, imp.results)
-  }
-  for f in funcs {
-    reg = register_functype(reg, f.params, f.results)
-  }
-  reg
+  init := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
+  reg := imports.fold(init, fn(r, imp) { register_functype(r, imp.params, imp.results) })
+  funcs.fold(reg, fn(r, f) { register_functype(r, f.params, f.results) })
 }
 
 fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) FuncTypeRegistry {
