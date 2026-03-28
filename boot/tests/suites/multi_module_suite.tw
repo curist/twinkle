@@ -91,6 +91,30 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("same source module imported selectively and under an alias reuses type identity", fn() {
+      result := module_compiler.compile_entry("${dir}/alias_type_bridge.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected alias import topology to preserve type identity, got: ${msg}"),
+      }
+    })
+
+    .test("aliased imported support type remains valid through exported signatures downstream", fn() {
+      result := module_compiler.compile_entry("${dir}/alias_type_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected downstream alias topology to preserve exported support types, got: ${msg}"),
+      }
+    })
+
+    .test("independent alias bridges preserve support type identity downstream", fn() {
+      result := module_compiler.compile_entry("${dir}/alias_type_transitive_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected transitive alias bridges to preserve exported support types, got: ${msg}"),
+      }
+    })
+
     .test("real boot lexer module typechecks through compiler import topology", fn() {
       result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
       case result {

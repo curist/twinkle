@@ -162,12 +162,14 @@ fn zonk(ty: MonoType, subst: Dict<Int, MonoType>) MonoType {
     .Vector(inner) => MonoType.Vector(zonk(inner, subst)),
     .Dict(k, v) => MonoType.Dict(zonk(k, subst), zonk(v, subst)),
     .Function(params, ret) => {
-      MonoType.Function(params.map(fn(p) { zonk(p, subst) }), zonk(ret, subst))
+      zonked_params := collect p in params { zonk(p, subst) }
+      MonoType.Function(zonked_params, zonk(ret, subst))
     },
     .Optional(inner) => MonoType.Optional(zonk(inner, subst)),
     .Result(ok, err) => MonoType.Result(zonk(ok, subst), zonk(err, subst)),
     .Named(tid, args) => {
-      MonoType.Named(tid, args.map(fn(a) { zonk(a, subst) }))
+      zonked_args := collect a in args { zonk(a, subst) }
+      MonoType.Named(tid, zonked_args)
     },
     _ => ty,
   }
@@ -366,12 +368,14 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
     .Vector(inner) => MonoType.Vector(subst_vars(inner, var_map)),
     .Dict(k, v) => MonoType.Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
     .Function(params, ret) => {
-      MonoType.Function(params.map(fn(p) { subst_vars(p, var_map) }), subst_vars(ret, var_map))
+      inst_params := collect p in params { subst_vars(p, var_map) }
+      MonoType.Function(inst_params, subst_vars(ret, var_map))
     },
     .Optional(inner) => MonoType.Optional(subst_vars(inner, var_map)),
     .Result(ok, err) => MonoType.Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
-      MonoType.Named(tid, args.map(fn(a) { subst_vars(a, var_map) }))
+      inst_args := collect a in args { subst_vars(a, var_map) }
+      MonoType.Named(tid, inst_args)
     },
     _ => ty,
   }
@@ -427,7 +431,7 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
     var_map[tp] = m.ty
   }
 
-  inst_params := sig.params.map(fn(p) { subst_vars(p, var_map) })
+  inst_params := collect p in sig.params { subst_vars(p, var_map) }
 
   inst_ret := case sig.ret {
     .Some(r) => subst_vars(r, var_map),
@@ -926,7 +930,7 @@ fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result
           var_map := build_var_map(type_params, type_args)
           for v in variants {
             if v.name == name {
-              field_types := v.fields.map(fn(ft) { subst_vars(ft, var_map) })
+              field_types := collect ft in v.fields { subst_vars(ft, var_map) }
               return .Some(.Ok(.{ field_types }))
             }
           }
@@ -1662,7 +1666,8 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx:
         name
       }
       if missing.len() > 0 {
-        missing_str := missing.map(fn(m) { ".${m}" }).join(", ")
+        missing_labels := collect m in missing { ".${m}" }
+        missing_str := missing_labels.join(", ")
         diags.push(diag.error(s, "non-exhaustive match, missing: ${missing_str}"))
       } else {
         diags
@@ -1680,7 +1685,7 @@ fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
     .Named(tid, _) => {
       def := try ctx.env.lookup_type_def(tid)
       case def {
-        .Sum(_, _, variants) => .Some(variants.map(fn(v) { v.name })),
+        .Sum(_, _, variants) => .Some(collect v in variants { v.name }),
         _ => .None,
       }
     },
@@ -2645,7 +2650,10 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
         } else {
           ""
         }
-        alias := decl.alias.unwrap_or(fallback)
+        alias := case decl.alias {
+          .Some(name) => name,
+          .None => fallback,
+        }
         if alias != "" { aliases[alias] = true }
       },
       _ => {},

@@ -1,0 +1,9 @@
+pub type Diagnostic = .{ message: String }
+
+pub fn error(message: String) Diagnostic {
+  Diagnostic.{ message }
+}
+
+pub fn message(d: Diagnostic) String {
+  d.message
+}

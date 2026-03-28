@@ -1,0 +1,5 @@
+use .alias_type_source as diag_a
+
+pub fn make(message: String) diag_a.Diagnostic {
+  diag_a.error(message)
+}

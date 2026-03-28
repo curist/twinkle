@@ -10,7 +10,7 @@ use @std.path
 use compiler.parser
 use compiler.resolver.{
   ResolvedEnv, ModuleExports, FunctionSig,
-  extract_exports, merge_module_exports, merge_selective_imports, merge_prelude_exports,
+  extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
 }
 use compiler.checker
 use compiler.lower_core
@@ -220,7 +220,7 @@ fn compile_module(
   )
 
   // Extract exports for importing modules
-  module_exports := extract_exports(resolved.env, parsed.value)
+  module_exports := extract_exports_for_module(resolved.env, parsed.value, canonical)
 
   // Cache and accumulate
   cur_state.cache[canonical] = module_exports

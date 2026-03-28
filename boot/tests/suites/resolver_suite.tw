@@ -1227,7 +1227,7 @@ pub fn suite() runner.Suite {
       }
       exports := resolver.ModuleExports.{
         visible_types: [],
-        support_types: [resolver.ExportedType.{ name: "dep.Support", entry }],
+        support_types: [resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") }],
         functions: [sig],
         methods: Dict.new(),
       }
@@ -1283,6 +1283,44 @@ pub fn suite() runner.Suite {
       try assert.is_true(!resolver.has_function(env, "math.add"))
       try assert.is_true(!resolver.has_function(env, "math.sub"))
       try assert.is_true(!resolver.has_function(env, "$import$.math.add"))
+      .Ok({})
+    })
+
+    .test("mixed selective and aliased full import of same module reuses type id", fn() {
+      src := "pub type Diagnostic = .{ message: String }\npub fn error(message: String) Diagnostic { Diagnostic.{ message } }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic")
+
+      items: Vector<ast.ImportItem> = [
+        .Type(ast.ImportTypeItem.{ name: "Diagnostic", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env()
+      env = env.merge_selective_imports("diagnostic", exports, items)
+      env = env.merge_module_exports("diag", exports)
+
+      bare := try resolver.lookup_type(env, "Diagnostic").ok_or("missing selective type binding")
+      aliased := try resolver.lookup_type(env, "diag.Diagnostic").ok_or("missing aliased module type binding")
+
+      try assert.int_eq(bare.id.id, aliased.id.id)
+      .Ok({})
+    })
+
+    .test("same module imported under two full aliases reuses type id", fn() {
+      src := "pub type Diagnostic = .{ message: String }\npub fn error(message: String) Diagnostic { Diagnostic.{ message } }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic")
+
+      env := resolver.empty_env()
+      env = env.merge_module_exports("diag_a", exports)
+      env = env.merge_module_exports("diag_b", exports)
+
+      first := try resolver.lookup_type(env, "diag_a.Diagnostic").ok_or("missing first aliased module type binding")
+      second := try resolver.lookup_type(env, "diag_b.Diagnostic").ok_or("missing second aliased module type binding")
+
+      try assert.int_eq(first.id.id, second.id.id)
       .Ok({})
     })
 

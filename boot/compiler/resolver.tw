@@ -66,6 +66,7 @@ pub type FunctionSig = .{
 pub type ExportedType = .{
   name: String,
   entry: TypeEntry,
+  origin: String?,
 }
 
 pub type ModuleExports = .{
@@ -93,6 +94,7 @@ pub type ResolvedEnv = .{
   types: Vector<TypeEntry>,
   type_names: Vector<String>,
   type_bindings: Dict<String, TypeId>,
+  type_origins: Dict<Int, String>,
   functions: Vector<FunctionSig>,
   function_bindings: Dict<String, String>,
   methods: Dict<String, Vector<MethodEntry>>,
@@ -106,6 +108,7 @@ pub fn empty_env() ResolvedEnv {
     types: [],
     type_names: [],
     type_bindings: Dict.new(),
+    type_origins: Dict.new(),
     functions: [],
     function_bindings: Dict.new(),
     methods: Dict.new(),
@@ -233,9 +236,22 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
     bindings[type_names[i]] = types[i].id
   }
 
+  origins: Dict<Int, String> = Dict.new()
+  for tid in env.type_origins.keys() {
+    case env.type_origins[tid] {
+      .Some(origin) => {
+        if valid_type_ids.has(tid) {
+          origins[tid] = origin
+        }
+      },
+      .None => {},
+    }
+  }
+
   env.types = types
   env.type_names = type_names
   env.type_bindings = bindings
+  env.type_origins = origins
   env.type_index = idx
   env
 }
@@ -309,6 +325,16 @@ pub fn bind_type(env: ResolvedEnv, name: String, tid: TypeId) ResolvedEnv {
   case find_type_entry_index(env, tid) {
     .Some(_) => {
       env.type_bindings[name] = tid
+      env
+    },
+    .None => env,
+  }
+}
+
+pub fn set_type_origin(env: ResolvedEnv, tid: TypeId, origin: String) ResolvedEnv {
+  case find_type_entry_index(env, tid) {
+    .Some(_) => {
+      env.type_origins[tid.id] = origin
       env
     },
     .None => env,
@@ -457,9 +483,28 @@ fn all_exported_types(exports: ModuleExports) Vector<ExportedType> {
   exports.visible_types.concat(exports.support_types)
 }
 
+fn local_type_origin(module_key: String, name: String) String? {
+  if module_key == "" {
+    .None
+  } else {
+    .Some("${module_key}::${name}")
+  }
+}
+
+fn exported_type_origin(env: ResolvedEnv, tid: TypeId, module_key: String, name: String) String? {
+  case env.type_origins[tid.id] {
+    .Some(origin) => .Some(origin),
+    .None => local_type_origin(module_key, name),
+  }
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
+  extract_exports_for_module(env, module, "")
+}
+
+pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: String) ModuleExports {
   visible_types: Vector<ExportedType> = []
   support_types: Vector<ExportedType> = []
   exported_functions: Vector<FunctionSig> = []
@@ -472,7 +517,11 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
         if !decl.is_pub { continue }
         case env.lookup_type(decl.name) {
           .Some(entry) => {
-            visible_types = visible_types.push(ExportedType.{ name: decl.name, entry })
+            visible_types = visible_types.push(ExportedType.{
+              name: decl.name,
+              entry,
+              origin: exported_type_origin(env, entry.id, module_key, decl.name),
+            })
             exported_type_names[decl.name] = true
           },
           .None => {},
@@ -511,7 +560,11 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
     if !hidden_support_types.has(name) or exported_type_names.has(name) {
       continue
     }
-    support_types = support_types.push(ExportedType.{ name, entry: env.types[i] })
+    support_types = support_types.push(ExportedType.{
+      name,
+      entry: env.types[i],
+      origin: exported_type_origin(env, env.types[i].id, module_key, name),
+    })
     exported_type_names[name] = true
   }
 
@@ -551,6 +604,12 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
 fn merge_exported_type(env: ResolvedEnv, exported: ExportedType, target_name: String, type_ids: Dict<Int, TypeId>, bind_name: Bool) ResolvedEnv {
   remapped := remap_type_entry(exported.entry, target_name, type_ids)
   cur := env.register_type_entry(remapped, target_name)
+  case exported.origin {
+    .Some(origin) => {
+      cur = cur.set_type_origin(remapped.id, origin)
+    },
+    .None => {},
+  }
   if bind_name {
     cur.bind_type(target_name, remapped.id)
   } else {
@@ -1135,6 +1194,20 @@ fn merged_export_type_name(alias: String, name: String) String {
   }
 }
 
+fn find_by_origin(env: ResolvedEnv, origin: String) TypeId? {
+  for tid in env.type_origins.keys() {
+    case env.type_origins[tid] {
+      .Some(existing) => {
+        if existing == origin {
+          return .Some(TypeId.{ id: tid })
+        }
+      },
+      .None => {},
+    }
+  }
+  .None
+}
+
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := env.types.len()
@@ -1142,7 +1215,12 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
     target_name := merged_export_type_name(alias, exported.name)
     existing_id: TypeId? = case lookup_registered_type(env, target_name) {
       .Some(existing) => .Some(existing.id),
-      .None => .None,
+      .None => {
+        case exported.origin {
+          .Some(origin) => find_by_origin(env, origin),
+          .None => .None,
+        }
+      },
     }
     case existing_id {
       .Some(eid) => {
