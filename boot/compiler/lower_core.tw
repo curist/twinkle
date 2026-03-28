@@ -17,6 +17,7 @@ use .ast.{
 use .resolver.{MonoType, ResolvedEnv, TypeId}
 use .checker
 use .checker.{CheckResult, MethodCallInfo}
+use .builder_family.{BuilderConfig, vector_builder_config}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
   LocalId, FuncId, FieldId, VariantId,
@@ -1512,13 +1513,47 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
 
 // ── Collect lowering ──────────────────────────────────────────────
 
+fn global_func_call(func_id: FuncId, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
+  CoreExpr.{
+    kind: .Call(
+      .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+      args,
+    ),
+    ty: ty,
+    span: s,
+  }
+}
+
+fn collect_builder_push(builder: BuilderConfig, builder_local: LocalId, value: CoreExpr, s: Span) CoreExpr {
+  void_ty := MonoType.Void
+  global_func_call(builder.builder_push_id, [
+    .{ kind: .Local(builder_local), ty: void_ty, span: s },
+    value,
+  ], void_ty, s)
+}
+
+fn lower_collect_builder_region(ctx: LowerCtx, builder: BuilderConfig, builder_local: LocalId, loop_expr: CoreExpr, ty: MonoType, s: Span) ExprOut {
+  void_ty := MonoType.Void
+  freeze_call := global_func_call(builder.builder_freeze_id, [
+    .{ kind: .Local(builder_local), ty: void_ty, span: s },
+  ], ty, s)
+
+  ao := ctx.alloc_anon_local()
+  ctx = ao.ctx
+  loop_then_freeze := CoreExpr.{ kind: .Let(ao.local, loop_expr, freeze_call), ty, span: s }
+
+  builder_new := global_func_call(builder.builder_new_id, [], ty, s)
+  result := CoreExpr.{ kind: .Let(builder_local, builder_new, loop_then_freeze), ty, span: s }
+  .{ expr: result, ctx }
+}
+
 fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut {
   // collect x in xs { body }
   //   → Let(builder, Call(builder_new, []),
   //       Let(_, <for-loop appending to builder>,
   //         Call(builder_freeze, [Local(builder)])))
   void_ty := MonoType.Void
-  int_ty := MonoType.Int
+  builder := vector_builder_config(ctx.builtins)
 
   builder_lo := ctx.alloc_anon_local()
   ctx = builder_lo.ctx
@@ -1529,42 +1564,11 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
       setup := setup_indexed_iter(ctx, iter_expr, ce.pattern, ce.index, ce.body, s)
       ctx = setup.ctx
 
-      push_call := CoreExpr.{
-        kind: .Call(
-          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_push")), ty: void_ty, span: s },
-          [.{ kind: .Local(builder_local), ty: void_ty, span: s }, setup.body_core],
-        ),
-        ty: void_ty,
-        span: s,
-      }
+      push_call := collect_builder_push(builder, builder_local, setup.body_core, s)
 
       loop_r := build_indexed_loop(setup, push_call, s)
       ctx = loop_r.ctx
-
-      freeze_call := CoreExpr.{
-        kind: .Call(
-          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_freeze")), ty: void_ty, span: s },
-          [.{ kind: .Local(builder_local), ty: void_ty, span: s }],
-        ),
-        ty,
-        span: s,
-      }
-
-      ao := ctx.alloc_anon_local()
-      ctx = ao.ctx
-      loop_then_freeze := CoreExpr.{ kind: .Let(ao.local, loop_r.expr, freeze_call), ty, span: s }
-
-      builder_new := CoreExpr.{
-        kind: .Call(
-          .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
-          [],
-        ),
-        ty,
-        span: s,
-      }
-
-      result := CoreExpr.{ kind: .Let(builder_local, builder_new, loop_then_freeze), ty, span: s }
-      .{ expr: result, ctx }
+      lower_collect_builder_region(ctx, builder, builder_local, loop_r.expr, ty, s)
     },
     .None => {
       // collect while cond { body } — condition-form
@@ -1577,14 +1581,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
           ctx = body_r.ctx
           ctx = ctx.pop_scope()
 
-          push_call := CoreExpr.{
-            kind: .Call(
-              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_push")), ty: void_ty, span: s },
-              [.{ kind: .Local(builder_local), ty: void_ty, span: s }, body_r.expr],
-            ),
-            ty: void_ty,
-            span: s,
-          }
+          push_call := collect_builder_push(builder, builder_local, body_r.expr, s)
 
           loop_body := CoreExpr.{
             kind: .If(
@@ -1598,30 +1595,7 @@ fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span) ExprOut 
 
           loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
 
-          freeze_call := CoreExpr.{
-            kind: .Call(
-              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_freeze")), ty: void_ty, span: s },
-              [.{ kind: .Local(builder_local), ty: void_ty, span: s }],
-            ),
-            ty,
-            span: s,
-          }
-
-          ao5 := ctx.alloc_anon_local()
-          ctx = ao5.ctx
-          loop_then_freeze := CoreExpr.{ kind: .Let(ao5.local, loop_expr, freeze_call), ty, span: s }
-
-          builder_new := CoreExpr.{
-            kind: .Call(
-              .{ kind: .GlobalFunc(ctx.builtins.id("vector_builder_new")), ty: void_ty, span: s },
-              [],
-            ),
-            ty,
-            span: s,
-          }
-
-          result := CoreExpr.{ kind: .Let(builder_local, builder_new, loop_then_freeze), ty, span: s }
-          .{ expr: result, ctx }
+          lower_collect_builder_region(ctx, builder, builder_local, loop_expr, ty, s)
         },
         .None => {
           ctx = ctx.emit_error(s, "collect requires either iter or condition")

@@ -55,7 +55,6 @@ from stage0, bootstrapping sequence)
 | Plan | Description |
 |------|-------------|
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
-| [optimizer-generalization.md](optimizer-generalization.md) | Move the boot optimizer from pass-local pattern matching toward shared effect/alias contracts and canonical transient forms |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |

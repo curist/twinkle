@@ -3,8 +3,10 @@ use tests.assert
 use compiler.core_ir.{LocalId, FuncId, BinOp, Param}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, OpKind}
 use compiler.anf_analysis.{set_has}
+use compiler.builtins.{make_builtin_registry}
 use compiler.resolver.{MonoType}
-use compiler.opt.pipeline.{optimize_module}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.opt.pipeline.{optimize_module, optimize_module_with_semantics}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -222,6 +224,33 @@ fn test_nested_multi_round() Result<Void, String> {
   }
 }
 
+fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)),
+    .Let(lid(1), .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
+      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(1, "test", expr)
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  explicit := optimize_module_with_semantics(module, .Some(semantics))
+  defaulted := optimize_module(module)
+
+  case explicit.functions[0].body {
+    .Atom(.ALitInt(n1)) => {
+      case defaulted.functions[0].body {
+        .Atom(.ALitInt(n2)) => {
+          try assert.int_eq(n1, 9)
+          assert.int_eq(n2, 9)
+        },
+        _ => { return .Err("default optimize_module did not reduce to Atom(9)") },
+      }
+    },
+    _ => .Err("optimize_module_with_semantics did not reduce to Atom(9)"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -234,5 +263,6 @@ pub fn suite() runner.Suite {
   s = s.test("already optimal unchanged", test_already_optimal)
   s = s.test("copy prop respects pinned", test_copy_prop_respects_pinned)
   s = s.test("nested multi-round fold", test_nested_multi_round)
+  s = s.test("explicit semantics matches default pipeline", test_optimize_module_with_semantics_matches_default)
   s
 }

@@ -3,8 +3,10 @@ use tests.assert
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, Param}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm, FieldAtom, OpKind}
 use compiler.anf_analysis.{set_has}
+use compiler.builder_family.{BuilderConfig}
 use compiler.resolver.{MonoType, TypeId}
-use compiler.opt.uniqueness.{CowOpEntry, BuilderConfig, CowConfig, uniqueness_rewrite}
+use compiler.opt.semantics.{OptimizerSemantics, CallSemantics}
+use compiler.opt.uniqueness.{uniqueness_rewrite_with_semantics}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -31,27 +33,71 @@ fn mock_builder_from() FuncId { fid(231) }
 fn mock_builder_push() FuncId { fid(232) }
 fn mock_builder_freeze() FuncId { fid(233) }
 
-fn mock_config() CowConfig {
-  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
-  // VEC_SET: base_arg=0, in_place=VEC_SET_IN_PLACE
-  cow_ops[mock_vec_set().id] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(mock_vec_set_in_place()) }
-  // DICT_SET: base_arg=0, in_place=DICT_SET_IN_PLACE
-  cow_ops[mock_dict_set().id] = CowOpEntry.{ base_arg: 0, in_place_id: .Some(mock_dict_set_in_place()) }
-  // VEC_PUSH: base_arg=0, no in_place (used for loop region rewrite)
-  cow_ops[mock_vec_push().id] = CowOpEntry.{ base_arg: 0, in_place_id: .None }
+fn mock_semantics() OptimizerSemantics {
+  calls: Dict<Int, CallSemantics> = Dict.new()
+  calls[mock_vec_set().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(mock_vec_set_in_place()),
+  }
+  calls[mock_dict_set().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(mock_dict_set_in_place()),
+  }
+  calls[mock_vec_push().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[mock_vec_make().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_dict_new().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_builder_new().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_builder_from().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_builder_push().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[mock_builder_freeze().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_vec_len().id] = .{
+    effect: .ReadOnly,
+    fresh_result: false,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
 
-  fresh: Dict<Int, Bool> = Dict.new()
-  fresh[mock_vec_make().id] = true
-  fresh[mock_dict_new().id] = true
-  fresh[mock_builder_freeze().id] = true
-
-  read_only: Dict<Int, Bool> = Dict.new()
-  read_only[mock_vec_len().id] = true
-
-  CowConfig.{
-    cow_ops: cow_ops,
-    fresh_producer_ids: fresh,
-    read_only_ids: read_only,
+  OptimizerSemantics.{
+    call_semantics: calls,
     builder: BuilderConfig.{
       push_id: mock_vec_push(),
       builder_new_id: mock_builder_new(),
@@ -60,6 +106,10 @@ fn mock_config() CowConfig {
       builder_freeze_id: mock_builder_freeze(),
     },
   }
+}
+
+fn rewrite(func: AnfFunctionDef) AnfFunctionDef {
+  uniqueness_rewrite_with_semantics(func, mock_semantics())
 }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
@@ -94,7 +144,7 @@ fn test_params_tainted_no_rewrite() Result<Void, String> {
     .Atom(.ALocal(lid(1))))
   params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
   func := make_func_with_params(params, body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Should still be MOCK_VEC_SET, not MOCK_VEC_SET_IN_PLACE
   case result.body {
@@ -115,7 +165,7 @@ fn test_closure_capture_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Dig into: Let(0, ..., Let(1, ..., Let(2, ACall(...), ...)))
   case result.body {
@@ -137,13 +187,30 @@ fn test_fresh_unique_rewrite() Result<Void, String> {
       .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
       .Atom(.ALocal(lid(1)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
       assert.int_eq(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewritten to in_place"),
+  }
+}
+
+fn test_fresh_unique_rewrite_with_semantics_entry() Result<Void, String> {
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := uniqueness_rewrite_with_semantics(func, mock_semantics())
+
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.int_eq(f.id, mock_vec_set_in_place().id)
+    },
+    _ => .Err("expected semantics entry point to rewrite to in_place"),
   }
 }
 
@@ -158,7 +225,7 @@ fn test_array_lit_fresh() Result<Void, String> {
       .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(99)]),
       .Atom(.ALocal(lid(1)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
@@ -179,7 +246,7 @@ fn test_record_fresh() Result<Void, String> {
       .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
       .Atom(.ALocal(lid(1)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _)) => {
@@ -200,7 +267,7 @@ fn test_base_live_no_rewrite() Result<Void, String> {
       .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
       .Let(lid(2), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
@@ -222,7 +289,7 @@ fn test_init_transfer() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -250,7 +317,7 @@ fn test_consume_reassign() Result<Void, String> {
           .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(99)]),
           .Atom(.ALocal(lid(3)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // First vec_set should be rewritten (consume-reassign: v dead because immediately reassigned)
   case result.body {
@@ -275,7 +342,7 @@ fn test_non_cow_call_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -297,7 +364,7 @@ fn test_read_only_no_taint() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -319,7 +386,7 @@ fn test_cow_base_arg_not_tainted() Result<Void, String> {
       .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
       .Atom(.ALocal(lid(1)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
@@ -341,7 +408,7 @@ fn test_stored_in_array_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -360,7 +427,7 @@ fn test_variant_fresh() Result<Void, String> {
     .AVariant(tid(7), VariantId.{ id: 0 }, [.ALitInt(1)]),
     .Atom(.ALocal(lid(0))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
   // No crash, body unchanged
   case result.body {
     .Let(_, .AVariant(_, _, _), _) => .Ok({}),
@@ -394,7 +461,7 @@ fn test_branches_conservative() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // v is still unique after the harmless branch → should rewrite
   case result.body {
@@ -431,7 +498,7 @@ fn test_loop_accumulator_rewrite() Result<Void, String> {
     .Let(lid(3), .ALoop(loop_body),
       .Atom(.ALocal(lid(0)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Check: Let(0, AArrayLit, Let(builder, Call(builder_new, []), ...))
   case result.body {
@@ -463,7 +530,7 @@ fn test_loop_accumulator_from() Result<Void, String> {
     .Let(lid(3), .ALoop(loop_body),
       .Atom(.ALocal(lid(0)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Check: Let(0, Call(vec_make), Let(builder, Call(builder_from, [ALocal(0)]), ...))
   case result.body {
@@ -485,7 +552,7 @@ fn test_dict_set_rewrite() Result<Void, String> {
       .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
       .Atom(.ALocal(lid(1)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
@@ -511,7 +578,7 @@ fn test_assign_transfer() Result<Void, String> {
           .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
           .Atom(.ALocal(lid(3)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
@@ -536,7 +603,7 @@ fn test_alias_taints() Result<Void, String> {
         .Let(lid(3), .AInit(.ALocal(lid(1))),
           .Atom(.ALocal(lid(3)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -566,7 +633,7 @@ fn test_assign_alias_taints() Result<Void, String> {
           .Let(lid(3), .AInit(.ALocal(lid(1))),
             .Atom(.ALocal(lid(3))))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // vec_set should NOT be rewritten because v is aliased through w
   case result.body {
@@ -601,7 +668,7 @@ fn test_branch_boundary_alias_escape() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(4))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -636,7 +703,7 @@ fn test_assign_alias_cross_scope() Result<Void, String> {
           .Let(lid(6), .AInit(.ALocal(lid(1))),
             .Atom(.ALocal(lid(6))))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
@@ -665,7 +732,7 @@ fn test_assign_alias_source_dead_ok() Result<Void, String> {
           .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
           .Atom(.ALocal(lid(2)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // w is unique (transferred from v) → vec_set should rewrite
   case result.body {
@@ -700,7 +767,7 @@ fn test_assign_chain_taint() Result<Void, String> {
               .Let(lid(3), .AInit(.ALocal(lid(7))),
                 .Atom(.ALocal(lid(3))))))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))))) => {
@@ -731,7 +798,7 @@ fn test_branch_boundary_else_branch() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(4))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -763,7 +830,7 @@ fn test_branch_alias_source_not_live_out() Result<Void, String> {
       .Atom(.ALitVoid)))
   func := make_func(body)
   // Should not crash. x is not used after if, so no observable taint effect.
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
   case result.body {
     .Let(_, _, _) => .Ok({}),
     _ => .Err("expected Let preserved"),
@@ -794,7 +861,7 @@ fn test_match_arm_alias_escape() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(4))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -816,7 +883,7 @@ fn test_stored_in_record_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -837,7 +904,7 @@ fn test_stored_in_variant_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -859,7 +926,7 @@ fn test_indirect_call_taints() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(2))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
@@ -889,7 +956,7 @@ fn test_cow_non_base_arg_tainted() Result<Void, String> {
           .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(1)]),
           .Atom(.ALocal(lid(3)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // The second vec_set(w, ...) should NOT be rewritten because w was tainted
   // as a non-base arg in the first vec_set
@@ -923,7 +990,7 @@ fn test_loop_tainted_no_rewrite() Result<Void, String> {
       .Let(lid(4), .ALoop(loop_body),
         .Atom(.ALocal(lid(0))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Should still have ALoop, no builder wrapping
   case result.body {
@@ -955,7 +1022,7 @@ fn test_loop_base_used_non_push() Result<Void, String> {
     .Let(lid(4), .ALoop(loop_body),
       .Atom(.ALocal(lid(0)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Should still have ALoop (no builder rewrite)
   case result.body {
@@ -988,7 +1055,7 @@ fn test_loop_push_in_branch() Result<Void, String> {
     .Let(lid(4), .ALoop(loop_body),
       .Atom(.ALocal(lid(0)))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Should be rewritten to builder
   case result.body {
@@ -1012,7 +1079,7 @@ fn test_init_transfer_tainted_source() Result<Void, String> {
       .Atom(.ALocal(lid(2)))))
   params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
   func := make_func_with_params(params, body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
@@ -1044,7 +1111,7 @@ fn test_record_update_consume_reassign() Result<Void, String> {
           .ARecordUpdate(.ALocal(lid(0)), field(1), .ALitInt(88), false, tid(7)),
           .Atom(.ALocal(lid(2)))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // First update: consume-reassign → can_reuse = true
   case result.body {
@@ -1111,7 +1178,7 @@ fn test_loop_rewrite_continues_into_cont() Result<Void, String> {
         .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
         .Atom(.ALocal(lid(4))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Find the vec_set/vec_set_in_place call deep in the rewritten tree.
   case find_vec_set(result.body) {
@@ -1149,7 +1216,7 @@ fn test_max_local_pattern_bindings() Result<Void, String> {
       .Let(lid(4), .ALoop(loop_body),
         .Atom(.ALocal(lid(0))))))
   func := make_func(body)
-  result := uniqueness_rewrite(func, mock_config())
+  result := rewrite(func)
 
   // Find builder_new call and check its bound local ID.
   case find_builder_local(result.body) {
@@ -1179,6 +1246,7 @@ pub fn suite() runner.Suite {
   s = s.test("alias taints when source live", test_alias_taints)
   // Phase 2: uniqueness tracking + rewrite
   s = s.test("fresh producer + dead → rewrite", test_fresh_unique_rewrite)
+  s = s.test("fresh producer + dead → rewrite via semantics", test_fresh_unique_rewrite_with_semantics_entry)
   s = s.test("array literal is fresh", test_array_lit_fresh)
   s = s.test("record literal is fresh", test_record_fresh)
   s = s.test("variant literal is fresh", test_variant_fresh)

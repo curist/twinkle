@@ -3,8 +3,10 @@ use tests.assert
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern}
 use compiler.resolver.{MonoType, TypeId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, OpKind, IndexKind, FieldAtom}
+use compiler.builtins.{make_builtin_registry}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
-use compiler.opt.dead_let.{dead_let_elim}
+use compiler.opt.dead_let.{dead_let_elim, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.copy_prop.{copy_propagate, subst_atom}
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -388,6 +390,25 @@ fn test_dead_let_keeps_unused_impure_if() Result<Void, String> {
   }
 }
 
+fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
+  // Semantics knows vector_len is read-only, but Stage 1 should preserve current
+  // dead-let behavior: unused calls are still retained.
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(make_builtin_registry().id("vector_len")), [.ALocal(lid(9))]),
+    .Atom(.ALitVoid),
+  )
+  semantics := make_prelude_optimizer_semantics(make_builtin_registry())
+  result := dead_let_elim_with_pinned_and_semantics(expr, Dict.new(), semantics)
+  try assert.is_false(result.changed)
+  case result.expr {
+    .Let(_, .ACall(.AGlobalFunc(f), _), _) => {
+      assert.int_eq(f.id, make_builtin_registry().id("vector_len").id)
+    },
+    _ => .Err("expected unused read-only call to be preserved"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -425,6 +446,7 @@ pub fn suite() runner.Suite {
   s = s.test("dead_let: nested in if", test_dead_let_nested_in_if)
   s = s.test("dead_let: drops unused pure if", test_dead_let_drops_unused_pure_if)
   s = s.test("dead_let: keeps unused impure if", test_dead_let_keeps_unused_impure_if)
+  s = s.test("dead_let: semantics keeps read-only call parity", test_dead_let_semantics_keeps_read_only_call_parity)
   // subst_atom
   s = s.test("subst: replaces target", test_subst_atom_replaces)
   s = s.test("subst: leaves other", test_subst_atom_leaves_other)

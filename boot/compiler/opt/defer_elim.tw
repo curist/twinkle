@@ -19,9 +19,10 @@
 //
 // After this pass no ADefer nodes remain.
 
-use compiler.core_ir.{LocalId, CorePattern}
+use compiler.core_ir.{LocalId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom, AnfFunctionDef}
 use compiler.anf_analysis.{collect_free_locals}
+use compiler.opt.analysis.{next_local_id}
 use compiler.resolver.{MonoType}
 
 // ── Public entry point ─────────────────────────────────────────────
@@ -338,115 +339,5 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
     .ADefer(body) => .ADefer(remap_expr(body, remap)),
     .AWrapAnyref(a, mono) => .AWrapAnyref(remap_atom(a, remap), mono),
     .AUnwrapAnyref(a, mono) => .AUnwrapAnyref(remap_atom(a, remap), mono),
-  }
-}
-
-// ── max_local_id helpers ───────────────────────────────────────────
-
-fn next_local_id(func: AnfFunctionDef) Int {
-  m := 0
-  for p in func.params {
-    if p.local.id > m { m = p.local.id }
-  }
-  m = max_local_in_expr(func.body, m)
-  m + 1
-}
-
-fn max_local_in_atom(a: Atom, m: Int) Int {
-  case a {
-    .ALocal(id) => if id.id > m { id.id } else { m },
-    _ => m,
-  }
-}
-
-fn max_local_in_expr(expr: AnfExpr, m: Int) Int {
-  case expr {
-    .Let(local, op, body) => {
-      m2 := if local.id > m { local.id } else { m }
-      m3 := max_local_in_op(op, m2)
-      max_local_in_expr(body, m3)
-    },
-    .Atom(a) => max_local_in_atom(a, m),
-    .Return(.Some(a)) => max_local_in_atom(a, m),
-    .Break(.Some(a)) => max_local_in_atom(a, m),
-    _ => m,
-  }
-}
-
-fn max_local_in_op(op: AnfOp, m: Int) Int {
-  case op {
-    .ACall(callee, args) => {
-      r := max_local_in_atom(callee, m)
-      for a in args { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AIf(cond, then_e, else_e) => {
-      r := max_local_in_atom(cond, m)
-      r = max_local_in_expr(then_e, r)
-      max_local_in_expr(else_e, r)
-    },
-    .AMatch(scrutinee, arms) => {
-      r := max_local_in_atom(scrutinee, m)
-      for arm in arms {
-        r = max_local_in_pattern(arm.pattern, r)
-        r = max_local_in_expr(arm.body, r)
-      }
-      r
-    },
-    .ALoop(body) => max_local_in_expr(body, m),
-    .ADefer(body) => max_local_in_expr(body, m),
-    .ABinOp(_, left, right, _) => {
-      r := max_local_in_atom(left, m)
-      max_local_in_atom(right, r)
-    },
-    .AUnOp(_, inner, _) => max_local_in_atom(inner, m),
-    .AMakeClosure(_, free_vars) => {
-      r := m
-      for v in free_vars { if v.id > r { r = v.id } }
-      r
-    },
-    .ARecord(_, fields) => {
-      r := m
-      for f in fields { r = max_local_in_atom(f.value, r) }
-      r
-    },
-    .ARecordGet(target, _, _) => max_local_in_atom(target, m),
-    .ARecordUpdate(base, _, value, _, _) => {
-      r := max_local_in_atom(base, m)
-      max_local_in_atom(value, r)
-    },
-    .AVariant(_, _, args) => {
-      r := m
-      for a in args { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AArrayLit(elems) => {
-      r := m
-      for a in elems { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AIndex(base, index, _, _) => {
-      r := max_local_in_atom(base, m)
-      max_local_in_atom(index, r)
-    },
-    .AInit(value) => max_local_in_atom(value, m),
-    .AAssign(local, value) => {
-      r := if local.id > m { local.id } else { m }
-      max_local_in_atom(value, r)
-    },
-    .AWrapAnyref(a, _) => max_local_in_atom(a, m),
-    .AUnwrapAnyref(a, _) => max_local_in_atom(a, m),
-  }
-}
-
-fn max_local_in_pattern(pat: CorePattern, m: Int) Int {
-  case pat {
-    .Var(id) => if id.id > m { id.id } else { m },
-    .Variant(_, _, fields) => {
-      r := m
-      for f in fields { r = max_local_in_pattern(f, r) }
-      r
-    },
-    _ => m,
   }
 }

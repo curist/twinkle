@@ -1,0 +1,369 @@
+// Shared optimizer-facing semantics for builtin calls and structured ANF ops.
+//
+// Stage 1 scope:
+// - centralize builtin optimizer metadata in one module
+// - expose effect classification for passes
+// - preserve current dead-let purity behavior (calls remain non-eliminable)
+
+use compiler.core_ir.{LocalId, FuncId}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.anf.{AnfExpr, AnfOp}
+use compiler.builder_family.{BuilderConfig, empty_builder_config, vector_builder_config}
+
+pub type CowOpEntry = .{
+  base_arg: Int,
+  in_place_id: FuncId?,
+}
+
+pub type CowConfig = .{
+  cow_ops: Dict<Int, CowOpEntry>,
+  fresh_producer_ids: Dict<Int, Bool>,
+  read_only_ids: Dict<Int, Bool>,
+  builder: BuilderConfig,
+}
+
+pub type EffectKind = {
+  Pure,
+  ReadOnly,
+  Update,
+  Allocate,
+  Control,
+}
+
+pub type CallSemantics = .{
+  effect: EffectKind,
+  fresh_result: Bool,
+  cow_base_arg: Int?,
+  in_place_equivalent: FuncId?,
+}
+
+pub type ReusableUpdateKind = {
+  Call,
+  RecordUpdate,
+}
+
+pub type ReusableUpdateSite = .{
+  kind: ReusableUpdateKind,
+  base_local: LocalId,
+  in_place_equivalent: FuncId?,
+}
+
+pub type OptimizerSemantics = .{
+  call_semantics: Dict<Int, CallSemantics>,
+  builder: BuilderConfig,
+}
+
+fn control_call() CallSemantics {
+  CallSemantics.{
+    effect: .Control,
+    fresh_result: false,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+}
+
+pub fn empty_optimizer_semantics() OptimizerSemantics {
+  OptimizerSemantics.{
+    call_semantics: Dict.new(),
+    builder: empty_builder_config(),
+  }
+}
+
+pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
+  calls: Dict<Int, CallSemantics> = Dict.new()
+  builder := vector_builder_config(b)
+
+  calls[b.id("vector_len").id] = CallSemantics.{
+    effect: .ReadOnly,
+    fresh_result: false,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  calls[b.id("vector_set_unsafe").id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(b.id("vector_set_in_place")),
+  }
+
+  calls[b.id("dict_set").id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(b.id("dict_set_in_place")),
+  }
+
+  calls[b.id("dict_remove").id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(b.id("dict_remove_in_place")),
+  }
+
+  calls[builder.push_id.id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+
+  calls[b.id("vector_make").id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  calls[b.id("dict_new").id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  calls[builder.builder_new_id.id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  calls[builder.builder_from_id.id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  calls[builder.builder_push_id.id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+
+  calls[builder.builder_freeze_id.id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+
+  OptimizerSemantics.{
+    call_semantics: calls,
+    builder: builder,
+  }
+}
+
+pub fn call_info(semantics: OptimizerSemantics, func_id: FuncId) CallSemantics? {
+  semantics.call_semantics[func_id.id]
+}
+
+pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
+  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
+  fresh_producer_ids: Dict<Int, Bool> = Dict.new()
+  read_only_ids: Dict<Int, Bool> = Dict.new()
+
+  for func_id in semantics.call_semantics.keys() {
+    info := semantics.call_semantics[func_id].unwrap_or(control_call())
+    case info.cow_base_arg {
+      .Some(base_arg) => {
+        cow_ops[func_id] = CowOpEntry.{
+          base_arg: base_arg,
+          in_place_id: info.in_place_equivalent,
+        }
+      },
+      .None => {},
+    }
+    if info.fresh_result {
+      fresh_producer_ids[func_id] = true
+    }
+    case info.effect {
+      .ReadOnly => { read_only_ids[func_id] = true },
+      _ => {},
+    }
+  }
+
+  CowConfig.{
+    cow_ops: cow_ops,
+    fresh_producer_ids: fresh_producer_ids,
+    read_only_ids: read_only_ids,
+    builder: semantics.builder,
+  }
+}
+
+pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics {
+  calls: Dict<Int, CallSemantics> = Dict.new()
+
+  for func_id in config.cow_ops.keys() {
+    info := config.cow_ops[func_id].unwrap_or(CowOpEntry.{ base_arg: 0, in_place_id: .None })
+    calls[func_id] = CallSemantics.{
+      effect: .Update,
+      fresh_result: false,
+      cow_base_arg: .Some(info.base_arg),
+      in_place_equivalent: info.in_place_id,
+    }
+  }
+
+  for func_id in config.fresh_producer_ids.keys() {
+    current := calls[func_id].unwrap_or(control_call())
+    calls[func_id] = CallSemantics.{
+      effect: if current.effect == .Control { .Allocate } else { current.effect },
+      fresh_result: true,
+      cow_base_arg: current.cow_base_arg,
+      in_place_equivalent: current.in_place_equivalent,
+    }
+  }
+
+  for func_id in config.read_only_ids.keys() {
+    current := calls[func_id].unwrap_or(control_call())
+    calls[func_id] = CallSemantics.{
+      effect: .ReadOnly,
+      fresh_result: current.fresh_result,
+      cow_base_arg: current.cow_base_arg,
+      in_place_equivalent: current.in_place_equivalent,
+    }
+  }
+
+  OptimizerSemantics.{
+    call_semantics: calls,
+    builder: config.builder,
+  }
+}
+
+pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
+  case op {
+    .ABinOp(binop, _, _, kind) => {
+      case kind {
+        .Int => {
+          case binop {
+            .Div => .Control,
+            .Mod => .Control,
+            _ => .Pure,
+          }
+        },
+        _ => .Pure,
+      }
+    },
+    .AInit(_) => .Pure,
+    .AUnOp(_, _, _) => .Pure,
+    .ARecord(_, _) => .Allocate,
+    .ARecordGet(_, _, _) => .Pure,
+    .ARecordUpdate(_, _, _, _, _) => .Allocate,
+    .AVariant(_, _, _) => .Allocate,
+    .AArrayLit(_) => .Allocate,
+    .AMakeClosure(_, _) => .Allocate,
+    .AIf(_, then_e, else_e) => {
+      if expr_is_pure_with_semantics(then_e, semantics) and expr_is_pure_with_semantics(else_e, semantics) {
+        .Pure
+      } else {
+        .Control
+      }
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if !expr_is_pure_with_semantics(arm.body, semantics) {
+          return .Control
+        }
+      }
+      .Pure
+    },
+    .ACall(.AGlobalFunc(func_id), _) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => info.effect,
+        .None => .Control,
+      }
+    },
+    .ACall(_, _) => .Control,
+    .AAssign(_, _) => .Control,
+    .ALoop(_) => .Control,
+    .AIndex(_, _, _, _) => .Control,
+    .ADefer(_) => .Control,
+    .AWrapAnyref(_, _) => .Control,
+    .AUnwrapAnyref(_, _) => .Control,
+  }
+}
+
+pub fn op_has_fresh_result(op: AnfOp, semantics: OptimizerSemantics) Bool {
+  case op {
+    .AArrayLit(_) => true,
+    .ARecord(_, _) => true,
+    .ARecordUpdate(_, _, _, _, _) => true,
+    .AVariant(_, _, _) => true,
+    .ACall(.AGlobalFunc(func_id), _) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => info.fresh_result,
+        .None => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+pub fn reusable_update_site(op: AnfOp, semantics: OptimizerSemantics) ReusableUpdateSite? {
+  case op {
+    .ARecordUpdate(.ALocal(base), _, _, _, _) => {
+      .Some(ReusableUpdateSite.{
+        kind: .RecordUpdate,
+        base_local: base,
+        in_place_equivalent: .None,
+      })
+    },
+    .ACall(.AGlobalFunc(func_id), args) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => {
+          case info.cow_base_arg {
+            .Some(base_arg) => {
+              if base_arg >= args.len() { return .None }
+              case args[base_arg] {
+                .ALocal(base) => {
+                  .Some(ReusableUpdateSite.{
+                    kind: .Call,
+                    base_local: base,
+                    in_place_equivalent: info.in_place_equivalent,
+                  })
+                },
+                _ => .None,
+              }
+            },
+            .None => .None,
+          }
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+pub fn is_pure_with_semantics(op: AnfOp, semantics: OptimizerSemantics) Bool {
+  case op {
+    // Stage 1 parity: even read-only/allocating calls remain non-eliminable.
+    .ACall(_, _) => false,
+    .AIf(_, then_e, else_e) => expr_is_pure_with_semantics(then_e, semantics) and expr_is_pure_with_semantics(else_e, semantics),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if !expr_is_pure_with_semantics(arm.body, semantics) { return false }
+      }
+      true
+    },
+    _ => {
+      case op_effect(op, semantics) {
+        .Pure => true,
+        .Allocate => true,
+        _ => false,
+      }
+    },
+  }
+}
+
+fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
+  case expr {
+    .Let(_, op, body) => is_pure_with_semantics(op, semantics) and expr_is_pure_with_semantics(body, semantics),
+    .Atom(_) => true,
+    .Return(_) => false,
+    .Break(_) => false,
+    .Continue => false,
+  }
+}

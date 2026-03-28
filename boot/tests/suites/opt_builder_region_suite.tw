@@ -1,0 +1,93 @@
+use tests.runner
+use tests.assert
+use compiler.core_ir.{LocalId, FuncId}
+use compiler.anf.{AnfExpr, AnfOp}
+use compiler.builder_family.{BuilderConfig}
+use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
+
+fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id: id } }
+
+fn mock_vec_push() FuncId { fid(204) }
+fn mock_builder_new() FuncId { fid(230) }
+fn mock_builder_from() FuncId { fid(231) }
+fn mock_builder_push() FuncId { fid(232) }
+fn mock_builder_freeze() FuncId { fid(233) }
+
+fn mock_builder_config() BuilderConfig {
+  BuilderConfig.{
+    push_id: mock_vec_push(),
+    builder_new_id: mock_builder_new(),
+    builder_from_id: mock_builder_from(),
+    builder_push_id: mock_builder_push(),
+    builder_freeze_id: mock_builder_freeze(),
+  }
+}
+
+fn sample_region(init: BuilderInit) BuilderRegion {
+  BuilderRegion.{
+    bind_local: lid(3),
+    base_local: lid(0),
+    builder_local: lid(10),
+    freeze_local: lid(11),
+    assign_local: lid(12),
+    init: init,
+    loop_body: .Continue,
+    cont: .Atom(.ALocal(lid(0))),
+  }
+}
+
+fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
+  region := sample_region(.New)
+  result := lower_builder_region(region, mock_builder_config())
+
+  case result {
+    .Let(builder_local, .ACall(.AGlobalFunc(f), args),
+      .Let(bind_local, .ALoop(.Continue),
+        .Let(freeze_local, .ACall(.AGlobalFunc(freeze_f), freeze_args),
+          .Let(assign_local, .AAssign(base_local, value), .Atom(.ALocal(cont_local)))))) => {
+      try assert.int_eq(builder_local.id, 10)
+      try assert.int_eq(f.id, mock_builder_new().id)
+      try assert.int_eq(args.len(), 0)
+      try assert.int_eq(bind_local.id, 3)
+      try assert.int_eq(freeze_local.id, 11)
+      try assert.int_eq(freeze_f.id, mock_builder_freeze().id)
+      try assert.int_eq(freeze_args.len(), 1)
+      case freeze_args[0] {
+        .ALocal(id) => { try assert.int_eq(id.id, 10) },
+        _ => { return .Err("expected freeze(builder_local)") },
+      }
+      try assert.int_eq(assign_local.id, 12)
+      try assert.int_eq(base_local.id, 0)
+      case value {
+        .ALocal(id) => { try assert.int_eq(id.id, 11) },
+        _ => { return .Err("expected assign from freeze local") },
+      }
+      assert.int_eq(cont_local.id, 0)
+    },
+    _ => .Err("expected canonical builder-region lowering shape"),
+  }
+}
+
+fn test_lower_builder_region_uses_builder_from_base() Result<Void, String> {
+  region := sample_region(.FromBase(lid(0)))
+  result := lower_builder_region(region, mock_builder_config())
+
+  case result {
+    .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
+      try assert.int_eq(f.id, mock_builder_from().id)
+      try assert.int_eq(args.len(), 1)
+      case args[0] {
+        .ALocal(base) => assert.int_eq(base.id, 0),
+        _ => .Err("expected builder_from base arg"),
+      }
+    },
+    _ => .Err("expected builder_from call at top of lowered region"),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("Opt: Builder Region")
+    .test("lower builder region uses builder_new", test_lower_builder_region_uses_builder_new)
+    .test("lower builder region uses builder_from", test_lower_builder_region_uses_builder_from_base)
+}

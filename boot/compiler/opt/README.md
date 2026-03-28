@@ -128,11 +128,31 @@ that may be read at or after each program point.
 when the base local is dead in the continuation. This tells the WAT backend it may emit
 `struct.set` (in-place mutation) instead of allocating a new struct.
 
+### semantics.tw -- Shared Optimizer Semantics
+
+Central optimizer-facing metadata for builtin calls and structured ANF ops.
+The current stage exposes:
+
+- effect classification (`Pure`, `ReadOnly`, `Update`, `Allocate`, `Control`)
+- fresh-result metadata
+- COW/in-place rewrite metadata
+- builder-family metadata
+
+Builder-family ids now come from the shared
+`compiler/builder_family.tw` helper so optimizer code and front-end
+lowering derive the same builder family from `BuiltinRegistry`.
+
+`pipeline.tw` now builds prelude optimizer semantics from `BuiltinRegistry`,
+and `uniqueness.tw` consumes those semantics directly. `CowConfig` remains as a
+compatibility wrapper for older call sites/tests.
+
 ### uniqueness.tw -- Uniqueness Rewrite (COW Elimination)
 
 Proves single-ownership of collection values to rewrite copy-on-write operations to
-in-place mutations. Decoupled from codegen via `CowConfig`, a capability record
-describing which functions are COW ops, fresh producers, and read-only.
+in-place mutations. The active path now consumes shared optimizer semantics
+rather than hardcoded builtin tables. It now relies on shared analysis helpers
+in `analysis.tw`, and delegates loop-region builder construction to
+`loop_builder.tw`.
 
 **Phase 1 -- Pre-scan**: builds a `tainted` set of locals that can never be unique:
 - Function parameters (come from outside)
@@ -157,13 +177,34 @@ ownership. Forward walk through the let-chain:
 `v = []; for ... { v = v.push(x) }` into the builder pattern
 `b = builder_new(); for ... { builder_push(b, x) }; v = builder_freeze(b)`.
 
-Analysis validates that the base local is only used in push+reassign patterns within
-the loop body. Rewriting introduces three fresh locals (builder, freeze result, assign)
-and replaces `vector_push` calls with `builder_push`. A safety check verifies the
-rewritten site count matches the analysis.
+Loop legality analysis lives in `analysis.tw`; the builder-region rewrite itself
+lives in `loop_builder.tw`, which now emits an optimizer-facing `BuilderRegion`
+and lowers that canonical region shape through `builder_region.tw`. Analysis
+validates that the base local is only used in push+reassign patterns within the
+loop body. Rewriting introduces three fresh locals (builder, freeze result,
+assign) and replaces `vector_push` calls with `builder_push`. A safety check
+verifies the rewritten site count matches the analysis.
 
 Also handles `builder_from` for non-empty initial vectors vs `builder_new` for
 initially-empty ones (tracked via `known_empty` set).
+
+### loop_builder.tw -- Loop Builder Region Rewrite
+
+Owns loop-accumulator candidate rewriting once legality has already been
+established. It rewrites push sites inside the loop body, chooses the builder
+region seed (`builder_new` vs `builder_from`), and constructs a canonical
+`BuilderRegion` for lowering.
+
+### builder_region.tw -- Canonical Builder Region Lowering
+
+Defines a small optimizer-facing transient builder region abstraction and lowers
+it to the current runtime builder call family. This is the Stage 4 bridge:
+passes can target a stable builder-region concept without directly assembling the
+final nested ANF `Let` shape around `vector_builder_*` calls.
+
+This is the current intended stop point. The optimizer does not yet introduce
+explicit transient IR nodes; Stage 5 IR refinement is deferred unless the shared
+builder-family boundary stops being sufficient.
 
 ### defer_elim.tw -- Defer Elimination
 
@@ -194,6 +235,9 @@ flow structure in ways the peephole passes aren't designed to handle.
 
 ## Configuration
 
-`make_prelude_cow_config` in `pipeline.tw` builds the `CowConfig` for Twinkle's
-prelude, mapping builtin FuncIds to their COW/in-place/fresh-producer/read-only roles.
-The uniqueness pass is skipped when `cow_config` is `.None`.
+`make_prelude_optimizer_semantics` in `semantics.tw` builds optimizer semantics
+for Twinkle's prelude from `BuiltinRegistry`.
+
+`optimize_module_with_semantics` in `pipeline.tw` is the semantics-first entry
+point. `optimize_module_with_config` remains available as a compatibility layer
+and internally converts `CowConfig` to optimizer semantics.

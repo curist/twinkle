@@ -56,6 +56,14 @@ This is a tree-walking ANF optimizer with no CFG.
   - detect a loop accumulator pattern
   - rewrite that pattern to vector builder ops
 - `defer_elim.tw` is structurally separate and correctly stays last.
+- `collect` already lowers directly through `vector_builder_new` /
+  `vector_builder_push` / `vector_builder_freeze` in `lower_core.tw`. The
+  remaining optimizer gap is not "make collect use builders", but "give
+  non-collect library/authored shapes an equally canonical transient target".
+- `anf_analysis.tw` already centralizes some ANF tree utilities
+  (free/bound/assigned locals, pattern bindings, divergence). The remaining
+  gap is optimizer-specific effect/alias/operand analysis, not analysis sharing
+  from absolute zero.
 
 ### Where semantic knowledge lives today
 
@@ -111,10 +119,12 @@ Several passes re-walk ANF with their own local logic:
 
 This makes the optimizer harder to extend consistently.
 
-### 4. There is no first-class transient region concept
+### 4. There is no first-class optimizer-level transient region concept
 
-The optimizer knows about vector builders, but only through a very specific rewrite.
-There is no explicit optimizer concept for:
+The compiler already has an operational vector-builder family and lowers
+`collect` through it, but the optimizer still knows about that transient shape
+only through specific builtin/rewrite logic. There is no explicit optimizer
+concept for:
 
 - begin mutable transient
 - apply local updates
@@ -267,6 +277,8 @@ are all instances of the same legality check:
 - Add optimizer semantics records for current builtins and relevant ANF ops.
 - Replace `CowConfig` with a more general semantics/config layer, or make `CowConfig`
   a subset of it.
+- Derive builtin-facing semantics from `BuiltinRegistry` / canonical builtin
+  metadata instead of creating a third independent builtin source of truth.
 - Update `use_count`, `liveness`, and `uniqueness` to consult the shared semantics
   layer where possible.
 - Keep current behavior unchanged.
@@ -276,12 +288,34 @@ Success criteria:
 - no pass needs to hardcode collection builtin roles independently
 - `make_prelude_cow_config` becomes a general prelude optimizer semantics builder
 
+Recommended kickoff slice:
+
+- add `boot/compiler/opt/semantics.tw` with a deliberately small API:
+  - effect classification for current ANF ops
+  - builtin semantics lookup by `FuncId`
+  - helpers for "fresh result", "read-only call", and "COW/in-place equivalent"
+- make `pipeline.tw` build optimizer semantics from `BuiltinRegistry`
+- migrate `dead_let` / `use_count.is_pure` first, then `uniqueness`
+- add parity tests that assert semantics-backed behavior matches current
+  `CowConfig` and `is_pure` behavior on existing optimizer fixtures
+
 ### Stage 2: Consolidate analysis helpers
 
 - Move repeated operand/local scanning into shared helpers.
 - Add reusable live-in/live-out support rather than recomputing `live_after(body)`
   in many places.
 - Introduce an escape/alias helper layer used by uniqueness and future passes.
+
+Current status:
+
+- done: shared optimizer helpers in `boot/compiler/opt/analysis.tw` for
+  local-operand scanning, global call-site counting, next-local allocation,
+  taint/escape pre-scan, loop push-site legality, and continuation-side
+  base-reuse legality
+- done: loop-region builder rewrite construction moved out of `uniqueness.tw`
+  into `boot/compiler/opt/loop_builder.tw`
+- remaining: decide whether any additional pass-local legality/state helpers in
+  `uniqueness.tw` are stable enough to share before starting Stage 3
 
 Success criteria:
 
@@ -312,6 +346,24 @@ Success criteria:
   op family recognized by the optimizer.
 - Extend the model to dict builders if needed.
 
+Current status:
+
+- done: `boot/compiler/opt/builder_region.tw` now defines a small
+  optimizer-facing `BuilderRegion` plus lowering back to the existing
+  `vector_builder_*` runtime calls
+- done: `boot/compiler/opt/loop_builder.tw` now emits that canonical region
+  shape instead of assembling the final nested builder-call ANF directly
+- done: `boot/compiler/builder_family.tw` now provides a shared builder-family
+  config derived from `BuiltinRegistry`, used by both optimizer semantics and
+  front-end collect lowering
+- done: `boot/compiler/lower_core.tw` now shares one collect-builder lowering
+  helper for both iterator and condition-form `collect`, so front-end collect
+  lowering also goes through a single canonical builder-call scaffold
+- decision: treat this as sufficient Stage 4 completion for now
+- deferred: do not add explicit transient IR forms unless a concrete optimization
+  or a second transient family shows that the shared builder-family boundary is
+  no longer enough
+
 Success criteria:
 
 - loop-region rewrite becomes a transform into a transient region, not a vector-only
@@ -328,6 +380,13 @@ If Stage 1-4 still leave too much syntactic matching:
 
 This stage is optional and should only happen if the semantics layer alone is not
 enough.
+
+Current decision:
+
+- skipped for now
+- revisit only if the current builder-family abstraction causes repeated awkward
+  pattern matching, blocks a desired optimization, or proves too narrow for
+  another transient family such as dict builders
 
 ## Impact on Current Passes
 
@@ -364,7 +423,9 @@ general reuse legality framework.
 ### `uniqueness.tw`
 
 This is the main beneficiary of the plan. It should become less prelude-specific and
-less tied to exact call forms.
+less tied to exact call forms. Stage 2 has already started shrinking it by moving
+shared legality analysis into `analysis.tw` and loop-region rewrite construction
+into `loop_builder.tw`.
 
 ### `defer_elim.tw`
 
@@ -515,7 +576,8 @@ generalized optimizer is to widen applicability without weakening correctness.
 For each stage in this plan, add tests before switching existing passes over:
 
 - Stage 1: contract-layer parity with current `CowConfig` behavior
-- Stage 2: shared-analysis parity with current liveness/taint behavior
+- Stage 2: shared-analysis parity with current liveness/taint behavior, plus
+  direct tests for extracted loop-region helpers
 - Stage 3: uniqueness rewrite parity on existing vector/dict/record tests
 - Stage 4: transient-region parity with current builder rewrite behavior
 - Stage 5: ANF-form parity if explicit builtin/transient ops are introduced

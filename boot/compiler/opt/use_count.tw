@@ -10,6 +10,7 @@
 // Dict is COW in Twinkle, so every function threads and returns the updated dict.
 
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics, is_pure_with_semantics}
 
 fn inc(uses: Dict<Int, Int>, id: Int) Dict<Int, Int> {
   uses[id] = uses[id].unwrap_or(0) + 1
@@ -137,44 +138,16 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
 // ── is_pure ─────────────────────────────────────────────────────────
 
 pub fn is_pure(op: AnfOp) Bool {
-  case op {
-    .ABinOp(binop, _, _, kind) => {
-      case kind {
-        .Int => {
-          case binop {
-            .Div => false,
-            .Mod => false,
-            _ => true,
-          }
-        },
-        _ => true,
-      }
-    },
-    .AInit(_) => true,
-    .AUnOp(_, _, _) => true,
-    .ARecord(_, _) => true,
-    .ARecordGet(_, _, _) => true,
-    .ARecordUpdate(_, _, _, _, _) => true,
-    .AVariant(_, _, _) => true,
-    .AArrayLit(_) => true,
-    .AMakeClosure(_, _) => true,
-    // Structural purity: recurse into branches/arms
-    .AIf(_, then_e, else_e) => expr_is_pure(then_e) and expr_is_pure(else_e),
-    .AMatch(_, arms) => {
-      for arm in arms {
-        if !expr_is_pure(arm.body) { return false }
-      }
-      true
-    },
-    _ => false,
-  }
+  is_pure_with_semantics(op, empty_optimizer_semantics())
 }
 
-// Check if an entire expression is pure (all ops in the let-chain are pure).
-// Return/Break/Continue are control-flow effects — dropping them changes behavior.
-fn expr_is_pure(expr: AnfExpr) Bool {
+pub fn is_pure_with_optimizer_semantics(op: AnfOp, body: AnfExpr, semantics: OptimizerSemantics) Bool {
+  is_pure_with_semantics(op, semantics) and expr_is_pure_with_semantics(body, semantics)
+}
+
+fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
   case expr {
-    .Let(_, op, body) => is_pure(op) and expr_is_pure(body),
+    .Let(_, op, body) => is_pure_with_semantics(op, semantics) and expr_is_pure_with_semantics(body, semantics),
     .Atom(_) => true,
     .Return(_) => false,
     .Break(_) => false,

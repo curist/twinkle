@@ -1,0 +1,33 @@
+// Shared vector-builder family metadata used by lowering and optimizer code.
+
+use compiler.core_ir.{FuncId}
+use compiler.builtins.{BuiltinRegistry}
+
+pub type BuilderConfig = .{
+  push_id: FuncId,
+  builder_new_id: FuncId,
+  builder_from_id: FuncId,
+  builder_push_id: FuncId,
+  builder_freeze_id: FuncId,
+}
+
+pub fn empty_builder_config() BuilderConfig {
+  zero := FuncId.{ id: 0 }
+  BuilderConfig.{
+    push_id: zero,
+    builder_new_id: zero,
+    builder_from_id: zero,
+    builder_push_id: zero,
+    builder_freeze_id: zero,
+  }
+}
+
+pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
+  BuilderConfig.{
+    push_id: b.id("vector_push"),
+    builder_new_id: b.id("vector_builder_new"),
+    builder_from_id: b.id("vector_builder_from"),
+    builder_push_id: b.id("vector_builder_push"),
+    builder_freeze_id: b.id("vector_builder_freeze"),
+  }
+}

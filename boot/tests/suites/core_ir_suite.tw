@@ -636,8 +636,23 @@ pub fn suite() runner.Suite {
       src := "fn f(xs: Vector<Int>) Vector<Int> { collect x in xs { x * 2 } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+      reg := make_builtin_registry()
       // Should produce builder pattern with loop
       try assert.ok(has_loop(body), "expected Loop in collect desugaring")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_new").id), "expected builder_new in collect lowering")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_push").id), "expected builder_push in collect lowering")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_freeze").id), "expected builder_freeze in collect lowering")
+      .Ok({})
+    })
+    .test("lower collect-while uses builder calls", fn() Result<Void, String> {
+      src := "fn f() Vector<Int> {\n  i := 0\n  collect i < 3 {\n    i = i + 1\n    i\n  }\n}"
+      lr := try lower_src(src)
+      body := lr.module.functions[0].body
+      reg := make_builtin_registry()
+      try assert.ok(has_loop(body), "expected Loop in collect-while desugaring")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_new").id), "expected builder_new in collect-while lowering")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_push").id), "expected builder_push in collect-while lowering")
+      try assert.ok(has_func_id(body, reg.id("vector_builder_freeze").id), "expected builder_freeze in collect-while lowering")
       .Ok({})
     })
     .test("lower array literal", fn() Result<Void, String> {

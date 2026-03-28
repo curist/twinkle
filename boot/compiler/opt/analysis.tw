@@ -1,0 +1,421 @@
+// Shared optimizer-oriented ANF analysis helpers.
+
+use compiler.core_ir.{LocalId, FuncId, CorePattern}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef}
+use compiler.anf_analysis.{set_has}
+use compiler.opt.liveness.{live_after}
+use compiler.opt.semantics.{OptimizerSemantics, call_info}
+
+fn atom_is_local(a: Atom, local: LocalId) Bool {
+  case a {
+    .ALocal(id) => id.id == local.id,
+    _ => false,
+  }
+}
+
+pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict<Int, Bool> {
+  tainted: Dict<Int, Bool> = Dict.new()
+  // Function params come from outside the function and are never unique.
+  for p in func.params {
+    tainted[p.local.id] = true
+  }
+  empty: Dict<Int, Bool> = Dict.new()
+  scan_tainted_expr(func.body, tainted, empty, semantics)
+}
+
+// The old base can be reused when the continuation immediately overwrites the
+// base with the new result, or when the old base is dead after the binding.
+pub fn base_reusable_after_binding(body: AnfExpr, base: LocalId, result: LocalId) Bool {
+  is_consume_reassign(body, base, result) or !set_has(live_after(body), base.id)
+}
+
+// Matches the loop accumulator pattern:
+//   let result = push(base, elem)
+//   let _ = assign(base, result)
+// and returns the pushed element when matched.
+pub fn loop_push_reassign_elem(op: AnfOp, body: AnfExpr, base: LocalId, push_id: FuncId, result: LocalId) Atom? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => {
+      if f.id == push_id.id and args.len() == 2
+        and atom_is_local(args[0], base)
+        and !atom_is_local(args[1], base)
+        and is_consume_reassign(body, base, result) {
+        .Some(args[1])
+      } else {
+        .None
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, semantics: OptimizerSemantics) Dict<Int, Bool> {
+  case expr {
+    .Let(local, op, body) => {
+      live_after_body := live_after(body)
+
+      init_alias_source: Int? = .None
+      case op {
+        .AInit(.ALocal(source)) => { init_alias_source = .Some(source.id) },
+        _ => {},
+      }
+
+      case init_alias_source {
+        .Some(source_id) => {
+          if set_has(live_after_body, source_id) {
+            tainted[source_id] = true
+          }
+        },
+        .None => {},
+      }
+
+      case op {
+        .AAssign(_, .ALocal(source)) => {
+          if set_has(live_after_body, source.id) or set_has(live_out, source.id) {
+            tainted[source.id] = true
+          }
+        },
+        _ => {},
+      }
+
+      tainted = scan_tainted_op(op, tainted, live_after_body, semantics)
+      tainted = scan_tainted_expr(body, tainted, live_out, semantics)
+
+      case init_alias_source {
+        .Some(source_id) => {
+          if set_has(live_out, source_id) and set_has(tainted, local.id) {
+            tainted[source_id] = true
+          }
+        },
+        .None => {},
+      }
+
+      tainted
+    },
+    _ => tainted,
+  }
+}
+
+fn scan_tainted_op(op: AnfOp, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, semantics: OptimizerSemantics) Dict<Int, Bool> {
+  case op {
+    .AMakeClosure(_, free_vars) => {
+      for v in free_vars { tainted[v.id] = true }
+      tainted
+    },
+    .AArrayLit(elems) => {
+      for a in elems {
+        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+      }
+      tainted
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        case f.value { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+      }
+      tainted
+    },
+    .AVariant(_, _, args) => {
+      for a in args {
+        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+      }
+      tainted
+    },
+    .ACall(.AGlobalFunc(func_id), args) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => {
+          case info.cow_base_arg {
+            .Some(base_arg) => {
+              idx := 0
+              for a in args {
+                if idx != base_arg {
+                  case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+                }
+                idx = idx + 1
+              }
+            },
+            .None => {
+              case info.effect {
+                .ReadOnly => {},
+                _ => {
+                  for a in args {
+                    case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+                  }
+                },
+              }
+            },
+          }
+        },
+        .None => {
+          for a in args {
+            case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+          }
+        },
+      }
+      tainted
+    },
+    .ACall(_, args) => {
+      for a in args {
+        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+      }
+      tainted
+    },
+    .AIf(_, then_e, else_e) => {
+      tainted = scan_tainted_expr(then_e, tainted, live_out, semantics)
+      scan_tainted_expr(else_e, tainted, live_out, semantics)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms { tainted = scan_tainted_expr(arm.body, tainted, live_out, semantics) }
+      tainted
+    },
+    .ALoop(body) => scan_tainted_expr(body, tainted, live_out, semantics),
+    .ADefer(body) => scan_tainted_expr(body, tainted, live_out, semantics),
+    _ => tainted,
+  }
+}
+
+// Returns the number of push+assign accumulator sites in a loop body, or .None
+// if the base local is used in any non-accumulator way.
+pub fn analyze_loop_push_sites(expr: AnfExpr, base: LocalId, push_id: FuncId) Int? {
+  case expr {
+    .Let(local, op, body) => {
+      case loop_push_reassign_elem(op, body, base, push_id, local) {
+        .Some(_) => {
+          case body {
+            .Let(_, _, rest) => {
+              rest_sites := try analyze_loop_push_sites(rest, base, push_id)
+              .Some(1 + rest_sites)
+            },
+            _ => .None,
+          }
+        },
+        .None => {
+          if op_uses_local_non_recursive(op, base) { return .None }
+          sub := try analyze_loop_push_sites_in_op(op, base, push_id)
+          rest := try analyze_loop_push_sites(body, base, push_id)
+          .Some(sub + rest)
+        },
+      }
+    },
+    .Atom(a) => {
+      if atom_is_local(a, base) { .None } else { .Some(0) }
+    },
+    .Return(.Some(a)) => {
+      if atom_is_local(a, base) { .None } else { .Some(0) }
+    },
+    .Break(.Some(a)) => {
+      if atom_is_local(a, base) { .None } else { .Some(0) }
+    },
+    .Return(.None) => .Some(0),
+    .Break(.None) => .Some(0),
+    .Continue => .Some(0),
+  }
+}
+
+fn analyze_loop_push_sites_in_op(op: AnfOp, base: LocalId, push_id: FuncId) Int? {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      t := try analyze_loop_push_sites(then_e, base, push_id)
+      e := try analyze_loop_push_sites(else_e, base, push_id)
+      .Some(t + e)
+    },
+    .AMatch(_, arms) => {
+      sites := 0
+      for arm in arms {
+        s := try analyze_loop_push_sites(arm.body, base, push_id)
+        sites = sites + s
+      }
+      .Some(sites)
+    },
+    .ALoop(body) => analyze_loop_push_sites(body, base, push_id),
+    .ADefer(body) => analyze_loop_push_sites(body, base, push_id),
+    _ => .Some(0),
+  }
+}
+
+pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
+  case op {
+    .ACall(callee, args) => {
+      if atom_is_local(callee, local) { return true }
+      for a in args {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .ABinOp(_, left, right, _) => atom_is_local(left, local) or atom_is_local(right, local),
+    .AUnOp(_, inner, _) => atom_is_local(inner, local),
+    .AMakeClosure(_, free_vars) => {
+      for v in free_vars {
+        if v.id == local.id { return true }
+      }
+      false
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        if atom_is_local(f.value, local) { return true }
+      }
+      false
+    },
+    .ARecordGet(target, _, _) => atom_is_local(target, local),
+    .ARecordUpdate(base, _, value, _, _) => atom_is_local(base, local) or atom_is_local(value, local),
+    .AVariant(_, _, args) => {
+      for a in args {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .AArrayLit(elems) => {
+      for a in elems {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
+    .AInit(value) => atom_is_local(value, local),
+    .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
+    .AIf(cond, _, _) => atom_is_local(cond, local),
+    .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
+    .ALoop(_) => false,
+    .ADefer(_) => false,
+    .AWrapAnyref(a, _) => atom_is_local(a, local),
+    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
+  }
+}
+
+pub fn count_global_call_sites(expr: AnfExpr, func_id: FuncId) Int {
+  case expr {
+    .Let(_, op, body) => count_global_call_sites_in_op(op, func_id) + count_global_call_sites(body, func_id),
+    _ => 0,
+  }
+}
+
+fn count_global_call_sites_in_op(op: AnfOp, func_id: FuncId) Int {
+  case op {
+    .ACall(.AGlobalFunc(f), _) => if f.id == func_id.id { 1 } else { 0 },
+    .AIf(_, then_e, else_e) => count_global_call_sites(then_e, func_id) + count_global_call_sites(else_e, func_id),
+    .AMatch(_, arms) => {
+      c := 0
+      for arm in arms { c = c + count_global_call_sites(arm.body, func_id) }
+      c
+    },
+    .ALoop(body) => count_global_call_sites(body, func_id),
+    .ADefer(body) => count_global_call_sites(body, func_id),
+    _ => 0,
+  }
+}
+
+fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
+  case body {
+    .Let(_, .AAssign(target, .ALocal(v)), _) => {
+      target.id == base.id and v.id == result.id
+    },
+    _ => false,
+  }
+}
+
+pub fn next_local_id(func: AnfFunctionDef) Int {
+  m := 0
+  for p in func.params {
+    if p.local.id > m { m = p.local.id }
+  }
+  m = max_local_in_expr(func.body, m)
+  m + 1
+}
+
+fn max_local_in_pattern(pat: CorePattern, m: Int) Int {
+  case pat {
+    .Var(local) => if local.id > m { local.id } else { m },
+    .Variant(_, _, fields) => {
+      r := m
+      for f in fields { r = max_local_in_pattern(f, r) }
+      r
+    },
+    _ => m,
+  }
+}
+
+fn max_local_in_atom(a: Atom, m: Int) Int {
+  case a {
+    .ALocal(id) => if id.id > m { id.id } else { m },
+    _ => m,
+  }
+}
+
+fn max_local_in_expr(expr: AnfExpr, m: Int) Int {
+  case expr {
+    .Let(local, op, body) => {
+      m2 := if local.id > m { local.id } else { m }
+      m3 := max_local_in_op(op, m2)
+      max_local_in_expr(body, m3)
+    },
+    .Atom(a) => max_local_in_atom(a, m),
+    .Return(.Some(a)) => max_local_in_atom(a, m),
+    .Break(.Some(a)) => max_local_in_atom(a, m),
+    _ => m,
+  }
+}
+
+fn max_local_in_op(op: AnfOp, m: Int) Int {
+  case op {
+    .ACall(callee, args) => {
+      r := max_local_in_atom(callee, m)
+      for a in args { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AIf(cond, then_e, else_e) => {
+      r := max_local_in_atom(cond, m)
+      r = max_local_in_expr(then_e, r)
+      max_local_in_expr(else_e, r)
+    },
+    .AMatch(scrutinee, arms) => {
+      r := max_local_in_atom(scrutinee, m)
+      for arm in arms {
+        r = max_local_in_pattern(arm.pattern, r)
+        r = max_local_in_expr(arm.body, r)
+      }
+      r
+    },
+    .ALoop(body) => max_local_in_expr(body, m),
+    .ADefer(body) => max_local_in_expr(body, m),
+    .ABinOp(_, left, right, _) => {
+      r := max_local_in_atom(left, m)
+      max_local_in_atom(right, r)
+    },
+    .AUnOp(_, inner, _) => max_local_in_atom(inner, m),
+    .AMakeClosure(_, free_vars) => {
+      r := m
+      for v in free_vars { r = if v.id > r { v.id } else { r } }
+      r
+    },
+    .ARecord(_, fields) => {
+      r := m
+      for f in fields { r = max_local_in_atom(f.value, r) }
+      r
+    },
+    .ARecordGet(target, _, _) => max_local_in_atom(target, m),
+    .ARecordUpdate(base, _, value, _, _) => {
+      r := max_local_in_atom(base, m)
+      max_local_in_atom(value, r)
+    },
+    .AVariant(_, _, args) => {
+      r := m
+      for a in args { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AArrayLit(elems) => {
+      r := m
+      for a in elems { r = max_local_in_atom(a, r) }
+      r
+    },
+    .AIndex(base, index, _, _) => {
+      r := max_local_in_atom(base, m)
+      max_local_in_atom(index, r)
+    },
+    .AInit(value) => max_local_in_atom(value, m),
+    .AAssign(target, value) => {
+      r := if target.id > m { target.id } else { m }
+      max_local_in_atom(value, r)
+    },
+    .AWrapAnyref(a, _) => max_local_in_atom(a, m),
+    .AUnwrapAnyref(a, _) => max_local_in_atom(a, m),
+  }
+}

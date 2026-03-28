@@ -1,36 +1,17 @@
 // Uniqueness rewrite: eliminate unnecessary COW allocations by proving single-ownership.
-// Decoupled from codegen via a CowConfig capability record.
+// Stage 1.5: consume shared optimizer semantics directly, while preserving the
+// old CowConfig entry point as a compatibility wrapper.
 //
 // Phase 1 — Pre-scan: build tainted set of locals that cannot be unique
 // Phase 2 — Forward rewrite: track unique set, rewrite COW ops to in-place
 // Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
 
-use compiler.core_ir.{LocalId, FuncId, CorePattern}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
+use compiler.core_ir.{LocalId, FuncId}
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
 use compiler.anf_analysis.{set_has}
-use compiler.opt.liveness.{live_after}
-
-// ── CowConfig types ────────────────────────────────────────────────
-
-pub type CowOpEntry = .{
-  base_arg: Int,
-  in_place_id: FuncId?,
-}
-
-pub type BuilderConfig = .{
-  push_id: FuncId,
-  builder_new_id: FuncId,
-  builder_from_id: FuncId,
-  builder_push_id: FuncId,
-  builder_freeze_id: FuncId,
-}
-
-pub type CowConfig = .{
-  cow_ops: Dict<Int, CowOpEntry>,
-  fresh_producer_ids: Dict<Int, Bool>,
-  read_only_ids: Dict<Int, Bool>,
-  builder: BuilderConfig,
-}
+use compiler.opt.analysis.{base_reusable_after_binding, collect_tainted, next_local_id}
+use compiler.opt.loop_builder.{rewrite_loop_region}
+use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, op_has_fresh_result, optimizer_semantics_from_cow_config, reusable_update_site}
 
 // ── set helpers ────────────────────────────────────────────────────
 
@@ -44,176 +25,11 @@ fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
   s
 }
 
-// ── Phase 1: Pre-scan — collect tainted locals ─────────────────────
-
-fn collect_tainted(func: AnfFunctionDef, config: CowConfig) Dict<Int, Bool> {
-  tainted: Dict<Int, Bool> = Dict.new()
-  // Function params come from outside — never unique
-  for p in func.params {
-    tainted[p.local.id] = true
-  }
-  empty: Dict<Int, Bool> = Dict.new()
-  scan_tainted_expr(func.body, tainted, empty, config)
-}
-
-fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, config: CowConfig) Dict<Int, Bool> {
-  case expr {
-    .Let(local, op, body) => {
-      live_after_body := live_after(body)
-
-      // Track init alias source for branch-boundary check later
-      init_alias_source: Int? = .None
-      case op {
-        .AInit(.ALocal(source)) => { init_alias_source = .Some(source.id) },
-        _ => {},
-      }
-
-      // Alias copy: let y = x — taint source when source is still live after
-      case init_alias_source {
-        .Some(source_id) => {
-          if set_has(live_after_body, source_id) {
-            tainted[source_id] = true
-          }
-        },
-        .None => {},
-      }
-
-      // Alias copy through reassignment: y = x
-      // Reassignment can cross sub-expression boundaries (e.g. branch writes
-      // to an outer local). Include outer live_out for conservative safety.
-      case op {
-        .AAssign(_, .ALocal(source)) => {
-          if set_has(live_after_body, source.id) or set_has(live_out, source.id) {
-            tainted[source.id] = true
-          }
-        },
-        _ => {},
-      }
-
-      tainted = scan_tainted_op(op, tainted, live_after_body, config)
-      tainted = scan_tainted_expr(body, tainted, live_out, config)
-
-      // Branch-boundary alias escape:
-      // If an init alias `y := x` occurs in a nested scope and `y` escapes
-      // (e.g. captured by a closure assigned outward), then `x` is aliased
-      // across the boundary when `x` is live-out of the parent continuation.
-      case init_alias_source {
-        .Some(source_id) => {
-          if set_has(live_out, source_id) and set_has(tainted, local.id) {
-            tainted[source_id] = true
-          }
-        },
-        .None => {},
-      }
-
-      tainted
-    },
-    _ => tainted,
-  }
-}
-
-fn scan_tainted_op(op: AnfOp, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, config: CowConfig) Dict<Int, Bool> {
-  case op {
-    // Escaped: captured by closure
-    .AMakeClosure(_, free_vars) => {
-      for v in free_vars { tainted[v.id] = true }
-      tainted
-    },
-    // Stored in container — reference escapes
-    .AArrayLit(elems) => {
-      for a in elems {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      tainted
-    },
-    .ARecord(_, fields) => {
-      for f in fields {
-        case f.value { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      tainted
-    },
-    .AVariant(_, _, args) => {
-      for a in args {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      tainted
-    },
-    // Calls: COW ops taint only non-base args; non-COW non-read-only taint all
-    .ACall(.AGlobalFunc(func_id), args) => {
-      case config.cow_ops[func_id.id] {
-        .Some(info) => {
-          idx := 0
-          for a in args {
-            if idx != info.base_arg {
-              case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-            }
-            idx = idx + 1
-          }
-        },
-        .None => {
-          if !set_has(config.read_only_ids, func_id.id) {
-            for a in args {
-              case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-            }
-          }
-        },
-      }
-      tainted
-    },
-    // Indirect call (closure): taint all local args
-    .ACall(_, args) => {
-      for a in args {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      tainted
-    },
-    // Recurse into sub-expressions
-    .AIf(_, then_e, else_e) => {
-      tainted = scan_tainted_expr(then_e, tainted, live_out, config)
-      scan_tainted_expr(else_e, tainted, live_out, config)
-    },
-    .AMatch(_, arms) => {
-      for arm in arms { tainted = scan_tainted_expr(arm.body, tainted, live_out, config) }
-      tainted
-    },
-    .ALoop(body) => scan_tainted_expr(body, tainted, live_out, config),
-    .ADefer(inner) => scan_tainted_expr(inner, tainted, live_out, config),
-    _ => tainted,
-  }
-}
-
 // ── Phase 2: Forward rewrite ───────────────────────────────────────
-
-fn is_fresh_producer(op: AnfOp, config: CowConfig) Bool {
-  case op {
-    .AArrayLit(_) => true,
-    .ARecord(_, _) => true,
-    .AVariant(_, _, _) => true,
-    .ACall(.AGlobalFunc(f), _) => set_has(config.fresh_producer_ids, f.id),
-    _ => false,
-  }
-}
 
 fn is_empty_array_lit(op: AnfOp) Bool {
   case op {
     .AArrayLit(elems) => elems.len() == 0,
-    _ => false,
-  }
-}
-
-fn atom_is_local(a: Atom, local: LocalId) Bool {
-  case a {
-    .ALocal(id) => id.id == local.id,
-    _ => false,
-  }
-}
-
-// Check if body starts with Let(_, AAssign(base, ALocal(result)), ...)
-fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
-  case body {
-    .Let(_, .AAssign(target, .ALocal(v)), _) => {
-      target.id == base.id and v.id == result.id
-    },
     _ => false,
   }
 }
@@ -223,18 +39,117 @@ type RwState = .{
   tainted: Dict<Int, Bool>,
   unique: Dict<Int, Bool>,
   known_empty: Dict<Int, Bool>,
-  config: CowConfig,
+  config: OptimizerSemantics,
   next_local: Int,
 }
 
-fn alloc_local(st: RwState) RwState {
+fn local_is_owned(st: RwState, local: LocalId) Bool {
+  set_has(st.unique, local.id) and !set_has(st.tainted, local.id)
+}
+
+fn with_unique_local(st: RwState, local: LocalId) RwState {
+  RwState.{
+    tainted: st.tainted,
+    unique: set_add(st.unique, local.id),
+    known_empty: st.known_empty,
+    config: st.config,
+    next_local: st.next_local,
+  }
+}
+
+fn with_known_empty_local(st: RwState, local: LocalId) RwState {
   RwState.{
     tainted: st.tainted,
     unique: st.unique,
+    known_empty: set_add(st.known_empty, local.id),
+    config: st.config,
+    next_local: st.next_local,
+  }
+}
+
+fn without_local_ownership(st: RwState, local: LocalId) RwState {
+  RwState.{
+    tainted: st.tainted,
+    unique: set_remove(st.unique, local.id),
+    known_empty: set_remove(st.known_empty, local.id),
+    config: st.config,
+    next_local: st.next_local,
+  }
+}
+
+fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
+  st = without_local_ownership(st, target)
+  if !local_is_owned(st, source) { return st }
+
+  st = RwState.{
+    tainted: st.tainted,
+    unique: set_add(set_remove(st.unique, source.id), target.id),
     known_empty: st.known_empty,
     config: st.config,
-    next_local: st.next_local + 1,
+    next_local: st.next_local,
   }
+  if set_has(st.known_empty, source.id) {
+    st = RwState.{
+      tainted: st.tainted,
+      unique: st.unique,
+      known_empty: set_add(set_remove(st.known_empty, source.id), target.id),
+      config: st.config,
+      next_local: st.next_local,
+    }
+  }
+  st
+}
+
+fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
+  st = with_unique_local(st, local)
+  RwState.{
+    tainted: st.tainted,
+    unique: st.unique,
+    known_empty: set_remove(st.known_empty, local.id),
+    config: st.config,
+    next_local: st.next_local,
+  }
+}
+
+type UpdateRewrite = .{
+  op: AnfOp,
+  st: RwState,
+}
+
+fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: RwState) UpdateRewrite {
+  new_op := op
+  case reusable_update_site(new_op, st.config) {
+    .Some(site) => {
+      if local_is_owned(st, site.base_local) and base_reusable_after_binding(body, site.base_local, bind_local) {
+        case site.kind {
+          .RecordUpdate => {
+            case new_op {
+              .ARecordUpdate(base, fld, value, _, type_id) => {
+                new_op = AnfOp.ARecordUpdate(base, fld, value, true, type_id)
+              },
+              _ => {},
+            }
+          },
+          .Call => {
+            case site.in_place_equivalent {
+              .Some(in_place) => {
+                case new_op {
+                  .ACall(_, args) => {
+                    new_op = AnfOp.ACall(.AGlobalFunc(in_place), args)
+                  },
+                  _ => {},
+                }
+              },
+              .None => {},
+            }
+            st = with_consumed_update_result(st, bind_local)
+          },
+        }
+      }
+    },
+    _ => {},
+  }
+  UpdateRewrite.{ op: new_op, st: st }
 }
 
 fn rewrite_expr(expr: AnfExpr, st: RwState) AnfExpr {
@@ -253,36 +168,17 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) AnfExpr {
       }
 
       // Track fresh producers → unique
-      if is_fresh_producer(op, st.config) {
-        st = RwState.{
-          tainted: st.tainted, unique: set_add(st.unique, local.id),
-          known_empty: st.known_empty, config: st.config, next_local: st.next_local,
-        }
+      if op_has_fresh_result(op, st.config) {
+        st = with_unique_local(st, local)
       }
       if is_empty_array_lit(op) {
-        st = RwState.{
-          tainted: st.tainted, unique: st.unique,
-          known_empty: set_add(st.known_empty, local.id), config: st.config, next_local: st.next_local,
-        }
+        st = with_known_empty_local(st, local)
       }
 
       // AInit uniqueness transfer: let x = init(y) where y is unique → x is unique
       case op {
         .AInit(.ALocal(source)) => {
-          if set_has(st.unique, source.id) and !set_has(st.tainted, source.id) {
-            st = RwState.{
-              tainted: st.tainted,
-              unique: set_add(set_remove(st.unique, source.id), local.id),
-              known_empty: st.known_empty, config: st.config, next_local: st.next_local,
-            }
-            if set_has(st.known_empty, source.id) {
-              st = RwState.{
-                tainted: st.tainted, unique: st.unique,
-                known_empty: set_add(set_remove(st.known_empty, source.id), local.id),
-                config: st.config, next_local: st.next_local,
-              }
-            }
-          }
+          st = transfer_owned_local(st, source, local)
         },
         _ => {},
       }
@@ -290,91 +186,18 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) AnfExpr {
       // AAssign uniqueness transfer
       case op {
         .AAssign(target, .ALocal(source)) => {
-          // Kill old target uniqueness
-          st = RwState.{
-            tainted: st.tainted,
-            unique: set_remove(st.unique, target.id),
-            known_empty: set_remove(st.known_empty, target.id),
-            config: st.config, next_local: st.next_local,
-          }
-          if set_has(st.unique, source.id) and !set_has(st.tainted, source.id) {
-            st = RwState.{
-              tainted: st.tainted,
-              unique: set_add(set_remove(st.unique, source.id), target.id),
-              known_empty: st.known_empty, config: st.config, next_local: st.next_local,
-            }
-            if set_has(st.known_empty, source.id) {
-              st = RwState.{
-                tainted: st.tainted, unique: st.unique,
-                known_empty: set_add(set_remove(st.known_empty, source.id), target.id),
-                config: st.config, next_local: st.next_local,
-              }
-            }
-          }
+          st = transfer_owned_local(st, source, target)
         },
         .AAssign(target, _) => {
           // Non-local assign: kill uniqueness
-          st = RwState.{
-            tainted: st.tainted,
-            unique: set_remove(st.unique, target.id),
-            known_empty: set_remove(st.known_empty, target.id),
-            config: st.config, next_local: st.next_local,
-          }
+          st = without_local_ownership(st, target)
         },
         _ => {},
       }
 
-      // Record update reuse annotation
-      new_op := op
-      case op {
-        .ARecordUpdate(.ALocal(base), fld, value, _, type_id) => {
-          // ARecordUpdate produces a fresh record
-          st = RwState.{
-            tainted: st.tainted, unique: set_add(st.unique, local.id),
-            known_empty: st.known_empty, config: st.config, next_local: st.next_local,
-          }
-          can_rewrite := is_consume_reassign(body, base, local) or !set_has(live_after(body), base.id)
-          if set_has(st.unique, base.id) and !set_has(st.tainted, base.id) and can_rewrite {
-            new_op = AnfOp.ARecordUpdate(.ALocal(base), fld, value, true, type_id)
-          }
-        },
-        _ => {},
-      }
-
-      // COW rewrite
-      case new_op {
-        .ACall(.AGlobalFunc(func_id), args) => {
-          case st.config.cow_ops[func_id.id] {
-            .Some(info) => {
-              base_atom := args[info.base_arg]
-              case base_atom {
-                .ALocal(base) => {
-                  if set_has(st.unique, base.id) and !set_has(st.tainted, base.id) {
-                    can_rw := is_consume_reassign(body, base, local) or !set_has(live_after(body), base.id)
-                    if can_rw {
-                      case info.in_place_id {
-                        .Some(in_place) => {
-                          new_op = AnfOp.ACall(.AGlobalFunc(in_place), args)
-                        },
-                        .None => {},
-                      }
-                      // Result inherits uniqueness
-                      st = RwState.{
-                        tainted: st.tainted, unique: set_add(st.unique, local.id),
-                        known_empty: set_remove(st.known_empty, local.id),
-                        config: st.config, next_local: st.next_local,
-                      }
-                    }
-                  }
-                },
-                _ => {},
-              }
-            },
-            .None => {},
-          }
-        },
-        _ => {},
-      }
+      update := rewrite_reusable_update(op, body, local, st)
+      new_op := update.op
+      st = update.st
 
       // Recurse into op sub-expressions (branches, loops)
       new_op = rewrite_op(new_op, st)
@@ -411,382 +234,25 @@ fn rewrite_op(op: AnfOp, st: RwState) AnfOp {
 
 // ── Phase 3: Loop region rewrite ───────────────────────────────────
 
-// Check if base is only used via push+reassign pattern in loop body.
-// Returns number of push sites, or .None if invalid.
-fn analyze_loop_expr(expr: AnfExpr, base: LocalId, push_id: FuncId) Int? {
-  case expr {
-    .Let(local, op, body) => {
-      // Check for push(base, elem) + assign(base, result) pattern
-      case op {
-        .ACall(.AGlobalFunc(f), args) => {
-          if f.id == push_id.id and args.len() == 2
-            and atom_is_local(args[0], base)
-            and !atom_is_local(args[1], base)
-            and is_consume_reassign(body, base, local) {
-            // Valid push site. Skip the assign node and continue.
-            case body {
-              .Let(_, _, rest) => {
-                rest_sites := try analyze_loop_expr(rest, base, push_id)
-                return .Some(1 + rest_sites)
-              },
-              _ => { return .None },
-            }
-          }
-          // Not a push — check if op uses base at all
-          if op_uses_local(op, base) { return .None }
-          sub := try analyze_loop_op_subexpr(op, base, push_id)
-          rest := try analyze_loop_expr(body, base, push_id)
-          .Some(sub + rest)
-        },
-        _ => {
-          if op_uses_local(op, base) { return .None }
-          sub := try analyze_loop_op_subexpr(op, base, push_id)
-          rest := try analyze_loop_expr(body, base, push_id)
-          .Some(sub + rest)
-        },
-      }
-    },
-    .Atom(a) => {
-      if atom_is_local(a, base) { .None } else { .Some(0) }
-    },
-    .Return(.Some(a)) => {
-      if atom_is_local(a, base) { .None } else { .Some(0) }
-    },
-    .Break(.Some(a)) => {
-      if atom_is_local(a, base) { .None } else { .Some(0) }
-    },
-    .Return(.None) => .Some(0),
-    .Break(.None) => .Some(0),
-    .Continue => .Some(0),
-  }
-}
-
-fn analyze_loop_op_subexpr(op: AnfOp, base: LocalId, push_id: FuncId) Int? {
-  case op {
-    .AIf(_, then_e, else_e) => {
-      t := try analyze_loop_expr(then_e, base, push_id)
-      e := try analyze_loop_expr(else_e, base, push_id)
-      .Some(t + e)
-    },
-    .AMatch(_, arms) => {
-      sites := 0
-      for arm in arms {
-        s := try analyze_loop_expr(arm.body, base, push_id)
-        sites = sites + s
-      }
-      .Some(sites)
-    },
-    .ALoop(body) => analyze_loop_expr(body, base, push_id),
-    .ADefer(body) => analyze_loop_expr(body, base, push_id),
-    _ => .Some(0),
-  }
-}
-
-fn op_uses_local(op: AnfOp, local: LocalId) Bool {
-  case op {
-    .ACall(callee, args) => {
-      if atom_is_local(callee, local) { return true }
-      for a in args {
-        if atom_is_local(a, local) { return true }
-      }
-      false
-    },
-    .ABinOp(_, left, right, _) => atom_is_local(left, local) or atom_is_local(right, local),
-    .AUnOp(_, inner, _) => atom_is_local(inner, local),
-    .AMakeClosure(_, free_vars) => {
-      for v in free_vars {
-        if v.id == local.id { return true }
-      }
-      false
-    },
-    .ARecord(_, fields) => {
-      for f in fields {
-        if atom_is_local(f.value, local) { return true }
-      }
-      false
-    },
-    .ARecordGet(target, _, _) => atom_is_local(target, local),
-    .ARecordUpdate(base, _, value, _, _) => atom_is_local(base, local) or atom_is_local(value, local),
-    .AVariant(_, _, args) => {
-      for a in args {
-        if atom_is_local(a, local) { return true }
-      }
-      false
-    },
-    .AArrayLit(elems) => {
-      for a in elems {
-        if atom_is_local(a, local) { return true }
-      }
-      false
-    },
-    .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
-    .AInit(value) => atom_is_local(value, local),
-    .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
-    .AIf(cond, _, _) => atom_is_local(cond, local),
-    .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
-    .ALoop(_) => false,
-    .ADefer(_) => false,
-    .AWrapAnyref(a, _) => atom_is_local(a, local),
-    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
-  }
-}
-
-// Rewrite push(base, elem) + assign(base, result) → builder_push(builder, elem) + void assign
-fn rewrite_loop_expr(expr: AnfExpr, base: LocalId, builder: LocalId, push_id: FuncId, builder_push_id: FuncId) AnfExpr {
-  case expr {
-    .Let(local, op, body) => {
-      case op {
-        .ACall(.AGlobalFunc(f), args) => {
-          if f.id == push_id.id and args.len() == 2
-            and atom_is_local(args[0], base)
-            and !atom_is_local(args[1], base)
-            and is_consume_reassign(body, base, local) {
-            // Rewrite: push(base, elem) → builder_push(builder, elem)
-            new_op := AnfOp.ACall(.AGlobalFunc(builder_push_id), [.ALocal(builder), args[1]])
-            case body {
-              .Let(assign_local, _, rest) => {
-                // Replace assign with void init (builder_push returns void)
-                new_assign := AnfOp.AInit(.ALitVoid)
-                return AnfExpr.Let(local, new_op,
-                  AnfExpr.Let(assign_local, new_assign,
-                    rewrite_loop_expr(rest, base, builder, push_id, builder_push_id)))
-              },
-              _ => {},
-            }
-          }
-        },
-        _ => {},
-      }
-      new_op := rewrite_loop_op_subexpr(op, base, builder, push_id, builder_push_id)
-      AnfExpr.Let(local, new_op, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
-    },
-    _ => expr,
-  }
-}
-
-fn rewrite_loop_op_subexpr(op: AnfOp, base: LocalId, builder: LocalId, push_id: FuncId, builder_push_id: FuncId) AnfOp {
-  case op {
-    .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(cond,
-        rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
-        rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id))
-    },
-    .AMatch(scrutinee, arms) => {
-      new_arms: Vector<AnfMatchArm> = collect arm in arms {
-        AnfMatchArm.{
-          pattern: arm.pattern,
-          body: rewrite_loop_expr(arm.body, base, builder, push_id, builder_push_id),
-        }
-      }
-      AnfOp.AMatch(scrutinee, new_arms)
-    },
-    .ALoop(body) => {
-      AnfOp.ALoop(rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
-    },
-    .ADefer(body) => {
-      AnfOp.ADefer(rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
-    },
-    _ => op,
-  }
-}
-
-// Count how many calls to builder_push_id exist in an expression (for verification)
-fn count_builder_push_sites(expr: AnfExpr, builder_push_id: FuncId) Int {
-  case expr {
-    .Let(_, op, body) => {
-      op_count := case op {
-        .ACall(.AGlobalFunc(f), _) => if f.id == builder_push_id.id { 1 } else { 0 },
-        .AIf(_, then_e, else_e) => {
-          count_builder_push_sites(then_e, builder_push_id) + count_builder_push_sites(else_e, builder_push_id)
-        },
-        .AMatch(_, arms) => {
-          c := 0
-          for arm in arms { c = c + count_builder_push_sites(arm.body, builder_push_id) }
-          c
-        },
-        .ALoop(b) => count_builder_push_sites(b, builder_push_id),
-        .ADefer(b) => count_builder_push_sites(b, builder_push_id),
-        _ => 0,
-      }
-      op_count + count_builder_push_sites(body, builder_push_id)
-    },
-    _ => 0,
-  }
-}
-
 fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: RwState) AnfExpr? {
   // Find candidates: unique, non-tainted locals
   candidates: Vector<Int> = collect k in st.unique.keys() {
     if !set_has(st.tainted, k) { k } else { continue }
   }
 
-  push_id := st.config.builder.push_id
   for base_id in candidates {
     base := LocalId.{ id: base_id }
-    case analyze_loop_expr(loop_body, base, push_id) {
-      .Some(sites) => {
-        if sites == 0 { continue }
-
-        builder_local := LocalId.{ id: st.next_local }
-        freeze_local := LocalId.{ id: st.next_local + 1 }
-        assign_local := LocalId.{ id: st.next_local + 2 }
-
-        use_builder_new := set_has(st.known_empty, base_id)
-
-        rewritten_body := rewrite_loop_expr(loop_body, base, builder_local,
-          push_id, st.config.builder.builder_push_id)
-
-        // Safety invariant: verify rewrite site count matches analysis
-        rewritten_sites := count_builder_push_sites(rewritten_body, st.config.builder.builder_push_id)
-        if rewritten_sites == 0 or rewritten_sites != sites { continue }
-
-        builder_func := if use_builder_new {
-          st.config.builder.builder_new_id
-        } else {
-          st.config.builder.builder_from_id
-        }
-        builder_args: Vector<Atom> = if use_builder_new {
-          []
-        } else {
-          [.ALocal(base)]
-        }
-
-        // Build: Let(builder, builder_new/from(...),
-        //   Let(bind_local, Loop(rewritten_body),
-        //     Let(freeze, freeze(builder),
-        //       Let(assign, Assign(base, freeze),
-        //         cont))))
-        result: AnfExpr = AnfExpr.Let(builder_local,
-          .ACall(.AGlobalFunc(builder_func), builder_args),
-          AnfExpr.Let(bind_local,
-            .ALoop(rewritten_body),
-            AnfExpr.Let(freeze_local,
-              .ACall(.AGlobalFunc(st.config.builder.builder_freeze_id), [.ALocal(builder_local)]),
-              AnfExpr.Let(assign_local,
-                .AAssign(base, .ALocal(freeze_local)),
-                cont))))
-
-        return .Some(result)
-      },
+    case rewrite_loop_region(bind_local, loop_body, cont, base, st.next_local, set_has(st.known_empty, base_id), st.config.builder) {
+      .Some(result) => { return .Some(result) },
       .None => {},
     }
   }
   .None
 }
 
-// ── next_local_id ──────────────────────────────────────────────────
-
-fn max_local_in_pattern(pat: CorePattern, m: Int) Int {
-  case pat {
-    .Var(local) => if local.id > m { local.id } else { m },
-    .Variant(_, _, fields) => {
-      r := m
-      for f in fields { r = max_local_in_pattern(f, r) }
-      r
-    },
-    _ => m,
-  }
-}
-
-fn max_local_in_atom(a: Atom, m: Int) Int {
-  case a {
-    .ALocal(id) => if id.id > m { id.id } else { m },
-    _ => m,
-  }
-}
-
-fn max_local_in_expr(expr: AnfExpr, m: Int) Int {
-  case expr {
-    .Let(local, op, body) => {
-      m2 := if local.id > m { local.id } else { m }
-      m3 := max_local_in_op(op, m2)
-      max_local_in_expr(body, m3)
-    },
-    .Atom(a) => max_local_in_atom(a, m),
-    .Return(.Some(a)) => max_local_in_atom(a, m),
-    .Break(.Some(a)) => max_local_in_atom(a, m),
-    _ => m,
-  }
-}
-
-fn max_local_in_op(op: AnfOp, m: Int) Int {
-  case op {
-    .ACall(callee, args) => {
-      r := max_local_in_atom(callee, m)
-      for a in args { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AIf(cond, then_e, else_e) => {
-      r := max_local_in_atom(cond, m)
-      r = max_local_in_expr(then_e, r)
-      max_local_in_expr(else_e, r)
-    },
-    .AMatch(scrutinee, arms) => {
-      r := max_local_in_atom(scrutinee, m)
-      for arm in arms {
-        r = max_local_in_pattern(arm.pattern, r)
-        r = max_local_in_expr(arm.body, r)
-      }
-      r
-    },
-    .ALoop(body) => max_local_in_expr(body, m),
-    .ADefer(body) => max_local_in_expr(body, m),
-    .ABinOp(_, left, right, _) => {
-      r := max_local_in_atom(left, m)
-      max_local_in_atom(right, r)
-    },
-    .AUnOp(_, inner, _) => max_local_in_atom(inner, m),
-    .AMakeClosure(_, free_vars) => {
-      r := m
-      for v in free_vars { r = if v.id > r { v.id } else { r } }
-      r
-    },
-    .ARecord(_, fields) => {
-      r := m
-      for f in fields { r = max_local_in_atom(f.value, r) }
-      r
-    },
-    .ARecordGet(target, _, _) => max_local_in_atom(target, m),
-    .ARecordUpdate(base, _, value, _, _) => {
-      r := max_local_in_atom(base, m)
-      max_local_in_atom(value, r)
-    },
-    .AVariant(_, _, args) => {
-      r := m
-      for a in args { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AArrayLit(elems) => {
-      r := m
-      for a in elems { r = max_local_in_atom(a, r) }
-      r
-    },
-    .AIndex(base, index, _, _) => {
-      r := max_local_in_atom(base, m)
-      max_local_in_atom(index, r)
-    },
-    .AInit(value) => max_local_in_atom(value, m),
-    .AAssign(target, value) => {
-      r := if target.id > m { target.id } else { m }
-      max_local_in_atom(value, r)
-    },
-    .AWrapAnyref(a, _) => max_local_in_atom(a, m),
-    .AUnwrapAnyref(a, _) => max_local_in_atom(a, m),
-  }
-}
-
-fn next_local_id(func: AnfFunctionDef) Int {
-  m := 0
-  for p in func.params {
-    if p.local.id > m { m = p.local.id }
-  }
-  m = max_local_in_expr(func.body, m)
-  m + 1
-}
-
 // ── Entry point ────────────────────────────────────────────────────
 
-pub fn uniqueness_rewrite(func: AnfFunctionDef, config: CowConfig) AnfFunctionDef {
+pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
   tainted := collect_tainted(func, config)
   st: RwState = RwState.{
     tainted: tainted,
@@ -804,4 +270,8 @@ pub fn uniqueness_rewrite(func: AnfFunctionDef, config: CowConfig) AnfFunctionDe
     body: new_body,
     return_ty: func.return_ty,
   }
+}
+
+pub fn uniqueness_rewrite(func: AnfFunctionDef, config: CowConfig) AnfFunctionDef {
+  uniqueness_rewrite_with_semantics(func, optimizer_semantics_from_cow_config(config))
 }

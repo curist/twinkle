@@ -20,10 +20,14 @@ use tests.suites.core_ir_suite
 use tests.suites.anf_suite
 use tests.suites.anf_lower_suite
 use tests.suites.anf_analysis_suite
+use tests.suites.opt_builder_region_suite
 use tests.suites.opt_dead_let_suite
 use tests.suites.opt_const_fold_suite
+use tests.suites.opt_analysis_suite
+use tests.suites.opt_loop_builder_suite
 use tests.suites.opt_pipeline_suite
 use tests.suites.opt_liveness_suite
+use tests.suites.opt_semantics_suite
 use tests.suites.opt_uniqueness_suite
 use tests.suites.opt_defer_elim_suite
 use tests.suites.builtins_suite
@@ -67,10 +71,14 @@ runner.run_all([
   anf_suite.suite(),
   anf_lower_suite.suite(),
   anf_analysis_suite.suite(),
+  opt_builder_region_suite.suite(),
   opt_dead_let_suite.suite(),
   opt_const_fold_suite.suite(),
+  opt_analysis_suite.suite(),
+  opt_loop_builder_suite.suite(),
   opt_pipeline_suite.suite(),
   opt_liveness_suite.suite(),
+  opt_semantics_suite.suite(),
   opt_uniqueness_suite.suite(),
   opt_defer_elim_suite.suite(),
   builtins_suite.suite(),

@@ -1,0 +1,131 @@
+use tests.runner
+use tests.assert
+use compiler.core_ir.{LocalId}
+use compiler.anf.{Atom, AnfOp}
+use compiler.builder_family.{vector_builder_config}
+use compiler.builtins.{make_builtin_registry}
+use compiler.opt.semantics.{EffectKind, make_prelude_optimizer_semantics, op_effect, op_has_fresh_result, is_pure_with_semantics, reusable_update_site}
+
+fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
+fn test_vector_len_effect_is_read_only() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  case op_effect(op, semantics) {
+    .ReadOnly => .Ok({}),
+    _ => .Err("expected vector_len effect to be ReadOnly"),
+  }
+}
+
+fn test_vector_set_unsafe_has_in_place_equivalent() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  case semantics.call_semantics[reg.id("vector_set_unsafe").id] {
+    .Some(info) => {
+      try assert.is_some(info.cow_base_arg)
+      base_arg := try info.cow_base_arg.ok_or("missing cow_base_arg")
+      try assert.int_eq(base_arg, 0)
+      in_place := try info.in_place_equivalent.ok_or("missing in_place_equivalent")
+      assert.int_eq(in_place.id, reg.id("vector_set_in_place").id)
+    },
+    .None => .Err("missing vector_set_unsafe semantics"),
+  }
+}
+
+fn test_vector_make_is_fresh_producer() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  case semantics.call_semantics[reg.id("vector_make").id] {
+    .Some(info) => assert.is_true(info.fresh_result),
+    .None => .Err("missing vector_make semantics"),
+  }
+}
+
+fn test_array_lit_has_fresh_result() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .AArrayLit([.ALitInt(1)])
+  assert.is_true(op_has_fresh_result(op, semantics))
+}
+
+fn test_vector_make_call_has_fresh_result() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_make")), [])
+  assert.is_true(op_has_fresh_result(op, semantics))
+}
+
+fn test_vector_len_call_not_fresh_result() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  assert.is_false(op_has_fresh_result(op, semantics))
+}
+
+fn test_record_update_has_fresh_result() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ARecordUpdate(.ALocal(lid(0)), .{ id: 0 }, .ALitInt(1), false, .{ id: 7 })
+  assert.is_true(op_has_fresh_result(op, semantics))
+}
+
+fn test_vector_set_reusable_update_site() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_set_unsafe")), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)])
+  case reusable_update_site(op, semantics) {
+    .Some(site) => {
+      try assert.int_eq(site.base_local.id, 0)
+      in_place := try site.in_place_equivalent.ok_or("missing in-place equivalent")
+      assert.int_eq(in_place.id, reg.id("vector_set_in_place").id)
+    },
+    .None => .Err("expected vector_set_unsafe reusable update site"),
+  }
+}
+
+fn test_record_update_reusable_update_site() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ARecordUpdate(.ALocal(lid(0)), .{ id: 0 }, .ALitInt(1), false, .{ id: 7 })
+  case reusable_update_site(op, semantics) {
+    .Some(site) => {
+      try assert.int_eq(site.base_local.id, 0)
+      assert.is_none(site.in_place_equivalent)
+    },
+    .None => .Err("expected record update reusable update site"),
+  }
+}
+
+fn test_read_only_call_stays_impure_for_dead_let_stage1() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  assert.is_false(is_pure_with_semantics(op, semantics))
+}
+
+fn test_builder_config_matches_shared_family_config() Result<Void, String> {
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  shared := vector_builder_config(reg)
+  try assert.int_eq(semantics.builder.push_id.id, shared.push_id.id)
+  try assert.int_eq(semantics.builder.builder_new_id.id, shared.builder_new_id.id)
+  try assert.int_eq(semantics.builder.builder_from_id.id, shared.builder_from_id.id)
+  try assert.int_eq(semantics.builder.builder_push_id.id, shared.builder_push_id.id)
+  assert.int_eq(semantics.builder.builder_freeze_id.id, shared.builder_freeze_id.id)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("Opt: Semantics")
+    .test("vector_len effect is read-only", test_vector_len_effect_is_read_only)
+    .test("vector_set_unsafe has in-place equivalent", test_vector_set_unsafe_has_in_place_equivalent)
+    .test("vector_make is fresh producer", test_vector_make_is_fresh_producer)
+    .test("array lit has fresh result", test_array_lit_has_fresh_result)
+    .test("vector_make call has fresh result", test_vector_make_call_has_fresh_result)
+    .test("vector_len call not fresh result", test_vector_len_call_not_fresh_result)
+    .test("record update has fresh result", test_record_update_has_fresh_result)
+    .test("vector_set reusable update site", test_vector_set_reusable_update_site)
+    .test("record update reusable update site", test_record_update_reusable_update_site)
+    .test("read-only call stays impure for stage1 dead-let parity", test_read_only_call_stays_impure_for_dead_let_stage1)
+    .test("builder config matches shared family config", test_builder_config_matches_shared_family_config)
+}

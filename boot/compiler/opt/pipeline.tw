@@ -3,14 +3,15 @@
 
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
+use compiler.anf.{AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
-use compiler.opt.dead_let.{dead_let_elim_with_pinned}
+use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
+use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimizer_semantics, cow_config_from_semantics, optimizer_semantics_from_cow_config}
 use compiler.opt.liveness.{annotate_in_place}
-use compiler.opt.uniqueness.{CowConfig, CowOpEntry, BuilderConfig, uniqueness_rewrite}
+use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics}
 use compiler.opt.defer_elim.{eliminate_defers}
 
 // ── compute_pinned ──────────────────────────────────────────────────
@@ -58,7 +59,7 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
 
 // ── optimize_func ───────────────────────────────────────────────────
 
-fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>) AnfFunctionDef {
+fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics?) AnfFunctionDef {
   expr := func.body
   round := 0
 
@@ -66,7 +67,10 @@ fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>) AnfFunctionDef {
     round = round + 1
 
     // 1. Dead let elimination (with pinned locals)
-    r1 := dead_let_elim_with_pinned(expr, pinned)
+    r1 := case semantics {
+      .Some(sem) => dead_let_elim_with_pinned_and_semantics(expr, pinned, sem),
+      .None => dead_let_elim_with_pinned(expr, pinned),
+    }
     expr = r1.expr
 
     // 2. Copy propagation (with pinned locals)
@@ -101,54 +105,43 @@ fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>) AnfFunctionDef {
 // Build the CowConfig for prelude FuncIds, matching the Rust compiler's
 // cow_op_info / is_fresh_producer / is_read_only mappings.
 pub fn make_prelude_cow_config(b: BuiltinRegistry) CowConfig {
-
-  cow_ops: Dict<Int, CowOpEntry> = Dict.new()
-  cow_ops[b.id("vector_set_unsafe").id] = .{ base_arg: 0, in_place_id: .Some(b.id("vector_set_in_place")) }
-  cow_ops[b.id("dict_set").id] = .{ base_arg: 0, in_place_id: .Some(b.id("dict_set_in_place")) }
-  cow_ops[b.id("dict_remove").id] = .{ base_arg: 0, in_place_id: .Some(b.id("dict_remove_in_place")) }
-  cow_ops[b.id("vector_push").id] = .{ base_arg: 0, in_place_id: .None }
-
-  fresh_producer_ids: Dict<Int, Bool> = Dict.new()
-  fresh_producer_ids[b.id("vector_make").id] = true
-  fresh_producer_ids[b.id("vector_builder_freeze").id] = true
-  fresh_producer_ids[b.id("dict_new").id] = true
-
-  read_only_ids: Dict<Int, Bool> = Dict.new()
-  read_only_ids[b.id("vector_len").id] = true
-
-  builder := BuilderConfig.{
-    push_id: b.id("vector_push"),
-    builder_new_id: b.id("vector_builder_new"),
-    builder_from_id: b.id("vector_builder_from"),
-    builder_push_id: b.id("vector_builder_push"),
-    builder_freeze_id: b.id("vector_builder_freeze"),
-  }
-
-  CowConfig.{
-    cow_ops: cow_ops,
-    fresh_producer_ids: fresh_producer_ids,
-    read_only_ids: read_only_ids,
-    builder: builder,
-  }
+  cow_config_from_semantics(make_prelude_optimizer_semantics(b))
 }
 
 // ── optimize_module ─────────────────────────────────────────────────
 
 pub fn optimize_module(module: AnfModule) AnfModule {
-  optimize_module_with_config(module, .Some(make_prelude_cow_config(make_builtin_registry())))
+  reg := make_builtin_registry()
+  semantics := make_prelude_optimizer_semantics(reg)
+  optimize_module_with_semantics(module, .Some(semantics))
+}
+
+pub fn optimize_module_with_semantics(module: AnfModule, semantics: OptimizerSemantics?) AnfModule {
+  optimize_module_internal(module, semantics, .None)
 }
 
 pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) AnfModule {
+  semantics: OptimizerSemantics? = case cow_config {
+    .Some(config) => .Some(optimizer_semantics_from_cow_config(config)),
+    .None => .None,
+  }
+  optimize_module_internal(module, semantics, cow_config)
+}
+
+fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) AnfModule {
   pinned := compute_pinned(module)
 
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
-    optimized := optimize_func(f, pinned)
+    optimized := optimize_func(f, pinned, semantics)
     // Post-loop pass: annotate record updates for in-place reuse
     optimized = annotate_in_place(optimized)
     // Post-loop pass: uniqueness rewrite (COW elimination)
-    optimized = case cow_config {
-      .Some(config) => uniqueness_rewrite(optimized, config),
-      .None => optimized,
+    optimized = case semantics {
+      .Some(config) => uniqueness_rewrite_with_semantics(optimized, config),
+      .None => case cow_config {
+        .Some(config) => uniqueness_rewrite(optimized, config),
+        .None => optimized,
+      },
     }
     // Post-loop pass: defer elimination (must be last)
     eliminate_defers(optimized)
