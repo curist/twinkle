@@ -643,6 +643,16 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    .test("F5 qualified variant constructor checks nested shorthand argument with expected type", fn() {
+      src := "type Inner = { Wrap(Int) }\ntype Outer = { Make(Inner) }\nfn f(x: Int) Outer { Outer.Make(.Wrap(x)) }"
+      _ := try check_ok(src)
+      .Ok({})
+    })
+    .test("F5 array check mode pushes expected element type into shorthand variants", fn() {
+      src := "type Atom = { Int(Int) }\nfn f(x: Int) Vector<Atom> { [.Int(x)] }"
+      _ := try check_ok(src)
+      .Ok({})
+    })
     // ── F8: check_function context restore ──
     .test("F8 second function independent of first", fn() {
       src := "fn first() Int { 1 }\nfn second() String { \"hello\" }"
@@ -1424,6 +1434,11 @@ pub fn suite() runner.Suite {
     .test("G5 float comparison", fn() {
       src := "fn f(a: Float, b: Float) Bool { a < b }"
       r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G5 string ordering comparison", fn() {
+      src := "fn f(a: String, b: String) Bool { a < b }"
+      _ := try check_ok(src)
       .Ok({})
     })
     // ── G6: Return value type-checking ──────────────────────────────────

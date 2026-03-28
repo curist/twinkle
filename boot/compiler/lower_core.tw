@@ -167,6 +167,30 @@ fn void_expr(s: Span) CoreExpr {
   CoreExpr.{ kind: .LitVoid, ty: MonoType.Void, span: s }
 }
 
+fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
+  CoreExpr.{ kind: .Local(local), ty, span: s }
+}
+
+fn global_func_expr(func_id: FuncId, s: Span) CoreExpr {
+  CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s }
+}
+
+fn record_get_expr(base: CoreExpr, field: FieldId, ty: MonoType, s: Span) CoreExpr {
+  CoreExpr.{ kind: .RecordGet(base, field), ty, span: s }
+}
+
+fn variant_expr(tid: TypeId, vid: Int, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
+  CoreExpr.{ kind: .Variant(tid, VariantId.{ id: vid }, args), ty, span: s }
+}
+
+fn variant_pattern(tid: TypeId, vid: Int, args: Vector<CorePattern>) CorePattern {
+  CorePattern.Variant(tid, VariantId.{ id: vid }, args)
+}
+
+fn return_expr(value: CoreExpr?, s: Span) CoreExpr {
+  CoreExpr.{ kind: .Return(value), ty: MonoType.Void, span: s }
+}
+
 fn is_terminal(expr: CoreExpr) Bool {
   case expr.kind {
     .Return(_) => true,
@@ -368,12 +392,14 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
     .Vector(inner) => .Vector(subst_vars(inner, var_map)),
     .Dict(k, v) => .Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
     .Function(params, ret) => {
-      .Function(params.map(fn(p) { subst_vars(p, var_map) }), subst_vars(ret, var_map))
+      inst_params := collect p in params { subst_vars(p, var_map) }
+      .Function(inst_params, subst_vars(ret, var_map))
     },
     .Optional(inner) => .Optional(subst_vars(inner, var_map)),
     .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
-      .Named(tid, args.map(fn(a) { subst_vars(a, var_map) }))
+      inst_args := collect a in args { subst_vars(a, var_map) }
+      .Named(tid, inst_args)
     },
     _ => ty,
   }
@@ -400,7 +426,7 @@ fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<Mono
               for v in variants {
                 if v.name == name {
                   var_map := build_var_map(type_params, type_args)
-                  return v.fields.map(fn(ft) { subst_vars(ft, var_map) })
+                  return collect ft in v.fields { subst_vars(ft, var_map) }
                 }
               }
               []
@@ -783,11 +809,117 @@ fn map_unop(op: AstUnOp) UnOp {
   }
 }
 
+type UnitVariantTag = .{ tid: TypeId, vid: Int }
+
+fn unit_variant_tag(expr: CoreExpr) UnitVariantTag? {
+  case expr.kind {
+    .Variant(tid, vid, args) => {
+      if args.len() == 0 {
+        .Some(.{ tid, vid: vid.id })
+      } else {
+        .None
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId, vid: Int, s: Span) CoreExprKind {
+  on_match := if ast_op == .Eq { true } else { false }
+  on_other := !on_match
+  .Match(scrutinee, [
+    MatchArm.{
+      pattern: variant_pattern(tid, vid, []),
+      body: CoreExpr.{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
+    },
+    MatchArm.{
+      pattern: .Wildcard,
+      body: CoreExpr.{ kind: .LitBool(on_other), ty: MonoType.Bool, span: s },
+    },
+  ])
+}
+
+fn lower_unit_variant_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExprKind? {
+  if ast_op != .Eq and ast_op != .Ne { return .None }
+
+  case unit_variant_tag(right) {
+    .Some(tag) => {
+      case left.ty {
+        .Named(lhs_tid, _) => {
+          if lhs_tid.id == tag.tid.id {
+            return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
+          }
+        },
+        _ => {},
+      }
+    },
+    .None => {},
+  }
+
+  case unit_variant_tag(left) {
+    .Some(tag) => {
+      case right.ty {
+        .Named(rhs_tid, _) => {
+          if rhs_tid.id == tag.tid.id {
+            return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
+          }
+        },
+        _ => {},
+      }
+    },
+    .None => {},
+  }
+
+  .None
+}
+
 // ── Binary, unary, if ───────────────────────────────────────────────
 
 fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoType, s: Span) ExprOut {
   // Short-circuit: a && b => If(a, b, false)
   case ast_op {
+    .Assign => {
+      case lhs.kind {
+        .Ident(name) => {
+          rr := ctx.lower_expr(rhs)
+          case rr.ctx.lookup_local_or_global(name) {
+            .Some(target) => {
+              return .{
+                expr: .{ kind: .Assign(target, rr.expr), ty, span: s },
+                ctx: rr.ctx,
+              }
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+      rr := ctx.lower_expr(rhs)
+      case rr.ctx.lower_lvalue_assign(lhs, rr.expr, s) {
+        .Some(lv) => {
+          .{
+            expr: .{ kind: .Assign(lv.root, lv.update), ty, span: s },
+            ctx: lv.ctx,
+          }
+        },
+        .None => {
+          bad_ctx := rr.ctx.emit_error(s, "invalid assignment target")
+          .{ expr: void_expr(s), ctx: bad_ctx }
+        },
+      }
+    },
+    .Range => {
+      lr := ctx.lower_expr(lhs)
+      rr := lr.ctx.lower_expr(rhs)
+      .{
+        expr: .{
+          kind: .Call(global_func_expr(rr.ctx.builtins.id("range_from"), s), [lr.expr, rr.expr]),
+          ty,
+          span: s,
+        },
+        ctx: rr.ctx,
+      }
+    },
     .LogicalAnd => {
       lr := ctx.lower_expr(lhs)
       rr := lr.ctx.lower_expr(rhs)
@@ -815,9 +947,16 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
     _ => {
       lr := ctx.lower_expr(lhs)
       rr := lr.ctx.lower_expr(rhs)
-      .{
-        expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
-        ctx: rr.ctx,
+      case lower_unit_variant_compare(ast_op, lr.expr, rr.expr, s) {
+        .Some(kind) => {
+          .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
+        },
+        .None => {
+          .{
+            expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
+            ctx: rr.ctx,
+          }
+        },
       }
     },
   }
@@ -1094,21 +1233,17 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
         .None => operand_ty,
       }
 
+      ok_pattern := variant_pattern(result_tid, 0, [CorePattern.Var(ok_local_out.local)])
+      ok_body := local_expr(ok_local_out.local, ok_ty, s)
       ok_arm := MatchArm.{
-        pattern: .Variant(result_tid, .{ id: 0 }, [.Var(ok_local_out.local)]),
-        body: .{ kind: .Local(ok_local_out.local), ty: ok_ty, span: s },
+        pattern: ok_pattern,
+        body: ok_body,
       }
+      err_pattern := variant_pattern(result_tid, 1, [CorePattern.Var(err_local_out.local)])
+      err_value := variant_expr(result_tid, 1, [local_expr(err_local_out.local, err_ty, s)], ret_ty, s)
       err_arm := MatchArm.{
-        pattern: .Variant(result_tid, .{ id: 1 }, [.Var(err_local_out.local)]),
-        body: .{
-          kind: .Return(.Some(.{
-            kind: .Variant(result_tid, .{ id: 1 }, [.{ kind: .Local(err_local_out.local), ty: err_ty, span: s }]),
-            ty: ret_ty,
-            span: s,
-          })),
-          ty: .Void,
-          span: s,
-        },
+        pattern: err_pattern,
+        body: return_expr(.Some(err_value), s),
       }
 
       .{
@@ -1126,21 +1261,17 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
         .None => operand_ty,
       }
 
+      some_pattern := variant_pattern(option_tid, 1, [CorePattern.Var(some_local_out.local)])
+      some_body := local_expr(some_local_out.local, inner_ty, s)
       some_arm := MatchArm.{
-        pattern: .Variant(option_tid, .{ id: 1 }, [.Var(some_local_out.local)]),
-        body: .{ kind: .Local(some_local_out.local), ty: inner_ty, span: s },
+        pattern: some_pattern,
+        body: some_body,
       }
+      none_pattern := variant_pattern(option_tid, 0, [])
+      none_value := variant_expr(option_tid, 0, [], ret_ty, s)
       none_arm := MatchArm.{
-        pattern: .Variant(option_tid, .{ id: 0 }, []),
-        body: .{
-          kind: .Return(.Some(.{
-            kind: .Variant(option_tid, .{ id: 0 }, []),
-            ty: ret_ty,
-            span: s,
-          })),
-          ty: .Void,
-          span: s,
-        },
+        pattern: none_pattern,
+        body: return_expr(.Some(none_value), s),
       }
 
       .{
@@ -1371,10 +1502,204 @@ fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: S
   }
 }
 
+fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
+  int_ty := MonoType.Int
+  bool_ty := MonoType.Bool
+  void_ty := MonoType.Void
+  ctx := setup.ctx
+  range_tid := case type_id_from_mono(setup.iter_core.ty) {
+    .Some(tid) => tid,
+    .None => {
+      ctx = ctx.emit_error(s, "internal error: expected Range type for range loop")
+      return .{ expr: void_expr(s), ctx }
+    },
+  }
+
+  start_fid := FieldId.{ id: find_field_index(ctx.env, range_tid, "start") }
+  end_fid := FieldId.{ id: find_field_index(ctx.env, range_tid, "end") }
+  step_fid := FieldId.{ id: find_field_index(ctx.env, range_tid, "step") }
+  range_local := local_expr(setup.arr_local, setup.iter_core.ty, s)
+
+  current_value := CoreExpr.{
+    kind: .BinOp(
+      .Add,
+      record_get_expr(range_local, start_fid, int_ty, s),
+      CoreExpr.{
+        kind: .BinOp(
+          .Mul,
+          local_expr(setup.idx_local, int_ty, s),
+          record_get_expr(range_local, step_fid, int_ty, s),
+        ),
+        ty: int_ty,
+        span: s,
+      },
+    ),
+    ty: int_ty,
+    span: s,
+  }
+
+  idx_inc := CoreExpr.{
+    kind: .Assign(setup.idx_local, CoreExpr.{
+      kind: .BinOp(.Add, local_expr(setup.idx_local, int_ty, s), CoreExpr.{ kind: .LitInt(1), ty: int_ty, span: s }),
+      ty: int_ty,
+      span: s,
+    }),
+    ty: void_ty,
+    span: s,
+  }
+  cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
+  ao1 := ctx.alloc_anon_local()
+  ctx = ao1.ctx
+  inc_then_cont := CoreExpr.{ kind: .Let(ao1.local, idx_inc, cont), ty: void_ty, span: s }
+
+  ao2 := ctx.alloc_anon_local()
+  ctx = ao2.ctx
+  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, inner_action, inc_then_cont), ty: void_ty, span: s }
+
+  body_or_idx := case setup.idx_user_local {
+    .Some(user_idx) => {
+      CoreExpr.{
+        kind: .Let(user_idx, local_expr(setup.idx_local, int_ty, s), action_then_inc),
+        ty: void_ty,
+        span: s,
+      }
+    },
+    .None => action_then_inc,
+  }
+
+  elem_bind := CoreExpr.{
+    kind: .Let(setup.elem_local, current_value, body_or_idx),
+    ty: void_ty,
+    span: s,
+  }
+
+  step_zero := CoreExpr.{
+    kind: .BinOp(.Eq, record_get_expr(range_local, step_fid, int_ty, s), CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }),
+    ty: bool_ty,
+    span: s,
+  }
+  step_positive := CoreExpr.{
+    kind: .BinOp(.Gt, record_get_expr(range_local, step_fid, int_ty, s), CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }),
+    ty: bool_ty,
+    span: s,
+  }
+  done_if_positive := CoreExpr.{
+    kind: .BinOp(.Ge, current_value, record_get_expr(range_local, end_fid, int_ty, s)),
+    ty: bool_ty,
+    span: s,
+  }
+  done_if_negative := CoreExpr.{
+    kind: .BinOp(.Le, current_value, record_get_expr(range_local, end_fid, int_ty, s)),
+    ty: bool_ty,
+    span: s,
+  }
+  directional_done := CoreExpr.{ kind: .If(step_positive, done_if_positive, done_if_negative), ty: bool_ty, span: s }
+  done_cond := CoreExpr.{
+    kind: .If(step_zero, CoreExpr.{ kind: .LitBool(true), ty: bool_ty, span: s }, directional_done),
+    ty: bool_ty,
+    span: s,
+  }
+
+  loop_body := CoreExpr.{
+    kind: .If(
+      done_cond,
+      CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s },
+      elem_bind,
+    ),
+    ty: void_ty,
+    span: s,
+  }
+
+  loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
+  idx_init := CoreExpr.{ kind: .Let(setup.idx_local, CoreExpr.{ kind: .LitInt(0), ty: int_ty, span: s }, loop_expr), ty: void_ty, span: s }
+  result := CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, idx_init), ty: void_ty, span: s }
+  .{ expr: result, ctx }
+}
+
+fn build_iterator_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
+  void_ty := MonoType.Void
+  ctx := setup.ctx
+  iter_item_tid := case resolve_type_id(ctx.env, "IterItem") {
+    .Some(tid) => tid,
+    .None => {
+      ctx = ctx.emit_error(s, "internal error: missing IterItem type")
+      return .{ expr: void_expr(s), ctx }
+    },
+  }
+  item_ty := MonoType.Named(iter_item_tid, [setup.elem_ty])
+  next_ty := MonoType.Optional(item_ty)
+  value_fid := FieldId.{ id: find_field_index(ctx.env, iter_item_tid, "value") }
+  rest_fid := FieldId.{ id: find_field_index(ctx.env, iter_item_tid, "rest") }
+
+  item_lo := ctx.alloc_anon_local()
+  ctx = item_lo.ctx
+  item_local := item_lo.local
+
+  next_call := CoreExpr.{
+    kind: .Call(
+      global_func_expr(ctx.builtins.id("iterator_next"), s),
+      [local_expr(setup.arr_local, setup.iter_core.ty, s)],
+    ),
+    ty: next_ty,
+    span: s,
+  }
+
+  assign_next := CoreExpr.{
+    kind: .Assign(setup.arr_local, record_get_expr(local_expr(item_local, item_ty, s), rest_fid, setup.iter_core.ty, s)),
+    ty: void_ty,
+    span: s,
+  }
+  cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
+  ao1 := ctx.alloc_anon_local()
+  ctx = ao1.ctx
+  body_then_cont := CoreExpr.{ kind: .Let(ao1.local, inner_action, cont), ty: void_ty, span: s }
+  elem_bind := CoreExpr.{
+    kind: .Let(setup.elem_local, record_get_expr(local_expr(item_local, item_ty, s), value_fid, setup.elem_ty, s), body_then_cont),
+    ty: void_ty,
+    span: s,
+  }
+  ao2 := ctx.alloc_anon_local()
+  ctx = ao2.ctx
+  some_body := CoreExpr.{ kind: .Let(ao2.local, assign_next, elem_bind), ty: void_ty, span: s }
+  none_body := CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s }
+
+  some_pattern := variant_pattern(TypeId.{ id: 0 }, 1, [CorePattern.Var(item_local)])
+  none_pattern := variant_pattern(TypeId.{ id: 0 }, 0, [])
+  some_arm := MatchArm.{ pattern: some_pattern, body: some_body }
+  none_arm := MatchArm.{ pattern: none_pattern, body: none_body }
+
+  loop_body := CoreExpr.{
+    kind: .Match(next_call, [some_arm, none_arm]),
+    ty: void_ty,
+    span: s,
+  }
+  loop_expr := CoreExpr.{ kind: .Loop(loop_body), ty: void_ty, span: s }
+  result := CoreExpr.{ kind: .Let(setup.arr_local, setup.iter_core, loop_expr), ty: void_ty, span: s }
+  .{ expr: result, ctx }
+}
+
 fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
   int_ty := MonoType.Int
   void_ty := MonoType.Void
   ctx := setup.ctx
+
+  expanded_iter_ty := expand_alias_for_iter(setup.iter_core.ty, ctx.env, 0)
+  case expanded_iter_ty {
+    .Named(tid, _) => {
+      case ctx.env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record("Range", _, _) => { return build_range_loop(setup, inner_action, s) },
+            .Record("Iterator", _, _) => { return build_iterator_loop(setup, inner_action, s) },
+            .Sum("Iterator", _, _) => { return build_iterator_loop(setup, inner_action, s) },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+    },
+    _ => {},
+  }
 
   idx_inc := CoreExpr.{
     kind: .Assign(setup.idx_local, .{
@@ -1448,7 +1773,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
       len_call := CoreExpr.{
         kind: .Call(
           .{ kind: .GlobalFunc(ctx.builtins.id("string_len")), ty: void_ty, span: s },
-          [.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+          [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,
         span: s,
@@ -1463,7 +1788,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           keys_call := CoreExpr.{
             kind: .Call(
               .{ kind: .GlobalFunc(ctx.builtins.id("dict_keys")), ty: void_ty, span: s },
-              [.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+              [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
             ),
             ty: keys_ty,
             span: s,
@@ -1471,7 +1796,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           len_call := CoreExpr.{
             kind: .Call(
               .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
-              [.{ kind: .Local(keys_local), ty: keys_ty, span: s }],
+              [CoreExpr.{ kind: CoreExprKind.Local(keys_local), ty: keys_ty, span: s }],
             ),
             ty: int_ty,
             span: s,
@@ -1484,7 +1809,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           len_call := CoreExpr.{
             kind: .Call(
               .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
-              [.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+              [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
             ),
             ty: int_ty,
             span: s,
@@ -1498,7 +1823,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
       len_call := CoreExpr.{
         kind: .Call(
           .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
-          [.{ kind: .Local(setup.arr_local), ty: iter_ty, span: s }],
+          [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,
         span: s,
@@ -1527,7 +1852,7 @@ fn global_func_call(func_id: FuncId, args: Vector<CoreExpr>, ty: MonoType, s: Sp
 fn collect_builder_push(builder: BuilderConfig, builder_local: LocalId, value: CoreExpr, s: Span) CoreExpr {
   void_ty := MonoType.Void
   global_func_call(builder.builder_push_id, [
-    .{ kind: .Local(builder_local), ty: void_ty, span: s },
+    CoreExpr.{ kind: CoreExprKind.Local(builder_local), ty: void_ty, span: s },
     value,
   ], void_ty, s)
 }
@@ -1535,7 +1860,7 @@ fn collect_builder_push(builder: BuilderConfig, builder_local: LocalId, value: C
 fn lower_collect_builder_region(ctx: LowerCtx, builder: BuilderConfig, builder_local: LocalId, loop_expr: CoreExpr, ty: MonoType, s: Span) ExprOut {
   void_ty := MonoType.Void
   freeze_call := global_func_call(builder.builder_freeze_id, [
-    .{ kind: .Local(builder_local), ty: void_ty, span: s },
+    CoreExpr.{ kind: CoreExprKind.Local(builder_local), ty: void_ty, span: s },
   ], ty, s)
 
   ao := ctx.alloc_anon_local()
@@ -1657,6 +1982,12 @@ type LvalueOut = .{ root: LocalId, update: CoreExpr, ctx: LowerCtx }
 // Returns the root local and the update expression to assign to it.
 fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) LvalueOut? {
   case lhs.kind {
+    .Ident(name) => {
+      case ctx.lookup_local_or_global(name) {
+        .Some(root_local) => .Some(.{ root: root_local, update: rhs_core, ctx }),
+        .None => .None,
+      }
+    },
     .Field(base, field_name) => {
       // r.field = val → Assign(r_local, RecordUpdate(Local(r), field_id, val))
       case base.kind {
@@ -1719,7 +2050,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
       // m[k] = val  → Assign(m_local, Call(DICT_SET, [m, k, val]))
       case base.kind {
         .Ident(name) => {
-          case ctx.lookup_local(name) {
+          case ctx.lookup_local_or_global(name) {
             .Some(root_local) => {
               base_ty := ctx.expr_type(base)
               ir := ctx.lower_expr(index)
@@ -1728,10 +2059,14 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
                 .Dict(_, _) => ctx.builtins.id("dict_set"),
                 _ => ctx.builtins.id("vector_set_unsafe"),
               }
+              base_kind: CoreExprKind = case ctx.module_globals[name] {
+                .Some(_) => .GlobalLocal(root_local),
+                .None => .Local(root_local),
+              }
               update := CoreExpr.{
                 kind: .Call(
-                  .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
-                  [.{ kind: .Local(root_local), ty: base_ty, span: s }, ir.expr, rhs_core],
+                  .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+                  [CoreExpr.{ kind: base_kind, ty: base_ty, span: s }, ir.expr, rhs_core],
                 ),
                 ty: base_ty,
                 span: s,
@@ -1741,7 +2076,24 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
             .None => .None,
           }
         },
-        _ => .None,
+        _ => {
+          base_ty := ctx.expr_type(base)
+          br := ctx.lower_expr(base)
+          ir := br.ctx.lower_expr(index)
+          func_id := case base_ty {
+            .Dict(_, _) => ctx.builtins.id("dict_set"),
+            _ => ctx.builtins.id("vector_set_unsafe"),
+          }
+          inner_update := CoreExpr.{
+            kind: .Call(
+              .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+              [br.expr, ir.expr, rhs_core],
+            ),
+            ty: base_ty,
+            span: s,
+          }
+          ir.ctx.lower_lvalue_assign(base, inner_update, s)
+        },
       }
     },
     _ => .None,

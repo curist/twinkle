@@ -438,6 +438,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("from_int", "byte_from_int"), me("compare", "compare"),
   ])
   env = env.register_bound_methods("Option", [
+    me("unwrap_or", "unwrap_or"),
     me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
     me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
   ])
@@ -542,6 +543,9 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
   }
 
   hidden_support_types: Dict<String, Bool> = Dict.new()
+  for exported in visible_types {
+    hidden_support_types = collect_hidden_support_types_from_entry(env, exported.entry, hidden_support_types)
+  }
   for sig in exported_functions {
     for param_ty in sig.params {
       hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)

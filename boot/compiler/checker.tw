@@ -365,17 +365,17 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
         .None => ty,
       }
     },
-    .Vector(inner) => MonoType.Vector(subst_vars(inner, var_map)),
-    .Dict(k, v) => MonoType.Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
+    .Vector(inner) => .Vector(subst_vars(inner, var_map)),
+    .Dict(k, v) => .Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
     .Function(params, ret) => {
       inst_params := collect p in params { subst_vars(p, var_map) }
-      MonoType.Function(inst_params, subst_vars(ret, var_map))
+      .Function(inst_params, subst_vars(ret, var_map))
     },
-    .Optional(inner) => MonoType.Optional(subst_vars(inner, var_map)),
-    .Result(ok, err) => MonoType.Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
+    .Optional(inner) => .Optional(subst_vars(inner, var_map)),
+    .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
       inst_args := collect a in args { subst_vars(a, var_map) }
-      MonoType.Named(tid, inst_args)
+      .Named(tid, inst_args)
     },
     _ => ty,
   }
@@ -588,10 +588,9 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
               cur_ctx := resolved.ctx
               cur_diags := diags
               for i in range(args.len()) {
-                ar := cur_ctx.synth(args[i], cur_diags)
-                u := ar.ctx.unify(ar.ty, info.field_types[i], args[i].span, ar.diags)
-                cur_ctx = u.ctx
-                cur_diags = u.diags
+                ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
+                cur_ctx = ar.ctx
+                cur_diags = ar.diags
               }
               callee_ty := MonoType.Function(info.field_types, named_ty)
               cur_ctx = set_type_map(cur_ctx, base.id, named_ty)
@@ -1244,10 +1243,9 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
           cur_ctx := ctx
           cur_diags := diags
           for e in elems {
-            er := cur_ctx.synth(e, cur_diags)
-            u := er.ctx.unify(er.ty, elem_ty, e.span, er.diags)
-            cur_ctx = u.ctx
-            cur_diags = u.diags
+            er := cur_ctx.check_expr(e, elem_ty, cur_diags)
+            cur_ctx = er.ctx
+            cur_diags = er.diags
           }
           return .{ ctx: set_type_map_span(cur_ctx, expr.id, expr.span.start, expected), diags: cur_diags }
         },
@@ -2027,13 +2025,7 @@ fn synth_cmp_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
   }
 
   u := cur_ctx.unify(lr.ty, rr.ty, s, cur_diags)
-  zonked := zonk(lr.ty, u.ctx.subst)
-  err_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
-    u.diags
-  } else {
-    u.diags.push(diag.error(s, "comparison not supported for ${u.ctx.env.ty_to_string_env(zonked)}"))
-  }
-  .{ ty: MonoType.Bool, ctx: u.ctx, diags: err_diags }
+  .{ ty: MonoType.Bool, ctx: u.ctx, diags: u.diags }
 }
 
 fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {

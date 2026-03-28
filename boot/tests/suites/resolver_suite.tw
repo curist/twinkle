@@ -1169,6 +1169,39 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("extract_exports includes support types referenced by visible exported type definitions", fn() {
+      support_tid := resolver.TypeId.{ id: 23 }
+      wrapper_tid := resolver.TypeId.{ id: 24 }
+      support_entry := resolver.TypeEntry.{
+        id: support_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Support", [], [
+          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      wrapper_entry := resolver.TypeEntry.{
+        id: wrapper_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("Wrapper", [], [
+          resolver.ResolvedField.{ name: "inner", ty: resolver.MonoType.Named(support_tid, []) },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      parsed := parser.parse("pub type Wrapper = .{ inner: Int }", 0)
+      env := resolver.empty_env()
+        .register_type_entry(support_entry, "dep.Support")
+        .add_type(wrapper_entry, "Wrapper")
+
+      exports := resolver.extract_exports(env, parsed.value)
+
+      try assert.int_eq(exports.visible_types.len(), 1)
+      try assert.str_eq(exports.visible_types[0].name, "Wrapper")
+      try assert.int_eq(exports.support_types.len(), 1)
+      try assert.str_eq(exports.support_types[0].name, "dep.Support")
+      .Ok({})
+    })
+
     .test("extract_exports finds pub functions", fn() {
       src := "pub fn add(a: Int, b: Int) Int { a + b }\nfn helper() { }"
       parsed := parser.parse(src, 0)
