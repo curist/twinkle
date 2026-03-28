@@ -209,6 +209,11 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("dot-method Vector.map type-checks without errors", fn() {
+      try check_ok_with_builtins("xs: Vector<Int> = [1, 2]\nys := xs.map(fn(x: Int) { x + 1 })")
+      .Ok({})
+    })
+
     .test("dot-method Cell.get resolves without errors", fn() {
       try resolve_ok_with_builtins("c := Cell.new(0)\nx := c.get()")
       .Ok({})
@@ -218,6 +223,16 @@ pub fn suite() runner.Suite {
       try check_ok_with_builtins(
         "it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })"
       )
+      .Ok({})
+    })
+
+    .test("module-qualified Option.map type-checks without errors", fn() {
+      try check_ok_with_builtins("x := Option.map(.Some(1), fn(n: Int) { n + 1 })")
+      .Ok({})
+    })
+
+    .test("module-qualified Result.map type-checks without errors", fn() {
+      try check_ok_with_builtins("x := Result.map(.Ok(1), fn(n: Int) { n + 1 })")
       .Ok({})
     })
 

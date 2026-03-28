@@ -375,7 +375,7 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
     .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
       inst_args := collect a in args { subst_vars(a, var_map) }
-      .Named(tid, inst_args)
+      MonoType.Named(tid, inst_args)
     },
     _ => ty,
   }
@@ -474,10 +474,10 @@ fn synth(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
 
 fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
   case expr.kind {
-    .IntLit(_) => .{ ty: MonoType.Int, ctx, diags },
-    .FloatLit(_) => .{ ty: MonoType.Float, ctx, diags },
-    .BoolLit(_) => .{ ty: MonoType.Bool, ctx, diags },
-    .StringLit(_) => .{ ty: MonoType.String, ctx, diags },
+    .IntLit(_) => .{ ty: .Int, ctx, diags },
+    .FloatLit(_) => .{ ty: .Float, ctx, diags },
+    .BoolLit(_) => .{ ty: .Bool, ctx, diags },
+    .StringLit(_) => .{ ty: .String, ctx, diags },
 
     .Ident(name) => synth_ident(name, expr.span, ctx, diags),
 
@@ -561,7 +561,7 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
               .Some(r) => { return r },
               .None => {
                 return .{
-                  ty: MonoType.Void,
+                  ty: .Void,
                   ctx: clean_ctx,
                   diags: diags.push(diag.error(callee.span, "undefined variable: ${alias}.${method_name}")),
                 }
@@ -809,7 +809,7 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
   ar := check_args(cur_ctx, args, inst.params, cur_diags)
   callee_ty := MonoType.Function(inst.params, inst.ret)
   final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
-  final_ctx.method_calls[callee_id] = MethodCallInfo.{ func_name: fn_name, has_receiver: false }
+  final_ctx.method_calls[callee_id] = .{ func_name: fn_name, has_receiver: false }
   .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
 }
 
@@ -827,7 +827,7 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
             return .None
           }
           err := diag.error(callee_span, "type ${br.ctx.env.ty_to_string_env(base_ty)} has no method '${method_name}'")
-          return .Some(.{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(err) })
+          return .Some(.{ ty: .Void, ctx: br.ctx, diags: br.diags.push(err) })
         },
       }
     },
@@ -867,7 +867,7 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     .Some(name) => name,
     .None => method_name,  // fallback to surface name
   }
-  final_ctx.method_calls[callee_id] = MethodCallInfo.{ func_name: resolved_fn, has_receiver: true }
+  final_ctx.method_calls[callee_id] = .{ func_name: resolved_fn, has_receiver: true }
   .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
 }
 
@@ -882,7 +882,7 @@ fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: 
 
   if inst.params.len() == 0 {
     return .Some(.{
-      ty: MonoType.Function([], inst.ret),
+      ty: .Function([], inst.ret),
       ctx: cur_ctx,
       diags: cur_diags.push(diag.error(s, "invalid method signature for '${method_name}'")),
     })
@@ -893,7 +893,7 @@ fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: 
   cur_diags = recv_u.diags
 
   remaining := inst.params.slice(1, inst.params.len())
-  .Some(.{ ty: MonoType.Function(remaining, inst.ret), ctx: cur_ctx, diags: cur_diags })
+  .Some(.{ ty: .Function(remaining, inst.ret), ctx: cur_ctx, diags: cur_diags })
 }
 
 // ── Records, Fields, Variants ───────────────────────────────────────
@@ -994,7 +994,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
           if info.field_types.len() == 0 {
             return .{ ty: named_ty, ctx: new_ctx, diags }
           } else {
-            return .{ ty: MonoType.Function(info.field_types, named_ty), ctx: new_ctx, diags }
+            return .{ ty: .Function(info.field_types, named_ty), ctx: new_ctx, diags }
           }
         },
         _ => {},
@@ -1012,7 +1012,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
         .Some(d) => d,
         .None => {
           err := diag.error(s, "unknown type for field access")
-          return .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(err) }
+          return .{ ty: .Void, ctx: br.ctx, diags: br.diags.push(err) }
         },
       }
       case def {
@@ -1026,7 +1026,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
             .Some(r) => r,
             .None => {
               err := diag.error(s, "no field '${field_name}' on this record")
-              .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(err) }
+              .{ ty: .Void, ctx: br.ctx, diags: br.diags.push(err) }
             },
           }
         },
@@ -1036,7 +1036,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
             .Some(r) => r,
             .None => {
               err := diag.error(s, "field access on non-record type")
-              .{ ty: MonoType.Void, ctx: br.ctx, diags: br.diags.push(err) }
+              .{ ty: .Void, ctx: br.ctx, diags: br.diags.push(err) }
             },
           }
         },
@@ -1183,7 +1183,7 @@ fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<Diagno
     cur_ctx = u.ctx
     cur_diags = u.diags
   }
-  .{ ty: MonoType.Vector(first.ty), ctx: cur_ctx, diags: cur_diags }
+  .{ ty: .Vector(first.ty), ctx: cur_ctx, diags: cur_diags }
 }
 
 // ── Check mode ──────────────────────────────────────────────────────
@@ -1313,12 +1313,12 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
       cur_diags = ann.diags
       body_r := check_block(body, ann.ty, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
-      .{ ty: MonoType.Function(param_tys, ann.ty), ctx: cur_ctx, diags: body_r.diags }
+      .{ ty: .Function(param_tys, ann.ty), ctx: cur_ctx, diags: body_r.diags }
     },
     .None => {
       body_r := synth_block(body, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
-      .{ ty: MonoType.Function(param_tys, body_r.ty), ctx: cur_ctx, diags: body_r.diags }
+      .{ ty: .Function(param_tys, body_r.ty), ctx: cur_ctx, diags: body_r.diags }
     },
   }
 }
@@ -1413,7 +1413,7 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
 
 fn check_if(cond: Expr, then_block: Block, else_expr: Expr?, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   cr := ctx.synth(cond, diags)
-  u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
+  u := cr.ctx.unify(cr.ty, .Bool, cond.span, cr.diags)
 
   case else_expr {
     .Some(else_e) => {
@@ -1431,7 +1431,7 @@ fn check_if(cond: Expr, then_block: Block, else_expr: Expr?, expected: MonoType,
     },
     .None => {
       then_r := synth_block(then_block, u.ctx, u.diags)
-      u2 := then_r.ctx.unify(MonoType.Void, expected, s, then_r.diags)
+      u2 := then_r.ctx.unify(.Void, expected, s, then_r.diags)
       .{ ctx: u2.ctx, diags: u2.diags }
     },
   }
@@ -1466,7 +1466,7 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
 
   if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
     err := diag.error(scrut.span, "case scrutinee must be a sum type or primitive (Int, Bool, String)")
-    return .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags.push(err) }
+    return .{ ty: .Void, ctx: cur_ctx, diags: cur_diags.push(err) }
   }
 
   // Track result type: join of non-Never arms

@@ -73,6 +73,13 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("builtin_env has vector_map", fn() {
+      sig := try require_sig("vector_map")
+      try assert.int_eq(sig.type_params.len(), 2)
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
     // Dict builtins
     .test("builtin_env has dict_new with two type params", fn() {
       sig := try require_sig("dict_new")
@@ -122,6 +129,27 @@ pub fn suite() runner.Suite {
     .test("builtin_env has iterator_unfold", fn() {
       sig := try require_sig("iterator_unfold")
       try assert.int_eq(sig.type_params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has iterator_map", fn() {
+      sig := try require_sig("iterator_map")
+      try assert.int_eq(sig.type_params.len(), 2)
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has option_map", fn() {
+      sig := try require_sig("option_map")
+      try assert.int_eq(sig.type_params.len(), 2)
+      try assert.int_eq(sig.params.len(), 2)
+      .Ok({})
+    })
+
+    .test("builtin_env has result_map", fn() {
+      sig := try require_sig("result_map")
+      try assert.int_eq(sig.type_params.len(), 3)
+      try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })
 
@@ -184,6 +212,12 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("Vector.map resolves to vector_map", fn() {
+      fn_name := try require_method("Vector", "map")
+      try assert.str_eq(fn_name, "vector_map")
+      .Ok({})
+    })
+
     .test("Dict.get resolves to dict_get", fn() {
       fn_name := try require_method("Dict", "get")
       try assert.str_eq(fn_name, "dict_get")
@@ -213,4 +247,22 @@ pub fn suite() runner.Suite {
       try assert.str_eq(fn_name, "iterator_unfold")
       .Ok({})
     })
-}
+
+    .test("Iterator.map resolves to iterator_map", fn() {
+      fn_name := try require_method("Iterator", "map")
+      try assert.str_eq(fn_name, "iterator_map")
+      .Ok({})
+    })
+
+    .test("Option.map resolves to option_map", fn() {
+      fn_name := try require_method("Option", "map")
+      try assert.str_eq(fn_name, "option_map")
+      .Ok({})
+    })
+
+    .test("Result.map resolves to result_map", fn() {
+      fn_name := try require_method("Result", "map")
+      try assert.str_eq(fn_name, "result_map")
+      .Ok({})
+    })
+  }

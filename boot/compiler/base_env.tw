@@ -128,16 +128,26 @@ pub fn builtin_env() ResolvedEnv {
   // "./prelude/signatures" resolves correctly because boot/prelude is a
   // symlink to ../prelude.
   root := loader.find_project_root(".")
+  prelude_dir := path.join(root, "prelude")
   sigs_dir := path.join(root, "prelude/signatures")
 
-  // Load and resolve signature stubs (parse + type-resolve only, no codegen).
+  // Load and resolve builtin/runtime signature stubs (parse + type-resolve only,
+  // no codegen).
   groups := case signatures.load_signatures(sigs_dir, builtin_type_env()) {
     .Ok(g) => g,
     .Err(msg) => error("builtin_env: failed to load prelude signatures: ${msg}"),
   }
+  // Load public signatures from the actual prelude modules as well. These
+  // provide the prelude-backed methods like Vector.map and Option.map that are
+  // not represented in prelude/signatures/*.tw.
+  prelude_groups := case signatures.load_signatures(prelude_dir, builtin_type_env()) {
+    .Ok(g) => g,
+    .Err(msg) => error("builtin_env: failed to load prelude sources: ${msg}"),
+  }
 
   // Derive FunctionSigs with internal names from the signature groups.
   sig_fns := signatures.all_internal_sigs(groups)
+  prelude_fns := signatures.all_internal_sigs(prelude_groups)
 
   // Functions NOT covered by any signature file: I/O builtins, string_substring,
   // vector builders, and host ops.
@@ -174,11 +184,12 @@ pub fn builtin_env() ResolvedEnv {
 
   env := resolver.empty_env()
     .with_types(builtin_named_types, builtin_named_type_names)
-    .with_functions(sig_fns.concat(hardcoded))
+    .with_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
 
   // First register methods derived from signature groups (these take priority
   // under the deduplication rule in register_methods).
   env = register_methods_from_groups(env, groups)
+  env = register_methods_from_groups(env, prelude_groups)
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
   env.register_builtin_methods()
 }
