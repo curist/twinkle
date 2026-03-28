@@ -311,7 +311,10 @@ pub fn register_receiver_methods(env: ResolvedEnv, tid: TypeId, entries: Vector<
 
 pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: String) ResolvedEnv {
   case find_type_entry_index(env, entry.id) {
-    .Some(_) => env,
+    .Some(idx) => {
+      env.type_index[preferred_name] = idx
+      env
+    },
     .None => {
       env.type_index[preferred_name] = env.types.len()
       env.types = env.types.push(entry)

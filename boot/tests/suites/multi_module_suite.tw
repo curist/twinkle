@@ -99,6 +99,14 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("same source module imported under a full alias before selective import reuses type identity", fn() {
+      result := module_compiler.compile_entry("${dir}/alias_type_bridge_full_first.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected reversed alias import topology to preserve type identity, got: ${msg}"),
+      }
+    })
+
     .test("aliased imported support type remains valid through exported signatures downstream", fn() {
       result := module_compiler.compile_entry("${dir}/alias_type_main.tw")
       case result {
