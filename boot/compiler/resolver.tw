@@ -399,11 +399,11 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("new", "cell_new"), me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
   ])
   env = env.register_bound_methods("Int", [
-    me("to_string", "int_to_string"), me("to_float", "int_to_float"),
+    me("to_string", "int_to_string"), me("to_float", "to_float"),
     me("from_string", "int_from_string"), me("compare", "compare"),
   ])
   env = env.register_bound_methods("Float", [
-    me("to_string", "float_to_string"), me("to_int", "float_to_int"),
+    me("to_string", "float_to_string"), me("to_int", "to_int"),
     me("from_string", "float_from_string"), me("compare", "compare"),
   ])
   env = env.register_bound_methods("Bool", [me("to_string", "bool_to_string")])
