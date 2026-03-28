@@ -854,7 +854,44 @@ fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId
   ])
 }
 
-fn lower_unit_variant_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExprKind? {
+fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
+  case env.lookup_type_def(tid) {
+    .Some(def) => {
+      case def {
+        .Sum(_, _, variants) => {
+          ids: Vector<Int> = []
+          for i in range(variants.len()) {
+            if variants[i].fields.len() != 0 {
+              return .None
+            }
+            ids = ids.push(i)
+          }
+          .Some(ids)
+        },
+        _ => .None,
+      }
+    },
+    .None => .None,
+  }
+}
+
+fn build_unit_sum_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, tid: TypeId, variants: Vector<Int>, s: Span) CoreExprKind {
+  arms: Vector<MatchArm> = []
+  for vid in variants {
+    arms = arms.push(MatchArm.{
+      pattern: variant_pattern(tid, vid, []),
+      body: CoreExpr.{ kind: build_unit_variant_compare(ast_op, right, tid, vid, s), ty: MonoType.Bool, span: s },
+    })
+  }
+  fallback := if ast_op == .Eq { false } else { true }
+  arms = arms.push(MatchArm.{
+    pattern: .Wildcard,
+    body: CoreExpr.{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s },
+  })
+  .Match(left, arms)
+}
+
+fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExprKind? {
   if ast_op != .Eq and ast_op != .Ne { return .None }
 
   case unit_variant_tag(right) {
@@ -883,6 +920,25 @@ fn lower_unit_variant_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr,
       }
     },
     .None => {},
+  }
+
+  case left.ty {
+    .Named(lhs_tid, _) => {
+      case right.ty {
+        .Named(rhs_tid, _) => {
+          if lhs_tid.id == rhs_tid.id {
+            case unit_sum_variant_ids(env, lhs_tid) {
+              .Some(variants) => {
+                return .Some(build_unit_sum_compare(ast_op, left, right, lhs_tid, variants, s))
+              },
+              .None => {},
+            }
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
   }
 
   .None
@@ -962,7 +1018,7 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
     _ => {
       lr := ctx.lower_expr(lhs)
       rr := lr.ctx.lower_expr(rhs)
-      case lower_unit_variant_compare(ast_op, lr.expr, rr.expr, s) {
+      case lower_unit_variant_compare(rr.ctx.env, ast_op, lr.expr, rr.expr, s) {
         .Some(kind) => {
           .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
         },

@@ -846,12 +846,27 @@ pub fn suite() runner.Suite {
         _ => .Err("expected Call for method call, got other kind"),
       }
     })
+    .test("lower unit-sum equality between values to match", fn() Result<Void, String> {
+      src := "type Kind = { A, B, C }\ntype Cursor = .{}\nfn kind(c: Cursor) Kind { .A }\nfn f(c: Cursor, end_kind: Kind) Bool { c.kind() == end_kind }"
+      lr := try lower_src(src)
+      body := lr.module.functions[1].body
+      case body.kind {
+        .Match(_, arms) => {
+          try assert.int_eq(arms.len(), 4)
+          case arms[0].body.kind {
+            .Match(_, _) => .Ok({}),
+            _ => .Err("expected nested Match in unit-sum equality arm"),
+          }
+        },
+        _ => .Err("expected unit-sum equality to lower to Match"),
+      }
+    })
     .test("lower module-qualified function value as GlobalFunc", fn() Result<Void, String> {
       src := "fn f(xs: Vector<String>) Vector<String> { xs.sort_by(String.compare) }"
       lr := try lower_src_with_builtin_env(src)
       body := lr.module.functions[0].body
-      reg := make_builtin_registry()
-      try assert.ok(has_func_id(body, reg.id(\"string_compare\").id), \"expected string_compare reference\")
+      compare_id := try lr.func_table["string_compare"].ok_or("expected string_compare in func_table")
+      try assert.ok(has_func_id(body, compare_id.id), "expected string_compare reference")
       .Ok({})
     })
     .test("lower for-in dict loop", fn() Result<Void, String> {
