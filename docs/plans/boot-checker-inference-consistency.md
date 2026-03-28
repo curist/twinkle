@@ -21,6 +21,8 @@ In scope:
 - contextual return-type propagation for calls,
 - consistency across direct, module-qualified, method, variant-constructor, and
   general call paths,
+- consistency between module-qualified calls and module-qualified function
+  values (for example `String.compare` used as a first-class value),
 - closure return annotation reconciliation in check mode,
 - duplicate-field validation for record literals,
 - final unsolved-meta diagnostic quality,
@@ -32,7 +34,17 @@ Out of scope:
 - redesigning the unifier,
 - changing the source-order top-level function inference rule,
 - large checker architecture rewrites,
+- module interface/export-closure bugs for support types or support functions,
+- downstream propagation bugs caused by exporting the pre-check env instead of
+  the checker-updated env,
 - non-checker runtime or codegen work.
+
+Notes:
+
+- imported inferred-`Never` behavior is checker-adjacent, but only the checker
+  side belongs here; module export/projection fixes that preserve inferred
+  returns across imports belong to module-compiler/export plans,
+- `lower_anf` / `op_kind_from` panics are explicitly outside this plan.
 
 ---
 
@@ -67,6 +79,12 @@ Boot already threads `call_expected_ret` into some call sites, but not all:
 
 This makes inference quality depend on surface syntax rather than callable
 semantics.
+
+This also extends to module-qualified function values:
+
+- module-qualified calls like `String.len("hi")` may type-check,
+- but first-class values like `String.compare` can still fall off the
+  specialized path and behave like ordinary field access.
 
 ### I3 — Instantiated-call logic is duplicated and already drifting
 
@@ -124,6 +142,8 @@ That is useful, but it currently:
 The current checker already implies these rules:
 
 - `Never` unifies with any type,
+- expressions that call a known `Never`-returning function should be treated as
+  diverging even when the callee is not spelled literally as `error(...)`,
 - real record fields win over method-value fallback,
 - aliases are expanded at selected checker boundaries rather than universally,
 - top-level inference for unannotated functions is source-order sensitive.
@@ -279,7 +299,11 @@ Write down, in the most appropriate design/spec location:
 Add checker tests that lock the intended behavior for:
 
 - direct/module/method/general call inference under expected return types,
+- module-qualified function values that should synthesize first-class callable
+  types instead of falling back to field access,
 - qualified variant-constructor inference,
+- divergence through known `Never`-returning helper calls in branch/case
+  positions,
 - closure return annotation conflicts,
 - duplicate record fields,
 - deduplicated ambiguous-type diagnostics.
@@ -310,12 +334,15 @@ The plan is not complete unless the checker is covered for all of the following:
 1. Named generic call inferred from expected return type.
 2. Module-qualified generic call inferred from expected return type.
 3. Receiver method generic call inferred from expected return type.
-4. Qualified variant-constructor call inferred from expected return type.
-5. Higher-order/general call inferred from expected return type.
-6. Closure with explicit return annotation matching expected function type.
-7. Closure with explicit return annotation conflicting with expected function type.
-8. Record literal with duplicate field.
-9. One ambiguous root producing one high-signal diagnostic instead of a cascade.
+4. Module-qualified function value synthesizes the expected callable type.
+5. Qualified variant-constructor call inferred from expected return type.
+6. Higher-order/general call inferred from expected return type.
+7. Diverging helper call with inferred `Never` return behaves like other
+   diverging expressions in branch/case joins.
+8. Closure with explicit return annotation matching expected function type.
+9. Closure with explicit return annotation conflicting with expected function type.
+10. Record literal with duplicate field.
+11. One ambiguous root producing one high-signal diagnostic instead of a cascade.
 
 ---
 
@@ -330,3 +357,5 @@ This plan is complete when all are true:
 5. Final ambiguity reporting is materially less noisy on common ambiguous inputs.
 6. `Never`, alias-boundary behavior, field-vs-method precedence, and source-order
    inference limitations are written down in docs.
+7. Module-qualified function values and non-literal `Never`-returning helper
+   calls are covered by checker regressions.

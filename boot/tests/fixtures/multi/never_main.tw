@@ -1,0 +1,8 @@
+use .never_helper
+
+pub fn f(x: Bool) Int {
+  case x {
+    true => 1,
+    false => never_helper.abort(),
+  }
+}

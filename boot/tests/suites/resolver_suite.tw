@@ -1209,6 +1209,7 @@ pub fn suite() runner.Suite {
       exports := resolver.extract_exports(r.env, parsed.value)
       try assert.int_eq(exports.functions.len(), 1)
       try assert.str_eq(exports.functions[0].name, "add")
+      try assert.str_eq(exports.functions[0].source_name, "add")
       .Ok({})
     })
 
@@ -1225,6 +1226,51 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
         .None => .Err("Point should have methods"),
+      }
+    })
+
+    .test("extract_exports includes support method functions for exported support types", fn() {
+      env_tid := resolver.TypeId.{ id: 31 }
+      env_entry := resolver.TypeEntry.{
+        id: env_tid,
+        arity: 0,
+        def: .Some(resolver.ResolvedTypeDef.Record("dep.Env", [], [
+          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+        ])),
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+      }
+      make_sig := resolver.FunctionSig.{
+        name: "make_env", type_params: [], param_names: [],
+        params: [], ret: .Some(resolver.MonoType.Named(env_tid, [])),
+      }
+      resolve_sig := resolver.FunctionSig.{
+        name: "dep.resolve", type_params: [], param_names: ["env"],
+        params: [resolver.MonoType.Named(env_tid, [])], ret: .Some(resolver.MonoType.Int),
+      }
+      env := resolver.empty_env()
+        .register_type_entry(env_entry, "dep.Env")
+        .add_function(make_sig)
+        .register_function(resolve_sig)
+        .register_bound_methods("dep.Env", [resolver.MethodEntry.{ method_name: "resolve", function_name: "dep.resolve" }])
+        .register_receiver_methods(env_tid, [resolver.MethodEntry.{ method_name: "resolve", function_name: "dep.resolve" }])
+
+      parsed := parser.parse("pub fn make_env() Int { 0 }", 0)
+      exports := resolver.extract_exports(env, parsed.value)
+
+      try assert.int_eq(exports.support_types.len(), 1)
+      try assert.str_eq(exports.support_types[0].name, "dep.Env")
+      try assert.int_eq(exports.support_functions.len(), 1)
+      try assert.str_eq(exports.support_functions[0].name, "dep.resolve")
+      case exports.methods["dep.Env"] {
+        .Some(methods) => {
+          found := false
+          for m in methods {
+            if m.method_name == "resolve" and m.function_name == "dep.resolve" { found = true }
+          }
+          try assert.is_true(found)
+          .Ok({})
+        },
+        .None => .Err("dep.Env should have support methods"),
       }
     })
 
@@ -1261,7 +1307,8 @@ pub fn suite() runner.Suite {
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") }],
-        functions: [sig],
+        functions: [resolver.ExportedFunction.{ name: "expose", sig, source_name: "expose" }],
+        support_functions: [],
         methods: Dict.new(),
       }
 

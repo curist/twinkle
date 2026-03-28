@@ -784,6 +784,19 @@ fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
   }
 }
 
+fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
+  fn_name := case ctx.env.lookup_method(type_name, method_name) {
+    .Some(name) => name,
+    .None => { return .None },
+  }
+  sig := case ctx.env.lookup_registered_function(fn_name) {
+    .Some(s) => s,
+    .None => { return .None },
+  }
+  inst := instantiate(sig, ctx)
+  .Some(.{ ty: MonoType.Function(inst.params, inst.ret), ctx: inst.ctx, diags })
+}
+
 fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
@@ -1001,6 +1014,19 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
       }
     },
     .None => {},
+  }
+
+  case base.kind {
+    .Ident(alias) => {
+      if is_module_alias(ctx, alias) {
+        module_value := try_synth_module_qualified_value(alias, field_name, ctx, diags)
+        case module_value {
+          .Some(r) => { return r },
+          .None => {},
+        }
+      }
+    },
+    _ => {},
   }
 
   br := ctx.synth(base, diags)
@@ -2355,7 +2381,7 @@ fn synth_block(block: Block, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut 
     },
     .None => {
       // If the last statement diverges, the block type is Never, not Void
-      block_ty := if block.stmts.len() > 0 and stmt_diverges(block.stmts[block.stmts.len() - 1]) {
+      block_ty := if block.stmts.len() > 0 and stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx) {
         MonoType.Never
       } else {
         MonoType.Void
@@ -2383,7 +2409,7 @@ fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<Di
     .None => {
       // If the last statement diverges, don't unify Void with expected
       diverges := if block.stmts.len() > 0 {
-        stmt_diverges(block.stmts[block.stmts.len() - 1])
+        stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx)
       } else { false }
       if diverges {
         .{ ctx: pop_scope(cur_ctx), diags: cur_diags }
@@ -2396,46 +2422,83 @@ fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<Di
 }
 
 // Check if a statement definitely diverges (all control paths return/error).
-fn stmt_diverges(stmt: Stmt) Bool {
+fn stmt_diverges(stmt: Stmt, ctx: InferCtx) Bool {
   case stmt {
     .Return(_) => true,
     .Break(_) => true,
     .Continue(_) => true,
-    .Expr(es) => expr_diverges(es.expr),
+    .Expr(es) => expr_diverges(es.expr, ctx),
     _ => false,
   }
 }
 
 // Check if an expression definitely diverges.
-fn expr_diverges(e: Expr) Bool {
-  case e.kind {
-    // error("msg") diverges
-    .Call(callee, _) => {
-      case callee.kind {
-        .Ident(name) => name == "error",
+fn returns_never(sig: FunctionSig) Bool {
+  case sig.ret {
+    .Some(ret) => {
+      case ret {
+        .Never => true,
         _ => false,
       }
     },
-    // if cond { ... } else { ... } diverges if both branches diverge
-    .If(_, then_block, else_expr) => {
-      then_div := block_diverges(then_block)
-      else_div := case else_expr {
-        .Some(eb) => expr_diverges(eb),
+    .None => false,
+  }
+}
+
+// Check if an expression definitely diverges.
+fn call_diverges(callee: Expr, ctx: InferCtx) Bool {
+  case callee.kind {
+    .Ident(name) => {
+      if name == "error" { return true }
+      case ctx.env.lookup_function(name) {
+        .Some(sig) => returns_never(sig),
         .None => false,
       }
-      then_div and else_div
     },
-    .BlockExpr(block) => block_diverges(block),
+    .Field(base, method_name) => {
+      case base.kind {
+        .Ident(alias) => {
+          if !is_module_alias(ctx, alias) { return false }
+          fn_name := case ctx.env.lookup_method(alias, method_name) {
+            .Some(found) => found,
+            .None => { return false },
+          }
+          case ctx.env.lookup_registered_function(fn_name) {
+            .Some(sig) => returns_never(sig),
+            .None => false,
+          }
+        },
+        _ => false,
+      }
+    },
     _ => false,
   }
 }
 
-fn block_diverges(block: Block) Bool {
+// Check if an expression definitely diverges.
+fn expr_diverges(e: Expr, ctx: InferCtx) Bool {
+  case e.kind {
+    .Call(callee, _) => call_diverges(callee, ctx),
+    // if cond { ... } else { ... } diverges if both branches diverge
+    .If(_, then_block, else_expr) => {
+      then_div := block_diverges(then_block, ctx)
+      else_div := case else_expr {
+        .Some(eb) => expr_diverges(eb, ctx),
+        .None => false,
+      }
+      then_div and else_div
+    },
+    .BlockExpr(block) => block_diverges(block, ctx),
+    _ => false,
+  }
+}
+
+fn block_diverges(block: Block, ctx: InferCtx) Bool {
   case block.tail {
-    .Some(tail) => expr_diverges(tail),
+    .Some(tail) => expr_diverges(tail, ctx),
     .None => {
       if block.stmts.len() > 0 {
-        stmt_diverges(block.stmts[block.stmts.len() - 1])
+        stmt_diverges(block.stmts[block.stmts.len() - 1], ctx)
       } else {
         false
       }

@@ -8,6 +8,7 @@ use compiler.core_ir
 use compiler.lower_core
 use compiler.monomorphize
 use compiler.builtins.{make_builtin_registry}
+use compiler.base_env.{builtin_env}
 use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -48,6 +49,22 @@ fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.
     return .Err("parse error: ${parsed.diagnostics[0].message}")
   }
   resolved := env.resolve(parsed.value)
+  if resolved.diagnostics.len() > 0 {
+    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+  }
+  check_result := checker.check(parsed.value, resolved.env)
+  if check_result.diagnostics.len() > 0 {
+    return .Err("check error: ${check_result.diagnostics[0].message}")
+  }
+  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
+}
+
+fn lower_src_with_builtin_env(src: String) Result<lower_core.LowerResult, String> {
+  parsed := parser.parse(src, 0)
+  if parsed.diagnostics.len() > 0 {
+    return .Err("parse error: ${parsed.diagnostics[0].message}")
+  }
+  resolved := builtin_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
     return .Err("resolve error: ${resolved.diagnostics[0].message}")
   }
@@ -828,6 +845,14 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Call for method call, got other kind"),
       }
+    })
+    .test("lower module-qualified function value as GlobalFunc", fn() Result<Void, String> {
+      src := "fn f(xs: Vector<String>) Vector<String> { xs.sort_by(String.compare) }"
+      lr := try lower_src_with_builtin_env(src)
+      body := lr.module.functions[0].body
+      reg := make_builtin_registry()
+      try assert.ok(has_func_id(body, reg.id(\"string_compare\").id), \"expected string_compare reference\")
+      .Ok({})
     })
     .test("lower for-in dict loop", fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Void { for k in m { k } }"

@@ -676,6 +676,12 @@ pub fn suite() runner.Suite {
       r := try check_ok_builtins(src)
       .Ok({})
     })
+    .test("F9 inferred Never helper call diverges in case arm", fn() {
+      src := "fn abort() { error(\"fail\") }\nfn f(x: Bool) Int { case x { true => 1, false => { abort() } } }"
+      r := try check_ok_builtins(src)
+      try assert.str_eq(try type_at(r, src, "case x"), "Int")
+      .Ok({})
+    })
     // ── F3: try threads unification context ──
     .test("F3 try on Result threads error type unification", fn() {
       // Verify that try on Result properly threads u.ctx so MetaVar substitutions are preserved

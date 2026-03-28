@@ -236,6 +236,11 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    .test("module-qualified String.compare is valid as a function value", fn() {
+      try check_ok_with_builtins("xs: Vector<String> = [\"b\", \"a\"]\nys := xs.sort_by(String.compare)")
+      .Ok({})
+    })
+
     // ── regression: free builtin functions ───────────────────────────────────
 
     .test("free function range_from resolves without errors", fn() {

@@ -515,6 +515,21 @@ fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: Stri
         },
         .None => {},
       }
+
+      case ctx.env.lookup_method(name, field_name) {
+        .Some(fn_name) => {
+          case ctx.func_table[fn_name] {
+            .Some(fid) => {
+              return .{
+                expr: .{ kind: .GlobalFunc(fid), ty, span: s },
+                ctx,
+              }
+            },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
     },
     _ => {},
   }

@@ -69,10 +69,17 @@ pub type ExportedType = .{
   origin: String?,
 }
 
+pub type ExportedFunction = .{
+  name: String,
+  sig: FunctionSig,
+  source_name: String,
+}
+
 pub type ModuleExports = .{
   visible_types: Vector<ExportedType>,
   support_types: Vector<ExportedType>,
-  functions: Vector<FunctionSig>,
+  functions: Vector<ExportedFunction>,
+  support_functions: Vector<ExportedFunction>,
   methods: Dict<String, Vector<MethodEntry>>,
 }
 
@@ -487,6 +494,19 @@ fn all_exported_types(exports: ModuleExports) Vector<ExportedType> {
   exports.visible_types.concat(exports.support_types)
 }
 
+fn all_exported_functions(exports: ModuleExports) Vector<ExportedFunction> {
+  exports.functions.concat(exports.support_functions)
+}
+
+fn visible_export_function(exports: ModuleExports, name: String) ExportedFunction? {
+  for exported in exports.functions {
+    if exported.name == name {
+      return .Some(exported)
+    }
+  }
+  .None
+}
+
 fn local_type_origin(module_key: String, name: String) String? {
   if module_key == "" {
     .None
@@ -511,8 +531,11 @@ pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
 pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: String) ModuleExports {
   visible_types: Vector<ExportedType> = []
   support_types: Vector<ExportedType> = []
-  exported_functions: Vector<FunctionSig> = []
-  exported_function_names: Dict<String, Bool> = Dict.new()
+  exported_functions: Vector<ExportedFunction> = []
+  support_functions: Vector<ExportedFunction> = []
+  visible_function_names: Dict<String, Bool> = Dict.new()
+  visible_function_sources: Dict<String, Bool> = Dict.new()
+  interface_function_sources: Dict<String, Bool> = Dict.new()
   exported_type_names: Dict<String, Bool> = Dict.new()
 
   for item in module.items {
@@ -535,8 +558,14 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if !decl.is_pub { continue }
         case env.lookup_function(decl.name) {
           .Some(sig) => {
-            exported_functions = exported_functions.push(sig)
-            exported_function_names[sig.name] = true
+            exported_functions = exported_functions.push(.{
+              name: sig.name,
+              sig,
+              source_name: sig.name,
+            })
+            visible_function_names[sig.name] = true
+            visible_function_sources[sig.name] = true
+            interface_function_sources[sig.name] = true
           },
           .None => {},
         }
@@ -549,11 +578,11 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
   for exported in visible_types {
     hidden_support_types = collect_hidden_support_types_from_entry(env, exported.entry, hidden_support_types)
   }
-  for sig in exported_functions {
-    for param_ty in sig.params {
+  for exported in exported_functions {
+    for param_ty in exported.sig.params {
       hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)
     }
-    case sig.ret {
+    case exported.sig.ret {
       .Some(ret_ty) => {
         hidden_support_types = collect_hidden_support_types(env, ret_ty, hidden_support_types)
       },
@@ -561,18 +590,72 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     }
   }
 
-  // Preserve the source env's declaration order for deterministic export order.
-  for i in range(env.type_names.len()) {
-    name := env.type_names[i]
-    if !hidden_support_types.has(name) or exported_type_names.has(name) {
+  changed := true
+  for changed {
+    changed = false
+
+    // Preserve the source env's declaration order for deterministic export order.
+    for i in range(env.type_names.len()) {
+      name := env.type_names[i]
+      if !hidden_support_types.has(name) or exported_type_names.has(name) {
+        continue
+      }
+      support_types = support_types.push(ExportedType.{
+        name,
+        entry: env.types[i],
+        origin: exported_type_origin(env, env.types[i].id, module_key, name),
+      })
+      exported_type_names[name] = true
+      changed = true
+    }
+
+    for exported in all_exported_types(.{
+      visible_types,
+      support_types,
+      functions: exported_functions,
+      support_functions,
+      methods: Dict.new(),
+    }) {
+      entries: Vector<MethodEntry> = case env.lookup_type_methods(exported.entry.id) {
+        .Some(found) => found,
+        .None => {
+          case env.methods[exported.name] {
+            .Some(found) => found,
+            .None => collect _ in range(0) { me("", "") },
+          }
+        },
+      }
+      for entry in entries {
+        if interface_function_sources.has(entry.function_name) { continue }
+        case lookup_registered_function(env, entry.function_name) {
+          .Some(sig) => {
+            interface_function_sources[entry.function_name] = true
+            changed = true
+            for param_ty in sig.params {
+              hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)
+            }
+            case sig.ret {
+              .Some(ret_ty) => {
+                hidden_support_types = collect_hidden_support_types(env, ret_ty, hidden_support_types)
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+      }
+    }
+  }
+
+  for sig in env.functions {
+    if !interface_function_sources.has(sig.name) or visible_function_sources.has(sig.name) {
       continue
     }
-    support_types = support_types.push(ExportedType.{
-      name,
-      entry: env.types[i],
-      origin: exported_type_origin(env, env.types[i].id, module_key, name),
+    support_functions = support_functions.push(.{
+      name: sig.name,
+      sig,
+      source_name: sig.name,
     })
-    exported_type_names[name] = true
   }
 
   exported_methods: Dict<String, Vector<MethodEntry>> = Dict.new()
@@ -581,7 +664,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     case env.lookup_type_methods(exported.entry.id) {
       .Some(entries) => {
         visible := collect entry in entries {
-          if !exported_function_names.has(entry.function_name) { continue }
+          if !interface_function_sources.has(entry.function_name) { continue }
           entry
         }
         if visible.len() > 0 {
@@ -592,7 +675,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         case env.methods[exported.name] {
           .Some(entries) => {
             visible := collect entry in entries {
-              if !exported_function_names.has(entry.function_name) { continue }
+              if !interface_function_sources.has(entry.function_name) { continue }
               entry
             }
             if visible.len() > 0 {
@@ -605,7 +688,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     }
   }
 
-  ModuleExports.{ visible_types, support_types, functions: exported_functions, methods: exported_methods }
+  ModuleExports.{ visible_types, support_types, functions: exported_functions, support_functions, methods: exported_methods }
 }
 
 fn merge_exported_type(env: ResolvedEnv, exported: ExportedType, target_name: String, type_ids: Dict<Int, TypeId>, bind_name: Bool) ResolvedEnv {
@@ -672,12 +755,21 @@ pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleE
   merge_selective_via_registration(env, alias, exports, items)
 }
 
+fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
+  names: Dict<String, Bool> = Dict.new()
+  for exported in exports.functions {
+    names[exported.name] = true
+  }
+  names
+}
+
 fn register_imported_functions(env: ResolvedEnv, alias: String, exports: ModuleExports, type_ids: Dict<Int, TypeId>, bind_qualified_names: Bool) ResolvedEnv {
   cur := env
-  for sig in exports.functions {
-    qualified_name := qualify_name(alias, sig.name)
-    cur = cur.register_function(remap_function_sig(sig, qualified_name, type_ids))
-    if bind_qualified_names {
+  visible_functions := visible_function_names(exports)
+  for exported in all_exported_functions(exports) {
+    qualified_name := qualify_name(alias, exported.name)
+    cur = cur.register_function(remap_function_sig(exported.sig, qualified_name, type_ids))
+    if bind_qualified_names and visible_functions.has(exported.name) {
       cur = cur.bind_function(qualified_name, qualified_name)
     }
   }
@@ -689,8 +781,8 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
   cur := register_imported_functions(reg.env, alias, exports, reg.type_ids, true)
 
   methods := cur.methods
-  module_entries := collect sig in exports.functions {
-    me(sig.name, qualify_name(alias, sig.name))
+  module_entries := collect exported in exports.functions {
+    me(exported.name, qualify_name(alias, exported.name))
   }
   if module_entries.len() > 0 {
     methods = register_methods(methods, alias, module_entries)
@@ -711,7 +803,11 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, exports: Mo
   for item in items {
     case item {
       .Value(value_item) => {
-        source_name := qualify_name(alias, value_item.name)
+        exported := case visible_export_function(exports, value_item.name) {
+          .Some(found) => found,
+          .None => { continue },
+        }
+        source_name := qualify_name(alias, exported.name)
         binding_name := import_binding_name(value_item.name, value_item.alias)
         case lookup_registered_function(cur, source_name) {
           .Some(_) => {
@@ -746,13 +842,14 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, exports: Mo
 pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv {
   reg := register_imported_interface_types(env, "", "", exports, true)
   cur := reg.env
-  visible_functions: Dict<String, Bool> = Dict.new()
+  visible_functions := visible_function_names(exports)
 
-  for sig in exports.functions {
-    if cur.has_function(sig.name) { continue }
-    cur = cur.register_function(remap_function_sig(sig, sig.name, reg.type_ids))
-    cur = cur.bind_function(sig.name, sig.name)
-    visible_functions[sig.name] = true
+  for exported in all_exported_functions(exports) {
+    if cur.has_function(exported.name) { continue }
+    cur = cur.register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
+    if visible_functions.has(exported.name) {
+      cur = cur.bind_function(exported.name, exported.name)
+    }
   }
 
   methods := cur.methods
@@ -760,17 +857,13 @@ pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedE
   for exported in all_exported_types(exports) {
     case exports.methods[exported.name] {
       .Some(entries) => {
-        visible := collect entry in entries {
-          if !visible_functions.has(entry.function_name) { continue }
-          entry
-        }
-        if visible.len() > 0 {
-          methods = register_methods(methods, exported.name, visible)
+        if entries.len() > 0 {
+          methods = register_methods(methods, exported.name, entries)
           remapped_id := case reg.type_ids[exported.entry.id.id] {
             .Some(id) => id,
             .None => exported.entry.id,
           }
-          methods_by_type = register_type_methods(methods_by_type, remapped_id, visible)
+          methods_by_type = register_type_methods(methods_by_type, remapped_id, entries)
         }
       },
       .None => {},

@@ -123,6 +123,22 @@ pub fn suite() runner.Suite {
       }
     })
 
+    .test("support type methods remain callable downstream through exported signatures", fn() {
+      result := module_compiler.compile_entry("${dir}/support_method_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected support type method surface to survive downstream import, got: ${msg}"),
+      }
+    })
+
+    .test("downstream sees inferred Never returns from imported modules", fn() {
+      result := module_compiler.compile_entry("${dir}/never_main.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected imported inferred Never return to survive downstream import, got: ${msg}"),
+      }
+    })
+
     .test("real boot lexer module typechecks through compiler import topology", fn() {
       result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
       case result {

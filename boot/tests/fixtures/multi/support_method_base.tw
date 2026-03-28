@@ -1,0 +1,5 @@
+use .support_method_env
+
+pub fn make_env(value: Int) support_method_env.Env {
+  support_method_env.new_env(value)
+}
