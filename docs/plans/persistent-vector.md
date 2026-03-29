@@ -10,6 +10,12 @@ so `Vector<Int>`, `Vector<String>`, and `Vector<Record...>` can use distinct run
 container/node types with typed element slots instead of boxing every element through
 `anyref`.
 
+This plan is subordinate to
+[`backend-anyref-elimination.md`](backend-anyref-elimination.md). If the two
+documents disagree, the backend `anyref` elimination plan wins. Transitional
+erased fallbacks are allowed during migration, but they are not part of the
+intended end state for supported concrete vector code paths.
+
 ## Current State
 
 - `Vector<T>` is backed by `rt.arr` using a flat Wasm GC array (`rt_types__Array`).
@@ -44,8 +50,11 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
   - `Vector<Int>` should store `i64` elements directly
   - `Vector<String>` should store `ref $String` elements directly
   - `Vector<Point>` should store `ref $Point` elements directly
-- Keep an erased fallback path only where the element type is genuinely not concrete or
-  not worth specializing.
+- For supported concrete `T`, the steady-state backend target is fully typed
+  vector/container/helper families with no backend-internal `anyref` element storage.
+- Transitional erased fallback may exist only during migration for unsupported or
+  not-yet-specialized `T`; per `backend-anyref-elimination.md`, it is not the
+  intended long-term model for ordinary concrete code.
 
 ## Non-Goals
 
@@ -113,6 +122,10 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
   - loop-region uniqueness rewrites target them directly
 - Ensure builder paths also specialize by element layout so `push` into `Vector<Int>`
   does not route through `anyref`.
+- Preserve current alias-safety semantics of `builder_from`: seeding a builder from an
+  existing persistent vector must not mutate shared structure unless uniqueness has
+  already been proved elsewhere. If the builder needs writable transient state, it must
+  detach first or maintain separate transient-only nodes.
 
 ### Task D: Codegen Type Plumbing
 
@@ -144,8 +157,11 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
   - concrete record/sum refs
   - typed closure refs where those are already available in the backend
 - Define fallback:
-  - erased/universal vector family only for genuinely non-concrete or unsupported `T`
+  - temporary erased/universal vector family only for genuinely non-concrete or
+    unsupported `T` during migration
   - fallback should be the exception, not the default
+  - fallback must be removed for supported concrete families once their typed layouts
+    land; it is not part of the target architecture
 
 ## Validation
 
@@ -163,7 +179,9 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 - Add representation-focused tests:
   - `Vector<Int>` read/write path contains no element boxing
   - `Vector<String>` read/write path contains no element boxing
-  - fallback vector path still works for intentionally erased cases
+  - `builder_from` seeded from an existing vector does not mutate aliases
+  - temporary fallback vector path, if still present during migration, works only for
+    intentionally erased cases
 - Update runtime/build snapshots for changed runtime type layout.
 
 ## Staging
@@ -175,7 +193,8 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
 5. Move `push` + builder path onto the specialized representation.
 6. Add `String` and common ref-element families.
 7. Move `concat/slice`.
-8. Retain erased fallback only for unsupported/non-concrete cases.
+8. Restrict transitional erased fallback to unsupported/non-concrete cases only, then
+   remove it for supported concrete families.
 9. Update snapshots and perf baseline.
 
 ## Risks

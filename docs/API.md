@@ -222,7 +222,9 @@ Qualified forms (`Vector.map`, `Vector.filter`, etc.) also work.
 
 ## Dict\<K, V\>
 
-Persistent hash map. Keys must be `Int`, `String`, or `Byte`.
+Persistent hash map. Keys must be `Int`, `String`, or `Byte`. `keys()`, dict iteration,
+and helpers built on top of them preserve insertion order of first insertion; updating an
+existing key keeps its position, and remove+reinsert appends it at the end.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

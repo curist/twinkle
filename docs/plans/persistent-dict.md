@@ -9,6 +9,12 @@ For concrete monomorphized programs, `Dict<K,V>` should also move away from univ
 so `Dict<String, Int>`, `Dict<Int, String>`, and other concrete pairs can use typed node
 layouts and avoid boxing every key/value through `anyref`.
 
+This plan is subordinate to
+[`backend-anyref-elimination.md`](backend-anyref-elimination.md). If the two
+documents disagree, the backend `anyref` elimination plan wins. Transitional
+erased fallbacks are allowed during migration, but they are not part of the
+intended end state for supported concrete dict code paths.
+
 ## Current State
 
 - Runtime dict is an unsorted association list over array entries.
@@ -20,7 +26,8 @@ layouts and avoid boxing every key/value through `anyref`.
   - `for`/`collect` over dicts depend on `Dict.keys` and therefore observe its order
   - the optimizer rewrites `dict_set` / `dict_remove` to `dict_set_in_place` /
     `dict_remove_in_place` when uniqueness permits
-- Current implementations restrict dict keys to a small builtin family; the persistent
+- Current implementations restrict dict keys to a small builtin family
+  (`Int | String | Byte`); the persistent
   runtime should preserve those key semantics rather than broaden them implicitly.
 - Runtime implementation lives in `boot/compiler/codegen/runtime/dict.tw` and mirrors
   stage0 `src/runtime/dict.rs`.
@@ -42,12 +49,15 @@ Adopt a persistent hash array mapped trie (HAMT):
   - `Dict<Int, Int>` stores direct `i64` keys and values
   - `Dict<String, Int>` stores `ref $String` keys and `i64` values
   - `Dict<String, Point>` stores `ref $String` keys and `ref $Point` values
-- Keep erased fallback only where key/value layouts are genuinely unsupported or not worth
-  specializing.
+- For supported concrete `(K, V)` pairs, the steady-state backend target is fully typed
+  dict/container/helper families with no backend-internal `anyref` payload storage.
+- Transitional erased fallback may exist only during migration for unsupported or
+  not-yet-specialized pairs; per `backend-anyref-elimination.md`, it is not the
+  intended long-term model for ordinary concrete code.
 
 ## Non-Goals
 
-- Expanding key types beyond `Int | String`
+- Expanding key types beyond the current builtin family (`Int | String | Byte`)
 - Exposing hash behavior at language surface
 - Requiring host-specific hash primitives
 - Forcing all key/value combinations to specialize in one step; rollout can prioritize the
@@ -78,8 +88,26 @@ Adopt a persistent hash array mapped trie (HAMT):
 ## Hashing Strategy
 
 - `Int`: stable 64-bit mix -> 32-bit hash
+- `Byte`: stable byte-to-int mix with the same deterministic hash contract as other
+  builtin keys
 - `String`: runtime UTF-8 hash (deterministic, host-independent)
 - Collision handling via collision nodes and full key equality check
+
+## Iteration Ordering Contract
+
+The HAMT implementation must preserve today's observable dict ordering semantics,
+not merely produce a deterministic order:
+
+- `Dict.keys`, `for k in d`, `for k, v in d`, `collect` over dicts, and helpers such
+  as `Dict.values` all observe dict order.
+- First insertion of a new key appends that key at the end of the observable order.
+- Updating an existing key preserves that key's position.
+- Removing a key preserves the relative order of the remaining keys.
+- Removing and later reinserting the same key treats the reinsertion as a new
+  insertion at the end.
+
+If the HAMT's internal node traversal does not naturally preserve this contract,
+the runtime must maintain separate ordering metadata or an equivalent mechanism.
 
 ## Implementation Tasks
 
@@ -99,7 +127,7 @@ Adopt a persistent hash array mapped trie (HAMT):
   - `set`: path-copy insert/replace, size delta tracking
   - `remove`: path-copy delete + node compaction
   - `len`: O(1) from stored size
-  - `keys`: deterministic traversal order (define and test)
+  - `keys`: preserve the insertion-order contract above, not just deterministic output
   - Preserve the current boot compiler runtime surface:
     - semantic helpers: `make`, `len`, `keys`, `get_option`, `has`, `set`, `remove`
     - optimizer helpers: `set_in_place`, `remove_in_place`
@@ -113,8 +141,10 @@ Adopt a persistent hash array mapped trie (HAMT):
 - Add internal hash helpers in runtime (likely `rt.core` or `rt.dict` local helpers).
 - Keep final key match guarded by existing equality semantics (`rt.core.eq`).
 - Ensure string hashing matches UTF-8 byte representation used in runtime strings.
+- Keep `Byte` key behavior first-class alongside `Int` and `String`; do not regress the
+  existing `Dict<Byte, V>` surface while changing representation.
 - `Dict.keys` order is part of today's observable behavior because dict iteration lowers
-  through `keys`; define the HAMT traversal order explicitly and keep it deterministic.
+  through `keys`; preserve the insertion-order contract above.
 - For specialized families, use typed key comparisons on hot paths where possible, falling
   back to structural equality only where semantics require it.
 
@@ -137,13 +167,18 @@ Adopt a persistent hash array mapped trie (HAMT):
 - Define which `(K, V)` pairs receive dedicated dict layouts first.
 - Minimum target:
   - `Dict<Int, Int>`
+  - `Dict<Byte, Int>`
   - `Dict<Int, String>`
   - `Dict<String, Int>`
   - `Dict<String, String>`
+  - `Dict<Byte, String>`
   - common ref-valued cases (`Dict<String, Record>`, `Dict<String, Sum>`)
 - Define fallback:
-  - erased/universal dict family only for unsupported/non-concrete cases
+  - temporary erased/universal dict family only for unsupported/non-concrete cases
+    during migration
   - fallback should be the exception, not the default
+  - fallback must be removed for supported concrete families once their typed layouts
+    land; it is not part of the target architecture
 
 ## Validation
 
@@ -152,18 +187,22 @@ Adopt a persistent hash array mapped trie (HAMT):
   - `tests/run/dict_methods.tw`
   - `tests/opt/*dict*`
 - Keep coverage for compiler hooks:
-  - dict iteration order remains deterministic via `Dict.keys`
+  - dict iteration order preserves insertion/update/remove semantics via `Dict.keys`
   - `m[k] = v` still maps to the persistent update path
   - uniqueness rewrites to in-place helpers preserve semantics
 - Add HAMT-specific tests:
   - Hash collision scenarios
   - Deep trie path updates/removes
   - Structural sharing sanity (older versions remain intact)
-  - Deterministic `Dict.keys` ordering checks
+  - `Dict<Byte, _>` coverage for get/has/set/remove/iteration
+  - `Dict.keys` ordering checks for insert, overwrite, remove, and remove+reinsert
 - Add representation-focused tests:
   - `Dict<String, Int>` lookup/update paths contain no key/value boxing
   - `Dict<Int, String>` lookup/update paths contain no key/value boxing
-  - erased fallback dict path still works for intentionally unsupported cases
+  - `Dict<Byte, Int>` lookup/update path contains no key boxing once that family is
+    supported
+  - temporary erased fallback dict path, if still present during migration, works only
+    for intentionally unsupported cases
 
 ## Staging
 
@@ -172,9 +211,10 @@ Adopt a persistent hash array mapped trie (HAMT):
 3. Implement `get/has/len` for the first specialized key/value pairs.
 4. Implement `set/remove` persistent path-copy for those pairs.
 5. Implement in-place helper variants for uniqueness rewrite path.
-6. Expand to additional high-value `(K, V)` families.
-7. Retain erased fallback only for unsupported/non-concrete cases.
-8. Finalize `keys` traversal and ordering guarantees.
+6. Expand to additional high-value `(K, V)` families, including `Byte`-key cases.
+7. Restrict transitional erased fallback to unsupported/non-concrete cases only.
+8. Remove transitional fallback for supported concrete families and finalize `keys`
+   ordering guarantees.
 9. Update snapshots and perf baseline.
 
 ## Risks

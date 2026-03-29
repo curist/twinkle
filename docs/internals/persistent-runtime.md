@@ -72,7 +72,8 @@ These extra helpers exist for current lowering and optimizer structure:
 - `arr[i] = v` lowers to raw persistent update (`vector_set_unsafe`).
 - `m[k] = v` lowers to `dict_set`.
 - dict iteration currently depends on `Dict.keys`, so key order is observable through
-  `for`, `collect`, and prelude helpers like `Dict.values`.
+  `for`, `collect`, and prelude helpers like `Dict.values`. Backends must preserve the
+  language-level dict-order contract, not just a deterministic traversal.
 
 ---
 

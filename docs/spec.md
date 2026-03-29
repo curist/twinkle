@@ -1358,10 +1358,10 @@ Used by `for` and `collect`.
 
 Dicts are **immutable** hash maps.
 
-**Key type constraint:** `K` must be `Int` or `String`. No other types are allowed
-as dict keys. `Bool` keys are excluded (a two-entry dict should be expressed as a
-plain record). Since Twinkle has no trait system, this constraint is enforced as a
-compiler-known closed set rather than a generic bound.
+**Key type constraint:** `K` must be `Int`, `String`, or `Byte`. No other types are
+allowed as dict keys. `Bool` keys are excluded (a two-entry dict should be expressed
+as a plain record). Since Twinkle has no trait system, this constraint is enforced as
+a compiler-known closed set rather than a generic bound.
 
 Creation:
 
@@ -1377,7 +1377,7 @@ Dict operations via module functions (all return new dicts):
 * `Dict.remove(m, k) Dict<K, V>` — returns new dict with key removed
 * `Dict.get(m, k) V?` — returns Option<V> for safe access
 * `Dict.has(m, k) Bool` — checks if key exists
-* `Dict.keys(m) Vector<K>` — returns array of keys
+* `Dict.keys(m) Vector<K>` — returns keys in dict order
 * `Dict.values(m) Vector<V>` — returns array of values (via `@std.dict_ext`)
 * `Dict.len(m) Int` — returns length of keys
 
@@ -1385,6 +1385,11 @@ Indexing syntax:
 
 * `m[k]` returns `V?` (Option<V>) for safe read access
 * `m[k] = v` desugars to `m = Dict.set(m, k, v)`
+
+**Dict order:** Dict iteration order is observable through `Dict.keys`, `for`, `collect`,
+and helpers built on top of them. Twinkle preserves insertion order of first insertion;
+updating an existing key does not move it, removing a key preserves the relative order
+of the remaining keys, and removing then reinserting a key appends it at the end.
 
 ### 17.1 Cell (Explicit Mutable State)
 
