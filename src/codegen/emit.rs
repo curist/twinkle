@@ -2,12 +2,15 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::codegen::ctx::{
     EmitCtx, FuncSigInfo, IteratorStateInfo, StringLiteralPoolEntry, SumRepr, atom_iterator_state,
-    is_concrete_mono_type, is_typed_general_option_candidate, is_typed_general_result_candidate,
+    infer_vector_elem_mono, infer_vector_mono_from_builder_atom, is_concrete_mono_type,
+    is_typed_general_option_candidate, is_typed_general_result_candidate,
     is_typed_general_sum_candidate, iterator_state_from_unfold_args, mono_to_symbol_key,
     mono_to_valtype, mono_to_valtype_for_param, mono_to_valtype_specialized,
     resolve_unfold_step_types, sum_repr_from_mono, typed_cell_struct_sym, typed_closure_struct_sym,
     typed_closurefunc_sym, typed_general_option_sym, typed_iter_item_sym, typed_iter_option_sym,
     typed_iterator_state_sym, typed_unfold_step_sym, user_record_type_sym, value_repr_from_mono,
+    vector_builder_elem_from_atom, vector_builder_elem_from_setup_op,
+    vector_builder_mutation_from_op,
 };
 use crate::codegen::prelude::build_prelude_map;
 use crate::intrinsics::registry::{self, LoweringKind};
@@ -822,12 +825,23 @@ fn emit_let_expr(
 ) -> Vec<Instr> {
     let mut restores = Vec::new();
     let mut repr_restores = Vec::new();
+    let mut builder_restores = Vec::new();
     let mut iterator_restores = Vec::new();
     let mut typed_option_restores = Vec::new();
     let local_mono = ctx.infer_let_op_mono_for_emit(local, op);
     let local_repr = local_mono
         .as_ref()
         .and_then(|mono| value_repr_from_mono(mono, &ctx.concrete_func_sigs));
+    let local_builder_elem = match (
+        ctx.local_vector_builder_elem(local),
+        vector_builder_elem_from_setup_op(op, ctx),
+    ) {
+        (Some(current), Some(incoming)) if current == incoming => Some(current),
+        (Some(current), None) => Some(current),
+        (None, Some(incoming)) => Some(incoming),
+        (Some(_), Some(_)) => None,
+        (None, None) => None,
+    };
     let local_iter = iterator_state_from_op(op, ctx);
     let local_opt_raw = match op {
         AnfOp::AVariant { type_id, .. }
@@ -846,6 +860,10 @@ fn emit_let_expr(
     }
     ctx.push_flow_mono_binding(local, local_mono.clone(), &mut restores);
     ctx.push_flow_value_repr_binding(local, local_repr, &mut repr_restores);
+    ctx.push_flow_vector_builder_binding(local, local_builder_elem, &mut builder_restores);
+    if let Some((target, elem)) = vector_builder_mutation_from_op(op, ctx) {
+        ctx.push_flow_vector_builder_binding(target, elem, &mut builder_restores);
+    }
     ctx.push_flow_iterator_binding(local, local_iter, &mut iterator_restores);
     push_flow_typed_option_binding(local, local_opt, &mut typed_option_restores, ctx);
     if let AnfOp::AAssign {
@@ -862,6 +880,11 @@ fn emit_let_expr(
             .filter(|mono| local_can_store_typed_option(*target, mono, ctx));
         ctx.push_flow_mono_binding(*target, value_mono.clone(), &mut restores);
         ctx.push_flow_value_repr_binding(*target, value_repr, &mut repr_restores);
+        ctx.push_flow_vector_builder_binding(
+            *target,
+            vector_builder_elem_from_atom(value, ctx),
+            &mut builder_restores,
+        );
         ctx.push_flow_iterator_binding(*target, value_iter, &mut iterator_restores);
         push_flow_typed_option_binding(*target, value_opt, &mut typed_option_restores, ctx);
     }
@@ -874,6 +897,9 @@ fn emit_let_expr(
     }
     while let Some((local_id, prev)) = typed_option_restores.pop() {
         restore_flow_typed_option_binding(local_id, prev, ctx);
+    }
+    while let Some((local_id, prev)) = builder_restores.pop() {
+        ctx.restore_flow_vector_builder_binding(local_id, prev);
     }
     while let Some((local_id, prev)) = repr_restores.pop() {
         ctx.restore_flow_value_repr_binding(local_id, prev);
@@ -2223,7 +2249,7 @@ fn emit_tail_runtime_prelude_call(
     return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Option<Vec<Instr>> {
-    if let Some(import) = specialized_vector_runtime_import(func_id, args, return_ty, ctx) {
+    if let Some(import) = specialized_vector_runtime_import(func_id, args, ctx) {
         return emit_tail_import_call(import, args, return_ty, ctx);
     }
     if !entry.is_runtime_call()
@@ -6941,7 +6967,7 @@ fn emit_runtime_prelude_call(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    if let Some(import) = specialized_vector_runtime_import(func_id, args, Some(bind_ty), ctx) {
+    if let Some(import) = specialized_vector_runtime_import(func_id, args, ctx) {
         return emit_runtime_import_call(import, args, bind_ty, ctx);
     }
     if args.len() != entry.runtime_params.len() {
@@ -7095,15 +7121,9 @@ fn ref_variant_null() -> ValType {
 fn typed_vector_elem_from_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     match atom {
         Atom::ALocal(local_id) => ctx.local_typed_vector_elem(*local_id).or_else(|| {
-            ctx.infer_atom_mono(atom).and_then(|mono| match mono {
-                MonoType::Vector(elem) if *elem == MonoType::Int => Some(elem.as_ref().clone()),
-                _ => None,
-            })
+            infer_vector_elem_mono(atom, ctx).filter(|elem_ty| *elem_ty == MonoType::Int)
         }),
-        _ => ctx.infer_atom_mono(atom).and_then(|mono| match mono {
-            MonoType::Vector(elem) if *elem == MonoType::Int => Some(elem.as_ref().clone()),
-            _ => None,
-        }),
+        _ => infer_vector_elem_mono(atom, ctx).filter(|elem_ty| *elem_ty == MonoType::Int),
     }
 }
 
@@ -7114,7 +7134,6 @@ fn is_int_vector_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> bool {
 fn specialized_vector_runtime_import(
     func_id: FuncId,
     args: &[Atom],
-    bind_ty: Option<&ValType>,
     ctx: &EmitCtx<'_>,
 ) -> Option<ImportDef> {
     use crate::ir::lower::prelude as ids;
@@ -7190,13 +7209,12 @@ fn specialized_vector_runtime_import(
             })
         }
         id if id == ids::VECTOR_BUILDER_FREEZE
-            && matches!(
-                bind_ty,
-                Some(ValType::Ref {
-                    heap: HeapType::Named(sym),
-                    ..
-                }) if sym == T_VECTOR_I64
-            ) =>
+            && args.first().is_some_and(|arg| {
+                matches!(
+                    infer_vector_mono_from_builder_atom(arg, ctx),
+                    Some(MonoType::Vector(elem)) if *elem == MonoType::Int
+                )
+            }) =>
         {
             Some(ImportDef {
                 module: "rt.arr".to_string(),
@@ -8584,7 +8602,7 @@ mod tests {
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
-        ctx.local_map.insert(LocalId(1), (0, ref_array_null()));
+        ctx.local_map.insert(LocalId(1), (0, ref_vector_i64_null()));
         ctx.local_map.insert(LocalId(2), (1, ValType::I64));
         ctx.local_mono
             .insert(LocalId(1), MonoType::Vector(Box::new(MonoType::Int)));
@@ -8599,7 +8617,7 @@ mod tests {
             prelude_ids::VECTOR_PUSH,
             &entry,
             &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
-            &ref_array_null(),
+            &ref_vector_i64(),
             &mut ctx,
         );
 
@@ -9628,6 +9646,45 @@ mod tests {
             ]
         );
         assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_arr__get_i64"));
+    }
+
+    #[test]
+    fn emit_builder_freeze_uses_i64_family_from_builder_metadata() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let entry = prelude
+            .get(&prelude_ids::VECTOR_BUILDER_FREEZE)
+            .cloned()
+            .expect("missing builder freeze prelude entry");
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
+        ctx.set_local_vector_builder_elem(LocalId(1), Some(MonoType::Int));
+
+        let instrs = emit_runtime_prelude_call(
+            prelude_ids::VECTOR_BUILDER_FREEZE,
+            &entry,
+            &[Atom::ALocal(LocalId(1))],
+            &ValType::Anyref,
+            &mut ctx,
+        );
+
+        assert_eq!(
+            instrs,
+            vec![
+                Instr::LocalGet(0),
+                Instr::RefCast {
+                    nullable: true,
+                    heap: HeapType::Named(T_ARRAY.to_string()),
+                },
+                Instr::Call("rt_arr__builder_freeze_i64".to_string()),
+            ]
+        );
+        assert!(
+            ctx.imports()
+                .iter()
+                .any(|i| i.as_sym == "rt_arr__builder_freeze_i64")
+        );
     }
 
     #[test]

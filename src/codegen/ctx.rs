@@ -101,6 +101,7 @@ impl SumRepr {
 #[derive(Debug, Clone, Default)]
 pub struct LocalBackendInfo {
     pub repr: Option<ValueRepr>,
+    pub vector_builder_elem: Option<MonoType>,
     pub iterator_state: Option<IteratorStateInfo>,
     pub iterator_next_state: Option<IteratorStateInfo>,
     pub iter_item_state: Option<IteratorStateInfo>,
@@ -196,6 +197,22 @@ impl ReprFlowCtx {
     pub fn set_local_value_repr(&mut self, local_id: LocalId, repr: Option<ValueRepr>) {
         let entry = self.local_backend.entry(local_id).or_default();
         entry.repr = repr;
+        if local_backend_entry_empty(entry) {
+            self.local_backend.remove(&local_id);
+        }
+    }
+
+    // -- Vector builder repr --
+
+    pub fn local_vector_builder_elem(&self, local_id: LocalId) -> Option<MonoType> {
+        self.local_backend
+            .get(&local_id)
+            .and_then(|info| info.vector_builder_elem.clone())
+    }
+
+    pub fn set_local_vector_builder_elem(&mut self, local_id: LocalId, elem: Option<MonoType>) {
+        let entry = self.local_backend.entry(local_id).or_default();
+        entry.vector_builder_elem = elem;
         if local_backend_entry_empty(entry) {
             self.local_backend.remove(&local_id);
         }
@@ -528,6 +545,8 @@ impl<'a> EmitCtx<'a> {
             }
         }
 
+        self.collect_vector_builder_hints_expr(&func.body);
+
         let mut wasm_locals = Vec::new();
         self.assign_expr_locals(&func.body, &mut next_idx, &mut wasm_locals);
 
@@ -591,6 +610,23 @@ impl<'a> EmitCtx<'a> {
                         func_id.0, local_id.0, item_info, mono
                     );
                 }
+            }
+            if info.vector_builder_elem.is_some()
+                && let Some((_, local_ty)) = self.local(*local_id)
+            {
+                let is_builder_storage = match local_ty {
+                    ValType::Anyref => true,
+                    ValType::Ref {
+                        heap: HeapType::Named(sym),
+                        ..
+                    } => sym == T_ARRAY,
+                    _ => false,
+                };
+                debug_assert!(
+                    is_builder_storage,
+                    "codegen verify: {func_name} (FuncId({})): L{} has vector_builder_elem metadata but local type is {:?}, expected Anyref or Array-backed builder storage",
+                    func_id.0, local_id.0, local_ty
+                );
             }
 
             // ── Sum repr coherence ─────────────────────────────────────
@@ -790,6 +826,10 @@ impl<'a> EmitCtx<'a> {
         }
     }
 
+    pub fn local_vector_builder_elem(&self, local_id: LocalId) -> Option<MonoType> {
+        self.repr_flow.local_vector_builder_elem(local_id)
+    }
+
     pub fn local_iterator_next_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
         self.repr_flow
             .local_backend
@@ -838,6 +878,14 @@ impl<'a> EmitCtx<'a> {
 
     pub(crate) fn set_local_value_repr(&mut self, local_id: LocalId, repr: Option<ValueRepr>) {
         self.repr_flow.set_local_value_repr(local_id, repr);
+    }
+
+    pub(crate) fn set_local_vector_builder_elem(
+        &mut self,
+        local_id: LocalId,
+        elem: Option<MonoType>,
+    ) {
+        self.repr_flow.set_local_vector_builder_elem(local_id, elem);
     }
 
     #[cfg(test)]
@@ -949,6 +997,21 @@ impl<'a> EmitCtx<'a> {
         self.set_local_value_repr(local, prev);
     }
 
+    pub fn push_flow_vector_builder_binding(
+        &mut self,
+        local: LocalId,
+        elem: Option<MonoType>,
+        restores: &mut Vec<(LocalId, Option<MonoType>)>,
+    ) {
+        let prev = self.local_vector_builder_elem(local);
+        self.set_local_vector_builder_elem(local, elem);
+        restores.push((local, prev));
+    }
+
+    pub fn restore_flow_vector_builder_binding(&mut self, local: LocalId, prev: Option<MonoType>) {
+        self.set_local_vector_builder_elem(local, prev);
+    }
+
     pub fn push_flow_sum_repr_binding(
         &mut self,
         local: LocalId,
@@ -1023,6 +1086,10 @@ impl<'a> EmitCtx<'a> {
                         };
                     let iterator_state = iterator_state_from_setup_op(op, self);
                     let iterator_next_state = iterator_next_result_state_from_op(op, self);
+                    let vector_builder_elem = merge_vector_builder_elem(
+                        self.local_vector_builder_elem(*local),
+                        vector_builder_elem_from_setup_op(op, self),
+                    );
                     let erase_assignment = (self.assigned_locals.contains(local)
                         || self.rebound_locals.contains(local))
                         && inferred_mono
@@ -1087,6 +1154,7 @@ impl<'a> EmitCtx<'a> {
                             .as_ref()
                             .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
                     );
+                    self.set_local_vector_builder_elem(*local, vector_builder_elem);
                     if let Some(info) = iterator_state {
                         self.set_local_iterator_state(*local, Some(info));
                     }
@@ -1105,6 +1173,7 @@ impl<'a> EmitCtx<'a> {
 
                 let mut mono_restores = Vec::new();
                 let mut repr_restores = Vec::new();
+                let mut builder_restores = Vec::new();
                 let mut iterator_restores = Vec::new();
                 let mut iterator_next_restores = Vec::new();
                 let local_mono = self.infer_let_op_mono_for_emit(*local, op);
@@ -1116,6 +1185,18 @@ impl<'a> EmitCtx<'a> {
                         .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
                     &mut repr_restores,
                 );
+                self.push_flow_vector_builder_binding(
+                    *local,
+                    merge_vector_builder_elem(
+                        self.local_vector_builder_elem(*local),
+                        vector_builder_elem_from_setup_op(op, self),
+                    ),
+                    &mut builder_restores,
+                );
+                if let Some((target, elem)) = vector_builder_mutation_from_op(op, self) {
+                    self.set_local_vector_builder_elem(target, elem.clone());
+                    self.push_flow_vector_builder_binding(target, elem, &mut builder_restores);
+                }
                 self.push_flow_iterator_binding(
                     *local,
                     iterator_state_from_setup_op(op, self),
@@ -1140,6 +1221,11 @@ impl<'a> EmitCtx<'a> {
                             .and_then(|mono| value_repr_from_mono(mono, &self.concrete_func_sigs)),
                         &mut repr_restores,
                     );
+                    self.push_flow_vector_builder_binding(
+                        *target,
+                        vector_builder_elem_from_atom(value, self),
+                        &mut builder_restores,
+                    );
                     self.push_flow_iterator_binding(
                         *target,
                         atom_iterator_state(value, self),
@@ -1154,6 +1240,9 @@ impl<'a> EmitCtx<'a> {
                 self.assign_expr_locals(body, next_idx, wasm_locals);
                 while let Some((local_id, prev)) = iterator_next_restores.pop() {
                     self.restore_flow_iterator_next_binding(local_id, prev);
+                }
+                while let Some((local_id, prev)) = builder_restores.pop() {
+                    self.restore_flow_vector_builder_binding(local_id, prev);
                 }
                 while let Some((local_id, prev)) = iterator_restores.pop() {
                     self.restore_flow_iterator_binding(local_id, prev);
@@ -1246,6 +1335,173 @@ impl<'a> EmitCtx<'a> {
                 self.assign_expr_locals(body, next_idx, wasm_locals);
             }
             _ => {}
+        }
+    }
+
+    fn collect_vector_builder_hints_expr(&mut self, expr: &AnfExpr) {
+        match expr {
+            AnfExpr::Let { local, op, body } => {
+                self.collect_vector_builder_hints_op(op);
+
+                let mut mono_restores = Vec::new();
+                let local_mono = self.infer_let_op_mono_for_emit(*local, op);
+                self.push_flow_mono_binding(*local, local_mono, &mut mono_restores);
+                self.set_local_vector_builder_elem(
+                    *local,
+                    merge_vector_builder_elem(
+                        self.local_vector_builder_elem(*local),
+                        vector_builder_elem_from_setup_op(op, self),
+                    ),
+                );
+                if let Some((target, elem)) = vector_builder_mutation_from_op(op, self) {
+                    self.set_local_vector_builder_elem(target, elem);
+                }
+                if let AnfOp::AAssign {
+                    local: target,
+                    value,
+                } = op.as_ref()
+                {
+                    let value_mono = self.infer_atom_mono(value);
+                    self.push_flow_mono_binding(*target, value_mono, &mut mono_restores);
+                    self.set_local_vector_builder_elem(
+                        *target,
+                        vector_builder_elem_from_atom(value, self),
+                    );
+                }
+                self.collect_vector_builder_hints_expr(body);
+                while let Some((local_id, prev)) = mono_restores.pop() {
+                    self.restore_flow_mono_binding(local_id, prev);
+                }
+            }
+            AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+        }
+    }
+
+    fn snapshot_builder_elems(&self) -> Vec<(LocalId, Option<MonoType>)> {
+        self.repr_flow
+            .local_backend
+            .iter()
+            .filter_map(|(id, info)| {
+                if info.vector_builder_elem.is_some() {
+                    Some((*id, info.vector_builder_elem.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn restore_builder_elems(&mut self, snapshot: &[(LocalId, Option<MonoType>)]) {
+        // Clear any builder elems that were added during the branch
+        let current_ids: Vec<LocalId> = self
+            .repr_flow
+            .local_backend
+            .iter()
+            .filter(|(_, info)| info.vector_builder_elem.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in current_ids {
+            self.set_local_vector_builder_elem(id, None);
+        }
+        // Restore snapshot
+        for (id, elem) in snapshot {
+            self.set_local_vector_builder_elem(*id, elem.clone());
+        }
+    }
+
+    fn collect_vector_builder_hints_op(&mut self, op: &AnfOp) {
+        match op {
+            AnfOp::AIf {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let snapshot = self.snapshot_builder_elems();
+                self.collect_vector_builder_hints_expr(then_branch);
+                let then_elems = self.snapshot_builder_elems();
+                self.restore_builder_elems(&snapshot);
+                self.collect_vector_builder_hints_expr(else_branch);
+                let else_elems = self.snapshot_builder_elems();
+                self.restore_builder_elems(&snapshot);
+                self.merge_branch_builder_elems(&snapshot, &[then_elems, else_elems]);
+            }
+            AnfOp::AMatch { arms, .. } => {
+                let snapshot = self.snapshot_builder_elems();
+                let mut branch_results = Vec::new();
+                for arm in arms {
+                    self.collect_vector_builder_hints_expr(&arm.body);
+                    branch_results.push(self.snapshot_builder_elems());
+                    self.restore_builder_elems(&snapshot);
+                }
+                self.merge_branch_builder_elems(&snapshot, &branch_results);
+            }
+            AnfOp::ALoop { body } => {
+                // Walk twice: first pass collects builder hints from push
+                // calls inside the loop body; second pass makes those hints
+                // visible to freeze calls in other arms of the same match
+                // (e.g. collect pattern: push in Some arm, freeze in None arm).
+                self.collect_vector_builder_hints_expr(body);
+                self.collect_vector_builder_hints_expr(body);
+            }
+            AnfOp::ADefer(body) => {
+                self.collect_vector_builder_hints_expr(body);
+            }
+            _ => {}
+        }
+    }
+
+    fn merge_branch_builder_elems(
+        &mut self,
+        pre_snapshot: &[(LocalId, Option<MonoType>)],
+        branches: &[Vec<(LocalId, Option<MonoType>)>],
+    ) {
+        if branches.is_empty() {
+            return;
+        }
+        // Collect all locals mentioned in any branch
+        let mut all_locals = std::collections::HashSet::new();
+        for branch in branches {
+            for (id, _) in branch {
+                all_locals.insert(*id);
+            }
+        }
+        // For each local, merge branch results conservatively.
+        // A branch that didn't change a local (same as pre-snapshot) is
+        // treated as "no opinion", not as disagreement.
+        for local_id in all_locals {
+            let pre_value = pre_snapshot
+                .iter()
+                .find(|(id, _)| *id == local_id)
+                .and_then(|(_, e)| e.clone());
+            let mut agreed: Option<Option<MonoType>> = None;
+            let mut conflict = false;
+            for branch in branches {
+                let branch_value = branch
+                    .iter()
+                    .find(|(id, _)| *id == local_id)
+                    .and_then(|(_, e)| e.clone());
+                // Skip branches that didn't change this local
+                if branch_value == pre_value {
+                    continue;
+                }
+                match &agreed {
+                    None => agreed = Some(branch_value),
+                    Some(prev) if *prev == branch_value => {}
+                    Some(_) => {
+                        conflict = true;
+                        break;
+                    }
+                }
+            }
+            if conflict {
+                // Branches actively disagree — clear the hint
+                self.set_local_vector_builder_elem(local_id, None);
+            } else if let Some(new_value) = agreed {
+                // At least one branch changed the value, all changers agree
+                self.set_local_vector_builder_elem(local_id, new_value);
+            }
+            // If no branch changed the value, pre-snapshot state is already
+            // restored — nothing to do.
         }
     }
 
@@ -1687,6 +1943,22 @@ impl<'a> EmitCtx<'a> {
                             type_id: OPTION_TYPE_ID,
                             args: vec![item_ty],
                         }),
+                    id if id == ids::VECTOR_GET => {
+                        infer_vector_elem_mono(args.first()?, self).map(|elem_ty| MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![elem_ty],
+                        })
+                    }
+                    id if id == ids::VECTOR_SET => self
+                        .infer_atom_mono(args.first()?)
+                        .filter(|mono| matches!(mono, MonoType::Vector(_)))
+                        .map(|mono| MonoType::Named {
+                            type_id: OPTION_TYPE_ID,
+                            args: vec![mono],
+                        }),
+                    id if id == ids::VECTOR_MAKE => self
+                        .infer_atom_mono(args.get(1)?)
+                        .map(|elem_ty| MonoType::Vector(Box::new(elem_ty))),
                     id if id == ids::VECTOR_LEN => Some(MonoType::Int),
                     id if id == ids::VECTOR_SET_UNSAFE
                         || id == ids::VECTOR_CONCAT
@@ -1695,6 +1967,9 @@ impl<'a> EmitCtx<'a> {
                         self.infer_atom_mono(args.first()?)
                     }
                     id if id == ids::VECTOR_BUILDER_PUSH => Some(MonoType::Void),
+                    id if id == ids::VECTOR_BUILDER_FREEZE => {
+                        infer_vector_mono_from_builder_atom(args.first()?, self)
+                    }
                     id if id == ids::VECTOR_SET_IN_PLACE => self.infer_atom_mono(args.first()?),
                     _ => self
                         .user_funcs
@@ -1836,6 +2111,7 @@ fn is_cell_mono(mono: &MonoType) -> bool {
 
 fn local_backend_entry_empty(info: &LocalBackendInfo) -> bool {
     info.repr.is_none()
+        && info.vector_builder_elem.is_none()
         && info.iterator_state.is_none()
         && info.iterator_next_state.is_none()
         && info.iter_item_state.is_none()
@@ -2077,6 +2353,69 @@ fn iterator_next_result_state_from_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<I
     }
 }
 
+pub(crate) fn vector_builder_elem_from_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_vector_builder_elem(*local_id),
+        _ => None,
+    }
+}
+
+pub(crate) fn vector_builder_elem_from_setup_op(op: &AnfOp, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id)
+                if *func_id == crate::ir::lower::prelude::VECTOR_BUILDER_FROM =>
+            {
+                infer_vector_elem_mono(args.first()?, ctx)
+            }
+            Atom::AGlobalFunc(func_id)
+                if *func_id == crate::ir::lower::prelude::VECTOR_BUILDER_NEW =>
+            {
+                None
+            }
+            _ => None,
+        },
+        AnfOp::AInit { value } => vector_builder_elem_from_atom(value, ctx),
+        _ => None,
+    }
+}
+
+fn merge_vector_builder_elem(
+    current: Option<MonoType>,
+    incoming: Option<MonoType>,
+) -> Option<MonoType> {
+    match (current, incoming) {
+        (Some(current), Some(incoming)) if current == incoming => Some(current),
+        (Some(current), None) => Some(current),
+        (None, Some(incoming)) => Some(incoming),
+        (None, None) => None,
+        (Some(_), Some(_)) => None,
+    }
+}
+
+pub(crate) fn vector_builder_mutation_from_op(
+    op: &AnfOp,
+    ctx: &EmitCtx<'_>,
+) -> Option<(LocalId, Option<MonoType>)> {
+    match op {
+        AnfOp::ACall { callee, args } => match callee {
+            Atom::AGlobalFunc(func_id)
+                if *func_id == crate::ir::lower::prelude::VECTOR_BUILDER_PUSH =>
+            {
+                let Atom::ALocal(target) = args.first()? else {
+                    return None;
+                };
+                let incoming = ctx.infer_atom_mono(args.get(1)?);
+                let merged =
+                    merge_vector_builder_elem(ctx.local_vector_builder_elem(*target), incoming);
+                Some((*target, merged))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn infer_iterator_item_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
     if let Some(info) = atom_iterator_state(atom, ctx) {
         return Some(MonoType::Named {
@@ -2090,6 +2429,31 @@ fn infer_iterator_item_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> 
                 type_id: ITER_ITEM_TYPE_ID,
                 args: vec![args[0].clone()],
             })
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn infer_vector_elem_mono(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match ctx.infer_atom_mono(atom)? {
+        MonoType::Vector(elem) => Some(elem.as_ref().clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn infer_vector_mono_from_builder_atom(
+    atom: &Atom,
+    ctx: &EmitCtx<'_>,
+) -> Option<MonoType> {
+    if let Some(elem_ty) = vector_builder_elem_from_atom(atom, ctx) {
+        return Some(MonoType::Vector(Box::new(elem_ty)));
+    }
+    match ctx.infer_atom_mono(atom)? {
+        MonoType::Named { type_id, args } if type_id == CELL_TYPE_ID && args.len() == 1 => {
+            match &args[0] {
+                MonoType::Vector(elem) => Some(MonoType::Vector(elem.clone())),
+                _ => None,
+            }
         }
         _ => None,
     }
@@ -3322,6 +3686,189 @@ mod tests {
             ctx.infer_let_op_mono_for_emit(LocalId(1), &op),
             Some(MonoType::Void)
         );
+    }
+
+    #[test]
+    fn infer_vector_intrinsic_results_from_argument_types() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        ctx.local_map
+            .insert(LocalId(1), (0, ref_named(true, T_VECTOR_I64)));
+        ctx.local_mono
+            .insert(LocalId(1), MonoType::Vector(Box::new(MonoType::Int)));
+        ctx.set_local_value_repr(
+            LocalId(1),
+            Some(ValueRepr::TypedVector {
+                elem_ty: MonoType::Int,
+            }),
+        );
+        ctx.local_map.insert(LocalId(2), (1, ValType::Anyref));
+        ctx.local_mono.insert(
+            LocalId(2),
+            MonoType::Named {
+                type_id: CELL_TYPE_ID,
+                args: vec![MonoType::Vector(Box::new(MonoType::Int))],
+            },
+        );
+
+        assert_eq!(
+            ctx.infer_call_result_mono(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_MAKE),
+                &[Atom::ALitInt(3), Atom::ALitInt(7)],
+            ),
+            Some(MonoType::Vector(Box::new(MonoType::Int)))
+        );
+        assert_eq!(
+            ctx.infer_call_result_valtype(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_MAKE),
+                &[Atom::ALitInt(3), Atom::ALitInt(7)],
+            ),
+            Some(ref_named(true, T_VECTOR_I64))
+        );
+        assert_eq!(
+            ctx.infer_call_result_mono(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_GET),
+                &[Atom::ALocal(LocalId(1)), Atom::ALitInt(0)],
+            ),
+            Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::Int],
+            })
+        );
+        assert_eq!(
+            ctx.infer_call_result_mono(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_SET),
+                &[Atom::ALocal(LocalId(1)), Atom::ALitInt(0), Atom::ALitInt(9)],
+            ),
+            Some(MonoType::Named {
+                type_id: OPTION_TYPE_ID,
+                args: vec![MonoType::Vector(Box::new(MonoType::Int))],
+            })
+        );
+        assert_eq!(
+            ctx.infer_call_result_mono(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_FREEZE),
+                &[Atom::ALocal(LocalId(2))],
+            ),
+            Some(MonoType::Vector(Box::new(MonoType::Int)))
+        );
+        assert_eq!(
+            ctx.infer_call_result_valtype(
+                &Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_FREEZE),
+                &[Atom::ALocal(LocalId(2))],
+            ),
+            Some(ref_named(true, T_VECTOR_I64))
+        );
+    }
+
+    #[test]
+    fn setup_locals_tracks_builder_family_without_forcing_cell_mono() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let func = AnfFunctionDef {
+            func_id: FuncId(5003),
+            name: "builder_family_local".to_string(),
+            params: vec![LocalId(10)],
+            param_tys: vec![MonoType::Vector(Box::new(MonoType::Int))],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_FROM),
+                    args: vec![Atom::ALocal(LocalId(10))],
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
+        };
+
+        let _ = ctx.setup_locals(&func);
+        assert_eq!(
+            ctx.local_vector_builder_elem(LocalId(1)),
+            Some(MonoType::Int)
+        );
+        assert_eq!(ctx.local_mono.get(&LocalId(1)), None);
+        assert_eq!(
+            ctx.local(LocalId(1)).map(|(_, ty)| ty.clone()),
+            Some(ref_named(false, T_ARRAY))
+        );
+        assert_eq!(
+            infer_vector_mono_from_builder_atom(&Atom::ALocal(LocalId(1)), &ctx),
+            Some(MonoType::Vector(Box::new(MonoType::Int)))
+        );
+    }
+
+    #[test]
+    fn builder_push_flow_enables_freeze_result_specialization() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let func = AnfFunctionDef {
+            func_id: FuncId(5004),
+            name: "builder_push_flow".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_NEW),
+                    args: vec![],
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(2),
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_PUSH),
+                        args: vec![Atom::ALocal(LocalId(1)), Atom::ALitInt(1)],
+                    }),
+                    body: Box::new(AnfExpr::Let {
+                        local: LocalId(3),
+                        op: Box::new(AnfOp::ACall {
+                            callee: Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_FREEZE),
+                            args: vec![Atom::ALocal(LocalId(1))],
+                        }),
+                        body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(3)))),
+                    }),
+                }),
+            },
+            return_ty: MonoType::Vector(Box::new(MonoType::Int)),
+            op_result_mono: HashMap::new(),
+        };
+
+        let _ = ctx.setup_locals(&func);
+        assert_eq!(
+            ctx.local(LocalId(3)).map(|(_, ty)| ty.clone()),
+            Some(ref_named(true, T_VECTOR_I64))
+        );
+        assert_eq!(
+            ctx.local_mono.get(&LocalId(3)),
+            Some(&MonoType::Vector(Box::new(MonoType::Int)))
+        );
+    }
+
+    #[test]
+    fn set_local_vector_builder_elem_cleans_up_empty_entries() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        ctx.set_local_vector_builder_elem(LocalId(21), Some(MonoType::Int));
+        assert!(ctx.repr_flow.local_backend.contains_key(&LocalId(21)));
+        assert_eq!(
+            ctx.local_vector_builder_elem(LocalId(21)),
+            Some(MonoType::Int)
+        );
+
+        ctx.set_local_vector_builder_elem(LocalId(21), None);
+        assert!(!ctx.repr_flow.local_backend.contains_key(&LocalId(21)));
     }
 
     // --- SumRepr tests ---

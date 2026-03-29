@@ -85,9 +85,15 @@ fn vector_collect_uses_builder_push_not_concat() {
 fn vector_collect_int_uses_i64_builder_family() {
     let wat = build_wat(&fixture("collect.tw"));
     let typed_push_calls = count_substring_in_user_funcs(&wat, "call $rt_arr__builder_push_i64");
+    let typed_freeze_calls =
+        count_substring_in_user_funcs(&wat, "call $rt_arr__builder_freeze_i64");
     assert!(
         typed_push_calls > 0,
         "Vector<Int> collect should use rt_arr__builder_push_i64 in user funcs"
+    );
+    assert!(
+        typed_freeze_calls > 0,
+        "Vector<Int> collect should use rt_arr__builder_freeze_i64 in user funcs"
     );
 }
 
