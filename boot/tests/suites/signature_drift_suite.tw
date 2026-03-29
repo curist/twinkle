@@ -232,7 +232,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("module-qualified Result.map type-checks without errors", fn() {
-      try check_ok_with_builtins("x := Result.map(.Ok(1), fn(n: Int) { n + 1 })")
+      try check_ok_with_builtins("x: Result<Int, String> = Result.map(.Ok(1), fn(n: Int) { n + 1 })")
       .Ok({})
     })
 

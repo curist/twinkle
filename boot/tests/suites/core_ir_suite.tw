@@ -804,18 +804,48 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("lower for-in iterator loop follows type definition rather than preferred stored name", fn() Result<Void, String> {
+      s0 := span.Span.{ file_id: 0, start: 0, end: 0 }
+      t := resolver.MonoType.Var("T")
+
+      // Option (TypeId 0) — required by iterator loop pattern matching
+      option_tid := resolver.TypeId.{ id: 0 }
+      option_entry := resolver.TypeEntry.{
+        id: option_tid, arity: 1,
+        def: .Some(resolver.ResolvedTypeDef.Sum("Option", ["T"], [
+          resolver.ResolvedVariant.{ name: "None", fields: [] },
+          resolver.ResolvedVariant.{ name: "Some", fields: [t] },
+        ])),
+        span: s0,
+      }
+
+      // Iterator (TypeId 62) — the type under test, intentionally a Sum
       iter_tid := resolver.TypeId.{ id: 62 }
       iter_entry := resolver.TypeEntry.{
-        id: iter_tid,
-        arity: 1,
+        id: iter_tid, arity: 1,
         def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
-          resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
+          resolver.ResolvedVariant.{ name: "Item", fields: [t] },
         ])),
-        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        span: s0,
       }
+
+      // IterItem — required by build_iterator_loop
+      iter_item_tid := resolver.TypeId.{ id: 63 }
+      iter_item_entry := resolver.TypeEntry.{
+        id: iter_item_tid, arity: 1,
+        def: .Some(resolver.ResolvedTypeDef.Record("IterItem", ["T"], [
+          resolver.ResolvedField.{ name: "value", ty: t },
+          resolver.ResolvedField.{ name: "rest", ty: resolver.MonoType.Named(iter_tid, [t]) },
+        ])),
+        span: s0,
+      }
+
       env := resolver.empty_env()
+        .register_type_entry(option_entry, "Option")
+        .bind_type("Option", option_tid)
         .register_type_entry(iter_entry, "dep.Iterator")
         .bind_type("Iterator", iter_tid)
+        .register_type_entry(iter_item_entry, "IterItem")
+        .bind_type("IterItem", iter_item_tid)
 
       src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
       lr := try lower_src_with_env(src, env)
