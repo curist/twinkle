@@ -14,6 +14,7 @@ pub const T_VARIANT: &str = "rt_types__Variant";
 pub const T_BOXED_INT: &str = "rt_types__BoxedInt";
 pub const T_BOXED_FLOAT: &str = "rt_types__BoxedFloat";
 pub const T_ITER_STATE: &str = "rt_types__IterState";
+pub const T_VECTOR_I64: &str = "rt_types__Vector_i64";
 
 /// Qualified function names for cross-module calls (after linking).
 pub const F_STR_EQ: &str = "rt_str__eq";
@@ -76,6 +77,22 @@ pub fn ref_iter_state_null() -> ValType {
     }
 }
 
+/// Ref-to-typed Vector<Int> container (non-null)
+pub fn ref_vector_i64() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_VECTOR_I64.into()),
+    }
+}
+
+/// Ref-to-typed Vector<Int> container (nullable)
+pub fn ref_vector_i64_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_VECTOR_I64.into()),
+    }
+}
+
 /// Build the `rt.types` module: all shared Wasm GC type definitions.
 pub fn make() -> ModuleIR {
     let mut m = ModuleIR::new("rt.types");
@@ -87,6 +104,16 @@ pub fn make() -> ModuleIR {
             name: None,
             mutable: true,
             ty: ValType::Anyref,
+        },
+    });
+
+    // (type $Vector_i64 (array (mut i64)))
+    m.types.push(TypeDef::Array {
+        name: "Vector_i64".into(),
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::I64,
         },
     });
 

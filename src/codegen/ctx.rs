@@ -10,7 +10,9 @@ use crate::ir::anf::analysis::{
 };
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
-use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT};
+use crate::runtime::types::{
+    T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT, T_VECTOR_I64,
+};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -50,6 +52,9 @@ pub enum ValueRepr {
         ret: MonoType,
     },
     TypedCell {
+        elem_ty: MonoType,
+    },
+    TypedVector {
         elem_ty: MonoType,
     },
 }
@@ -778,6 +783,13 @@ impl<'a> EmitCtx<'a> {
         }
     }
 
+    pub fn local_typed_vector_elem(&self, local_id: LocalId) -> Option<MonoType> {
+        match self.local_value_repr(local_id)? {
+            ValueRepr::TypedVector { elem_ty } => Some(elem_ty),
+            _ => None,
+        }
+    }
+
     pub fn local_iterator_next_state(&self, local_id: LocalId) -> Option<IteratorStateInfo> {
         self.repr_flow
             .local_backend
@@ -841,6 +853,16 @@ impl<'a> EmitCtx<'a> {
     #[cfg(test)]
     pub(crate) fn set_local_typed_cell_elem(&mut self, local_id: LocalId, elem: Option<MonoType>) {
         let repr = elem.map(|elem_ty| ValueRepr::TypedCell { elem_ty });
+        self.set_local_value_repr(local_id, repr);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_local_typed_vector_elem(
+        &mut self,
+        local_id: LocalId,
+        elem: Option<MonoType>,
+    ) {
+        let repr = elem.map(|elem_ty| ValueRepr::TypedVector { elem_ty });
         self.set_local_value_repr(local_id, repr);
     }
 
@@ -1665,6 +1687,13 @@ impl<'a> EmitCtx<'a> {
                             type_id: OPTION_TYPE_ID,
                             args: vec![item_ty],
                         }),
+                    id if id == ids::VECTOR_LEN => Some(MonoType::Int),
+                    id if id == ids::VECTOR_SET_UNSAFE
+                        || id == ids::VECTOR_CONCAT
+                        || id == ids::VECTOR_SLICE =>
+                    {
+                        self.infer_atom_mono(args.first()?)
+                    }
                     id if id == ids::VECTOR_BUILDER_PUSH => Some(MonoType::Void),
                     id if id == ids::VECTOR_SET_IN_PLACE => self.infer_atom_mono(args.first()?),
                     _ => self
@@ -1831,10 +1860,6 @@ pub(crate) fn value_repr_from_mono(
     mono: &MonoType,
     concrete_func_sigs: &HashMap<FuncId, (Vec<MonoType>, MonoType)>,
 ) -> Option<ValueRepr> {
-    if concrete_func_sigs.is_empty() {
-        return None;
-    }
-
     match mono {
         MonoType::Function { params, ret }
             if is_concrete_mono_type(mono)
@@ -1852,6 +1877,11 @@ pub(crate) fn value_repr_from_mono(
         {
             Some(ValueRepr::TypedCell {
                 elem_ty: args[0].clone(),
+            })
+        }
+        MonoType::Vector(elem) if is_concrete_mono_type(elem) && **elem == MonoType::Int => {
+            Some(ValueRepr::TypedVector {
+                elem_ty: elem.as_ref().clone(),
             })
         }
         _ => None,
@@ -2111,6 +2141,9 @@ pub fn mono_to_valtype_specialized(
                 && is_concrete_mono_type(&args[0]) =>
         {
             ref_named(true, &typed_cell_struct_sym(&args[0]))
+        }
+        MonoType::Vector(elem) if is_concrete_mono_type(elem) && **elem == MonoType::Int => {
+            ref_named(true, T_VECTOR_I64)
         }
         _ => mono_to_valtype(ty, type_env),
     }
@@ -3078,6 +3111,61 @@ mod tests {
             Some((vec![MonoType::Int], MonoType::Int))
         );
         assert_eq!(ctx.local_typed_cell_elem(LocalId(2)), Some(MonoType::Int));
+    }
+
+    #[test]
+    fn local_backend_repr_tracks_typed_vector_locals() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+
+        let func = AnfFunctionDef {
+            func_id: FuncId(1002),
+            name: "backend_repr_vector_locals".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AArrayLit(vec![Atom::ALitInt(1), Atom::ALitInt(2)])),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(1)))),
+            },
+            return_ty: MonoType::Vector(Box::new(MonoType::Int)),
+            op_result_mono: HashMap::new(),
+        };
+
+        let _locals = ctx.setup_locals(&func);
+        assert_eq!(
+            ctx.local_value_repr(LocalId(1)),
+            Some(ValueRepr::TypedVector {
+                elem_ty: MonoType::Int,
+            })
+        );
+        assert_eq!(ctx.local_typed_vector_elem(LocalId(1)), Some(MonoType::Int));
+        assert_eq!(
+            ctx.local(LocalId(1)).map(|(_, ty)| ty.clone()),
+            Some(ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(T_VECTOR_I64.to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn mono_to_valtype_specialized_vector_int_uses_typed_vector_ref() {
+        let type_env = TypeEnv::new();
+        let ty = mono_to_valtype_specialized(
+            &MonoType::Vector(Box::new(MonoType::Int)),
+            &type_env,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            ty,
+            ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(T_VECTOR_I64.to_string()),
+            }
+        );
     }
 
     #[test]

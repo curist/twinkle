@@ -82,6 +82,16 @@ fn vector_collect_uses_builder_push_not_concat() {
 }
 
 #[test]
+fn vector_collect_int_uses_i64_builder_family() {
+    let wat = build_wat(&fixture("collect.tw"));
+    let typed_push_calls = count_substring_in_user_funcs(&wat, "call $rt_arr__builder_push_i64");
+    assert!(
+        typed_push_calls > 0,
+        "Vector<Int> collect should use rt_arr__builder_push_i64 in user funcs"
+    );
+}
+
+#[test]
 fn iterator_collect_uses_builder_push_not_concat() {
     let wat = build_wat(&fixture("iterator.tw"));
     let concat_calls = count_substring_in_user_funcs(&wat, "call $rt_arr__concat");
@@ -93,5 +103,34 @@ fn iterator_collect_uses_builder_push_not_concat() {
     assert!(
         push_calls > 0,
         "iterator collect should use rt_arr__builder_push in user funcs"
+    );
+}
+
+#[test]
+fn vector_methods_int_use_i64_helper_family() {
+    let wat = build_wat(&fixture("vector_methods.tw"));
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__len_i64") > 0,
+        "Vector<Int>.len should use rt_arr__len_i64 in user funcs"
+    );
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__concat_i64") > 0,
+        "Vector<Int>.concat should use rt_arr__concat_i64 in user funcs"
+    );
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__slice_i64") > 0,
+        "Vector<Int>.slice should use rt_arr__slice_i64 in user funcs"
+    );
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__make_i64") > 0,
+        "Vector<Int>.make should use rt_arr__make_i64 in user funcs"
+    );
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__get_i64") > 0,
+        "Vector<Int>.get/index should use rt_arr__get_i64 in user funcs"
+    );
+    assert!(
+        count_substring_in_user_funcs(&wat, "call $rt_arr__set_i64") > 0,
+        "Vector<Int>.set should use rt_arr__set_i64 in user funcs"
     );
 }

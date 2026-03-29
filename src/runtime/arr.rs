@@ -15,6 +15,16 @@ pub fn make() -> ModuleIR {
     m.funcs.push(builder_from_fn());
     m.funcs.push(builder_push_fn());
     m.funcs.push(builder_freeze_fn());
+    m.funcs.push(make_i64_fn());
+    m.funcs.push(get_i64_fn());
+    m.funcs.push(set_i64_fn());
+    m.funcs.push(len_i64_fn());
+    m.funcs.push(concat_i64_fn());
+    m.funcs.push(slice_i64_fn());
+    m.funcs.push(push_i64_fn());
+    m.funcs.push(builder_from_i64_fn());
+    m.funcs.push(builder_push_i64_fn());
+    m.funcs.push(builder_freeze_i64_fn());
 
     for f in &m.funcs {
         m.exports.push(ExportDef {
@@ -45,6 +55,21 @@ fn make_fn() -> FuncDef {
     }
 }
 
+/// `make_i64(len: i32, fill: i64) -> Vector_i64`
+fn make_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "make_i64".into(),
+        params: vec![ValType::I32, ValType::I64],
+        results: vec![ref_vector_i64()],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(1),
+            Instr::LocalGet(0),
+            Instr::ArrayNew(T_VECTOR_I64.into()),
+        ],
+    }
+}
+
 /// `get(arr: Array, i: i32) -> anyref`
 fn get_fn() -> FuncDef {
     FuncDef {
@@ -57,6 +82,22 @@ fn get_fn() -> FuncDef {
             Instr::RefAsNonNull,
             Instr::LocalGet(1),
             Instr::ArrayGet(T_ARRAY.into()),
+        ],
+    }
+}
+
+/// `get_i64(arr: Vector_i64, i: i32) -> i64`
+fn get_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "get_i64".into(),
+        params: vec![ref_vector_i64_null(), ValType::I32],
+        results: vec![ValType::I64],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::ArrayGet(T_VECTOR_I64.into()),
         ],
     }
 }
@@ -102,11 +143,57 @@ fn set_fn() -> FuncDef {
     }
 }
 
+/// `set_i64(arr: Vector_i64, i: i32, val: i64) -> Vector_i64`
+fn set_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "set_i64".into(),
+        params: vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
+        results: vec![ref_vector_i64()],
+        locals: vec![ref_vector_i64_null(), ValType::I32],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(4),
+            Instr::I64Const(0),
+            Instr::LocalGet(4),
+            Instr::ArrayNew(T_VECTOR_I64.into()),
+            Instr::LocalSet(3),
+            Instr::LocalGet(3),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(4),
+            Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+            Instr::LocalGet(3),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::ArraySet(T_VECTOR_I64.into()),
+            Instr::LocalGet(3),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
 /// `len(arr: Array) -> i32`
 fn len_fn() -> FuncDef {
     FuncDef {
         name: "len".into(),
         params: vec![ref_array_null()],
+        results: vec![ValType::I32],
+        locals: vec![],
+        body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen],
+    }
+}
+
+/// `len_i64(arr: Vector_i64) -> i32`
+fn len_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "len_i64".into(),
+        params: vec![ref_vector_i64_null()],
         results: vec![ValType::I32],
         locals: vec![],
         body: vec![Instr::LocalGet(0), Instr::RefAsNonNull, Instr::ArrayLen],
@@ -167,6 +254,57 @@ fn concat_fn() -> FuncDef {
     }
 }
 
+/// `concat_i64(a: Vector_i64, b: Vector_i64) -> Vector_i64`
+fn concat_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "concat_i64".into(),
+        params: vec![ref_vector_i64_null(), ref_vector_i64_null()],
+        results: vec![ref_vector_i64()],
+        locals: vec![
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ref_vector_i64_null(),
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
+            Instr::LocalGet(2),
+            Instr::LocalGet(3),
+            Instr::I32Add,
+            Instr::LocalSet(4),
+            Instr::I64Const(0),
+            Instr::LocalGet(4),
+            Instr::ArrayNew(T_VECTOR_I64.into()),
+            Instr::LocalSet(5),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(2),
+            Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(3),
+            Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
 /// `slice(arr: Array, start: i32, end: i32) -> Array`
 fn slice_fn() -> FuncDef {
     // Locals: p3=new_len (i32), p4=result (ref $Array)
@@ -202,10 +340,57 @@ fn slice_fn() -> FuncDef {
     }
 }
 
+/// `slice_i64(arr: Vector_i64, start: i32, end: i32) -> Vector_i64`
+fn slice_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "slice_i64".into(),
+        params: vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
+        results: vec![ref_vector_i64()],
+        locals: vec![ValType::I32, ref_vector_i64_null()],
+        body: vec![
+            Instr::LocalGet(2),
+            Instr::LocalGet(1),
+            Instr::I32Sub,
+            Instr::LocalSet(3),
+            Instr::I64Const(0),
+            Instr::LocalGet(3),
+            Instr::ArrayNew(T_VECTOR_I64.into()),
+            Instr::LocalSet(4),
+            Instr::LocalGet(4),
+            Instr::RefAsNonNull,
+            Instr::I32Const(0),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::LocalGet(3),
+            Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+            Instr::LocalGet(4),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
+/// `push_i64(arr: Vector_i64, elem: i64) -> Vector_i64`
+fn push_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "push_i64".into(),
+        params: vec![ref_vector_i64_null(), ValType::I64],
+        results: vec![ref_vector_i64()],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::I32Const(1),
+            Instr::LocalGet(1),
+            Instr::Call("make_i64".into()),
+            Instr::Call("concat_i64".into()),
+        ],
+    }
+}
+
 /// `builder_new() -> Array`
 ///
 /// Builder layout (all anyref fields in a 3-slot rt_types__Array):
-///   [0] = buf : ref $Array
+///   [0] = buf : nullable vector buffer payload
 ///   [1] = len : BoxedInt(i64)
 ///   [2] = cap : BoxedInt(i64)
 fn builder_new_fn() -> FuncDef {
@@ -215,17 +400,11 @@ fn builder_new_fn() -> FuncDef {
         results: vec![ref_array()],
         locals: vec![],
         body: vec![
-            // buf = array.new $Array (null, initial_cap)
             Instr::RefNull(HeapType::None),
-            Instr::I32Const(BUILDER_INITIAL_CAPACITY),
-            Instr::ArrayNew(T_ARRAY.into()),
-            // len = BoxedInt(0)
             Instr::I64Const(0),
             Instr::StructNew(T_BOXED_INT.into()),
-            // cap = BoxedInt(initial_cap)
-            Instr::I64Const(BUILDER_INITIAL_CAPACITY as i64),
+            Instr::I64Const(0),
             Instr::StructNew(T_BOXED_INT.into()),
-            // [buf, len, cap]
             Instr::ArrayNewFixed(T_ARRAY.into(), 3),
         ],
     }
@@ -257,6 +436,36 @@ fn builder_from_fn() -> FuncDef {
             Instr::LocalGet(1),
             Instr::LocalSet(2),
             // [buf=vec, len=BoxedInt(len), cap=BoxedInt(cap)]
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(1),
+            Instr::I64ExtendI32S,
+            Instr::StructNew(T_BOXED_INT.into()),
+            Instr::LocalGet(2),
+            Instr::I64ExtendI32S,
+            Instr::StructNew(T_BOXED_INT.into()),
+            Instr::ArrayNewFixed(T_ARRAY.into(), 3),
+        ],
+    }
+}
+
+/// `builder_from_i64(vec: Vector_i64) -> Array`
+fn builder_from_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "builder_from_i64".into(),
+        params: vec![ref_vector_i64_null()],
+        results: vec![ref_array()],
+        locals: vec![
+            ValType::I32, // p1: len
+            ValType::I32, // p2: cap
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(1),
+            Instr::LocalGet(1),
+            Instr::LocalSet(2),
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::LocalGet(1),
@@ -363,15 +572,23 @@ fn builder_push_fn() -> FuncDef {
         Instr::LocalGet(5),
         Instr::ArrayNew(T_ARRAY.into()),
         Instr::LocalSet(6),
-        // array.copy new_buf[0..len] <- buf[0..len]
-        Instr::LocalGet(6),
-        Instr::RefAsNonNull,
-        Instr::I32Const(0),
-        Instr::LocalGet(2),
-        Instr::RefAsNonNull,
-        Instr::I32Const(0),
+        // array.copy new_buf[0..len] <- buf[0..len] when builder already owns data
         Instr::LocalGet(3),
-        Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+        Instr::I32Eqz,
+        Instr::If {
+            result: None,
+            then_body: vec![],
+            else_body: vec![
+                Instr::LocalGet(6),
+                Instr::RefAsNonNull,
+                Instr::I32Const(0),
+                Instr::LocalGet(2),
+                Instr::RefAsNonNull,
+                Instr::I32Const(0),
+                Instr::LocalGet(3),
+                Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+            ],
+        },
         // new_buf[len] = elem
         Instr::LocalGet(6),
         Instr::RefAsNonNull,
@@ -431,6 +648,144 @@ fn builder_push_fn() -> FuncDef {
     }
 }
 
+/// `builder_push_i64(builder: Array, elem: i64) -> void`
+fn builder_push_i64_fn() -> FuncDef {
+    let body = vec![
+        // p2 = builder[0] as Vector_i64?
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(0),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_VECTOR_I64.into()),
+        },
+        Instr::LocalSet(2),
+        // p3 = unbox(builder[1])
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(1),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: false,
+            heap: HeapType::Named(T_BOXED_INT.into()),
+        },
+        Instr::StructGet(T_BOXED_INT.into(), 0),
+        Instr::I32WrapI64,
+        Instr::LocalSet(3),
+        // p4 = unbox(builder[2])
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(2),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: false,
+            heap: HeapType::Named(T_BOXED_INT.into()),
+        },
+        Instr::StructGet(T_BOXED_INT.into(), 0),
+        Instr::I32WrapI64,
+        Instr::LocalSet(4),
+        // cond: len < cap
+        Instr::LocalGet(3),
+        Instr::LocalGet(4),
+        Instr::I32LtS,
+        Instr::If {
+            result: None,
+            then_body: vec![
+                Instr::LocalGet(2),
+                Instr::RefAsNonNull,
+                Instr::LocalGet(3),
+                Instr::LocalGet(1),
+                Instr::ArraySet(T_VECTOR_I64.into()),
+                Instr::LocalGet(3),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::LocalSet(3),
+                Instr::LocalGet(0),
+                Instr::RefAsNonNull,
+                Instr::I32Const(1),
+                Instr::LocalGet(3),
+                Instr::I64ExtendI32S,
+                Instr::StructNew(T_BOXED_INT.into()),
+                Instr::ArraySet(T_ARRAY.into()),
+            ],
+            else_body: vec![
+                Instr::LocalGet(4),
+                Instr::I32Eqz,
+                Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: vec![Instr::I32Const(BUILDER_INITIAL_CAPACITY)],
+                    else_body: vec![Instr::LocalGet(4), Instr::I32Const(2), Instr::I32Mul],
+                },
+                Instr::LocalSet(5),
+                Instr::I64Const(0),
+                Instr::LocalGet(5),
+                Instr::ArrayNew(T_VECTOR_I64.into()),
+                Instr::LocalSet(6),
+                Instr::LocalGet(3),
+                Instr::I32Eqz,
+                Instr::If {
+                    result: None,
+                    then_body: vec![],
+                    else_body: vec![
+                        Instr::LocalGet(6),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(0),
+                        Instr::LocalGet(2),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(0),
+                        Instr::LocalGet(3),
+                        Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+                    ],
+                },
+                Instr::LocalGet(6),
+                Instr::RefAsNonNull,
+                Instr::LocalGet(3),
+                Instr::LocalGet(1),
+                Instr::ArraySet(T_VECTOR_I64.into()),
+                Instr::LocalGet(3),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::LocalSet(3),
+                Instr::LocalGet(5),
+                Instr::LocalSet(4),
+                Instr::LocalGet(0),
+                Instr::RefAsNonNull,
+                Instr::I32Const(0),
+                Instr::LocalGet(6),
+                Instr::ArraySet(T_ARRAY.into()),
+                Instr::LocalGet(0),
+                Instr::RefAsNonNull,
+                Instr::I32Const(1),
+                Instr::LocalGet(3),
+                Instr::I64ExtendI32S,
+                Instr::StructNew(T_BOXED_INT.into()),
+                Instr::ArraySet(T_ARRAY.into()),
+                Instr::LocalGet(0),
+                Instr::RefAsNonNull,
+                Instr::I32Const(2),
+                Instr::LocalGet(4),
+                Instr::I64ExtendI32S,
+                Instr::StructNew(T_BOXED_INT.into()),
+                Instr::ArraySet(T_ARRAY.into()),
+            ],
+        },
+    ];
+    FuncDef {
+        name: "builder_push_i64".into(),
+        params: vec![ref_array_null(), ValType::I64],
+        results: vec![],
+        locals: vec![
+            ref_vector_i64_null(), // p2: buf
+            ValType::I32,          // p3: len
+            ValType::I32,          // p4: cap
+            ValType::I32,          // p5: new_cap
+            ref_vector_i64_null(), // p6: new_buf
+        ],
+        body,
+    }
+}
+
 /// `builder_freeze(builder: Array) -> Array`
 ///
 /// Return an exactly-sized immutable snapshot of the first `len` elements.
@@ -472,16 +827,82 @@ fn builder_freeze_fn() -> FuncDef {
             Instr::LocalGet(2),
             Instr::ArrayNew(T_ARRAY.into()),
             Instr::LocalSet(3),
-            // out[0..len] <- buf[0..len]
+            // out[0..len] <- buf[0..len] when the builder was seeded or pushed into
+            Instr::LocalGet(2),
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![],
+                else_body: vec![
+                    Instr::LocalGet(3),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(1),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(2),
+                    Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                ],
+            },
+            // return out
             Instr::LocalGet(3),
             Instr::RefAsNonNull,
-            Instr::I32Const(0),
-            Instr::LocalGet(1),
+        ],
+    }
+}
+
+/// `builder_freeze_i64(builder: Array) -> Vector_i64`
+fn builder_freeze_i64_fn() -> FuncDef {
+    FuncDef {
+        name: "builder_freeze_i64".into(),
+        params: vec![ref_array_null()],
+        results: vec![ref_vector_i64()],
+        locals: vec![
+            ref_vector_i64_null(), // p1: buf
+            ValType::I32,          // p2: len
+            ref_vector_i64_null(), // p3: out
+        ],
+        body: vec![
+            Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::I32Const(0),
+            Instr::ArrayGet(T_ARRAY.into()),
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(T_VECTOR_I64.into()),
+            },
+            Instr::LocalSet(1),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::I32Const(1),
+            Instr::ArrayGet(T_ARRAY.into()),
+            Instr::RefCast {
+                nullable: false,
+                heap: HeapType::Named(T_BOXED_INT.into()),
+            },
+            Instr::StructGet(T_BOXED_INT.into(), 0),
+            Instr::I32WrapI64,
+            Instr::LocalSet(2),
+            Instr::I64Const(0),
             Instr::LocalGet(2),
-            Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
-            // return out
+            Instr::ArrayNew(T_VECTOR_I64.into()),
+            Instr::LocalSet(3),
+            Instr::LocalGet(2),
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![],
+                else_body: vec![
+                    Instr::LocalGet(3),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(1),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(2),
+                    Instr::ArrayCopy(T_VECTOR_I64.into(), T_VECTOR_I64.into()),
+                ],
+            },
             Instr::LocalGet(3),
             Instr::RefAsNonNull,
         ],

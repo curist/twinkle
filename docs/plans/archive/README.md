@@ -50,6 +50,7 @@ Related historical context outside this folder:
 | [bytes-followup-hardening.md](bytes-followup-hardening.md) | Follow-up hardening for byte semantics, intrinsic contracts, and unfold callback typing |
 | [byte-contextual-int-literals.md](byte-contextual-int-literals.md) | Allow in-range integer literals to satisfy `Byte` in expected-type contexts without enabling general implicit narrowing |
 | [vector-type.md](vector-type.md) | Replace `Array<T>` with `Vector<T>` |
+| [vector-backend-repr-inference.md](vector-backend-repr-inference.md) | Stage0 backend slice for separating semantic `Vector<T>` typing from physical vector-family representation, completed for the concrete `Vector<Int>` typed container/helper path |
 | [to-string-method-unification.md](to-string-method-unification.md) | Unify string conversion via `.to_string()` |
 | [bitwise-operations.md](bitwise-operations.md) | Add bitwise operators for Int/Byte with interpreter/Wasm parity |
 | [uniqueness-optimization.md](uniqueness-optimization.md) | Uniqueness-based in-place update optimization |

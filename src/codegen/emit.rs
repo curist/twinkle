@@ -20,8 +20,8 @@ use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_STRING, T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_iter_state_null, ref_string,
-    ref_string_null,
+    T_STRING, T_VARIANT, T_VECTOR_I64, ref_array, ref_array_null, ref_dict_null,
+    ref_iter_state_null, ref_string, ref_string_null, ref_vector_i64, ref_vector_i64_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -2206,7 +2206,7 @@ fn emit_tail_call(
     match callee {
         Atom::AGlobalFunc(func_id) => {
             if let Some(entry) = ctx.prelude.get(func_id).cloned() {
-                emit_tail_runtime_prelude_call(&entry, args, return_ty, ctx)
+                emit_tail_runtime_prelude_call(*func_id, &entry, args, return_ty, ctx)
             } else {
                 emit_tail_direct_user_call(*func_id, args, return_ty, ctx)
             }
@@ -2217,11 +2217,15 @@ fn emit_tail_call(
 }
 
 fn emit_tail_runtime_prelude_call(
+    func_id: FuncId,
     entry: &crate::codegen::prelude::PreludeEntry,
     args: &[Atom],
     return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Option<Vec<Instr>> {
+    if let Some(import) = specialized_vector_runtime_import(func_id, args, return_ty, ctx) {
+        return emit_tail_import_call(import, args, return_ty, ctx);
+    }
     if !entry.is_runtime_call()
         || !tail_runtime_result_compatible(&entry.runtime_results, return_ty)
     {
@@ -2247,6 +2251,34 @@ fn emit_tail_runtime_prelude_call(
             entry.twinkle_name
         )
     });
+    instrs.push(Instr::ReturnCall(sym));
+    Some(instrs)
+}
+
+fn emit_tail_import_call(
+    import: ImportDef,
+    args: &[Atom],
+    return_ty: Option<&ValType>,
+    ctx: &mut EmitCtx<'_>,
+) -> Option<Vec<Instr>> {
+    if !tail_runtime_result_compatible(&import.results, return_ty) {
+        return None;
+    }
+    if args.len() != import.params.len() {
+        panic!(
+            "arity mismatch for runtime import '{}': expected {}, got {}",
+            import.as_sym,
+            import.params.len(),
+            args.len()
+        );
+    }
+
+    let mut instrs = Vec::new();
+    for (arg, param_ty) in args.iter().zip(import.params.iter()) {
+        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+    }
+    let sym = import.as_sym.clone();
+    ctx.add_import(import);
     instrs.push(Instr::ReturnCall(sym));
     Some(instrs)
 }
@@ -3935,6 +3967,18 @@ fn emit_array_literal(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     let mut instrs = Vec::new();
+    if matches!(elem_mono, Some(MonoType::Int)) {
+        for elem in elems {
+            instrs.extend(emit_atom(elem, Some(&ValType::I64), ctx));
+        }
+        instrs.push(Instr::ArrayNewFixed(
+            T_VECTOR_I64.to_string(),
+            elems.len() as u32,
+        ));
+        instrs.extend(emit_coerce_stack(&ref_vector_i64(), bind_ty));
+        return instrs;
+    }
+
     let elem_val_ty = elem_mono
         .map(|mono| mono_to_valtype_specialized(mono, ctx.type_env, &ctx.concrete_func_sigs));
     for elem in elems {
@@ -3963,11 +4007,19 @@ fn emit_index_op(
     let mut instrs = Vec::new();
     match base_ty {
         crate::ir::anf::IndexKind::Array => {
-            ensure_rt_arr_get_import(ctx);
-            instrs.extend(emit_atom(base, Some(&ref_array_null()), ctx));
-            instrs.extend(emit_index_as_i32(index, ctx));
-            instrs.push(Instr::Call("rt_arr__get".to_string()));
-            instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+            if is_int_vector_atom(base, ctx) {
+                ensure_rt_arr_get_i64_import(ctx);
+                instrs.extend(emit_atom(base, Some(&ref_vector_i64_null()), ctx));
+                instrs.extend(emit_index_as_i32(index, ctx));
+                instrs.push(Instr::Call("rt_arr__get_i64".to_string()));
+                instrs.extend(emit_coerce_stack(&ValType::I64, bind_ty));
+            } else {
+                ensure_rt_arr_get_import(ctx);
+                instrs.extend(emit_atom(base, Some(&ref_array_null()), ctx));
+                instrs.extend(emit_index_as_i32(index, ctx));
+                instrs.push(Instr::Call("rt_arr__get".to_string()));
+                instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
+            }
         }
         crate::ir::anf::IndexKind::Dict => {
             // Dict indexing returns Option<V>, so use get_option which returns a
@@ -4309,7 +4361,7 @@ fn emit_prelude_call(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     if entry.is_runtime_call() {
-        return emit_runtime_prelude_call(entry, args, bind_ty, ctx);
+        return emit_runtime_prelude_call(func_id, entry, args, bind_ty, ctx);
     }
 
     let Some(kind) = registry::lowering_kind(func_id) else {
@@ -4431,6 +4483,15 @@ fn emit_array_append_intrinsic(
         panic!("Array.append intrinsic expects 2 args, got {}", args.len());
     }
 
+    if is_int_vector_atom(&args[0], ctx) {
+        ensure_rt_arr_push_i64_import(ctx);
+        let mut instrs = emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx);
+        instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+        instrs.push(Instr::Call("rt_arr__push_i64".to_string()));
+        instrs.extend(emit_coerce_stack(&ref_vector_i64(), bind_ty));
+        return instrs;
+    }
+
     ensure_rt_arr_concat_import(ctx);
 
     let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
@@ -4451,6 +4512,15 @@ fn emit_vector_make_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     assert_eq!(args.len(), 2, "Vector.make expects 2 args");
+    if matches!(ctx.infer_atom_mono(&args[1]), Some(MonoType::Int)) {
+        ensure_rt_arr_make_i64_import(ctx);
+        let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+        instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+        instrs.push(Instr::Call("rt_arr__make_i64".to_string()));
+        instrs.extend(emit_coerce_stack(&ref_vector_i64(), bind_ty));
+        return instrs;
+    }
+
     let mut instrs = Vec::new();
     // fill value (anyref)
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
@@ -4474,21 +4544,36 @@ fn emit_vector_get_intrinsic(
     assert_eq!(args.len(), 2, "Vector.get expects 2 args");
 
     let mut instrs = Vec::new();
+    let use_i64_family = is_int_vector_atom(&args[0], ctx);
 
     // condition: i_i32 < arr.len
     // i32.lt_u pops [lhs, rhs] and pushes lhs < rhs
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64); // lhs = i as i32
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    if use_i64_family {
+        instrs.extend(emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx));
+    } else {
+        instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    }
     instrs.push(Instr::ArrayLen); // rhs = arr.len
     instrs.push(Instr::I32LtU);
 
     // then: Some(arr[i])
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
-    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    if use_i64_family {
+        then_body.extend(emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx));
+    } else {
+        then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    }
     then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     then_body.push(Instr::I32WrapI64);
-    then_body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    if use_i64_family {
+        ensure_rt_arr_get_i64_import(ctx);
+        then_body.push(Instr::Call("rt_arr__get_i64".to_string()));
+        then_body.push(Instr::StructNew(T_BOXED_INT.to_string()));
+    } else {
+        then_body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    }
     then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     then_body.push(Instr::StructNew(T_VARIANT.to_string()));
 
@@ -4519,24 +4604,42 @@ fn emit_vector_set_intrinsic(
     use crate::types::ty::OPTION_TYPE_ID;
     assert_eq!(args.len(), 3, "Vector.set expects 3 args");
 
-    ensure_rt_arr_set_import(ctx);
+    let use_i64_family = is_int_vector_atom(&args[0], ctx);
+    if use_i64_family {
+        ensure_rt_arr_set_i64_import(ctx);
+    } else {
+        ensure_rt_arr_set_import(ctx);
+    }
 
     let mut instrs = Vec::new();
 
     // condition: i_i32 < arr.len
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64);
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    if use_i64_family {
+        instrs.extend(emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx));
+    } else {
+        instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    }
     instrs.push(Instr::ArrayLen);
     instrs.push(Instr::I32LtU);
 
     // then: Some(rt_arr__set(arr, i, val))
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
-    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    if use_i64_family {
+        then_body.extend(emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx));
+    } else {
+        then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    }
     then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     then_body.push(Instr::I32WrapI64);
-    then_body.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
-    then_body.push(Instr::Call("rt_arr__set".to_string()));
+    if use_i64_family {
+        then_body.extend(emit_atom(&args[2], Some(&ValType::I64), ctx));
+        then_body.push(Instr::Call("rt_arr__set_i64".to_string()));
+    } else {
+        then_body.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
+        then_body.push(Instr::Call("rt_arr__set".to_string()));
+    }
     then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     then_body.push(Instr::StructNew(T_VARIANT.to_string()));
 
@@ -6832,11 +6935,15 @@ fn emit_unimplemented_intrinsic_prelude_call(
 }
 
 fn emit_runtime_prelude_call(
+    func_id: FuncId,
     entry: &crate::codegen::prelude::PreludeEntry,
     args: &[Atom],
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    if let Some(import) = specialized_vector_runtime_import(func_id, args, Some(bind_ty), ctx) {
+        return emit_runtime_import_call(import, args, bind_ty, ctx);
+    }
     if args.len() != entry.runtime_params.len() {
         panic!(
             "arity mismatch for prelude call '{}': expected {}, got {}",
@@ -6867,6 +6974,39 @@ fn emit_runtime_prelude_call(
             "multi-value runtime prelude return not supported yet: {}",
             entry.twinkle_name
         ),
+    }
+
+    instrs
+}
+
+fn emit_runtime_import_call(
+    import: ImportDef,
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != import.params.len() {
+        panic!(
+            "arity mismatch for runtime import '{}': expected {}, got {}",
+            import.as_sym,
+            import.params.len(),
+            args.len()
+        );
+    }
+
+    let mut instrs = Vec::new();
+    for (arg, param_ty) in args.iter().zip(import.params.iter()) {
+        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+    }
+    let sym = import.as_sym.clone();
+    let results = import.results.clone();
+    ctx.add_import(import);
+    instrs.push(Instr::Call(sym));
+
+    match results.as_slice() {
+        [] => instrs.extend(emit_void_value(Some(bind_ty))),
+        [single] => instrs.extend(emit_coerce_stack(single, bind_ty)),
+        _ => panic!("multi-value runtime import return not supported yet"),
     }
 
     instrs
@@ -6952,6 +7092,124 @@ fn ref_variant_null() -> ValType {
     }
 }
 
+fn typed_vector_elem_from_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> Option<MonoType> {
+    match atom {
+        Atom::ALocal(local_id) => ctx.local_typed_vector_elem(*local_id).or_else(|| {
+            ctx.infer_atom_mono(atom).and_then(|mono| match mono {
+                MonoType::Vector(elem) if *elem == MonoType::Int => Some(elem.as_ref().clone()),
+                _ => None,
+            })
+        }),
+        _ => ctx.infer_atom_mono(atom).and_then(|mono| match mono {
+            MonoType::Vector(elem) if *elem == MonoType::Int => Some(elem.as_ref().clone()),
+            _ => None,
+        }),
+    }
+}
+
+fn is_int_vector_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> bool {
+    matches!(typed_vector_elem_from_atom(atom, ctx), Some(MonoType::Int))
+}
+
+fn specialized_vector_runtime_import(
+    func_id: FuncId,
+    args: &[Atom],
+    bind_ty: Option<&ValType>,
+    ctx: &EmitCtx<'_>,
+) -> Option<ImportDef> {
+    use crate::ir::lower::prelude as ids;
+
+    match func_id {
+        id if id == ids::VECTOR_LEN
+            && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "len_i64".to_string(),
+                as_sym: "rt_arr__len_i64".to_string(),
+                params: vec![ref_vector_i64_null()],
+                results: vec![ValType::I32],
+            })
+        }
+        id if id == ids::VECTOR_SET_UNSAFE
+            && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "set_i64".to_string(),
+                as_sym: "rt_arr__set_i64".to_string(),
+                params: vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
+                results: vec![ref_vector_i64()],
+            })
+        }
+        id if id == ids::VECTOR_CONCAT
+            && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "concat_i64".to_string(),
+                as_sym: "rt_arr__concat_i64".to_string(),
+                params: vec![ref_vector_i64_null(), ref_vector_i64_null()],
+                results: vec![ref_vector_i64()],
+            })
+        }
+        id if id == ids::VECTOR_SLICE
+            && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "slice_i64".to_string(),
+                as_sym: "rt_arr__slice_i64".to_string(),
+                params: vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
+                results: vec![ref_vector_i64()],
+            })
+        }
+        id if id == ids::VECTOR_BUILDER_FROM
+            && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "builder_from_i64".to_string(),
+                as_sym: "rt_arr__builder_from_i64".to_string(),
+                params: vec![ref_vector_i64_null()],
+                results: vec![ref_array()],
+            })
+        }
+        id if id == ids::VECTOR_BUILDER_PUSH
+            && matches!(
+                args.get(1).and_then(|arg| ctx.infer_atom_mono(arg)),
+                Some(MonoType::Int)
+            ) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "builder_push_i64".to_string(),
+                as_sym: "rt_arr__builder_push_i64".to_string(),
+                params: vec![ref_array_null(), ValType::I64],
+                results: vec![],
+            })
+        }
+        id if id == ids::VECTOR_BUILDER_FREEZE
+            && matches!(
+                bind_ty,
+                Some(ValType::Ref {
+                    heap: HeapType::Named(sym),
+                    ..
+                }) if sym == T_VECTOR_I64
+            ) =>
+        {
+            Some(ImportDef {
+                module: "rt.arr".to_string(),
+                name: "builder_freeze_i64".to_string(),
+                as_sym: "rt_arr__builder_freeze_i64".to_string(),
+                params: vec![ref_array_null()],
+                results: vec![ref_vector_i64()],
+            })
+        }
+        _ => None,
+    }
+}
+
 fn ensure_rt_str_eq_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.str".to_string(),
@@ -7002,6 +7260,16 @@ fn ensure_rt_arr_concat_import(ctx: &mut EmitCtx<'_>) {
     });
 }
 
+fn ensure_rt_arr_make_i64_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "make_i64".to_string(),
+        as_sym: "rt_arr__make_i64".to_string(),
+        params: vec![ValType::I32, ValType::I64],
+        results: vec![ref_vector_i64()],
+    });
+}
+
 fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.arr".to_string(),
@@ -7012,6 +7280,16 @@ fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
     });
 }
 
+fn ensure_rt_arr_get_i64_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "get_i64".to_string(),
+        as_sym: "rt_arr__get_i64".to_string(),
+        params: vec![ref_vector_i64_null(), ValType::I32],
+        results: vec![ValType::I64],
+    });
+}
+
 fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.arr".to_string(),
@@ -7019,6 +7297,26 @@ fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
         as_sym: "rt_arr__set".to_string(),
         params: vec![ref_array_null(), ValType::I32, ValType::Anyref],
         results: vec![ref_array()],
+    });
+}
+
+fn ensure_rt_arr_set_i64_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "set_i64".to_string(),
+        as_sym: "rt_arr__set_i64".to_string(),
+        params: vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
+        results: vec![ref_vector_i64()],
+    });
+}
+
+fn ensure_rt_arr_push_i64_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "push_i64".to_string(),
+        as_sym: "rt_arr__push_i64".to_string(),
+        params: vec![ref_vector_i64_null(), ValType::I64],
+        results: vec![ref_vector_i64()],
     });
 }
 
@@ -8281,6 +8579,42 @@ mod tests {
     }
 
     #[test]
+    fn emit_array_append_intrinsic_uses_i64_family_for_vector_int() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ref_array_null()));
+        ctx.local_map.insert(LocalId(2), (1, ValType::I64));
+        ctx.local_mono
+            .insert(LocalId(1), MonoType::Vector(Box::new(MonoType::Int)));
+        ctx.local_mono.insert(LocalId(2), MonoType::Int);
+
+        let entry = ctx
+            .prelude
+            .get(&prelude_ids::VECTOR_PUSH)
+            .cloned()
+            .expect("missing prelude entry");
+        let instrs = emit_prelude_call(
+            prelude_ids::VECTOR_PUSH,
+            &entry,
+            &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
+            &ref_array_null(),
+            &mut ctx,
+        );
+
+        assert_eq!(
+            instrs,
+            vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(1),
+                Instr::Call("rt_arr__push_i64".to_string()),
+            ]
+        );
+        assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_arr__push_i64"));
+    }
+
+    #[test]
     fn emit_unimplemented_intrinsic_uses_runtime_trap_not_compiler_panic() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
@@ -9192,6 +9526,35 @@ mod tests {
     }
 
     #[test]
+    fn emit_array_lit_vector_int_uses_typed_vector_family() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ref_vector_i64_null()));
+        ctx.local_mono
+            .insert(LocalId(1), MonoType::Vector(Box::new(MonoType::Int)));
+        ctx.set_local_typed_vector_elem(LocalId(1), Some(MonoType::Int));
+
+        let instrs = emit_let_binding(
+            LocalId(1),
+            &AnfOp::AArrayLit(vec![Atom::ALitInt(1), Atom::ALitInt(2)]),
+            None,
+            &mut ctx,
+        );
+
+        assert_eq!(
+            instrs,
+            vec![
+                Instr::I64Const(1),
+                Instr::I64Const(2),
+                Instr::ArrayNewFixed(T_VECTOR_I64.to_string(), 2),
+                Instr::LocalSet(0),
+            ]
+        );
+    }
+
+    #[test]
     fn emit_index_array_calls_runtime_get_and_unboxes() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
@@ -9228,6 +9591,43 @@ mod tests {
             ]
         );
         assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_arr__get"));
+    }
+
+    #[test]
+    fn emit_index_vector_int_calls_i64_family_get() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let user_funcs = HashMap::new();
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        ctx.local_map.insert(LocalId(1), (0, ValType::I64));
+        ctx.local_map.insert(LocalId(2), (1, ref_vector_i64_null()));
+        ctx.local_mono
+            .insert(LocalId(2), MonoType::Vector(Box::new(MonoType::Int)));
+        ctx.set_local_typed_vector_elem(LocalId(2), Some(MonoType::Int));
+
+        let instrs = emit_let_binding(
+            LocalId(1),
+            &AnfOp::AIndex {
+                base: Atom::ALocal(LocalId(2)),
+                index: Atom::ALitInt(3),
+                base_ty: crate::ir::anf::IndexKind::Array,
+                result_ty: MonoType::Int,
+            },
+            None,
+            &mut ctx,
+        );
+
+        assert_eq!(
+            instrs,
+            vec![
+                Instr::LocalGet(1),
+                Instr::I64Const(3),
+                Instr::I32WrapI64,
+                Instr::Call("rt_arr__get_i64".to_string()),
+                Instr::LocalSet(0),
+            ]
+        );
+        assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_arr__get_i64"));
     }
 
     #[test]
