@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::codegen::emit::emit_user_module;
+use crate::compiler_lib;
 use crate::runtime;
 use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link};
@@ -41,6 +42,7 @@ pub fn build_wat(file_path: &str) -> Result<String> {
         &pipeline.core_module.type_env,
     );
     let mut modules = runtime::all_modules();
+    modules.extend(compiler_lib::all_modules()?);
     modules.push(user_module);
 
     let linked = link(modules, None).map_err(format_link_errors)?;

@@ -6,7 +6,7 @@ pub mod loader;
 mod planner;
 mod stage_runner;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -1488,6 +1488,41 @@ pub fn compile_entry(file_path: &str) -> Result<(CoreModule, FileRegistry)> {
     state.entry_module_path = Some(path.clone());
     let (_, registry) = compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, true)?;
     Ok((dce::eliminate_dead_code(link(state)), registry))
+}
+
+/// Full pipeline for compiler-owned library modules.
+///
+/// Unlike `compile_entry`, this preserves the entry module's public functions as
+/// DCE roots so the resulting artifact can be emitted as a separate Wasm module
+/// and linked by namespace.
+pub fn compile_entry_library(file_path: &str) -> Result<(CoreModule, ModuleExports, FileRegistry)> {
+    let path = PathBuf::from(file_path)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(file_path));
+    let alias = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    let mut ctx = CompilationContext::new();
+    let mut state = CompileState::initial();
+    state.entry_module_path = Some(path.clone());
+    let (exports, registry) =
+        compile_module(&path, &alias, &mut ctx, &mut vec![], &mut state, true)?;
+    let linked = link(state);
+    let public_func_names = exports
+        .public_functions
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let extra_roots = linked
+        .functions
+        .iter()
+        .filter(|func| public_func_names.contains(&func.name))
+        .map(|func| func.func_id)
+        .collect::<Vec<_>>();
+    let linked = dce::eliminate_dead_code_with_roots(linked, &extra_roots);
+    Ok((linked, exports, registry))
 }
 
 /// Full pipeline (parse + resolve + typecheck + lower) from an in-memory module map.

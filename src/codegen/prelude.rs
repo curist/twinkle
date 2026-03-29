@@ -4,7 +4,8 @@ use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_string, ref_string_null,
+    T_ARRAY, T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_string,
+    ref_string_null, ref_vector_i64, ref_vector_i64_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
@@ -363,6 +364,114 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
     }
 }
 
+fn ref_array_nonnull() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    }
+}
+
+fn ref_array_null_typed() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY.to_string()),
+    }
+}
+
+fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeEntry> {
+    match func_id {
+        id if id == prelude_ids::LIB_VECTOR_I64_MAKE => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "make_i64",
+            "rt_arr__make_i64",
+            vec![ValType::I32, ValType::I64],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_GET => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "get_i64",
+            "rt_arr__get_i64",
+            vec![ref_vector_i64_null(), ValType::I32],
+            vec![ValType::I64],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_SET => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "set_i64",
+            "rt_arr__set_i64",
+            vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_LEN => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "len_i64",
+            "rt_arr__len_i64",
+            vec![ref_vector_i64_null()],
+            vec![ValType::I32],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_PUSH => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "push_i64",
+            "rt_arr__push_i64",
+            vec![ref_vector_i64_null(), ValType::I64],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_CONCAT => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "concat_i64",
+            "rt_arr__concat_i64",
+            vec![ref_vector_i64_null(), ref_vector_i64_null()],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_SLICE => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "slice_i64",
+            "rt_arr__slice_i64",
+            vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_NEW => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "builder_new",
+            "rt_arr__builder_new",
+            vec![],
+            vec![ref_array_nonnull()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_FROM => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "builder_from_i64",
+            "rt_arr__builder_from_i64",
+            vec![ref_vector_i64_null()],
+            vec![ref_array_nonnull()],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_PUSH => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "builder_push_i64",
+            "rt_arr__builder_push_i64",
+            vec![ref_array_null_typed(), ValType::I64],
+            vec![],
+        )),
+        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_FREEZE => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "builder_freeze_i64",
+            "rt_arr__builder_freeze_i64",
+            vec![ref_array_null_typed()],
+            vec![ref_vector_i64()],
+        )),
+        _ => None,
+    }
+}
+
 pub fn build_prelude_map() -> PreludeMap {
     let mut map = HashMap::new();
 
@@ -376,6 +485,14 @@ pub fn build_prelude_map() -> PreludeMap {
                         spec.func_id.0, spec.twinkle_name
                     )
                 }),
+            IntrinsicDispatch::LibraryInternal => {
+                library_internal_entry(spec.func_id, spec.twinkle_name).unwrap_or_else(|| {
+                    panic!(
+                        "missing library-internal prelude binding for FuncId({}) '{}'",
+                        spec.func_id.0, spec.twinkle_name
+                    )
+                })
+            }
         };
         map.insert(spec.func_id, entry);
     }
@@ -473,7 +590,10 @@ mod tests {
             assert_eq!(entry.twinkle_name, spec.twinkle_name);
             assert_eq!(
                 entry.is_runtime_call(),
-                matches!(spec.dispatch, IntrinsicDispatch::Runtime),
+                matches!(
+                    spec.dispatch,
+                    IntrinsicDispatch::Runtime | IntrinsicDispatch::LibraryInternal
+                ),
                 "dispatch mismatch for FuncId({})",
                 spec.func_id.0
             );

@@ -7,6 +7,13 @@ can bind and call into runtime substrate symbols (e.g. `rt.arr.*`,
 `rt.str.*`), so that semantic library implementations can be written in
 Twinkle rather than maintained as parallel Rust logic.
 
+This plan is specifically about the boundary between two different
+Twinkle-authored layers:
+
+- ordinary Twinkle in `boot/lib`, where semantic collection logic should live
+- compiler-owned runtime modules, which may themselves be authored in Twinkle
+  via the Wasm IR DSL (`boot/compiler/codegen/wasm_ir.tw`)
+
 This plan is a prerequisite for:
 
 - [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md)
@@ -30,6 +37,11 @@ Today, no such capability exists:
 Until this boundary exists, plans that depend on Twinkle-authored library
 modules consuming runtime substrate are blocked.
 
+This is not the same as saying low-level helpers must remain Rust-owned.
+Stage0 and boot may continue to move runtime substrate into Twinkle-authored
+Wasm IR modules. The missing piece is the call/import/link boundary from
+ordinary `boot/lib` Twinkle into those substrate modules.
+
 ## Scope
 
 In scope:
@@ -47,6 +59,9 @@ Out of scope:
 - General-purpose Wasm FFI (arbitrary host imports, multi-value returns)
 - Changes to the public user-facing language surface
 - Moving all runtime functions behind this boundary at once
+- Replacing the compiler/runtime Wasm IR layer with ordinary `boot/lib`
+  source; low-level substrate may remain expressed through compiler-owned
+  Wasm IR modules
 
 ## Design Space
 
@@ -167,7 +182,9 @@ appear, Option A (extern syntax) can be introduced later as a generalization.
 
 Later, stub bodies can be replaced with real Twinkle implementations that
 call substrate helpers directly (once the function-body-replacement path is
-proven).
+proven). Those substrate helpers may themselves be Rust-authored or
+Twinkle-authored Wasm IR modules; this plan only cares that `boot/lib`
+can bind them as compiler-owned runtime artifacts.
 
 ## Milestones
 

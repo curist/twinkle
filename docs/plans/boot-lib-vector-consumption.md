@@ -48,6 +48,13 @@ The intended end state is closer to a host-contract style boundary:
 - the linker consumes the compiled artifact like any other module
 - Rust remains substrate and integration glue, not algorithm owner
 
+For self-hosting, "substrate" here does not mean "must stay in Rust". Low-level
+runtime helpers may also be authored in Twinkle through the compiler-owned Wasm
+IR layer. The ownership rule is about abstraction level:
+
+- semantic vector behavior belongs in ordinary `boot/lib` Twinkle
+- raw typed storage/helper primitives belong in compiler/runtime substrate
+
 This plan makes that boundary explicit so implementation can pivot away from
 indefinite Rust-side specialization.
 
@@ -69,6 +76,10 @@ Rust/stage0 remains responsible for:
 - codegen selection of the correct library ABI symbol
 - optimizer-only unique/in-place hooks
 - linking the compiled `boot/lib` artifact
+
+Those `rt.arr` helpers may be implemented in Rust or in Twinkle-authored Wasm
+IR runtime modules. What matters is that they stay substrate-only and do not
+become the semantic home of vectors again.
 
 ### 2. Stage0 Should Consume An Artifact, Not Source-Rewrite It
 
@@ -98,6 +109,11 @@ Its role in this design is limited to:
 
 The Twinkle library implementation may import `rt.arr` helpers, but user code
 should not need to know that shape directly.
+
+The implementation language of `rt.arr` is not architecturally important here.
+For bootstrap/self-hosting, compiler-owned runtime helpers may be authored in
+Twinkle Wasm IR as long as they remain substrate and are consumed through the
+same ABI boundary.
 
 ### 4. Public `Vector.*` Surface Can Stay Intrinsic During Migration
 
@@ -258,6 +274,12 @@ The first implementation should use this path:
 2. compile that module with stage0 as part of the build pipeline
 3. include its Wasm module in the linked module set
 4. route `Vector<Int>` intrinsic/runtime calls to its exports
+
+In parallel, keep `rt.arr` as a separate compiler-owned runtime module set.
+Those modules may continue to be implemented in Rust in stage0 and in
+Twinkle-authored Wasm IR on the boot side. The key requirement is that the
+`boot/lib` vector artifact links against substrate helpers rather than
+re-embedding their logic or forcing user code to name them directly.
 
 This requires:
 

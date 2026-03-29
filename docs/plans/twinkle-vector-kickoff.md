@@ -31,6 +31,11 @@ The desired end state is:
 - stage0 is used first to prove the backend substrate and ABI shape
 - boot follows once the substrate is stable
 
+For this kickoff, "on the Twinkle side" has two layers:
+
+- ordinary Twinkle in `boot/lib` for semantic vector logic
+- compiler-owned Twinkle Wasm IR for low-level runtime substrate where needed
+
 This avoids rediscovering representation problems in boot while still keeping
 the long-term library ownership in Twinkle.
 
@@ -73,6 +78,11 @@ The Twinkle library layer remains responsible for:
 - vector algorithm semantics
 - structural sharing invariants
 - builder semantics at the source/runtime-library layer
+
+Low-level runtime substrate may still be authored separately in a compiler-owned
+Wasm IR layer. That is compatible with self-hosting, but it does not replace
+the requirement that semantic vector behavior live in ordinary `boot/lib`
+Twinkle.
 
 ### 3. Stage0 Is The First Integration Environment
 
@@ -146,6 +156,10 @@ Stage0 needs a reusable typed-family substrate for vectors:
   `push`, and builder ops
 - codegen selection rules that map concrete `Vector<T>` to the correct family
 
+This substrate may be implemented partly in Rust during stage0 bring-up and
+partly in Twinkle-authored Wasm IR on the boot side. The important boundary is
+that it stays substrate rather than becoming the semantic owner of vectors.
+
 Relevant stage0 files for the first slice:
 
 - `src/runtime/types.rs`
@@ -165,6 +179,11 @@ The implementation must satisfy all of the following:
   permanently embedded in Rust runtime code
 - the Twinkle implementation targets the typed family substrate above
 - public `Vector` semantics remain unchanged
+
+The algorithm should not be forced down into the Wasm IR layer just because the
+low-level helpers are there. Twinkle-authored Wasm IR is the right tool for raw
+runtime primitives; `boot/lib` remains the right tool for persistent vector
+semantics.
 
 Planned home:
 
@@ -249,6 +268,10 @@ include:
 Whichever path is chosen, the invariant is the same: algorithm ownership stays
 in `boot/lib`, and Rust-side code remains integration glue rather than a second
 maintained implementation.
+
+Compiler-owned runtime modules authored in Twinkle Wasm IR are allowed within
+this model. They count as Twinkle implementation of substrate, not as the
+semantic vector library itself.
 
 ## Milestones
 

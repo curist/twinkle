@@ -14,7 +14,16 @@ use crate::ir::lower::prelude;
 /// Roots: all `__init__` functions in `all_init_func_ids`.
 /// Reachable set is computed by BFS over GlobalFunc and MakeClosure references.
 /// Unreachable functions are dropped; remaining functions get compact FuncIds.
-pub fn eliminate_dead_code(mut module: CoreModule) -> CoreModule {
+pub fn eliminate_dead_code(module: CoreModule) -> CoreModule {
+    eliminate_dead_code_with_roots(module, &[])
+}
+
+/// Remove unreachable functions from a linked `CoreModule`, preserving any
+/// additional explicit roots alongside the standard `__init__` roots.
+pub fn eliminate_dead_code_with_roots(
+    mut module: CoreModule,
+    extra_roots: &[FuncId],
+) -> CoreModule {
     // 1. Build adjacency list
     let mut refs: HashMap<FuncId, HashSet<FuncId>> = HashMap::new();
     for func in &module.functions {
@@ -29,6 +38,11 @@ pub fn eliminate_dead_code(mut module: CoreModule) -> CoreModule {
     for &init_id in &module.all_init_func_ids {
         if reachable.insert(init_id) {
             queue.push_back(init_id);
+        }
+    }
+    for &root_id in extra_roots {
+        if reachable.insert(root_id) {
+            queue.push_back(root_id);
         }
     }
     while let Some(id) = queue.pop_front() {

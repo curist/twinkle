@@ -5,6 +5,7 @@
 //! `emit_user_module` currently computes inline, then `ModuleEmitPlan::emit_wat`
 //! feeds that plan to the emitter.
 
+use std::collections::HashSet;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::codegen::ctx::{FuncSigInfo, IteratorStateInfo};
@@ -41,8 +42,14 @@ impl ModuleEmitPlan {
     /// Emit WAT from this plan.  Equivalent to `emit_user_module` but using
     /// pre-computed plan data instead of inline analysis.
     pub fn emit_wat(&self, anf: &AnfModule, type_env: &TypeEnv) -> String {
-        let module_ir = emit::emit_user_module_from_plan(self, anf, type_env);
+        let exported_names = HashSet::new();
+        let module_ir =
+            emit::emit_named_module_from_plan(self, anf, type_env, "user", &exported_names);
         let mut modules = crate::runtime::all_modules();
+        modules.extend(
+            crate::compiler_lib::all_modules()
+                .expect("compiler-owned library modules should build"),
+        );
         modules.push(module_ir);
         let linked = crate::wasm::linker::link(modules, None).expect("link should succeed");
         crate::wasm::emit::emit_wat(&linked)

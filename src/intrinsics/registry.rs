@@ -7,6 +7,10 @@ use crate::ir::lower::prelude as prelude_ids;
 pub enum IntrinsicDispatch {
     Runtime,
     Intrinsic,
+    /// Library-internal builtins: not exposed through the prelude, but
+    /// available to `boot/lib` modules via `populate_func_table`.  Each
+    /// entry maps directly to a runtime substrate import (e.g. `rt.arr`).
+    LibraryInternal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +320,84 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(HOST_ENV, "__host_env", Runtime, false, false),
     spec!(HOST_CWD, "__host_cwd", Runtime, false, false),
     spec!(HOST_EXIT, "__host_exit", Runtime, false, false),
+    // ── Library-internal: Vector<Int> ABI ────────────────────────────
+    spec!(
+        LIB_VECTOR_I64_MAKE,
+        "__lib_vector_i64_make",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_GET,
+        "__lib_vector_i64_get",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_SET,
+        "__lib_vector_i64_set",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_LEN,
+        "__lib_vector_i64_len",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_PUSH,
+        "__lib_vector_i64_push",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_CONCAT,
+        "__lib_vector_i64_concat",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_SLICE,
+        "__lib_vector_i64_slice",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_BUILDER_NEW,
+        "__lib_vector_i64_builder_new",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_BUILDER_FROM,
+        "__lib_vector_i64_builder_from",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_BUILDER_PUSH,
+        "__lib_vector_i64_builder_push",
+        LibraryInternal,
+        false,
+        false
+    ),
+    spec!(
+        LIB_VECTOR_I64_BUILDER_FREEZE,
+        "__lib_vector_i64_builder_freeze",
+        LibraryInternal,
+        false,
+        false
+    ),
 ];
 
 pub fn all_specs() -> &'static [IntrinsicSpec] {
@@ -406,6 +488,14 @@ pub fn populate_func_table(
     {
         func_table.insert(spec.twinkle_name.to_string(), spec.func_id);
     }
+    // Library-internal builtins are always registered so boot/lib
+    // modules can reference them by name.
+    for spec in all_specs()
+        .iter()
+        .filter(|spec| spec.dispatch == IntrinsicDispatch::LibraryInternal)
+    {
+        func_table.insert(spec.twinkle_name.to_string(), spec.func_id);
+    }
 }
 
 pub fn builtin_module_aliases() -> &'static [&'static str] {
@@ -470,9 +560,9 @@ mod tests {
         for entry in all_specs() {
             let lowering = lowering_kind(entry.func_id);
             match entry.dispatch {
-                IntrinsicDispatch::Runtime => assert!(
+                IntrinsicDispatch::Runtime | IntrinsicDispatch::LibraryInternal => assert!(
                     lowering.is_none(),
-                    "runtime FuncId({}) should not have intrinsic lowering kind",
+                    "runtime/library-internal FuncId({}) should not have intrinsic lowering kind",
                     entry.func_id.0
                 ),
                 IntrinsicDispatch::Intrinsic => assert!(

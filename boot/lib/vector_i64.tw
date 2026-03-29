@@ -1,0 +1,48 @@
+// Compiler-owned Vector<Int> library ABI shim.
+//
+// These stubs give the library ABI stable Twinkle-level names while the
+// implementation still forwards directly into the typed rt.arr substrate.
+
+pub fn vector_i64_make(len: Int, fill: Int) Vector<Int> {
+  __lib_vector_i64_make(len, fill)
+}
+
+pub fn vector_i64_get(xs: Vector<Int>, idx: Int) Int {
+  __lib_vector_i64_get(xs, idx)
+}
+
+pub fn vector_i64_set(xs: Vector<Int>, idx: Int, value: Int) Vector<Int> {
+  __lib_vector_i64_set(xs, idx, value)
+}
+
+pub fn vector_i64_len(xs: Vector<Int>) Int {
+  __lib_vector_i64_len(xs)
+}
+
+pub fn vector_i64_push(xs: Vector<Int>, value: Int) Vector<Int> {
+  __lib_vector_i64_push(xs, value)
+}
+
+pub fn vector_i64_concat(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  __lib_vector_i64_concat(a, b)
+}
+
+pub fn vector_i64_slice(xs: Vector<Int>, start: Int, end: Int) Vector<Int> {
+  __lib_vector_i64_slice(xs, start, end)
+}
+
+pub fn vector_i64_builder_new() Vector<Int> {
+  __lib_vector_i64_builder_new()
+}
+
+pub fn vector_i64_builder_from(xs: Vector<Int>) Vector<Int> {
+  __lib_vector_i64_builder_from(xs)
+}
+
+pub fn vector_i64_builder_push(builder: Vector<Int>, value: Int) Void {
+  __lib_vector_i64_builder_push(builder, value)
+}
+
+pub fn vector_i64_builder_freeze(builder: Vector<Int>) Vector<Int> {
+  __lib_vector_i64_builder_freeze(builder)
+}

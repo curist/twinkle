@@ -1,0 +1,21 @@
+use lib.vector_i64 as v64
+
+xs := v64.vector_i64_make(3, 7)
+ys := v64.vector_i64_set(xs, 1, 9)
+zs := v64.vector_i64_push(ys, 11)
+joined := v64.vector_i64_concat(xs, zs)
+window := v64.vector_i64_slice(joined, 1, 4)
+
+println("${v64.vector_i64_len(window)}")
+println("${v64.vector_i64_get(window, 0)}")
+
+builder := v64.vector_i64_builder_new()
+v64.vector_i64_builder_push(builder, 1)
+v64.vector_i64_builder_push(builder, 2)
+built := v64.vector_i64_builder_freeze(builder)
+println("${v64.vector_i64_len(built)}")
+
+seeded := v64.vector_i64_builder_from(xs)
+v64.vector_i64_builder_push(seeded, 5)
+seeded_out := v64.vector_i64_builder_freeze(seeded)
+println("${v64.vector_i64_len(seeded_out)}")

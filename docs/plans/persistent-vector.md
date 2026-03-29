@@ -56,6 +56,15 @@ Use a persistent tree-backed vector (bit-partitioned trie; optional RRB extensio
   not-yet-specialized `T`; per `backend-anyref-elimination.md`, it is not the
   intended long-term model for ordinary concrete code.
 
+The long-term ownership split is:
+
+- semantic vector behavior in ordinary Twinkle library code (`boot/lib`)
+- low-level typed storage/runtime helpers in compiler-owned substrate modules
+
+Those substrate modules may be authored in Rust or in Twinkle through the Wasm
+IR layer, but they should remain raw helper families rather than the semantic
+home of the persistent vector algorithm.
+
 ## Non-Goals
 
 - Changing user-visible `Vector` syntax or method names

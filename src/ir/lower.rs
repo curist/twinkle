@@ -132,6 +132,22 @@ pub mod prelude {
     pub const HOST_CWD: FuncId = FuncId(1011); // () -> String
     pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
 
+    // ── Library-internal builtins (Vector<Int> ABI) ─────────────────────
+    // These are NOT user-visible prelude functions.  They provide the
+    // substrate binding layer for `boot/lib` Twinkle modules that wrap
+    // typed runtime helpers.
+    pub const LIB_VECTOR_I64_MAKE: FuncId = FuncId(2001);
+    pub const LIB_VECTOR_I64_GET: FuncId = FuncId(2002);
+    pub const LIB_VECTOR_I64_SET: FuncId = FuncId(2003);
+    pub const LIB_VECTOR_I64_LEN: FuncId = FuncId(2004);
+    pub const LIB_VECTOR_I64_PUSH: FuncId = FuncId(2005);
+    pub const LIB_VECTOR_I64_CONCAT: FuncId = FuncId(2006);
+    pub const LIB_VECTOR_I64_SLICE: FuncId = FuncId(2007);
+    pub const LIB_VECTOR_I64_BUILDER_NEW: FuncId = FuncId(2008);
+    pub const LIB_VECTOR_I64_BUILDER_FROM: FuncId = FuncId(2009);
+    pub const LIB_VECTOR_I64_BUILDER_PUSH: FuncId = FuncId(2010);
+    pub const LIB_VECTOR_I64_BUILDER_FREEZE: FuncId = FuncId(2011);
+
     // User functions start here
     pub const USER_FUNC_START: u32 = 41;
 

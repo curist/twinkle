@@ -32,7 +32,7 @@ use crate::types::ty::{
     TypeDef as LangTypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{
-    FieldDef as WasmFieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ModuleIR,
+    ExportDef, FieldDef as WasmFieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ModuleIR,
     TypeDef as WasmTypeDef, ValType,
 };
 
@@ -95,6 +95,16 @@ pub fn emit_user_module(anf: &AnfModule, type_env: &TypeEnv) -> ModuleIR {
     emit_user_module_from_plan(&plan, anf, type_env)
 }
 
+pub fn emit_named_module(
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+    namespace: &str,
+    exported_names: &HashSet<String>,
+) -> ModuleIR {
+    let plan = build_module_emit_plan_impl(anf, type_env);
+    emit_named_module_from_plan(&plan, anf, type_env, namespace, exported_names)
+}
+
 /// Build a `ModuleEmitPlan` by running all analysis/collection passes.
 /// Called by `planner::build_module_emit_plan`.
 pub(crate) fn build_module_emit_plan_impl(
@@ -142,6 +152,17 @@ pub(crate) fn emit_user_module_from_plan(
     anf: &AnfModule,
     type_env: &TypeEnv,
 ) -> ModuleIR {
+    let exported_names = HashSet::new();
+    emit_named_module_from_plan(plan, anf, type_env, "user", &exported_names)
+}
+
+pub(crate) fn emit_named_module_from_plan(
+    plan: &crate::codegen::planner::ModuleEmitPlan,
+    anf: &AnfModule,
+    type_env: &TypeEnv,
+    namespace: &str,
+    exported_names: &HashSet<String>,
+) -> ModuleIR {
     let prelude = build_prelude_map();
     let user_sigs = plan.user_sigs.clone();
     let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
@@ -163,7 +184,7 @@ pub(crate) fn emit_user_module_from_plan(
     let closure_capture_layouts = &plan.closure_capture_layouts;
     let module_global_ids = &plan.module_global_ids;
 
-    let mut module = ModuleIR::new("user");
+    let mut module = ModuleIR::new(namespace);
 
     // Emit typed ClosureFunc and Closure struct types from the unified registry.
     for (params, ret) in ctx.requested_typed_closures().values() {
@@ -344,6 +365,16 @@ pub(crate) fn emit_user_module_from_plan(
     module
         .funcs
         .extend(emit_string_literal_pool_getters(&string_literals));
+
+    module.exports.extend(
+        anf.functions
+            .iter()
+            .filter(|func| exported_names.contains(&func.name))
+            .map(|func| ExportDef {
+                wasm_name: func.name.clone(),
+                func_sym: user_func_sym(func.func_id),
+            }),
+    );
 
     module.imports.extend(ctx.imports());
 
@@ -4513,7 +4544,7 @@ fn emit_array_append_intrinsic(
         ensure_rt_arr_push_i64_import(ctx);
         let mut instrs = emit_atom(&args[0], Some(&ref_vector_i64_null()), ctx);
         instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
-        instrs.push(Instr::Call("rt_arr__push_i64".to_string()));
+        instrs.push(Instr::Call("bootlib_vector_i64__push".to_string()));
         instrs.extend(emit_coerce_stack(&ref_vector_i64(), bind_ty));
         return instrs;
     }
@@ -4542,7 +4573,7 @@ fn emit_vector_make_intrinsic(
         ensure_rt_arr_make_i64_import(ctx);
         let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
         instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
-        instrs.push(Instr::Call("rt_arr__make_i64".to_string()));
+        instrs.push(Instr::Call("bootlib_vector_i64__make".to_string()));
         instrs.extend(emit_coerce_stack(&ref_vector_i64(), bind_ty));
         return instrs;
     }
@@ -4595,7 +4626,7 @@ fn emit_vector_get_intrinsic(
     then_body.push(Instr::I32WrapI64);
     if use_i64_family {
         ensure_rt_arr_get_i64_import(ctx);
-        then_body.push(Instr::Call("rt_arr__get_i64".to_string()));
+        then_body.push(Instr::Call("bootlib_vector_i64__get".to_string()));
         then_body.push(Instr::StructNew(T_BOXED_INT.to_string()));
     } else {
         then_body.push(Instr::ArrayGet(T_ARRAY.to_string()));
@@ -4661,7 +4692,7 @@ fn emit_vector_set_intrinsic(
     then_body.push(Instr::I32WrapI64);
     if use_i64_family {
         then_body.extend(emit_atom(&args[2], Some(&ValType::I64), ctx));
-        then_body.push(Instr::Call("rt_arr__set_i64".to_string()));
+        then_body.push(Instr::Call("bootlib_vector_i64__set".to_string()));
     } else {
         then_body.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
         then_body.push(Instr::Call("rt_arr__set".to_string()));
@@ -7131,6 +7162,113 @@ fn is_int_vector_atom(atom: &Atom, ctx: &EmitCtx<'_>) -> bool {
     matches!(typed_vector_elem_from_atom(atom, ctx), Some(MonoType::Int))
 }
 
+const BOOTLIB_VECTOR_I64_MODULE: &str = "bootlib.vector_i64";
+
+fn bootlib_vector_i64_import(
+    name: &str,
+    as_sym: &str,
+    params: Vec<ValType>,
+    results: Vec<ValType>,
+) -> ImportDef {
+    ImportDef {
+        module: BOOTLIB_VECTOR_I64_MODULE.to_string(),
+        name: name.to_string(),
+        as_sym: as_sym.to_string(),
+        params,
+        results,
+    }
+}
+
+fn bootlib_vector_i64_make_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_make",
+        "bootlib_vector_i64__make",
+        vec![ValType::I32, ValType::I64],
+        vec![ref_vector_i64()],
+    )
+}
+
+fn bootlib_vector_i64_get_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_get",
+        "bootlib_vector_i64__get",
+        vec![ref_vector_i64_null(), ValType::I32],
+        vec![ValType::I64],
+    )
+}
+
+fn bootlib_vector_i64_set_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_set",
+        "bootlib_vector_i64__set",
+        vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
+        vec![ref_vector_i64()],
+    )
+}
+
+fn bootlib_vector_i64_len_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_len",
+        "bootlib_vector_i64__len",
+        vec![ref_vector_i64_null()],
+        vec![ValType::I32],
+    )
+}
+
+fn bootlib_vector_i64_push_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_push",
+        "bootlib_vector_i64__push",
+        vec![ref_vector_i64_null(), ValType::I64],
+        vec![ref_vector_i64()],
+    )
+}
+
+fn bootlib_vector_i64_concat_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_concat",
+        "bootlib_vector_i64__concat",
+        vec![ref_vector_i64_null(), ref_vector_i64_null()],
+        vec![ref_vector_i64()],
+    )
+}
+
+fn bootlib_vector_i64_slice_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_slice",
+        "bootlib_vector_i64__slice",
+        vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
+        vec![ref_vector_i64()],
+    )
+}
+
+fn bootlib_vector_i64_builder_from_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_builder_from",
+        "bootlib_vector_i64__builder_from",
+        vec![ref_vector_i64_null()],
+        vec![ref_array()],
+    )
+}
+
+fn bootlib_vector_i64_builder_push_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_builder_push",
+        "bootlib_vector_i64__builder_push",
+        vec![ref_array_null(), ValType::I64],
+        vec![],
+    )
+}
+
+fn bootlib_vector_i64_builder_freeze_import() -> ImportDef {
+    bootlib_vector_i64_import(
+        "vector_i64_builder_freeze",
+        "bootlib_vector_i64__builder_freeze",
+        vec![ref_array_null()],
+        vec![ref_vector_i64()],
+    )
+}
+
 fn specialized_vector_runtime_import(
     func_id: FuncId,
     args: &[Atom],
@@ -7142,57 +7280,27 @@ fn specialized_vector_runtime_import(
         id if id == ids::VECTOR_LEN
             && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "len_i64".to_string(),
-                as_sym: "rt_arr__len_i64".to_string(),
-                params: vec![ref_vector_i64_null()],
-                results: vec![ValType::I32],
-            })
+            Some(bootlib_vector_i64_len_import())
         }
         id if id == ids::VECTOR_SET_UNSAFE
             && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "set_i64".to_string(),
-                as_sym: "rt_arr__set_i64".to_string(),
-                params: vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
-                results: vec![ref_vector_i64()],
-            })
+            Some(bootlib_vector_i64_set_import())
         }
         id if id == ids::VECTOR_CONCAT
             && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "concat_i64".to_string(),
-                as_sym: "rt_arr__concat_i64".to_string(),
-                params: vec![ref_vector_i64_null(), ref_vector_i64_null()],
-                results: vec![ref_vector_i64()],
-            })
+            Some(bootlib_vector_i64_concat_import())
         }
         id if id == ids::VECTOR_SLICE
             && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "slice_i64".to_string(),
-                as_sym: "rt_arr__slice_i64".to_string(),
-                params: vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
-                results: vec![ref_vector_i64()],
-            })
+            Some(bootlib_vector_i64_slice_import())
         }
         id if id == ids::VECTOR_BUILDER_FROM
             && args.first().is_some_and(|arg| is_int_vector_atom(arg, ctx)) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "builder_from_i64".to_string(),
-                as_sym: "rt_arr__builder_from_i64".to_string(),
-                params: vec![ref_vector_i64_null()],
-                results: vec![ref_array()],
-            })
+            Some(bootlib_vector_i64_builder_from_import())
         }
         id if id == ids::VECTOR_BUILDER_PUSH
             && matches!(
@@ -7200,13 +7308,7 @@ fn specialized_vector_runtime_import(
                 Some(MonoType::Int)
             ) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "builder_push_i64".to_string(),
-                as_sym: "rt_arr__builder_push_i64".to_string(),
-                params: vec![ref_array_null(), ValType::I64],
-                results: vec![],
-            })
+            Some(bootlib_vector_i64_builder_push_import())
         }
         id if id == ids::VECTOR_BUILDER_FREEZE
             && args.first().is_some_and(|arg| {
@@ -7216,13 +7318,7 @@ fn specialized_vector_runtime_import(
                 )
             }) =>
         {
-            Some(ImportDef {
-                module: "rt.arr".to_string(),
-                name: "builder_freeze_i64".to_string(),
-                as_sym: "rt_arr__builder_freeze_i64".to_string(),
-                params: vec![ref_array_null()],
-                results: vec![ref_vector_i64()],
-            })
+            Some(bootlib_vector_i64_builder_freeze_import())
         }
         _ => None,
     }
@@ -7279,13 +7375,7 @@ fn ensure_rt_arr_concat_import(ctx: &mut EmitCtx<'_>) {
 }
 
 fn ensure_rt_arr_make_i64_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "make_i64".to_string(),
-        as_sym: "rt_arr__make_i64".to_string(),
-        params: vec![ValType::I32, ValType::I64],
-        results: vec![ref_vector_i64()],
-    });
+    ctx.add_import(bootlib_vector_i64_make_import());
 }
 
 fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
@@ -7299,13 +7389,7 @@ fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
 }
 
 fn ensure_rt_arr_get_i64_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "get_i64".to_string(),
-        as_sym: "rt_arr__get_i64".to_string(),
-        params: vec![ref_vector_i64_null(), ValType::I32],
-        results: vec![ValType::I64],
-    });
+    ctx.add_import(bootlib_vector_i64_get_import());
 }
 
 fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
@@ -7319,23 +7403,11 @@ fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
 }
 
 fn ensure_rt_arr_set_i64_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "set_i64".to_string(),
-        as_sym: "rt_arr__set_i64".to_string(),
-        params: vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
-        results: vec![ref_vector_i64()],
-    });
+    ctx.add_import(bootlib_vector_i64_set_import());
 }
 
 fn ensure_rt_arr_push_i64_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "push_i64".to_string(),
-        as_sym: "rt_arr__push_i64".to_string(),
-        params: vec![ref_vector_i64_null(), ValType::I64],
-        results: vec![ref_vector_i64()],
-    });
+    ctx.add_import(bootlib_vector_i64_push_import());
 }
 
 fn ensure_rt_dict_get_import(ctx: &mut EmitCtx<'_>) {
@@ -8626,10 +8698,14 @@ mod tests {
             vec![
                 Instr::LocalGet(0),
                 Instr::LocalGet(1),
-                Instr::Call("rt_arr__push_i64".to_string()),
+                Instr::Call("bootlib_vector_i64__push".to_string()),
             ]
         );
-        assert!(ctx.imports().iter().any(|i| i.as_sym == "rt_arr__push_i64"));
+        assert!(
+            ctx.imports()
+                .iter()
+                .any(|i| i.as_sym == "bootlib_vector_i64__push")
+        );
     }
 
     #[test]
@@ -9677,13 +9753,13 @@ mod tests {
                     nullable: true,
                     heap: HeapType::Named(T_ARRAY.to_string()),
                 },
-                Instr::Call("rt_arr__builder_freeze_i64".to_string()),
+                Instr::Call("bootlib_vector_i64__builder_freeze".to_string()),
             ]
         );
         assert!(
             ctx.imports()
                 .iter()
-                .any(|i| i.as_sym == "rt_arr__builder_freeze_i64")
+                .any(|i| i.as_sym == "bootlib_vector_i64__builder_freeze")
         );
     }
 
