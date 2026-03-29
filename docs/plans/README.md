@@ -56,6 +56,8 @@ from stage0, bootstrapping sequence)
 |------|-------------|
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
+| [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | Define the ABI-first artifact boundary by which stage0 consumes a Twinkle-authored `Vector<Int>` implementation from `boot/lib` (blocked on runtime import boundary) |
+| [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Provide extern/import mechanism for Twinkle library modules to bind runtime substrate symbols; prerequisite for boot/lib consumption |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | First implementation slice for a Twinkle-authored persistent vector, integrated through the stage0 Wasm backend first |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
