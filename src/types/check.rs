@@ -2812,22 +2812,82 @@ impl TypeChecker {
             span,
         )?;
 
-        // Type-check first arm to get result type
-        let mut result_ty = self.synth_case_arm(&arms[0], &scrut_ty)?;
+        let mut result_ty: Option<MonoType> = None;
+        let mut deferred_arms = Vec::new();
 
-        // Check all other arms match
-        for arm in &arms[1..] {
+        // First synthesize arms that do not require contextual expected types.
+        // This keeps case-arm inference order-independent: `.Void` can appear
+        // before the arm that reveals the enclosing sum type.
+        for arm in arms {
+            if Self::case_arm_needs_expected_type(&arm.body) {
+                deferred_arms.push(arm);
+                continue;
+            }
+
             let arm_ty = self.synth_case_arm(arm, &scrut_ty)?;
-            self.unify(&arm_ty, &result_ty, arm.span)?;
-            // If the current result type is Never (diverging arm), prefer
-            // a concrete type from a non-diverging arm — mirrors the
-            // if/else handling where one branch diverges.
-            if result_ty == MonoType::Never && arm_ty != MonoType::Never {
-                result_ty = arm_ty;
+            let arm_ty = self.zonk(&arm_ty);
+            if arm_ty == MonoType::Never {
+                continue;
+            }
+
+            match &result_ty {
+                Some(current) => self.unify(&arm_ty, current, arm.span)?,
+                None => result_ty = Some(arm_ty.clone()),
             }
         }
 
-        Ok(result_ty)
+        if let Some(join_ty) = result_ty.clone().map(|ty| self.zonk(&ty)) {
+            if !contains_meta(&join_ty) {
+                for arm in deferred_arms {
+                    self.check_case_arm(arm, &scrut_ty, &join_ty)?;
+                }
+                return Ok(join_ty);
+            }
+        }
+
+        if deferred_arms.is_empty() {
+            return Ok(result_ty
+                .map(|ty| self.zonk(&ty))
+                .unwrap_or(MonoType::Never));
+        }
+
+        // No concrete join type was available. Re-run deferred arms in synth
+        // mode to surface the existing "needs context" diagnostics.
+        let mut had_error = false;
+        for arm in deferred_arms {
+            if self.synth_case_arm(arm, &scrut_ty).is_err() {
+                had_error = true;
+            }
+        }
+
+        if had_error {
+            Err(())
+        } else {
+            Ok(result_ty
+                .map(|ty| self.zonk(&ty))
+                .unwrap_or(MonoType::Never))
+        }
+    }
+
+    fn case_arm_needs_expected_type(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::VariantLit { .. } => true,
+            ExprKind::RecordLit { name: None, .. } => true,
+            ExprKind::Block(block) => Self::block_needs_expected_type(block),
+            _ => false,
+        }
+    }
+
+    fn block_needs_expected_type(block: &Block) -> bool {
+        block
+            .stmts
+            .iter()
+            .rposition(|stmt| matches!(stmt, Stmt::Expr(_)))
+            .and_then(|idx| match &block.stmts[idx] {
+                Stmt::Expr(expr) => Some(Self::case_arm_needs_expected_type(expr)),
+                _ => None,
+            })
+            .unwrap_or(false)
     }
 
     fn synth_case_arm(
@@ -2850,6 +2910,29 @@ impl TypeChecker {
 
         // Type-check the arm body
         let body_result = self.synth_expr(&arm.body);
+
+        self.local_env.pop_scope();
+        body_result
+    }
+
+    fn check_case_arm(
+        &mut self,
+        arm: &crate::syntax::ast::CaseArm,
+        scrut_ty: &MonoType,
+        expected: &MonoType,
+    ) -> Result<(), ()> {
+        self.local_env.push_scope();
+
+        let mut pattern_checker =
+            PatternChecker::new(&self.type_env, &mut self.local_env, &mut self.errors);
+        let pat_result = pattern_checker.check_pattern(&arm.pattern, scrut_ty);
+
+        if pat_result.is_err() {
+            self.local_env.pop_scope();
+            return Err(());
+        }
+
+        let body_result = self.check_expr(&arm.body, expected);
 
         self.local_env.pop_scope();
         body_result

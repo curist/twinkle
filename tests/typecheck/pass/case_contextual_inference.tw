@@ -1,0 +1,26 @@
+type Mono = { Void, Int }
+
+fn case_variant_from_later_arm(flag: Bool, xs: Vector<Mono>) Mono {
+  case flag {
+    true => .Void,
+    _ => xs[0],
+  }
+}
+
+fn case_block_tail_variant_from_later_arm(flag: Bool, xs: Vector<Mono>) Mono {
+  case flag {
+    true => {
+      .Void
+    },
+    _ => xs[0],
+  }
+}
+
+type MaybeInt = { Some(Int), None }
+
+fn case_option_from_later_arm(flag: Bool, xs: Vector<Int>) MaybeInt {
+  case flag {
+    true => .None,
+    _ => MaybeInt.Some(xs[0]),
+  }
+}

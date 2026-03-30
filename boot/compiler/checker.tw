@@ -1194,6 +1194,22 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
   }
 }
 
+fn block_needs_expected_type(block: Block) Bool {
+  case block.tail {
+    .Some(tail) => expr_needs_expected_type(tail),
+    .None => false,
+  }
+}
+
+fn expr_needs_expected_type(expr: Expr) Bool {
+  case expr.kind {
+    .Variant(_, _) => true,
+    .Record(_) => true,
+    .BlockExpr(block) => block_needs_expected_type(block),
+    _ => false,
+  }
+}
+
 fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   if elems.len() == 0 {
     m := fresh_meta(ctx)
@@ -1485,6 +1501,20 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
   }
 }
 
+fn synth_case_arm(arm: CaseArm, scrut_ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+  arm_ctx := push_scope(ctx)
+  pr := check_pattern(arm.pattern, scrut_ty, arm_ctx, diags)
+  body_r := pr.ctx.synth(arm.expr, pr.diags)
+  .{ ty: body_r.ty, ctx: pop_scope(body_r.ctx), diags: body_r.diags }
+}
+
+fn check_case_arm(arm: CaseArm, scrut_ty: MonoType, expected: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  arm_ctx := push_scope(ctx)
+  pr := check_pattern(arm.pattern, scrut_ty, arm_ctx, diags)
+  body_r := pr.ctx.check_expr(arm.expr, expected, pr.diags)
+  .{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
+}
+
 fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   sr := ctx.synth(scrut, diags)
   cur_ctx := sr.ctx
@@ -1495,51 +1525,67 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
     return .{ ty: .Void, ctx: cur_ctx, diags: cur_diags.push(err) }
   }
 
-  // Track result type: join of non-Never arms
   result_ty: MonoType? = .None
-  all_never := true
+  deferred_arms: Vector<CaseArm> = []
 
   for arm in arms {
-    // Push scope for pattern bindings
-    cur_ctx = push_scope(cur_ctx)
-    pr := check_pattern(arm.pattern, sr.ty, cur_ctx, cur_diags)
-    cur_ctx = pr.ctx
-    cur_diags = pr.diags
+    if expr_needs_expected_type(arm.expr) {
+      deferred_arms = deferred_arms.push(arm)
+      continue
+    }
 
-    // Synth arm body
-    body_r := cur_ctx.synth(arm.expr, cur_diags)
-    cur_ctx = pop_scope(body_r.ctx)
-    cur_diags = body_r.diags
+    arm_r := synth_case_arm(arm, sr.ty, cur_ctx, cur_diags)
+    cur_ctx = arm_r.ctx
+    cur_diags = arm_r.diags
 
-    case body_r.ty {
+    arm_ty := zonk(arm_r.ty, cur_ctx.subst)
+    case arm_ty {
       .Never => {},
       _ => {
-        all_never = false
         case result_ty {
           .Some(rt) => {
-            u := cur_ctx.unify(body_r.ty, rt, arm.span, cur_diags)
+            u := cur_ctx.unify(arm_ty, rt, arm.span, cur_diags)
             cur_ctx = u.ctx
             cur_diags = u.diags
           },
-          .None => { result_ty = .Some(body_r.ty) },
+          .None => { result_ty = .Some(arm_ty) },
         }
       },
     }
   }
 
-  // Exhaustiveness check
   cur_diags = check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags)
 
-  final_ty := if all_never {
-    MonoType.Never
-  } else {
-    case result_ty {
-      .Some(ty) => ty,
-      .None => MonoType.Void,
+  case result_ty {
+    .Some(join_ty) => {
+      zonked_join := zonk(join_ty, cur_ctx.subst)
+      if deferred_arms.len() > 0 and !contains_meta(zonked_join) {
+        for arm in deferred_arms {
+          arm_r := check_case_arm(arm, sr.ty, zonked_join, cur_ctx, cur_diags)
+          cur_ctx = arm_r.ctx
+          cur_diags = arm_r.diags
+        }
+      } else {
+        for arm in deferred_arms {
+          arm_r := synth_case_arm(arm, sr.ty, cur_ctx, cur_diags)
+          cur_ctx = arm_r.ctx
+          cur_diags = arm_r.diags
+        }
+      }
+      .{ ty: zonked_join, ctx: cur_ctx, diags: cur_diags }
+    },
+    .None => {
+      if deferred_arms.len() > 0 {
+        for arm in deferred_arms {
+          arm_r := synth_case_arm(arm, sr.ty, cur_ctx, cur_diags)
+          cur_ctx = arm_r.ctx
+          cur_diags = arm_r.diags
+        }
+        return .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags }
+      }
+      .{ ty: MonoType.Never, ctx: cur_ctx, diags: cur_diags }
     }
   }
-
-  .{ ty: final_ty, ctx: cur_ctx, diags: cur_diags }
 }
 
 fn check_case(scrut: Expr, arms: Vector<CaseArm>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
@@ -1553,14 +1599,9 @@ fn check_case(scrut: Expr, arms: Vector<CaseArm>, expected: MonoType, s: Span, c
   }
 
   for arm in arms {
-    cur_ctx = push_scope(cur_ctx)
-    pr := check_pattern(arm.pattern, sr.ty, cur_ctx, cur_diags)
-    cur_ctx = pr.ctx
-    cur_diags = pr.diags
-
-    body_r := cur_ctx.check_expr(arm.expr, expected, cur_diags)
-    cur_ctx = pop_scope(body_r.ctx)
-    cur_diags = body_r.diags
+    arm_r := check_case_arm(arm, sr.ty, expected, cur_ctx, cur_diags)
+    cur_ctx = arm_r.ctx
+    cur_diags = arm_r.diags
   }
 
   .{ ctx: cur_ctx, diags: check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags) }

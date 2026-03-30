@@ -154,7 +154,7 @@ fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
 fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
   case ctx.type_map[expr.id] {
     .Some(ty) => ty,
-    .None => MonoType.Void,
+    .None => .Void,
   }
 }
 
@@ -164,7 +164,7 @@ fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
 }
 
 fn void_expr(s: Span) CoreExpr {
-  CoreExpr.{ kind: .LitVoid, ty: MonoType.Void, span: s }
+  CoreExpr.{ kind: .LitVoid, ty: .Void, span: s }
 }
 
 fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
@@ -172,7 +172,7 @@ fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
 }
 
 fn global_func_expr(func_id: FuncId, s: Span) CoreExpr {
-  CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s }
+  CoreExpr.{ kind: .GlobalFunc(func_id), ty: .Void, span: s }
 }
 
 fn record_get_expr(base: CoreExpr, field: FieldId, ty: MonoType, s: Span) CoreExpr {
@@ -188,7 +188,7 @@ fn variant_pattern(tid: TypeId, vid: Int, args: Vector<CorePattern>) CorePattern
 }
 
 fn return_expr(value: CoreExpr?, s: Span) CoreExpr {
-  CoreExpr.{ kind: .Return(value), ty: MonoType.Void, span: s }
+  CoreExpr.{ kind: .Return(value), ty: .Void, span: s }
 }
 
 fn is_terminal(expr: CoreExpr) Bool {
@@ -299,12 +299,12 @@ fn find_field_type(env: ResolvedEnv, tid: TypeId, field_name: String) MonoType {
               return f.ty
             }
           }
-          MonoType.Void
+          .Void
         },
-        _ => MonoType.Void,
+        _ => .Void,
       }
     },
-    .None => MonoType.Void,
+    .None => .Void,
   }
 }
 
@@ -1079,7 +1079,7 @@ fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoT
   // Determine lambda return type from the closure's type
   lambda_ret_ty := case ty {
     .Function(_, ret) => ret,
-    _ => MonoType.Void,
+    _ => .Void,
   }
   ctx.current_fn_return_type = .Some(lambda_ret_ty)
 
@@ -1904,7 +1904,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
 fn global_func_call(func_id: FuncId, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
   CoreExpr.{
     kind: .Call(
-      .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+      .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
       args,
     ),
     ty: ty,
@@ -2028,7 +2028,7 @@ fn lower_for(ctx: LowerCtx, for_stmt: ForStmt) ExprOut {
           // Infinite loop: for { body }  →  Loop(body)
           body_r := ctx.lower_block(for_stmt.body)
           .{
-            expr: .{ kind: .Loop(body_r.expr), ty: MonoType.Void, span: s },
+            expr: .{ kind: .Loop(body_r.expr), ty: .Void, span: s },
             ctx: body_r.ctx,
           }
         },
@@ -2128,7 +2128,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
               }
               update := CoreExpr.{
                 kind: .Call(
-                  .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+                  .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
                   [CoreExpr.{ kind: base_kind, ty: base_ty, span: s }, ir.expr, rhs_core],
                 ),
                 ty: base_ty,
@@ -2149,7 +2149,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
           }
           inner_update := CoreExpr.{
             kind: .Call(
-              .{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
+              .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
               [br.expr, ir.expr, rhs_core],
             ),
             ty: base_ty,
@@ -2402,7 +2402,7 @@ fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId) FuncOut {
     .Some(sig) => {
       case sig.ret {
         .Some(t) => t,
-        .None => MonoType.Void,
+        .None => .Void,
       }
     },
     .None => body_r.expr.ty,

@@ -1567,6 +1567,16 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    .test("G14 case arm resolves variant shorthand from later arm", fn() {
+      src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => .Void, _ => xs[0] } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("G14 case arm block tail resolves variant shorthand from later arm", fn() {
+      src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => { .Void }, _ => xs[0] } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
     .test("G13 if-else branch mismatch still errors", fn() {
       src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
       msgs := try check_errs(src)
