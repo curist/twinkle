@@ -1422,12 +1422,10 @@ impl<W: Write> Interpreter<W> {
                     "host.exit({code})"
                 ))));
             }
-            // Library-internal Vector<Int> ABI — in the interpreter these
-            // behave identically to the generic vector builtins.
-            prelude_ids::LIB_VECTOR_I64_MAKE => self.call_builtin(prelude_ids::VECTOR_MAKE, args),
-            prelude_ids::LIB_VECTOR_I64_GET => {
-                // get_i64 returns the raw element (not Option) — matches VECTOR_GET's
-                // underlying array access semantics in interpreter for typed vectors.
+            // Raw substrate Vector<Int> helpers — direct equivalents of rt.arr ops.
+            prelude_ids::RAW_VECTOR_I64_MAKE => self.call_builtin(prelude_ids::VECTOR_MAKE, args),
+            prelude_ids::RAW_VECTOR_I64_GET_UNCHECKED => {
+                // Unchecked get — returns the raw element directly.
                 match (&args[0], &args[1]) {
                     (Value::Vec(elems), Value::Int(i)) => {
                         let idx = *i as usize;
@@ -1440,28 +1438,31 @@ impl<W: Write> Interpreter<W> {
                             }))
                         }
                     }
-                    _ => panic!("lib_vector_i64_get: wrong argument types"),
+                    _ => panic!("raw_vector_i64_get_unchecked: wrong argument types"),
                 }
             }
-            prelude_ids::LIB_VECTOR_I64_SET => {
+            prelude_ids::RAW_VECTOR_I64_SET_UNCHECKED => {
                 self.call_builtin(prelude_ids::VECTOR_SET_UNSAFE, args)
             }
-            prelude_ids::LIB_VECTOR_I64_LEN => self.call_builtin(prelude_ids::VECTOR_LEN, args),
-            prelude_ids::LIB_VECTOR_I64_PUSH => self.call_builtin(prelude_ids::VECTOR_PUSH, args),
-            prelude_ids::LIB_VECTOR_I64_CONCAT => {
+            prelude_ids::RAW_VECTOR_I64_LEN => self.call_builtin(prelude_ids::VECTOR_LEN, args),
+            prelude_ids::RAW_VECTOR_I64_PUSH => self.call_builtin(prelude_ids::VECTOR_PUSH, args),
+            prelude_ids::RAW_VECTOR_I64_CONCAT => {
                 self.call_builtin(prelude_ids::VECTOR_CONCAT, args)
             }
-            prelude_ids::LIB_VECTOR_I64_SLICE => self.call_builtin(prelude_ids::VECTOR_SLICE, args),
-            prelude_ids::LIB_VECTOR_I64_BUILDER_NEW => {
+            prelude_ids::RAW_VECTOR_I64_SLICE_UNCHECKED => {
+                self.call_builtin(prelude_ids::VECTOR_SLICE, args)
+            }
+            // Raw substrate builder ops
+            prelude_ids::RAW_VECTOR_I64_BUILDER_NEW => {
                 self.call_builtin(prelude_ids::VECTOR_BUILDER_NEW, args)
             }
-            prelude_ids::LIB_VECTOR_I64_BUILDER_FROM => {
+            prelude_ids::RAW_VECTOR_I64_BUILDER_FROM => {
                 self.call_builtin(prelude_ids::VECTOR_BUILDER_FROM, args)
             }
-            prelude_ids::LIB_VECTOR_I64_BUILDER_PUSH => {
+            prelude_ids::RAW_VECTOR_I64_BUILDER_PUSH => {
                 self.call_builtin(prelude_ids::VECTOR_BUILDER_PUSH, args)
             }
-            prelude_ids::LIB_VECTOR_I64_BUILDER_FREEZE => {
+            prelude_ids::RAW_VECTOR_I64_BUILDER_FREEZE => {
                 self.call_builtin(prelude_ids::VECTOR_BUILDER_FREEZE, args)
             }
             _ => panic!("unknown builtin FuncId({})", func_id.0),

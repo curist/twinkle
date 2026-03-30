@@ -118,6 +118,28 @@ fn expr_mentions_func_id(expr: &CoreExpr, target: FuncId) -> bool {
     }
 }
 
+fn expr_contains_if(expr: &CoreExpr) -> bool {
+    match &expr.kind {
+        CoreExprKind::If { .. } => true,
+        CoreExprKind::Let { value, body, .. } => expr_contains_if(value) || expr_contains_if(body),
+        CoreExprKind::Assign { value, .. } => expr_contains_if(value),
+        CoreExprKind::Call { callee, args } => {
+            expr_contains_if(callee) || args.iter().any(expr_contains_if)
+        }
+        CoreExprKind::Match { scrutinee, arms } => {
+            expr_contains_if(scrutinee)
+                || arms
+                    .iter()
+                    .any(|MatchArm { body, .. }| expr_contains_if(body))
+        }
+        CoreExprKind::Loop { body } => expr_contains_if(body),
+        CoreExprKind::Break { value } | CoreExprKind::Return { value } => {
+            value.as_ref().is_some_and(|v| expr_contains_if(v))
+        }
+        _ => false,
+    }
+}
+
 fn find_function<'a>(functions: &'a [FunctionDef], name: &str) -> &'a FunctionDef {
     functions
         .iter()
@@ -131,29 +153,30 @@ fn boot_lib_vector_stub_lowers_to_library_abi_func_ids() {
         .expect("fixture should compile through backend ANF");
     let functions = &pipeline.core_module.functions;
 
+    // All ops call raw substrate helpers (__raw_*) directly
     let expected = [
-        ("vector_i64_make", prelude::LIB_VECTOR_I64_MAKE),
-        ("vector_i64_get", prelude::LIB_VECTOR_I64_GET),
-        ("vector_i64_set", prelude::LIB_VECTOR_I64_SET),
-        ("vector_i64_len", prelude::LIB_VECTOR_I64_LEN),
-        ("vector_i64_push", prelude::LIB_VECTOR_I64_PUSH),
-        ("vector_i64_concat", prelude::LIB_VECTOR_I64_CONCAT),
-        ("vector_i64_slice", prelude::LIB_VECTOR_I64_SLICE),
+        ("vector_i64_len", prelude::RAW_VECTOR_I64_LEN),
+        ("vector_i64_get", prelude::RAW_VECTOR_I64_GET_UNCHECKED),
+        ("vector_i64_set", prelude::RAW_VECTOR_I64_SET_UNCHECKED),
+        ("vector_i64_make", prelude::RAW_VECTOR_I64_MAKE),
+        ("vector_i64_push", prelude::RAW_VECTOR_I64_PUSH),
+        ("vector_i64_concat", prelude::RAW_VECTOR_I64_CONCAT),
+        ("vector_i64_slice", prelude::RAW_VECTOR_I64_SLICE_UNCHECKED),
         (
             "vector_i64_builder_new",
-            prelude::LIB_VECTOR_I64_BUILDER_NEW,
+            prelude::RAW_VECTOR_I64_BUILDER_NEW,
         ),
         (
             "vector_i64_builder_from",
-            prelude::LIB_VECTOR_I64_BUILDER_FROM,
+            prelude::RAW_VECTOR_I64_BUILDER_FROM,
         ),
         (
             "vector_i64_builder_push",
-            prelude::LIB_VECTOR_I64_BUILDER_PUSH,
+            prelude::RAW_VECTOR_I64_BUILDER_PUSH,
         ),
         (
             "vector_i64_builder_freeze",
-            prelude::LIB_VECTOR_I64_BUILDER_FREEZE,
+            prelude::RAW_VECTOR_I64_BUILDER_FREEZE,
         ),
     ];
 
@@ -161,7 +184,7 @@ fn boot_lib_vector_stub_lowers_to_library_abi_func_ids() {
         let func = find_function(functions, name);
         assert!(
             expr_mentions_func_id(&func.body, func_id),
-            "{name} should reference library ABI FuncId({})",
+            "{name} should reference raw substrate FuncId({})",
             func_id.0
         );
     }
@@ -206,6 +229,18 @@ fn stage0_vector_methods_route_through_bootlib_vector_module() {
         "expected user funcs to call through bootlib.vector_i64"
     );
 
+    // Semantic ops in bootlib should contain real Twinkle logic, not just forwarding
+    // vector_i64_make: has a negative-length guard (if/unreachable for error())
+    assert!(
+        wat.contains("bootlib_vector_i64__vector_i64_make"),
+        "expected bootlib vector_i64_make to be present"
+    );
+    // vector_i64_get: has bounds-check logic (calls len, compares, traps)
+    assert!(
+        wat.contains("bootlib_vector_i64__vector_i64_get"),
+        "expected bootlib vector_i64_get to be present"
+    );
+
     for sym in [
         "call $rt_arr__len_i64",
         "call $rt_arr__concat_i64",
@@ -217,6 +252,50 @@ fn stage0_vector_methods_route_through_bootlib_vector_module() {
             count_substring_in_user_funcs(&wat, sym),
             0,
             "expected {sym} to stay behind the bootlib.vector_i64 boundary in user funcs"
+        );
+    }
+}
+
+#[test]
+fn bootlib_semantic_ops_contain_real_twinkle_logic() {
+    let pipeline = compile_backend_anf(&fixture("vector_i64_boundary.tw"))
+        .expect("fixture should compile through backend ANF");
+    let functions = &pipeline.core_module.functions;
+
+    // vector_i64_get should have conditional logic (bounds check), not just a forwarding call
+    let get_fn = find_function(functions, "vector_i64_get");
+    assert!(
+        expr_contains_if(&get_fn.body),
+        "vector_i64_get should contain conditional logic (bounds check), not be a pure forwarding stub"
+    );
+
+    // vector_i64_make should have conditional logic (negative length guard)
+    let make_fn = find_function(functions, "vector_i64_make");
+    assert!(
+        expr_contains_if(&make_fn.body),
+        "vector_i64_make should contain conditional logic (negative length guard), not be a pure forwarding stub"
+    );
+
+    // vector_i64_set should have conditional logic (bounds check)
+    let set_fn = find_function(functions, "vector_i64_set");
+    assert!(
+        expr_contains_if(&set_fn.body),
+        "vector_i64_set should contain conditional logic (bounds check), not be a pure forwarding stub"
+    );
+
+    // vector_i64_slice should have conditional logic (range validation)
+    let slice_fn = find_function(functions, "vector_i64_slice");
+    assert!(
+        expr_contains_if(&slice_fn.body),
+        "vector_i64_slice should contain conditional logic (range validation), not be a pure forwarding stub"
+    );
+
+    // Simple delegations should NOT have conditional logic
+    for name in ["vector_i64_len", "vector_i64_push", "vector_i64_concat"] {
+        let func = find_function(functions, name);
+        assert!(
+            !expr_contains_if(&func.body),
+            "{name} should be a simple delegation without conditionals"
         );
     }
 }

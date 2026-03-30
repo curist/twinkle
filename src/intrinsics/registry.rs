@@ -320,80 +320,80 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(HOST_ENV, "__host_env", Runtime, false, false),
     spec!(HOST_CWD, "__host_cwd", Runtime, false, false),
     spec!(HOST_EXIT, "__host_exit", Runtime, false, false),
-    // ── Library-internal: Vector<Int> ABI ────────────────────────────
+    // ── Raw substrate: direct rt.arr access for boot/lib Twinkle logic ──
     spec!(
-        LIB_VECTOR_I64_MAKE,
-        "__lib_vector_i64_make",
+        RAW_VECTOR_I64_LEN,
+        "__raw_vector_i64_len",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_GET,
-        "__lib_vector_i64_get",
+        RAW_VECTOR_I64_GET_UNCHECKED,
+        "__raw_vector_i64_get_unchecked",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_SET,
-        "__lib_vector_i64_set",
+        RAW_VECTOR_I64_SET_UNCHECKED,
+        "__raw_vector_i64_set_unchecked",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_LEN,
-        "__lib_vector_i64_len",
+        RAW_VECTOR_I64_SLICE_UNCHECKED,
+        "__raw_vector_i64_slice_unchecked",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_PUSH,
-        "__lib_vector_i64_push",
+        RAW_VECTOR_I64_PUSH,
+        "__raw_vector_i64_push",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_CONCAT,
-        "__lib_vector_i64_concat",
+        RAW_VECTOR_I64_CONCAT,
+        "__raw_vector_i64_concat",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_SLICE,
-        "__lib_vector_i64_slice",
+        RAW_VECTOR_I64_MAKE,
+        "__raw_vector_i64_make",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_BUILDER_NEW,
-        "__lib_vector_i64_builder_new",
+        RAW_VECTOR_I64_BUILDER_NEW,
+        "__raw_vector_i64_builder_new",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_BUILDER_FROM,
-        "__lib_vector_i64_builder_from",
+        RAW_VECTOR_I64_BUILDER_FROM,
+        "__raw_vector_i64_builder_from",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_BUILDER_PUSH,
-        "__lib_vector_i64_builder_push",
+        RAW_VECTOR_I64_BUILDER_PUSH,
+        "__raw_vector_i64_builder_push",
         LibraryInternal,
         false,
         false
     ),
     spec!(
-        LIB_VECTOR_I64_BUILDER_FREEZE,
-        "__lib_vector_i64_builder_freeze",
+        RAW_VECTOR_I64_BUILDER_FREEZE,
+        "__raw_vector_i64_builder_freeze",
         LibraryInternal,
         false,
         false

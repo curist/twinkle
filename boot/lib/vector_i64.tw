@@ -1,48 +1,62 @@
-// Compiler-owned Vector<Int> library ABI shim.
+// Compiler-owned Vector<Int> library ABI.
 //
-// These stubs give the library ABI stable Twinkle-level names while the
-// implementation still forwards directly into the typed rt.arr substrate.
+// Semantic operations are implemented in ordinary Twinkle, calling raw
+// substrate helpers (__raw_*) for low-level access into rt.arr.
+// Builder ops remain as __lib_* forwarding stubs (internal-only).
 
 pub fn vector_i64_make(len: Int, fill: Int) Vector<Int> {
-  __lib_vector_i64_make(len, fill)
-}
-
-pub fn vector_i64_get(xs: Vector<Int>, idx: Int) Int {
-  __lib_vector_i64_get(xs, idx)
-}
-
-pub fn vector_i64_set(xs: Vector<Int>, idx: Int, value: Int) Vector<Int> {
-  __lib_vector_i64_set(xs, idx, value)
+  if len < 0 { error("Vector.make: negative length") }
+  __raw_vector_i64_make(len, fill)
 }
 
 pub fn vector_i64_len(xs: Vector<Int>) Int {
-  __lib_vector_i64_len(xs)
+  __raw_vector_i64_len(xs)
+}
+
+pub fn vector_i64_get(xs: Vector<Int>, idx: Int) Int {
+  if idx < 0 or idx >= vector_i64_len(xs) {
+    error("Vector.get: index out of bounds")
+  }
+  __raw_vector_i64_get_unchecked(xs, idx)
+}
+
+pub fn vector_i64_set(xs: Vector<Int>, idx: Int, value: Int) Vector<Int> {
+  if idx < 0 or idx >= vector_i64_len(xs) {
+    error("Vector.set: index out of bounds")
+  }
+  __raw_vector_i64_set_unchecked(xs, idx, value)
 }
 
 pub fn vector_i64_push(xs: Vector<Int>, value: Int) Vector<Int> {
-  __lib_vector_i64_push(xs, value)
+  __raw_vector_i64_push(xs, value)
 }
 
 pub fn vector_i64_concat(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
-  __lib_vector_i64_concat(a, b)
+  __raw_vector_i64_concat(a, b)
 }
 
 pub fn vector_i64_slice(xs: Vector<Int>, start: Int, end: Int) Vector<Int> {
-  __lib_vector_i64_slice(xs, start, end)
+  len := vector_i64_len(xs)
+  if start < 0 or start > len or end < start or end > len {
+    error("Vector.slice: range out of bounds")
+  }
+  __raw_vector_i64_slice_unchecked(xs, start, end)
 }
 
+// ── Builder ops (substrate delegation) ───────────────────────────────
+
 pub fn vector_i64_builder_new() Vector<Int> {
-  __lib_vector_i64_builder_new()
+  __raw_vector_i64_builder_new()
 }
 
 pub fn vector_i64_builder_from(xs: Vector<Int>) Vector<Int> {
-  __lib_vector_i64_builder_from(xs)
+  __raw_vector_i64_builder_from(xs)
 }
 
 pub fn vector_i64_builder_push(builder: Vector<Int>, value: Int) Void {
-  __lib_vector_i64_builder_push(builder, value)
+  __raw_vector_i64_builder_push(builder, value)
 }
 
 pub fn vector_i64_builder_freeze(builder: Vector<Int>) Vector<Int> {
-  __lib_vector_i64_builder_freeze(builder)
+  __raw_vector_i64_builder_freeze(builder)
 }

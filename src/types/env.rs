@@ -979,78 +979,79 @@ impl ValueEnv {
         );
 
         let vector_int = MonoType::Vector(Box::new(MonoType::Int));
+        // Raw substrate helpers — direct rt.arr access for boot/lib Twinkle logic
         env.builtins.insert(
-            "__lib_vector_i64_make".to_string(),
-            MonoType::Function {
-                params: vec![MonoType::Int, MonoType::Int],
-                ret: Box::new(vector_int.clone()),
-            },
-        );
-        env.builtins.insert(
-            "__lib_vector_i64_get".to_string(),
-            MonoType::Function {
-                params: vec![vector_int.clone(), MonoType::Int],
-                ret: Box::new(MonoType::Int),
-            },
-        );
-        env.builtins.insert(
-            "__lib_vector_i64_set".to_string(),
-            MonoType::Function {
-                params: vec![vector_int.clone(), MonoType::Int, MonoType::Int],
-                ret: Box::new(vector_int.clone()),
-            },
-        );
-        env.builtins.insert(
-            "__lib_vector_i64_len".to_string(),
+            "__raw_vector_i64_len".to_string(),
             MonoType::Function {
                 params: vec![vector_int.clone()],
                 ret: Box::new(MonoType::Int),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_push".to_string(),
+            "__raw_vector_i64_get_unchecked".to_string(),
+            MonoType::Function {
+                params: vec![vector_int.clone(), MonoType::Int],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+        env.builtins.insert(
+            "__raw_vector_i64_set_unchecked".to_string(),
+            MonoType::Function {
+                params: vec![vector_int.clone(), MonoType::Int, MonoType::Int],
+                ret: Box::new(vector_int.clone()),
+            },
+        );
+        env.builtins.insert(
+            "__raw_vector_i64_slice_unchecked".to_string(),
+            MonoType::Function {
+                params: vec![vector_int.clone(), MonoType::Int, MonoType::Int],
+                ret: Box::new(vector_int.clone()),
+            },
+        );
+        env.builtins.insert(
+            "__raw_vector_i64_push".to_string(),
             MonoType::Function {
                 params: vec![vector_int.clone(), MonoType::Int],
                 ret: Box::new(vector_int.clone()),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_concat".to_string(),
+            "__raw_vector_i64_concat".to_string(),
             MonoType::Function {
                 params: vec![vector_int.clone(), vector_int.clone()],
                 ret: Box::new(vector_int.clone()),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_slice".to_string(),
+            "__raw_vector_i64_make".to_string(),
             MonoType::Function {
-                params: vec![vector_int.clone(), MonoType::Int, MonoType::Int],
+                params: vec![MonoType::Int, MonoType::Int],
                 ret: Box::new(vector_int.clone()),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_builder_new".to_string(),
+            "__raw_vector_i64_builder_new".to_string(),
             MonoType::Function {
                 params: vec![],
                 ret: Box::new(vector_int.clone()),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_builder_from".to_string(),
+            "__raw_vector_i64_builder_from".to_string(),
             MonoType::Function {
                 params: vec![vector_int.clone()],
                 ret: Box::new(vector_int.clone()),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_builder_push".to_string(),
+            "__raw_vector_i64_builder_push".to_string(),
             MonoType::Function {
                 params: vec![vector_int.clone(), MonoType::Int],
                 ret: Box::new(MonoType::Void),
             },
         );
         env.builtins.insert(
-            "__lib_vector_i64_builder_freeze".to_string(),
+            "__raw_vector_i64_builder_freeze".to_string(),
             MonoType::Function {
                 params: vec![vector_int],
                 ret: Box::new(MonoType::Vector(Box::new(MonoType::Int))),

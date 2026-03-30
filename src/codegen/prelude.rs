@@ -380,31 +380,8 @@ fn ref_array_null_typed() -> ValType {
 
 fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeEntry> {
     match func_id {
-        id if id == prelude_ids::LIB_VECTOR_I64_MAKE => Some(PreludeEntry::runtime(
-            twinkle_name,
-            "rt.arr",
-            "make_i64",
-            "rt_arr__make_i64",
-            vec![ValType::I32, ValType::I64],
-            vec![ref_vector_i64()],
-        )),
-        id if id == prelude_ids::LIB_VECTOR_I64_GET => Some(PreludeEntry::runtime(
-            twinkle_name,
-            "rt.arr",
-            "get_i64",
-            "rt_arr__get_i64",
-            vec![ref_vector_i64_null(), ValType::I32],
-            vec![ValType::I64],
-        )),
-        id if id == prelude_ids::LIB_VECTOR_I64_SET => Some(PreludeEntry::runtime(
-            twinkle_name,
-            "rt.arr",
-            "set_i64",
-            "rt_arr__set_i64",
-            vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
-            vec![ref_vector_i64()],
-        )),
-        id if id == prelude_ids::LIB_VECTOR_I64_LEN => Some(PreludeEntry::runtime(
+        // ── Raw substrate helpers for boot/lib Twinkle logic ────────
+        id if id == prelude_ids::RAW_VECTOR_I64_LEN => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "len_i64",
@@ -412,23 +389,23 @@ fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option
             vec![ref_vector_i64_null()],
             vec![ValType::I32],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_PUSH => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_GET_UNCHECKED => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
-            "push_i64",
-            "rt_arr__push_i64",
-            vec![ref_vector_i64_null(), ValType::I64],
-            vec![ref_vector_i64()],
+            "get_i64",
+            "rt_arr__get_i64",
+            vec![ref_vector_i64_null(), ValType::I32],
+            vec![ValType::I64],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_CONCAT => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_SET_UNCHECKED => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
-            "concat_i64",
-            "rt_arr__concat_i64",
-            vec![ref_vector_i64_null(), ref_vector_i64_null()],
+            "set_i64",
+            "rt_arr__set_i64",
+            vec![ref_vector_i64_null(), ValType::I32, ValType::I64],
             vec![ref_vector_i64()],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_SLICE => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_SLICE_UNCHECKED => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "slice_i64",
@@ -436,7 +413,31 @@ fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option
             vec![ref_vector_i64_null(), ValType::I32, ValType::I32],
             vec![ref_vector_i64()],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_NEW => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_PUSH => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "push_i64",
+            "rt_arr__push_i64",
+            vec![ref_vector_i64_null(), ValType::I64],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::RAW_VECTOR_I64_CONCAT => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "concat_i64",
+            "rt_arr__concat_i64",
+            vec![ref_vector_i64_null(), ref_vector_i64_null()],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::RAW_VECTOR_I64_MAKE => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "make_i64",
+            "rt_arr__make_i64",
+            vec![ValType::I32, ValType::I64],
+            vec![ref_vector_i64()],
+        )),
+        id if id == prelude_ids::RAW_VECTOR_I64_BUILDER_NEW => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "builder_new",
@@ -444,7 +445,7 @@ fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option
             vec![],
             vec![ref_array_nonnull()],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_FROM => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_BUILDER_FROM => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "builder_from_i64",
@@ -452,7 +453,7 @@ fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option
             vec![ref_vector_i64_null()],
             vec![ref_array_nonnull()],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_PUSH => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_BUILDER_PUSH => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "builder_push_i64",
@@ -460,7 +461,7 @@ fn library_internal_entry(func_id: FuncId, twinkle_name: &'static str) -> Option
             vec![ref_array_null_typed(), ValType::I64],
             vec![],
         )),
-        id if id == prelude_ids::LIB_VECTOR_I64_BUILDER_FREEZE => Some(PreludeEntry::runtime(
+        id if id == prelude_ids::RAW_VECTOR_I64_BUILDER_FREEZE => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "builder_freeze_i64",
