@@ -59,6 +59,7 @@ from stage0, bootstrapping sequence)
 | [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | Define the ABI-first artifact boundary by which stage0 consumes a Twinkle-authored `Vector<Int>` implementation from `boot/lib` (blocked on runtime import boundary) |
 | [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Provide extern/import mechanism for Twinkle library modules to bind runtime substrate symbols; prerequisite for boot/lib consumption |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
+| [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Stage0-only `Vector<Int>` persistent-vector proof of concept with fixed-width trie nodes and unchanged bootlib ABI |
 | [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | First implementation slice for a Twinkle-authored persistent vector, integrated through the stage0 Wasm backend first |
 | [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |

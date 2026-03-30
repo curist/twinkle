@@ -2,13 +2,14 @@
 
 ## Goal
 
-Replace the current flat copy-on-write vector backing with a persistent vector data structure, while preserving Twinkle `Vector<T>` semantics and API.
+Replace the current flat copy-on-write vector backing with a persistent vector
+data structure, while preserving Twinkle `Vector<T>` semantics and API.
 
-For concrete monomorphized programs, `Vector<T>` should also move away from generic
-`anyref` element storage: the long-term target is a per-instantiation container family,
-so `Vector<Int>`, `Vector<String>`, and `Vector<Record...>` can use distinct runtime
-container/node types with typed element slots instead of boxing every element through
-`anyref`.
+For concrete monomorphized programs, `Vector<T>` should also move away from
+generic `anyref` element storage: the long-term target is a
+per-instantiation container family, so `Vector<Int>`, `Vector<String>`, and
+`Vector<Record...>` can use distinct runtime container/node types with typed
+element slots instead of boxing every element through `anyref`.
 
 This plan is subordinate to
 [`backend-anyref-elimination.md`](backend-anyref-elimination.md). If the two
