@@ -17,7 +17,7 @@ fn pad(indent: Int) String {
 }
 
 fn line(lines: Vector<String>, indent: Int, text: String) Vector<String> {
-  lines.push("${pad(indent)}${text}")
+  lines.append("${pad(indent)}${text}")
 }
 
 fn join_lines(lines: Vector<String>) String {
@@ -374,7 +374,7 @@ fn render_anf_function(lines: Vector<String>, env: ResolvedEnv, func: AnfFunctio
   out = line(out, 2, "return_ty: ${mono(env, func.return_ty)}")
   out = line(out, 2, "body:")
   out = render_anf_expr(out, env, func, func.body, 4)
-  out.push("")
+  out.append("")
 }
 
 pub fn render_core_module(module: CoreModule) String {
@@ -384,19 +384,19 @@ pub fn render_core_module(module: CoreModule) String {
   ]
   case module.init_func_id {
     .Some(init_id) => {
-      lines = lines.push("// init = FuncId(${init_id.id})")
+      lines = lines.append("// init = FuncId(${init_id.id})")
     },
     .None => {},
   }
-  lines = lines.push("")
+  lines = lines.append("")
 
   for func in module.functions {
     params := param_strings(module.type_env, func.params)
-    lines = lines.push("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
-    lines = lines.push("  return_ty: ${mono(module.type_env, func.return_ty)}")
-    lines = lines.push("  body:")
+    lines = lines.append("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
+    lines = lines.append("  return_ty: ${mono(module.type_env, func.return_ty)}")
+    lines = lines.append("  body:")
     lines = render_core_expr(lines, module.type_env, func.body, 4)
-    lines = lines.push("")
+    lines = lines.append("")
   }
 
   join_lines(lines)
@@ -409,11 +409,11 @@ pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
   ]
   case module.init_func_id {
     .Some(init_id) => {
-      lines = lines.push("// init = FuncId(${init_id.id})")
+      lines = lines.append("// init = FuncId(${init_id.id})")
     },
     .None => {},
   }
-  lines = lines.push("")
+  lines = lines.append("")
 
   for func in module.functions {
     lines = render_anf_function(lines, env, func)

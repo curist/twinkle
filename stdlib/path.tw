@@ -111,15 +111,15 @@ pub fn normalize(path: String) String {
         if segs.len() > 0 {
           last := segs[segs.len() - 1]
           if last == ".." {
-            if !abs { segs = segs.push(seg) }
+            if !abs { segs = segs.append(seg) }
           } else {
             segs = segs.slice(0, segs.len() - 1)
           }
         } else if !abs {
-          segs = segs.push(seg)
+          segs = segs.append(seg)
         }
       } else {
-        segs = segs.push(seg)
+        segs = segs.append(seg)
       }
       start = i + 1
     }

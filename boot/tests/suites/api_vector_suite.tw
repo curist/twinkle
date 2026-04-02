@@ -22,7 +22,7 @@ pub fn suite() runner.Suite {
     })
     .test("push returns new vector, original unchanged", fn() {
       xs: Vector<Int> = [1, 2]
-      ys := xs.push(3)
+      ys := xs.append(3)
       try assert.int_eq(xs.len(), 2)
       try assert.int_eq(ys.len(), 3)
       try assert.int_eq(ys[2], 3)

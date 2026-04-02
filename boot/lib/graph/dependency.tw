@@ -74,7 +74,7 @@ pub fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<St
         for dep in dependents {
           if !visited.has(dep) {
             visited[dep] = true
-            queue = queue.push(dep)
+            queue = queue.append(dep)
           }
         }
       },
@@ -104,7 +104,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
         .Some(deps) => {
           for dep in deps {
             if !reachable.has(dep) {
-              stack = stack.push(dep)
+              stack = stack.append(dep)
             }
           }
         },
@@ -148,7 +148,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
   for qi < queue.len() {
     node := queue[qi]
     qi = qi + 1
-    result = result.push(node)
+    result = result.append(node)
 
     // Find nodes that depend on this node (via reverse map)
     // and decrement their dep_count
@@ -161,7 +161,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
             deg = deg - 1
             dep_count[dep] = deg
             if deg == 0 {
-              freed = freed.push(dep)
+              freed = freed.append(dep)
             }
           }
         }
@@ -209,7 +209,7 @@ fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>
     .Some(deps) => {
       for dep in deps {
         if allowed.has(dep) {
-          stack = stack.push(dep)
+          stack = stack.append(dep)
         }
       }
     },
@@ -227,7 +227,7 @@ fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>
       .Some(deps) => {
         for dep in deps {
           if allowed.has(dep) and !visited.has(dep) {
-            stack = stack.push(dep)
+            stack = stack.append(dep)
           }
         }
       },
@@ -273,7 +273,7 @@ fn remove_from_reverse(rev: Dict<String, Vector<String>>, dep: String, module: S
 fn add_to_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<String, Vector<String>> {
   case rev[dep] {
     .Some(dependents) => {
-      rev[dep] = dependents.push(module)
+      rev[dep] = dependents.append(module)
       rev
     },
     .None => {

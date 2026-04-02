@@ -11,7 +11,7 @@ xs: Vector<Int> = [1, 2, 3]
 println("${xs.len()}")
 
 // push returns a new vector; bind to a new name
-xs2 := xs.push(4)
+xs2 := xs.append(4)
 for x in xs2 {
     println("${x}")
 }

@@ -196,7 +196,7 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.len()` | `fn<T>(v: Vector<T>) Int` | Number of elements |
-| `.push(elem)` | `fn<T>(v: Vector<T>, elem: T) Vector<T>` | Append element, return new vector |
+| `.append(elem)` | `fn<T>(v: Vector<T>, elem: T) Vector<T>` | Append element, return new vector |
 | `.get(i)` | `fn<T>(v: Vector<T>, i: Int) Option<T>` | Safe index lookup |
 | `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index |
 | `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors |

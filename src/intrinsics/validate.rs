@@ -98,15 +98,15 @@ mod tests {
     fn validate_intrinsic_bindings_reports_shape_mismatch() {
         let mut env = ValueEnv::new();
         let mut sig = env
-            .get_function("Vector.push")
-            .expect("Vector.push should be registered")
+            .get_function("Vector.append")
+            .expect("Vector.append should be registered")
             .clone();
         sig.params.pop();
         env.update_function(sig);
 
         let err = validate_intrinsic_bindings(&env).expect_err("shape mismatch should fail");
         let msg = err.to_string();
-        assert!(msg.contains("Vector.push"), "unexpected error: {msg}");
+        assert!(msg.contains("Vector.append"), "unexpected error: {msg}");
         assert!(msg.contains("arity mismatch"), "unexpected error: {msg}");
     }
 }

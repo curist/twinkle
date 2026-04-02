@@ -167,7 +167,7 @@ fn params_to_bindings(params: Vector<Param>, i: Int, out: Vector<Binding>) Vecto
         out
     } else {
         p := params[i]
-        params_to_bindings(params, i + 1, out.push(.{ name: p.name, ty: p.ty }))
+        params_to_bindings(params, i + 1, out.append(.{ name: p.name, ty: p.ty }))
     }
 }
 
@@ -183,7 +183,7 @@ fn collect_fn_sigs(fns: Vector<FnDecl>, i: Int, out: Vector<FnSig>) Vector<FnSig
     if i >= fns.len() {
         out
     } else {
-        collect_fn_sigs(fns, i + 1, out.push(fn_decl_to_sig(fns[i])))
+        collect_fn_sigs(fns, i + 1, out.append(fn_decl_to_sig(fns[i])))
     }
 }
 
@@ -321,7 +321,7 @@ fn collect_binding_types(bs: Vector<Binding>, i: Int, out: Vector<Ty>) Vector<Ty
     if i >= bs.len() {
         out
     } else {
-        collect_binding_types(bs, i + 1, out.push(bs[i].ty))
+        collect_binding_types(bs, i + 1, out.append(bs[i].ty))
     }
 }
 
@@ -379,7 +379,7 @@ fn bind_pattern_fields(ctx: CheckCtx, pats: Vector<Pattern>, tys: Vector<Ty>, i:
 fn bind_pattern(ctx: CheckCtx, pat: Pattern, expected: Ty, env: Vector<Binding>) Vector<Binding>!String {
     case pat {
         .PWildcard => .Ok(env),
-        .PBind(name) => .Ok(env.push(.{ name: name, ty: expected })),
+        .PBind(name) => .Ok(env.append(.{ name: name, ty: expected })),
         .PVariant(variant_name, fields) => {
             type_name := case expected {
                 .TNamed(n) => n,

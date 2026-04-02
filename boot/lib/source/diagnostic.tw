@@ -45,7 +45,7 @@ pub fn format_diagnostic_with_path(path: String, reg: registry.FileRegistry, d: 
 pub fn format_diagnostics(reg: registry.FileRegistry, ds: Vector<Diagnostic>) String {
   lines: Vector<String> = []
   for d in ds {
-    lines = lines.push(format_diagnostic(reg, d))
+    lines = lines.append(format_diagnostic(reg, d))
   }
   lines.join("\n")
 }
@@ -57,7 +57,7 @@ pub fn format_diagnostics_with_path(
 ) String {
   lines: Vector<String> = []
   for d in ds {
-    lines = lines.push(format_diagnostic_with_path(path, reg, d))
+    lines = lines.append(format_diagnostic_with_path(path, reg, d))
   }
   lines.join("\n")
 }

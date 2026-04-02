@@ -86,7 +86,7 @@ pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
   for group in groups {
     for sig in group.sigs {
       internal := to_internal_name(group.receiver, sig.name)
-      result = result.push(FunctionSig.{
+      result = result.append(FunctionSig.{
         name: internal,
         type_params: sig.type_params,
         param_names: sig.param_names,
@@ -173,8 +173,8 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
         for param in decl.params {
           case resolve_param_type(env, param, type_vars) {
             .Ok(mono) => {
-              param_tys = param_tys.push(mono)
-              param_names = param_names.push(param.name)
+              param_tys = param_tys.append(mono)
+              param_names = param_names.append(param.name)
             },
             .Err(msg) => {
               ok = false
@@ -192,7 +192,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
           params: param_tys,
           ret: ret,
         }
-        sigs = sigs.push(sig)
+        sigs = sigs.append(sig)
       },
       _ => {},
     }
@@ -219,7 +219,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
   tw_files: Vector<String> = []
   for entry in entries {
     if path.extension(entry.name) == ".tw" {
-      tw_files = tw_files.push(entry.name)
+      tw_files = tw_files.append(entry.name)
     }
   }
   tw_files = tw_files.sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
@@ -236,7 +236,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
     }
 
     group := try load_group_from_source(src, receiver, type_env)
-    groups = groups.push(group)
+    groups = groups.append(group)
   }
 
   .Ok(groups)

@@ -9,7 +9,7 @@ fn make() Vector<Int> {
     xs: Vector<Int> = []
     for x in [1, 2, 3] {
         println("${xs.len()}")
-        xs = xs.push(x)
+        xs = xs.append(x)
     }
     xs
 }

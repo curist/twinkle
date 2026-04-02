@@ -28,7 +28,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
   msgs: Vector<String> = []
   for d in r.diagnostics {
-    msgs = msgs.push(d.message)
+    msgs = msgs.append(d.message)
   }
   .Ok(msgs)
 }

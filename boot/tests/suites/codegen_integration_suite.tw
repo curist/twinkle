@@ -207,7 +207,7 @@ fn test_link_runtime_host_imports_preserved() Result<Void, String> {
       // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
       host_names: Vector<String> = []
       for imp in linked.imports {
-        host_names = host_names.push(imp.name)
+        host_names = host_names.append(imp.name)
       }
       found_print := false
       found_println := false

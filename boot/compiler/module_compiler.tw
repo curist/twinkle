@@ -153,7 +153,7 @@ fn compile_module(
   dep_plan := try imports.plan_dependencies(parsed.value, canonical, state.project_root)
 
   // Push onto importing stack
-  stack := importing_stack.push(canonical)
+  stack := importing_stack.append(canonical)
 
   // Compile dependencies and build up the env for this module.
   // Also track function origins for the linker's external_refs.
@@ -224,7 +224,7 @@ fn compile_module(
 
   // Cache and accumulate
   cur_state.cache[canonical] = module_exports
-  cur_state.compiled_modules = cur_state.compiled_modules.push(.{
+  cur_state.compiled_modules = cur_state.compiled_modules.append(.{
     path: canonical,
     core: lowered.module,
     func_table: lowered.func_table,

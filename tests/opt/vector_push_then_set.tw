@@ -3,7 +3,7 @@
 
 fn make() Vector<Int> {
     xs := [1, 2, 3]
-    xs = xs.push(4)
+    xs = xs.append(4)
     xs[0] = 99
     xs
 }

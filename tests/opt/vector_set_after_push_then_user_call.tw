@@ -7,7 +7,7 @@ fn touch(v: Vector<Int>) Int {
 
 fn make() Vector<Int> {
     xs := [1, 2, 3]
-    xs = xs.push(4)
+    xs = xs.append(4)
     n := touch(xs)
     println("${n}")
     xs[0] = 99

@@ -55,7 +55,7 @@ fn push_accum(
   op: AnfOp,
   ty: MonoType,
 ) PushResult {
-  new_accum := accum.push(LetBinding.{ local: local, op: op })
+  new_accum := accum.append(LetBinding.{ local: local, op: op })
   new_mono := state.op_result_mono
   new_mono[local.id] = ty
   PushResult.{ accum: new_accum, state: LowerState.{ next_temp: state.next_temp, op_result_mono: new_mono } }
@@ -222,7 +222,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
       body: result.expr,
       return_ty: func.return_ty,
     }
-    functions = functions.push(fdef)
+    functions = functions.append(fdef)
   }
   AnfModule.{
     functions: functions,
@@ -293,7 +293,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       arg_atoms: Vector<Atom> = []
       for a in args {
         aa := atomize(a, cur_state, cur_accum)
-        arg_atoms = arg_atoms.push(aa.atom)
+        arg_atoms = arg_atoms.append(aa.atom)
         cur_state = aa.state
         cur_accum = aa.accum
       }
@@ -310,7 +310,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       field_atoms: Vector<FieldAtom> = []
       for f in fields {
         fa := atomize(f.value, cur_state, cur_accum)
-        field_atoms = field_atoms.push(FieldAtom.{ field: f.field, value: fa.atom })
+        field_atoms = field_atoms.append(FieldAtom.{ field: f.field, value: fa.atom })
         cur_state = fa.state
         cur_accum = fa.accum
       }
@@ -348,7 +348,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       arg_atoms: Vector<Atom> = []
       for a in args {
         aa := atomize(a, cur_state, cur_accum)
-        arg_atoms = arg_atoms.push(aa.atom)
+        arg_atoms = arg_atoms.append(aa.atom)
         cur_state = aa.state
         cur_accum = aa.accum
       }
@@ -365,7 +365,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       atoms: Vector<Atom> = []
       for e in elements {
         ea := atomize(e, cur_state, cur_accum)
-        atoms = atoms.push(ea.atom)
+        atoms = atoms.append(ea.atom)
         cur_state = ea.state
         cur_accum = ea.accum
       }
@@ -420,7 +420,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
           // Value reduced to atom — extend outer accum, push AInit
           merged := accum
           for b in vr.accum {
-            merged = merged.push(b)
+            merged = merged.append(b)
           }
           pa := push_accum(merged, vr.state, orig_local, .AInit(atom), value.ty)
           // Continue with body
@@ -455,7 +455,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       anf_arms: Vector<AnfMatchArm> = []
       for arm in arms {
         arm_r := lower_expr_top(arm.body, cur_state)
-        anf_arms = anf_arms.push(AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr })
+        anf_arms = anf_arms.append(AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr })
         cur_state = arm_r.state
       }
       r := fresh(cur_state)
@@ -558,7 +558,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       arg_atoms: Vector<Atom> = []
       for a in args {
         aa := atomize(a, cur_state, cur_accum)
-        arg_atoms = arg_atoms.push(aa.atom)
+        arg_atoms = arg_atoms.append(aa.atom)
         cur_state = aa.state
         cur_accum = aa.accum
       }
@@ -574,7 +574,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       field_atoms: Vector<FieldAtom> = []
       for f in fields {
         fa := atomize(f.value, cur_state, cur_accum)
-        field_atoms = field_atoms.push(FieldAtom.{ field: f.field, value: fa.atom })
+        field_atoms = field_atoms.append(FieldAtom.{ field: f.field, value: fa.atom })
         cur_state = fa.state
         cur_accum = fa.accum
       }
@@ -609,7 +609,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       arg_atoms: Vector<Atom> = []
       for a in args {
         aa := atomize(a, cur_state, cur_accum)
-        arg_atoms = arg_atoms.push(aa.atom)
+        arg_atoms = arg_atoms.append(aa.atom)
         cur_state = aa.state
         cur_accum = aa.accum
       }
@@ -625,7 +625,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       atoms: Vector<Atom> = []
       for e in elements {
         ea := atomize(e, cur_state, cur_accum)
-        atoms = atoms.push(ea.atom)
+        atoms = atoms.append(ea.atom)
         cur_state = ea.state
         cur_accum = ea.accum
       }
@@ -697,7 +697,7 @@ fn flatten_into_accum(
 ) FlatResult {
   case anf {
     .Let(local, op, body) => {
-      new_accum := accum.push(LetBinding.{ local: local, op: op })
+      new_accum := accum.append(LetBinding.{ local: local, op: op })
       flatten_into_accum(body, new_accum, result_local, state, result_ty)
     },
     .Atom(atom) => {

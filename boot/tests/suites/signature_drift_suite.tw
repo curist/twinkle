@@ -76,7 +76,7 @@ pub fn suite() runner.Suite {
         for sig in group.sigs {
           internal := to_internal_name(group.receiver, sig.name)
           case lookup_function(env, internal) {
-            .None => { missing = missing.push(internal) },
+            .None => { missing = missing.append(internal) },
             .Some(_) => {},
           }
         }
@@ -97,7 +97,7 @@ pub fn suite() runner.Suite {
         for sig in group.sigs {
           cn := canonical_name(group.receiver, sig.name)
           case reg.entry_by_canonical(cn) {
-            .None => { missing = missing.push(cn) },
+            .None => { missing = missing.append(cn) },
             .Some(_) => {},
           }
         }
@@ -125,7 +125,7 @@ pub fn suite() runner.Suite {
       spurious: Vector<String> = []
       for cn in reg.by_canonical.keys() {
         case expected[cn] {
-          .None => { spurious = spurious.push(cn) },
+          .None => { spurious = spurious.append(cn) },
           .Some(_) => {},
         }
       }
@@ -173,7 +173,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("module-qualified Vector.push resolves without errors", fn() {
-      try resolve_ok_with_builtins("x: Vector<Int> = Vector.push([], 1)")
+      try resolve_ok_with_builtins("x: Vector<Int> = Vector.append([], 1)")
       .Ok({})
     })
 
@@ -205,7 +205,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("dot-method Vector.push resolves without errors", fn() {
-      try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.push(1)")
+      try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.append(1)")
       .Ok({})
     })
 

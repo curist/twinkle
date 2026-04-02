@@ -219,7 +219,7 @@ impl TypeEnv {
         let builtin_methods: &[(TypeId, &str, &str)] = &[
             // Vector
             (BUILTIN_VECTOR_TYPE_ID, "len", "Vector.len"),
-            (BUILTIN_VECTOR_TYPE_ID, "push", "Vector.push"),
+            (BUILTIN_VECTOR_TYPE_ID, "append", "Vector.append"),
             (BUILTIN_VECTOR_TYPE_ID, "concat", "Vector.concat"),
             (BUILTIN_VECTOR_TYPE_ID, "slice", "Vector.slice"),
             (BUILTIN_VECTOR_TYPE_ID, "get", "Vector.get"),

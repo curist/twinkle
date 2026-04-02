@@ -10,7 +10,7 @@ fn my_range(n: Int) Iterator<Int> {
 
 xs: Vector<Int> = []
 for x in my_range(1000) {
-  xs = xs.push(x * 2)
+  xs = xs.append(x * 2)
 }
 
 sum := 0

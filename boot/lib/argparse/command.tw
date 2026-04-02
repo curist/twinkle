@@ -11,7 +11,7 @@ pub fn make(name: String, help: String) Command {
 }
 
 pub fn add_arg(cmd: Command, a: arg.Arg) Command {
-  .{ name: cmd.name, help: cmd.help, args: cmd.args.push(a) }
+  .{ name: cmd.name, help: cmd.help, args: cmd.args.append(a) }
 }
 
 pub fn add_args(cmd: Command, args: Vector<arg.Arg>) Command {

@@ -101,8 +101,8 @@ pub fn deps_hash(entries: Vector<DepEntry>) Int {
   })
   chunks: Vector<Int> = [hash_text("deps")]
   for entry in sorted {
-    chunks = chunks.push(hash_text(entry.path))
-    chunks = chunks.push(entry.hash)
+    chunks = chunks.append(hash_text(entry.path))
+    chunks = chunks.append(entry.hash)
   }
   mix_many(chunks)
 }
@@ -124,8 +124,8 @@ pub fn context_hash(entries: Vector<DepEntry>) Int {
   })
   chunks: Vector<Int> = [hash_text("ctx")]
   for entry in sorted {
-    chunks = chunks.push(hash_text(entry.path))
-    chunks = chunks.push(entry.hash)
+    chunks = chunks.append(hash_text(entry.path))
+    chunks = chunks.append(entry.hash)
   }
   mix_many(chunks)
 }

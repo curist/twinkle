@@ -309,7 +309,7 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             let vec_t = MonoType::Vector(Box::new(t.clone()));
             Some(IntrinsicContract {
                 func_id,
-                twinkle_name: "Vector.push",
+                twinkle_name: "Vector.append",
                 dispatch: IntrinsicDispatch::Intrinsic,
                 type_params: vec!["T".to_string()],
                 params: vec![vec_t.clone(), t],
@@ -693,7 +693,7 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
 
         // Vector
         "Vector.len" => "Return the number of elements.",
-        "Vector.push" => "Return a new vector with the element appended.",
+        "Vector.append" => "Return a new vector with the element appended.",
         "Vector.concat" => "Return a new vector with all elements from both vectors.",
         "Vector.slice" => "Return a sub-vector from start (inclusive) to end (exclusive).",
         "Vector.get" => "Return the element at the given index, or `None` if out of bounds.",

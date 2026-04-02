@@ -74,7 +74,7 @@ fn elim(expr: AnfExpr, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
           register_snapshot_types(captures.snapshots, type_map, snap_types)
 
           // Add to loop_defers (fn_defers is set by the loop handler)
-          new_loop := loop_defers.push(deferred)
+          new_loop := loop_defers.append(deferred)
 
           rewritten_tail := elim(body, fn_defers, new_loop, in_sub_expr, in_loop, next, type_map, snap_types)
           prepend_snapshots(captures.snapshots, rewritten_tail)
@@ -195,7 +195,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
     snap_id := next.get()
     next.set(snap_id + 1)
     remap[src_id] = snap_id
-    snapshots = snapshots.push(SnapshotBinding.{ src: LocalId.{ id: src_id }, snap: LocalId.{ id: snap_id } })
+    snapshots = snapshots.append(SnapshotBinding.{ src: LocalId.{ id: src_id }, snap: LocalId.{ id: snap_id } })
   }
 
   CaptureResult.{ remap: remap, snapshots: snapshots }
@@ -237,12 +237,12 @@ fn sort_ints(xs: Vector<Int>) Vector<Int> {
     new: Vector<Int> = []
     for r in result {
       if !inserted and x < r {
-        new = new.push(x)
+        new = new.append(x)
         inserted = true
       }
-      new = new.push(r)
+      new = new.append(r)
     }
-    if !inserted { new = new.push(x) }
+    if !inserted { new = new.append(x) }
     result = new
   }
   result

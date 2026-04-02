@@ -35,7 +35,7 @@ pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   registry := plan_wasm_types(inputs.anf, inputs.env, inputs.builtins)
   anf2 := insert_boundaries(inputs.anf, registry, inputs.builtins, inputs.env)
   user_module := emit_module(anf2, registry, inputs.builtins, inputs.env)
-  modules := runtime_modules().push(user_module)
+  modules := runtime_modules().append(user_module)
   case link(modules, .None) {
     .Ok(linked) => .Ok(linked),
     .Err(_) => .Err("link failed"),

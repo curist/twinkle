@@ -1583,7 +1583,7 @@ pub fn suite() runner.Suite {
       for item in parsed.value.items {
         case item {
           .Function(f) => {
-            fn_names = fn_names.push(f.name)
+            fn_names = fn_names.append(f.name)
           },
           _ => {},
         }

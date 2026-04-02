@@ -127,14 +127,14 @@ fn apply_subst(ty: MonoType, subst: Dict<String, MonoType>) MonoType {
     .Function(params, ret) => {
       new_params: Vector<MonoType> = []
       for p in params {
-        new_params = new_params.push(apply_subst(p, subst))
+        new_params = new_params.append(apply_subst(p, subst))
       }
       MonoType.Function(new_params, apply_subst(ret, subst))
     },
     .Named(tid, args) => {
       new_args: Vector<MonoType> = []
       for a in args {
-        new_args = new_args.push(apply_subst(a, subst))
+        new_args = new_args.append(apply_subst(a, subst))
       }
       MonoType.Named(tid, new_args)
     },
@@ -164,7 +164,7 @@ fn collect_vars_in_order(ty: MonoType, seen: Dict<String, Bool>, result: Vector<
     .Var(name) => {
       if !seen.has(name) {
         seen[name] = true
-        result = result.push(name)
+        result = result.append(name)
       }
       VarCollectState.{ seen, result }
     },
@@ -214,7 +214,7 @@ fn type_key(ty: MonoType) String {
       } else {
         parts: Vector<String> = []
         for a in args {
-          parts = parts.push(type_key(a))
+          parts = parts.append(type_key(a))
         }
         "T${tid.id}_${join_parts(parts)}"
       }
@@ -222,7 +222,7 @@ fn type_key(ty: MonoType) String {
     .Function(params, ret) => {
       parts: Vector<String> = []
       for p in params {
-        parts = parts.push(type_key(p))
+        parts = parts.append(type_key(p))
       }
       "Fn_${join_parts(parts)}_${type_key(ret)}"
     },
@@ -247,7 +247,7 @@ fn join_parts(parts: Vector<String>) String {
 fn spec_key(func_id: FuncId, type_args: Vector<MonoType>) String {
   parts: Vector<String> = []
   for ta in type_args {
-    parts = parts.push(type_key(ta))
+    parts = parts.append(type_key(ta))
   }
   "${func_id.id}|${join_parts(parts)}"
 }
@@ -272,7 +272,7 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
                   i = i + 1
                 }
                 if subst.keys().len() > 0 {
-                  queue.items = queue.items.push(InstItem.{ func_id: fid, subst })
+                  queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
                 }
               },
               .None => {},
@@ -292,12 +292,12 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
             // Non-call position: match against expr.ty
             param_tys: Vector<MonoType> = []
             for p in gf.params {
-              param_tys = param_tys.push(p.ty)
+              param_tys = param_tys.append(p.ty)
             }
             generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
             if subst.keys().len() > 0 {
-              queue.items = queue.items.push(InstItem.{ func_id: fid, subst })
+              queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
             }
           },
           .None => {},
@@ -391,7 +391,7 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .Call(callee, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.push(apply_subst_to_expr(a, subst))
+        new_args = new_args.append(apply_subst_to_expr(a, subst))
       }
       .Call(apply_subst_to_expr(callee, subst), new_args)
     },
@@ -402,7 +402,7 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
       for arm in arms {
-        new_arms = new_arms.push(MatchArm.{ pattern: arm.pattern, body: apply_subst_to_expr(arm.body, subst) })
+        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: apply_subst_to_expr(arm.body, subst) })
       }
       .Match(apply_subst_to_expr(scrut, subst), new_arms)
     },
@@ -423,7 +423,7 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .Record(tid, fields) => {
       new_fields: Vector<FieldInit> = []
       for fi in fields {
-        new_fields = new_fields.push(FieldInit.{ field: fi.field, value: apply_subst_to_expr(fi.value, subst) })
+        new_fields = new_fields.append(FieldInit.{ field: fi.field, value: apply_subst_to_expr(fi.value, subst) })
       }
       .Record(tid, new_fields)
     },
@@ -432,14 +432,14 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .Variant(tid, vid, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.push(apply_subst_to_expr(a, subst))
+        new_args = new_args.append(apply_subst_to_expr(a, subst))
       }
       .Variant(tid, vid, new_args)
     },
     .ArrayLit(elems) => {
       new_elems: Vector<CoreExpr> = []
       for e in elems {
-        new_elems = new_elems.push(apply_subst_to_expr(e, subst))
+        new_elems = new_elems.append(apply_subst_to_expr(e, subst))
       }
       .ArrayLit(new_elems)
     },
@@ -459,7 +459,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
     .Call(callee, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.push(rewrite_calls(a, spec_map, generic_ids, func_map))
+        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map))
       }
       case callee.kind {
         .GlobalFunc(fid) => {
@@ -476,8 +476,8 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
                 type_args: Vector<MonoType> = []
                 for tp in type_params {
                   case subst[tp] {
-                    .Some(t) => { type_args = type_args.push(t) },
-                    .None => { type_args = type_args.push(MonoType.Void) },
+                    .Some(t) => { type_args = type_args.append(t) },
+                    .None => { type_args = type_args.append(MonoType.Void) },
                   }
                 }
                 key := spec_key(fid, type_args)
@@ -502,7 +502,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
           .Some(gf) => {
             param_tys: Vector<MonoType> = []
             for p in gf.params {
-              param_tys = param_tys.push(p.ty)
+              param_tys = param_tys.append(p.ty)
             }
             generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
             type_params := collect_type_params(gf)
@@ -510,8 +510,8 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
             type_args: Vector<MonoType> = []
             for tp in type_params {
               case subst[tp] {
-                .Some(t) => { type_args = type_args.push(t) },
-                .None => { type_args = type_args.push(MonoType.Void) },
+                .Some(t) => { type_args = type_args.append(t) },
+                .None => { type_args = type_args.append(MonoType.Void) },
               }
             }
             key := spec_key(fid, type_args)
@@ -539,7 +539,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
       for arm in arms {
-        new_arms = new_arms.push(MatchArm.{ pattern: arm.pattern, body: rewrite_calls(arm.body, spec_map, generic_ids, func_map) })
+        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: rewrite_calls(arm.body, spec_map, generic_ids, func_map) })
       }
       .Match(rewrite_calls(scrut, spec_map, generic_ids, func_map), new_arms)
     },
@@ -560,7 +560,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
     .Record(tid, fields) => {
       new_fields: Vector<FieldInit> = []
       for fi in fields {
-        new_fields = new_fields.push(FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, generic_ids, func_map) })
+        new_fields = new_fields.append(FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, generic_ids, func_map) })
       }
       .Record(tid, new_fields)
     },
@@ -571,14 +571,14 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
     .Variant(tid, vid, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.push(rewrite_calls(a, spec_map, generic_ids, func_map))
+        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map))
       }
       .Variant(tid, vid, new_args)
     },
     .ArrayLit(elems) => {
       new_elems: Vector<CoreExpr> = []
       for e in elems {
-        new_elems = new_elems.push(rewrite_calls(e, spec_map, generic_ids, func_map))
+        new_elems = new_elems.append(rewrite_calls(e, spec_map, generic_ids, func_map))
       }
       .ArrayLit(new_elems)
     },
@@ -637,8 +637,8 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         type_args: Vector<MonoType> = []
         for tp in type_params {
           case item.subst[tp] {
-            .Some(t) => { type_args = type_args.push(t) },
-            .None => { type_args = type_args.push(MonoType.Void) },
+            .Some(t) => { type_args = type_args.append(t) },
+            .None => { type_args = type_args.append(MonoType.Void) },
           }
         }
 
@@ -656,14 +656,14 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         // Build specialized name
         suffix_parts: Vector<String> = []
         for ta in type_args {
-          suffix_parts = suffix_parts.push(type_key(ta))
+          suffix_parts = suffix_parts.append(type_key(ta))
         }
         spec_name := gf.name.concat("__").concat(join_parts(suffix_parts))
 
         // Clone and substitute
         new_params: Vector<Param> = []
         for p in gf.params {
-          new_params = new_params.push(Param.{ local: p.local, ty: apply_subst(p.ty, item.subst) })
+          new_params = new_params.append(Param.{ local: p.local, ty: apply_subst(p.ty, item.subst) })
         }
         new_body := apply_subst_to_expr(gf.body, item.subst)
         new_ret := apply_subst(gf.return_ty, item.subst)
@@ -678,7 +678,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
 
         // Collect transitive instantiations from the specialized body
         queue = collect_instantiations(specialized.body, generic_ids, func_map, queue)
-        new_functions = new_functions.push(specialized)
+        new_functions = new_functions.append(specialized)
       },
       .None => {},
     }
@@ -689,7 +689,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   for func in module.functions {
     if !generic_ids.has(func.func_id.id) {
       new_body := rewrite_calls(func.body, spec_map, generic_ids, func_map)
-      rewritten = rewritten.push(FunctionDef.{
+      rewritten = rewritten.append(FunctionDef.{
         func_id: func.func_id,
         name: func.name,
         params: func.params,
@@ -702,7 +702,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   // Rewrite specialized functions too
   for func in new_functions {
     new_body := rewrite_calls(func.body, spec_map, generic_ids, func_map)
-    rewritten = rewritten.push(FunctionDef.{
+    rewritten = rewritten.append(FunctionDef.{
       func_id: func.func_id,
       name: func.name,
       params: func.params,

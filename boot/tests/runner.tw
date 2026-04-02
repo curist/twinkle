@@ -69,7 +69,7 @@ pub fn suite(name: String) Suite {
 }
 
 pub fn test(s: Suite, name: String, f: fn() Result<Void, String>) Suite {
-  Suite.{ name: s.name, tests: s.tests.push(Test.{ name: name, run: f }) }
+  Suite.{ name: s.name, tests: s.tests.append(Test.{ name: name, run: f }) }
 }
 
 pub fn run(s: Suite) Bool {
@@ -180,7 +180,7 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
           } else {
             print_compact_marker(opts, false)
           }
-          failures = failures.push(FailedTest.{ suite_name: s.name, test_name: t.name, message: msg })
+          failures = failures.append(FailedTest.{ suite_name: s.name, test_name: t.name, message: msg })
           failed = failed + 1
         },
       }

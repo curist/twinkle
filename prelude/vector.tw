@@ -69,7 +69,7 @@ pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   out := [xs[n - 1]]
   i := n - 2
   for i >= 0 {
-    out = out.push(xs[i])
+    out = out.append(xs[i])
     i = i - 1
   }
   out
@@ -106,13 +106,13 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
     next := out.slice(0, 0)
     for y in out {
       if !inserted and is_lt(cmp(x, y)) {
-        next = next.push(x)
+        next = next.append(x)
         inserted = true
       }
-      next = next.push(y)
+      next = next.append(y)
     }
     if !inserted {
-      next = next.push(x)
+      next = next.append(x)
     }
     out = next
   }

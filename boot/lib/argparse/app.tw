@@ -29,7 +29,7 @@ pub fn make(name: String, help: String) App {
 }
 
 pub fn add_command(a: App, cmd: command.Command) App {
-  App.{ name: a.name, help: a.help, commands: a.commands.push(cmd), args: a.args }
+  App.{ name: a.name, help: a.help, commands: a.commands.append(cmd), args: a.args }
 }
 
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
@@ -224,7 +224,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     current := argv[i]
 
     if past_flags {
-      pos = pos.push(current)
+      pos = pos.append(current)
       i = i + 1
       continue
     }
@@ -268,7 +268,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
               i = i + 1
               options[name] = argv[i]
             },
-            .Positional => pos = pos.push(current),
+            .Positional => pos = pos.append(current),
           }
         },
       }
@@ -287,10 +287,10 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           i = i + 1
           options[def.name] = argv[i]
         },
-        .Positional => pos = pos.push(current),
+        .Positional => pos = pos.append(current),
       }
     } else {
-      pos = pos.push(current)
+      pos = pos.append(current)
     }
 
     i = i + 1

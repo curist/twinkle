@@ -155,7 +155,7 @@ pub fn suite() runner.Suite {
     .test("rebinding does not affect aliases", fn() {
       xs: Vector<Int> = [1, 2, 3]
       ys := xs
-      xs = xs.push(4)
+      xs = xs.append(4)
       try assert.int_eq(ys.len(), 3)
       try assert.int_eq(xs.len(), 4)
       .Ok({})

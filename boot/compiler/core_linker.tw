@@ -89,7 +89,7 @@ pub fn link(
     // Remap and collect functions
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
-      all_functions = all_functions.push(FunctionDef.{
+      all_functions = all_functions.append(FunctionDef.{
         func_id: remapped_id,
         name: f.name,
         params: f.params,
@@ -101,7 +101,7 @@ pub fn link(
     // Track entry module's function IDs for DCE roots
     if m.path == entry_path {
       for f in m.core.functions {
-        entry_func_ids = entry_func_ids.push(remap_func_id(f.func_id, remap).id)
+        entry_func_ids = entry_func_ids.append(remap_func_id(f.func_id, remap).id)
       }
     }
 
@@ -109,7 +109,7 @@ pub fn link(
     case m.core.init_func_id {
       .Some(init_id) => {
         remapped_init := remap_func_id(init_id, remap)
-        all_init_ids = all_init_ids.push(remapped_init)
+        all_init_ids = all_init_ids.append(remapped_init)
         if m.path == entry_path {
           entry_init = .Some(remapped_init)
         }
@@ -130,7 +130,7 @@ pub fn link(
   live_functions: Vector<FunctionDef> = []
   for f in linked_functions {
     if reachable.has(f.func_id.id) {
-      live_functions = live_functions.push(f)
+      live_functions = live_functions.append(f)
     }
   }
 
@@ -216,7 +216,7 @@ fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_fun
   // Seed with init function
   case init_id {
     .Some(id) => {
-      queue = queue.push(id.id)
+      queue = queue.append(id.id)
       reachable[id.id] = true
     },
     .None => {},
@@ -226,7 +226,7 @@ fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_fun
   for fid in entry_func_ids {
     if !reachable.has(fid) {
       reachable[fid] = true
-      queue = queue.push(fid)
+      queue = queue.append(fid)
     }
   }
 
@@ -264,7 +264,7 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
   new_reachable := state.reachable
   new_reachable[ref_id] = true
   BfsState.{
-    queue: state.queue.push(ref_id),
+    queue: state.queue.append(ref_id),
     reachable: new_reachable,
   }
 }
@@ -298,7 +298,7 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
     .Local(_) => refs,
     .GlobalLocal(_) => refs,
 
-    .GlobalFunc(id) => refs.push(id.id),
+    .GlobalFunc(id) => refs.append(id.id),
 
     .Let(_, value, body) => {
       r := collect_func_refs_into(value, refs)
@@ -316,7 +316,7 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
       r := collect_func_refs_into(callee, refs)
       collect_func_refs_list(args, r)
     },
-    .MakeClosure(func_id, _) => refs.push(func_id.id),
+    .MakeClosure(func_id, _) => refs.append(func_id.id),
 
     .If(cond, then_br, else_br) => {
       r := collect_func_refs_into(cond, refs)

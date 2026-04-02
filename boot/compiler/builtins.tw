@@ -130,7 +130,7 @@ pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String,
     by_name: by_name,
     by_id: by_id,
     by_canonical: reg.by_canonical,
-    entries: reg.entries.push(entry),
+    entries: reg.entries.append(entry),
     next_id: reg.next_id + 1,
   }
 }
@@ -154,7 +154,7 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
     by_name: by_name,
     by_id: by_id,
     by_canonical: reg.by_canonical,
-    entries: reg.entries.push(entry),
+    entries: reg.entries.append(entry),
     next_id: reg.next_id + 1,
   }
 }

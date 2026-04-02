@@ -290,13 +290,13 @@ fn rewrite_call(
             cur_ctx.local_types[wrap_local.id] = .Anyref_
             // Build: let wrap_local = AWrapAnyref(arg, mono); ...
             // We'll prepend these lets before the call
-            new_args = new_args.push(.ALocal(wrap_local))
+            new_args = new_args.append(.ALocal(wrap_local))
             // Store wrap info to emit lets later
           } else {
-            new_args = new_args.push(arg)
+            new_args = new_args.append(arg)
           }
         } else {
-          new_args = new_args.push(arg)
+          new_args = new_args.append(arg)
         }
       }
 

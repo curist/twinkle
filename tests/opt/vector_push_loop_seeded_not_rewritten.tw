@@ -6,7 +6,7 @@
 fn make() Vector<Int> {
     xs := [10]
     for x in [1, 2, 3] {
-        xs = xs.push(x)
+        xs = xs.append(x)
     }
     xs
 }

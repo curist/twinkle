@@ -864,13 +864,13 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             prelude_ids::VECTOR_PUSH => {
-                // vector_push(vec: Vector<T>, elem: T) Vector<T>
+                // vector_append(vec: Vector<T>, elem: T) Vector<T>
                 match args[0].clone() {
                     Value::Vec(mut elems) => {
                         elems.push(args[1].clone());
                         Ok(Value::Vec(elems))
                     }
-                    _ => panic!("vector_push: expected Vector"),
+                    _ => panic!("vector_append: expected Vector"),
                 }
             }
             prelude_ids::VECTOR_SET_UNSAFE => {

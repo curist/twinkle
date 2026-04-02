@@ -7,12 +7,12 @@
 xs: Vector<Int> = []
 println("${xs.len()}")
 
-xs2 := xs.push(1).push(2).push(3)
+xs2 := xs.append(1).append(2).append(3)
 println("${xs2.len()}")
 
 // Empty vector of strings
 words: Vector<String> = []
-words2 := words.push("hello").push("world")
+words2 := words.append("hello").append("world")
 for w in words2 {
     println(w)
 }

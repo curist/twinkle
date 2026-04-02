@@ -324,8 +324,8 @@ pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: S
     },
     .None => {
       env.type_index[preferred_name] = env.types.len()
-      env.types = env.types.push(entry)
-      env.type_names = env.type_names.push(preferred_name)
+      env.types = env.types.append(entry)
+      env.type_names = env.type_names.append(preferred_name)
       env
     },
   }
@@ -380,7 +380,7 @@ pub fn register_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
     },
     .None => {
       env.func_index[sig.name] = env.functions.len()
-      env.functions = env.functions.push(sig)
+      env.functions = env.functions.append(sig)
       env
     },
   }
@@ -544,7 +544,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if !decl.is_pub { continue }
         case env.lookup_type(decl.name) {
           .Some(entry) => {
-            visible_types = visible_types.push(ExportedType.{
+            visible_types = visible_types.append(ExportedType.{
               name: decl.name,
               entry,
               origin: exported_type_origin(env, entry.id, module_key, decl.name),
@@ -558,7 +558,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if !decl.is_pub { continue }
         case env.lookup_function(decl.name) {
           .Some(sig) => {
-            exported_functions = exported_functions.push(.{
+            exported_functions = exported_functions.append(.{
               name: sig.name,
               sig,
               source_name: sig.name,
@@ -600,7 +600,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       if !hidden_support_types.has(name) or exported_type_names.has(name) {
         continue
       }
-      support_types = support_types.push(ExportedType.{
+      support_types = support_types.append(ExportedType.{
         name,
         entry: env.types[i],
         origin: exported_type_origin(env, env.types[i].id, module_key, name),
@@ -651,7 +651,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     if !interface_function_sources.has(sig.name) or visible_function_sources.has(sig.name) {
       continue
     }
-    support_functions = support_functions.push(.{
+    support_functions = support_functions.append(.{
       name: sig.name,
       sig,
       source_name: sig.name,
@@ -908,9 +908,9 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
     case item {
       .Type(decl) => {
         if is_reserved_type_name(decl.name) {
-          diags = diags.push(diag.error(decl.span, "type name '${decl.name}' is reserved"))
+          diags = diags.append(diag.error(decl.span, "type name '${decl.name}' is reserved"))
         } else if cur.has_type(decl.name) {
-          diags = diags.push(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
+          diags = diags.append(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
         } else {
           tid := TypeId.{ id: cur.types.len() }
           cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
@@ -918,7 +918,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       },
       .Function(decl) => {
         if seen_fns.has(decl.name) {
-          diags = diags.push(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
+          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
         } else {
           seen_fns[decl.name] = true
         }
@@ -1023,7 +1023,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
       }
     }
     if collision {
-      method_diags = method_diags.push(diag.error(
+      method_diags = method_diags.append(diag.error(
         span.Span.{ file_id: 0, start: 0, end: 0 },
         "method '${f.name}' on type '${type_name}' conflicts with an existing registration"
       ))
@@ -1139,7 +1139,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
         }
       },
       .None => {
-        diags = diags.push(diag.error(param.span, "function parameters must have type annotations"))
+        diags = diags.append(diag.error(param.span, "function parameters must have type annotations"))
         .ErrorType
       },
     }
@@ -1630,7 +1630,7 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
 
   // Mark done and append
   new_state[names[i]] = 2
-  new_order = new_order.push(i)
+  new_order = new_order.append(i)
   .{ state: new_state, order: new_order }
 }
 
@@ -1728,7 +1728,7 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
     if names[i] == name {
       if acc.seen.has(i) { return acc }
       acc.seen[i] = true
-      acc.indices = acc.indices.push(i)
+      acc.indices = acc.indices.append(i)
       return acc
     }
   }
@@ -1749,7 +1749,7 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<Diagnostic>) Vector<D
       _ => { continue },
     }
     if is_circular_alias(env, aname, Dict.new()) {
-      result = result.push(diag.error(env.types[i].span, "circular type alias: ${aname}"))
+      result = result.append(diag.error(env.types[i].span, "circular type alias: ${aname}"))
     }
   }
   result

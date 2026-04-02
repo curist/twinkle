@@ -74,14 +74,14 @@ fn emit_wat_parts(
 
   // 1. Named type definitions
   for td in types {
-    lines = lines.push(emit_typedef(td))
+    lines = lines.append(emit_typedef(td))
   }
 
   // 2. Anonymous functype dedup for imports + functions
   ft_registry := build_functype_registry(imports, funcs)
   for i in range(ft_registry.entries.len()) {
     entry := ft_registry.entries[i]
-    lines = lines.push(emit_functype_def(i, entry.params, entry.results))
+    lines = lines.append(emit_functype_def(i, entry.params, entry.results))
   }
 
   // 3. Imports
@@ -89,7 +89,7 @@ fn emit_wat_parts(
     idx := lookup_functype(ft_registry, imp.params, imp.results)
     s := sym(imp.as_sym)
     ft := sym("functype_${idx}")
-    lines = lines.push("  (import \"${imp.module}\" \"${imp.name}\" (func ${s} (type ${ft})))")
+    lines = lines.append("  (import \"${imp.module}\" \"${imp.name}\" (func ${s} (type ${ft})))")
   }
 
   // 4. Tables
@@ -100,7 +100,7 @@ fn emit_wat_parts(
     }
     s := sym(tbl.name)
     vt := emit_val_type(tbl.elem_type)
-    lines = lines.push("  (table ${s} ${tbl.min}${max_str} ${vt})")
+    lines = lines.append("  (table ${s} ${tbl.min}${max_str} ${vt})")
   }
 
   // 5. Globals
@@ -109,9 +109,9 @@ fn emit_wat_parts(
     s := sym(g.name)
     vt := emit_val_type(g.ty)
     if g.mutable {
-      lines = lines.push("  (global ${s} (mut ${vt}) (${init_str}))")
+      lines = lines.append("  (global ${s} (mut ${vt}) (${init_str}))")
     } else {
-      lines = lines.push("  (global ${s} ${vt} (${init_str}))")
+      lines = lines.append("  (global ${s} ${vt} (${init_str}))")
     }
   }
 
@@ -119,7 +119,7 @@ fn emit_wat_parts(
   for f in funcs {
     idx := lookup_functype(ft_registry, f.params, f.results)
     func_lines := emit_func_def(f, idx)
-    for fl in func_lines { lines = lines.push(fl) }
+    for fl in func_lines { lines = lines.append(fl) }
   }
 
   // 7. Element segments
@@ -128,9 +128,9 @@ fn emit_wat_parts(
     syms_str := collect s in elem.func_syms { sym(s) }.join(" ")
     ts := sym(elem.table)
     if syms_str.len() > 0 {
-      lines = lines.push("  (elem (table ${ts}) (${offset_str}) func ${syms_str})")
+      lines = lines.append("  (elem (table ${ts}) (${offset_str}) func ${syms_str})")
     } else {
-      lines = lines.push("  (elem (table ${ts}) (${offset_str}) func)")
+      lines = lines.append("  (elem (table ${ts}) (${offset_str}) func)")
     }
   }
 
@@ -138,7 +138,7 @@ fn emit_wat_parts(
   ref_func_syms := collect_ref_func_syms(funcs, elems)
   if ref_func_syms.len() > 0 {
     syms_str := collect s in ref_func_syms { sym(s) }.join(" ")
-    lines = lines.push("  (elem declare func ${syms_str})")
+    lines = lines.append("  (elem declare func ${syms_str})")
   }
 
   // 8. Data segments
@@ -146,29 +146,29 @@ fn emit_wat_parts(
     hex_str := bytes_to_hex(d.bytes)
     ds := sym(d.name)
     if d.offset.len() == 0 {
-      lines = lines.push("  (data ${ds} \"${hex_str}\")")
+      lines = lines.append("  (data ${ds} \"${hex_str}\")")
     } else {
       offset_str := emit_instrs_inline(d.offset)
-      lines = lines.push("  (data ${ds} (${offset_str}) \"${hex_str}\")")
+      lines = lines.append("  (data ${ds} (${offset_str}) \"${hex_str}\")")
     }
   }
 
   // 9. Exports
   for e in exports {
     fs := sym(e.func_sym)
-    lines = lines.push("  (export \"${e.wasm_name}\" (func ${fs}))")
+    lines = lines.append("  (export \"${e.wasm_name}\" (func ${fs}))")
   }
 
   // 10. Start
   case start {
     .Some(s) => {
       ss := sym(s)
-      lines = lines.push("  (start ${ss})")
+      lines = lines.append("  (start ${ss})")
     },
     .None => {},
   }
 
-  lines = lines.push(")")
+  lines = lines.append(")")
   join_lines(lines)
 }
 
@@ -255,7 +255,7 @@ fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Ve
   if reg.keys.has(key) { return reg }
   idx := reg.entries.len()
   FuncTypeRegistry.{
-    entries: reg.entries.push(FuncSigPair.{ params: params, results: results }),
+    entries: reg.entries.append(FuncSigPair.{ params: params, results: results }),
     keys: reg.keys.set(key, idx),
   }
 }
@@ -305,31 +305,31 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
   for vt in f.params {
     ps := sym("p${idx}")
     v := emit_val_type(vt)
-    lines = lines.push("    (param ${ps} ${v})")
+    lines = lines.append("    (param ${ps} ${v})")
     idx = idx + 1
   }
 
   // Results
   for vt in f.results {
     v := emit_val_type(vt)
-    lines = lines.push("    (result ${v})")
+    lines = lines.append("    (result ${v})")
   }
 
   // Locals (beyond params)
   for vt in f.locals {
     ps := sym("p${idx}")
     v := emit_val_type(vt)
-    lines = lines.push("    (local ${ps} ${v})")
+    lines = lines.append("    (local ${ps} ${v})")
     idx = idx + 1
   }
 
   // Body instructions
   for instr in f.body {
     instr_lines := emit_instr(instr, 4)
-    for il in instr_lines { lines = lines.push(il) }
+    for il in instr_lines { lines = lines.append(il) }
   }
 
-  lines = lines.push("  )")
+  lines = lines.append("  )")
   lines
 }
 
@@ -492,18 +492,18 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
       ]
       for i in then_body {
         inner := emit_instr(i, indent + 4)
-        for il in inner { lines = lines.push(il) }
+        for il in inner { lines = lines.append(il) }
       }
-      lines = lines.push("${pad}  )")
+      lines = lines.append("${pad}  )")
       if else_body.len() > 0 {
-        lines = lines.push("${pad}  (else")
+        lines = lines.append("${pad}  (else")
         for i in else_body {
           inner := emit_instr(i, indent + 4)
-          for il in inner { lines = lines.push(il) }
+          for il in inner { lines = lines.append(il) }
         }
-        lines = lines.push("${pad}  )")
+        lines = lines.append("${pad}  )")
       }
-      lines = lines.push("${pad})")
+      lines = lines.append("${pad})")
       lines
     },
     .Block(label, result_ty, body) => {
@@ -515,9 +515,9 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
       lines: Vector<String> = ["${pad}(block ${ls}${result_str}"]
       for i in body {
         inner := emit_instr(i, indent + 2)
-        for il in inner { lines = lines.push(il) }
+        for il in inner { lines = lines.append(il) }
       }
-      lines = lines.push("${pad})")
+      lines = lines.append("${pad})")
       lines
     },
     .Loop(label, result_ty, body) => {
@@ -529,9 +529,9 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
       lines: Vector<String> = ["${pad}(loop ${ls}${result_str}"]
       for i in body {
         inner := emit_instr(i, indent + 2)
-        for il in inner { lines = lines.push(il) }
+        for il in inner { lines = lines.append(il) }
       }
-      lines = lines.push("${pad})")
+      lines = lines.append("${pad})")
       lines
     },
   }

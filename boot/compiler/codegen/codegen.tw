@@ -42,7 +42,7 @@ pub fn codegen(
   user_module := emit_module(anf2, registry, builtins, env)
 
   // 4. Link with runtime
-  modules := runtime_modules().push(user_module)
+  modules := runtime_modules().append(user_module)
   linked := case link(modules, .None) {
     .Ok(l) => l,
     .Err(errors) => {

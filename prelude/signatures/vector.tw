@@ -4,7 +4,7 @@ pub fn len<T>(xs: Vector<T>) Int {
 }
 
 /// Return a new vector with x appended.
-pub fn push<T>(xs: Vector<T>, x: T) Vector<T> {
+pub fn append<T>(xs: Vector<T>, x: T) Vector<T> {
   xs
 }
 
