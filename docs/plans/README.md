@@ -58,6 +58,7 @@ from stage0, bootstrapping sequence)
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
 | [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | Define the ABI-first artifact boundary by which stage0 consumes a Twinkle-authored `Vector<Int>` implementation from `boot/lib` (blocked on runtime import boundary) |
 | [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Provide extern/import mechanism for Twinkle library modules to bind runtime substrate symbols; prerequisite for boot/lib consumption |
+| [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
 | [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
 | [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Stage0-only `Vector<Int>` persistent-vector proof of concept with fixed-width trie nodes and unchanged bootlib ABI |
 | [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | First implementation slice for a Twinkle-authored persistent vector, integrated through the stage0 Wasm backend first |
