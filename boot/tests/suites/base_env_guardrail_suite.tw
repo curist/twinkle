@@ -55,8 +55,8 @@ pub fn suite() runner.Suite {
     })
 
     // Vector builtins
-    .test("builtin_env has vector_push with type param T", fn() {
-      sig := try require_sig("vector_push")
+    .test("builtin_env has vector_append with type param T", fn() {
+      sig := try require_sig("vector_append")
       try assert.int_eq(sig.type_params.len(), 1)
       try assert.str_eq(sig.type_params[0], "T")
       try assert.int_eq(sig.params.len(), 2)
@@ -206,9 +206,9 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    .test("Vector.push resolves to vector_push", fn() {
+    .test("Vector.append resolves to vector_append", fn() {
       fn_name := try require_method("Vector", "push")
-      try assert.str_eq(fn_name, "vector_push")
+      try assert.str_eq(fn_name, "vector_append")
       .Ok({})
     })
 

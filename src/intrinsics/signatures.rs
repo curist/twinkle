@@ -304,7 +304,7 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::Anyref),
             })
         }
-        id if id == prelude_ids::VECTOR_PUSH => {
+        id if id == prelude_ids::VECTOR_APPEND => {
             let t = ty_var("T");
             let vec_t = MonoType::Vector(Box::new(t.clone()));
             Some(IntrinsicContract {

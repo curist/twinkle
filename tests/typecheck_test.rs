@@ -354,7 +354,7 @@ main()
         .expect("resolve failed");
 
     let mut broken_value_env = resolved.value_env;
-    broken_value_env.remove_function("Vector.push");
+    broken_value_env.remove_function("Vector.append");
 
     let result = twinkle::types::TypeChecker::check_module(
         &ast,
@@ -368,10 +368,10 @@ main()
         errors.iter().any(|err| {
             matches!(
                 err,
-                TypeError::UndefinedVariable { name, .. } if name == "Vector.push"
+                TypeError::UndefinedVariable { name, .. } if name == "Vector.append"
             )
         }),
-        "expected UndefinedVariable for Vector.push, got: {:?}",
+        "expected UndefinedVariable for Vector.append, got: {:?}",
         errors
     );
 }

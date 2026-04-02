@@ -863,7 +863,7 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("vector_len: expected Vector"),
                 }
             }
-            prelude_ids::VECTOR_PUSH => {
+            prelude_ids::VECTOR_APPEND => {
                 // vector_append(vec: Vector<T>, elem: T) Vector<T>
                 match args[0].clone() {
                     Value::Vec(mut elems) => {
@@ -1445,7 +1445,7 @@ impl<W: Write> Interpreter<W> {
                 self.call_builtin(prelude_ids::VECTOR_SET_UNSAFE, args)
             }
             prelude_ids::RAW_VECTOR_I64_LEN => self.call_builtin(prelude_ids::VECTOR_LEN, args),
-            prelude_ids::RAW_VECTOR_I64_PUSH => self.call_builtin(prelude_ids::VECTOR_PUSH, args),
+            prelude_ids::RAW_VECTOR_I64_PUSH => self.call_builtin(prelude_ids::VECTOR_APPEND, args),
             prelude_ids::RAW_VECTOR_I64_CONCAT => {
                 self.call_builtin(prelude_ids::VECTOR_CONCAT, args)
             }

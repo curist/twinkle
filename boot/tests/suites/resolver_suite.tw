@@ -524,11 +524,11 @@ pub fn suite() runner.Suite {
         .None => .Err("expected Some"),
       }
     })
-    .test("builtin method: Vector.push", fn() {
+    .test("builtin method: Vector.append", fn() {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Vector", "push") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "vector_push")
+          try assert.str_eq(fn_name, "vector_append")
           .Ok({})
         },
         .None => .Err("expected Some"),

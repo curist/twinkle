@@ -799,8 +799,8 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
     return out.append(Instr.LocalSet(result_idx))
   }
 
-  if name == "vector_push" {
-    return emit_intrinsic_vector_push(args, result_idx, ctx)
+  if name == "vector_append" {
+    return emit_intrinsic_vector_append(args, result_idx, ctx)
   }
   if name == "vector_get" {
     return emit_intrinsic_vector_get(args, result_idx, result_mono, ctx)
@@ -901,10 +901,10 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
   error("emit_intrinsic_call: unknown intrinsic '${name}'")
 }
 
-// ── vector_push: COW append via concat ─────────────────────────────────
+// ── vector_append: COW append via concat ─────────────────────────────────
 
-fn emit_intrinsic_vector_push(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
-  // vector_push(vec, elem) → rt_arr__concat(vec, [elem])
+fn emit_intrinsic_vector_append(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+  // vector_append(vec, elem) → rt_arr__concat(vec, [elem])
   out := emit_atom(args[0], ctx)  // vec
   out = append_instrs(out, emit_atom(args[1], ctx))  // elem (already anyref after boundary)
   out = out.append(Instr.ArrayNewFixed("rt_types__Array", 1))

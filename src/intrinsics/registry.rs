@@ -110,7 +110,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     ),
     spec!(VECTOR_LEN, "Vector.len", Runtime, true, true),
     spec!(
-        VECTOR_PUSH,
+        VECTOR_APPEND,
         "Vector.append",
         Intrinsic,
         true,
@@ -464,7 +464,7 @@ const LEGACY_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("string_len", prelude_ids::STRING_LEN),
     ("string_concat", prelude_ids::STRING_CONCAT),
     ("vector_len", prelude_ids::VECTOR_LEN),
-    ("vector_append", prelude_ids::VECTOR_PUSH),
+    ("vector_append", prelude_ids::VECTOR_APPEND),
     ("vector_set_unsafe", prelude_ids::VECTOR_SET_UNSAFE),
     ("dict_set", prelude_ids::DICT_SET),
     ("dict_keys", prelude_ids::DICT_KEYS),

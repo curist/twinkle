@@ -1,4 +1,4 @@
-// Empty unique loop accumulator should rewrite from VECTOR_PUSH to builder ops.
+// Empty unique loop accumulator should rewrite from VECTOR_APPEND to builder ops.
 // Expected output:
 //   3
 //   6

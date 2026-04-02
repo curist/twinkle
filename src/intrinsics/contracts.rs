@@ -62,7 +62,7 @@ fn intrinsic_abi_result(func_id: FuncId) -> Option<IntrinsicAbiResult> {
 
     if matches!(
         func_id,
-        id if id == prelude_ids::VECTOR_PUSH
+        id if id == prelude_ids::VECTOR_APPEND
             || id == prelude_ids::VECTOR_CONCAT
             || id == prelude_ids::VECTOR_SLICE
             || id == prelude_ids::VECTOR_SET_IN_PLACE

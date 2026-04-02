@@ -449,7 +449,7 @@ fn opt_record_capture_escape_not_annotated() {
 const VECTOR_SET_UNSAFE: FuncId = FuncId(12);
 const VECTOR_SET: FuncId = FuncId(39);
 const VECTOR_SET_IN_PLACE: FuncId = FuncId(1013);
-const VECTOR_PUSH: FuncId = FuncId(11);
+const VECTOR_APPEND: FuncId = FuncId(11);
 const VECTOR_BUILDER_NEW: FuncId = FuncId(33);
 const VECTOR_BUILDER_PUSH: FuncId = FuncId(34);
 const VECTOR_BUILDER_FREEZE: FuncId = FuncId(35);
@@ -668,12 +668,12 @@ fn opt_vector_set_after_len_rewritten() {
 }
 
 #[test]
-fn opt_vector_push_then_set_rewritten() {
+fn opt_vector_append_then_set_rewritten() {
     // Consuming push + reassign should preserve uniqueness for later set.
-    let module = compile_opt("tests/opt/vector_push_then_set.tw");
+    let module = compile_opt("tests/opt/vector_append_then_set.tw");
     assert!(
         has_call_to(&module, VECTOR_SET_IN_PLACE),
-        "Expected VECTOR_SET_UNSAFE to rewrite after VECTOR_PUSH reassign"
+        "Expected VECTOR_SET_UNSAFE to rewrite after VECTOR_APPEND reassign"
     );
     assert!(
         !has_call_to(&module, VECTOR_SET_UNSAFE),
@@ -691,7 +691,7 @@ fn opt_vector_set_additional_positive_rewrites() {
         "tests/opt/vector_set_in_if_branches.tw",
         "tests/opt/vector_set_after_branch_local_alias.tw",
         "tests/opt/vector_set_after_len_in_branch.tw",
-        "tests/opt/vector_set_after_push_chain.tw",
+        "tests/opt/vector_set_after_append_chain.tw",
     ];
 
     for path in fixtures {
@@ -716,7 +716,7 @@ fn opt_vector_set_additional_negative_no_rewrite() {
         "tests/opt/vector_set_after_indirect_call.tw",
         "tests/opt/vector_set_after_get.tw",
         "tests/opt/vector_set_stored_in_array.tw",
-        "tests/opt/vector_set_after_push_then_user_call.tw",
+        "tests/opt/vector_set_after_append_then_user_call.tw",
         "tests/opt/vector_set_branch_alias_escape.tw",
         "tests/opt/vector_set_capture_in_branch.tw",
         "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
@@ -774,7 +774,7 @@ fn opt_vector_set_precise_call_counts() {
             0usize,
         ),
         (
-            "tests/opt/vector_set_after_push_chain.tw",
+            "tests/opt/vector_set_after_append_chain.tw",
             1usize,
             0usize,
             0usize,
@@ -831,7 +831,7 @@ fn opt_vector_set_precise_call_counts() {
 #[test]
 fn opt_vector_set_runtime_semantics_core_paths() {
     let matrix: [(&str, &[&str]); 9] = [
-        ("tests/opt/vector_push_then_set.tw", &["99"]),
+        ("tests/opt/vector_append_then_set.tw", &["99"]),
         ("tests/opt/vector_set_unique.tw", &["99"]),
         ("tests/opt/vector_set_param.tw", &["99"]),
         ("tests/opt/vector_set_aliased.tw", &["1", "99"]),
@@ -856,7 +856,7 @@ fn opt_vector_set_runtime_semantics_call_and_branch_paths() {
         ("tests/opt/vector_set_after_get.tw", &["1", "99"]),
         ("tests/opt/vector_set_stored_in_array.tw", &["1", "99"]),
         (
-            "tests/opt/vector_set_after_push_then_user_call.tw",
+            "tests/opt/vector_set_after_append_then_user_call.tw",
             &["4", "99"],
         ),
         ("tests/opt/vector_set_safe_option_not_rewritten.tw", &["99"]),
@@ -873,7 +873,7 @@ fn opt_vector_set_runtime_semantics_escape_paths() {
             &["1", "99"],
         ),
         ("tests/opt/vector_set_after_len_in_branch.tw", &["3", "99"]),
-        ("tests/opt/vector_set_after_push_chain.tw", &["99"]),
+        ("tests/opt/vector_set_after_append_chain.tw", &["99"]),
         ("tests/opt/vector_set_capture_in_branch.tw", &["1", "99"]),
         (
             "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
@@ -947,12 +947,12 @@ fn opt_vector_set_cell_closure_loop_branch_escape_wasm_stress() {
 }
 
 #[test]
-fn opt_vector_push_loop_unique_rewritten_to_builder() {
-    let module = compile_opt("tests/opt/vector_push_loop_unique.tw");
+fn opt_vector_append_loop_unique_rewritten_to_builder() {
+    let module = compile_opt("tests/opt/vector_append_loop_unique.tw");
     assert_eq!(
-        count_calls_to(&module, VECTOR_PUSH),
+        count_calls_to(&module, VECTOR_APPEND),
         0,
-        "Expected no VECTOR_PUSH in rewritten loop accumulator fixture"
+        "Expected no VECTOR_APPEND in rewritten loop accumulator fixture"
     );
     assert_eq!(
         count_calls_to(&module, VECTOR_BUILDER_NEW),
@@ -977,12 +977,12 @@ fn opt_vector_push_loop_unique_rewritten_to_builder() {
 }
 
 #[test]
-fn opt_vector_push_loop_seeded_rewritten_to_builder_from() {
-    let module = compile_opt("tests/opt/vector_push_loop_seeded_not_rewritten.tw");
+fn opt_vector_append_loop_seeded_rewritten_to_builder_from() {
+    let module = compile_opt("tests/opt/vector_append_loop_seeded_not_rewritten.tw");
     assert_eq!(
-        count_calls_to(&module, VECTOR_PUSH),
+        count_calls_to(&module, VECTOR_APPEND),
         0,
-        "Expected no VECTOR_PUSH in seeded rewritten fixture"
+        "Expected no VECTOR_APPEND in seeded rewritten fixture"
     );
     assert_eq!(
         count_calls_to(&module, VECTOR_BUILDER_FROM),
@@ -1007,17 +1007,17 @@ fn opt_vector_push_loop_seeded_rewritten_to_builder_from() {
 }
 
 #[test]
-fn opt_vector_push_loop_negative_cases_not_rewritten() {
+fn opt_vector_append_loop_negative_cases_not_rewritten() {
     let fixtures = [
-        "tests/opt/vector_push_loop_reads_acc_not_rewritten.tw",
-        "tests/opt/vector_push_loop_captured_not_rewritten.tw",
+        "tests/opt/vector_append_loop_reads_acc_not_rewritten.tw",
+        "tests/opt/vector_append_loop_captured_not_rewritten.tw",
     ];
 
     for path in fixtures {
         let module = compile_opt(path);
         assert!(
-            has_call_to(&module, VECTOR_PUSH),
-            "Expected VECTOR_PUSH to remain in {}",
+            has_call_to(&module, VECTOR_APPEND),
+            "Expected VECTOR_APPEND to remain in {}",
             path
         );
         assert!(
@@ -1039,27 +1039,27 @@ fn opt_vector_push_loop_negative_cases_not_rewritten() {
 }
 
 #[test]
-fn opt_vector_push_loop_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_push_loop_unique.tw", &["3", "6"]);
+fn opt_vector_append_loop_runtime_semantics() {
+    assert_runtime_output("tests/opt/vector_append_loop_unique.tw", &["3", "6"]);
     assert_runtime_output(
-        "tests/opt/vector_push_loop_seeded_not_rewritten.tw",
+        "tests/opt/vector_append_loop_seeded_not_rewritten.tw",
         &["10", "4"],
     );
     assert_runtime_output(
-        "tests/opt/vector_push_loop_reads_acc_not_rewritten.tw",
+        "tests/opt/vector_append_loop_reads_acc_not_rewritten.tw",
         &["0", "1", "2", "3"],
     );
     assert_runtime_output(
-        "tests/opt/vector_push_loop_captured_not_rewritten.tw",
+        "tests/opt/vector_append_loop_captured_not_rewritten.tw",
         &["0", "1", "2", "3"],
     );
 }
 
 #[test]
-fn opt_vector_push_loop_seeded_runtime_wasm_semantics() {
+fn opt_vector_append_loop_seeded_runtime_wasm_semantics() {
     // Regression guard for builder_from capacity correctness in Wasm runtime path.
     assert_runtime_output_wasm(
-        "tests/opt/vector_push_loop_seeded_not_rewritten.tw",
+        "tests/opt/vector_append_loop_seeded_not_rewritten.tw",
         &["10", "4"],
     );
 }

@@ -49,7 +49,7 @@ pub mod prelude {
     pub const STRING_CONCAT: FuncId = FuncId(9);
 
     pub const VECTOR_LEN: FuncId = FuncId(10);
-    pub const VECTOR_PUSH: FuncId = FuncId(11);
+    pub const VECTOR_APPEND: FuncId = FuncId(11);
 
     pub const VECTOR_SET_UNSAFE: FuncId = FuncId(12); // Vector.set_unsafe(vec, idx, val) -> Vector<T>
     pub const DICT_SET: FuncId = FuncId(13); // Dict.set(m, k, v) -> Dict<K,V>

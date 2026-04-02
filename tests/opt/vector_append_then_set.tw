@@ -1,4 +1,4 @@
-// Uniqueness should propagate through consuming VECTOR_PUSH + reassignment,
+// Uniqueness should propagate through consuming VECTOR_APPEND + reassignment,
 // so a subsequent index update can rewrite in-place.
 
 fn make() Vector<Int> {

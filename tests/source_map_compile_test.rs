@@ -150,7 +150,7 @@ pub fn push(xs: Vector<Int>) Vector<Int> {
         "unexpected error:\n{}",
         msg
     );
-    assert!(msg.contains("Vector.push"), "unexpected error:\n{}", msg);
+    assert!(msg.contains("Vector.append"), "unexpected error:\n{}", msg);
     assert!(msg.contains("arity mismatch"), "unexpected error:\n{}", msg);
 }
 

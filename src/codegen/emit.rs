@@ -8642,11 +8642,11 @@ mod tests {
 
         let entry = ctx
             .prelude
-            .get(&prelude_ids::VECTOR_PUSH)
+            .get(&prelude_ids::VECTOR_APPEND)
             .cloned()
             .expect("missing prelude entry");
         let instrs = emit_prelude_call(
-            prelude_ids::VECTOR_PUSH,
+            prelude_ids::VECTOR_APPEND,
             &entry,
             &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
             &ref_array_null(),
@@ -8682,11 +8682,11 @@ mod tests {
 
         let entry = ctx
             .prelude
-            .get(&prelude_ids::VECTOR_PUSH)
+            .get(&prelude_ids::VECTOR_APPEND)
             .cloned()
             .expect("missing prelude entry");
         let instrs = emit_prelude_call(
-            prelude_ids::VECTOR_PUSH,
+            prelude_ids::VECTOR_APPEND,
             &entry,
             &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
             &ref_vector_i64(),

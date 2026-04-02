@@ -162,7 +162,7 @@ pub fn suite() runner.Suite {
 
       // vector ops
       _ := reg.id("vector_len")
-      _ := reg.id("vector_push")
+      _ := reg.id("vector_append")
       _ := reg.id("vector_set_unsafe")
 
       // dict ops

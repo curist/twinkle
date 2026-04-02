@@ -35,10 +35,10 @@ pub fn suite() runner.Suite {
 
     .test("with_canonical adds entry to by_canonical index", fn() {
       reg := empty_registry()
-        .runtime("vector_push", "rt.arr", "push")
-        .with_canonical("Vector.push", "vector_push")
-      entry := try reg.entry_by_canonical("Vector.push").ok_or("not in by_canonical")
-      try assert.str_eq(entry.name, "vector_push")
+        .runtime("vector_append", "rt.arr", "push")
+        .with_canonical("Vector.append", "vector_append")
+      entry := try reg.entry_by_canonical("Vector.append").ok_or("not in by_canonical")
+      try assert.str_eq(entry.name, "vector_append")
       .Ok({})
     })
 
@@ -54,11 +54,11 @@ pub fn suite() runner.Suite {
     .test("id_by_canonical returns same FuncId as internal lookup", fn() {
       reg := empty_registry()
         .runtime("string_len", "rt.str", "len")
-        .runtime("vector_push", "rt.arr", "push")
+        .runtime("vector_append", "rt.arr", "push")
         .with_canonical("String.len", "string_len")
-        .with_canonical("Vector.push", "vector_push")
+        .with_canonical("Vector.append", "vector_append")
       try assert.int_eq(reg.id_by_canonical("String.len").id, reg.id("string_len").id)
-      try assert.int_eq(reg.id_by_canonical("Vector.push").id, reg.id("vector_push").id)
+      try assert.int_eq(reg.id_by_canonical("Vector.append").id, reg.id("vector_append").id)
       .Ok({})
     })
 
@@ -87,7 +87,7 @@ pub fn suite() runner.Suite {
     .test("full registry has canonical names for vector builtins", fn() {
       reg := make_builtin_registry()
       try assert.int_eq(reg.id_by_canonical("Vector.len").id,    reg.id("vector_len").id)
-      try assert.int_eq(reg.id_by_canonical("Vector.push").id,   reg.id("vector_push").id)
+      try assert.int_eq(reg.id_by_canonical("Vector.append").id,   reg.id("vector_append").id)
       try assert.int_eq(reg.id_by_canonical("Vector.concat").id, reg.id("vector_concat").id)
       try assert.int_eq(reg.id_by_canonical("Vector.get").id,    reg.id("vector_get").id)
       try assert.int_eq(reg.id_by_canonical("Vector.set").id,    reg.id("vector_set").id)

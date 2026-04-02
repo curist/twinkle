@@ -419,7 +419,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
   ])
   env = env.register_bound_methods("Vector", [
-    me("len", "vector_len"), me("push", "vector_push"), me("get", "vector_get"),
+    me("len", "vector_len"), me("push", "vector_append"), me("get", "vector_get"),
     me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
     me("make", "vector_make"),
     me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),

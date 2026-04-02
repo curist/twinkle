@@ -172,7 +172,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    .test("module-qualified Vector.push resolves without errors", fn() {
+    .test("module-qualified Vector.append resolves without errors", fn() {
       try resolve_ok_with_builtins("x: Vector<Int> = Vector.append([], 1)")
       .Ok({})
     })
@@ -204,7 +204,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    .test("dot-method Vector.push resolves without errors", fn() {
+    .test("dot-method Vector.append resolves without errors", fn() {
       try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.append(1)")
       .Ok({})
     })

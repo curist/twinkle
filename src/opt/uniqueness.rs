@@ -30,7 +30,7 @@ fn cow_op_info(func_id: FuncId) -> Option<CowOpInfo> {
             in_place_rewrite: Some(prelude::DICT_REMOVE_IN_PLACE),
             base_arg: 0,
         })
-    } else if func_id == prelude::VECTOR_PUSH {
+    } else if func_id == prelude::VECTOR_APPEND {
         // Growth update known to preserve uniqueness; loop-region rewrite handles
         // push with builder wrapping.
         Some(CowOpInfo {
@@ -335,7 +335,7 @@ fn is_cow_consume_reassign(
 }
 
 /// Analyze whether `base` is only used via consuming COW op + assign(base=result)
-/// patterns inside the loop body (vector push, dict set, dict remove, etc.).
+/// patterns inside the loop body (vector append, dict set, dict remove, etc.).
 ///
 /// Returns the number of valid sites if allowed, otherwise `None`.
 fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
@@ -378,7 +378,7 @@ fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
 
 /// Analyze whether the loop body uses `base` only via in-place-swappable COW ops
 /// (dict set/remove). Returns the count of such sites, or None if base is used
-/// in any other way (including vector push, which needs builder wrapping).
+/// in any other way (including vector append, which needs builder wrapping).
 fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
     match expr {
         AnfExpr::Let { local, op, body } => {
@@ -537,7 +537,7 @@ fn rewrite_loop_expr(expr: &mut AnfExpr, base: LocalId, builder: LocalId, sites:
         args,
     } = op.as_mut()
     {
-        if *func_id == prelude::VECTOR_PUSH
+        if *func_id == prelude::VECTOR_APPEND
             && args.len() == 2
             && atom_is_local(&args[0], base)
             && !atom_is_local(&args[1], base)
@@ -685,7 +685,7 @@ fn max_local_in_atom(atom: &Atom, max: &mut u32) {
 /// - Rewrite `VECTOR_SET_UNSAFE` -> `VECTOR_SET_IN_PLACE` when base is unique + consumed
 /// - Rewrite `DICT_SET`/`DICT_REMOVE` to uniqueness-safe in-place helpers
 /// - Annotate `ARecordUpdate` with `can_reuse_in_place=true` when base is unique + consumed
-/// - Preserve uniqueness across known COW updates (`VECTOR_PUSH`)
+/// - Preserve uniqueness across known COW updates (`VECTOR_APPEND`)
 pub fn uniqueness_rewrite(func: &mut AnfFunctionDef) {
     let tainted = collect_tainted(func);
     let mut unique = HashSet::new();
