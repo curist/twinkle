@@ -38,7 +38,6 @@ use tests.suites.insert_boundaries_suite
 use tests.suites.wat_suite
 use tests.suites.linker_suite
 use tests.suites.runtime_suite
-use tests.suites.codegen_integration_suite
 use tests.suites.module_loader_suite
 use tests.suites.dependency_graph_suite
 use tests.suites.query_keys_suite
@@ -89,7 +88,6 @@ runner.run_all([
   wat_suite.suite(),
   linker_suite.suite(),
   runtime_suite.suite(),
-  codegen_integration_suite.suite(),
   module_loader_suite.suite(),
   dependency_graph_suite.suite(),
   query_keys_suite.suite(),

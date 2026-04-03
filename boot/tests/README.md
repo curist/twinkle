@@ -2,7 +2,7 @@
 
 ## Running Tests
 
-Full suite (all 1100+ tests):
+Default suite (`main.tw`, excluding the slow codegen integration suite):
 
 ```bash
 cargo run --release -- run boot/tests/main.tw        # Wasm backend
@@ -22,6 +22,9 @@ Grouped entry points for faster iteration:
 ```bash
 cargo run --release -- run -i boot/tests/test_opt.tw
 ```
+
+`test_codegen.tw` still includes the slower `codegen integration (M11)` suite, but
+`main.tw` no longer does.
 
 The default reporter is compact: passing tests print `.`, failing tests print `x`,
 and failures are listed at the end. Set `TWK_TEST_REPORT=verbose` to restore the
