@@ -272,6 +272,32 @@ Currently `eliminate_defers` does not introduce aliasing.
 | Record update in-place | Complete |
 | Boot compiler mirror (Twinkle) | Partial (vector builder done; dict loop in progress) |
 
+## Follow-up Precision Plan
+
+This document is the canonical reference for the semantic contract and the
+current implementation. A separate follow-up plan,
+[`static-uniqueness-next.md`](./static-uniqueness-next.md), covers the next
+round of static-analysis precision work:
+
+- regaining uniqueness after guaranteed-fresh COW results
+- path-sensitive propagation through branches and merges
+- function-boundary summaries/specialization without runtime tracking
+
+That follow-up plan is intentionally static-only. Runtime refcounts or runtime
+uniqueness flags remain out of scope.
+
+## Baseline Measurements
+
+See [`docs/reports/cow-analysis-baseline.md`](../reports/cow-analysis-baseline.md)
+for a snapshot of COW operation counts across the full boot compiler
+(`boot/tests/main.tw`, 2887 functions, measured 2026-04-02).
+
+Reproduce with: `cargo test --release --test cow_analysis -- --nocapture`
+
+Key takeaway: **1144 COW operations remain** after optimization (~8% rewrite
+rate). The three biggest contributors are `VECTOR_APPEND` (751), `DICT_SET`
+(177), and `VECTOR_CONCAT` (106). Record updates (98) are entirely un-optimized.
+
 ## Testing Strategy
 
 Tests live in `tests/opt_test.rs` with fixtures in `tests/opt/*.tw`. Each
@@ -377,10 +403,12 @@ current compiler.
 
 ## Future Work
 
+Detailed next-step analysis work lives in
+[`static-uniqueness-next.md`](./static-uniqueness-next.md). The short version:
+
 - **`VECTOR_CONCAT` uniqueness:** Add alias analysis sufficient to prove
   `concat(a, b)` is safe when `b` is not a view into `a`.
 - **Loop-carried uniqueness across branches:** Tighten the conservative
   branch-merge rule when both sides provably produce the same unique local.
-- **Interprocedural `@noescape` inference:** Automatically infer that a
-  function does not retain its argument, without user annotations. Low priority
-  — most hot paths are already covered by known-COW/read-only sets.
+- **Function-boundary precision:** Add static summaries/specialization for
+  non-retaining helper functions, without introducing runtime tracking.
