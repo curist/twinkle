@@ -713,7 +713,7 @@ fn rewrite_expr(
     let bind_local = *local;
 
     // Region rewrite (Phase 3, conservative):
-    // Loop accumulator `xs = xs.push(v)` -> builder_new/push/freeze wrapping
+    // Loop accumulator `xs = xs.append(v)` -> builder_new/push/freeze wrapping
     // when `xs` is unique, non-escaped, and known-empty at loop entry.
     if let AnfOp::ALoop { body: loop_body } = op.as_ref() {
         let mut candidates = unique

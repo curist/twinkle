@@ -22,7 +22,7 @@ intended end state for supported concrete vector code paths.
 - `Vector<T>` is backed by `rt.arr` using a flat Wasm GC array (`rt_types__Array`).
 - `set`, `concat`, and `slice` allocate and copy.
 - The boot compiler's current collection contract is split:
-  - user-facing `Vector.push/get/set/make` are compiler intrinsics
+  - user-facing `Vector.append/get/set/make` are compiler intrinsics
   - raw runtime helpers are `len`, `set` (`vector_set_unsafe`), `concat`, `slice`
   - `collect` and loop-push rewrites depend on `builder_new`, `builder_from`,
     `builder_push`, and `builder_freeze`

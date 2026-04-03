@@ -317,7 +317,7 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .with_canonical("String.from_utf8",    "string_from_utf8")
     // Vector ops
     .with_canonical("Vector.len",    "vector_len")
-    .with_canonical("Vector.append",   "vector_append")
+    .with_canonical("Vector.append", "vector_append")
     .with_canonical("Vector.concat", "vector_concat")
     .with_canonical("Vector.slice",  "vector_slice")
     .with_canonical("Vector.get",    "vector_get")

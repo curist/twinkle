@@ -210,7 +210,7 @@ The public entry surface remains:
 - `Vector.make`
 - `Vector.get`
 - `Vector.set`
-- `Vector.push`
+- `Vector.append`
 - `Vector.len`
 - `Vector.concat`
 - `Vector.slice`

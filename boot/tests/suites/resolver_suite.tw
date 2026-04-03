@@ -526,7 +526,7 @@ pub fn suite() runner.Suite {
     })
     .test("builtin method: Vector.append", fn() {
       env := resolver.empty_env().register_builtin_methods()
-      case resolver.lookup_method(env, "Vector", "push") {
+      case resolver.lookup_method(env, "Vector", "append") {
         .Some(fn_name) => {
           try assert.str_eq(fn_name, "vector_append")
           .Ok({})

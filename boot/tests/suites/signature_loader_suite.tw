@@ -153,10 +153,10 @@ pub fn suite() runner.Suite {
 
     // ── Vector signatures ─────────────────────────────────────────────────────
 
-    .test("Vector group has push with type param T", fn() {
+    .test("Vector group has append with type param T", fn() {
       groups := try load_signatures(signatures_dir, builtin_type_env())
       group := try find_group(groups, "Vector").ok_or("no Vector group")
-      sig := try find_sig(group.sigs, "push").ok_or("no push sig")
+      sig := try find_sig(group.sigs, "append").ok_or("no append sig")
       try assert.int_eq(sig.type_params.len(), 1)
       try assert.str_eq(sig.type_params[0], "T")
       try assert.int_eq(sig.params.len(), 2)

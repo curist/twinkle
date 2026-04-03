@@ -1285,7 +1285,7 @@ Vectors are **immutable** sequences (`Vector<T>`).
 Vector operations via method or module syntax:
 
 * `vec.len() Int` / `Vector.len(vec) Int` — number of elements
-* `vec.push(value) Vector<T>` — returns new vector with value appended
+* `vec.append(value) Vector<T>` — returns new vector with value appended
 * `vec.concat(other) Vector<T>` / `Vector.concat(a, b) Vector<T>` — concatenate two vectors
 * `vec.slice(start, end) Vector<T>` / `Vector.slice(vec, start, end) Vector<T>` — subset `[start, end)`
 * `vec.get(i) Option<T>` — safe index access; returns `None` if out of bounds

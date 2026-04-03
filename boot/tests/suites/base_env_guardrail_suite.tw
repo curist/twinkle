@@ -207,7 +207,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("Vector.append resolves to vector_append", fn() {
-      fn_name := try require_method("Vector", "push")
+      fn_name := try require_method("Vector", "append")
       try assert.str_eq(fn_name, "vector_append")
       .Ok({})
     })

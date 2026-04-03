@@ -87,7 +87,7 @@ pub fn suite() runner.Suite {
     .test("full registry has canonical names for vector builtins", fn() {
       reg := make_builtin_registry()
       try assert.int_eq(reg.id_by_canonical("Vector.len").id,    reg.id("vector_len").id)
-      try assert.int_eq(reg.id_by_canonical("Vector.append").id,   reg.id("vector_append").id)
+      try assert.int_eq(reg.id_by_canonical("Vector.append").id, reg.id("vector_append").id)
       try assert.int_eq(reg.id_by_canonical("Vector.concat").id, reg.id("vector_concat").id)
       try assert.int_eq(reg.id_by_canonical("Vector.get").id,    reg.id("vector_get").id)
       try assert.int_eq(reg.id_by_canonical("Vector.set").id,    reg.id("vector_set").id)

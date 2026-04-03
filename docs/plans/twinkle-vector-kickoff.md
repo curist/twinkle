@@ -205,7 +205,7 @@ The first slice must preserve:
 
 - lowering contract for raw vector update helpers
 - public `Vector` entry-point ownership:
-  - `Vector.push`
+  - `Vector.append`
   - `Vector.get`
   - `Vector.set`
   - `Vector.make`
@@ -325,7 +325,7 @@ Tasks:
 - route concrete `Vector<Int>` `make/get/len/set/concat/slice/push` helper
   calls to typed family symbols
 - retarget builder helper families as part of the same typed-family switch
-- keep stage0 `Vector.push/get/set/make` intrinsics as the public entry points,
+- keep stage0 `Vector.append/get/set/make` intrinsics as the public entry points,
   but change their concrete implementation path to use the typed family
 - keep erased helpers only for unsupported or still-migrating cases
 
@@ -449,7 +449,7 @@ This kickoff plan is complete when all are true:
 2. `Vector<Int>` is wired end-to-end through that substrate.
 3. `boot/lib` contains the first Twinkle-authored persistent vector
    implementation slice.
-4. Public `Vector.push/get/set/make` remain intrinsic entry points for the
+4. Public `Vector.append/get/set/make` remain intrinsic entry points for the
    kickoff, but their concrete `Vector<Int>` path is routed through the typed
    family substrate.
 5. Builder and optimizer contracts still hold.
