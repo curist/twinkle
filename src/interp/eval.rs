@@ -1422,49 +1422,6 @@ impl<W: Write> Interpreter<W> {
                     "host.exit({code})"
                 ))));
             }
-            // Raw substrate Vector<Int> helpers — direct equivalents of rt.arr ops.
-            prelude_ids::RAW_VECTOR_I64_MAKE => self.call_builtin(prelude_ids::VECTOR_MAKE, args),
-            prelude_ids::RAW_VECTOR_I64_GET_UNCHECKED => {
-                // Unchecked get — returns the raw element directly.
-                match (&args[0], &args[1]) {
-                    (Value::Vec(elems), Value::Int(i)) => {
-                        let idx = *i as usize;
-                        if idx < elems.len() {
-                            Ok(elems[idx].clone())
-                        } else {
-                            Err(Signal::Trap(TrapError::ArrayIndexOutOfBounds {
-                                index: *i as usize,
-                                len: elems.len(),
-                            }))
-                        }
-                    }
-                    _ => panic!("raw_vector_i64_get_unchecked: wrong argument types"),
-                }
-            }
-            prelude_ids::RAW_VECTOR_I64_SET_UNCHECKED => {
-                self.call_builtin(prelude_ids::VECTOR_SET_UNSAFE, args)
-            }
-            prelude_ids::RAW_VECTOR_I64_LEN => self.call_builtin(prelude_ids::VECTOR_LEN, args),
-            prelude_ids::RAW_VECTOR_I64_PUSH => self.call_builtin(prelude_ids::VECTOR_APPEND, args),
-            prelude_ids::RAW_VECTOR_I64_CONCAT => {
-                self.call_builtin(prelude_ids::VECTOR_CONCAT, args)
-            }
-            prelude_ids::RAW_VECTOR_I64_SLICE_UNCHECKED => {
-                self.call_builtin(prelude_ids::VECTOR_SLICE, args)
-            }
-            // Raw substrate builder ops
-            prelude_ids::RAW_VECTOR_I64_BUILDER_NEW => {
-                self.call_builtin(prelude_ids::VECTOR_BUILDER_NEW, args)
-            }
-            prelude_ids::RAW_VECTOR_I64_BUILDER_FROM => {
-                self.call_builtin(prelude_ids::VECTOR_BUILDER_FROM, args)
-            }
-            prelude_ids::RAW_VECTOR_I64_BUILDER_PUSH => {
-                self.call_builtin(prelude_ids::VECTOR_BUILDER_PUSH, args)
-            }
-            prelude_ids::RAW_VECTOR_I64_BUILDER_FREEZE => {
-                self.call_builtin(prelude_ids::VECTOR_BUILDER_FREEZE, args)
-            }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
     }

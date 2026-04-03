@@ -46,10 +46,6 @@ impl ModuleEmitPlan {
         let module_ir =
             emit::emit_named_module_from_plan(self, anf, type_env, "user", &exported_names);
         let mut modules = crate::runtime::all_modules();
-        modules.extend(
-            crate::compiler_lib::all_modules()
-                .expect("compiler-owned library modules should build"),
-        );
         modules.push(module_ir);
         let linked = crate::wasm::linker::link(modules, None).expect("link should succeed");
         crate::wasm::emit::emit_wat(&linked)
