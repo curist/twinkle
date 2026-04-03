@@ -270,7 +270,7 @@ Currently `eliminate_defers` does not introduce aliasing.
 | Loop region rewrite: `VECTOR_APPEND -> builder` | Complete |
 | Loop callee-swap: `DICT_SET/REMOVE -> in-place` | Complete |
 | Record update in-place | Complete |
-| Boot compiler mirror (Twinkle) | Partial (vector builder done; dict loop in progress) |
+| Boot compiler mirror (Twinkle) | Complete (point, builder, dict loop, record in-place) |
 
 ## Follow-up Precision Plan
 
