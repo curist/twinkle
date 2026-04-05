@@ -54,14 +54,27 @@ from stage0, bootstrapping sequence)
 
 | Plan | Description |
 |------|-------------|
+| [pragmatic-persistent-vector.md](pragmatic-persistent-vector.md) | **Next up** — Replace flat COW vector with persistent bit-partitioned trie using existing `anyref` storage and `rt.arr` ABI |
+| [pragmatic-persistent-dict.md](pragmatic-persistent-dict.md) | **Next up** — Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage and `rt.dict` ABI |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
-| [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | Define the ABI-first artifact boundary by which stage0 consumes a Twinkle-authored `Vector<Int>` implementation from `boot/lib` (blocked on runtime import boundary) |
-| [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Provide extern/import mechanism for Twinkle library modules to bind runtime substrate symbols; prerequisite for boot/lib consumption |
 | [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
-| [persistent-vector.md](persistent-vector.md) | Move vector runtime from flat COW arrays to persistent tree structure |
-| [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Stage0-only `Vector<Int>` persistent-vector proof of concept with fixed-width trie nodes and unchanged bootlib ABI |
-| [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | First implementation slice for a Twinkle-authored persistent vector, integrated through the stage0 Wasm backend first |
-| [persistent-dict.md](persistent-dict.md) | Replace linear dict runtime with persistent HAMT |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |
+
+### Deferred — Persistent Data Structure Enhancements
+
+These plans defined a more ambitious architecture (typed per-element families,
+`boot/lib` ownership, runtime import boundaries) that was blocking progress.
+The pragmatic plans above supersede their **implementation strategy** while
+preserving them as future enhancement targets once the base trie/HAMT is
+working.
+
+| Plan | Description |
+|------|-------------|
+| [persistent-vector.md](persistent-vector.md) | Full typed-family persistent vector with per-element specialization |
+| [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Stage0-only `Vector<Int>` POC with typed `i64` trie nodes |
+| [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | Twinkle-authored persistent vector with `boot/lib` ownership |
+| [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | ABI boundary for stage0 to consume `boot/lib` vector artifact |
+| [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Extern/import mechanism for `boot/lib` to bind runtime substrate symbols |
+| [persistent-dict.md](persistent-dict.md) | Full typed-family persistent HAMT with per-key/value specialization |
