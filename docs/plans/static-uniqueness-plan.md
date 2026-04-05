@@ -410,18 +410,45 @@ Current staged rule:
 
 Measured impact so far:
 
-- `VECTOR_APPEND`: `237 -> 218`
-- `VECTOR_CONCAT`: `99 -> 59`
-- total remaining COW: `562 -> 503`
+- `VECTOR_APPEND`: `237 -> 193`
+- `VECTOR_CONCAT`: `99 -> 26`
+- total remaining COW: `562 -> 445`
+
+Additional R3 extensions landed in sessions after the initial plan:
+
+1. **Concat-result freshness propagation**: After `ys = xs.concat(rhs)`, the
+   result local is marked unique/fresh so downstream concat ops can use
+   `builder_from` on it. This unlocked many parser-heavy concat chains.
+
+2. **Early-return-aware if-join**: When one branch of an if always terminates
+   (return/break/continue), the continuation is only reachable via the other
+   branch. The join now uses the non-terminating branch's state directly
+   instead of intersecting, preserving `known_empty` and `builder_safe` facts
+   through early-return guard patterns. This unblocked all the parser functions
+   with `if !valid { append error; return }` guards before the first concat.
+
+3. **`source_fresh` tracking for non-empty array literals**: A new
+   `source_fresh` set tracks locally-allocated but non-empty array literals
+   moved to tainted locals via init. This acts as an additional bypass in
+   `base_can_start_builder_region` (alongside `known_empty` and
+   `builder_safe`), enabling loop/spine builder rewrites for initializers like
+   `lines := ["(module"]` that grow across multiple loops. The bypass is
+   intentionally NOT wired into `can_preserve_builder_uniqueness` in the
+   regular COW single-step path to prevent unsafe in-place rewrites after
+   opaque calls.
+
+4. **consume-reassign in `detect_dead_concat_base`**: The dead-base concat
+   detector now allows `xs = xs.concat(rhs)` (consume-reassign) patterns in
+   addition to the original `ys := xs.concat(rhs)` (dead-base) case.
 
 What remains for full R3:
 
-- broader alias checks than simple `rhs != base`
-- possibly loop concat cases with harmless intervening ops
-- more permissive mixed builder regions around harmless bookkeeping/read-only ops
-- any destructive left-fast-path formulation beyond the current builder lowering
-- branch-heavy parser concat shapes where the accumulator starts from a
-  non-empty diagnostics vector returned by a helper
+- single conditional appends in branches (e.g., `if ref_func_syms.len() > 0
+  { lines = lines.append(...) }`) — only worth addressing if a multi-step
+  builder threshold lowering is accepted
+- early-return-inside-loop patterns where the loop body has return statements
+  that reference the accumulator (e.g., `parse_prefix` StringStart)
+- concat of two shared/parameter-derived vectors (fundamentally COW)
 
 ## Phase R4: Broader helper summaries
 
