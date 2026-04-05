@@ -45,6 +45,11 @@ cargo run --release -- run boot/tests/main.tw
 - In documentation and commit messages, focus on **what/why/how**, not quantitative details
 - Example: Instead of "Added 7 tests with 16 assertions", write "Added tests covering nested scopes, closures, and variable shadowing"
 
+**Commit message style:**
+- Match the style of recent repository commits.
+- Use a short imperative subject line.
+- Include a body for non-trivial changes explaining what changed and why.
+- Only add `Co-Authored-By` trailers when they are actually correct for the current session/tooling.
 
 ## Language Architecture
 
