@@ -1,0 +1,25 @@
+// Refreshed tainted dict parameter should rewrite loop sets in place.
+// Expected output:
+//   3
+//   1
+//   2
+
+fn build(seed: Dict<String, Int>) Dict<String, Int> {
+    d := seed
+    d = Dict.new()
+    for i in range(3) {
+        d["k_${i}"] = i
+    }
+    d
+}
+
+result := build(Dict.new())
+println("${result.len()}")
+case result["k_1"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case result["k_2"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}

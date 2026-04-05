@@ -1,0 +1,25 @@
+// Param updated twice via assign-back into the same local.
+// After refreshed-state reuse is applied to call-based COW rewrites, the
+// second set should rewrite in-place while the first remains COW.
+// Expected output:
+//   2
+//   10
+//   20
+
+fn update_twice(d: Dict<String, Int>) Dict<String, Int> {
+    d["a"] = 10
+    d["b"] = 20
+    d
+}
+
+base: Dict<String, Int> = Dict.new()
+result := update_twice(base)
+println("${result.len()}")
+case result["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case result["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}

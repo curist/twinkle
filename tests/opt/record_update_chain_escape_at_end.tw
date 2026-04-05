@@ -1,0 +1,24 @@
+// Phase A for record updates: sequential record updates on a fresh local that
+// escapes only at function end should still be eligible for in-place reuse.
+// Expected output:
+//   10
+//   20
+//   30
+//   4
+
+type Rec = .{ a: Int, b: Int, c: Int }
+type Wrapper = .{ inner: Rec }
+
+fn build() Wrapper {
+    r := Rec.{ a: 1, b: 2, c: 3 }
+    r.a = 10
+    r.b = 20
+    r.c = 30
+    Wrapper.{ inner: r }
+}
+
+w := build()
+println(w.inner.a.to_string())
+println(w.inner.b.to_string())
+println(w.inner.c.to_string())
+println((w.inner.a / 10 + w.inner.b / 20 + w.inner.c / 30 + 1).to_string())

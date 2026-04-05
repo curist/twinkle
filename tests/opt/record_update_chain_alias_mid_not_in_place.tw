@@ -1,0 +1,19 @@
+// Phase A negative for record updates: aliasing the record mid-chain means the
+// later update must not be marked reusable in place.
+// Expected output:
+//   1
+//   9
+
+type Point = .{ x: Int, y: Int }
+type Wrapper = .{ point: Point }
+
+fn build() Wrapper {
+    p := Point.{ x: 1, y: 2 }
+    q := p
+    p.y = 9
+    println(q.y.to_string())
+    Wrapper.{ point: p }
+}
+
+w := build()
+println(w.point.y.to_string())

@@ -276,6 +276,14 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             vec![ref_array_null()],
             vec![ref_array_null()],
         )),
+        id if id == prelude_ids::VECTOR_BUILDER_EXTEND => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "builder_extend",
+            "rt_arr__builder_extend",
+            vec![ref_array_null(), ref_array_null()],
+            vec![],
+        )),
         id if id == prelude_ids::HOST_READ_FILE => Some(PreludeEntry::runtime(
             twinkle_name,
             "host",

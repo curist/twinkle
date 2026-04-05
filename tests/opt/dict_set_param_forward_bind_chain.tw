@@ -1,0 +1,28 @@
+// Forwarding binds between a COW result and assign-back should still count as
+// consume-reassign. After relaxed consume-reassign recognition, the first set
+// refreshes `d` through `tmp -> tmp2 -> d`, so the second set can rewrite
+// in-place.
+// Expected output:
+//   2
+//   10
+//   20
+
+fn update_twice(d: Dict<String, Int>) Dict<String, Int> {
+    tmp := Dict.set(d, "a", 10)
+    tmp2 := tmp
+    d = tmp2
+    d["b"] = 20
+    d
+}
+
+base: Dict<String, Int> = Dict.new()
+result := update_twice(base)
+println("${result.len()}")
+case result["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case result["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}

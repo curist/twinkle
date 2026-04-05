@@ -276,7 +276,7 @@ Currently `eliminate_defers` does not introduce aliasing.
 
 This document is the canonical reference for the semantic contract and the
 current implementation. A separate follow-up plan,
-[`static-uniqueness-next.md`](./static-uniqueness-next.md), covers the next
+[`static-uniqueness-plan.md`](./static-uniqueness-plan.md), covers the next
 round of static-analysis precision work:
 
 - regaining uniqueness after guaranteed-fresh COW results
@@ -404,7 +404,7 @@ current compiler.
 ## Future Work
 
 Detailed next-step analysis work lives in
-[`static-uniqueness-next.md`](./static-uniqueness-next.md). The short version:
+[`static-uniqueness-plan.md`](./static-uniqueness-plan.md). The short version:
 
 - **`VECTOR_CONCAT` uniqueness:** Add alias analysis sufficient to prove
   `concat(a, b)` is safe when `b` is not a view into `a`.

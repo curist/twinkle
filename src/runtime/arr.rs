@@ -14,6 +14,7 @@ pub fn make() -> ModuleIR {
     m.funcs.push(builder_new_fn());
     m.funcs.push(builder_from_fn());
     m.funcs.push(builder_push_fn());
+    m.funcs.push(builder_extend_fn());
     m.funcs.push(builder_freeze_fn());
 
     for f in &m.funcs {
@@ -428,6 +429,177 @@ fn builder_push_fn() -> FuncDef {
             ValType::I32,     // p4: cap
             ValType::I32,     // p5: new_cap
             ref_array_null(), // p6: new_buf
+        ],
+        body,
+    }
+}
+
+/// `builder_extend(builder: Array, vec: Array) -> void`
+///
+/// Append all elements of `vec` to the builder in one bulk-copy operation.
+fn builder_extend_fn() -> FuncDef {
+    // Params:
+    //   p0 = builder (ref null $Array)
+    //   p1 = vec     (ref null $Array)
+    //
+    // Locals:
+    //   p2 = buf      (ref null $Array)
+    //   p3 = len      (i32)
+    //   p4 = cap      (i32)
+    //   p5 = rhs_len  (i32)
+    //   p6 = needed   (i32)
+    //   p7 = new_cap  (i32)
+    //   p8 = new_buf  (ref null $Array)
+    let body = vec![
+        // p2 = builder[0] as Array
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(0),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.into()),
+        },
+        Instr::LocalSet(2),
+        // p3 = unbox(builder[1])
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(1),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: false,
+            heap: HeapType::Named(T_BOXED_INT.into()),
+        },
+        Instr::StructGet(T_BOXED_INT.into(), 0),
+        Instr::I32WrapI64,
+        Instr::LocalSet(3),
+        // p4 = unbox(builder[2])
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(2),
+        Instr::ArrayGet(T_ARRAY.into()),
+        Instr::RefCast {
+            nullable: false,
+            heap: HeapType::Named(T_BOXED_INT.into()),
+        },
+        Instr::StructGet(T_BOXED_INT.into(), 0),
+        Instr::I32WrapI64,
+        Instr::LocalSet(4),
+        // p5 = len(vec)
+        Instr::LocalGet(1),
+        Instr::RefAsNonNull,
+        Instr::ArrayLen,
+        Instr::LocalSet(5),
+        // p6 = len + rhs_len
+        Instr::LocalGet(3),
+        Instr::LocalGet(5),
+        Instr::I32Add,
+        Instr::LocalSet(6),
+        // if rhs_len == 0 { return }
+        Instr::LocalGet(5),
+        Instr::I32Eqz,
+        Instr::If {
+            result: None,
+            then_body: vec![],
+            else_body: vec![
+                // if needed <= cap, copy directly into existing buffer
+                Instr::LocalGet(6),
+                Instr::LocalGet(4),
+                Instr::I32LeS,
+                Instr::If {
+                    result: None,
+                    then_body: vec![
+                        Instr::LocalGet(2),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(1),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(0),
+                        Instr::LocalGet(5),
+                        Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(1),
+                        Instr::LocalGet(6),
+                        Instr::I64ExtendI32S,
+                        Instr::StructNew(T_BOXED_INT.into()),
+                        Instr::ArraySet(T_ARRAY.into()),
+                    ],
+                    else_body: vec![
+                        // new_cap = needed
+                        Instr::LocalGet(6),
+                        Instr::LocalSet(7),
+                        // new_buf = array.new $Array (null, new_cap)
+                        Instr::RefNull(HeapType::None),
+                        Instr::LocalGet(7),
+                        Instr::ArrayNew(T_ARRAY.into()),
+                        Instr::LocalSet(8),
+                        // copy old prefix when len > 0
+                        Instr::LocalGet(3),
+                        Instr::I32Eqz,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![],
+                            else_body: vec![
+                                Instr::LocalGet(8),
+                                Instr::RefAsNonNull,
+                                Instr::I32Const(0),
+                                Instr::LocalGet(2),
+                                Instr::RefAsNonNull,
+                                Instr::I32Const(0),
+                                Instr::LocalGet(3),
+                                Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                            ],
+                        },
+                        // copy vec into new_buf[len .. len + rhs_len]
+                        Instr::LocalGet(8),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(1),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(0),
+                        Instr::LocalGet(5),
+                        Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                        // builder[0] = new_buf
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(0),
+                        Instr::LocalGet(8),
+                        Instr::ArraySet(T_ARRAY.into()),
+                        // builder[1] = BoxedInt(needed)
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(1),
+                        Instr::LocalGet(6),
+                        Instr::I64ExtendI32S,
+                        Instr::StructNew(T_BOXED_INT.into()),
+                        Instr::ArraySet(T_ARRAY.into()),
+                        // builder[2] = BoxedInt(new_cap)
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::I32Const(2),
+                        Instr::LocalGet(7),
+                        Instr::I64ExtendI32S,
+                        Instr::StructNew(T_BOXED_INT.into()),
+                        Instr::ArraySet(T_ARRAY.into()),
+                    ],
+                },
+            ],
+        },
+    ];
+
+    FuncDef {
+        name: "builder_extend".into(),
+        params: vec![ref_array_null(), ref_array_null()],
+        results: vec![],
+        locals: vec![
+            ref_array_null(), // p2: buf
+            ValType::I32,     // p3: len
+            ValType::I32,     // p4: cap
+            ValType::I32,     // p5: rhs_len
+            ValType::I32,     // p6: needed
+            ValType::I32,     // p7: new_cap
+            ref_array_null(), // p8: new_buf
         ],
         body,
     }

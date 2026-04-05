@@ -1,0 +1,24 @@
+// Forwarding helper-wrapped Dict.remove inside a loop should still rewrite in place.
+// Expected output:
+//   0
+
+fn drop_key(d: Dict<Int, Int>, k: Int) Dict<Int, Int> {
+    d2 := d
+    out := d2.remove(k)
+    out2 := out
+    out2
+}
+
+fn build_and_remove(n: Int) Dict<Int, Int> {
+    d: Dict<Int, Int> = Dict.new()
+    for i in range(n) {
+        d[i] = i
+    }
+    for i in range(n) {
+        d = drop_key(d, i)
+    }
+    d
+}
+
+result := build_and_remove(5)
+println("${result.len()}")

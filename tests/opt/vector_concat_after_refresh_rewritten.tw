@@ -1,0 +1,20 @@
+// Tainted local refreshed from a fresh non-empty vector should be eligible for
+// concat builder rewrite via builder_from.
+// Expected output:
+//   3
+//   6
+
+fn build(seed: Vector<Int>) Vector<Int> {
+    xs := seed
+    xs = [1, 2]
+    xs = xs.concat([3])
+    xs
+}
+
+xs := build([99])
+sum := 0
+for x in xs {
+    sum = sum + x
+}
+println("${xs.len()}")
+println("${sum}")

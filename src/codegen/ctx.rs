@@ -1970,7 +1970,9 @@ impl<'a> EmitCtx<'a> {
                         // specialised ValType.
                         self.infer_atom_mono(args.first()?)
                     }
-                    id if id == ids::VECTOR_BUILDER_PUSH => Some(MonoType::Void),
+                    id if id == ids::VECTOR_BUILDER_PUSH || id == ids::VECTOR_BUILDER_EXTEND => {
+                        Some(MonoType::Void)
+                    }
                     id if id == ids::VECTOR_BUILDER_FREEZE => {
                         infer_vector_mono_from_builder_atom(args.first()?, self)
                     }
@@ -2419,6 +2421,17 @@ pub(crate) fn vector_builder_mutation_from_op(
                     return None;
                 };
                 let incoming = ctx.infer_atom_mono(args.get(1)?);
+                let merged =
+                    merge_vector_builder_elem(ctx.local_vector_builder_elem(*target), incoming);
+                Some((*target, merged))
+            }
+            Atom::AGlobalFunc(func_id)
+                if *func_id == crate::ir::lower::prelude::VECTOR_BUILDER_EXTEND =>
+            {
+                let Atom::ALocal(target) = args.first()? else {
+                    return None;
+                };
+                let incoming = infer_vector_elem_mono(args.get(1)?, ctx);
                 let merged =
                     merge_vector_builder_elem(ctx.local_vector_builder_elem(*target), incoming);
                 Some((*target, merged))

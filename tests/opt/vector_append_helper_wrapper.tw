@@ -1,0 +1,22 @@
+// Characterization fixture: append wrapped in a helper function.
+// Without function summaries/inlining, the helper body still contains
+// VECTOR_APPEND and the caller can't trigger builder rewriting.
+// Expected output:
+//   3
+//   3
+
+fn step(xs: Vector<Int>, x: Int) Vector<Int> {
+    xs.append(x)
+}
+
+fn build() Vector<Int> {
+    xs: Vector<Int> = []
+    xs = step(xs, 1)
+    xs = step(xs, 2)
+    xs = step(xs, 3)
+    xs
+}
+
+out := build()
+println("${out.len()}")
+println("${out[2]}")

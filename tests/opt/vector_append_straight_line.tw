@@ -1,0 +1,18 @@
+// Straight-line append chain on a unique local should rewrite to builder ops.
+// Expected output:
+//   5
+//   50
+
+fn make() Vector<Int> {
+    xs: Vector<Int> = []
+    xs = xs.append(10)
+    xs = xs.append(20)
+    xs = xs.append(30)
+    xs = xs.append(40)
+    xs = xs.append(50)
+    xs
+}
+
+out := make()
+println("${out.len()}")
+println("${out[4]}")

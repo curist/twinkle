@@ -1,0 +1,24 @@
+// Tiny helper wrapper around Dict.remove should let the caller rewrite to
+// __dict_remove_in_place once the dict is known unique.
+// Expected output:
+//   0
+//   false
+//   true
+
+fn drop_key(d: Dict<String, Int>, k: String) Dict<String, Int> {
+    d.remove(k)
+}
+
+fn build() Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    d["a"] = 1
+    d["b"] = 2
+    d = drop_key(d, "z")
+    d = drop_key(d, "a")
+    d
+}
+
+out := build()
+println("${out.len()}")
+println("${out.has("a")}")
+println("${out.has("b")}")

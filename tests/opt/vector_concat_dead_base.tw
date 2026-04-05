@@ -1,0 +1,19 @@
+// Dead-base concat should rewrite to builder setup + extend + freeze even when
+// the concat result is bound to a new name instead of assigned back.
+// Expected output:
+//   4
+//   10
+
+fn build() Vector<Int> {
+    xs := [1, 2]
+    ys := xs.concat([3, 4])
+    ys
+}
+
+out := build()
+sum := 0
+for x in out {
+    sum = sum + x
+}
+println("${out.len()}")
+println("${sum}")

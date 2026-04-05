@@ -1,0 +1,17 @@
+// Phase A negative: dict is aliased mid-chain before a set.
+// The alias means the set could be observed through `snapshot`, so it must NOT
+// be rewritten to in-place.
+// Expected output:
+//   0
+//   1
+
+fn build() Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    snapshot := d
+    d["a"] = 10
+    println("${snapshot.len()}")
+    d
+}
+
+out := build()
+println("${out.len()}")

@@ -1,0 +1,24 @@
+// Tiny wrapper with transparent forwarding binds around append should still let
+// the caller rewrite to builder operations.
+// Expected output:
+//   3
+//   3
+
+fn step(xs: Vector<Int>, x: Int) Vector<Int> {
+    ys := xs
+    out := ys.append(x)
+    out2 := out
+    out2
+}
+
+fn build() Vector<Int> {
+    xs: Vector<Int> = []
+    xs = step(xs, 1)
+    xs = step(xs, 2)
+    xs = step(xs, 3)
+    xs
+}
+
+out := build()
+println("${out.len()}")
+println("${out[2]}")

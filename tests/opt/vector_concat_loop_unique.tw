@@ -1,0 +1,25 @@
+// Loop concat on an empty accumulator should rewrite to
+// builder_new/extend/freeze.
+// Expected output:
+//   6
+//   21
+
+type Out = .{ values: Vector<Int>, sum: Int }
+
+fn build() Out {
+    xs: Vector<Int> = []
+    for i in range(3) {
+        xs = xs.concat([i, i + 10])
+    }
+
+    sum := 0
+    for x in xs {
+        sum = sum + x
+    }
+
+    Out.{ values: xs, sum: sum }
+}
+
+out := build()
+println("${out.values.len()}")
+println("${out.sum}")

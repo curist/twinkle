@@ -1,0 +1,22 @@
+// Mixed append + concat chain on an empty accumulator should rewrite to one
+// builder region using push + extend.
+// Expected output:
+//   6
+//   63
+
+fn build() Vector<Int> {
+    xs: Vector<Int> = []
+    xs = xs.append(1)
+    xs = xs.concat([2, 3])
+    xs = xs.append(4)
+    xs = xs.concat([5, 6])
+    xs
+}
+
+xs := build()
+sum := 0
+for x in xs {
+    sum = sum + x * 3
+}
+println("${xs.len()}")
+println("${sum}")

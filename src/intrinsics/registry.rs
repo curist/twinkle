@@ -231,6 +231,13 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
+    spec!(
+        VECTOR_BUILDER_EXTEND,
+        "__vector_builder_extend",
+        Runtime,
+        false,
+        false
+    ),
     spec!(BYTE_TO_INT, "Byte.to_int", Intrinsic, true, true, ByteToInt),
     spec!(
         BYTE_FROM_INT,

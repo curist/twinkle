@@ -1,0 +1,27 @@
+// Tiny wrapper with transparent forwarding binds around Dict.remove should still
+// let caller-side updates rewrite in place.
+// Expected output:
+//   1
+//   false
+//   true
+
+fn drop_key(d: Dict<String, Int>, k: String) Dict<String, Int> {
+    d2 := d
+    out := d2.remove(k)
+    out2 := out
+    out2
+}
+
+fn build() Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    d["a"] = 1
+    d["b"] = 2
+    d = drop_key(d, "z")
+    d = drop_key(d, "a")
+    d
+}
+
+out := build()
+println("${out.len()}")
+println("${out.has("a")}")
+println("${out.has("b")}")

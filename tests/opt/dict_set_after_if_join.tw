@@ -1,0 +1,45 @@
+// Characterization fixture: a tainted dict parameter is updated in both
+// branches, then updated again after the join. Each branch produces a fresh
+// result, but the current optimizer does not propagate refreshed/unique facts
+// out of the branch, so the post-join update also remains COW.
+// Expected output:
+//   2
+//   10
+//   30
+//   2
+//   20
+//   30
+
+fn build(flag: Bool, d: Dict<String, Int>) Dict<String, Int> {
+    if flag {
+        d["a"] = 10
+    } else {
+        d["b"] = 20
+    }
+    d["c"] = 30
+    d
+}
+
+left_base: Dict<String, Int> = Dict.new()
+left := build(true, left_base)
+println("${left.len()}")
+case left["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case left["c"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+
+right_base: Dict<String, Int> = Dict.new()
+right := build(false, right_base)
+println("${right.len()}")
+case right["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case right["c"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}

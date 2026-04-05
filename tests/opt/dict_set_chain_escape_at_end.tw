@@ -1,0 +1,32 @@
+// Phase A: sequential dict sets on a fresh local that escapes only at function end.
+// The reassign-aware taint refinement should untaint `d` so all sets are in-place.
+// Expected output:
+//   3
+//   10
+//   20
+//   30
+
+type Wrapper = .{ data: Dict<String, Int> }
+
+fn build() Wrapper {
+    d: Dict<String, Int> = Dict.new()
+    d["a"] = 10
+    d["b"] = 20
+    d["c"] = 30
+    Wrapper.{ data: d }
+}
+
+w := build()
+println("${w.data.len()}")
+case w.data["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case w.data["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case w.data["c"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}

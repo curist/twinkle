@@ -1,77 +1,300 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom};
+use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use crate::ir::core::{CorePattern, FuncId, LocalId};
 use crate::ir::lower::prelude;
 use crate::opt::liveness::live_after;
 
-// ── Known COW operations ─────────────────────────────────────────────────────
+// ── Unified operation semantics table ────────────────────────────────────────
+//
+// Central classification of every known intrinsic for the uniqueness optimizer.
+//
+// All analysis (taint pre-scan, point rewrites, loop rewrites, wrapper
+// summaries, straight-line builder rewrites) queries this single table
+// instead of ad-hoc per-operation checks scattered across the pass.
 
-struct CowOpInfo {
-    // If present, the call may be rewritten to this in-place intrinsic when
-    // the base local is unique + consumed.
-    in_place_rewrite: Option<FuncId>,
-    base_arg: usize,
+#[derive(Debug, Clone)]
+struct OpSemantics {
+    /// Index of the "base" collection argument (the one being COW-updated).
+    /// `None` for read-only ops and fresh producers.
+    base_arg: Option<usize>,
+
+    /// Direct callee-swap in-place variant (e.g. DICT_SET → DICT_SET_IN_PLACE).
+    in_place_id: Option<FuncId>,
+
+    /// True if, when the base is shared, the COW path produces a fresh copy.
+    /// Enables Phase B "fresh-after-COW" reasoning.
+    fresh_if_copied: bool,
+
+    /// True if this op never retains or aliases any of its arguments and is
+    /// otherwise observationally read-only with respect to them.
+    no_retain_read_only: bool,
+
+    /// True if this call does not retain or alias any argument, even if it is
+    /// not a pure read-only query. This stays separate from
+    /// `no_retain_read_only` so allocating combinators like VECTOR_CONCAT can
+    /// avoid tainting their inputs without being treated as harmless
+    /// bookkeeping during builder-region scans.
+    no_retain_args: bool,
+
+    /// True if this op always produces a fresh unique value with no base arg
+    /// (e.g. DICT_NEW, VECTOR_MAKE, VECTOR_BUILDER_FREEZE).
+    fresh_producer: bool,
+
+    /// True if this COW update participates in the vector builder rewrite
+    /// (VECTOR_APPEND → VECTOR_BUILDER_PUSH lifecycle).
+    builder_rewritable: bool,
 }
 
-fn cow_op_info(func_id: FuncId) -> Option<CowOpInfo> {
-    if func_id == prelude::VECTOR_SET_UNSAFE {
+/// Derived view for COW update operations (those with a base arg).
+/// Returned by `resolve_cow_call` so call sites get a guaranteed `usize` base.
+struct CowOpInfo {
+    base_arg: usize,
+    in_place_id: Option<FuncId>,
+    fresh_if_copied: bool,
+    builder_rewritable: bool,
+}
+
+impl OpSemantics {
+    fn as_cow_info(&self) -> Option<CowOpInfo> {
         Some(CowOpInfo {
-            in_place_rewrite: Some(prelude::VECTOR_SET_IN_PLACE),
-            base_arg: 0,
+            base_arg: self.base_arg?,
+            in_place_id: self.in_place_id,
+            fresh_if_copied: self.fresh_if_copied,
+            builder_rewritable: self.builder_rewritable,
         })
-    } else if func_id == prelude::DICT_SET {
-        Some(CowOpInfo {
-            in_place_rewrite: Some(prelude::DICT_SET_IN_PLACE),
-            base_arg: 0,
-        })
-    } else if func_id == prelude::DICT_REMOVE {
-        Some(CowOpInfo {
-            in_place_rewrite: Some(prelude::DICT_REMOVE_IN_PLACE),
-            base_arg: 0,
-        })
-    } else if func_id == prelude::VECTOR_APPEND {
-        // Growth update known to preserve uniqueness; loop-region rewrite handles
-        // push with builder wrapping.
-        Some(CowOpInfo {
-            in_place_rewrite: None,
-            base_arg: 0,
-        })
-    } else {
-        None
     }
 }
 
-fn is_no_retain_read_only(func_id: FuncId) -> bool {
-    func_id == prelude::VECTOR_LEN
+fn op_semantics(func_id: FuncId) -> Option<OpSemantics> {
+    // ── COW update ops ───────────────────────────────────────────────────
+    if func_id == prelude::VECTOR_SET_UNSAFE {
+        return Some(OpSemantics {
+            base_arg: Some(0),
+            in_place_id: Some(prelude::VECTOR_SET_IN_PLACE),
+            fresh_if_copied: true,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: false,
+            builder_rewritable: false,
+        });
+    }
+    if func_id == prelude::DICT_SET {
+        return Some(OpSemantics {
+            base_arg: Some(0),
+            in_place_id: Some(prelude::DICT_SET_IN_PLACE),
+            fresh_if_copied: true,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: false,
+            builder_rewritable: false,
+        });
+    }
+    if func_id == prelude::DICT_REMOVE {
+        return Some(OpSemantics {
+            base_arg: Some(0),
+            in_place_id: Some(prelude::DICT_REMOVE_IN_PLACE),
+            fresh_if_copied: true,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: false,
+            builder_rewritable: false,
+        });
+    }
+    if func_id == prelude::VECTOR_APPEND {
+        return Some(OpSemantics {
+            base_arg: Some(0),
+            in_place_id: None,
+            fresh_if_copied: false,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: false,
+            builder_rewritable: true,
+        });
+    }
+    if func_id == prelude::VECTOR_CONCAT {
+        return Some(OpSemantics {
+            base_arg: None,
+            in_place_id: None,
+            fresh_if_copied: false,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: false,
+            builder_rewritable: false,
+        });
+    }
+    // ── Read-only / no-retain ops ────────────────────────────────────────
+    if func_id == prelude::VECTOR_LEN
+        || func_id == prelude::VECTOR_GET
         || func_id == prelude::DICT_LEN
         || func_id == prelude::DICT_HAS
         || func_id == prelude::DICT_GET
         || func_id == prelude::DICT_GET_UNSAFE
         || func_id == prelude::DICT_KEYS
+    {
+        return Some(OpSemantics {
+            base_arg: None,
+            in_place_id: None,
+            fresh_if_copied: false,
+            no_retain_read_only: true,
+            no_retain_args: true,
+            fresh_producer: false,
+            builder_rewritable: false,
+        });
+    }
+    // ── Fresh producers ──────────────────────────────────────────────────
+    if func_id == prelude::VECTOR_MAKE
+        || func_id == prelude::VECTOR_BUILDER_FREEZE
+        || func_id == prelude::DICT_NEW
+    {
+        return Some(OpSemantics {
+            base_arg: None,
+            in_place_id: None,
+            fresh_if_copied: false,
+            no_retain_read_only: false,
+            no_retain_args: false,
+            fresh_producer: true,
+            builder_rewritable: false,
+        });
+    }
+    None
 }
 
-/// Info for a COW op that can be rewritten to an in-place variant inside a loop
-/// by simply swapping the callee (no builder lifecycle needed).
-struct InPlaceSwapInfo {
-    in_place_id: FuncId,
-    base_arg: usize,
+fn is_no_retain_read_only(func_id: FuncId) -> bool {
+    op_semantics(func_id).map_or(false, |s| s.no_retain_read_only)
 }
 
-/// Check if a func_id is a COW op that can be rewritten to in-place by a simple
-/// callee swap (i.e., has an in_place_rewrite and doesn't need builder wrapping).
-fn in_place_swap_info(func_id: FuncId) -> Option<InPlaceSwapInfo> {
-    let info = cow_op_info(func_id)?;
-    Some(InPlaceSwapInfo {
-        in_place_id: info.in_place_rewrite?,
-        base_arg: info.base_arg,
-    })
+fn call_does_not_retain_args(func_id: FuncId) -> bool {
+    op_semantics(func_id).map_or(false, |s| s.no_retain_args)
 }
 
 fn alloc_local(next_local: &mut u32) -> LocalId {
     let local = LocalId(*next_local);
     *next_local += 1;
     local
+}
+
+#[derive(Debug, Clone)]
+pub struct TinyWrapperSummary {
+    pub wrapped_func: FuncId,
+    pub base_arg: usize,
+    pub arg_map: Vec<usize>,
+}
+
+pub fn collect_tiny_wrapper_summaries(module: &AnfModule) -> HashMap<FuncId, TinyWrapperSummary> {
+    let mut summaries = HashMap::new();
+    for func in &module.functions {
+        if let Some(summary) = summarize_tiny_wrapper(func) {
+            summaries.insert(func.func_id, summary);
+        }
+    }
+    summaries
+}
+
+fn summarize_tiny_wrapper(func: &AnfFunctionDef) -> Option<TinyWrapperSummary> {
+    let mut param_aliases = HashMap::new();
+    for (i, param) in func.params.iter().enumerate() {
+        param_aliases.insert(*param, i);
+    }
+
+    let mut cursor = &func.body;
+    loop {
+        let AnfExpr::Let { local, op, body } = cursor else {
+            return None;
+        };
+        match op.as_ref() {
+            AnfOp::AInit {
+                value: Atom::ALocal(source),
+            } => {
+                let param_index = *param_aliases.get(source)?;
+                param_aliases.insert(*local, param_index);
+                cursor = body;
+            }
+            AnfOp::ACall {
+                callee: Atom::AGlobalFunc(wrapped_func),
+                args,
+            } => {
+                let Some(info) = op_semantics(*wrapped_func).and_then(|s| s.as_cow_info()) else {
+                    return None;
+                };
+                if !info.builder_rewritable && info.in_place_id.is_none() {
+                    return None;
+                }
+                if args.len() != func.params.len() {
+                    return None;
+                }
+                let mut arg_map = Vec::with_capacity(args.len());
+                for arg in args {
+                    let Atom::ALocal(arg_local) = arg else {
+                        return None;
+                    };
+                    arg_map.push(*param_aliases.get(arg_local)?);
+                }
+
+                let mut result_local = *local;
+                let mut tail = body.as_ref();
+                loop {
+                    match tail {
+                        AnfExpr::Let {
+                            local,
+                            op,
+                            body: next,
+                        } => match op.as_ref() {
+                            AnfOp::AInit {
+                                value: Atom::ALocal(source),
+                            } if *source == result_local => {
+                                result_local = *local;
+                                tail = next;
+                            }
+                            _ => return None,
+                        },
+                        AnfExpr::Atom(Atom::ALocal(ret))
+                        | AnfExpr::Return(Some(Atom::ALocal(ret)))
+                            if *ret == result_local =>
+                        {
+                            return Some(TinyWrapperSummary {
+                                wrapped_func: *wrapped_func,
+                                base_arg: info.base_arg,
+                                arg_map,
+                            });
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn resolve_cow_call<'a>(
+    func_id: FuncId,
+    args: &'a [Atom],
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<(CowOpInfo, FuncId, Vec<&'a Atom>)> {
+    if let Some(info) = op_semantics(func_id).and_then(|s| s.as_cow_info()) {
+        return Some((info, func_id, args.iter().collect()));
+    }
+    let summary = wrappers.get(&func_id)?;
+    let info = op_semantics(summary.wrapped_func).and_then(|s| s.as_cow_info())?;
+    if args.len() != summary.arg_map.len() {
+        return None;
+    }
+    let resolved_args = summary
+        .arg_map
+        .iter()
+        .map(|param_index| args.get(*param_index))
+        .collect::<Option<Vec<_>>>()?;
+    Some((info, summary.wrapped_func, resolved_args))
+}
+
+fn base_can_rewrite(
+    base: LocalId,
+    tainted: &HashSet<LocalId>,
+    unique: &HashSet<LocalId>,
+    refreshed: &HashSet<LocalId>,
+) -> bool {
+    unique.contains(&base) && (!tainted.contains(&base) || refreshed.contains(&base))
 }
 
 // ── Fresh producer detection ─────────────────────────────────────────────────
@@ -82,28 +305,267 @@ fn is_fresh_producer(op: &AnfOp) -> bool {
         AnfOp::ACall {
             callee: Atom::AGlobalFunc(id),
             ..
-        } => {
-            *id == prelude::VECTOR_MAKE
-                || *id == prelude::VECTOR_BUILDER_FREEZE
-                || *id == prelude::DICT_NEW
-        }
+        } => op_semantics(*id).map_or(false, |s| s.fresh_producer),
         _ => false,
     }
 }
 
 // ── Pre-scan: collect tainted (aliased / escaped) locals ─────────────────────
 
-fn collect_tainted(func: &AnfFunctionDef) -> HashSet<LocalId> {
+fn collect_tainted(
+    func: &AnfFunctionDef,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> HashSet<LocalId> {
     let mut tainted = HashSet::new();
     // Function params come from outside — never unique.
     for p in &func.params {
         tainted.insert(*p);
     }
-    scan_tainted_expr(&func.body, &mut tainted, &HashSet::new());
+    scan_tainted_expr(&func.body, &mut tainted, &HashSet::new(), wrappers);
+
+    // Phase A: reassign-aware taint refinement.
+    // The pre-scan above is flow-insensitive — if a local escapes anywhere (e.g.
+    // stored into a record at function end), it's tainted everywhere. But for
+    // reassigned locals, `assign(d = r)` kills the old value. If every escape of
+    // `d` is followed by a reassign before the next use, the escape only affects
+    // the final version, not the intermediate ones that the optimizer can rewrite.
+    //
+    // Walk the top-level Let chain only (no recursion into branches/loops).
+    // For each tainted reassign-target, track whether it's currently escaped.
+    // A reassign resets the escaped flag. If we reach the end with escaped=false,
+    // remove the local from tainted.
+    refine_tainted_for_reassigned_locals(&func.body, &mut tainted);
+
     tainted
 }
 
-fn scan_tainted_expr(expr: &AnfExpr, tainted: &mut HashSet<LocalId>, live_out: &HashSet<LocalId>) {
+/// Phase A pass 2: for reassigned locals that were tainted only because of a
+/// terminal escape (stored in record/returned at end of function), check if all
+/// COW operations happen BEFORE the first escape. If so, the taint doesn't
+/// affect the COW ops and can be removed.
+///
+/// The key insight: if a local `d` is built linearly via COW ops and only
+/// escapes at the very end (e.g., stored in a record), the intermediate
+/// versions are never aliased. The pre-scan tainted `d` because it saw the
+/// final escape, but all COW ops saw a unique value.
+fn refine_tainted_for_reassigned_locals(body: &AnfExpr, tainted: &mut HashSet<LocalId>) {
+    // Collect locals that are COW-reassign targets on the top-level spine.
+    let mut cow_reassigned: HashSet<LocalId> = HashSet::new();
+    collect_cow_reassign_targets_spine(body, &mut cow_reassigned);
+
+    let candidates: Vec<LocalId> = cow_reassigned
+        .iter()
+        .copied()
+        .filter(|l| tainted.contains(l))
+        .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    for local in candidates {
+        if all_escapes_after_last_cow_use(body, local) {
+            tainted.remove(&local);
+        }
+    }
+}
+
+/// Collect locals that are targets of COW-consume-reassign on the top-level spine:
+///   let r = DICT_SET(d, ...) ; assign(d = r)
+///   let r = RecordUpdate(d, field, val) ; assign(d = r)
+fn collect_cow_reassign_targets_spine(expr: &AnfExpr, targets: &mut HashSet<LocalId>) {
+    let mut cursor = expr;
+    loop {
+        match cursor {
+            AnfExpr::Let { local, op, body } => {
+                // Check for COW call op followed by assign(target = result)
+                if let AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(func_id),
+                    args,
+                } = op.as_ref()
+                {
+                    if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
+                        if let Some(Atom::ALocal(base)) = args.get(info.base_arg) {
+                            if is_consume_reassign(body, *base, *local) {
+                                targets.insert(*base);
+                            }
+                        }
+                    }
+                }
+                // Check for record update followed by assign(target = result)
+                if let AnfOp::ARecordUpdate {
+                    base: Atom::ALocal(base),
+                    ..
+                } = op.as_ref()
+                {
+                    if is_consume_reassign(body, *base, *local) {
+                        targets.insert(*base);
+                    }
+                }
+                cursor = body;
+            }
+            _ => break,
+        }
+    }
+}
+
+/// Check that all escape points of `local` on the spine occur AFTER the last
+/// COW-base use of `local`. Also bail out if `local` appears in any nested
+/// scope (branch/loop/closure).
+///
+/// "Escape" = stored in record/array/variant, passed to non-COW call, captured.
+/// "COW-base use" = used as base arg in a COW op.
+///
+/// If this returns true, the local's taint doesn't affect any COW rewrite
+/// decision, so it can be safely removed.
+fn all_escapes_after_last_cow_use(body: &AnfExpr, local: LocalId) -> bool {
+    // Walk the spine and record positions of COW-base uses and escapes.
+    // We track: has_seen_escape (set when we see an escape), and check
+    // that no COW-base use occurs after an escape.
+    let mut seen_escape = false;
+    let mut cursor = body;
+
+    loop {
+        match cursor {
+            AnfExpr::Let { local: _, op, body } => {
+                // Bail out if local appears in a nested scope.
+                if op_has_local_in_nested_scope(op, local) {
+                    return false;
+                }
+
+                // Check if this is a COW-base use of local.
+                let is_cow_base = if let AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(func_id),
+                    args,
+                } = op.as_ref()
+                {
+                    if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
+                        args.get(info.base_arg)
+                            .map_or(false, |a| atom_is_local(a, local))
+                    } else {
+                        false
+                    }
+                } else if let AnfOp::ARecordUpdate {
+                    base: Atom::ALocal(b),
+                    ..
+                } = op.as_ref()
+                {
+                    *b == local
+                } else {
+                    false
+                };
+
+                if is_cow_base && seen_escape {
+                    // A COW op on local AFTER an escape — the escape could alias
+                    // the value the COW op sees. Not safe to untaint.
+                    return false;
+                }
+
+                // Check if this op escapes local.
+                if op_escapes_local(op, local) {
+                    seen_escape = true;
+                }
+
+                cursor = body;
+            }
+            _ => break,
+        }
+    }
+
+    // We need at least one escape (otherwise the local wouldn't be tainted by
+    // the spine, so this function shouldn't have been called — but be safe).
+    seen_escape
+}
+
+/// Check whether `op` uses `local` in a position that constitutes an escape
+/// (stored in container, passed to non-COW/non-read-only call, captured by closure).
+/// This mirrors the logic in `scan_tainted_op` but checks a specific local.
+fn op_escapes_local(op: &AnfOp, local: LocalId) -> bool {
+    match op {
+        AnfOp::AMakeClosure { free_vars, .. } => free_vars.contains(&local),
+        AnfOp::AArrayLit(elems) => elems.iter().any(|a| atom_is_local(a, local)),
+        AnfOp::ARecord { fields, .. } => fields.iter().any(|(_, a)| atom_is_local(a, local)),
+        AnfOp::AVariant { args, .. } => args.iter().any(|a| atom_is_local(a, local)),
+        AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } => {
+            if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
+                // COW op: only non-base args escape
+                args.iter()
+                    .enumerate()
+                    .any(|(i, a)| i != info.base_arg && atom_is_local(a, local))
+            } else if call_does_not_retain_args(*func_id) {
+                false
+            } else {
+                // Unknown call: any arg position is an escape
+                args.iter().any(|a| atom_is_local(a, local))
+            }
+        }
+        AnfOp::ACall { args, .. } => {
+            // Indirect call: all args escape
+            args.iter().any(|a| atom_is_local(a, local))
+        }
+        // AInit(y = local) is an alias, not an escape in itself — the alias
+        // tracking in pass 1 handles that separately. But if the alias target
+        // is tainted, that's already reflected. Don't count AInit as escape here.
+        _ => false,
+    }
+}
+
+/// Check whether `local` appears anywhere inside a nested scope (branch, loop,
+/// or closure body) within `op`. If so, we can't reason about ordering and must
+/// bail out.
+fn op_has_local_in_nested_scope(op: &AnfOp, local: LocalId) -> bool {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_mentions_local(then_branch, local) || expr_mentions_local(else_branch, local),
+        AnfOp::AMatch { arms, .. } => arms.iter().any(|arm| expr_mentions_local(&arm.body, local)),
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => expr_mentions_local(body, local),
+        AnfOp::AMakeClosure { free_vars, .. } => free_vars.contains(&local),
+        _ => false,
+    }
+}
+
+/// Check whether `local` is mentioned anywhere in an expression tree.
+fn expr_mentions_local(expr: &AnfExpr, local: LocalId) -> bool {
+    match expr {
+        AnfExpr::Let { op, body, .. } => {
+            op_mentions_local(op, local) || expr_mentions_local(body, local)
+        }
+        AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) | AnfExpr::Atom(atom) => {
+            atom_is_local(atom, local)
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => false,
+    }
+}
+
+/// Check whether `local` is mentioned anywhere in an op (including nested scopes).
+fn op_mentions_local(op: &AnfOp, local: LocalId) -> bool {
+    if op_uses_local_non_recursive(op, local) {
+        return true;
+    }
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_mentions_local(then_branch, local) || expr_mentions_local(else_branch, local),
+        AnfOp::AMatch { arms, .. } => arms.iter().any(|arm| expr_mentions_local(&arm.body, local)),
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => expr_mentions_local(body, local),
+        _ => false,
+    }
+}
+
+fn scan_tainted_expr(
+    expr: &AnfExpr,
+    tainted: &mut HashSet<LocalId>,
+    live_out: &HashSet<LocalId>,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     match expr {
         AnfExpr::Let { local, op, body } => {
             let bind_local = *local;
@@ -136,8 +598,8 @@ fn scan_tainted_expr(expr: &AnfExpr, tainted: &mut HashSet<LocalId>, live_out: &
                     tainted.insert(*source);
                 }
             }
-            scan_tainted_op(op, tainted, &live_after_body);
-            scan_tainted_expr(body, tainted, live_out);
+            scan_tainted_op(op, tainted, &live_after_body, wrappers);
+            scan_tainted_expr(body, tainted, live_out, wrappers);
 
             // Branch-boundary alias escape:
             // If an init alias `y := x` occurs in a nested scope and `y` escapes
@@ -153,7 +615,12 @@ fn scan_tainted_expr(expr: &AnfExpr, tainted: &mut HashSet<LocalId>, live_out: &
     }
 }
 
-fn scan_tainted_op(op: &AnfOp, tainted: &mut HashSet<LocalId>, live_out: &HashSet<LocalId>) {
+fn scan_tainted_op(
+    op: &AnfOp,
+    tainted: &mut HashSet<LocalId>,
+    live_out: &HashSet<LocalId>,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     match op {
         // Escaped: captured by closure
         AnfOp::AMakeClosure { free_vars, .. } => {
@@ -188,16 +655,31 @@ fn scan_tainted_op(op: &AnfOp, tainted: &mut HashSet<LocalId>, live_out: &HashSe
             callee: Atom::AGlobalFunc(func_id),
             args,
         } => {
-            if let Some(info) = cow_op_info(*func_id) {
-                // COW op: only taint non-base args
-                for (i, a) in args.iter().enumerate() {
+            if let Some((info, _wrapped_func, resolved_args)) =
+                resolve_cow_call(*func_id, args, wrappers)
+            {
+                for (i, a) in resolved_args.iter().enumerate() {
                     if i != info.base_arg {
                         if let Atom::ALocal(x) = a {
                             tainted.insert(*x);
                         }
                     }
                 }
-            } else if !is_no_retain_read_only(*func_id) {
+            } else if *func_id == prelude::VECTOR_CONCAT && args.len() == 2 {
+                // Keep concat local and conservative: the right-hand side still
+                // taints normally, but the left base only needs taint if it
+                // remains live after the concat call. This preserves negative
+                // cases like vector_set_after_concat while allowing dead-base
+                // concat rewrites when the old left value dies immediately.
+                if let Atom::ALocal(rhs) = &args[1] {
+                    tainted.insert(*rhs);
+                }
+                if let Atom::ALocal(base) = &args[0] {
+                    if live_out.contains(base) {
+                        tainted.insert(*base);
+                    }
+                }
+            } else if !call_does_not_retain_args(*func_id) {
                 // Non-COW function: taint all local args (conservative)
                 for a in args {
                     if let Atom::ALocal(x) = a {
@@ -220,16 +702,16 @@ fn scan_tainted_op(op: &AnfOp, tainted: &mut HashSet<LocalId>, live_out: &HashSe
             else_branch,
             ..
         } => {
-            scan_tainted_expr(then_branch, tainted, live_out);
-            scan_tainted_expr(else_branch, tainted, live_out);
+            scan_tainted_expr(then_branch, tainted, live_out, wrappers);
+            scan_tainted_expr(else_branch, tainted, live_out, wrappers);
         }
         AnfOp::AMatch { arms, .. } => {
             for arm in arms {
-                scan_tainted_expr(&arm.body, tainted, live_out);
+                scan_tainted_expr(&arm.body, tainted, live_out, wrappers);
             }
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            scan_tainted_expr(body, tainted, live_out);
+            scan_tainted_expr(body, tainted, live_out, wrappers);
         }
         _ => {}
     }
@@ -237,18 +719,32 @@ fn scan_tainted_op(op: &AnfOp, tainted: &mut HashSet<LocalId>, live_out: &HashSe
 
 // ── Consume-reassign pattern detection ───────────────────────────────────────
 
-/// Checks if `body` starts with `Let { op: AAssign { local: base, value: result } }`.
+/// Checks whether `body` begins with a transparent forward-bind chain ending in
+/// `assign(base = current_result)`, e.g.:
+///
+///   let t2 = init(t1)
+///   let _  = assign(base = t2)
 fn is_consume_reassign(body: &AnfExpr, base: LocalId, result: LocalId) -> bool {
-    if let AnfExpr::Let { op, .. } = body {
-        if let AnfOp::AAssign {
-            local,
-            value: Atom::ALocal(v),
-        } = op.as_ref()
-        {
-            return *local == base && *v == result;
+    let mut current = result;
+    let mut cursor = body;
+    loop {
+        let AnfExpr::Let { local, op, body } = cursor else {
+            return false;
+        };
+        match op.as_ref() {
+            AnfOp::AAssign {
+                local: target,
+                value: Atom::ALocal(v),
+            } => return *target == base && *v == current,
+            AnfOp::AInit {
+                value: Atom::ALocal(v),
+            } if *v == current => {
+                current = *local;
+                cursor = body;
+            }
+            _ => return false,
         }
     }
-    false
 }
 
 fn atom_is_local(atom: &Atom, local: LocalId) -> bool {
@@ -287,21 +783,30 @@ fn op_uses_local_non_recursive(op: &AnfOp, local: LocalId) -> bool {
     }
 }
 
-fn analyze_loop_op_subexpr(op: &AnfOp, base: LocalId) -> Option<usize> {
+fn analyze_loop_builder_op_subexpr(
+    op: &AnfOp,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<usize> {
     match op {
         AnfOp::AIf {
             then_branch,
             else_branch,
             ..
-        } => Some(analyze_loop_expr(then_branch, base)? + analyze_loop_expr(else_branch, base)?),
+        } => Some(
+            analyze_loop_builder_expr(then_branch, base, wrappers)?
+                + analyze_loop_builder_expr(else_branch, base, wrappers)?,
+        ),
         AnfOp::AMatch { arms, .. } => {
             let mut sites = 0usize;
             for arm in arms {
-                sites += analyze_loop_expr(&arm.body, base)?;
+                sites += analyze_loop_builder_expr(&arm.body, base, wrappers)?;
             }
             Some(sites)
         }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => analyze_loop_expr(body, base),
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            analyze_loop_builder_expr(body, base, wrappers)
+        }
         _ => Some(0),
     }
 }
@@ -315,18 +820,19 @@ fn is_cow_consume_reassign(
     body: &AnfExpr,
     base: LocalId,
     result: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) -> bool {
-    let Some(info) = cow_op_info(func_id) else {
+    let Some((info, _wrapped_func, resolved_args)) = resolve_cow_call(func_id, args, wrappers)
+    else {
         return false;
     };
-    if info.base_arg >= args.len() {
+    if info.base_arg >= resolved_args.len() {
         return false;
     }
-    if !atom_is_local(&args[info.base_arg], base) {
+    if !atom_is_local(resolved_args[info.base_arg], base) {
         return false;
     }
-    // No other arg should reference base
-    for (i, arg) in args.iter().enumerate() {
+    for (i, arg) in resolved_args.iter().enumerate() {
         if i != info.base_arg && atom_is_local(arg, base) {
             return false;
         }
@@ -334,52 +840,16 @@ fn is_cow_consume_reassign(
     is_consume_reassign(body, base, result)
 }
 
-/// Analyze whether `base` is only used via consuming COW op + assign(base=result)
-/// patterns inside the loop body (vector append, dict set, dict remove, etc.).
-///
-/// Returns the number of valid sites if allowed, otherwise `None`.
-fn analyze_loop_expr(expr: &AnfExpr, base: LocalId) -> Option<usize> {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            if let AnfOp::ACall {
-                callee: Atom::AGlobalFunc(func_id),
-                args,
-            } = op.as_ref()
-            {
-                if is_cow_consume_reassign(*func_id, args, body, base, *local) {
-                    let AnfExpr::Let {
-                        body: rest_after_assign,
-                        ..
-                    } = body.as_ref()
-                    else {
-                        return None;
-                    };
-                    return Some(1 + analyze_loop_expr(rest_after_assign, base)?);
-                }
-            }
-
-            if op_uses_local_non_recursive(op, base) {
-                return None;
-            }
-            Some(analyze_loop_op_subexpr(op, base)? + analyze_loop_expr(body, base)?)
-        }
-        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
-            if atom_is_local(atom, base) {
-                None
-            } else {
-                Some(0)
-            }
-        }
-        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => Some(0),
-    }
-}
-
 // ── Dict in-place loop rewrite (simple callee swap, no builder) ─────────────
 
 /// Analyze whether the loop body uses `base` only via in-place-swappable COW ops
 /// (dict set/remove). Returns the count of such sites, or None if base is used
 /// in any other way (including vector append, which needs builder wrapping).
-fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
+fn analyze_loop_dict_sites(
+    expr: &AnfExpr,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<usize> {
     match expr {
         AnfExpr::Let { local, op, body } => {
             if let AnfOp::ACall {
@@ -387,17 +857,23 @@ fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
                 args,
             } = op.as_ref()
             {
-                if in_place_swap_info(*func_id).is_some()
-                    && is_cow_consume_reassign(*func_id, args, body, base, *local)
+                if let Some((info, _wrapped_func, _resolved_args)) =
+                    resolve_cow_call(*func_id, args, wrappers)
                 {
-                    let AnfExpr::Let {
-                        body: rest_after_assign,
-                        ..
-                    } = body.as_ref()
-                    else {
-                        return None;
-                    };
-                    return Some(1 + analyze_loop_dict_sites(rest_after_assign, base)?);
+                    if info.in_place_id.is_some()
+                        && is_cow_consume_reassign(*func_id, args, body, base, *local, wrappers)
+                    {
+                        let AnfExpr::Let {
+                            body: rest_after_assign,
+                            ..
+                        } = body.as_ref()
+                        else {
+                            return None;
+                        };
+                        return Some(
+                            1 + analyze_loop_dict_sites(rest_after_assign, base, wrappers)?,
+                        );
+                    }
                 }
             }
 
@@ -414,7 +890,10 @@ fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
                     return None;
                 }
             }
-            Some(analyze_loop_dict_sites_in_op(op, base)? + analyze_loop_dict_sites(body, base)?)
+            Some(
+                analyze_loop_dict_sites_in_op(op, base, wrappers)?
+                    + analyze_loop_dict_sites(body, base, wrappers)?,
+            )
         }
         AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
             if atom_is_local(atom, base) {
@@ -427,30 +906,41 @@ fn analyze_loop_dict_sites(expr: &AnfExpr, base: LocalId) -> Option<usize> {
     }
 }
 
-fn analyze_loop_dict_sites_in_op(op: &AnfOp, base: LocalId) -> Option<usize> {
+fn analyze_loop_dict_sites_in_op(
+    op: &AnfOp,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<usize> {
     match op {
         AnfOp::AIf {
             then_branch,
             else_branch,
             ..
         } => Some(
-            analyze_loop_dict_sites(then_branch, base)?
-                + analyze_loop_dict_sites(else_branch, base)?,
+            analyze_loop_dict_sites(then_branch, base, wrappers)?
+                + analyze_loop_dict_sites(else_branch, base, wrappers)?,
         ),
         AnfOp::AMatch { arms, .. } => {
             let mut sites = 0usize;
             for arm in arms {
-                sites += analyze_loop_dict_sites(&arm.body, base)?;
+                sites += analyze_loop_dict_sites(&arm.body, base, wrappers)?;
             }
             Some(sites)
         }
-        AnfOp::ALoop { body } | AnfOp::ADefer(body) => analyze_loop_dict_sites(body, base),
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            analyze_loop_dict_sites(body, base, wrappers)
+        }
         _ => Some(0),
     }
 }
 
 /// Rewrite in-place-swappable COW ops in a loop body by swapping the callee ID.
-fn rewrite_loop_dict_expr(expr: &mut AnfExpr, base: LocalId, sites: &mut usize) {
+fn rewrite_loop_dict_expr(
+    expr: &mut AnfExpr,
+    base: LocalId,
+    sites: &mut usize,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     let AnfExpr::Let { local, op, body } = expr else {
         return;
     };
@@ -460,74 +950,502 @@ fn rewrite_loop_dict_expr(expr: &mut AnfExpr, base: LocalId, sites: &mut usize) 
         args,
     } = op.as_mut()
     {
-        if let Some(swap) = in_place_swap_info(*func_id) {
-            if atom_is_local(&args[swap.base_arg], base) && is_consume_reassign(body, base, *local)
-            {
-                *func_id = swap.in_place_id;
-                *sites += 1;
-                if let AnfExpr::Let {
-                    body: rest_after_assign,
-                    ..
-                } = body.as_mut()
+        if let Some((info, _wrapped_func, resolved_args)) =
+            resolve_cow_call(*func_id, args, wrappers)
+        {
+            if let Some(in_place_id) = info.in_place_id {
+                if info.base_arg < resolved_args.len()
+                    && atom_is_local(resolved_args[info.base_arg], base)
+                    && is_consume_reassign(body, base, *local)
                 {
-                    rewrite_loop_dict_expr(rest_after_assign, base, sites);
-                    return;
+                    *func_id = in_place_id;
+                    *sites += 1;
+                    if let AnfExpr::Let {
+                        body: rest_after_assign,
+                        ..
+                    } = body.as_mut()
+                    {
+                        rewrite_loop_dict_expr(rest_after_assign, base, sites, wrappers);
+                        return;
+                    }
                 }
             }
         }
     }
 
-    rewrite_loop_dict_op_subexpr(op, base, sites);
-    rewrite_loop_dict_expr(body, base, sites);
+    rewrite_loop_dict_op_subexpr(op, base, sites, wrappers);
+    rewrite_loop_dict_expr(body, base, sites, wrappers);
 }
 
-fn rewrite_loop_dict_op_subexpr(op: &mut AnfOp, base: LocalId, sites: &mut usize) {
+fn rewrite_loop_dict_op_subexpr(
+    op: &mut AnfOp,
+    base: LocalId,
+    sites: &mut usize,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     match op {
         AnfOp::AIf {
             then_branch,
             else_branch,
             ..
         } => {
-            rewrite_loop_dict_expr(then_branch, base, sites);
-            rewrite_loop_dict_expr(else_branch, base, sites);
+            rewrite_loop_dict_expr(then_branch, base, sites, wrappers);
+            rewrite_loop_dict_expr(else_branch, base, sites, wrappers);
         }
         AnfOp::AMatch { arms, .. } => {
             for arm in arms {
-                rewrite_loop_dict_expr(&mut arm.body, base, sites);
+                rewrite_loop_dict_expr(&mut arm.body, base, sites, wrappers);
             }
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            rewrite_loop_dict_expr(body, base, sites);
+            rewrite_loop_dict_expr(body, base, sites, wrappers);
         }
         _ => {}
+    }
+}
+
+// ── Straight-line vector builder rewrite ─────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuilderRegionStep {
+    Push,
+    Extend,
+}
+
+fn match_builder_region_step(
+    func_id: FuncId,
+    args: &[Atom],
+    body: &AnfExpr,
+    base: LocalId,
+    result: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<BuilderRegionStep> {
+    if let Some((info, _wrapped_func, resolved_args)) = resolve_cow_call(func_id, args, wrappers) {
+        if info.builder_rewritable
+            && resolved_args.len() == 2
+            && atom_is_local(resolved_args[0], base)
+            && !atom_is_local(resolved_args[1], base)
+            && is_consume_reassign(body, base, result)
+        {
+            return Some(BuilderRegionStep::Push);
+        }
+    }
+
+    if func_id == prelude::VECTOR_CONCAT
+        && args.len() == 2
+        && atom_is_local(&args[0], base)
+        && !atom_is_local(&args[1], base)
+        && is_consume_reassign(body, base, result)
+    {
+        return Some(BuilderRegionStep::Extend);
+    }
+
+    None
+}
+
+fn base_can_start_builder_region(
+    base: LocalId,
+    tainted: &HashSet<LocalId>,
+    unique: &HashSet<LocalId>,
+    known_empty: &HashSet<LocalId>,
+    refreshed: &HashSet<LocalId>,
+    builder_safe: &HashSet<LocalId>,
+) -> bool {
+    unique.contains(&base)
+        && ((!tainted.contains(&base) || refreshed.contains(&base))
+            || known_empty.contains(&base)
+            || builder_safe.contains(&base))
+}
+
+/// Check if the current expr starts a straight-line builder region:
+/// `xs = xs.append(v)` and/or `xs = xs.concat(rhs)` consume-reassign chains.
+/// Base must be uniqueness-safe for builder_from/new.
+fn detect_spine_builder_base(
+    expr: &AnfExpr,
+    tainted: &HashSet<LocalId>,
+    unique: &HashSet<LocalId>,
+    known_empty: &HashSet<LocalId>,
+    refreshed: &HashSet<LocalId>,
+    builder_safe: &HashSet<LocalId>,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<LocalId> {
+    let AnfExpr::Let { local, op, body } = expr else {
+        return None;
+    };
+    let AnfOp::ACall {
+        callee: Atom::AGlobalFunc(func_id),
+        args,
+    } = op.as_ref()
+    else {
+        return None;
+    };
+
+    let base = match resolve_cow_call(*func_id, args, wrappers) {
+        Some((info, _wrapped_func, resolved_args)) if info.builder_rewritable => {
+            let Atom::ALocal(base) = resolved_args[0] else {
+                return None;
+            };
+            *base
+        }
+        _ if *func_id == prelude::VECTOR_CONCAT && args.len() == 2 => {
+            let Atom::ALocal(base) = &args[0] else {
+                return None;
+            };
+            *base
+        }
+        _ => return None,
+    };
+
+    if !base_can_start_builder_region(base, tainted, unique, known_empty, refreshed, builder_safe) {
+        return None;
+    }
+    match_builder_region_step(*func_id, args, body, base, *local, wrappers)?;
+    Some(base)
+}
+
+/// Count mixed append/concat consume-reassign builder sites on the spine.
+/// Returns the number of rewriteable steps until a disqualifying use of `base`
+/// or control-flow boundary is encountered.
+fn count_spine_builder_steps(
+    expr: &AnfExpr,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> usize {
+    let mut count = 0;
+    let mut cursor = expr;
+    loop {
+        let AnfExpr::Let { local, op, body } = cursor else {
+            break;
+        };
+        if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = op.as_ref()
+        {
+            if match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some() {
+                count += 1;
+                if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
+                    cursor = rest;
+                    continue;
+                }
+                break;
+            }
+        }
+        if op_uses_local_non_recursive(op, base) {
+            let is_read_only = matches!(
+                op.as_ref(),
+                AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(fid),
+                    ..
+                } if is_no_retain_read_only(*fid)
+            );
+            if !is_read_only {
+                break;
+            }
+        }
+        if op_has_local_in_nested_scope(op, base) {
+            break;
+        }
+        cursor = body;
+    }
+    count
+}
+
+fn spine_builder_region_has_extend(
+    expr: &AnfExpr,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> bool {
+    let mut cursor = expr;
+    loop {
+        let AnfExpr::Let { local, op, body } = cursor else {
+            return false;
+        };
+        if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = op.as_ref()
+        {
+            if let Some(step) =
+                match_builder_region_step(*func_id, args, body, base, *local, wrappers)
+            {
+                if step == BuilderRegionStep::Extend {
+                    return true;
+                }
+                if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
+                    cursor = rest;
+                    continue;
+                }
+                return false;
+            }
+        }
+        if op_uses_local_non_recursive(op, base) {
+            let is_read_only = matches!(
+                op.as_ref(),
+                AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(fid),
+                    ..
+                } if is_no_retain_read_only(*fid)
+            );
+            if !is_read_only {
+                return false;
+            }
+        }
+        if op_has_local_in_nested_scope(op, base) {
+            return false;
+        }
+        cursor = body;
+    }
+}
+
+fn detect_dead_concat_base(
+    expr: &AnfExpr,
+    tainted: &HashSet<LocalId>,
+    unique: &HashSet<LocalId>,
+    known_empty: &HashSet<LocalId>,
+    refreshed: &HashSet<LocalId>,
+    builder_safe: &HashSet<LocalId>,
+) -> Option<(LocalId, LocalId, Atom)> {
+    let AnfExpr::Let { local, op, body } = expr else {
+        return None;
+    };
+    let AnfOp::ACall {
+        callee: Atom::AGlobalFunc(func_id),
+        args,
+    } = op.as_ref()
+    else {
+        return None;
+    };
+    if *func_id != prelude::VECTOR_CONCAT || args.len() != 2 {
+        return None;
+    }
+    let Atom::ALocal(base) = args[0] else {
+        return None;
+    };
+    if atom_is_local(&args[1], base) {
+        return None;
+    }
+    if expr_mentions_local(body, base) {
+        return None;
+    }
+    if !base_can_start_builder_region(base, tainted, unique, known_empty, refreshed, builder_safe) {
+        return None;
+    }
+    Some((base, *local, args[1].clone()))
+}
+
+/// Rewrite mixed append/concat consume-reassign sites on the spine to
+/// builder_push/builder_extend plus noop assign. Skips intervening non-step ops.
+fn rewrite_spine_builder_steps(
+    mut expr: &mut AnfExpr,
+    base: LocalId,
+    builder: LocalId,
+    sites: &mut usize,
+    target: usize,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
+    loop {
+        if *sites >= target {
+            return;
+        }
+        let AnfExpr::Let { local, op, body } = expr else {
+            return;
+        };
+        if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = op.as_mut()
+        {
+            if let Some(step) =
+                match_builder_region_step(*func_id, args, body, base, *local, wrappers)
+            {
+                *func_id = match step {
+                    BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
+                    BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+                };
+                args[0] = Atom::ALocal(builder);
+                if let AnfExpr::Let {
+                    op: assign_op,
+                    body: rest,
+                    ..
+                } = body.as_mut()
+                {
+                    *assign_op = Box::new(AnfOp::AInit {
+                        value: Atom::ALitVoid,
+                    });
+                    *sites += 1;
+                    expr = rest;
+                    continue;
+                }
+                return;
+            }
+        }
+        expr = body;
+    }
+}
+
+fn is_builder_step(op: &AnfOp) -> bool {
+    matches!(
+        op,
+        AnfOp::ACall {
+            callee: Atom::AGlobalFunc(fid),
+            ..
+        } if *fid == prelude::VECTOR_BUILDER_PUSH || *fid == prelude::VECTOR_BUILDER_EXTEND
+    )
+}
+
+/// Walk spine to find the insertion point after the last builder step.
+/// This is where we'll splice in the FREEZE + assign.
+fn spine_tail(expr: &mut AnfExpr) -> &mut AnfExpr {
+    // First pass: count how many spine nodes to skip.
+    let skip = count_builder_chain_len(expr);
+    // Second pass: advance `skip` nodes.
+    let mut cursor = expr;
+    for _ in 0..skip {
+        let AnfExpr::Let { body, .. } = cursor else {
+            break;
+        };
+        cursor = body;
+    }
+    cursor
+}
+
+/// Count spine Let nodes that belong to the rewritten push chain
+/// (push ops, noop assigns, and intervening non-push ops before the next push).
+fn count_builder_chain_len(expr: &AnfExpr) -> usize {
+    let mut count = 0;
+    let mut cursor = expr;
+    loop {
+        let AnfExpr::Let { op, body, .. } = cursor else {
+            break;
+        };
+        if is_builder_step(op.as_ref()) {
+            // Count the builder step + its noop assign (2 nodes)
+            count += 1;
+            if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
+                count += 1;
+                cursor = rest;
+                continue;
+            }
+            break;
+        }
+        // Check for noop assign (leftover from rewrite)
+        let is_noop = matches!(
+            op.as_ref(),
+            AnfOp::AInit {
+                value: Atom::ALitVoid
+            }
+        );
+        if is_noop {
+            count += 1;
+            cursor = body;
+            continue;
+        }
+        // Intervening op — only skip if there's a builder step further downstream
+        if has_builder_step_downstream(body) {
+            count += 1;
+            cursor = body;
+            continue;
+        }
+        break;
+    }
+    count
+}
+
+fn has_builder_step_downstream(expr: &AnfExpr) -> bool {
+    let mut cursor = expr;
+    loop {
+        let AnfExpr::Let { op, body, .. } = cursor else {
+            return false;
+        };
+        if is_builder_step(op.as_ref()) {
+            return true;
+        }
+        cursor = body;
     }
 }
 
 // ── Vector builder loop rewrite ─────────────────────────────────────────────
 
-fn rewrite_loop_op_subexpr(op: &mut AnfOp, base: LocalId, builder: LocalId, sites: &mut usize) {
+fn analyze_loop_builder_expr(
+    expr: &AnfExpr,
+    base: LocalId,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> Option<usize> {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            if let AnfOp::ACall {
+                callee: Atom::AGlobalFunc(func_id),
+                args,
+            } = op.as_ref()
+            {
+                if match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some()
+                {
+                    let AnfExpr::Let {
+                        body: rest_after_assign,
+                        ..
+                    } = body.as_ref()
+                    else {
+                        return None;
+                    };
+                    return Some(1 + analyze_loop_builder_expr(rest_after_assign, base, wrappers)?);
+                }
+            }
+
+            if op_uses_local_non_recursive(op, base) {
+                return None;
+            }
+            Some(
+                analyze_loop_builder_op_subexpr(op, base, wrappers)?
+                    + analyze_loop_builder_expr(body, base, wrappers)?,
+            )
+        }
+        AnfExpr::Atom(atom) | AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
+            if atom_is_local(atom, base) {
+                None
+            } else {
+                Some(0)
+            }
+        }
+        AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => Some(0),
+    }
+}
+
+fn rewrite_loop_builder_op_subexpr(
+    op: &mut AnfOp,
+    base: LocalId,
+    builder: LocalId,
+    sites: &mut usize,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     match op {
         AnfOp::AIf {
             then_branch,
             else_branch,
             ..
         } => {
-            rewrite_loop_expr(then_branch, base, builder, sites);
-            rewrite_loop_expr(else_branch, base, builder, sites);
+            rewrite_loop_builder_expr(then_branch, base, builder, sites, wrappers);
+            rewrite_loop_builder_expr(else_branch, base, builder, sites, wrappers);
         }
         AnfOp::AMatch { arms, .. } => {
             for arm in arms {
-                rewrite_loop_expr(&mut arm.body, base, builder, sites);
+                rewrite_loop_builder_expr(&mut arm.body, base, builder, sites, wrappers);
             }
         }
         AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
-            rewrite_loop_expr(body, base, builder, sites);
+            rewrite_loop_builder_expr(body, base, builder, sites, wrappers);
         }
         _ => {}
     }
 }
 
-fn rewrite_loop_expr(expr: &mut AnfExpr, base: LocalId, builder: LocalId, sites: &mut usize) {
+fn rewrite_loop_builder_expr(
+    expr: &mut AnfExpr,
+    base: LocalId,
+    builder: LocalId,
+    sites: &mut usize,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
     let AnfExpr::Let { local, op, body } = expr else {
         return;
     };
@@ -537,13 +1455,12 @@ fn rewrite_loop_expr(expr: &mut AnfExpr, base: LocalId, builder: LocalId, sites:
         args,
     } = op.as_mut()
     {
-        if *func_id == prelude::VECTOR_APPEND
-            && args.len() == 2
-            && atom_is_local(&args[0], base)
-            && !atom_is_local(&args[1], base)
-            && is_consume_reassign(body, base, *local)
+        if let Some(step) = match_builder_region_step(*func_id, args, body, base, *local, wrappers)
         {
-            *func_id = prelude::VECTOR_BUILDER_PUSH;
+            *func_id = match step {
+                BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
+                BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+            };
             args[0] = Atom::ALocal(builder);
             if let AnfExpr::Let {
                 op: assign_op,
@@ -555,14 +1472,14 @@ fn rewrite_loop_expr(expr: &mut AnfExpr, base: LocalId, builder: LocalId, sites:
                     value: Atom::ALitVoid,
                 });
                 *sites += 1;
-                rewrite_loop_expr(rest_after_assign, base, builder, sites);
+                rewrite_loop_builder_expr(rest_after_assign, base, builder, sites, wrappers);
                 return;
             }
         }
     }
 
-    rewrite_loop_op_subexpr(op, base, builder, sites);
-    rewrite_loop_expr(body, base, builder, sites);
+    rewrite_loop_builder_op_subexpr(op, base, builder, sites, wrappers);
+    rewrite_loop_builder_expr(body, base, builder, sites, wrappers);
 }
 
 fn next_local_id(func: &AnfFunctionDef) -> u32 {
@@ -686,17 +1603,25 @@ fn max_local_in_atom(atom: &Atom, max: &mut u32) {
 /// - Rewrite `DICT_SET`/`DICT_REMOVE` to uniqueness-safe in-place helpers
 /// - Annotate `ARecordUpdate` with `can_reuse_in_place=true` when base is unique + consumed
 /// - Preserve uniqueness across known COW updates (`VECTOR_APPEND`)
-pub fn uniqueness_rewrite(func: &mut AnfFunctionDef) {
-    let tainted = collect_tainted(func);
+pub fn uniqueness_rewrite(
+    func: &mut AnfFunctionDef,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) {
+    let tainted = collect_tainted(func, wrappers);
     let mut unique = HashSet::new();
     let mut known_empty = HashSet::new();
+    let mut refreshed = HashSet::new();
+    let mut builder_safe = HashSet::new();
     let mut next_local = next_local_id(func);
     rewrite_expr(
         &mut func.body,
         &tainted,
         &mut unique,
         &mut known_empty,
+        &mut refreshed,
+        &mut builder_safe,
         &mut next_local,
+        wrappers,
     );
 }
 
@@ -705,26 +1630,190 @@ fn rewrite_expr(
     tainted: &HashSet<LocalId>,
     unique: &mut HashSet<LocalId>,
     known_empty: &mut HashSet<LocalId>,
+    refreshed: &mut HashSet<LocalId>,
+    builder_safe: &mut HashSet<LocalId>,
     next_local: &mut u32,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) {
+    // Straight-line builder rewrite (Phase F):
+    // Sequential `xs = xs.append(v)` chains on the spine → builder_from/push/freeze
+    // when xs is unique, non-escaped, and there are ≥2 appends.
+    // Must run before destructuring expr to avoid borrow conflicts.
+    if let Some(base) = detect_spine_builder_base(
+        expr,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        wrappers,
+    ) {
+        let total_steps = count_spine_builder_steps(expr, base, wrappers);
+        let has_extend = spine_builder_region_has_extend(expr, base, wrappers);
+        if total_steps >= 2 || has_extend {
+            let builder_local = alloc_local(next_local);
+            let freeze_local = alloc_local(next_local);
+            let assign_local = alloc_local(next_local);
+            let use_builder_new = known_empty.contains(&base);
+
+            let mut rewritten_sites = 0usize;
+            rewrite_spine_builder_steps(
+                expr,
+                base,
+                builder_local,
+                &mut rewritten_sites,
+                total_steps,
+                wrappers,
+            );
+            if rewritten_sites == total_steps {
+                // Splice freeze+assign after the last builder step
+                let tail = spine_tail(expr);
+                let old_tail = std::mem::replace(tail, AnfExpr::Atom(Atom::ALitVoid));
+                *tail = AnfExpr::Let {
+                    local: freeze_local,
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(prelude::VECTOR_BUILDER_FREEZE),
+                        args: vec![Atom::ALocal(builder_local)],
+                    }),
+                    body: Box::new(AnfExpr::Let {
+                        local: assign_local,
+                        op: Box::new(AnfOp::AAssign {
+                            local: base,
+                            value: Atom::ALocal(freeze_local),
+                        }),
+                        body: Box::new(old_tail),
+                    }),
+                };
+
+                // Wrap with builder_from/new at the top
+                let inner = std::mem::replace(expr, AnfExpr::Atom(Atom::ALitVoid));
+                *expr = AnfExpr::Let {
+                    local: builder_local,
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(if use_builder_new {
+                            prelude::VECTOR_BUILDER_NEW
+                        } else {
+                            prelude::VECTOR_BUILDER_FROM
+                        }),
+                        args: if use_builder_new {
+                            vec![]
+                        } else {
+                            vec![Atom::ALocal(base)]
+                        },
+                    }),
+                    body: Box::new(inner),
+                };
+
+                rewrite_expr(
+                    expr,
+                    tainted,
+                    unique,
+                    known_empty,
+                    refreshed,
+                    builder_safe,
+                    next_local,
+                    wrappers,
+                );
+                return;
+            }
+        }
+    }
+
+    if let Some((base, result_local, rhs)) =
+        detect_dead_concat_base(expr, tainted, unique, known_empty, refreshed, builder_safe)
+    {
+        let builder_local = alloc_local(next_local);
+        let step_local = alloc_local(next_local);
+        let freeze_local = alloc_local(next_local);
+        let use_builder_new = known_empty.contains(&base);
+
+        let old_expr = std::mem::replace(expr, AnfExpr::Atom(Atom::ALitVoid));
+        let AnfExpr::Let { body, .. } = old_expr else {
+            unreachable!();
+        };
+        *expr = AnfExpr::Let {
+            local: builder_local,
+            op: Box::new(AnfOp::ACall {
+                callee: Atom::AGlobalFunc(if use_builder_new {
+                    prelude::VECTOR_BUILDER_NEW
+                } else {
+                    prelude::VECTOR_BUILDER_FROM
+                }),
+                args: if use_builder_new {
+                    vec![]
+                } else {
+                    vec![Atom::ALocal(base)]
+                },
+            }),
+            body: Box::new(AnfExpr::Let {
+                local: step_local,
+                op: Box::new(AnfOp::ACall {
+                    callee: Atom::AGlobalFunc(prelude::VECTOR_BUILDER_EXTEND),
+                    args: vec![Atom::ALocal(builder_local), rhs],
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: freeze_local,
+                    op: Box::new(AnfOp::ACall {
+                        callee: Atom::AGlobalFunc(prelude::VECTOR_BUILDER_FREEZE),
+                        args: vec![Atom::ALocal(builder_local)],
+                    }),
+                    body: Box::new(AnfExpr::Let {
+                        local: result_local,
+                        op: Box::new(AnfOp::AInit {
+                            value: Atom::ALocal(freeze_local),
+                        }),
+                        body,
+                    }),
+                }),
+            }),
+        };
+        rewrite_expr(
+            expr,
+            tainted,
+            unique,
+            known_empty,
+            refreshed,
+            builder_safe,
+            next_local,
+            wrappers,
+        );
+        return;
+    }
+
     let AnfExpr::Let { local, op, body } = expr else {
         return;
     };
     let bind_local = *local;
 
-    // Region rewrite (Phase 3, conservative):
+    // Region rewrite (Phase 3):
     // Loop accumulator `xs = xs.append(v)` -> builder_new/push/freeze wrapping
-    // when `xs` is unique, non-escaped, and known-empty at loop entry.
+    // when `xs` is unique and either not tainted OR known-empty.
+    //
+    // The known-empty relaxation is safe because:
+    // - known_empty proves the local was just allocated (e.g. `xs: Vector<T> = []`)
+    // - any taint is from a future escape on the spine (stored in record, returned)
+    // - builder_new() is used (not builder_from), so no alias is affected
+    // - after freeze, the local is reassigned to the frozen result
+    // - subsequent code (including the escape) sees the frozen vector, not the builder
     if let AnfOp::ALoop { body: loop_body } = op.as_ref() {
         let mut candidates = unique
             .iter()
             .copied()
-            .filter(|id| !tainted.contains(id))
+            .filter(|id| {
+                base_can_start_builder_region(
+                    *id,
+                    tainted,
+                    unique,
+                    known_empty,
+                    refreshed,
+                    builder_safe,
+                )
+            })
             .collect::<Vec<_>>();
         candidates.sort_by_key(|id| id.0);
 
         for base in candidates {
-            let Some(expected_sites) = analyze_loop_expr(loop_body, base) else {
+            let Some(expected_sites) = analyze_loop_builder_expr(loop_body, base, wrappers) else {
                 continue;
             };
             if expected_sites == 0 {
@@ -738,11 +1827,12 @@ fn rewrite_expr(
 
             let mut rewritten_loop_body = (*loop_body.as_ref()).clone();
             let mut rewritten_sites = 0usize;
-            rewrite_loop_expr(
+            rewrite_loop_builder_expr(
                 &mut rewritten_loop_body,
                 base,
                 builder_local,
                 &mut rewritten_sites,
+                wrappers,
             );
             if rewritten_sites == 0 || rewritten_sites != expected_sites {
                 continue;
@@ -785,7 +1875,16 @@ fn rewrite_expr(
                     }),
                 }),
             };
-            rewrite_expr(expr, tainted, unique, known_empty, next_local);
+            rewrite_expr(
+                expr,
+                tainted,
+                unique,
+                known_empty,
+                refreshed,
+                builder_safe,
+                next_local,
+                wrappers,
+            );
             return;
         }
 
@@ -794,10 +1893,10 @@ fn rewrite_expr(
         for base in unique
             .iter()
             .copied()
-            .filter(|id| !tainted.contains(id))
+            .filter(|id| base_can_rewrite(*id, tainted, unique, refreshed))
             .collect::<Vec<_>>()
         {
-            let Some(expected_sites) = analyze_loop_dict_sites(loop_body, base) else {
+            let Some(expected_sites) = analyze_loop_dict_sites(loop_body, base, wrappers) else {
                 continue;
             };
             if expected_sites == 0 {
@@ -806,7 +1905,12 @@ fn rewrite_expr(
 
             let mut rewritten_loop_body = (*loop_body.as_ref()).clone();
             let mut rewritten_sites = 0usize;
-            rewrite_loop_dict_expr(&mut rewritten_loop_body, base, &mut rewritten_sites);
+            rewrite_loop_dict_expr(
+                &mut rewritten_loop_body,
+                base,
+                &mut rewritten_sites,
+                wrappers,
+            );
             if rewritten_sites == 0 || rewritten_sites != expected_sites {
                 continue;
             }
@@ -814,14 +1918,26 @@ fn rewrite_expr(
             *op = Box::new(AnfOp::ALoop {
                 body: Box::new(rewritten_loop_body),
             });
-            rewrite_expr(expr, tainted, unique, known_empty, next_local);
+            rewrite_expr(
+                expr,
+                tainted,
+                unique,
+                known_empty,
+                refreshed,
+                builder_safe,
+                next_local,
+                wrappers,
+            );
             return;
         }
     }
 
-    // Track fresh producers → Unique
+    // Track fresh producers → Unique.
     if is_fresh_producer(op) {
         unique.insert(bind_local);
+        if tainted.contains(&bind_local) {
+            builder_safe.insert(bind_local);
+        }
     }
     if let AnfOp::AArrayLit(elems) = op.as_ref() {
         if elems.is_empty() {
@@ -835,14 +1951,28 @@ fn rewrite_expr(
         value: Atom::ALocal(source),
     } = op.as_ref()
     {
-        if unique.contains(source) && !tainted.contains(source) {
-            // Transfer: source dies (moved), target becomes unique
+        if unique.contains(source) && (!tainted.contains(source) || builder_safe.contains(source)) {
+            // Transfer: source dies (moved), target becomes unique.
+            // `builder_safe` sources are allowed here even when globally tainted:
+            // the taint is only from a later escape, while the current value is
+            // still a locally-owned vector builder candidate.
             unique.remove(source);
             unique.insert(bind_local);
+            if tainted.contains(&bind_local) && builder_safe.contains(source) {
+                builder_safe.insert(bind_local);
+            }
+        } else if refreshed.contains(source) && live_after(body).contains(source) {
+            // Source was refreshed (held a fresh value) but is now aliased.
+            // Clear refreshed so downstream checks don't bypass the taint guard.
+            refreshed.remove(source);
         }
         if known_empty.contains(source) && !tainted.contains(source) {
             known_empty.remove(source);
             known_empty.insert(bind_local);
+        }
+        if builder_safe.contains(source) && !tainted.contains(source) {
+            builder_safe.remove(source);
+            builder_safe.insert(bind_local);
         }
     }
 
@@ -854,15 +1984,33 @@ fn rewrite_expr(
     {
         unique.remove(target);
         known_empty.remove(target);
+        refreshed.remove(target);
+        builder_safe.remove(target);
         if let Atom::ALocal(source) = value {
-            if unique.contains(source) && !tainted.contains(source) {
-                // Treat as move when source is not tainted (no surviving alias).
+            if unique.contains(source)
+                && (!tainted.contains(source) || builder_safe.contains(source))
+            {
+                // Treat as move when source is not tainted, or when the source
+                // is in `builder_safe` and therefore only tainted by a later
+                // escape of a locally-owned vector value.
                 unique.remove(source);
                 unique.insert(*target);
+                // If target is tainted (e.g., a parameter), mark it as
+                // refreshed — it now holds a fresh value, not the original
+                // tainted one. This enables downstream ARecordUpdate to
+                // use can_reuse_in_place even though tainted still contains it.
+                if tainted.contains(target) {
+                    refreshed.insert(*target);
+                    builder_safe.insert(*target);
+                }
             }
             if known_empty.contains(source) && !tainted.contains(source) {
                 known_empty.remove(source);
                 known_empty.insert(*target);
+            }
+            if builder_safe.contains(source) && !tainted.contains(source) {
+                builder_safe.remove(source);
+                builder_safe.insert(*target);
             }
         }
     }
@@ -879,7 +2027,13 @@ fn rewrite_expr(
         unique.insert(bind_local);
         let can_rewrite =
             is_consume_reassign(body, *base, bind_local) || !live_after(body).contains(base);
-        if unique.contains(base) && !tainted.contains(base) && can_rewrite {
+        // Allow in-place when base is unique AND either:
+        //   (a) base is not tainted (original rule), or
+        //   (b) base is tainted but was refreshed — i.e., reassigned from a
+        //       fresh source (record update result or COW result) since the
+        //       taint-causing event. The taint is about the original parameter
+        //       value, not the current one.
+        if base_can_rewrite(*base, tainted, unique, refreshed) && can_rewrite {
             *can_reuse_in_place = true;
         }
     }
@@ -890,30 +2044,128 @@ fn rewrite_expr(
         args,
     } = op.as_mut()
     {
-        if let Some(info) = cow_op_info(*func_id) {
-            if let Some(Atom::ALocal(base)) = args.get(info.base_arg) {
+        if let Some((info, _wrapped_func, resolved_args)) =
+            resolve_cow_call(*func_id, args, wrappers)
+        {
+            if let Some(Atom::ALocal(base)) = resolved_args.get(info.base_arg) {
                 let base = *base;
-                if unique.contains(&base) && !tainted.contains(&base) {
-                    let can_rewrite = is_consume_reassign(body, base, bind_local)
-                        || !live_after(body).contains(&base);
-                    if can_rewrite {
-                        if let Some(in_place_id) = info.in_place_rewrite {
+                let can_rewrite = is_consume_reassign(body, base, bind_local)
+                    || !live_after(body).contains(&base);
+                let can_reuse_in_place_base = base_can_rewrite(base, tainted, unique, refreshed);
+                let can_preserve_builder_uniqueness = info.builder_rewritable
+                    && base_can_start_builder_region(
+                        base,
+                        tainted,
+                        unique,
+                        known_empty,
+                        refreshed,
+                        builder_safe,
+                    );
+                if can_rewrite && (can_reuse_in_place_base || can_preserve_builder_uniqueness) {
+                    if can_reuse_in_place_base {
+                        if let Some(in_place_id) = info.in_place_id {
                             *func_id = in_place_id;
                         }
-                        // Result inherits uniqueness from the consuming update.
+                    }
+                    // Result inherits uniqueness from the consuming update.
+                    unique.insert(bind_local);
+                    if tainted.contains(&bind_local) && can_preserve_builder_uniqueness {
+                        builder_safe.insert(bind_local);
+                    }
+                    // Any consuming update may change container cardinality/content.
+                    known_empty.remove(&bind_local);
+                } else if info.fresh_if_copied {
+                    // Phase B: base is tainted or not unique, but COW ops with
+                    // in-place rewrites guarantee a fresh result (full copy).
+                    // Mark result as unique for downstream ops, enabling
+                    // subsequent updates on the fresh copy to be in-place.
+                    let is_consumed = is_consume_reassign(body, base, bind_local)
+                        || !live_after(body).contains(&base);
+                    if is_consumed && !tainted.contains(&bind_local) {
                         unique.insert(bind_local);
-                        // Any consuming update may change container cardinality/content.
                         known_empty.remove(&bind_local);
                     }
                 }
+            }
+        } else if *func_id == prelude::VECTOR_CONCAT && args.len() == 2 {
+            // Concat always produces a fresh vector result even though we keep
+            // it out of the generic one-base COW table. Recording freshness on
+            // the result local lets consume-reassign sites refresh a tainted
+            // accumulator without changing the conservative treatment of the
+            // original left base in unrelated patterns like vector_set_after_concat.
+            if !tainted.contains(&bind_local) {
+                unique.insert(bind_local);
+                known_empty.remove(&bind_local);
             }
         }
     }
 
     // Recurse into op sub-expressions (branches, loops)
-    rewrite_op(op, tainted, unique, known_empty, next_local);
+    rewrite_op(
+        op,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        next_local,
+        wrappers,
+    );
     // Continue with body
-    rewrite_expr(body, tainted, unique, known_empty, next_local);
+    rewrite_expr(
+        body,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        next_local,
+        wrappers,
+    );
+}
+
+/// Collect all `AAssign` target locals in an expression tree.
+fn collect_assign_targets(expr: &AnfExpr) -> HashSet<LocalId> {
+    let mut targets = HashSet::new();
+    collect_assign_targets_expr(expr, &mut targets);
+    targets
+}
+
+fn collect_assign_targets_expr(expr: &AnfExpr, targets: &mut HashSet<LocalId>) {
+    let AnfExpr::Let { op, body, .. } = expr else {
+        return;
+    };
+    if let AnfOp::AAssign { local, .. } = op.as_ref() {
+        targets.insert(*local);
+    }
+    collect_assign_targets_op(op, targets);
+    collect_assign_targets_expr(body, targets);
+}
+
+fn collect_assign_targets_op(op: &AnfOp, targets: &mut HashSet<LocalId>) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_assign_targets_expr(then_branch, targets);
+            collect_assign_targets_expr(else_branch, targets);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_assign_targets_expr(&arm.body, targets);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_assign_targets_expr(body, targets);
+        }
+        _ => {}
+    }
+}
+
+fn intersect_in_place(dst: &mut HashSet<LocalId>, other: &HashSet<LocalId>) {
+    dst.retain(|id| other.contains(id));
 }
 
 fn rewrite_op(
@@ -921,7 +2173,10 @@ fn rewrite_op(
     tainted: &HashSet<LocalId>,
     unique: &mut HashSet<LocalId>,
     known_empty: &mut HashSet<LocalId>,
+    refreshed: &mut HashSet<LocalId>,
+    builder_safe: &mut HashSet<LocalId>,
     next_local: &mut u32,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) {
     match op {
         AnfOp::AIf {
@@ -929,44 +2184,123 @@ fn rewrite_op(
             else_branch,
             ..
         } => {
-            // Conservative: separate unique sets for each branch, don't propagate out
             let mut then_unique = unique.clone();
             let mut else_unique = unique.clone();
             let mut then_empty = known_empty.clone();
             let mut else_empty = known_empty.clone();
+            let mut then_refreshed = refreshed.clone();
+            let mut else_refreshed = refreshed.clone();
+            let mut then_builder_safe = builder_safe.clone();
+            let mut else_builder_safe = builder_safe.clone();
             rewrite_expr(
                 then_branch,
                 tainted,
                 &mut then_unique,
                 &mut then_empty,
+                &mut then_refreshed,
+                &mut then_builder_safe,
                 next_local,
+                wrappers,
             );
             rewrite_expr(
                 else_branch,
                 tainted,
                 &mut else_unique,
                 &mut else_empty,
+                &mut else_refreshed,
+                &mut else_builder_safe,
                 next_local,
+                wrappers,
             );
+            intersect_in_place(&mut then_unique, &else_unique);
+            intersect_in_place(&mut then_empty, &else_empty);
+            intersect_in_place(&mut then_refreshed, &else_refreshed);
+            intersect_in_place(&mut then_builder_safe, &else_builder_safe);
+            *unique = then_unique;
+            *known_empty = then_empty;
+            *refreshed = then_refreshed;
+            *builder_safe = then_builder_safe;
         }
         AnfOp::AMatch { arms, .. } => {
+            let mut merged_unique: Option<HashSet<LocalId>> = None;
+            let mut merged_empty: Option<HashSet<LocalId>> = None;
+            let mut merged_refreshed: Option<HashSet<LocalId>> = None;
+            let mut merged_builder_safe: Option<HashSet<LocalId>> = None;
             for arm in arms {
                 let mut arm_unique = unique.clone();
                 let mut arm_empty = known_empty.clone();
+                let mut arm_refreshed = refreshed.clone();
+                let mut arm_builder_safe = builder_safe.clone();
                 rewrite_expr(
                     &mut arm.body,
                     tainted,
                     &mut arm_unique,
                     &mut arm_empty,
+                    &mut arm_refreshed,
+                    &mut arm_builder_safe,
                     next_local,
+                    wrappers,
                 );
+                if let Some(m) = merged_unique.as_mut() {
+                    intersect_in_place(m, &arm_unique);
+                } else {
+                    merged_unique = Some(arm_unique);
+                }
+                if let Some(m) = merged_empty.as_mut() {
+                    intersect_in_place(m, &arm_empty);
+                } else {
+                    merged_empty = Some(arm_empty);
+                }
+                if let Some(m) = merged_refreshed.as_mut() {
+                    intersect_in_place(m, &arm_refreshed);
+                } else {
+                    merged_refreshed = Some(arm_refreshed);
+                }
+                if let Some(m) = merged_builder_safe.as_mut() {
+                    intersect_in_place(m, &arm_builder_safe);
+                } else {
+                    merged_builder_safe = Some(arm_builder_safe);
+                }
+            }
+            if let Some(m) = merged_unique {
+                *unique = m;
+            }
+            if let Some(m) = merged_empty {
+                *known_empty = m;
+            }
+            if let Some(m) = merged_refreshed {
+                *refreshed = m;
+            }
+            if let Some(m) = merged_builder_safe {
+                *builder_safe = m;
             }
         }
         AnfOp::ALoop { body } => {
-            // Conservative: don't propagate unique into loops
+            // Conservative: don't propagate unique/refreshed into loops
             let mut loop_unique = HashSet::new();
             let mut loop_empty = HashSet::new();
-            rewrite_expr(body, tainted, &mut loop_unique, &mut loop_empty, next_local);
+            let mut loop_refreshed = HashSet::new();
+            let mut loop_builder_safe = HashSet::new();
+            rewrite_expr(
+                body,
+                tainted,
+                &mut loop_unique,
+                &mut loop_empty,
+                &mut loop_refreshed,
+                &mut loop_builder_safe,
+                next_local,
+                wrappers,
+            );
+            // Invalidate known_empty for locals assigned inside the loop.
+            // A loop body may `assign(x = ...)` to outer locals, making
+            // known_empty stale (e.g. a vector that was [] gains elements).
+            // We only clear known_empty, not unique — uniqueness is about
+            // aliasing, and consume-reassign patterns in loops preserve it.
+            let assigned_in_loop = collect_assign_targets(body);
+            for local in &assigned_in_loop {
+                known_empty.remove(local);
+                builder_safe.remove(local);
+            }
         }
         _ => {}
     }

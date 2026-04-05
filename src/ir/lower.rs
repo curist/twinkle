@@ -99,6 +99,8 @@ pub mod prelude {
     pub const DICT_SET_IN_PLACE: FuncId = FuncId(1015); // (dict, key, val) -> Dict<K,V>
     // Internal helper: uniqueness rewrite target for Dict.remove on a unique base.
     pub const DICT_REMOVE_IN_PLACE: FuncId = FuncId(1016); // (dict, key) -> Dict<K,V>
+    // Internal helper: extend a vector builder with all elements from a vector.
+    pub const VECTOR_BUILDER_EXTEND: FuncId = FuncId(1100); // (builder, vec) -> Void
 
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int

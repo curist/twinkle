@@ -1,0 +1,16 @@
+// Phase B negative: COW result is aliased, so the second set must NOT be in-place.
+// Expected output:
+//   1
+//   2
+
+fn update(d: Dict<String, Int>) Dict<String, Int> {
+    d1 := Dict.set(d, "a", 10)
+    snapshot := d1
+    d2 := Dict.set(d1, "b", 20)
+    println("${snapshot.len()}")
+    d2
+}
+
+base: Dict<String, Int> = Dict.new()
+result := update(base)
+println("${result.len()}")

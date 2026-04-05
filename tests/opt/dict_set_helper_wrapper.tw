@@ -1,0 +1,28 @@
+// Tiny helper wrapper around Dict.set should let the caller rewrite to
+// __dict_set_in_place once the dict is known unique.
+// Expected output:
+//   2
+//   10
+//   20
+
+fn put(d: Dict<String, Int>, k: String, v: Int) Dict<String, Int> {
+    Dict.set(d, k, v)
+}
+
+fn build() Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    d = put(d, "a", 10)
+    d = put(d, "b", 20)
+    d
+}
+
+out := build()
+println("${out.len()}")
+case out["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing a"),
+}
+case out["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing b"),
+}

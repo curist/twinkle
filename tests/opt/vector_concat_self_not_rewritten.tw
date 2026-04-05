@@ -1,0 +1,19 @@
+// Self-concat must not rewrite through builder_extend.
+// Expected output:
+//   4
+//   1
+//   2
+//   1
+//   2
+
+fn dup() Vector<Int> {
+    xs := [1, 2]
+    ys := xs.concat(xs)
+    ys
+}
+
+out := dup()
+println("${out.len()}")
+for x in out {
+    println("${x}")
+}

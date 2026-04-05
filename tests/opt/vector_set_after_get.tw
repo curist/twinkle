@@ -1,5 +1,5 @@
-// Vector.get is currently not in the no-retain set.
-// Must not rewrite subsequent update.
+// Vector.get is read-only (no-retain). The vector stays unique,
+// so the subsequent set should be rewritten to in-place.
 
 fn make() Vector<Int> {
     xs := [1, 2, 3]

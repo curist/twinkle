@@ -1,0 +1,28 @@
+// Mixed append + concat loop accumulator should rewrite through one builder
+// region using push + extend.
+// Expected output:
+//   8
+//   6
+
+type Out = .{ values: Vector<Int>, sum: Int }
+
+fn build() Out {
+    xs: Vector<Int> = []
+    for i in range(4) {
+        xs = xs.append(i)
+        xs = xs.concat([i + 10])
+    }
+
+    sum := 0
+    for x in xs {
+        if x < 10 {
+            sum = sum + x
+        }
+    }
+
+    Out.{ values: xs, sum: sum }
+}
+
+out := build()
+println("${out.values.len()}")
+println("${out.sum}")

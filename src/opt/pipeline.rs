@@ -1,13 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ir::anf::analysis::{collect_bound_locals, collect_free_locals};
 use crate::ir::anf::{AnfFunctionDef, AnfModule};
-use crate::ir::core::LocalId;
+use crate::ir::core::{FuncId, LocalId};
 use crate::opt::defer_elim::eliminate_defers;
 use crate::opt::passes::{
     branch_simplify, constant_fold, copy_propagate_with_pinned, dead_let_elim,
 };
-use crate::opt::uniqueness::uniqueness_rewrite;
+use crate::opt::uniqueness::{
+    TinyWrapperSummary, collect_tiny_wrapper_summaries, uniqueness_rewrite,
+};
 use crate::opt::use_count::{collect_assigned_locals, count_uses};
 
 #[cfg(debug_assertions)]
@@ -15,9 +17,7 @@ use crate::ir::anf::verify::verify_function_after_pass;
 
 const MAX_ROUNDS: usize = 10;
 
-/// Run all peephole optimization passes to a fixed point on a single function,
-/// then run uniqueness-based rewrites/annotations.
-pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> AnfFunctionDef {
+fn run_peephole_passes(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> AnfFunctionDef {
     for _ in 0..MAX_ROUNDS {
         let uses = count_uses(&func.body);
         let mut assigned = collect_assigned_locals(&func.body);
@@ -53,11 +53,20 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
         }
     }
 
-    uniqueness_rewrite(&mut func);
+    func
+}
+
+/// Run all peephole optimization passes to a fixed point on a single function,
+/// then run uniqueness-based rewrites/annotations.
+pub fn optimize_func(
+    func: AnfFunctionDef,
+    pinned: &HashSet<LocalId>,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> AnfFunctionDef {
+    let mut func = run_peephole_passes(func, pinned);
+    uniqueness_rewrite(&mut func, wrappers);
     #[cfg(debug_assertions)]
     verify_function_after_pass(&func, "uniqueness_rewrite");
-    // Eliminate all ADefer nodes — must run after peephole passes since it
-    // restructures terminal nodes (Return/Break/Continue/Atom) irreversibly.
     func = eliminate_defers(func);
     #[cfg(debug_assertions)]
     verify_function_after_pass(&func, "eliminate_defers");
@@ -67,17 +76,44 @@ pub fn optimize_func(mut func: AnfFunctionDef, pinned: &HashSet<LocalId>) -> Anf
 /// Optimize every function in an ANF module.
 pub fn optimize_module(module: AnfModule) -> AnfModule {
     let module_globals = collect_module_globals(&module);
-    let functions = module
+
+    let peepholed = module
         .functions
         .into_iter()
         .map(|func| {
             if func.name == "__init__" {
-                optimize_func(func, &module_globals)
+                run_peephole_passes(func, &module_globals)
             } else {
-                optimize_func(func, &HashSet::new())
+                run_peephole_passes(func, &HashSet::new())
             }
         })
+        .collect::<Vec<_>>();
+
+    let summaries = collect_tiny_wrapper_summaries(&AnfModule {
+        functions: peepholed.clone(),
+        init_func_id: module.init_func_id,
+        all_init_func_ids: module.all_init_func_ids.clone(),
+    });
+
+    let functions = peepholed
+        .into_iter()
+        .map(|mut func| {
+            let pinned = if func.name == "__init__" {
+                &module_globals
+            } else {
+                &HashSet::new()
+            };
+            uniqueness_rewrite(&mut func, &summaries);
+            #[cfg(debug_assertions)]
+            verify_function_after_pass(&func, "uniqueness_rewrite");
+            func = eliminate_defers(func);
+            #[cfg(debug_assertions)]
+            verify_function_after_pass(&func, "eliminate_defers");
+            let _ = pinned;
+            func
+        })
         .collect();
+
     AnfModule {
         functions,
         ..module
