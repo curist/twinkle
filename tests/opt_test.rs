@@ -2206,6 +2206,31 @@ fn opt_vector_concat_guard_fresh_runtime_semantics() {
 }
 
 #[test]
+fn opt_dict_set_fresh_first_in_place() {
+    // Dict.new() should have its FIRST set rewritten to DICT_SET_IN_PLACE.
+    // Before source_fresh, only the second+ set was in-place (via refreshed).
+    let module = compile_opt("tests/opt/dict_set_fresh_first_in_place.tw");
+    assert_eq!(
+        count_calls_to(&module, DICT_SET),
+        0,
+        "Expected no COW DICT_SET: all sets on fresh Dict.new() should be in-place"
+    );
+    assert_eq!(
+        count_calls_to(&module, DICT_SET_IN_PLACE),
+        2,
+        "Expected both dict sets to be DICT_SET_IN_PLACE via source_fresh"
+    );
+}
+
+#[test]
+fn opt_dict_set_fresh_first_in_place_runtime() {
+    assert_runtime_output(
+        "tests/opt/dict_set_fresh_first_in_place.tw",
+        &["2", "10", "20"],
+    );
+}
+
+#[test]
 fn opt_vector_append_nonempty_init_loop_rewritten_to_builder() {
     // A non-empty array literal moved to a tainted local via init should be
     // eligible for loop builder rewrites (builder_from + loop push + freeze).

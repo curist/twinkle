@@ -288,13 +288,29 @@ fn resolve_cow_call<'a>(
     Some((info, summary.wrapped_func, resolved_args))
 }
 
+/// Returns true when `base` is safe for a direct in-place COW swap.
+///
+/// When `source_fresh` is Some, the presence of `base` in that set acts as an
+/// additional bypass: the value is freshly allocated and hasn't been passed to
+/// any opaque function yet, so modifying it in-place is safe.
+///
+/// **Important**: only pass `Some(source_fresh)` for ops that have a real
+/// `in_place_id` (DICT_SET, DICT_REMOVE, VECTOR_SET_UNSAFE). For ops without
+/// an in-place variant (VECTOR_APPEND), pass `None`. Passing `Some` for
+/// VECTOR_APPEND would trigger the `unique.insert(result)` propagation even
+/// without an actual swap, which can cascade and incorrectly enable downstream
+/// in-place ops after an opaque function call.
 fn base_can_rewrite(
     base: LocalId,
     tainted: &HashSet<LocalId>,
     unique: &HashSet<LocalId>,
     refreshed: &HashSet<LocalId>,
+    source_fresh: Option<&HashSet<LocalId>>,
 ) -> bool {
-    unique.contains(&base) && (!tainted.contains(&base) || refreshed.contains(&base))
+    unique.contains(&base)
+        && (!tainted.contains(&base)
+            || refreshed.contains(&base)
+            || source_fresh.map_or(false, |sf| sf.contains(&base)))
 }
 
 // ── Fresh producer detection ─────────────────────────────────────────────────
@@ -1973,7 +1989,7 @@ fn rewrite_expr(
         for base in unique
             .iter()
             .copied()
-            .filter(|id| base_can_rewrite(*id, tainted, unique, refreshed))
+            .filter(|id| base_can_rewrite(*id, tainted, unique, refreshed, Some(source_fresh)))
             .collect::<Vec<_>>()
         {
             let Some(expected_sites) = analyze_loop_dict_sites(loop_body, base, wrappers) else {
@@ -2013,19 +2029,51 @@ fn rewrite_expr(
         }
     }
 
-    // Track fresh producers → Unique.
+    // Track fresh producers → Unique + source_fresh.
     if is_fresh_producer(op) {
         unique.insert(bind_local);
         if tainted.contains(&bind_local) {
             builder_safe.insert(bind_local);
         }
+        // source_fresh: any freshly-allocated value (array literal, Dict.new,
+        // builder freeze, etc.) is locally owned until either aliased via init
+        // or passed to an opaque function.  The set is checked (optionally) in
+        // base_can_rewrite to allow the first in-place COW op on a fresh local
+        // even when it's globally tainted.  Only cleared by AAssign / AInit
+        // alias / opaque-call arg / loop-assign.
+        source_fresh.insert(bind_local);
     }
     if let AnfOp::AArrayLit(elems) = op.as_ref() {
-        // source_fresh: all array literals (empty or not) produce a freshly
-        // allocated value that is locally owned until aliased.
-        source_fresh.insert(bind_local);
         if elems.is_empty() {
             known_empty.insert(bind_local);
+        }
+        // Locals stored inside the array are escaped into the container.
+        // Clear source_fresh so they are no longer considered unaliased.
+        for a in elems {
+            if let Atom::ALocal(x) = a {
+                source_fresh.remove(x);
+            }
+        }
+    }
+    // Similarly clear source_fresh for locals stored in records, variants,
+    // and closure captures.
+    if let AnfOp::ARecord { fields, .. } = op.as_ref() {
+        for (_, a) in fields {
+            if let Atom::ALocal(x) = a {
+                source_fresh.remove(x);
+            }
+        }
+    }
+    if let AnfOp::AVariant { args, .. } = op.as_ref() {
+        for a in args {
+            if let Atom::ALocal(x) = a {
+                source_fresh.remove(x);
+            }
+        }
+    }
+    if let AnfOp::AMakeClosure { free_vars, .. } = op.as_ref() {
+        for x in free_vars {
+            source_fresh.remove(x);
         }
     }
 
@@ -2101,6 +2149,16 @@ fn rewrite_expr(
                     refreshed.insert(*target);
                     builder_safe.insert(*target);
                 }
+            } else if unique.contains(source) {
+                // Transfer failed: source is tainted and not builder_safe.
+                // The assign aliases source into target; source is no longer
+                // uniquely owned. Clear unique so downstream ops don't
+                // incorrectly treat source as unaliased.
+                // (Before source_fresh, base_can_rewrite would still fail
+                // via the !tainted||refreshed check, but source_fresh bypasses
+                // that check so we must clear unique explicitly here.)
+                unique.remove(source);
+                source_fresh.remove(source);
             }
             if known_empty.contains(source) && !tainted.contains(source) {
                 known_empty.remove(source);
@@ -2131,7 +2189,9 @@ fn rewrite_expr(
         //       fresh source (record update result or COW result) since the
         //       taint-causing event. The taint is about the original parameter
         //       value, not the current one.
-        if base_can_rewrite(*base, tainted, unique, refreshed) && can_rewrite {
+        // Record update: source_fresh is not applicable here (records aren't
+        // dict/vector containers with an in_place_id in the same sense).
+        if base_can_rewrite(*base, tainted, unique, refreshed, None) && can_rewrite {
             *can_reuse_in_place = true;
         }
     }
@@ -2149,12 +2209,23 @@ fn rewrite_expr(
                 let base = *base;
                 let can_rewrite = is_consume_reassign(body, base, bind_local)
                     || !live_after(body).contains(&base);
-                let can_reuse_in_place_base = base_can_rewrite(base, tainted, unique, refreshed);
-                // Do NOT pass source_fresh here. The source_fresh bypass is
-                // only for actual builder-region detection (loop/spine/concat).
-                // Passing it here would propagate uniqueness through a single
-                // append on a fresh-but-non-empty base, which then incorrectly
-                // enables downstream in-place vector-set ops after opaque calls.
+                // Use source_fresh only for ops that have a real in_place_id
+                // (DICT_SET, DICT_REMOVE, VECTOR_SET_UNSAFE). For VECTOR_APPEND
+                // (in_place_id = None), passing Some would trigger
+                // unique.insert(result) even without an actual swap, which can
+                // cascade and incorrectly enable downstream ops after opaque calls.
+                let can_reuse_in_place_base = base_can_rewrite(
+                    base,
+                    tainted,
+                    unique,
+                    refreshed,
+                    if info.in_place_id.is_some() {
+                        Some(source_fresh)
+                    } else {
+                        None
+                    },
+                );
+                // Do NOT pass source_fresh to base_can_start_builder_region here.
                 let can_preserve_builder_uniqueness = info.builder_rewritable
                     && base_can_start_builder_region(
                         base,
@@ -2200,6 +2271,35 @@ fn rewrite_expr(
             if !tainted.contains(&bind_local) {
                 unique.insert(bind_local);
                 known_empty.remove(&bind_local);
+            }
+            // Conservatively clear source_fresh for the left base when it is
+            // tainted (i.e., the pre-scan determined it may be aliased or live
+            // after the concat). Without this, source_fresh would bypass the
+            // taint guard and allow incorrect in-place ops on the base after
+            // the concat, violating the vector_set_after_concat negative invariant.
+            if let Atom::ALocal(base) = &args[0] {
+                if tainted.contains(base) {
+                    source_fresh.remove(base);
+                }
+            }
+        } else if !call_does_not_retain_args(*func_id) {
+            // Opaque call: the function may retain any of its arguments.
+            // Clear source_fresh for all arg locals so subsequent direct
+            // in-place ops don't incorrectly treat them as uniquely owned.
+            for arg in args.iter() {
+                if let Atom::ALocal(local) = arg {
+                    source_fresh.remove(local);
+                }
+            }
+        }
+    }
+    // Indirect call (closure/fn-value call): all args may be retained.
+    if let AnfOp::ACall { callee, args } = op.as_ref() {
+        if !matches!(callee, Atom::AGlobalFunc(_)) {
+            for arg in args {
+                if let Atom::ALocal(local) = arg {
+                    source_fresh.remove(local);
+                }
             }
         }
     }

@@ -1,0 +1,26 @@
+// A freshly created dict (Dict.new()) should have its first set rewritten to
+// DICT_SET_IN_PLACE when the value has not yet been passed to any opaque call.
+// source_fresh tracks locally-owned freshly-allocated values and allows the
+// first in-place dict set even before any COW+assign has established refreshed.
+// Expected output:
+//   2
+//   10
+//   20
+
+fn build() Dict<String, Int> {
+    d: Dict<String, Int> = Dict.new()
+    d["a"] = 10
+    d["b"] = 20
+    d
+}
+
+result := build()
+println("${result.len()}")
+case result["a"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
+case result["b"] {
+    .Some(n) => println("${n}"),
+    .None => println("missing"),
+}
