@@ -2169,3 +2169,38 @@ fn opt_record_update_chain_wasm_semantics() {
         &["2", "9"],
     );
 }
+
+#[test]
+fn opt_vector_concat_guard_fresh_rewritten_to_builder() {
+    // An accumulator that is `[]` should survive an early-return guard branch
+    // and still be eligible for concat builder rewrite on the continuation path.
+    let module = compile_opt("tests/opt/vector_concat_guard_fresh_rewritten.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_CONCAT),
+        0,
+        "Expected no VECTOR_CONCAT: acc stays known-empty past early-return guard"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_NEW),
+        1,
+        "Expected VECTOR_BUILDER_NEW for fresh empty accumulator concat"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_EXTEND),
+        1,
+        "Expected VECTOR_BUILDER_EXTEND for concat lowering"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FREEZE),
+        1,
+        "Expected VECTOR_BUILDER_FREEZE for builder result"
+    );
+}
+
+#[test]
+fn opt_vector_concat_guard_fresh_runtime_semantics() {
+    assert_runtime_output(
+        "tests/opt/vector_concat_guard_fresh_rewritten.tw",
+        &["3", "6"],
+    );
+}

@@ -1,0 +1,26 @@
+// Parser-style pattern: fresh accumulator that survives early-return guards
+// should still be eligible for concat rewrite (builder_new + extend + freeze).
+// The guard branch always returns, so the accumulator stays known-empty
+// on the continuation path.
+// Expected output:
+//   3
+//   6
+
+fn build(bad: Bool) Vector<Int> {
+    acc: Vector<Int> = []
+    if bad {
+        acc = acc.append(99)
+        return acc
+    }
+    extra := [1, 2, 3]
+    acc = acc.concat(extra)
+    acc
+}
+
+xs := build(false)
+sum := 0
+for x in xs {
+    sum = sum + x
+}
+println("${xs.len()}")
+println("${sum}")

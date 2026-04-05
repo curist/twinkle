@@ -299,6 +299,39 @@ fn base_can_rewrite(
 
 // ── Fresh producer detection ─────────────────────────────────────────────────
 
+// ── Termination detection ───────────────────────────────────────────────────
+
+/// Returns true if every execution path through `expr` ends in a terminator
+/// (return / break / continue) without reaching the natural fall-through exit.
+/// Used by the if-join to avoid destroying state that can't be affected when
+/// one branch always exits early.
+fn expr_always_terminates(expr: &AnfExpr) -> bool {
+    match expr {
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue => true,
+        AnfExpr::Atom(_) => false,
+        AnfExpr::Let { op, body, .. } => {
+            if op_always_terminates(op) {
+                return true;
+            }
+            expr_always_terminates(body)
+        }
+    }
+}
+
+fn op_always_terminates(op: &AnfOp) -> bool {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_always_terminates(then_branch) && expr_always_terminates(else_branch),
+        AnfOp::AMatch { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|a| expr_always_terminates(&a.body))
+        }
+        _ => false,
+    }
+}
+
 fn is_fresh_producer(op: &AnfOp) -> bool {
     match op {
         AnfOp::AArrayLit(_) | AnfOp::ARecord { .. } | AnfOp::AVariant { .. } => true,
@@ -1225,7 +1258,9 @@ fn detect_dead_concat_base(
     if atom_is_local(&args[1], base) {
         return None;
     }
-    if expr_mentions_local(body, base) {
+    // Allow the consume-reassign case: `xs = xs.concat(rhs)` where `xs`
+    // appears only as the immediate assign target (not read).
+    if expr_mentions_local(body, base) && !is_consume_reassign(body, base, *local) {
         return None;
     }
     if !base_can_start_builder_region(base, tainted, unique, known_empty, refreshed, builder_safe) {
@@ -2212,14 +2247,30 @@ fn rewrite_op(
                 next_local,
                 wrappers,
             );
-            intersect_in_place(&mut then_unique, &else_unique);
-            intersect_in_place(&mut then_empty, &else_empty);
-            intersect_in_place(&mut then_refreshed, &else_refreshed);
-            intersect_in_place(&mut then_builder_safe, &else_builder_safe);
-            *unique = then_unique;
-            *known_empty = then_empty;
-            *refreshed = then_refreshed;
-            *builder_safe = then_builder_safe;
+            // If one branch always terminates (return/break/continue), the
+            // continuation is only reachable via the other branch. Use that
+            // branch's state directly instead of intersecting — intersection
+            // would conservatively destroy state that can't be affected.
+            if expr_always_terminates(then_branch) {
+                *unique = else_unique;
+                *known_empty = else_empty;
+                *refreshed = else_refreshed;
+                *builder_safe = else_builder_safe;
+            } else if expr_always_terminates(else_branch) {
+                *unique = then_unique;
+                *known_empty = then_empty;
+                *refreshed = then_refreshed;
+                *builder_safe = then_builder_safe;
+            } else {
+                intersect_in_place(&mut then_unique, &else_unique);
+                intersect_in_place(&mut then_empty, &else_empty);
+                intersect_in_place(&mut then_refreshed, &else_refreshed);
+                intersect_in_place(&mut then_builder_safe, &else_builder_safe);
+                *unique = then_unique;
+                *known_empty = then_empty;
+                *refreshed = then_refreshed;
+                *builder_safe = then_builder_safe;
+            }
         }
         AnfOp::AMatch { arms, .. } => {
             let mut merged_unique: Option<HashSet<LocalId>> = None;
