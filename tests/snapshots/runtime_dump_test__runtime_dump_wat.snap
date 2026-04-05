@@ -26,21 +26,22 @@ expression: wat
   (type $functype_8 (func (result (ref $rt_types__Array))))
   (type $functype_9 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__Array))))
   (type $functype_10 (func (param (ref null $rt_types__Array) anyref)))
-  (type $functype_11 (func (param (ref null $rt_types__String)) (result i32)))
-  (type $functype_12 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result (ref $rt_types__String))))
-  (type $functype_13 (func (param (ref null $rt_types__String) i32 i32) (result (ref $rt_types__String))))
-  (type $functype_14 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result i32)))
-  (type $functype_15 (func (param i64) (result (ref $rt_types__String))))
-  (type $functype_16 (func (param i32) (result (ref $rt_types__String))))
-  (type $functype_17 (func (result (ref $rt_types__Dict))))
-  (type $functype_18 (func (param (ref null $rt_types__Dict)) (result i32)))
-  (type $functype_19 (func (param (ref null $rt_types__Dict)) (result (ref $rt_types__Array))))
-  (type $functype_20 (func (param (ref null $rt_types__Dict) anyref) (result i32)))
-  (type $functype_21 (func (param (ref null $rt_types__Dict) anyref) (result anyref)))
-  (type $functype_22 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Variant))))
-  (type $functype_23 (func (param (ref null $rt_types__Dict) anyref anyref) (result (ref $rt_types__Dict))))
-  (type $functype_24 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Dict))))
-  (type $functype_25 (func (param anyref anyref) (result i32)))
+  (type $functype_11 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array))))
+  (type $functype_12 (func (param (ref null $rt_types__String)) (result i32)))
+  (type $functype_13 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result (ref $rt_types__String))))
+  (type $functype_14 (func (param (ref null $rt_types__String) i32 i32) (result (ref $rt_types__String))))
+  (type $functype_15 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result i32)))
+  (type $functype_16 (func (param i64) (result (ref $rt_types__String))))
+  (type $functype_17 (func (param i32) (result (ref $rt_types__String))))
+  (type $functype_18 (func (result (ref $rt_types__Dict))))
+  (type $functype_19 (func (param (ref null $rt_types__Dict)) (result i32)))
+  (type $functype_20 (func (param (ref null $rt_types__Dict)) (result (ref $rt_types__Array))))
+  (type $functype_21 (func (param (ref null $rt_types__Dict) anyref) (result i32)))
+  (type $functype_22 (func (param (ref null $rt_types__Dict) anyref) (result anyref)))
+  (type $functype_23 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Variant))))
+  (type $functype_24 (func (param (ref null $rt_types__Dict) anyref anyref) (result (ref $rt_types__Dict))))
+  (type $functype_25 (func (param (ref null $rt_types__Dict) anyref) (result (ref $rt_types__Dict))))
+  (type $functype_26 (func (param anyref anyref) (result i32)))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -174,11 +175,9 @@ expression: wat
   (func $rt_arr__builder_new (type $functype_8)
     (result (ref $rt_types__Array))
     ref.null none
-    i32.const 8
-    array.new $rt_types__Array
     i64.const 0
     struct.new $rt_types__BoxedInt
-    i64.const 8
+    i64.const 0
     struct.new $rt_types__BoxedInt
     array.new_fixed $rt_types__Array 3
   )
@@ -269,14 +268,19 @@ expression: wat
         local.get $p5
         array.new $rt_types__Array
         local.set $p6
-        local.get $p6
-        ref.as_non_null
-        i32.const 0
-        local.get $p2
-        ref.as_non_null
-        i32.const 0
         local.get $p3
-        array.copy $rt_types__Array $rt_types__Array
+        i32.eqz
+        (if
+          (then)
+          (else
+            local.get $p6
+            ref.as_non_null
+            i32.const 0
+            local.get $p2
+            ref.as_non_null
+            i32.const 0
+            local.get $p3
+            array.copy $rt_types__Array $rt_types__Array))
         local.get $p6
         ref.as_non_null
         local.get $p3
@@ -308,6 +312,119 @@ expression: wat
         struct.new $rt_types__BoxedInt
         array.set $rt_types__Array))
   )
+  (func $rt_arr__builder_extend (type $functype_11)
+    (param $p0 (ref null $rt_types__Array))
+    (param $p1 (ref null $rt_types__Array))
+    (local $p2 (ref null $rt_types__Array))
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 i32)
+    (local $p8 (ref null $rt_types__Array))
+    local.get $p0
+    ref.as_non_null
+    i32.const 0
+    array.get $rt_types__Array
+    ref.cast (ref null $rt_types__Array)
+    local.set $p2
+    local.get $p0
+    ref.as_non_null
+    i32.const 1
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    i32.wrap_i64
+    local.set $p3
+    local.get $p0
+    ref.as_non_null
+    i32.const 2
+    array.get $rt_types__Array
+    ref.cast (ref $rt_types__BoxedInt)
+    struct.get $rt_types__BoxedInt 0
+    i32.wrap_i64
+    local.set $p4
+    local.get $p1
+    ref.as_non_null
+    array.len
+    local.set $p5
+    local.get $p3
+    local.get $p5
+    i32.add
+    local.set $p6
+    local.get $p5
+    i32.eqz
+    (if
+      (then)
+      (else
+        local.get $p6
+        local.get $p4
+        i32.le_s
+        (if
+          (then
+            local.get $p2
+            ref.as_non_null
+            local.get $p3
+            local.get $p1
+            ref.as_non_null
+            i32.const 0
+            local.get $p5
+            array.copy $rt_types__Array $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 1
+            local.get $p6
+            i64.extend_i32_s
+            struct.new $rt_types__BoxedInt
+            array.set $rt_types__Array)
+          (else
+            local.get $p6
+            local.set $p7
+            ref.null none
+            local.get $p7
+            array.new $rt_types__Array
+            local.set $p8
+            local.get $p3
+            i32.eqz
+            (if
+              (then)
+              (else
+                local.get $p8
+                ref.as_non_null
+                i32.const 0
+                local.get $p2
+                ref.as_non_null
+                i32.const 0
+                local.get $p3
+                array.copy $rt_types__Array $rt_types__Array))
+            local.get $p8
+            ref.as_non_null
+            local.get $p3
+            local.get $p1
+            ref.as_non_null
+            i32.const 0
+            local.get $p5
+            array.copy $rt_types__Array $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 0
+            local.get $p8
+            array.set $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 1
+            local.get $p6
+            i64.extend_i32_s
+            struct.new $rt_types__BoxedInt
+            array.set $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 2
+            local.get $p7
+            i64.extend_i32_s
+            struct.new $rt_types__BoxedInt
+            array.set $rt_types__Array))))
+  )
   (func $rt_arr__builder_freeze (type $functype_9)
     (param $p0 (ref null $rt_types__Array))
     (result (ref $rt_types__Array))
@@ -332,25 +449,30 @@ expression: wat
     local.get $p2
     array.new $rt_types__Array
     local.set $p3
-    local.get $p3
-    ref.as_non_null
-    i32.const 0
-    local.get $p1
-    ref.as_non_null
-    i32.const 0
     local.get $p2
-    array.copy $rt_types__Array $rt_types__Array
+    i32.eqz
+    (if
+      (then)
+      (else
+        local.get $p3
+        ref.as_non_null
+        i32.const 0
+        local.get $p1
+        ref.as_non_null
+        i32.const 0
+        local.get $p2
+        array.copy $rt_types__Array $rt_types__Array))
     local.get $p3
     ref.as_non_null
   )
-  (func $rt_str__len (type $functype_11)
+  (func $rt_str__len (type $functype_12)
     (param $p0 (ref null $rt_types__String))
     (result i32)
     local.get $p0
     ref.as_non_null
     array.len
   )
-  (func $rt_str__concat (type $functype_12)
+  (func $rt_str__concat (type $functype_13)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result (ref $rt_types__String))
@@ -393,7 +515,7 @@ expression: wat
     local.get $p5
     ref.as_non_null
   )
-  (func $rt_str__substring (type $functype_13)
+  (func $rt_str__substring (type $functype_14)
     (param $p0 (ref null $rt_types__String))
     (param $p1 i32)
     (param $p2 i32)
@@ -458,7 +580,7 @@ expression: wat
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_str__eq (type $functype_14)
+  (func $rt_str__eq (type $functype_15)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result i32)
@@ -505,7 +627,7 @@ expression: wat
         br $cmp))
     i32.const 1
   )
-  (func $rt_str__cmp (type $functype_14)
+  (func $rt_str__cmp (type $functype_15)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result i32)
@@ -583,7 +705,7 @@ expression: wat
         return))
     i32.const 0
   )
-  (func $rt_str__from_i64 (type $functype_15)
+  (func $rt_str__from_i64 (type $functype_16)
     (param $p0 i64)
     (result (ref $rt_types__String))
     (local $p1 i32)
@@ -707,7 +829,7 @@ expression: wat
     local.get $p0
     call $rt_str__host_f64_to_string
   )
-  (func $rt_str__from_bool (type $functype_16)
+  (func $rt_str__from_bool (type $functype_17)
     (param $p0 i32)
     (result (ref $rt_types__String))
     local.get $p0
@@ -726,18 +848,18 @@ expression: wat
         i32.const 101
         array.new_fixed $rt_types__String 5))
   )
-  (func $rt_dict__make (type $functype_17)
+  (func $rt_dict__make (type $functype_18)
     (result (ref $rt_types__Dict))
     array.new_fixed $rt_types__Dict 0
   )
-  (func $rt_dict__len (type $functype_18)
+  (func $rt_dict__len (type $functype_19)
     (param $p0 (ref null $rt_types__Dict))
     (result i32)
     local.get $p0
     ref.as_non_null
     array.len
   )
-  (func $rt_dict__keys (type $functype_19)
+  (func $rt_dict__keys (type $functype_20)
     (param $p0 (ref null $rt_types__Dict))
     (result (ref $rt_types__Array))
     (local $p1 i32)
@@ -780,7 +902,7 @@ expression: wat
     local.get $p3
     ref.as_non_null
   )
-  (func $rt_dict__has (type $functype_20)
+  (func $rt_dict__has (type $functype_21)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (result i32)
@@ -820,7 +942,7 @@ expression: wat
         br $scan))
     i32.const 0
   )
-  (func $rt_dict__get (type $functype_21)
+  (func $rt_dict__get (type $functype_22)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (result anyref)
@@ -862,7 +984,7 @@ expression: wat
         br $scan))
     ref.null any
   )
-  (func $rt_dict__get_option (type $functype_22)
+  (func $rt_dict__get_option (type $functype_23)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (result (ref $rt_types__Variant))
@@ -911,7 +1033,7 @@ expression: wat
     ref.null $rt_types__Array
     struct.new $rt_types__Variant
   )
-  (func $rt_dict__set (type $functype_23)
+  (func $rt_dict__set (type $functype_24)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (param $p2 anyref)
@@ -1022,7 +1144,7 @@ expression: wat
     local.get $p6
     ref.as_non_null
   )
-  (func $rt_dict__remove (type $functype_24)
+  (func $rt_dict__remove (type $functype_25)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (result (ref $rt_types__Dict))
@@ -1120,7 +1242,7 @@ expression: wat
     local.get $p5
     ref.as_non_null
   )
-  (func $rt_dict__set_in_place (type $functype_23)
+  (func $rt_dict__set_in_place (type $functype_24)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (param $p2 anyref)
@@ -1193,7 +1315,7 @@ expression: wat
     local.get $p6
     ref.as_non_null
   )
-  (func $rt_dict__remove_in_place (type $functype_24)
+  (func $rt_dict__remove_in_place (type $functype_25)
     (param $p0 (ref null $rt_types__Dict))
     (param $p1 anyref)
     (result (ref $rt_types__Dict))
@@ -1315,7 +1437,7 @@ expression: wat
     call $rt_core__host_error
     unreachable
   )
-  (func $rt_core__eq (type $functype_25)
+  (func $rt_core__eq (type $functype_26)
     (param $p0 anyref)
     (param $p1 anyref)
     (result i32)
@@ -1371,6 +1493,7 @@ expression: wat
   (export "rt_arr__builder_new" (func $rt_arr__builder_new))
   (export "rt_arr__builder_from" (func $rt_arr__builder_from))
   (export "rt_arr__builder_push" (func $rt_arr__builder_push))
+  (export "rt_arr__builder_extend" (func $rt_arr__builder_extend))
   (export "rt_arr__builder_freeze" (func $rt_arr__builder_freeze))
   (export "rt_str__len" (func $rt_str__len))
   (export "rt_str__concat" (func $rt_str__concat))

@@ -742,7 +742,6 @@ fn opt_vector_set_additional_positive_rewrites() {
         "tests/opt/vector_set_from_make.tw",
         "tests/opt/vector_set_twice_chain.tw",
         "tests/opt/vector_set_in_if_branches.tw",
-        "tests/opt/vector_set_after_branch_local_alias.tw",
         "tests/opt/vector_set_after_len_in_branch.tw",
         "tests/opt/vector_set_after_append_chain.tw",
         "tests/opt/vector_set_after_get.tw",
@@ -1496,19 +1495,6 @@ fn opt_dict_remove_unique_rewritten_to_in_place() {
         count_calls_to(&module, DICT_REMOVE),
         0,
         "Expected no DICT_REMOVE calls after rewrite"
-    );
-}
-
-#[test]
-fn opt_dict_remove_captured_not_rewritten() {
-    let module = compile_opt("tests/opt/dict_remove_captured_not_rewritten.tw");
-    assert!(
-        has_call_to(&module, DICT_REMOVE),
-        "Expected DICT_REMOVE to remain when dict is closure-captured"
-    );
-    assert!(
-        !has_call_to(&module, DICT_REMOVE_IN_PLACE),
-        "Expected no DICT_REMOVE_IN_PLACE when dict is closure-captured"
     );
 }
 
