@@ -49,9 +49,9 @@ This plan is **compatible with** but does not depend on:
 - Structural sharing: updates copy only the path from root to the modified
   node; all other subtrees are shared across versions.
 - Element storage remains `anyref` — no type-family changes.
-- The `rt.arr` export surface remains identical.
-- The builder system is simplified to wrap persistent `push`.
-- The uniqueness optimizer's `VECTOR_SET_IN_PLACE` continues to work.
+- The `rt.arr` function set remains stable: same exported names and responsibilities, but vector-valued params/results switch from `ref $Array` to `ref $PVec`.
+- The builder system switches to a transient mutable-tail design that preserves amortized O(1) append during construction.
+- The uniqueness optimizer's `VECTOR_SET_IN_PLACE` continues to work, but initially lowers to persistent `set` rather than raw in-place leaf mutation.
 
 ## Non-Goals
 
@@ -122,6 +122,8 @@ This affects:
 - `src/codegen/prelude.rs` — vector valtype mapping
 - `src/codegen/emit.rs` — vector literal lowering, intrinsic emission
 - `src/codegen/ctx.rs` — vector ref helpers
+- `boot/compiler/builtins.tw` — vector ABI metadata and builtin signatures
+- boot boundary/ABI tests that currently assert `rt_types__Array`
 
 The `rt.arr` export signatures change their vector parameter/return types from
 `ref $Array` to `ref $PVec`, but the **function names and count stay the
@@ -133,7 +135,7 @@ same**.
 
 - `len == 0`: return shared empty vector singleton
 - `len <= 32`: tail-only vector with `len` copies of `fill`
-- `len > 32`: repeated `push` from empty (O(N log32 N))
+- `len > 32`: repeated `push` from empty (amortized O(N) overall; most pushes only copy the tail, with trie promotion every 32 elements)
 
 Optimization note: since `fill` is uniform, `make` could build full 32-element
 leaves directly and assemble the trie bottom-up in O(N). Deferred for v1 but
@@ -209,9 +211,16 @@ final `PVec` on `freeze`:
   - `tail_buf`: a mutable `$Array` used as the write buffer
   - `tail_len`: `BoxedInt` tracking how many elements are in `tail_buf`
 - **`builder_new()`**: `[empty_pvec, Array(cap=32), BoxedInt(0)]`
-- **`builder_from(vec)`**: freeze the existing vec's structure into
-  `pvec_so_far`, start with a fresh empty tail buffer. This avoids mutating
-  any shared trie nodes from the source vector.
+- **`builder_from(vec)`**: split the existing vector at its tail boundary.
+  - `pvec_so_far` receives only the source vector's trie/full-leaf prefix
+    (that is, all elements before `tailoff(vec.len)`)
+  - the source tail elements are copied into the fresh mutable `tail_buf`
+  - `tail_len` is initialized to the copied tail length
+
+  This preserves the normal persistent-vector invariant that `pvec_so_far`
+  contains only full 32-element leaves plus an empty tail, while the builder's
+  mutable right edge lives entirely in `tail_buf`. It also avoids mutating any
+  shared trie nodes from the source vector.
 - **`builder_push(builder, elem)`**:
   - If `tail_len < 32`: `tail_buf[tail_len] = elem; tail_len += 1`
     (true in-place mutation, amortized O(1))
@@ -225,6 +234,11 @@ final `PVec` on `freeze`:
 This preserves the current amortized O(1) push performance for `collect`
 and loop-rewritten append patterns, while producing a proper persistent
 vector on freeze.
+
+**Builder invariant**: `pvec_so_far` is always a valid `PVec` whose tail is
+empty; all builder-private, not-yet-frozen right-edge elements live in
+`tail_buf[0..tail_len]`. When `tail_buf` fills, it is promoted as a full leaf
+into `pvec_so_far` and replaced with a fresh empty 32-slot buffer.
 
 The 3-slot `$Array` ABI shape is preserved for the builder object itself,
 keeping the lowering contract (`VECTOR_BUILDER_NEW/FROM/PUSH/FREEZE`) and
@@ -240,13 +254,16 @@ the builder — only the transient `tail_buf` is mutated). The fresh
 
 ### `VECTOR_SET_IN_PLACE`
 
-Currently emits `array.set` on the flat array. With the trie, true in-place
-leaf mutation is only safe when the entire path from root to the target leaf
-is uniquely owned.
+Today this intrinsic lowers directly to raw `array.set` in codegen. With the
+trie representation, true in-place leaf mutation is only safe when the entire
+path from root to the target leaf is uniquely owned.
 
-For the initial landing, `VECTOR_SET_IN_PLACE` can be implemented as an alias
-for the persistent `set` (path-copy). This preserves correctness while losing
-the O(1) fast path.
+For the initial landing, `VECTOR_SET_IN_PLACE` should lower to the persistent
+`set` implementation (path-copy) rather than emitting raw mutation. This
+preserves correctness while losing the old O(1) flat-array fast path.
+
+This requires updates in both stage0 and boot intrinsic lowering, not just in
+`rt.arr`, because the current implementation bypasses the runtime helper layer.
 
 Follow-up: implement real in-place path mutation for the unique case, which
 requires walking the path and mutating nodes directly. This is still O(log32 N)
@@ -307,8 +324,11 @@ emits the old one.
 - Implement `VECTOR_SET_IN_PLACE` as persistent set initially
 - Change vector valtype from `ref $Array` to `ref $PVec` in codegen
 - Update vector literal emission
-- Update intrinsic emission (boundaries, casts)
+- Update intrinsic emission (boundaries, casts), including replacing direct
+  `array.set` lowering for `VECTOR_SET_IN_PLACE`
 - Update prelude vector ref helpers
+- Update `boot/compiler/builtins.tw` so vector/runtime builtin ABI metadata
+  points at `ref $PVec` rather than `ref $Array`
 - Add empty vector singleton as a Wasm global
 
 ### Phase 4: Boot Compiler Parity
@@ -324,9 +344,12 @@ Sub-phases:
 2. **Core read ops**: `get`, `len` — simplest to port, good smoke test
 3. **Core write ops**: `set`, `make` — path-copy logic
 4. **Push + tail promotion**: the most complex single operation
-5. **Builder**: transient builder with mutable tail
+5. **Builder**: transient builder with mutable tail, including correct
+   `builder_from(vec)` handling of an existing source tail
 6. **Remaining ops**: `concat`, `slice`, `builder_extend`
-7. **Verify**: boot-compiled programs produce correct output
+7. **Builtin ABI + intrinsic parity**: update boot builtin ABI metadata and
+   intrinsic lowering to use `PVec` and persistent `VECTOR_SET_IN_PLACE`
+8. **Verify**: boot-compiled programs produce correct output
 
 ### Phase 5: Validation
 
@@ -347,7 +370,8 @@ Sub-phases:
   likely failure mode. Careful testing at boundary sizes (32, 33, 1024, 1025)
   is essential.
 - **Codegen vector ref type change**: many places assume `Vector<T>` is
-  `ref $Array`. The switch to `ref $PVec` will touch codegen broadly.
+  `ref $Array`. The switch to `ref $PVec` will touch codegen broadly,
+  including boot builtin ABI tables and boundary tests.
 - **Boot parity**: the mirrored Wasm IR in `boot/compiler/codegen/runtime/`
   must implement the same algorithm, which is substantial.
 - **In-place set regression**: the optimizer's `SET_IN_PLACE` becomes a

@@ -42,9 +42,9 @@ This plan is **compatible with** but does not depend on:
 - `get`/`has`/`set`/`remove`: near O(1) average, O(log32 N) worst case.
 - Structural sharing: updates copy only the path from root to the modified
   node; all other subtrees are shared across versions.
-- Insertion-order iteration is preserved via a separate order-tracking array.
+- Iteration order is HAMT traversal order rather than insertion order.
 - Key/value storage remains `anyref` — no type-family changes.
-- The `rt.dict` export surface remains identical.
+- The `rt.dict` function set remains stable: same exported names and responsibilities, but dict-valued params/results switch from `ref $Dict` to `ref $PDict`.
 - The uniqueness optimizer's in-place rewrites continue to work.
 
 ## Non-Goals
@@ -53,6 +53,7 @@ This plan is **compatible with** but does not depend on:
 - Expanding key types beyond `Int | String | Byte`
 - Exposing hash behavior at language surface
 - Changing user-visible `Dict` syntax or method names
+- Preserving insertion-order iteration in v1
 - Moving dict logic to `boot/lib` Twinkle source
 
 ## Hashing Strategy
@@ -94,19 +95,14 @@ New Wasm GC types added to `rt.types`:
   (field $hash i32)
   (field $entries (ref $Array))))     ;; array of $HamtEntry refs
 
-;; Order-tracking array for insertion-order iteration
-;; Stores $HamtEntry refs in insertion order, with nulls for removed entries
-;; compacted on rebuild
-
 ;; Persistent dictionary root
 (type $PDict (struct
   (field $size i32)
-  (field $root (ref null $HamtNode))
-  (field $order (ref $Array))))       ;; insertion-order entry refs
+  (field $root (ref null $HamtNode))))
 ```
 
 The existing `$Array` type (`array (mut anyref)`) is reused for node entry
-storage and order tracking, keeping all existing boxing/unboxing paths working.
+storage, keeping all existing boxing/unboxing paths working.
 
 **Node entries**: the `entries` array in `$HamtNode` contains a packed array
 of either `$HamtEntry` refs (for leaves at this level), `$HamtNode` refs (for
@@ -115,33 +111,24 @@ via `ref.test` / `ref.cast`. The array length equals `popcount(bitmap)`.
 
 ## Iteration Order
 
-The HAMT's internal traversal order is hash-based, not insertion-based. To
-preserve the current insertion-order contract:
+Iteration order in v1 is HAMT traversal order, not insertion order.
 
-- `$PDict` carries an `order` array of `$HamtEntry` refs in insertion order.
-- `keys` walks the order array, skipping nulls from removals.
-- `set` of a new key appends the entry ref to the order array.
-- `set` of an existing key replaces the entry in-place in the order array
-  (preserving position) via a linear scan of the order array.
-- `remove` nulls out the removed entry's slot in the order array via a
-  linear scan.
+That means:
 
-The order array is rebuilt (compacted, nulls removed) when the null ratio
-exceeds a threshold (e.g. 50% nulls, or on `keys` call). This keeps the
-amortized overhead manageable.
+- `keys` traverses the trie and emits keys in structural/hash order
+- updates do not maintain a separate ordering side table
+- `set`/`remove` retain the HAMT's near-O(1) average update behavior rather
+  than paying an extra O(N) order-maintenance cost
 
-**Complexity impact**: `get`/`has` don't touch the order array — pure O(1).
-`set` of a new key is O(1) amortized (append). `set` of an existing key and
-`remove` have an O(N) component for the order array scan, but the HAMT lookup
-itself is O(1). This is still a massive improvement over the current O(N) for
-everything. A follow-up can replace the order array with a doubly-linked list
-threaded through entries for O(1) order maintenance.
+This is a deliberate tradeoff for the pragmatic landing. If ordered iteration
+is still desirable later, it can be added with a separate persistent ordering
+structure or a distinct ordered-dict design.
 
 ## Core Operations
 
 ### `make() -> PDict`
 
-- Return `PDict { size: 0, root: null, order: [] }`
+- Return `PDict { size: 0, root: null }`
 
 ### `has(dict, key) -> i32`
 
@@ -163,17 +150,14 @@ threaded through entries for O(1) order maintenance.
 ### `set(dict, key, val) -> PDict`
 
 - Compute hash; walk HAMT
-- If key exists: path-copy to the entry, replace value, update order array
-  entry in-place
-- If key absent: path-copy and insert new entry, append to order array,
-  increment size
+- If key exists: path-copy to the entry, replace value
+- If key absent: path-copy and insert new entry, increment size
 
 ### `remove(dict, key) -> PDict`
 
 - Compute hash; walk HAMT
 - If key absent: return dict unchanged
-- If key found: path-copy and remove entry, null out order array slot,
-  decrement size
+- If key found: path-copy and remove entry, decrement size
 - Compact node if it becomes empty or single-entry after removal
 
 ### `len(dict) -> i32`
@@ -182,8 +166,8 @@ threaded through entries for O(1) order maintenance.
 
 ### `keys(dict) -> Array`
 
-- Walk order array, collect non-null entry keys into a fresh `$Array`
-- This naturally preserves insertion order
+- Traverse the HAMT and collect keys into a fresh `$Array`
+- Order is HAMT traversal order, not insertion order
 
 ## In-Place Variants
 
@@ -213,6 +197,8 @@ This affects:
 - `src/codegen/prelude.rs` — dict valtype mapping
 - `src/codegen/emit.rs` — dict literal lowering, intrinsic emission
 - `src/codegen/ctx.rs` — dict ref helpers
+- `boot/compiler/builtins.tw` — dict ABI metadata and builtin signatures
+- boot boundary/ABI tests that currently assert `rt_types__Dict`
 
 The `rt.dict` export signatures change their dict parameter/return types from
 `ref $Dict` to `ref $PDict`, but the **function names and count stay the
@@ -221,7 +207,8 @@ same**.
 ## Boot Compiler Parity
 
 The boot compiler has a mirrored runtime in
-`boot/compiler/codegen/runtime/dict.tw`. It must be updated in lockstep:
+`boot/compiler/codegen/runtime/dict.tw`. It must be updated in lockstep,
+along with boot builtin ABI metadata:
 
 - `boot/compiler/codegen/runtime/types.tw` — add HAMT type definitions
 - `boot/compiler/codegen/runtime/dict.tw` — rewrite all operations
@@ -251,6 +238,8 @@ Phases 2 and 3 must land as a single atomic change. Once `rt.dict` expects
 - Update dict literal emission (empty dict)
 - Update intrinsic emission (boundaries, casts)
 - Update prelude dict ref helpers
+- Update `boot/compiler/builtins.tw` so dict/runtime builtin ABI metadata
+  points at `ref $PDict` rather than `ref $Dict`
 - Add empty dict singleton as a Wasm global
 
 ### Phase 4: Boot Compiler Parity
@@ -268,9 +257,11 @@ Sub-phases:
    mutation
 4. **Core write ops**: `set`, `remove` — path-copy with bitmap manipulation
 5. **Collision handling**: collision node creation and resolution
-6. **Order tracking**: order array maintenance in `set`/`remove`/`keys`
+6. **Traversal-based `keys`**: HAMT walk that materializes keys in traversal
+   order
 7. **Remaining ops**: `set_in_place`, `remove_in_place`
-8. **Verify**: boot-compiled programs produce correct output
+8. **Builtin ABI parity**: update boot builtin ABI metadata to use `PDict`
+9. **Verify**: boot-compiled programs produce correct output
 
 ### Phase 5: Validation
 
@@ -281,7 +272,7 @@ Sub-phases:
   - Hash collision scenarios (craft keys with same hash)
   - Large dicts (1000+ entries): get/has/set/remove
   - Structural sharing: modify derived dict, verify original unchanged
-  - Insertion-order preservation across set/update/remove/reinsert
+  - Traversal-order behavior stays deterministic for a fixed hash/trie shape
   - `Dict<Byte, V>` coverage
   - In-place rewrite correctness (uniqueness optimizer)
 
@@ -289,10 +280,11 @@ Sub-phases:
 
 - **Hash collision handling**: collision nodes add complexity. Incorrect
   collision resolution can cause silent data loss. Needs targeted tests.
-- **Iteration order preservation**: the order array adds overhead to `set`
-  (existing key) and `remove`. Acceptable for v1 but should be profiled.
+- **Iteration-order change**: dropping insertion-order iteration may change
+  observable output for code that implicitly relied on assoc-list ordering.
 - **Codegen dict ref type change**: the switch from `ref $Dict` to
-  `ref $PDict` touches codegen broadly, similar to the vector change.
+  `ref $PDict` touches codegen broadly, similar to the vector change,
+  including boot builtin ABI tables and boundary tests.
 - **Boot parity**: the mirrored Wasm IR implementation is substantial.
 - **In-place regression**: the optimizer's in-place variants become
   persistent operations initially, losing the mutation fast path.
@@ -310,7 +302,8 @@ These remain valid future work, enabled by having a working HAMT:
 
 1. **Real in-place mutation** for uniquely owned paths
 2. **Per-key/value-type specialization** (`Dict<String, Int>` with typed slots)
-3. **O(1) order maintenance** via doubly-linked entry list
+3. **Ordered iteration** via a separate persistent ordering structure or a
+   dedicated ordered-dict design
 4. **Cached hash in entries** to avoid recomputation on resize/collision
 5. **Twinkle-authored library ownership** in `boot/lib`
 6. **`anyref` elimination** from key/value storage
