@@ -2204,3 +2204,38 @@ fn opt_vector_concat_guard_fresh_runtime_semantics() {
         &["3", "6"],
     );
 }
+
+#[test]
+fn opt_vector_append_nonempty_init_loop_rewritten_to_builder() {
+    // A non-empty array literal moved to a tainted local via init should be
+    // eligible for loop builder rewrites (builder_from + loop push + freeze).
+    let module = compile_opt("tests/opt/vector_append_nonempty_init_loop.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_APPEND),
+        0,
+        "Expected no VECTOR_APPEND: non-empty init source_fresh enables loop builder"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FROM),
+        1,
+        "Expected VECTOR_BUILDER_FROM for non-empty initial content"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_PUSH),
+        1,
+        "Expected VECTOR_BUILDER_PUSH in loop"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FREEZE),
+        1,
+        "Expected VECTOR_BUILDER_FREEZE after loop"
+    );
+}
+
+#[test]
+fn opt_vector_append_nonempty_init_loop_runtime_semantics() {
+    assert_runtime_output(
+        "tests/opt/vector_append_nonempty_init_loop.tw",
+        &["6", "15"],
+    );
+}

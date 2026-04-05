@@ -1,0 +1,22 @@
+// A non-empty array literal moved into a tainted local should still be
+// eligible for loop-builder rewrites: the value is freshly allocated even
+// though the binding eventually escapes.
+// Expected output:
+//   6
+//   15
+
+fn build() Vector<Int> {
+    out := [0, 1]
+    for x in range(4) {
+        out = out.append(x + 2)
+    }
+    out
+}
+
+xs := build()
+println("${xs.len()}")
+sum := 0
+for x in xs {
+    sum = sum + x
+}
+println("${sum}")

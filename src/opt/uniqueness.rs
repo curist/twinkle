@@ -1076,6 +1076,17 @@ fn match_builder_region_step(
     None
 }
 
+/// Returns true if the base local is eligible to start a builder region
+/// (builder_new/from → push/extend → freeze → assign pattern).
+///
+/// When `source_fresh` is provided (Some), it acts as an extra bypass that
+/// allows freshly-allocated but tainted locals to participate. This bypass
+/// should only be used by the **detection** functions (detect_spine_builder_base,
+/// detect_dead_concat_base, loop builder candidate filter). It must NOT be used
+/// when checking `can_preserve_builder_uniqueness` inside the regular COW
+/// single-step rewrite, because that path propagates uniqueness through the
+/// assign even when no builder region will actually be created, which can
+/// incorrectly enable downstream in-place vector-set ops after an opaque call.
 fn base_can_start_builder_region(
     base: LocalId,
     tainted: &HashSet<LocalId>,
@@ -1083,11 +1094,13 @@ fn base_can_start_builder_region(
     known_empty: &HashSet<LocalId>,
     refreshed: &HashSet<LocalId>,
     builder_safe: &HashSet<LocalId>,
+    source_fresh: Option<&HashSet<LocalId>>,
 ) -> bool {
     unique.contains(&base)
         && ((!tainted.contains(&base) || refreshed.contains(&base))
             || known_empty.contains(&base)
-            || builder_safe.contains(&base))
+            || builder_safe.contains(&base)
+            || source_fresh.map_or(false, |sf| sf.contains(&base)))
 }
 
 /// Check if the current expr starts a straight-line builder region:
@@ -1100,6 +1113,7 @@ fn detect_spine_builder_base(
     known_empty: &HashSet<LocalId>,
     refreshed: &HashSet<LocalId>,
     builder_safe: &HashSet<LocalId>,
+    source_fresh: &HashSet<LocalId>,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) -> Option<LocalId> {
     let AnfExpr::Let { local, op, body } = expr else {
@@ -1129,7 +1143,15 @@ fn detect_spine_builder_base(
         _ => return None,
     };
 
-    if !base_can_start_builder_region(base, tainted, unique, known_empty, refreshed, builder_safe) {
+    if !base_can_start_builder_region(
+        base,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        Some(source_fresh),
+    ) {
         return None;
     }
     match_builder_region_step(*func_id, args, body, base, *local, wrappers)?;
@@ -1238,6 +1260,7 @@ fn detect_dead_concat_base(
     known_empty: &HashSet<LocalId>,
     refreshed: &HashSet<LocalId>,
     builder_safe: &HashSet<LocalId>,
+    source_fresh: &HashSet<LocalId>,
 ) -> Option<(LocalId, LocalId, Atom)> {
     let AnfExpr::Let { local, op, body } = expr else {
         return None;
@@ -1263,7 +1286,15 @@ fn detect_dead_concat_base(
     if expr_mentions_local(body, base) && !is_consume_reassign(body, base, *local) {
         return None;
     }
-    if !base_can_start_builder_region(base, tainted, unique, known_empty, refreshed, builder_safe) {
+    if !base_can_start_builder_region(
+        base,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        Some(source_fresh),
+    ) {
         return None;
     }
     Some((base, *local, args[1].clone()))
@@ -1647,6 +1678,7 @@ pub fn uniqueness_rewrite(
     let mut known_empty = HashSet::new();
     let mut refreshed = HashSet::new();
     let mut builder_safe = HashSet::new();
+    let mut source_fresh = HashSet::new();
     let mut next_local = next_local_id(func);
     rewrite_expr(
         &mut func.body,
@@ -1655,6 +1687,7 @@ pub fn uniqueness_rewrite(
         &mut known_empty,
         &mut refreshed,
         &mut builder_safe,
+        &mut source_fresh,
         &mut next_local,
         wrappers,
     );
@@ -1667,6 +1700,7 @@ fn rewrite_expr(
     known_empty: &mut HashSet<LocalId>,
     refreshed: &mut HashSet<LocalId>,
     builder_safe: &mut HashSet<LocalId>,
+    source_fresh: &mut HashSet<LocalId>,
     next_local: &mut u32,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) {
@@ -1681,6 +1715,7 @@ fn rewrite_expr(
         known_empty,
         refreshed,
         builder_safe,
+        source_fresh,
         wrappers,
     ) {
         let total_steps = count_spine_builder_steps(expr, base, wrappers);
@@ -1746,6 +1781,7 @@ fn rewrite_expr(
                     known_empty,
                     refreshed,
                     builder_safe,
+                    source_fresh,
                     next_local,
                     wrappers,
                 );
@@ -1754,9 +1790,15 @@ fn rewrite_expr(
         }
     }
 
-    if let Some((base, result_local, rhs)) =
-        detect_dead_concat_base(expr, tainted, unique, known_empty, refreshed, builder_safe)
-    {
+    if let Some((base, result_local, rhs)) = detect_dead_concat_base(
+        expr,
+        tainted,
+        unique,
+        known_empty,
+        refreshed,
+        builder_safe,
+        source_fresh,
+    ) {
         let builder_local = alloc_local(next_local);
         let step_local = alloc_local(next_local);
         let freeze_local = alloc_local(next_local);
@@ -1809,6 +1851,7 @@ fn rewrite_expr(
             known_empty,
             refreshed,
             builder_safe,
+            source_fresh,
             next_local,
             wrappers,
         );
@@ -1842,6 +1885,7 @@ fn rewrite_expr(
                     known_empty,
                     refreshed,
                     builder_safe,
+                    Some(source_fresh),
                 )
             })
             .collect::<Vec<_>>();
@@ -1917,6 +1961,7 @@ fn rewrite_expr(
                 known_empty,
                 refreshed,
                 builder_safe,
+                source_fresh,
                 next_local,
                 wrappers,
             );
@@ -1960,6 +2005,7 @@ fn rewrite_expr(
                 known_empty,
                 refreshed,
                 builder_safe,
+                source_fresh,
                 next_local,
                 wrappers,
             );
@@ -1975,6 +2021,9 @@ fn rewrite_expr(
         }
     }
     if let AnfOp::AArrayLit(elems) = op.as_ref() {
+        // source_fresh: all array literals (empty or not) produce a freshly
+        // allocated value that is locally owned until aliased.
+        source_fresh.insert(bind_local);
         if elems.is_empty() {
             known_empty.insert(bind_local);
         }
@@ -1996,10 +2045,23 @@ fn rewrite_expr(
             if tainted.contains(&bind_local) && builder_safe.contains(source) {
                 builder_safe.insert(bind_local);
             }
-        } else if refreshed.contains(source) && live_after(body).contains(source) {
-            // Source was refreshed (held a fresh value) but is now aliased.
-            // Clear refreshed so downstream checks don't bypass the taint guard.
-            refreshed.remove(source);
+            // Transfer source_fresh: the freshly-allocated value moves with the
+            // local. The source is dead after this point.
+            if source_fresh.contains(source) {
+                source_fresh.remove(source);
+                source_fresh.insert(bind_local);
+            }
+        } else {
+            // Transfer failed (source is tainted and not builder_safe = aliased,
+            // or source is not unique). The source may now be aliased by
+            // bind_local; clear source_fresh from the source since we can no
+            // longer guarantee unique ownership of the value.
+            source_fresh.remove(source);
+            if refreshed.contains(source) && live_after(body).contains(source) {
+                // Source was refreshed (held a fresh value) but is now aliased.
+                // Clear refreshed so downstream checks don't bypass the taint guard.
+                refreshed.remove(source);
+            }
         }
         if known_empty.contains(source) && !tainted.contains(source) {
             known_empty.remove(source);
@@ -2021,6 +2083,7 @@ fn rewrite_expr(
         known_empty.remove(target);
         refreshed.remove(target);
         builder_safe.remove(target);
+        source_fresh.remove(target);
         if let Atom::ALocal(source) = value {
             if unique.contains(source)
                 && (!tainted.contains(source) || builder_safe.contains(source))
@@ -2087,6 +2150,11 @@ fn rewrite_expr(
                 let can_rewrite = is_consume_reassign(body, base, bind_local)
                     || !live_after(body).contains(&base);
                 let can_reuse_in_place_base = base_can_rewrite(base, tainted, unique, refreshed);
+                // Do NOT pass source_fresh here. The source_fresh bypass is
+                // only for actual builder-region detection (loop/spine/concat).
+                // Passing it here would propagate uniqueness through a single
+                // append on a fresh-but-non-empty base, which then incorrectly
+                // enables downstream in-place vector-set ops after opaque calls.
                 let can_preserve_builder_uniqueness = info.builder_rewritable
                     && base_can_start_builder_region(
                         base,
@@ -2095,6 +2163,7 @@ fn rewrite_expr(
                         known_empty,
                         refreshed,
                         builder_safe,
+                        None,
                     );
                 if can_rewrite && (can_reuse_in_place_base || can_preserve_builder_uniqueness) {
                     if can_reuse_in_place_base {
@@ -2143,6 +2212,7 @@ fn rewrite_expr(
         known_empty,
         refreshed,
         builder_safe,
+        source_fresh,
         next_local,
         wrappers,
     );
@@ -2154,6 +2224,7 @@ fn rewrite_expr(
         known_empty,
         refreshed,
         builder_safe,
+        source_fresh,
         next_local,
         wrappers,
     );
@@ -2210,6 +2281,7 @@ fn rewrite_op(
     known_empty: &mut HashSet<LocalId>,
     refreshed: &mut HashSet<LocalId>,
     builder_safe: &mut HashSet<LocalId>,
+    source_fresh: &mut HashSet<LocalId>,
     next_local: &mut u32,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) {
@@ -2227,6 +2299,8 @@ fn rewrite_op(
             let mut else_refreshed = refreshed.clone();
             let mut then_builder_safe = builder_safe.clone();
             let mut else_builder_safe = builder_safe.clone();
+            let mut then_source_fresh = source_fresh.clone();
+            let mut else_source_fresh = source_fresh.clone();
             rewrite_expr(
                 then_branch,
                 tainted,
@@ -2234,6 +2308,7 @@ fn rewrite_op(
                 &mut then_empty,
                 &mut then_refreshed,
                 &mut then_builder_safe,
+                &mut then_source_fresh,
                 next_local,
                 wrappers,
             );
@@ -2244,6 +2319,7 @@ fn rewrite_op(
                 &mut else_empty,
                 &mut else_refreshed,
                 &mut else_builder_safe,
+                &mut else_source_fresh,
                 next_local,
                 wrappers,
             );
@@ -2256,20 +2332,24 @@ fn rewrite_op(
                 *known_empty = else_empty;
                 *refreshed = else_refreshed;
                 *builder_safe = else_builder_safe;
+                *source_fresh = else_source_fresh;
             } else if expr_always_terminates(else_branch) {
                 *unique = then_unique;
                 *known_empty = then_empty;
                 *refreshed = then_refreshed;
                 *builder_safe = then_builder_safe;
+                *source_fresh = then_source_fresh;
             } else {
                 intersect_in_place(&mut then_unique, &else_unique);
                 intersect_in_place(&mut then_empty, &else_empty);
                 intersect_in_place(&mut then_refreshed, &else_refreshed);
                 intersect_in_place(&mut then_builder_safe, &else_builder_safe);
+                intersect_in_place(&mut then_source_fresh, &else_source_fresh);
                 *unique = then_unique;
                 *known_empty = then_empty;
                 *refreshed = then_refreshed;
                 *builder_safe = then_builder_safe;
+                *source_fresh = then_source_fresh;
             }
         }
         AnfOp::AMatch { arms, .. } => {
@@ -2277,11 +2357,13 @@ fn rewrite_op(
             let mut merged_empty: Option<HashSet<LocalId>> = None;
             let mut merged_refreshed: Option<HashSet<LocalId>> = None;
             let mut merged_builder_safe: Option<HashSet<LocalId>> = None;
+            let mut merged_source_fresh: Option<HashSet<LocalId>> = None;
             for arm in arms {
                 let mut arm_unique = unique.clone();
                 let mut arm_empty = known_empty.clone();
                 let mut arm_refreshed = refreshed.clone();
                 let mut arm_builder_safe = builder_safe.clone();
+                let mut arm_source_fresh = source_fresh.clone();
                 rewrite_expr(
                     &mut arm.body,
                     tainted,
@@ -2289,6 +2371,7 @@ fn rewrite_op(
                     &mut arm_empty,
                     &mut arm_refreshed,
                     &mut arm_builder_safe,
+                    &mut arm_source_fresh,
                     next_local,
                     wrappers,
                 );
@@ -2312,6 +2395,11 @@ fn rewrite_op(
                 } else {
                     merged_builder_safe = Some(arm_builder_safe);
                 }
+                if let Some(m) = merged_source_fresh.as_mut() {
+                    intersect_in_place(m, &arm_source_fresh);
+                } else {
+                    merged_source_fresh = Some(arm_source_fresh);
+                }
             }
             if let Some(m) = merged_unique {
                 *unique = m;
@@ -2325,6 +2413,9 @@ fn rewrite_op(
             if let Some(m) = merged_builder_safe {
                 *builder_safe = m;
             }
+            if let Some(m) = merged_source_fresh {
+                *source_fresh = m;
+            }
         }
         AnfOp::ALoop { body } => {
             // Conservative: don't propagate unique/refreshed into loops
@@ -2332,6 +2423,7 @@ fn rewrite_op(
             let mut loop_empty = HashSet::new();
             let mut loop_refreshed = HashSet::new();
             let mut loop_builder_safe = HashSet::new();
+            let mut loop_source_fresh = HashSet::new();
             rewrite_expr(
                 body,
                 tainted,
@@ -2339,18 +2431,18 @@ fn rewrite_op(
                 &mut loop_empty,
                 &mut loop_refreshed,
                 &mut loop_builder_safe,
+                &mut loop_source_fresh,
                 next_local,
                 wrappers,
             );
-            // Invalidate known_empty for locals assigned inside the loop.
-            // A loop body may `assign(x = ...)` to outer locals, making
-            // known_empty stale (e.g. a vector that was [] gains elements).
-            // We only clear known_empty, not unique — uniqueness is about
-            // aliasing, and consume-reassign patterns in loops preserve it.
+            // Invalidate known_empty and source_fresh for locals assigned
+            // inside the loop. A loop body may `assign(x = ...)` to outer
+            // locals, making these facts stale.
             let assigned_in_loop = collect_assign_targets(body);
             for local in &assigned_in_loop {
                 known_empty.remove(local);
                 builder_safe.remove(local);
+                source_fresh.remove(local);
             }
         }
         _ => {}
