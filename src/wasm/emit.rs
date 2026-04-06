@@ -98,7 +98,7 @@ pub fn emit_wat(module: &LinkedModuleIR) -> String {
             .collect::<Vec<_>>()
             .join(" ");
         out.push_str(&format!(
-            "  (global ${} {}{}{} ({}))\n",
+            "  (global ${} {}{}{} {})\n",
             global.name,
             mut_str,
             emit_val_type(&global.ty),
@@ -390,7 +390,9 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I32RemS => format!("{pad}i32.rem_s"),
         Instr::I32And => format!("{pad}i32.and"),
         Instr::I32Or => format!("{pad}i32.or"),
+        Instr::I32Shl => format!("{pad}i32.shl"),
         Instr::I32ShrU => format!("{pad}i32.shr_u"),
+        Instr::I32ShrS => format!("{pad}i32.shr_s"),
         Instr::I32Eq => format!("{pad}i32.eq"),
         Instr::I32Ne => format!("{pad}i32.ne"),
         Instr::I32LtS => format!("{pad}i32.lt_s"),

@@ -16,6 +16,15 @@ pub fn make() -> ModuleIR {
         results: vec![ValType::I32],
     });
 
+    // Import rt.arr.push for keys() which returns PVec
+    m.imports.push(ImportDef {
+        module: "rt.arr".into(),
+        name: "push".into(),
+        as_sym: "push".into(),
+        params: vec![ref_pvec(), ValType::Anyref],
+        results: vec![ref_pvec()],
+    });
+
     m.funcs.push(make_fn());
     m.funcs.push(len_fn());
     m.funcs.push(keys_fn());
@@ -80,28 +89,34 @@ fn len_fn() -> FuncDef {
     }
 }
 
-/// `keys(dict: Dict) -> Array`  — returns Array<anyref> of keys
+/// `keys(dict: Dict) -> PVec`  — returns PVec of keys
 fn keys_fn() -> FuncDef {
-    // Locals: p1=n (i32), p2=i (i32), p3=result (ref $Array), p4=entry (ref null $DictEntry)
+    // Locals: p1=n (i32), p2=i (i32), p3=result (ref null $PVec), p4=entry (ref null $DictEntry)
     FuncDef {
         name: "keys".into(),
         params: vec![ref_dict_null()],
-        results: vec![ref_array()],
+        results: vec![ref_pvec()],
         locals: vec![
             ValType::I32,
             ValType::I32,
-            ref_array_null(),
+            ref_pvec_null(),
             ref_dict_entry_null(),
         ],
         body: vec![
+            // n = dict.len
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::ArrayLen,
             Instr::LocalSet(1),
-            Instr::RefNull(HeapType::None),
-            Instr::LocalGet(1),
-            Instr::ArrayNew(T_ARRAY.into()),
+            // result = PVec { 0, 0, null, VecLeaf(Array(0)) }
+            Instr::I32Const(0),
+            Instr::I32Const(0),
+            Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.into())),
+            Instr::ArrayNewFixed(T_ARRAY.into(), 0),
+            Instr::StructNew(T_VEC_LEAF.into()),
+            Instr::StructNew(T_PVEC.into()),
             Instr::LocalSet(3),
+            // i = 0
             Instr::I32Const(0),
             Instr::LocalSet(2),
             Instr::Block {
@@ -115,18 +130,21 @@ fn keys_fn() -> FuncDef {
                         Instr::LocalGet(1),
                         Instr::I32GeS,
                         Instr::BrIf("exit".into()),
+                        // entry = dict[i]
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::LocalGet(2),
                         Instr::ArrayGet(T_DICT.into()),
                         Instr::LocalSet(4),
+                        // result = push(result, entry.key)
                         Instr::LocalGet(3),
                         Instr::RefAsNonNull,
-                        Instr::LocalGet(2),
                         Instr::LocalGet(4),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_DICT_ENTRY.into(), 0),
-                        Instr::ArraySet(T_ARRAY.into()),
+                        Instr::Call("push".into()),
+                        Instr::LocalSet(3),
+                        // i += 1
                         Instr::LocalGet(2),
                         Instr::I32Const(1),
                         Instr::I32Add,

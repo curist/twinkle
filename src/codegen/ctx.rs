@@ -10,7 +10,9 @@ use crate::ir::anf::analysis::{
 };
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
-use crate::runtime::types::{T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_STRING, T_VARIANT};
+use crate::runtime::types::{
+    T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_PVEC, T_STRING, T_VARIANT,
+};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -614,12 +616,12 @@ impl<'a> EmitCtx<'a> {
                     ValType::Ref {
                         heap: HeapType::Named(sym),
                         ..
-                    } => sym == T_ARRAY,
+                    } => sym == T_ARRAY || sym == T_PVEC,
                     _ => false,
                 };
                 debug_assert!(
                     is_builder_storage,
-                    "codegen verify: {func_name} (FuncId({})): L{} has vector_builder_elem metadata but local type is {:?}, expected Anyref or Array-backed builder storage",
+                    "codegen verify: {func_name} (FuncId({})): L{} has vector_builder_elem metadata but local type is {:?}, expected Anyref, Array, or PVec-backed builder storage",
                     func_id.0, local_id.0, local_ty
                 );
             }
@@ -1068,16 +1070,10 @@ impl<'a> EmitCtx<'a> {
                         self.local_vector_builder_elem(*local),
                         vector_builder_elem_from_setup_op(op, self),
                     );
-                    // For BUILDER_NEW/BUILDER_FROM, the builder handle should be
-                    // typed to match the vector it builds.  When the pre-pass
-                    // determined the element type (via BUILDER_PUSH sites), use
-                    // it so the local gets the right i64-specialised ValType.
-                    if inferred_mono.is_none() {
-                        if let Some(elem_ty) = vector_builder_elem.as_ref() {
-                            if is_vector_builder_setup_op(op) {
-                                inferred_mono = Some(MonoType::Vector(Box::new(elem_ty.clone())));
-                            }
-                        }
+                    // Builder handle locals stay as Anyref — the builder is a
+                    // 3-slot $Array, not a $PVec.
+                    if is_vector_builder_setup_op(op) {
+                        inferred_mono = None;
                     }
                     let erase_assignment = (self.assigned_locals.contains(local)
                         || self.rebound_locals.contains(local))
@@ -1127,6 +1123,9 @@ impl<'a> EmitCtx<'a> {
                                 &self.concrete_func_sigs,
                             )
                         }
+                    } else if is_vector_builder_setup_op(op) {
+                        // Builder handle is a 3-slot $Array, not $PVec
+                        ValType::Anyref
                     } else {
                         self.infer_op_valtype(op).unwrap_or(ValType::Anyref)
                     };
@@ -2492,7 +2491,7 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
         MonoType::Bool | MonoType::Byte => ValType::I32,
         MonoType::String => ref_named(true, T_STRING),
         MonoType::Void | MonoType::Never => ValType::I32,
-        MonoType::Vector(_) => ref_named(true, T_ARRAY),
+        MonoType::Vector(_) => ref_named(true, T_PVEC),
         MonoType::Dict(_, _) => ref_named(true, T_DICT),
         MonoType::Function { .. } => ref_named(true, T_CLOSURE),
         MonoType::Var(_) | MonoType::MetaVar(_) => ValType::Anyref,
@@ -3038,7 +3037,7 @@ mod tests {
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::lower::prelude as prelude_ids;
     use crate::ir::{FieldId, VariantId};
-    use crate::runtime::types::ref_array_null;
+    use crate::runtime::types::{ref_array_null, ref_pvec_null};
     use crate::types::ty::{CELL_TYPE_ID, RESULT_TYPE_ID, Variant};
 
     #[test]
@@ -3659,12 +3658,13 @@ mod tests {
 
     #[test]
     fn infer_vector_intrinsic_results_from_argument_types() {
+        use crate::runtime::types::ref_pvec_null;
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
 
-        ctx.local_map.insert(LocalId(1), (0, ref_array_null()));
+        ctx.local_map.insert(LocalId(1), (0, ref_pvec_null()));
         ctx.local_mono
             .insert(LocalId(1), MonoType::Vector(Box::new(MonoType::Int)));
         ctx.local_map.insert(LocalId(2), (1, ValType::Anyref));
@@ -3688,7 +3688,7 @@ mod tests {
                 &Atom::AGlobalFunc(prelude_ids::VECTOR_MAKE),
                 &[Atom::ALitInt(3), Atom::ALitInt(7)],
             ),
-            Some(ref_array_null())
+            Some(ref_pvec_null())
         );
         assert_eq!(
             ctx.infer_call_result_mono(
@@ -3722,7 +3722,7 @@ mod tests {
                 &Atom::AGlobalFunc(prelude_ids::VECTOR_BUILDER_FREEZE),
                 &[Atom::ALocal(LocalId(2))],
             ),
-            Some(ref_array_null())
+            Some(ref_pvec_null())
         );
     }
 
@@ -3755,18 +3755,13 @@ mod tests {
             ctx.local_vector_builder_elem(LocalId(1)),
             Some(MonoType::Int)
         );
-        // After removing i64 specialization, builder-from result gets a
-        // mono annotation from `infer_call_result_mono`.  The builder
-        // local now carries `Vector(Int)` in `local_mono`, which is fine
-        // — what matters is that the builder_elem metadata is also set.
-        assert_eq!(
-            ctx.local_mono.get(&LocalId(1)),
-            Some(&MonoType::Vector(Box::new(MonoType::Int)))
-        );
-        // Builder locals use nullable ref (from mono_to_valtype for Vector)
+        // Builder setup ops clear inferred_mono so the builder local
+        // stays as Anyref (builder is a 3-slot $Array, not a $PVec).
+        assert_eq!(ctx.local_mono.get(&LocalId(1)), None);
+        // Builder locals get Anyref since inferred_mono is cleared
         assert_eq!(
             ctx.local(LocalId(1)).map(|(_, ty)| ty.clone()),
-            Some(ref_array_null())
+            Some(ValType::Anyref)
         );
         assert_eq!(
             infer_vector_mono_from_builder_atom(&Atom::ALocal(LocalId(1)), &ctx),
@@ -3815,7 +3810,7 @@ mod tests {
         let _ = ctx.setup_locals(&func);
         assert_eq!(
             ctx.local(LocalId(3)).map(|(_, ty)| ty.clone()),
-            Some(ref_array_null())
+            Some(ref_pvec_null())
         );
         assert_eq!(
             ctx.local_mono.get(&LocalId(3)),

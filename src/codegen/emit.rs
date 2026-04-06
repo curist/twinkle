@@ -22,8 +22,8 @@ use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_STRING, T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_iter_state_null, ref_string,
-    ref_string_null,
+    T_PVEC, T_STRING, T_VARIANT, T_VEC_LEAF, ref_array, ref_array_null, ref_dict_null,
+    ref_iter_state_null, ref_pvec, ref_pvec_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -3991,23 +3991,55 @@ fn emit_array_literal(
     elem_mono: Option<&MonoType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    use crate::runtime::types::T_VEC_INTERNAL;
     let mut instrs = Vec::new();
+
+    if elems.is_empty() {
+        // Empty vector: use the global singleton
+        instrs.push(Instr::GlobalGet("rt_arr__empty_pvec".to_string()));
+        instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
+        return instrs;
+    }
 
     let elem_val_ty = elem_mono
         .map(|mono| mono_to_valtype_specialized(mono, ctx.type_env, &ctx.concrete_func_sigs));
-    for elem in elems {
-        if let Some(elem_ty) = elem_val_ty.as_ref() {
-            instrs.extend(emit_atom(elem, Some(elem_ty), ctx));
-            instrs.extend(emit_coerce_stack(elem_ty, &ValType::Anyref));
-        } else {
-            instrs.extend(emit_atom(elem, Some(&ValType::Anyref), ctx));
+
+    if elems.len() <= 32 {
+        // Small literal: tail-only PVec
+        // Push PVec fields in order: len, shift, root, then build tail
+        instrs.push(Instr::I32Const(elems.len() as i32));
+        instrs.push(Instr::I32Const(0)); // shift = 0
+        instrs.push(Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.to_string())));
+        // Build tail: elements → ArrayNewFixed → StructNew VecLeaf
+        for elem in elems {
+            if let Some(elem_ty) = elem_val_ty.as_ref() {
+                instrs.extend(emit_atom(elem, Some(elem_ty), ctx));
+                instrs.extend(emit_coerce_stack(elem_ty, &ValType::Anyref));
+            } else {
+                instrs.extend(emit_atom(elem, Some(&ValType::Anyref), ctx));
+            }
+        }
+        instrs.push(Instr::ArrayNewFixed(
+            T_ARRAY.to_string(),
+            elems.len() as u32,
+        ));
+        instrs.push(Instr::StructNew(T_VEC_LEAF.to_string()));
+        instrs.push(Instr::StructNew(T_PVEC.to_string()));
+    } else {
+        // Large literal (>32): use repeated push
+        ensure_rt_arr_push_import(ctx);
+        instrs.push(Instr::GlobalGet("rt_arr__empty_pvec".to_string()));
+        for elem in elems {
+            if let Some(elem_ty) = elem_val_ty.as_ref() {
+                instrs.extend(emit_atom(elem, Some(elem_ty), ctx));
+                instrs.extend(emit_coerce_stack(elem_ty, &ValType::Anyref));
+            } else {
+                instrs.extend(emit_atom(elem, Some(&ValType::Anyref), ctx));
+            }
+            instrs.push(Instr::Call("rt_arr__push".to_string()));
         }
     }
-    instrs.push(Instr::ArrayNewFixed(
-        T_ARRAY.to_string(),
-        elems.len() as u32,
-    ));
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
     instrs
 }
 
@@ -4022,7 +4054,7 @@ fn emit_index_op(
     match base_ty {
         crate::ir::anf::IndexKind::Array => {
             ensure_rt_arr_get_import(ctx);
-            instrs.extend(emit_atom(base, Some(&ref_array_null()), ctx));
+            instrs.extend(emit_atom(base, Some(&ref_pvec_null()), ctx));
             instrs.extend(emit_index_as_i32(index, ctx));
             instrs.push(Instr::Call("rt_arr__get".to_string()));
             instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
@@ -4489,20 +4521,20 @@ fn emit_array_append_intrinsic(
         panic!("Array.append intrinsic expects 2 args, got {}", args.len());
     }
 
-    ensure_rt_arr_concat_import(ctx);
+    ensure_rt_arr_push_import(ctx);
 
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_pvec_null()), ctx);
+    instrs.push(Instr::RefAsNonNull);
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
-    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
-    instrs.push(Instr::Call("rt_arr__concat".to_string()));
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs.push(Instr::Call("rt_arr__push".to_string()));
+    instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
     instrs
 }
 
 // --- Vector safe/make intrinsics ---
 
 /// `Vector.make(size: Int, fill: T) -> Vector<T>`
-/// Wasm: `array.new $Array (fill_anyref, size_i32)`
+/// Calls rt_arr__make(len_i32, fill_anyref) -> PVec
 fn emit_vector_make_intrinsic(
     args: &[Atom],
     bind_ty: &ValType,
@@ -4510,14 +4542,16 @@ fn emit_vector_make_intrinsic(
 ) -> Vec<Instr> {
     assert_eq!(args.len(), 2, "Vector.make expects 2 args");
 
+    ensure_rt_arr_make_import(ctx);
+
     let mut instrs = Vec::new();
-    // fill value (anyref)
-    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
     // size (Int = i64) → i32
     instrs.extend(emit_atom(&args[0], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64);
-    instrs.push(Instr::ArrayNew(T_ARRAY.to_string()));
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    // fill value (anyref)
+    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
+    instrs.push(Instr::Call("rt_arr__make".to_string()));
+    instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
     instrs
 }
 
@@ -4532,22 +4566,23 @@ fn emit_vector_get_intrinsic(
     use crate::types::ty::OPTION_TYPE_ID;
     assert_eq!(args.len(), 2, "Vector.get expects 2 args");
 
+    ensure_rt_arr_get_import(ctx);
+
     let mut instrs = Vec::new();
 
-    // condition: i_i32 < arr.len
-    // i32.lt_u pops [lhs, rhs] and pushes lhs < rhs
+    // condition: i_i32 < pvec.len (unsigned comparison for negative index safety)
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64); // lhs = i as i32
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    instrs.push(Instr::ArrayLen); // rhs = arr.len
+    instrs.extend(emit_atom(&args[0], Some(&ref_pvec_null()), ctx));
+    instrs.push(Instr::StructGet(T_PVEC.to_string(), 0)); // rhs = pvec.len
     instrs.push(Instr::I32LtU);
 
-    // then: Some(arr[i])
+    // then: Some(get(vec, i))
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
-    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    then_body.extend(emit_atom(&args[0], Some(&ref_pvec_null()), ctx));
     then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     then_body.push(Instr::I32WrapI64);
-    then_body.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    then_body.push(Instr::Call("rt_arr__get".to_string()));
     then_body.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
     then_body.push(Instr::StructNew(T_VARIANT.to_string()));
 
@@ -4582,16 +4617,16 @@ fn emit_vector_set_intrinsic(
 
     let mut instrs = Vec::new();
 
-    // condition: i_i32 < arr.len
+    // condition: i_i32 < pvec.len
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64);
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    instrs.push(Instr::ArrayLen);
+    instrs.extend(emit_atom(&args[0], Some(&ref_pvec_null()), ctx));
+    instrs.push(Instr::StructGet(T_PVEC.to_string(), 0)); // pvec.len
     instrs.push(Instr::I32LtU);
 
-    // then: Some(rt_arr__set(arr, i, val))
+    // then: Some(rt_arr__set(vec, i, val))
     let mut then_body = vec![Instr::I32Const(OPTION_TYPE_ID.0 as i32), Instr::I32Const(1)];
-    then_body.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
+    then_body.extend(emit_atom(&args[0], Some(&ref_pvec_null()), ctx));
     then_body.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     then_body.push(Instr::I32WrapI64);
     then_body.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
@@ -4618,7 +4653,9 @@ fn emit_vector_set_intrinsic(
 /// Internal collect helper:
 /// `__vector_set_in_place(vec: Vector<T>, i: Int, val: T) -> Vector<T>`
 ///
-/// Mutates `vec[i]` directly with `array.set` and returns the same vector ref.
+/// With persistent vector trie, this lowers to the persistent `set` (path-copy)
+/// rather than raw in-place mutation. True in-place leaf mutation is a future
+/// optimization.
 fn emit_vector_set_in_place_intrinsic(
     args: &[Atom],
     bind_ty: &ValType,
@@ -4626,16 +4663,15 @@ fn emit_vector_set_in_place_intrinsic(
 ) -> Vec<Instr> {
     assert_eq!(args.len(), 3, "__vector_set_in_place expects 3 args");
 
-    // array.set expects: arr, idx(i32), val
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    ensure_rt_arr_set_import(ctx);
+
+    // Call persistent set: rt_arr__set(vec, idx, val) -> PVec
+    let mut instrs = emit_atom(&args[0], Some(&ref_pvec_null()), ctx);
     instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
     instrs.push(Instr::I32WrapI64);
     instrs.extend(emit_atom(&args[2], Some(&ValType::Anyref), ctx));
-    instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
-
-    // Return the same vector reference.
-    instrs.extend(emit_atom(&args[0], Some(&ref_array_null()), ctx));
-    instrs.extend(emit_coerce_stack(&ref_array(), bind_ty));
+    instrs.push(Instr::Call("rt_arr__set".to_string()));
+    instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
     instrs
 }
 
@@ -7052,22 +7088,12 @@ fn ensure_rt_str_substring_import(ctx: &mut EmitCtx<'_>) {
     });
 }
 
-fn ensure_rt_arr_concat_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: "rt.arr".to_string(),
-        name: "concat".to_string(),
-        as_sym: "rt_arr__concat".to_string(),
-        params: vec![ref_array_null(), ref_array_null()],
-        results: vec![ref_array()],
-    });
-}
-
 fn ensure_rt_arr_get_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
         module: "rt.arr".to_string(),
         name: "get".to_string(),
         as_sym: "rt_arr__get".to_string(),
-        params: vec![ref_array_null(), ValType::I32],
+        params: vec![ref_pvec_null(), ValType::I32],
         results: vec![ValType::Anyref],
     });
 }
@@ -7077,8 +7103,28 @@ fn ensure_rt_arr_set_import(ctx: &mut EmitCtx<'_>) {
         module: "rt.arr".to_string(),
         name: "set".to_string(),
         as_sym: "rt_arr__set".to_string(),
-        params: vec![ref_array_null(), ValType::I32, ValType::Anyref],
-        results: vec![ref_array()],
+        params: vec![ref_pvec_null(), ValType::I32, ValType::Anyref],
+        results: vec![ref_pvec()],
+    });
+}
+
+fn ensure_rt_arr_push_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "push".to_string(),
+        as_sym: "rt_arr__push".to_string(),
+        params: vec![ref_pvec(), ValType::Anyref],
+        results: vec![ref_pvec()],
+    });
+}
+
+fn ensure_rt_arr_make_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "make".to_string(),
+        as_sym: "rt_arr__make".to_string(),
+        params: vec![ValType::I32, ValType::Anyref],
+        results: vec![ref_pvec()],
     });
 }
 
@@ -8304,12 +8350,12 @@ mod tests {
     }
 
     #[test]
-    fn emit_array_append_intrinsic_lowers_to_concat_with_singleton() {
+    fn emit_array_append_intrinsic_lowers_to_push() {
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
-        ctx.local_map.insert(LocalId(1), (0, ref_array_null()));
+        ctx.local_map.insert(LocalId(1), (0, ref_pvec_null()));
         ctx.local_map.insert(LocalId(2), (1, ValType::I64));
 
         let entry = ctx
@@ -8321,7 +8367,7 @@ mod tests {
             prelude_ids::VECTOR_APPEND,
             &entry,
             &[Atom::ALocal(LocalId(1)), Atom::ALocal(LocalId(2))],
-            &ref_array_null(),
+            &ref_pvec_null(),
             &mut ctx,
         );
 
@@ -8329,15 +8375,15 @@ mod tests {
             instrs,
             vec![
                 Instr::LocalGet(0),
+                Instr::RefAsNonNull,
                 Instr::LocalGet(1),
                 Instr::StructNew(T_BOXED_INT.to_string()),
-                Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
-                Instr::Call("rt_arr__concat".to_string()),
+                Instr::Call("rt_arr__push".to_string()),
             ]
         );
 
         let imports = ctx.imports();
-        assert!(imports.iter().any(|i| i.as_sym == "rt_arr__concat"));
+        assert!(imports.iter().any(|i| i.as_sym == "rt_arr__push"));
     }
 
     #[test]
@@ -9225,11 +9271,12 @@ mod tests {
 
     #[test]
     fn emit_array_lit_boxes_elements() {
+        use crate::runtime::types::{T_VEC_INTERNAL, T_VEC_LEAF};
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
-        ctx.local_map.insert(LocalId(1), (0, ref_array_null()));
+        ctx.local_map.insert(LocalId(1), (0, ref_pvec_null()));
 
         let instrs = emit_let_binding(
             LocalId(1),
@@ -9241,11 +9288,16 @@ mod tests {
         assert_eq!(
             instrs,
             vec![
+                Instr::I32Const(2), // len
+                Instr::I32Const(0), // shift
+                Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.to_string())),
                 Instr::I64Const(1),
                 Instr::StructNew(T_BOXED_INT.to_string()),
                 Instr::I32Const(1),
                 Instr::RefI31,
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 2),
+                Instr::StructNew(T_VEC_LEAF.to_string()),
+                Instr::StructNew(T_PVEC.to_string()),
                 Instr::LocalSet(0),
             ]
         );
@@ -9258,7 +9310,7 @@ mod tests {
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
         ctx.local_map.insert(LocalId(1), (0, ValType::I64));
-        ctx.local_map.insert(LocalId(2), (1, ref_array_null()));
+        ctx.local_map.insert(LocalId(2), (1, ref_pvec_null()));
 
         let instrs = emit_let_binding(
             LocalId(1),

@@ -4,7 +4,8 @@ use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_string, ref_string_null,
+    T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_pvec, ref_pvec_null,
+    ref_string, ref_string_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
@@ -142,7 +143,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.arr",
             "len",
             "rt_arr__len",
-            vec![ref_array_null()],
+            vec![ref_pvec_null()],
             vec![ValType::I32],
         )),
         id if id == prelude_ids::VECTOR_SET_UNSAFE => Some(PreludeEntry::runtime(
@@ -150,24 +151,24 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.arr",
             "set",
             "rt_arr__set",
-            vec![ref_array_null(), ValType::I32, ValType::Anyref],
-            vec![ref_array()],
+            vec![ref_pvec_null(), ValType::I32, ValType::Anyref],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::VECTOR_CONCAT => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "concat",
             "rt_arr__concat",
-            vec![ref_array_null(), ref_array_null()],
-            vec![ref_array()],
+            vec![ref_pvec_null(), ref_pvec_null()],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::VECTOR_SLICE => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "slice",
             "rt_arr__slice",
-            vec![ref_array_null(), ValType::I32, ValType::I32],
-            vec![ref_array()],
+            vec![ref_pvec_null(), ValType::I32, ValType::I32],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::DICT_SET => Some(PreludeEntry::runtime(
             twinkle_name,
@@ -183,7 +184,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "keys",
             "rt_dict__keys",
             vec![ref_dict_null()],
-            vec![ref_array()],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::DICT_GET => Some(PreludeEntry::runtime(
             twinkle_name,
@@ -266,14 +267,14 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "builder_freeze",
             "rt_arr__builder_freeze",
             vec![ref_array_null()],
-            vec![ref_array_null()],
+            vec![ref_pvec_null()],
         )),
         id if id == prelude_ids::VECTOR_BUILDER_FROM => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.arr",
             "builder_from",
             "rt_arr__builder_from",
-            vec![ref_array_null()],
+            vec![ref_pvec_null()],
             vec![ref_array_null()],
         )),
         id if id == prelude_ids::VECTOR_BUILDER_EXTEND => Some(PreludeEntry::runtime(
@@ -281,7 +282,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.arr",
             "builder_extend",
             "rt_arr__builder_extend",
-            vec![ref_array_null(), ref_array_null()],
+            vec![ref_array_null(), ref_pvec_null()],
             vec![],
         )),
         id if id == prelude_ids::HOST_READ_FILE => Some(PreludeEntry::runtime(
