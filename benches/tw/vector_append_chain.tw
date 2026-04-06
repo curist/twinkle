@@ -1,0 +1,18 @@
+// Benchmark: repeated persistent append.
+// Sensitive to append/push complexity.
+// Expected output:
+//   1249975000
+
+n := 50000
+xs: Vector<Int> = []
+i := 0
+for i < n {
+  xs = xs.append(i)
+  i = i + 1
+}
+
+sum := 0
+for x in xs {
+  sum = sum + x
+}
+println("${sum}")
