@@ -4,8 +4,8 @@ use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_VARIANT, ref_array, ref_array_null, ref_dict, ref_dict_null, ref_pvec, ref_pvec_null,
-    ref_string, ref_string_null,
+    T_VARIANT, ref_array_null, ref_dict, ref_dict_null, ref_pvec, ref_pvec_null, ref_string,
+    ref_string_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
@@ -326,7 +326,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "list_dir",
             "host_list_dir",
             vec![ref_string_null()],
-            vec![ref_array()],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::HOST_EXISTS => Some(PreludeEntry::runtime(
             twinkle_name,
@@ -342,7 +342,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "args",
             "host_args",
             vec![],
-            vec![ref_array()],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::HOST_ENV => Some(PreludeEntry::runtime(
             twinkle_name,
@@ -350,7 +350,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "env",
             "host_env",
             vec![ref_string_null()],
-            vec![ref_array()],
+            vec![ref_pvec()],
         )),
         id if id == prelude_ids::HOST_CWD => Some(PreludeEntry::runtime(
             twinkle_name,

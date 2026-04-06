@@ -77,6 +77,9 @@ pub fn make() -> ModuleIR {
     m.funcs.push(builder_push_fn());
     m.funcs.push(builder_extend_fn());
     m.funcs.push(builder_freeze_fn());
+    m.funcs.push(from_array_fn());
+    m.funcs.push(to_array_fn());
+    m.funcs.push(from_read_file_result_fn());
 
     for f in &m.funcs {
         m.exports.push(ExportDef {
@@ -1477,6 +1480,204 @@ fn builder_freeze_fn() -> FuncDef {
                     Instr::StructNew(T_VEC_LEAF.into()),
                     Instr::StructNew(T_PVEC.into()),
                 ],
+            },
+        ],
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Array ↔ PVec boundary conversion
+//
+// Host functions (args, list_dir, env) return flat $Array. These helpers
+// convert at the boundary.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `from_array(arr: Array) -> PVec`
+/// Wrap a flat $Array as a tail-only PVec (for ≤32 elements) or build via push.
+fn from_array_fn() -> FuncDef {
+    // p0=arr, L1=len, L2=result, L3=i
+    FuncDef {
+        name: "from_array".into(),
+        params: vec![ref_array()],
+        results: vec![ref_pvec()],
+        locals: vec![ValType::I32, ref_pvec_null(), ValType::I32],
+        body: vec![
+            // len = arr.len
+            Instr::LocalGet(0),
+            Instr::ArrayLen,
+            Instr::LocalSet(1),
+            // if len == 0: return empty
+            Instr::LocalGet(1),
+            Instr::I32Eqz,
+            Instr::If {
+                result: Some(ref_pvec()),
+                then_body: vec![Instr::GlobalGet("empty_pvec".into())],
+                else_body: vec![
+                    // if len <= 32: tail-only PVec (zero-copy wrap)
+                    Instr::LocalGet(1),
+                    Instr::I32Const(BF),
+                    Instr::I32LeS,
+                    Instr::If {
+                        result: Some(ref_pvec()),
+                        then_body: vec![
+                            Instr::LocalGet(1),
+                            Instr::I32Const(0),
+                            Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.into())),
+                            Instr::LocalGet(0),
+                            Instr::StructNew(T_VEC_LEAF.into()),
+                            Instr::StructNew(T_PVEC.into()),
+                        ],
+                        else_body: vec![
+                            // len > 32: iterate and push
+                            Instr::GlobalGet("empty_pvec".into()),
+                            Instr::LocalSet(2),
+                            Instr::I32Const(0),
+                            Instr::LocalSet(3),
+                            Instr::Block {
+                                label: "brk".into(),
+                                result: None,
+                                body: vec![Instr::Loop {
+                                    label: "lp".into(),
+                                    result: None,
+                                    body: vec![
+                                        Instr::LocalGet(3),
+                                        Instr::LocalGet(1),
+                                        Instr::I32GeS,
+                                        Instr::BrIf("brk".into()),
+                                        Instr::LocalGet(2),
+                                        Instr::RefAsNonNull,
+                                        Instr::LocalGet(0),
+                                        Instr::LocalGet(3),
+                                        Instr::ArrayGet(T_ARRAY.into()),
+                                        Instr::Call("push".into()),
+                                        Instr::LocalSet(2),
+                                        Instr::LocalGet(3),
+                                        Instr::I32Const(1),
+                                        Instr::I32Add,
+                                        Instr::LocalSet(3),
+                                        Instr::Br("lp".into()),
+                                    ],
+                                }],
+                            },
+                            Instr::LocalGet(2),
+                            Instr::RefAsNonNull,
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+}
+
+/// `to_array(vec: PVec) -> Array`
+/// Flatten a PVec back to a flat $Array (for host boundary, e.g. write_bytes).
+fn to_array_fn() -> FuncDef {
+    // p0=vec, L1=len, L2=result, L3=i
+    FuncDef {
+        name: "to_array".into(),
+        params: vec![ref_pvec_null()],
+        results: vec![ref_array()],
+        locals: vec![ValType::I32, ref_array_null(), ValType::I32],
+        body: vec![
+            // len = vec.len
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_PVEC.into(), PV_LEN),
+            Instr::LocalSet(1),
+            // result = new Array(len, null)
+            Instr::RefNull(HeapType::None),
+            Instr::LocalGet(1),
+            Instr::ArrayNew(T_ARRAY.into()),
+            Instr::LocalSet(2),
+            // i = 0; loop: result[i] = get(vec, i)
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::Block {
+                label: "brk".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "lp".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(1),
+                        Instr::I32GeS,
+                        Instr::BrIf("brk".into()),
+                        Instr::LocalGet(2),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::Call("get".into()),
+                        Instr::ArraySet(T_ARRAY.into()),
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("lp".into()),
+                    ],
+                }],
+            },
+            Instr::LocalGet(2),
+            Instr::RefAsNonNull,
+        ],
+    }
+}
+
+/// `from_read_file_result(v: Variant) -> Variant`
+/// Host read_file returns Result<Array, String>; rewrite Ok(Array) payload to Ok(PVec).
+fn from_read_file_result_fn() -> FuncDef {
+    let variant_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_VARIANT.into()),
+    };
+
+    FuncDef {
+        name: "from_read_file_result".into(),
+        params: vec![variant_ref.clone()],
+        results: vec![variant_ref.clone()],
+        locals: vec![variant_ref.clone(), ref_array_null()],
+        body: vec![
+            // If not the expected Result type / Ok arm, pass through unchanged.
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_VARIANT.into(), 0),
+            Instr::I32Const(1),
+            Instr::I32Eq,
+            Instr::If {
+                result: Some(variant_ref.clone()),
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_VARIANT.into(), 1),
+                    Instr::I32Eqz,
+                    Instr::If {
+                        result: Some(variant_ref.clone()),
+                        then_body: vec![
+                            // payload = [from_array(payload[0])]
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_VARIANT.into(), 2),
+                            Instr::LocalSet(2),
+                            Instr::I32Const(1),
+                            Instr::I32Const(0),
+                            Instr::LocalGet(2),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::ArrayGet(T_ARRAY.into()),
+                            Instr::RefCast {
+                                nullable: false,
+                                heap: HeapType::Named(T_ARRAY.into()),
+                            },
+                            Instr::Call("from_array".into()),
+                            Instr::ArrayNewFixed(T_ARRAY.into(), 1),
+                            Instr::StructNew(T_VARIANT.into()),
+                        ],
+                        else_body: vec![Instr::LocalGet(0)],
+                    },
+                ],
+                else_body: vec![Instr::LocalGet(0)],
             },
         ],
     }

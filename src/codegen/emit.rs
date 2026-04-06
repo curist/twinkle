@@ -5794,9 +5794,11 @@ fn emit_string_utf8_bytes_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     // String.utf8_bytes(s: String) -> Vector<Byte>
-    // Delegates to helper that iterates string bytes and boxes them into $Array.
+    // Helper still builds a flat $Array; convert at the boundary.
     let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
     instrs.push(Instr::Call("$string_utf8_bytes_helper".to_string()));
+    ensure_rt_arr_from_array_import(ctx);
+    instrs.push(Instr::Call("rt_arr__from_array".to_string()));
     instrs
 }
 
@@ -5806,8 +5808,10 @@ fn emit_string_from_utf8_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
-    // Delegates to helper that validates UTF-8 and copies bytes into $String.
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    // Helper still expects a flat byte $Array; convert at the boundary.
+    let mut instrs = emit_atom(&args[0], Some(&ref_pvec_null()), ctx);
+    ensure_rt_arr_to_array_import(ctx);
+    instrs.push(Instr::Call("rt_arr__to_array".to_string()));
     instrs.push(Instr::Call("$string_from_utf8_helper".to_string()));
     instrs
 }
@@ -6927,7 +6931,7 @@ fn emit_unimplemented_intrinsic_prelude_call(
 }
 
 fn emit_runtime_prelude_call(
-    _func_id: FuncId,
+    func_id: FuncId,
     entry: &crate::codegen::prelude::PreludeEntry,
     args: &[Atom],
     bind_ty: &ValType,
@@ -6943,29 +6947,144 @@ fn emit_runtime_prelude_call(
     }
 
     let mut instrs = Vec::new();
-    for (arg, param_ty) in args.iter().zip(entry.runtime_params.iter()) {
-        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+    for (i, (arg, param_ty)) in args.iter().zip(entry.runtime_params.iter()).enumerate() {
+        if is_host_vector_arg(func_id, i) {
+            // Host boundary: emit as PVec, then convert PVec → flat Array
+            instrs.extend(emit_atom(arg, Some(&ref_pvec_null()), ctx));
+            ensure_rt_arr_to_array_import(ctx);
+            instrs.push(Instr::Call("rt_arr__to_array".to_string()));
+        } else {
+            instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        }
     }
-    ctx.add_runtime_import(entry);
-
     let sym = entry.runtime_sym.as_ref().cloned().unwrap_or_else(|| {
         panic!(
             "runtime prelude entry missing symbol: {}",
             entry.twinkle_name
         )
     });
+
+    if is_host_vector_returning(func_id) || has_host_vector_args(func_id) {
+        // For host vector boundary functions, add the import with the
+        // actual host-side types ($Array), not the language-side types ($PVec).
+        let host_params: Vec<ValType> = entry
+            .runtime_params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                if is_host_vector_arg(func_id, i) {
+                    ref_array_null()
+                } else {
+                    ty.clone()
+                }
+            })
+            .collect();
+        let host_results = if is_host_vector_returning(func_id) {
+            vec![ref_array()]
+        } else {
+            entry.runtime_results.clone()
+        };
+        ctx.add_import(ImportDef {
+            module: entry.runtime_module.unwrap().to_string(),
+            name: entry.runtime_name.unwrap().to_string(),
+            as_sym: sym.clone(),
+            params: host_params,
+            results: host_results,
+        });
+    } else {
+        ctx.add_runtime_import(entry);
+    }
+
     instrs.push(Instr::Call(sym));
 
-    match entry.runtime_results.as_slice() {
-        [] => instrs.extend(emit_void_value(Some(bind_ty))),
-        [single] => instrs.extend(emit_coerce_stack(single, bind_ty)),
-        _ => panic!(
-            "multi-value runtime prelude return not supported yet: {}",
-            entry.twinkle_name
-        ),
+    if is_host_vector_returning(func_id) {
+        // Host returned flat $Array, convert to $PVec
+        ensure_rt_arr_from_array_import(ctx);
+        instrs.push(Instr::Call("rt_arr__from_array".to_string()));
+        instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
+    } else if is_host_read_file(func_id) {
+        ensure_rt_arr_from_read_file_result_import(ctx);
+        instrs.push(Instr::Call("rt_arr__from_read_file_result".to_string()));
+        match entry.runtime_results.as_slice() {
+            [] => instrs.extend(emit_void_value(Some(bind_ty))),
+            [single] => instrs.extend(emit_coerce_stack(single, bind_ty)),
+            _ => panic!(
+                "multi-value runtime prelude return not supported yet: {}",
+                entry.twinkle_name
+            ),
+        }
+    } else {
+        match entry.runtime_results.as_slice() {
+            [] => instrs.extend(emit_void_value(Some(bind_ty))),
+            [single] => instrs.extend(emit_coerce_stack(single, bind_ty)),
+            _ => panic!(
+                "multi-value runtime prelude return not supported yet: {}",
+                entry.twinkle_name
+            ),
+        }
     }
 
     instrs
+}
+
+/// Host functions that return a flat $Array representing a Vector.
+fn is_host_vector_returning(func_id: FuncId) -> bool {
+    use crate::ir::lower::prelude as ids;
+    func_id == ids::HOST_ARGS || func_id == ids::HOST_LIST_DIR || func_id == ids::HOST_ENV
+}
+
+fn is_host_read_file(func_id: FuncId) -> bool {
+    use crate::ir::lower::prelude as ids;
+    func_id == ids::HOST_READ_FILE
+}
+
+/// Whether arg at `index` for `func_id` is a host-boundary vector that needs
+/// PVec → flat Array conversion before the host call.
+fn is_host_vector_arg(func_id: FuncId, index: usize) -> bool {
+    use crate::ir::lower::prelude as ids;
+    func_id == ids::HOST_WRITE_BYTES && index == 1
+}
+
+/// Whether any arg of `func_id` needs PVec → Array conversion.
+fn has_host_vector_args(func_id: FuncId) -> bool {
+    use crate::ir::lower::prelude as ids;
+    func_id == ids::HOST_WRITE_BYTES
+}
+
+fn ensure_rt_arr_from_array_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "from_array".to_string(),
+        as_sym: "rt_arr__from_array".to_string(),
+        params: vec![ref_array()],
+        results: vec![ref_pvec()],
+    });
+}
+
+fn ensure_rt_arr_to_array_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "to_array".to_string(),
+        as_sym: "rt_arr__to_array".to_string(),
+        params: vec![ref_pvec_null()],
+        results: vec![ref_array()],
+    });
+}
+
+fn ensure_rt_arr_from_read_file_result_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.arr".to_string(),
+        name: "from_read_file_result".to_string(),
+        as_sym: "rt_arr__from_read_file_result".to_string(),
+        params: vec![ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.into()),
+        }],
+        results: vec![ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.into()),
+        }],
+    });
 }
 
 fn emit_unop(
