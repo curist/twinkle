@@ -1,0 +1,22 @@
+// Benchmark: append through a helper to make builder/in-place rewrites less
+// likely to fire than in the direct local-update loop.
+// Expected output:
+//   1249975000
+
+fn append_one(xs: Vector<Int>, x: Int) Vector<Int> {
+  xs.append(x)
+}
+
+n := 50000
+xs: Vector<Int> = []
+i := 0
+for i < n {
+  xs = append_one(xs, i)
+  i = i + 1
+}
+
+sum := 0
+for x in xs {
+  sum = sum + x
+}
+println("${sum}")

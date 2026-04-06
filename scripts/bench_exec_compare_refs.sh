@@ -3,27 +3,28 @@ set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
   cat <<'EOF'
-Usage: scripts/bench_compare_refs.sh <before-ref> <after-ref> [runs]
+Usage: scripts/bench_exec_compare_refs.sh <before-ref> <after-ref> [runs]
 
-Benchmarks the same Twinkle workloads against two git refs without keeping
-an old runtime path in-tree. The script uses temporary git worktrees, builds
-both refs in release mode, then reports median wall time for each benchmark.
+Compares two git refs by building each ref once, compiling each benchmark to
+Wasm once inside a dedicated bench_exec binary, and timing only repeated Wasm
+execution.
 
 Examples:
-  scripts/bench_compare_refs.sh 7eafa07 HEAD
-  scripts/bench_compare_refs.sh HEAD~1 HEAD 7
+  scripts/bench_exec_compare_refs.sh 795d1c8 HEAD
+  scripts/bench_exec_compare_refs.sh 795d1c8 HEAD 15
 EOF
   exit 1
 fi
 
 before_ref=$1
 after_ref=$2
-runs=${3:-5}
+runs=${3:-10}
 repo_root=$(git rev-parse --show-toplevel)
-workdir=$(mktemp -d "${TMPDIR:-/tmp}/twk-bench.XXXXXX")
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/twk-bench-exec.XXXXXX")
 before_dir="$workdir/before"
 after_dir="$workdir/after"
 bench_source_dir="$repo_root/benches/tw"
+bench_driver_source="$repo_root/src/bin/bench_exec.rs"
 bench_rel_dir=".bench-inputs"
 benchmark_names=(
   "vector_append_chain.tw"
@@ -53,23 +54,25 @@ for name in "${benchmark_names[@]}"; do
   cp "$bench_source_dir/$name" "$after_dir/$bench_rel_dir/$name"
 done
 
+mkdir -p "$before_dir/src/bin" "$after_dir/src/bin"
+cp "$bench_driver_source" "$before_dir/src/bin/bench_exec.rs"
+cp "$bench_driver_source" "$after_dir/src/bin/bench_exec.rs"
+
 benchmarks=()
 for name in "${benchmark_names[@]}"; do
   benchmarks+=("$bench_rel_dir/$name")
 done
 
-echo "==> building release binaries"
-( cd "$before_dir" && cargo build --release >/dev/null )
-( cd "$after_dir" && cargo build --release >/dev/null )
+echo "==> building release bench_exec binaries"
+( cd "$before_dir" && cargo build --release --bin bench_exec >/dev/null )
+( cd "$after_dir" && cargo build --release --bin bench_exec >/dev/null )
 
-before_bin="$before_dir/target/release/twk"
-after_bin="$after_dir/target/release/twk"
+before_bin="$before_dir/target/release/bench_exec"
+after_bin="$after_dir/target/release/bench_exec"
 
 python3 - "$before_dir" "$after_dir" "$before_bin" "$after_bin" "$runs" "${benchmarks[@]}" <<'PY'
-import statistics
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 before_dir = Path(sys.argv[1])
@@ -80,32 +83,29 @@ runs = int(sys.argv[5])
 benchmarks = [Path(x) for x in sys.argv[6:]]
 
 
-def run_once(bin_path: Path, cwd: Path, bench_rel: Path) -> float:
-    start = time.perf_counter()
+def run_exec_bench(bin_path: Path, cwd: Path, bench_rel: Path, runs: int):
     proc = subprocess.run(
-        [str(bin_path), "run", str(bench_rel)],
+        [str(bin_path), str(bench_rel), "--runs", str(runs), "--warmup", "1"],
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    elapsed = time.perf_counter() - start
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout)
         sys.stderr.write(proc.stderr)
         raise SystemExit(f"benchmark failed: {bench_rel} with {bin_path}")
-    return elapsed
 
-
-def bench(bin_path: Path, cwd: Path, bench_rel: Path, runs: int):
-    warmup = run_once(bin_path, cwd, bench_rel)
-    samples = [run_once(bin_path, cwd, bench_rel) for _ in range(runs)]
+    data = {}
+    for line in proc.stdout.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
     return {
-        "warmup": warmup,
-        "median": statistics.median(samples),
-        "min": min(samples),
-        "max": max(samples),
-        "samples": samples,
+        "median": float(data["median_seconds"]),
+        "min": float(data["min_seconds"]),
+        "max": float(data["max_seconds"]),
+        "samples": data["samples_seconds"],
     }
 
 
@@ -116,22 +116,21 @@ print(f"{'benchmark':34} {'before(s)':>10} {'after(s)':>10} {'delta':>9} {'speed
 print("-" * 78)
 
 for bench_rel in benchmarks:
-    before = bench(before_bin, before_dir, bench_rel, runs)
-    after = bench(after_bin, after_dir, bench_rel, runs)
+    before = run_exec_bench(before_bin, before_dir, bench_rel, runs)
+    after = run_exec_bench(after_bin, after_dir, bench_rel, runs)
     delta = after['median'] - before['median']
     speedup = before['median'] / after['median'] if after['median'] > 0 else float('inf')
     print(
         f"{bench_rel.name:34} "
-        f"{before['median']:10.4f} "
-        f"{after['median']:10.4f} "
-        f"{delta:+9.4f} "
+        f"{before['median']:10.6f} "
+        f"{after['median']:10.6f} "
+        f"{delta:+9.6f} "
         f"{speedup:9.2f}x"
     )
 
 print()
 print("Notes:")
-print("- Results are median wall-clock time across repeated process runs.")
+print("- This script times execution only: each benchmark is compiled to Wasm once,")
+print("  then the already-built module is executed repeatedly inside bench_exec.")
 print("- 'speedup' > 1 means the after-ref is faster.")
-print("- The workloads live in benches/tw and can be edited without keeping")
-print("  old runtime codepaths around just for benchmarking.")
 PY
