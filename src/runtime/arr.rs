@@ -1,7 +1,19 @@
 use crate::runtime::types::*;
 use crate::wasm::ir::*;
 
-/// Branching factor for the persistent vector trie.
+/// Persistent bit-partitioned trie vector with branching factor 32.
+///
+/// Representation invariants (maintained by all public operations):
+///   - 0 <= tail.data.len <= 32
+///   - len = trie_element_count + tail.data.len
+///   - root = null  iff  len <= 32  (tail-only vector)
+///   - shift = 0 when root = null; otherwise shift = 5 * tree_depth
+///   - Trie leaves always contain exactly 32 elements
+///   - For len > 0, tail.data.len > 0 (the tail is never empty on a non-empty vector)
+///
+/// These invariants cannot be structurally enforced by the Wasm GC type system
+/// (e.g. a PVec with len=5 but an empty tail array is representable), so they
+/// are upheld by construction in push, make, set, builder_freeze, etc.
 const B: i32 = 5;
 const BF: i32 = 1 << B; // 32
 const MASK: i32 = BF - 1; // 31
@@ -254,29 +266,24 @@ fn new_path_fn() -> FuncDef {
 /// `push_tail(level: i32, parent: VecInternal, tail_node: VecNode) -> VecInternal`
 /// Path-copy the rightmost spine of `parent` and insert `tail_node` at the bottom.
 fn push_tail_fn() -> FuncDef {
-    // p0=level, p1=parent, p2=tail_node
-    // L3=sub_idx(i32), L4=new_children, L5=child
+    // push_tail(cnt: i32, level: i32, parent: VecInternal, tail_node: VecNode) -> VecNode
     //
-    // This is called when the current tail is full and needs to be promoted
-    // into the trie. `tail_node` is the old tail wrapped as a VecLeaf (cast to VecNode).
+    // Path-copy the rightmost spine of `parent` and insert `tail_node` at
+    // the bottom. Called when the current tail is full and needs to be
+    // promoted into the trie.
     //
     // Algorithm:
+    //   sub_idx = ((cnt - 1) >> level) & MASK
     //   copy parent.children → new_children
-    //   sub_idx = rightmost occupied slot index (we use the vector's implicit knowledge)
     //   if level == B (bottom of internal nodes):
     //     new_children[sub_idx] = tail_node
     //   else:
     //     if parent.children[sub_idx] != null:
-    //       new_children[sub_idx] = push_tail(level-B, children[sub_idx], tail_node)
+    //       new_children[sub_idx] = push_tail(cnt, level-B, children[sub_idx], tail_node)
     //     else:
     //       new_children[sub_idx] = new_path(level-B, tail_node)
     //   return VecInternal { new_children }
     //
-    // But we need the vector length to compute sub_idx. Let's pass it.
-    // Actually, in Clojure's impl, push_tail takes the count. Let me add it.
-    //
-    // Revised: push_tail(cnt: i32, level: i32, parent: VecInternal, tail_node: VecNode) -> VecInternal
-
     // p0=cnt, p1=level, p2=parent, p3=tail_node
     // L4=new_children, L5=sub_idx, L6=child
     FuncDef {
@@ -623,7 +630,7 @@ fn push_fn() -> FuncDef {
                                 Instr::I32Const(B),
                                 Instr::LocalSet(6),
                                 // new_root = new_path(B, old_tail as VecNode)
-                                // Actually: just make an internal node with old_tail at slot 0
+                                // new_path wraps the leaf in one level of VecInternal
                                 Instr::I32Const(B),
                                 Instr::LocalGet(0),
                                 Instr::StructGet(T_PVEC.into(), PV_TAIL),
@@ -745,6 +752,11 @@ fn push_fn() -> FuncDef {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Public API
+//
+// Convention: public functions called via prelude (get, set, len, concat,
+// slice, builder_*) accept nullable PVec params because user code binds
+// vectors as `ref null $PVec`. Internal helpers (push, push_tail, etc.)
+// accept non-null params; callers insert ref.as_non_null.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// `make(len: i32, fill: anyref) -> PVec`
