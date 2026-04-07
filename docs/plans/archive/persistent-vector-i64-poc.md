@@ -7,7 +7,7 @@ only, replacing the current flat copy-on-write `rt_types__Vector_i64` array
 with a bit-partitioned trie plus tail.
 
 This plan is intentionally narrower than
-[`persistent-vector.md`](persistent-vector.md):
+[`persistent-vector.md`](../persistent-vector.md):
 
 - only `Vector<Int>` is in scope
 - only the existing `bootlib.vector_i64` boundary is in scope

@@ -45,6 +45,10 @@ Related historical context outside this folder:
 | [boot-no-hidden-imports.md](boot-no-hidden-imports.md) | Remove hidden selective-import namespaces by splitting canonical import storage from visible bindings, completing support-type closure, and moving method lookup to receiver identity |
 | [backend-pipeline-alignment.md](backend-pipeline-alignment.md) | Align backend pipeline to operate on monomorphized Core IR |
 | [optimizer-generalization.md](optimizer-generalization.md) | Generalize optimizer semantics, shared analysis, and canonical builder/transient boundaries without requiring explicit transient IR forms yet |
+| [pragmatic-persistent-vector.md](pragmatic-persistent-vector.md) | Pragmatic `PVec` implementation plan using existing `rt.arr` ABI; now landed on both stage0 and boot mirror |
+| [persistent-vector-benchmark-followup.md](persistent-vector-benchmark-followup.md) | Early benchmark investigation for persistent vector regressions before the later read-path follow-up settled the direction |
+| [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Historical stage0-only `Vector<Int>` typed-family POC that predates the shipped pragmatic `PVec` approach |
+| [persistent-vector-read-path-followup.md](persistent-vector-read-path-followup.md) | Read-path performance investigation and landed leaf-wrapper removal follow-up for persistent vectors |
 | [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |
 | [byte-first-fs-read-api.md](byte-first-fs-read-api.md) | Migrate file-read host ABI and stdlib layering to byte-first semantics |
 | [bytes-followup-hardening.md](bytes-followup-hardening.md) | Follow-up hardening for byte semantics, intrinsic contracts, and unfold callback typing |
