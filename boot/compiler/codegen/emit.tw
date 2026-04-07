@@ -2254,19 +2254,23 @@ fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
   for k in reg.string_pool_order {
     case reg.string_pool[k] {
       .Some(entry) => {
-        // Getter: check global, if null → create from data segment, cache
-        body: Vector<Instr> = []
-        body = body.append(.GlobalGet(entry.global_sym))
-        body = body.append(.RefIsNull)
-        then_body: Vector<Instr> = []
-        // Create string from data segment
-        then_body = then_body.append(.I32Const(entry.byte_offset))
-        then_body = then_body.append(.I32Const(entry.byte_len))
-        then_body = then_body.append(.ArrayNewData("rt_types__String", entry.data_segment_name))
-        then_body = then_body.append(.GlobalSet(entry.global_sym))
-        body = body.append(.If(.None, then_body, []))
-        body = body.append(.GlobalGet(entry.global_sym))
-        body = body.append(.RefAsNonNull)
+        // Getter: check global, if null → create from data segment, cache.
+        // Build the instruction vectors directly as literals here. Repeated
+        // append() construction of these Instr vectors currently miscompiles in
+        // the boot compiler and can produce empty function bodies.
+        then_body: Vector<Instr> = [
+          .I32Const(entry.byte_offset),
+          .I32Const(entry.byte_len),
+          .ArrayNewData("rt_types__String", entry.data_segment_name),
+          .GlobalSet(entry.global_sym),
+        ]
+        body: Vector<Instr> = [
+          .GlobalGet(entry.global_sym),
+          .RefIsNull,
+          .If(.None, then_body, []),
+          .GlobalGet(entry.global_sym),
+          .RefAsNonNull,
+        ]
 
         funcs = funcs.append(FuncDef.{
           name: entry.getter_sym,
