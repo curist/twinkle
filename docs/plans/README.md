@@ -55,7 +55,7 @@ from stage0, bootstrapping sequence)
 | Plan | Description |
 |------|-------------|
 | [pragmatic-persistent-vector.md](pragmatic-persistent-vector.md) | **Next up** — Replace flat COW vector with persistent bit-partitioned trie using existing `anyref` storage and `rt.arr` ABI |
-| [pragmatic-persistent-dict.md](pragmatic-persistent-dict.md) | **Next up** — Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage and `rt.dict` ABI |
+| [persistent-dict.md](persistent-dict.md) | **Next up** — Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
 | [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
@@ -77,4 +77,3 @@ working.
 | [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | Twinkle-authored persistent vector with `boot/lib` ownership |
 | [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | ABI boundary for stage0 to consume `boot/lib` vector artifact |
 | [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Extern/import mechanism for `boot/lib` to bind runtime substrate symbols |
-| [persistent-dict.md](persistent-dict.md) | Full typed-family persistent HAMT with per-key/value specialization |

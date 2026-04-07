@@ -2,227 +2,477 @@
 
 ## Goal
 
-Replace the current linear assoc-list dictionary implementation with a persistent HAMT, preserving Twinkle `Dict<K,V>` behavior.
+Replace the current linear assoc-list dictionary implementation with a persistent
+hash array mapped trie (HAMT), preserving the existing Twinkle `Dict<K,V>`
+surface and the current `rt.dict` function set.
 
-For concrete monomorphized programs, `Dict<K,V>` should also move away from universal
-`anyref` key/value storage: the long-term target is a per-instantiation container family,
-so `Dict<String, Int>`, `Dict<Int, String>`, and other concrete pairs can use typed node
-layouts and avoid boxing every key/value through `anyref`.
+This plan intentionally follows the same pragmatic strategy used for persistent
+vectors:
 
-This plan is subordinate to
-[`backend-anyref-elimination.md`](backend-anyref-elimination.md). If the two
-documents disagree, the backend `anyref` elimination plan wins. Transitional
-erased fallbacks are allowed during migration, but they are not part of the
-intended end state for supported concrete dict code paths.
+- land the representation/algorithmic win first
+- keep the current erased `anyref` key/value storage for the first version
+- preserve optimizer and lowering contracts
+- defer typed per-`(K, V)` specialization to follow-up work
+
+The long-term target still aligns with
+[`backend-anyref-elimination.md`](backend-anyref-elimination.md): supported
+concrete dict instantiations should eventually move away from backend-internal
+`anyref` payload storage. But that is a follow-up, not a prerequisite for the
+first HAMT landing.
 
 ## Current State
 
 - Runtime dict is an unsorted association list over array entries.
-- `get/has/set/remove` are linear scans in `src/runtime/dict.rs`.
-- Key comparison uses structural equality (`rt.core.eq`).
-- The current compiler/runtime contract is larger than the user-visible `Dict` method set:
-  - user-facing `Dict.get` is the safe `Option`-returning operation
-  - indexed assignment `m[k] = v` lowers directly to `dict_set`
-  - `for`/`collect` over dicts depend on `Dict.keys` and therefore observe its order
-  - the optimizer rewrites `dict_set` / `dict_remove` to `dict_set_in_place` /
-    `dict_remove_in_place` when uniqueness permits
-- Current implementations restrict dict keys to a small builtin family
-  (`Int | String | Byte`); the persistent
-  runtime should preserve those key semantics rather than broaden them implicitly.
-- Runtime implementation lives in `boot/compiler/codegen/runtime/dict.tw` and mirrors
-  stage0 `src/runtime/dict.rs`.
-- Key/value storage is erased through `anyref` slots, so concrete values cross boxing
-  boundaries on lookup/update paths.
+- Stage0 implementation lives in `src/runtime/dict.rs`.
+- Boot mirror lives in `boot/compiler/codegen/runtime/dict.tw`.
+- Shared runtime types live in:
+  - `src/runtime/types.rs`
+  - `boot/compiler/codegen/runtime/types.tw`
+- Prelude / builtin ABI wiring currently treats dict values as `ref $Dict`:
+  - `src/codegen/prelude.rs`
+  - `boot/compiler/builtins.tw`
+- Current representation:
+  - `DictEntry = struct { key: anyref, val: anyref }`
+  - `Dict = array (mut (ref null DictEntry))`
+- `get/has/set/remove` are linear scans.
+- `set` and `remove` are copy-on-write over the whole backing array.
+- Key comparison uses structural equality via `rt.core.eq`.
+- Key types are restricted to `Int | String | Byte`.
+- The optimizer rewrites `DICT_SET` / `DICT_REMOVE` to in-place variants when
+  uniqueness permits, including loop rewrites already covered by current tests.
+- Dict iteration currently lowers through `Dict.keys` and therefore observes the
+  order produced by `keys`.
 
-## Target State
+## Key Findings From Current Implementation
 
-Adopt a persistent hash array mapped trie (HAMT):
+Before changing the plan, inspect the current runtime/codegen surface:
+
+### Runtime representation and ABI
+
+- `src/runtime/types.rs` defines:
+  - `T_DICT_ENTRY = rt_types__DictEntry`
+  - `T_DICT = rt_types__Dict`
+- `src/runtime/dict.rs` exports exactly these helpers:
+  - `make`
+  - `len`
+  - `keys`
+  - `has`
+  - `get`
+  - `get_option`
+  - `set`
+  - `remove`
+  - `set_in_place`
+  - `remove_in_place`
+- Boot mirrors the same surface in `boot/compiler/codegen/runtime/dict.tw`.
+
+### Codegen/builtin assumptions
+
+- `src/codegen/prelude.rs` maps dict runtime calls to `ref_dict()` /
+  `ref_dict_null()` and `anyref` key/value parameters.
+- `boot/compiler/builtins.tw` encodes the same ABI, still using
+  `rt_types__Dict` and `anyref` payloads.
+- Dict refs are also hardcoded in direct lowering/codegen emission paths:
+  - `src/codegen/emit.rs` emits `rt_dict__get` / `rt_dict__get_option`
+  - `src/codegen/emit.rs` emits `dict_get_unsafe` via `rt_dict__get`
+  - `boot/compiler/codegen/emit.tw` directly emits `rt_dict__get` /
+    `rt_dict__get_option`
+- Several tests and ABI guardrails currently assert that dict values are backed
+  by `rt_types__Dict`.
+
+### Order-sensitive tests already exist
+
+Even if user code does not intentionally rely on dict iteration order, the test
+suite does today:
+
+- `tests/run/dicts.tw` expects insertion-order output for `for k, v in dict`
+  and `for k in dict`
+- runtime shape tests in `boot/tests/suites/runtime_suite.tw` assert the
+  current array/entry implementation details
+- layout/ABI tests in boot suites assert `rt_types__Dict` by name
+
+So a HAMT migration is not just an internal optimization. It changes visible
+representation and, unless we choose otherwise, potentially visible iteration
+behavior.
+
+## Target State (Phase 1)
+
+Adopt a persistent HAMT with branching factor 32:
 
 - `get/has/set/remove`: near O(1) average, O(log32 N) worst structural depth
-- Structural sharing for persistent updates
-- Stable semantics for iteration/key listing (`Dict.keys`)
-- Preserve the current split between:
-  - safe `Option`-returning lookup exposed to user code
-  - raw helpers used by lowering or optimizer fast paths
-- For concrete monomorphized instantiations, prefer typed dict/node layouts over
-  universal `anyref` key/value fields:
-  - `Dict<Int, Int>` stores direct `i64` keys and values
-  - `Dict<String, Int>` stores `ref $String` keys and `i64` values
-  - `Dict<String, Point>` stores `ref $String` keys and `ref $Point` values
-- For supported concrete `(K, V)` pairs, the steady-state backend target is fully typed
-  dict/container/helper families with no backend-internal `anyref` payload storage.
-- Transitional erased fallback may exist only during migration for unsupported or
-  not-yet-specialized pairs; per `backend-anyref-elimination.md`, it is not the
-  intended long-term model for ordinary concrete code.
+- structural sharing for persistent updates
+- key/value storage remains `anyref` in v1
+- `rt.dict` keeps the same exported function names and responsibilities
+- optimizer-only in-place helpers remain part of the ABI surface
+- dict runtime values move from flat `ref $Dict` arrays to a root struct
+  representing the HAMT
 
-## Non-Goals
+## Non-Goals (Phase 1)
 
-- Expanding key types beyond the current builtin family (`Int | String | Byte`)
-- Exposing hash behavior at language surface
-- Requiring host-specific hash primitives
-- Forcing all key/value combinations to specialize in one step; rollout can prioritize the
-  highest-value concrete pairs first.
-
-## Data Model (Proposed)
-
-- `Dict<K,V>` stores:
-  - `size: i32`
-  - `root: Node<K,V>?`
-- Node families should be specialized per concrete `(K, V)` layout, not shared through
-  `anyref` fields.
-- Conceptually:
-  - `Dict<String, Int>`:
-    - `Dict_str_i64 { size: i32, root: Node_str_i64? }`
-    - leaf entries store `(key: ref $String, value: i64, hash: i32|i64)`
-  - `Dict<Int, String>`:
-    - `Dict_i64_str { ... }`
-    - leaf entries store `(key: i64, value: ref $String, hash: i32|i64)`
-- Node variants:
-  - Bitmap indexed node
-  - Collision node (same hash, different keys)
-  - Leaf entry with typed `key` / `value` / cached `hash`
-- The exact node factoring can evolve, but the core policy is:
-  - dict and node types are specialized per `(K, V)` instantiation
-  - key/value fields use concrete Wasm types, not `anyref`
-
-## Hashing Strategy
-
-- `Int`: stable 64-bit mix -> 32-bit hash
-- `Byte`: stable byte-to-int mix with the same deterministic hash contract as other
-  builtin keys
-- `String`: runtime UTF-8 hash (deterministic, host-independent)
-- Collision handling via collision nodes and full key equality check
+- per-`(K, V)` typed dict/node families
+- expanding key types beyond `Int | String | Byte`
+- exposing hash behavior at the language surface
+- moving dict ownership to `boot/lib`
+- eliminating all backend-internal `anyref` usage in the first landing
 
 ## Iteration Ordering Contract
 
-The HAMT implementation must preserve today's observable dict ordering semantics,
-not merely produce a deterministic order:
+The HAMT migration must preserve today's observable dict ordering semantics.
 
-- `Dict.keys`, `for k in d`, `for k, v in d`, `collect` over dicts, and helpers such
-  as `Dict.values` all observe dict order.
-- First insertion of a new key appends that key at the end of the observable order.
-- Updating an existing key preserves that key's position.
-- Removing a key preserves the relative order of the remaining keys.
-- Removing and later reinserting the same key treats the reinsertion as a new
-  insertion at the end.
+That means the following continue to observe insertion order:
 
-If the HAMT's internal node traversal does not naturally preserve this contract,
-the runtime must maintain separate ordering metadata or an equivalent mechanism.
+- `Dict.keys`
+- `for k in d`
+- `for k, v in d`
+- `collect` over dicts
+
+Required behavior:
+
+- first insertion of a new key appends that key at the end of iteration order
+- updating an existing key preserves that key's position
+- removing a key preserves the relative order of remaining keys
+- removing and later reinserting the same key treats the reinsertion as a new
+  insertion at the end
+
+This is a deliberate semantic constraint, not an implementation suggestion.
+The HAMT's internal traversal order is not user-visible unless it happens to
+match the insertion-order contract above.
+
+## Ordering Metadata Strategy
+
+Because plain HAMT traversal does not preserve insertion order, the first HAMT
+landing must carry explicit ordering metadata.
+
+Recommended shape for v1:
+
+- `PDict` stores:
+  - `size`
+  - `root`
+  - `order`
+- `order` is a persistent sequence of keys representing observable iteration
+  order
+- HAMT remains the lookup/update index
+- `order` remains the iteration source of truth
+
+Important dependency note:
+
+- `PVec` is only an obvious fit on stage0 because the persistent vector runtime
+  types already exist there
+- boot does not currently have matching persistent-vector runtime type coverage
+  in `boot/compiler/codegen/runtime/types.tw`
+- therefore `PVec`-backed ordering is not a free reuse on boot; it requires an
+  explicit dependency decision
+
+Acceptable ways to satisfy that dependency:
+
+1. add/mirror the persistent vector runtime types and any needed ABI support in
+   boot first, then use `PVec` for dict order in both runtimes
+2. choose a different ordering representation that already exists in both
+   runtimes for the first HAMT landing
+
+Until that decision is made, `PVec` should be treated as the default
+recommendation, not as already-available shared infrastructure.
+
+Operationally:
+
+- on insert of a new key:
+  - insert into HAMT
+  - append key to `order`
+- on update of existing key:
+  - update HAMT value only
+  - leave `order` unchanged
+- on remove:
+  - remove from HAMT
+  - remove key from `order`
+- on remove+reinsert:
+  - key is appended again as a fresh insertion
+
+This makes the first HAMT landing somewhat larger than a pure traversal-order
+HAMT, but it keeps language semantics stable and makes the migration easier to
+reason about.
+
+## Ordering Structure Tradeoff
+
+Preserving order means one operation remains less than ideal in the first
+landing:
+
+- HAMT keeps lookup/update path-copy near O(1) average
+- order maintenance may still impose O(N) work on removal, depending on the
+  chosen persistent sequence representation
+
+That tradeoff is acceptable for the first landing because:
+
+- it preserves current language behavior
+- it still removes the current O(N) lookup/update bottleneck
+- it keeps future optimization options open
+
+If later profiling shows ordered removal is a major cost center, we can optimize
+that separately without changing user-visible semantics.
+
+## Data Model (Phase 1)
+
+Introduce HAMT-specific runtime types while keeping erased payloads:
+
+```wat
+(type $HamtNode (struct
+  (field $bitmap i32)
+  (field $entries (ref $Array))))
+
+(type $HamtEntry (struct
+  (field $hash i32)
+  (field $key anyref)
+  (field $val anyref)))
+
+(type $HamtCollision (struct
+  (field $hash i32)
+  (field $entries (ref $Array))))
+
+(type $PDict (struct
+  (field $size i32)
+  (field $root (ref null $HamtNode))
+  (field $order (ref $PVec))))
+```
+
+Notes:
+
+- `$Array` remains the shared `(array (mut anyref))`
+- `HamtNode.entries` stores packed child refs:
+  - `HamtEntry`
+  - `HamtNode`
+  - `HamtCollision`
+- runtime node discrimination uses `ref.test` / `ref.cast`
+- `PDict.order` is the observable iteration source
+- dict-valued runtime params/results change from `ref $Dict` to `ref $PDict`
+
+## Hashing Strategy
+
+Hashing must be deterministic and host-independent.
+
+- `Int`: stable bit-mix to 32-bit hash
+- `Byte`: same stable mix after zero-extension
+- `String`: deterministic UTF-8 byte hash
+
+Collision handling uses collision nodes plus final key equality via `rt.core.eq`.
+
+## Runtime Surface to Preserve
+
+The following exported names stay stable:
+
+- `rt_dict__make`
+- `rt_dict__len`
+- `rt_dict__keys`
+- `rt_dict__has`
+- `rt_dict__get`
+- `rt_dict__get_option`
+- `rt_dict__set`
+- `rt_dict__remove`
+- `rt_dict__set_in_place`
+- `rt_dict__remove_in_place`
+
+Semantics:
+
+- `get_option` remains the safe user-facing lookup path
+- raw `get` remains available for parity/internal lowering
+- `set_in_place` / `remove_in_place` remain optimizer-only ABI hooks
+
+For the first landing:
+
+- `set_in_place` may alias persistent `set`
+- `remove_in_place` may alias persistent `remove`
+
+Real destructive path mutation is a follow-up optimization.
+
+## Representation Boundary Changes
+
+The dict representation boundary changes atomically:
+
+- stage0 runtime types and `rt.dict`
+- boot runtime types and `rt.dict`
+- stage0 prelude/runtime ABI wiring
+- boot builtin ABI wiring
+- tests that assert old `rt_types__Dict`/`DictEntry` details
+
+Current assumptions that must change together:
+
+- `src/runtime/types.rs`
+- `src/runtime/dict.rs`
+- `src/codegen/prelude.rs`
+- `src/codegen/emit.rs`
+- `boot/compiler/codegen/runtime/types.tw`
+- `boot/compiler/codegen/runtime/dict.tw`
+- `boot/compiler/codegen/emit.tw`
+- `boot/compiler/builtins.tw`
+- runtime/layout/ABI tests in `boot/tests/suites/*`
+
+In particular, the atomic rollout must include all direct dict import/call sites
+that still hardcode `ref $Dict` assumptions, including:
+
+- `rt_dict__get`
+- `rt_dict__get_option`
+- the internal `dict_get_unsafe` lowering path that routes through `rt_dict__get`
 
 ## Implementation Tasks
 
-### Task A: Runtime Types for HAMT Nodes
+### Task A: Add HAMT Runtime Types
 
-- Update `src/runtime/types.rs`:
-  - Add typed dict/node structs or generated families needed for HAMT.
-  - Keep external `Dict` ref helper stable only if it can name a concrete instantiated
-    dict family; otherwise migrate with coordinated codegen changes.
-- Add symbol/key derivation for per-instantiation dict families.
+Update stage0 and boot runtime type definitions to add:
+
+- `HamtNode`
+- `HamtEntry`
+- `HamtCollision`
+- `PDict`
+
+Keep old flat dict types only as long as needed for atomic migration. The final
+HAMT landing should remove ordinary runtime dependence on the old assoc-list
+representation.
 
 ### Task B: Reimplement `rt.dict`
 
-- Rewrite `boot/compiler/codegen/runtime/dict.tw` and stage0 `src/runtime/dict.rs`:
-  - `make`: empty root, size 0
-  - `get/has`: trie walk by hash fragments
-  - `set`: path-copy insert/replace, size delta tracking
-  - `remove`: path-copy delete + node compaction
-  - `len`: O(1) from stored size
-  - `keys`: preserve the insertion-order contract above, not just deterministic output
-  - Preserve the current boot compiler runtime surface:
-    - semantic helpers: `make`, `len`, `keys`, `get_option`, `has`, `set`, `remove`
-    - optimizer helpers: `set_in_place`, `remove_in_place`
-    - optional raw lookup helper kept for parity/internal lowering: `get`
-  - Split helper families by concrete `(K, V)` layout where needed, or generate internal
-    dispatch from a type key.
-  - Avoid boxing/unboxing on specialized key/value paths.
+Rewrite stage0 and boot dict runtimes to use HAMT operations:
 
-### Task C: Hash + Equality Integration
+- `make`: empty `PDict`
+- `len`: O(1) from stored size
+- `has`: trie walk by hash fragments
+- `get`: trie walk returning value-or-null
+- `get_option`: Option variant wrapper over lookup
+- `set`: persistent path-copy insert/replace
+- `remove`: persistent path-copy delete + compaction
+- `keys`: materialize keys from `order`, not HAMT traversal
+- `set_in_place` / `remove_in_place`: preserve the same ordering semantics as
+  their persistent counterparts; initially aliasing the persistent versions is
+  acceptable if needed for landing speed
 
-- Add internal hash helpers in runtime (likely `rt.core` or `rt.dict` local helpers).
-- Keep final key match guarded by existing equality semantics (`rt.core.eq`).
-- Ensure string hashing matches UTF-8 byte representation used in runtime strings.
-- Keep `Byte` key behavior first-class alongside `Int` and `String`; do not regress the
-  existing `Dict<Byte, V>` surface while changing representation.
-- `Dict.keys` order is part of today's observable behavior because dict iteration lowers
-  through `keys`; preserve the insertion-order contract above.
-- For specialized families, use typed key comparisons on hot paths where possible, falling
-  back to structural equality only where semantics require it.
+### Task C: Ordered Iteration Support
 
-### Task D: In-Place Rewrite Compatibility
+Add ordering metadata support in both stage0 and boot runtimes.
 
-- Keep optimizer contract in `src/opt/uniqueness.rs`:
-  - `DICT_SET` -> `DICT_SET_IN_PLACE`
-  - `DICT_REMOVE` -> `DICT_REMOVE_IN_PLACE`
-- Redefine in-place helpers in HAMT runtime as safe destructive path mutation only when uniqueness guarantees hold.
-- Verify in-place helpers target the correct specialized dict family.
-- Treat those helpers as optimizer-only ABI, not user-visible surface API.
+Minimum requirements:
 
-### Task E: Prelude and Snapshot Alignment
+- `PDict` stores an `order` sequence
+- `make` initializes empty order metadata
+- `set` appends only when inserting a previously absent key
+- `remove` removes the key from order while preserving relative order
+- `keys` reads from order rather than walking the HAMT directly
+- `for` / `collect` over dicts therefore continue to see stable insertion order
 
-- Keep existing prelude IDs and runtime symbols (`rt_dict__*`) to minimize frontend impact.
-- Update snapshots and runtime dump expectations after type/function body changes.
+Dependency decision required before implementation:
 
-### Task F: Specialization Policy
+- if `order` is backed by `PVec`, boot must first gain the necessary persistent
+  vector runtime type support
+- otherwise the first HAMT landing must choose an ordering representation that
+  is already available in both runtimes
 
-- Define which `(K, V)` pairs receive dedicated dict layouts first.
-- Minimum target:
-  - `Dict<Int, Int>`
-  - `Dict<Byte, Int>`
-  - `Dict<Int, String>`
-  - `Dict<String, Int>`
-  - `Dict<String, String>`
-  - `Dict<Byte, String>`
-  - common ref-valued cases (`Dict<String, Record>`, `Dict<String, Sum>`)
-- Define fallback:
-  - temporary erased/universal dict family only for unsupported/non-concrete cases
-    during migration
-  - fallback should be the exception, not the default
-  - fallback must be removed for supported concrete families once their typed layouts
-    land; it is not part of the target architecture
+Implementation note:
+
+- `PVec` is the default recommendation for stage0
+- for boot, treat `PVec` as a dependency to be introduced explicitly, not as
+  already-present shared runtime machinery
+- remove-from-order may remain O(N) in the first landing; that is acceptable
+  for v1 if lookup/update still benefit from HAMT
+
+### Task D: Hash + Equality Integration
+
+Add deterministic runtime hash helpers for:
+
+- `Int`
+- `String`
+- `Byte`
+
+Preserve final key comparison through existing equality semantics.
+
+### Task E: Prelude / Builtin ABI Update
+
+Change dict runtime valtypes from `ref $Dict` to `ref $PDict` in:
+
+- `src/codegen/prelude.rs`
+- `src/codegen/emit.rs`
+- `boot/compiler/codegen/emit.tw`
+- `boot/compiler/builtins.tw`
+
+This includes the direct lowering/codegen call sites for:
+
+- `rt_dict__get`
+- `rt_dict__get_option`
+- `dict_get_unsafe`
+
+Keep exported function names and arities stable where possible.
+
+### Task F: Test and Snapshot Realignment
+
+Update tests that currently bake in assoc-list details:
+
+- runtime shape tests that assert `DictEntry`/`Dict` array behavior
+- boot ABI/layout tests that assert `rt_types__Dict`
+
+Keep and expand order-semantics tests rather than weakening them.
+
+Required coverage:
+
+- insertion appends to iteration order
+- updating an existing key preserves position
+- removal preserves the relative order of remaining keys
+- remove+reinsert appends at the end
+- `for k in d` and `for k, v in d` agree with `Dict.keys`
+
+### Task G: Keep Optimizer Compatibility
+
+Preserve the optimizer contract for:
+
+- `DICT_SET -> DICT_SET_IN_PLACE`
+- `DICT_REMOVE -> DICT_REMOVE_IN_PLACE`
+
+The loop-rewrite work already covered by the dict in-place optimization plan
+must continue to apply after the HAMT migration.
 
 ## Validation
 
-- Existing dict behavior tests pass:
-  - `tests/run/dicts.tw`
+- Existing dict API behavior still passes with insertion-order semantics preserved:
   - `tests/run/dict_methods.tw`
+  - `tests/run/dicts.tw`
   - `tests/opt/*dict*`
-- Keep coverage for compiler hooks:
-  - dict iteration order preserves insertion/update/remove semantics via `Dict.keys`
-  - `m[k] = v` still maps to the persistent update path
-  - uniqueness rewrites to in-place helpers preserve semantics
-- Add HAMT-specific tests:
-  - Hash collision scenarios
-  - Deep trie path updates/removes
-  - Structural sharing sanity (older versions remain intact)
-  - `Dict<Byte, _>` coverage for get/has/set/remove/iteration
-  - `Dict.keys` ordering checks for insert, overwrite, remove, and remove+reinsert
-- Add representation-focused tests:
-  - `Dict<String, Int>` lookup/update paths contain no key/value boxing
-  - `Dict<Int, String>` lookup/update paths contain no key/value boxing
-  - `Dict<Byte, Int>` lookup/update path contains no key boxing once that family is
-    supported
-  - temporary erased fallback dict path, if still present during migration, works only
-    for intentionally unsupported cases
+- Boot compiler tests pass:
+  - `cargo run --release -- run boot/tests/main.tw`
+- Add HAMT-specific tests for:
+  - hash collisions
+  - deep trie updates/removes
+  - structural sharing
+  - large dicts
+  - `Dict<Byte, _>` behavior
+  - preserved insertion-order semantics for a fixed update/remove history
+- Add ABI/layout tests for the new `PDict`/HAMT types.
 
 ## Staging
 
-1. Introduce hash helpers and typed node/container families.
-2. Add planner/codegen plumbing for concrete `(K, V)` dict refs.
-3. Implement `get/has/len` for the first specialized key/value pairs.
-4. Implement `set/remove` persistent path-copy for those pairs.
-5. Implement in-place helper variants for uniqueness rewrite path.
-6. Expand to additional high-value `(K, V)` families, including `Byte`-key cases.
-7. Restrict transitional erased fallback to unsupported/non-concrete cases only.
-8. Remove transitional fallback for supported concrete families and finalize `keys`
-   ordering guarantees.
-9. Update snapshots and perf baseline.
+1. Add HAMT type definitions in stage0 and boot runtimes, including `PDict.order`.
+2. Decide the first cross-runtime ordering representation:
+   - either introduce the missing boot-side support needed for `PVec` order
+   - or choose an ordering container already available in both runtimes.
+3. Add deterministic hash helpers.
+4. Rewrite stage0 `rt.dict` to `PDict` + HAMT + ordered iteration metadata.
+5. Rewrite boot `rt.dict` to match.
+6. Update all dict ABI/import sites from `ref $Dict` to `ref $PDict`, including prelude and direct emitter call sites.
+7. Update runtime/layout/ABI tests and snapshots.
+8. Add explicit order-contract tests for insert/update/remove/reinsert behavior.
+9. Re-run optimizer tests to ensure in-place rewrites still target dict ops.
 
 ## Risks
 
-- Collision node correctness bugs can be hard to detect without targeted tests.
-- Deterministic iteration order must be explicitly specified and preserved.
-- In-place path mutation must remain strictly guarded by uniqueness proofs.
-- Per-instantiation dict families increase runtime/codegen complexity and may require many
-  helper variants.
-- Specializing too many `(K, V)` pairs without profiling may increase code size more than it
-  helps; staging should prioritize hot combinations.
+- Collision-node correctness bugs can silently lose entries.
+- Boot parity is substantial because HAMT manipulation is much more complex than
+  the current flat array implementation.
+- Changing dict runtime type names/layout touches many ABI guardrails and
+  snapshots.
+- Preserving insertion order makes the first HAMT landing more complex,
+  especially around ordered removal.
+- In-place variants may temporarily lose their destructive-path advantage if
+  implemented as aliases first.
+
+## Future Enhancements
+
+Once the base HAMT lands and stabilizes:
+
+1. real destructive path mutation for unique dicts
+2. typed per-`(K, V)` dict/node families
+3. backend-internal `anyref` elimination for common concrete dicts
+4. cached hashes / further node-layout optimizations
+5. possible more efficient ordered-removal metadata if profiling justifies it
+6. possible `boot/lib` ownership later
