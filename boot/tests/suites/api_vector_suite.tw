@@ -1,6 +1,36 @@
 use tests.runner
 use tests.assert
 
+fn build_seq(count: Int) Vector<Int> {
+  xs: Vector<Int> = []
+  i := 0
+  for i < count {
+    xs = xs.append(i)
+    i = i + 1
+  }
+  xs
+}
+
+fn build_scaled_seq(count: Int, scale: Int) Vector<Int> {
+  xs: Vector<Int> = []
+  i := 0
+  for i < count {
+    xs = xs.append(i * scale)
+    i = i + 1
+  }
+  xs
+}
+
+fn assert_vec_int_eq(actual: Vector<Int>, expected: Vector<Int>) Result<Void, String> {
+  try assert.int_eq(actual.len(), expected.len())
+  i := 0
+  for i < actual.len() {
+    try assert.int_eq(actual[i], expected[i])
+    i = i + 1
+  }
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner.suite("vector")
     .test("literal construction and len", fn() {
@@ -162,6 +192,83 @@ pub fn suite() runner.Suite {
       try assert.int_eq(xs.len(), 3)
       try assert.int_eq(xs[0], 0)
       try assert.int_eq(xs[2], 0)
+      .Ok({})
+    })
+    .test("boundary lengths 32 and 33 keep indexed values", fn() {
+      xs32 := build_seq(32)
+      xs33 := build_seq(33)
+      try assert.int_eq(xs32.len(), 32)
+      try assert.int_eq(xs33.len(), 33)
+      try assert.int_eq(xs32[0], 0)
+      try assert.int_eq(xs32[31], 31)
+      try assert.int_eq(xs33[0], 0)
+      try assert.int_eq(xs33[31], 31)
+      try assert.int_eq(xs33[32], 32)
+      .Ok({})
+    })
+    .test("deep append chain reaches 1025 elements", fn() {
+      xs := build_seq(1025)
+      try assert.int_eq(xs.len(), 1025)
+      try assert.int_eq(xs[0], 0)
+      try assert.int_eq(xs[31], 31)
+      try assert.int_eq(xs[32], 32)
+      try assert.int_eq(xs[1023], 1023)
+      try assert.int_eq(xs[1024], 1024)
+      .Ok({})
+    })
+    .test("persistent updates preserve previous versions across boundaries", fn() {
+      base := build_seq(40)
+      appended := base.append(40)
+      updated := case appended.set(32, 999) {
+        .Some(v) => v,
+        .None => appended,
+      }
+      try assert.int_eq(base.len(), 40)
+      try assert.int_eq(base[32], 32)
+      try assert.int_eq(base[39], 39)
+      try assert.int_eq(appended.len(), 41)
+      try assert.int_eq(appended[32], 32)
+      try assert.int_eq(appended[40], 40)
+      try assert.int_eq(updated.len(), 41)
+      try assert.int_eq(updated[32], 999)
+      try assert.int_eq(updated[40], 40)
+      .Ok({})
+    })
+    .test("append loop from non-empty seed preserves prefix and original", fn() {
+      seed := build_seq(8)
+      grown := seed
+      i := 8
+      for i < 40 {
+        grown = grown.append(i)
+        i = i + 1
+      }
+      try assert.int_eq(seed.len(), 8)
+      try assert.int_eq(seed[0], 0)
+      try assert.int_eq(seed[7], 7)
+      try assert.int_eq(grown.len(), 40)
+      try assert.int_eq(grown[7], 7)
+      try assert.int_eq(grown[8], 8)
+      try assert.int_eq(grown[39], 39)
+      .Ok({})
+    })
+    .test("collect matches append loop across trie boundaries", fn() {
+      via_collect := collect i in range(1050) { i * 3 }
+      via_append := build_scaled_seq(1050, 3)
+      try assert_vec_int_eq(via_collect, via_append)
+      .Ok({})
+    })
+    .test("large literal crossing trie boundary keeps values", fn() {
+      xs: Vector<Int> = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+        30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+      ]
+      try assert.int_eq(xs.len(), 40)
+      try assert.int_eq(xs[0], 0)
+      try assert.int_eq(xs[31], 31)
+      try assert.int_eq(xs[32], 32)
+      try assert.int_eq(xs[39], 39)
       .Ok({})
     })
     .test("sort_by orders ascending and descending", fn() {
