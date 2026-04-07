@@ -283,42 +283,42 @@ fn emit_expr(expr: AnfExpr, expected_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
           case mono {
             .Void => [],
             .Never => instrs,
-            _ => instrs.append(Instr.Drop),
+            _ => instrs.append(.Drop),
           }
         },
         .Never => {
           out := emit_atom(atom, ctx)
-          out.append(Instr.Unreachable)
+          out.append(.Unreachable)
         },
         _ => emit_atom(atom, ctx),
       }
     },
     .Return(.Some(atom)) => {
       out := emit_atom(atom, ctx)
-      out.append(Instr.Return)
+      out.append(.Return)
     },
-    .Return(.None) => [Instr.Return],
+    .Return(.None) => [.Return],
     .Break(.Some(atom)) => {
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Break with no label stack")
       }
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       out := emit_atom(atom, ctx)
-      out.append(Instr.Br(lp.break_label))
+      out.append(.Br(lp.break_label))
     },
     .Break(.None) => {
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Break with no label stack")
       }
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
-      [Instr.Br(lp.break_label)]
+      [.Br(lp.break_label)]
     },
     .Continue => {
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Continue with no label stack")
       }
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
-      [Instr.Br(lp.continue_label)]
+      [.Br(lp.continue_label)]
     },
   }
 }
@@ -334,7 +334,7 @@ fn emit_let(local: LocalId, op: AnfOp, body: AnfExpr, expected_ty: MonoType, ctx
     .Never => {
       // Emit op instructions (will end with Unreachable), skip body
       out := emit_op(op, entry.index, .None, result_mono, ctx)
-      out.append(Instr.Unreachable)
+      out.append(.Unreachable)
     },
     _ => {
       out := emit_op(op, entry.index, .Some(entry.val_type), result_mono, ctx)
@@ -349,8 +349,8 @@ fn emit_let(local: LocalId, op: AnfOp, body: AnfExpr, expected_ty: MonoType, ctx
       if is_init {
         case ctx.registry.module_globals[local.id] {
           .Some(gentry) => {
-            out = out.append(Instr.LocalGet(entry.index))
-            out = out.append(Instr.GlobalSet(gentry.sym))
+            out = out.append(.LocalGet(entry.index))
+            out = out.append(.GlobalSet(gentry.sym))
           },
           .None => {},
         }
@@ -367,12 +367,12 @@ fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoTyp
   case op {
     .AInit(atom) => {
       out := emit_atom(atom, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AAssign(target, atom) => {
       tgt := lookup_local(ctx, target)
       out := emit_atom(atom, ctx)
-      out = out.append(Instr.LocalSet(tgt.index))
+      out = out.append(.LocalSet(tgt.index))
       // For module globals in __init__, also set the global
       is_init := case ctx.init_func_id {
         .Some(ifid) => case ctx.current_func_id {
@@ -384,24 +384,24 @@ fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoTyp
       if is_init {
         case ctx.registry.module_globals[target.id] {
           .Some(gentry) => {
-            out = out.append(Instr.LocalGet(tgt.index))
-            out = out.append(Instr.GlobalSet(gentry.sym))
+            out = out.append(.LocalGet(tgt.index))
+            out = out.append(.GlobalSet(gentry.sym))
           },
           .None => {},
         }
       }
       // AAssign produces void — set result to void
-      out = out.append(Instr.I32Const(0))
-      out = out.append(Instr.RefI31)
-      out.append(Instr.LocalSet(result_idx))
+      out = out.append(.I32Const(0))
+      out = out.append(.RefI31)
+      out.append(.LocalSet(result_idx))
     },
     .ABinOp(bop, left, right, kind) => {
       out := emit_binop(bop, left, right, kind, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AUnOp(uop, operand, kind) => {
       out := emit_unop(uop, operand, kind, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .ACall(callee, args) => {
       out := emit_call(callee, args, result_idx, result_mono, ctx)
@@ -418,39 +418,39 @@ fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoTyp
     },
     .ARecord(tid, fields) => {
       out := emit_record_literal(tid, fields, result_mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .ARecordGet(target, fid, tid) => {
       out := emit_record_get(target, fid, tid, result_mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .ARecordUpdate(base, fid, value, can_reuse, tid) => {
       out := emit_record_update(base, fid, value, can_reuse, tid, result_mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AVariant(tid, vid, args) => {
       out := emit_variant_literal(tid, vid, args, result_mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AArrayLit(items) => {
       out := emit_array_literal(items, result_mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AIndex(base, index, kind, mono) => {
       out := emit_index_op(base, index, kind, mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AMakeClosure(fid, free_vars) => {
       out := emit_make_closure(fid, free_vars, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AWrapAnyref(atom, mono) => {
       out := emit_wrap_anyref(atom, mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .AUnwrapAnyref(atom, mono) => {
       out := emit_unwrap_anyref(atom, mono, ctx)
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
     .ADefer(_) => error("ADefer must be eliminated before codegen"),
   }
@@ -460,13 +460,13 @@ fn emit_op(op: AnfOp, result_idx: Int, result_vt: ValType?, result_mono: MonoTyp
 
 fn emit_atom(atom: Atom, ctx: EmitCtx) Vector<Instr> {
   case atom {
-    .ALitInt(n) => [Instr.I64Const(n)],
-    .ALitFloat(f) => [Instr.F64Const(f)],
-    .ALitBool(b) => [Instr.I32Const(if b { 1 } else { 0 })],
-    .ALitVoid => [Instr.I32Const(0), Instr.RefI31],
+    .ALitInt(n) => [.I64Const(n)],
+    .ALitFloat(f) => [.F64Const(f)],
+    .ALitBool(b) => [.I32Const(if b { 1 } else { 0 })],
+    .ALitVoid => [.I32Const(0), .RefI31],
     .ALitStr(s) => {
       case ctx.registry.string_pool[s] {
-        .Some(entry) => [Instr.Call(entry.getter_sym)],
+        .Some(entry) => [.Call(entry.getter_sym)],
         .None => error("emit_atom: string not in pool: ${s}"),
       }
     },
@@ -482,17 +482,17 @@ fn emit_atom(atom: Atom, ctx: EmitCtx) Vector<Instr> {
       if !is_init {
         case ctx.registry.module_globals[lid.id] {
           .Some(gentry) => {
-            return [Instr.GlobalGet(gentry.sym)]
+            return [.GlobalGet(gentry.sym)]
           },
           .None => {},
         }
       }
       entry := lookup_local(ctx, lid)
-      [Instr.LocalGet(entry.index)]
+      [.LocalGet(entry.index)]
     },
     .AGlobalFunc(fid) => {
       sym := lookup_func_sym(ctx.func_sym_map, fid)
-      [Instr.RefFunc(sym)]
+      [.RefFunc(sym)]
     },
   }
 }
@@ -527,7 +527,7 @@ fn emit_binop(bop: BinOp, left: Atom, right: Atom, kind: OpKind, ctx: EmitCtx) V
 fn emit_atom_as_i64(atom: Atom, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(atom, ctx)
   case atom_mono(atom, ctx) {
-    .Byte => out.append(Instr.I64ExtendI32S),
+    .Byte => out.append(.I64ExtendI32S),
     _ => out,
   }
 }
@@ -535,23 +535,23 @@ fn emit_atom_as_i64(atom: Atom, ctx: EmitCtx) Vector<Instr> {
 fn emit_int_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom_as_i64(left, ctx)
   out = append_instrs(out, emit_atom_as_i64(right, ctx))
-  instr := case bop {
-    .Add => Instr.I64Add,
-    .Sub => Instr.I64Sub,
-    .Mul => Instr.I64Mul,
-    .Div => Instr.I64DivS,
-    .Mod => Instr.I64RemS,
-    .Eq => Instr.I64Eq,
-    .Ne => Instr.I64Ne,
-    .Lt => Instr.I64LtS,
-    .Le => Instr.I64LeS,
-    .Gt => Instr.I64GtS,
-    .Ge => Instr.I64GeS,
-    .BitAnd => Instr.I64And,
-    .BitOr => Instr.I64Or,
-    .BitXor => Instr.I64Xor,
-    .Shl => Instr.I64Shl,
-    .Shr => Instr.I64ShrS,
+  instr : Instr = case bop {
+    .Add => .I64Add,
+    .Sub => .I64Sub,
+    .Mul => .I64Mul,
+    .Div => .I64DivS,
+    .Mod => .I64RemS,
+    .Eq => .I64Eq,
+    .Ne => .I64Ne,
+    .Lt => .I64LtS,
+    .Le => .I64LeS,
+    .Gt => .I64GtS,
+    .Ge => .I64GeS,
+    .BitAnd => .I64And,
+    .BitOr => .I64Or,
+    .BitXor => .I64Xor,
+    .Shl => .I64Shl,
+    .Shr => .I64ShrS,
     .And => error("emit_int_binop: And not valid for Int"),
     .Or => error("emit_int_binop: Or not valid for Int"),
   }
@@ -561,17 +561,17 @@ fn emit_int_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Inst
 fn emit_float_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(left, ctx)
   out = append_instrs(out, emit_atom(right, ctx))
-  instr := case bop {
-    .Add => Instr.F64Add,
-    .Sub => Instr.F64Sub,
-    .Mul => Instr.F64Mul,
-    .Div => Instr.F64Div,
-    .Eq => Instr.F64Eq,
-    .Ne => Instr.F64Ne,
-    .Lt => Instr.F64Lt,
-    .Le => Instr.F64Le,
-    .Gt => Instr.F64Gt,
-    .Ge => Instr.F64Ge,
+  instr : Instr = case bop {
+    .Add => .F64Add,
+    .Sub => .F64Sub,
+    .Mul => .F64Mul,
+    .Div => .F64Div,
+    .Eq => .F64Eq,
+    .Ne => .F64Ne,
+    .Lt => .F64Lt,
+    .Le => .F64Le,
+    .Gt => .F64Gt,
+    .Ge => .F64Ge,
     _ => error("emit_float_binop: unsupported op"),
   }
   out.append(instr)
@@ -580,11 +580,11 @@ fn emit_float_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<In
 fn emit_bool_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(left, ctx)
   out = append_instrs(out, emit_atom(right, ctx))
-  instr := case bop {
-    .Eq => Instr.I32Eq,
-    .Ne => Instr.I32Ne,
-    .And => Instr.I32And,
-    .Or => Instr.I32Or,
+  instr : Instr = case bop {
+    .Eq => .I32Eq,
+    .Ne => .I32Ne,
+    .And => .I32And,
+    .Or => .I32Or,
     _ => error("emit_bool_binop: unsupported op"),
   }
   out.append(instr)
@@ -594,31 +594,31 @@ fn emit_str_binop(bop: BinOp, left: Atom, right: Atom, ctx: EmitCtx) Vector<Inst
   out := emit_atom(left, ctx)
   out = append_instrs(out, emit_atom(right, ctx))
   case bop {
-    .Add => out.append(Instr.Call("rt_str__concat")),
-    .Eq => out.append(Instr.Call("rt_str__eq")),
+    .Add => out.append(.Call("rt_str__concat")),
+    .Eq => out.append(.Call("rt_str__eq")),
     .Ne => {
-      out = out.append(Instr.Call("rt_str__eq"))
-      out.append(Instr.I32Eqz)
+      out = out.append(.Call("rt_str__eq"))
+      out.append(.I32Eqz)
     },
     .Lt => {
-      out = out.append(Instr.Call("rt_str__cmp"))
-      out = out.append(Instr.I32Const(0))
-      out.append(Instr.I32LtS)
+      out = out.append(.Call("rt_str__cmp"))
+      out = out.append(.I32Const(0))
+      out.append(.I32LtS)
     },
     .Le => {
-      out = out.append(Instr.Call("rt_str__cmp"))
-      out = out.append(Instr.I32Const(1))
-      out.append(Instr.I32LtS)
+      out = out.append(.Call("rt_str__cmp"))
+      out = out.append(.I32Const(1))
+      out.append(.I32LtS)
     },
     .Gt => {
-      out = out.append(Instr.Call("rt_str__cmp"))
-      out = out.append(Instr.I32Const(0))
-      out.append(Instr.I32GtS)
+      out = out.append(.Call("rt_str__cmp"))
+      out = out.append(.I32Const(0))
+      out.append(.I32GtS)
     },
     .Ge => {
-      out = out.append(Instr.Call("rt_str__cmp"))
-      out = out.append(Instr.I32Const(-1))
-      out.append(Instr.I32GtS)
+      out = out.append(.Call("rt_str__cmp"))
+      out = out.append(.I32Const(-1))
+      out.append(.I32GtS)
     },
     _ => error("emit_str_binop: unsupported op"),
   }
@@ -632,22 +632,22 @@ fn emit_unop(uop: UnOp, operand: Atom, kind: OpKind, ctx: EmitCtx) Vector<Instr>
     .Neg => {
       case kind {
         .Int => {
-          out = [Instr.I64Const(0)]
+          out = [.I64Const(0)]
           out = append_instrs(out, emit_atom_as_i64(operand, ctx))
-          out.append(Instr.I64Sub)
+          out.append(.I64Sub)
         },
-        .Float => out.append(Instr.F64Neg),
+        .Float => out.append(.F64Neg),
         _ => error("emit_unop: Neg not valid for this type"),
       }
     },
     .Not => {
       case kind {
-        .Bool => out.append(Instr.I32Eqz),
+        .Bool => out.append(.I32Eqz),
         .Int => {
           // BitNot: x XOR -1
           out = emit_atom_as_i64(operand, ctx)
-          out = out.append(Instr.I64Const(-1))
-          out.append(Instr.I64Xor)
+          out = out.append(.I64Const(-1))
+          out.append(.I64Xor)
         },
         _ => error("emit_unop: Not not valid for this type"),
       }
@@ -711,15 +711,26 @@ fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mon
       out = append_instrs(out, emit_atom(a, ctx))
     }
   }
-  out = out.append(Instr.Call(sym))
+  out = out.append(.Call(sym))
   case result_mono {
     .Void => {
-      out = out.append(Instr.I32Const(0))
-      out = out.append(Instr.RefI31)
-      out.append(Instr.LocalSet(result_idx))
+      out = out.append(.I32Const(0))
+      out = out.append(.RefI31)
+      out.append(.LocalSet(result_idx))
     },
-    _ => out.append(Instr.LocalSet(result_idx)),
+    _ => out.append(.LocalSet(result_idx)),
   }
+}
+
+// Host boundary helpers: identify functions that cross the Array/PVec boundary
+fn is_host_vector_returning(name: String) Bool {
+  name == "host_args" or name == "host_list_dir" or name == "host_env"
+}
+fn is_host_read_file(name: String) Bool {
+  name == "host_read_file"
+}
+fn is_host_vector_arg(name: String) Bool {
+  name == "host_write_bytes"
 }
 
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -728,6 +739,10 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_
   abi: AbiContract? = case ctx.builtins.by_id[fid.id] {
     .Some(entry) => .Some(entry.abi),
     .None => .None,
+  }
+  entry_name := case ctx.builtins.by_id[fid.id] {
+    .Some(e) => e.name,
+    .None => "",
   }
   for a,i in args {
     // Check if ABI expects i32 and the arg is Int-typed → checked narrowing
@@ -748,19 +763,30 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<Atom>, result_
       out = append_instrs(out, emit_checked_i32_narrow(a, ctx))
     } else {
       out = append_instrs(out, emit_atom(a, ctx))
+      // host_write_bytes: convert PVec arg → flat Array for host
+      if is_host_vector_arg(entry_name) and i == 1 {
+        out = out.append(.Call("rt_arr__to_array"))
+      }
     }
   }
-  out = out.append(Instr.Call(import_sym))
+  out = out.append(.Call(import_sym))
+  // Host boundary: wrap flat Array results → PVec
+  if is_host_vector_returning(entry_name) {
+    out = out.append(.Call("rt_arr__from_array"))
+  }
+  if is_host_read_file(entry_name) {
+    out = out.append(.Call("rt_arr__from_read_file_result"))
+  }
   // Some runtime calls return void
   case result_mono {
     .Void => {
-      out = out.append(Instr.I32Const(0))
-      out = out.append(Instr.RefI31)
-      out.append(Instr.LocalSet(result_idx))
+      out = out.append(.I32Const(0))
+      out = out.append(.RefI31)
+      out.append(.LocalSet(result_idx))
     },
     _ => {
       out = append_instrs(out, adapt_runtime_result(fid, result_mono, ctx))
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
   }
 }
@@ -776,7 +802,7 @@ fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector
         case result_mono {
           .Int => {
             case abi.result_types[0] {
-              .I32 => [Instr.I64ExtendI32S],
+              .I32 => [.I64ExtendI32S],
               _ => [],
             }
           },
@@ -796,7 +822,7 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
   if name == "string_to_string" {
     // Identity — just return the string
     out := emit_atom(args[0], ctx)
-    return out.append(Instr.LocalSet(result_idx))
+    return out.append(.LocalSet(result_idx))
   }
 
   if name == "vector_append" {
@@ -843,8 +869,8 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
 
   if name == "byte_to_int" {
     out := emit_atom(args[0], ctx)
-    out = out.append(Instr.I64ExtendI32U)
-    return out.append(Instr.LocalSet(result_idx))
+    out = out.append(.I64ExtendI32U)
+    return out.append(.LocalSet(result_idx))
   }
   if name == "byte_from_int" {
     return emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx)
@@ -852,9 +878,9 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
   if name == "byte_to_string" {
     // Zero-extend byte to i64, call int_to_string
     out := emit_atom(args[0], ctx)
-    out = out.append(Instr.I64ExtendI32U)
-    out = out.append(Instr.Call("rt_str__from_i64"))
-    return out.append(Instr.LocalSet(result_idx))
+    out = out.append(.I64ExtendI32U)
+    out = out.append(.Call("rt_str__from_i64"))
+    return out.append(.LocalSet(result_idx))
   }
 
   if name == "cell_new" {
@@ -889,13 +915,13 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
 
   if name == "int_from_string" {
     out := emit_atom(args[0], ctx)
-    out = out.append(Instr.Call("$int_from_string_helper"))
-    return out.append(Instr.LocalSet(result_idx))
+    out = out.append(.Call("$int_from_string_helper"))
+    return out.append(.LocalSet(result_idx))
   }
   if name == "float_from_string" {
     out := emit_atom(args[0], ctx)
-    out = out.append(Instr.Call("$float_from_string_helper"))
-    return out.append(Instr.LocalSet(result_idx))
+    out = out.append(.Call("$float_from_string_helper"))
+    return out.append(.LocalSet(result_idx))
   }
 
   error("emit_intrinsic_call: unknown intrinsic '${name}'")
@@ -904,12 +930,12 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<Atom>, result_idx
 // ── vector_append: COW append via concat ─────────────────────────────────
 
 fn emit_intrinsic_vector_append(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
-  // vector_append(vec, elem) → rt_arr__concat(vec, [elem])
-  out := emit_atom(args[0], ctx)  // vec
+  // vector_append(vec, elem) → rt_arr__push(vec, elem)
+  out := emit_atom(args[0], ctx)  // vec (PVec, nullable)
+  out = out.append(.RefAsNonNull)  // push takes non-null PVec
   out = append_instrs(out, emit_atom(args[1], ctx))  // elem (already anyref after boundary)
-  out = out.append(Instr.ArrayNewFixed("rt_types__Array", 1))
-  out = out.append(Instr.Call("rt_arr__concat"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("rt_arr__push"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── vector_get: bounds-checked → Option<T> ─────────────────────────────
@@ -922,36 +948,37 @@ fn emit_intrinsic_vector_get(args: Vector<Atom>, result_idx: Int, result_mono: M
   // Bounds check: 0 <= index < len
   // index is i64, len is i32; compare in i64
   out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)                       // index >= 0
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)                       // index >= 0
   out = append_instrs(out, emit_atom(args[1], ctx))  // index again
   out = append_instrs(out, emit_atom(args[0], ctx))  // vec
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LtS)                       // index < len
-  out = out.append(Instr.I32And)                        // both conditions
+  out = out.append(.RefAsNonNull)
+  out = out.append(.StructGet("rt_types__PVec", 0))  // vec.len
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LtS)                       // index < len
+  out = out.append(.I32And)                        // both conditions
 
-  // Then: Some(vec[index])
+  // Then: Some(rt_arr__get(vec, index))
   then_instrs: Vector<Instr> = []
-  then_instrs = then_instrs.append(Instr.I32Const(1))  // tag = Some
+  then_instrs = then_instrs.append(.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
   then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
-  then_instrs = then_instrs.append(Instr.ArrayGet("rt_types__Array"))   // anyref element
-  then_instrs = then_instrs.append(Instr.StructNew(sum_layout.sym))
+  then_instrs = then_instrs.append(.Call("rt_arr__get"))   // anyref element
+  then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None
   else_instrs: Vector<Instr> = []
-  else_instrs = else_instrs.append(Instr.I32Const(0))  // tag = None
+  else_instrs = else_instrs.append(.I32Const(0))  // tag = None
   // Default payload for the Some field
   some_variant := sum_layout.variants[1]
   if some_variant.payload_types.len() > 0 {
     else_instrs = append_instrs(else_instrs, emit_default_value(some_variant.payload_types[0]))
   }
-  else_instrs = else_instrs.append(Instr.StructNew(sum_layout.sym))
+  else_instrs = else_instrs.append(.StructNew(sum_layout.sym))
 
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  out = out.append(Instr.If(.Some(result_ref), then_instrs, else_instrs))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.If(.Some(result_ref), then_instrs, else_instrs))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── vector_set: bounds-checked COW → Option<Vector<T>> ─────────────────
@@ -962,60 +989,59 @@ fn emit_intrinsic_vector_set(args: Vector<Atom>, result_idx: Int, result_mono: M
   out: Vector<Instr> = []
   // Bounds check
   out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   out = append_instrs(out, emit_atom(args[1], ctx))
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LtS)
-  out = out.append(Instr.I32And)
+  out = out.append(.RefAsNonNull)
+  out = out.append(.StructGet("rt_types__PVec", 0))  // vec.len
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LtS)
+  out = out.append(.I32And)
 
   // Then: Some(rt_arr__set(vec, index, elem))
   then_instrs: Vector<Instr> = []
-  then_instrs = then_instrs.append(Instr.I32Const(1))  // tag = Some
+  then_instrs = then_instrs.append(.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
   then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
   then_instrs = append_instrs(then_instrs, emit_atom(args[2], ctx))  // value (anyref after boundary)
-  then_instrs = then_instrs.append(Instr.Call("rt_arr__set"))
-  then_instrs = then_instrs.append(Instr.StructNew(sum_layout.sym))
+  then_instrs = then_instrs.append(.Call("rt_arr__set"))
+  then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None
   else_instrs: Vector<Instr> = []
-  else_instrs = else_instrs.append(Instr.I32Const(0))
+  else_instrs = else_instrs.append(.I32Const(0))
   some_v := sum_layout.variants[1]
   if some_v.payload_types.len() > 0 {
     else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
   }
-  else_instrs = else_instrs.append(Instr.StructNew(sum_layout.sym))
+  else_instrs = else_instrs.append(.StructNew(sum_layout.sym))
 
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  out = out.append(Instr.If(.Some(result_ref), then_instrs, else_instrs))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.If(.Some(result_ref), then_instrs, else_instrs))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── vector_make: make(size, default) ───────────────────────────────────
 
 fn emit_intrinsic_vector_make(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   out: Vector<Instr> = []
+  out = append_instrs(out, emit_checked_i32_narrow(args[0], ctx))  // size (i32)
   out = append_instrs(out, emit_atom(args[1], ctx))  // default value (anyref)
-  out = append_instrs(out, emit_checked_i32_narrow(args[0], ctx))  // size (i64)
-  out = out.append(Instr.ArrayNew("rt_types__Array"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("rt_arr__make"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── vector_set_in_place ────────────────────────────────────────────────
 
 fn emit_intrinsic_vector_set_in_place(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
-  // vector_set_in_place(vec, index, value) → mutate in place, return vec
+  // vector_set_in_place: initially lowers to persistent set (correctness over perf)
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(args[0], ctx))  // vec
-  out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))  // index (i64)
+  out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))  // index
   out = append_instrs(out, emit_atom(args[2], ctx))  // value (anyref)
-  out = out.append(Instr.ArraySet("rt_types__Array"))
-  // Return the same vec ref
-  out = append_instrs(out, emit_atom(args[0], ctx))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("rt_arr__set"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── dict_get_unsafe ────────────────────────────────────────────────────
@@ -1024,8 +1050,8 @@ fn emit_intrinsic_dict_get_unsafe(args: Vector<Atom>, result_idx: Int, ctx: Emit
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(args[0], ctx))  // dict
   out = append_instrs(out, emit_atom(args[1], ctx))  // key (anyref)
-  out = out.append(Instr.Call("rt_dict__get"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("rt_dict__get"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── string_get: s.get(i) → Option<Byte> ───────────────────────────────
@@ -1036,35 +1062,35 @@ fn emit_intrinsic_string_get(args: Vector<Atom>, result_idx: Int, result_mono: M
   out: Vector<Instr> = []
   // Bounds check in i64 domain
   out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   out = append_instrs(out, emit_atom(args[1], ctx))
   out = append_instrs(out, emit_atom(args[0], ctx))  // string
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LtS)
-  out = out.append(Instr.I32And)
+  out = out.append(.ArrayLen)
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LtS)
+  out = out.append(.I32And)
 
   // Then: Some(s[i])
   then_instrs: Vector<Instr> = []
-  then_instrs = then_instrs.append(Instr.I32Const(1))  // tag = Some
+  then_instrs = then_instrs.append(.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
   then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))
-  then_instrs = then_instrs.append(Instr.ArrayGetU("rt_types__String"))  // unsigned byte
-  then_instrs = then_instrs.append(Instr.StructNew(sum_layout.sym))
+  then_instrs = then_instrs.append(.ArrayGetU("rt_types__String"))  // unsigned byte
+  then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None (with default payload)
   else_instrs: Vector<Instr> = []
-  else_instrs = else_instrs.append(Instr.I32Const(0))
+  else_instrs = else_instrs.append(.I32Const(0))
   some_v := sum_layout.variants[1]
   if some_v.payload_types.len() > 0 {
     else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
   }
-  else_instrs = else_instrs.append(Instr.StructNew(sum_layout.sym))
+  else_instrs = else_instrs.append(.StructNew(sum_layout.sym))
 
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  out = out.append(Instr.If(.Some(result_ref), then_instrs, else_instrs))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.If(.Some(result_ref), then_instrs, else_instrs))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── string_slice: s.slice(start, end) ──────────────────────────────────
@@ -1077,28 +1103,28 @@ fn emit_intrinsic_string_slice(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx
   // For simplicity, do a combined trap check
   // start >= 0
   out = append_instrs(out, emit_atom(args[1], ctx))  // start (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   // end >= 0
   out = append_instrs(out, emit_atom(args[2], ctx))  // end (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
-  out = out.append(Instr.I32And)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
+  out = out.append(.I32And)
   // start <= end
   out = append_instrs(out, emit_atom(args[1], ctx))
   out = append_instrs(out, emit_atom(args[2], ctx))
-  out = out.append(Instr.I64LeS)
-  out = out.append(Instr.I32And)
+  out = out.append(.I64LeS)
+  out = out.append(.I32And)
   // end <= len
   out = append_instrs(out, emit_atom(args[2], ctx))
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LeS)
-  out = out.append(Instr.I32And)
+  out = out.append(.ArrayLen)
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LeS)
+  out = out.append(.I32And)
   // Trap if any check fails
-  out = out.append(Instr.I32Eqz)
-  out = out.append(Instr.If(.None, [Instr.Unreachable], []))
+  out = out.append(.I32Eqz)
+  out = out.append(.If(.None, [.Unreachable], []))
 
   // UTF-8 boundary check at start (if start > 0 && start < len)
   // Check (s[start] & 0xC0) != 0x80 (not a continuation byte)
@@ -1110,35 +1136,35 @@ fn emit_intrinsic_string_slice(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx
   out = append_instrs(out, emit_atom(args[0], ctx))
   out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))
   out = append_instrs(out, emit_checked_i32_narrow(args[2], ctx))
-  out = out.append(Instr.Call("rt_str__substring"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("rt_str__substring"))
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_utf8_boundary_check(str_atom: Atom, idx_atom: Atom, ctx: EmitCtx) Vector<Instr> {
   // if idx > 0 && idx < len: check (s[idx] & 0xC0) != 0x80
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(idx_atom, ctx))
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GtS)  // idx > 0
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GtS)  // idx > 0
   out = append_instrs(out, emit_atom(idx_atom, ctx))
   out = append_instrs(out, emit_atom(str_atom, ctx))
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LtS)  // idx < len
-  out = out.append(Instr.I32And)
+  out = out.append(.ArrayLen)
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LtS)  // idx < len
+  out = out.append(.I32And)
 
   // Then: check byte
   check: Vector<Instr> = []
   check = append_instrs(check, emit_atom(str_atom, ctx))
   check = append_instrs(check, emit_checked_i32_narrow(idx_atom, ctx))
-  check = check.append(Instr.ArrayGetU("rt_types__String"))
-  check = check.append(Instr.I32Const(192))   // 0xC0
-  check = check.append(Instr.I32And)
-  check = check.append(Instr.I32Const(128))   // 0x80
-  check = check.append(Instr.I32Eq)
-  check = check.append(Instr.If(.None, [Instr.Unreachable], []))
+  check = check.append(.ArrayGetU("rt_types__String"))
+  check = check.append(.I32Const(192))   // 0xC0
+  check = check.append(.I32And)
+  check = check.append(.I32Const(128))   // 0x80
+  check = check.append(.I32Eq)
+  check = check.append(.If(.None, [.Unreachable], []))
 
-  out = out.append(Instr.If(.None, check, []))
+  out = out.append(.If(.None, check, []))
   out
 }
 
@@ -1148,22 +1174,22 @@ fn emit_intrinsic_char_code_at(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx
   out: Vector<Instr> = []
   // Trap if out of bounds
   out = append_instrs(out, emit_atom(args[1], ctx))  // index (i64)
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   out = append_instrs(out, emit_atom(args[1], ctx))
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.ArrayLen)
-  out = out.append(Instr.I64ExtendI32U)
-  out = out.append(Instr.I64LtS)
-  out = out.append(Instr.I32And)
-  out = out.append(Instr.I32Eqz)
-  out = out.append(Instr.If(.None, [Instr.Unreachable], []))
+  out = out.append(.ArrayLen)
+  out = out.append(.I64ExtendI32U)
+  out = out.append(.I64LtS)
+  out = out.append(.I32And)
+  out = out.append(.I32Eqz)
+  out = out.append(.If(.None, [.Unreachable], []))
   // Read byte
   out = append_instrs(out, emit_atom(args[0], ctx))
   out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))
-  out = out.append(Instr.ArrayGetU("rt_types__String"))
-  out = out.append(Instr.I64ExtendI32U)
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.ArrayGetU("rt_types__String"))
+  out = out.append(.I64ExtendI32U)
+  out.append(.LocalSet(result_idx))
 }
 
 // ── from_char_code: Int → Option<String> ───────────────────────────────
@@ -1174,33 +1200,33 @@ fn emit_intrinsic_from_char_code(args: Vector<Atom>, result_idx: Int, result_mon
   out: Vector<Instr> = []
   // Check 0 <= code < 128
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.I64Const(128))
-  out = out.append(Instr.I64LtS)
-  out = out.append(Instr.I32And)
+  out = out.append(.I64Const(128))
+  out = out.append(.I64LtS)
+  out = out.append(.I32And)
 
   // Then: Some(string_from_byte)
   then_instrs: Vector<Instr> = []
-  then_instrs = then_instrs.append(Instr.I32Const(1))  // tag = Some
+  then_instrs = then_instrs.append(.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
-  then_instrs = then_instrs.append(Instr.I32WrapI64)
-  then_instrs = then_instrs.append(Instr.ArrayNewFixed("rt_types__String", 1))
-  then_instrs = then_instrs.append(Instr.StructNew(sum_layout.sym))
+  then_instrs = then_instrs.append(.I32WrapI64)
+  then_instrs = then_instrs.append(.ArrayNewFixed("rt_types__String", 1))
+  then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None
   else_instrs: Vector<Instr> = []
-  else_instrs = else_instrs.append(Instr.I32Const(0))
+  else_instrs = else_instrs.append(.I32Const(0))
   some_v := sum_layout.variants[1]
   if some_v.payload_types.len() > 0 {
     else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
   }
-  else_instrs = else_instrs.append(Instr.StructNew(sum_layout.sym))
+  else_instrs = else_instrs.append(.StructNew(sum_layout.sym))
 
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  out = out.append(Instr.If(.Some(result_ref), then_instrs, else_instrs))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.If(.Some(result_ref), then_instrs, else_instrs))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── from_code_point: Int → Option<String> ──────────────────────────────
@@ -1208,24 +1234,28 @@ fn emit_intrinsic_from_char_code(args: Vector<Atom>, result_idx: Int, result_mon
 fn emit_intrinsic_from_code_point(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Delegate to helper function
   out := emit_atom(args[0], ctx)
-  out = out.append(Instr.Call("$from_code_point_helper"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("$from_code_point_helper"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── string_utf8_bytes ──────────────────────────────────────────────────
 
 fn emit_intrinsic_string_utf8_bytes(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(args[0], ctx)
-  out = out.append(Instr.Call("$string_utf8_bytes_helper"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("$string_utf8_bytes_helper"))
+  // Helper returns flat $Array; wrap to PVec
+  out = out.append(.Call("rt_arr__from_array"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── string_from_utf8 ──────────────────────────────────────────────────
 
 fn emit_intrinsic_string_from_utf8(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(args[0], ctx)
-  out = out.append(Instr.Call("$string_from_utf8_helper"))
-  out.append(Instr.LocalSet(result_idx))
+  // User passes PVec; helper expects flat $Array
+  out = out.append(.Call("rt_arr__to_array"))
+  out = out.append(.Call("$string_from_utf8_helper"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── byte_from_int: Int → Option<Byte> ──────────────────────────────────
@@ -1236,32 +1266,32 @@ fn emit_intrinsic_byte_from_int(args: Vector<Atom>, result_idx: Int, result_mono
   out: Vector<Instr> = []
   // Check 0 <= n <= 255
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.I64Const(256))
-  out = out.append(Instr.I64LtS)
-  out = out.append(Instr.I32And)
+  out = out.append(.I64Const(256))
+  out = out.append(.I64LtS)
+  out = out.append(.I32And)
 
   // Then: Some(byte)
   then_instrs: Vector<Instr> = []
-  then_instrs = then_instrs.append(Instr.I32Const(1))
+  then_instrs = then_instrs.append(.I32Const(1))
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))
-  then_instrs = then_instrs.append(Instr.I32WrapI64)
-  then_instrs = then_instrs.append(Instr.StructNew(sum_layout.sym))
+  then_instrs = then_instrs.append(.I32WrapI64)
+  then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None
   else_instrs: Vector<Instr> = []
-  else_instrs = else_instrs.append(Instr.I32Const(0))
+  else_instrs = else_instrs.append(.I32Const(0))
   some_v := sum_layout.variants[1]
   if some_v.payload_types.len() > 0 {
     else_instrs = append_instrs(else_instrs, emit_default_value(some_v.payload_types[0]))
   }
-  else_instrs = else_instrs.append(Instr.StructNew(sum_layout.sym))
+  else_instrs = else_instrs.append(.StructNew(sum_layout.sym))
 
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  out = out.append(Instr.If(.Some(result_ref), then_instrs, else_instrs))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.If(.Some(result_ref), then_instrs, else_instrs))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── Cell intrinsics ────────────────────────────────────────────────────
@@ -1303,8 +1333,8 @@ fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: Mon
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)
-  out = out.append(Instr.StructGet(sym, 0))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.StructGet(sym, 0))
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
@@ -1318,11 +1348,11 @@ fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Ve
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)   // cell ref
   out = append_instrs(out, emit_atom(args[1], ctx))  // new value
-  out = out.append(Instr.StructSet(sym, 0))
+  out = out.append(.StructSet(sym, 0))
   // Return void
-  out = out.append(Instr.I32Const(0))
-  out = out.append(Instr.RefI31)
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.I32Const(0))
+  out = out.append(.RefI31)
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_cell_update(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
@@ -1341,24 +1371,24 @@ fn emit_intrinsic_cell_update(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx)
   out := emit_atom(args[0], ctx)   // cell ref for struct.set target
   // Get env from closure
   out = append_instrs(out, emit_atom(args[1], ctx))  // closure
-  out = out.append(Instr.StructGet("rt_types__Closure", 1))  // env (field 1)
+  out = out.append(.StructGet("rt_types__Closure", 1))  // env (field 1)
   // Get current cell value, box to anyref
   out = append_instrs(out, emit_atom(args[0], ctx))
-  out = out.append(Instr.StructGet(sym, 0))
+  out = out.append(.StructGet(sym, 0))
   out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
-  out = out.append(Instr.ArrayNewFixed("rt_types__Array", 1))  // args array
+  out = out.append(.ArrayNewFixed("rt_types__Array", 1))  // args array
   // Get funcref from closure
   out = append_instrs(out, emit_atom(args[1], ctx))
-  out = out.append(Instr.StructGet("rt_types__Closure", 0))  // universal funcref (field 0)
-  out = out.append(Instr.CallRef("rt_types__ClosureFunc"))
+  out = out.append(.StructGet("rt_types__Closure", 0))  // universal funcref (field 0)
+  out = out.append(.CallRef("rt_types__ClosureFunc"))
   // Unbox result back to T
   out = append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
   // Store back
-  out = out.append(Instr.StructSet(sym, 0))
+  out = out.append(.StructSet(sym, 0))
   // Return void
-  out = out.append(Instr.I32Const(0))
-  out = out.append(Instr.RefI31)
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.I32Const(0))
+  out = out.append(.RefI31)
+  out.append(.LocalSet(result_idx))
 }
 
 // ── Range intrinsics ───────────────────────────────────────────────────
@@ -1370,11 +1400,11 @@ fn emit_intrinsic_range(args: Vector<Atom>, result_idx: Int, result_mono: MonoTy
     .Record(r) => r.sym,
     _ => error("range: expected Record layout"),
   }
-  out: Vector<Instr> = [Instr.I64Const(0)]  // start
+  out: Vector<Instr> = [.I64Const(0)]  // start
   out = append_instrs(out, emit_atom(args[0], ctx))  // end
-  out = out.append(Instr.I64Const(1))  // step
-  out = out.append(Instr.StructNew(sym))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.I64Const(1))  // step
+  out = out.append(.StructNew(sym))
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_range_from(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1386,9 +1416,9 @@ fn emit_intrinsic_range_from(args: Vector<Atom>, result_idx: Int, result_mono: M
   }
   out := emit_atom(args[0], ctx)  // start
   out = append_instrs(out, emit_atom(args[1], ctx))  // end
-  out = out.append(Instr.I64Const(1))  // step
-  out = out.append(Instr.StructNew(sym))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.I64Const(1))  // step
+  out = out.append(.StructNew(sym))
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_range_step(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1401,8 +1431,8 @@ fn emit_intrinsic_range_step(args: Vector<Atom>, result_idx: Int, result_mono: M
   out := emit_atom(args[0], ctx)  // start
   out = append_instrs(out, emit_atom(args[1], ctx))  // end
   out = append_instrs(out, emit_atom(args[2], ctx))  // step
-  out = out.append(Instr.StructNew(sym))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.StructNew(sym))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── Iterator intrinsics ────────────────────────────────────────────────
@@ -1417,16 +1447,16 @@ fn emit_intrinsic_iterator_unfold(args: Vector<Atom>, result_idx: Int, result_mo
   }
   out := emit_atom(args[0], ctx)  // seed
   out = append_instrs(out, emit_atom(args[1], ctx))  // step closure
-  out = out.append(Instr.StructNew(sym))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.StructNew(sym))
+  out.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_iterator_next(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // iterator_next(state) → calls helper
   // The helper function should be emitted as part of the module
   out := emit_atom(args[0], ctx)
-  out = out.append(Instr.Call("$iterator_next_helper"))
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.Call("$iterator_next_helper"))
+  out.append(.LocalSet(result_idx))
 }
 
 // ── Record operations ──────────────────────────────────────────────────
@@ -1456,7 +1486,7 @@ fn emit_record_literal(tid: TypeId, fields: Vector<FieldAtom>, result_mono: Mono
       out = append_instrs(out, emit_default_value(fl.val_type))
     }
   }
-  out.append(Instr.StructNew(sym))
+  out.append(.StructNew(sym))
 }
 
 fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1470,7 +1500,7 @@ fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoTyp
   // Find field index
   field_idx := find_field_index(rec, fid)
   out := emit_atom(target, ctx)
-  out.append(Instr.StructGet(rec.sym, field_idx))
+  out.append(.StructGet(rec.sym, field_idx))
 }
 
 fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1486,7 +1516,7 @@ fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, ti
     // In-place update: struct.set then return same ref
     out := emit_atom(base, ctx)      // struct ref for StructSet
     out = append_instrs(out, emit_atom(value, ctx))  // new field value
-    out = out.append(Instr.StructSet(rec.sym, field_idx))
+    out = out.append(.StructSet(rec.sym, field_idx))
     // Return the mutated struct
     append_instrs(out, emit_atom(base, ctx))
   } else {
@@ -1497,10 +1527,10 @@ fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, ti
         out = append_instrs(out, emit_atom(value, ctx))
       } else {
         out = append_instrs(out, emit_atom(base, ctx))
-        out = out.append(Instr.StructGet(rec.sym, i))
+        out = out.append(.StructGet(rec.sym, i))
       }
     }
-    out.append(Instr.StructNew(rec.sym))
+    out.append(.StructNew(rec.sym))
   }
 }
 
@@ -1522,7 +1552,7 @@ fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<Atom>, result_
   }
 
   // Emit tag
-  out: Vector<Instr> = [Instr.I32Const(vid.id)]
+  out: Vector<Instr> = [.I32Const(vid.id)]
 
   // Emit all payload fields for ALL variants (typed struct has slots for all)
   for v in sum.variants {
@@ -1538,20 +1568,27 @@ fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<Atom>, result_
       }
     }
   }
-  out.append(Instr.StructNew(sum.sym))
+  out.append(.StructNew(sum.sym))
 }
 
 // ── Array operations ───────────────────────────────────────────────────
 
 fn emit_array_literal(items: Vector<Atom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  // Array literal: all elements boxed to anyref for $Array
+  // Vector literal: build a tail-only PVec { len, shift=0, root=null, tail=ArrayNewFixed }
   out: Vector<Instr> = []
+  // PVec fields first (len, shift, root) — these go on the stack before the tail
+  n := items.len()
+  out = out.append(.I32Const(n))
+  out = out.append(.I32Const(0))  // shift = 0
+  out = out.append(.RefNull(.Named("rt_types__VecInternal")))  // root = null
+  // Build tail: all elements boxed to anyref for $Array
   for item in items {
     out = append_instrs(out, emit_atom(item, ctx))
     out = append_instrs(out, emit_box_to_anyref(atom_mono(item, ctx), ctx.env))
   }
-  n := items.len()
-  out.append(Instr.ArrayNewFixed("rt_types__Array", n))
+  out = out.append(.ArrayNewFixed("rt_types__Array", n))
+  out = out.append(.StructNew("rt_types__PVec"))
+  out
 }
 
 // ── Index operations ───────────────────────────────────────────────────
@@ -1559,25 +1596,26 @@ fn emit_array_literal(items: Vector<Atom>, result_mono: MonoType, ctx: EmitCtx) 
 fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
   case kind {
     .Array => {
-      // Array indexing: trap on OOB, return element
+      // Vector indexing: trap on OOB, return element via rt_arr__get
       // Boundary pass handles unwrap of anyref element
       out: Vector<Instr> = []
       // Bounds check in i64 domain
       out = append_instrs(out, emit_atom(index, ctx))
-      out = out.append(Instr.I64Const(0))
-      out = out.append(Instr.I64GeS)
+      out = out.append(.I64Const(0))
+      out = out.append(.I64GeS)
       out = append_instrs(out, emit_atom(index, ctx))
       out = append_instrs(out, emit_atom(base, ctx))
-      out = out.append(Instr.ArrayLen)
-      out = out.append(Instr.I64ExtendI32U)
-      out = out.append(Instr.I64LtS)
-      out = out.append(Instr.I32And)
-      out = out.append(Instr.I32Eqz)
-      out = out.append(Instr.If(.None, [Instr.Unreachable], []))
+      out = out.append(.RefAsNonNull)
+      out = out.append(.StructGet("rt_types__PVec", 0))  // vec.len
+      out = out.append(.I64ExtendI32U)
+      out = out.append(.I64LtS)
+      out = out.append(.I32And)
+      out = out.append(.I32Eqz)
+      out = out.append(.If(.None, [.Unreachable], []))
       // Get element
       out = append_instrs(out, emit_atom(base, ctx))
       out = append_instrs(out, emit_checked_i32_narrow(index, ctx))
-      out = out.append(Instr.ArrayGet("rt_types__Array"))
+      out = out.append(.Call("rt_arr__get"))
       out
     },
     .Dict => {
@@ -1585,7 +1623,7 @@ fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, 
       out: Vector<Instr> = []
       out = append_instrs(out, emit_atom(base, ctx))
       out = append_instrs(out, emit_atom(index, ctx))
-      out = out.append(Instr.Call("rt_dict__get_option"))
+      out = out.append(.Call("rt_dict__get_option"))
       out
     },
     .Str => {
@@ -1593,20 +1631,20 @@ fn emit_index_op(base: Atom, index: Atom, kind: IndexKind, result_ty: MonoType, 
       out: Vector<Instr> = []
       // Bounds check
       out = append_instrs(out, emit_atom(index, ctx))
-      out = out.append(Instr.I64Const(0))
-      out = out.append(Instr.I64GeS)
+      out = out.append(.I64Const(0))
+      out = out.append(.I64GeS)
       out = append_instrs(out, emit_atom(index, ctx))
       out = append_instrs(out, emit_atom(base, ctx))
-      out = out.append(Instr.ArrayLen)
-      out = out.append(Instr.I64ExtendI32U)
-      out = out.append(Instr.I64LtS)
-      out = out.append(Instr.I32And)
-      out = out.append(Instr.I32Eqz)
-      out = out.append(Instr.If(.None, [Instr.Unreachable], []))
+      out = out.append(.ArrayLen)
+      out = out.append(.I64ExtendI32U)
+      out = out.append(.I64LtS)
+      out = out.append(.I32And)
+      out = out.append(.I32Eqz)
+      out = out.append(.If(.None, [.Unreachable], []))
       // Get byte
       out = append_instrs(out, emit_atom(base, ctx))
       out = append_instrs(out, emit_checked_i32_narrow(index, ctx))
-      out = out.append(Instr.ArrayGetU("rt_types__String"))
+      out = out.append(.ArrayGetU("rt_types__String"))
       out
     },
   }
@@ -1625,8 +1663,8 @@ fn emit_if_op(cond: Atom, then_e: AnfExpr, else_e: AnfExpr, result_idx: Int, res
 
   if then_div and else_div {
     // Both diverge — no result
-    out = out.append(Instr.If(.None, then_instrs, else_instrs))
-    out = out.append(Instr.Unreachable)
+    out = out.append(.If(.None, then_instrs, else_instrs))
+    out = out.append(.Unreachable)
     out
   } else {
     // Store result into local
@@ -1640,7 +1678,7 @@ fn emit_if_op(cond: Atom, then_e: AnfExpr, else_e: AnfExpr, result_idx: Int, res
     if !else_div {
       else_body = append_result_store(else_body, result_idx, result_mono)
     }
-    out = out.append(Instr.If(.None, then_body, else_body))
+    out = out.append(.If(.None, then_body, else_body))
     out
   }
 }
@@ -1674,28 +1712,28 @@ fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCt
 
   body_instrs := emit_expr(body, .Void, loop_ctx)
   // Implicit continue at end of loop body
-  body_instrs = body_instrs.append(Instr.Br(cont_label))
+  body_instrs = body_instrs.append(.Br(cont_label))
 
   loop_instr := Instr.Loop(cont_label, .None, body_instrs)
   block_instrs: Vector<Instr> = [loop_instr]
 
   // Block wraps the loop for break target
-  out: Vector<Instr> = [Instr.Block(break_label, .None, block_instrs)]
+  out: Vector<Instr> = [.Block(break_label, .None, block_instrs)]
 
   // Loop produces void — set result to void
-  out = out.append(Instr.I32Const(0))
-  out = out.append(Instr.RefI31)
-  out.append(Instr.LocalSet(result_idx))
+  out = out.append(.I32Const(0))
+  out = out.append(.RefI31)
+  out.append(.LocalSet(result_idx))
 }
 
 fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoType) Vector<Instr> {
   case result_mono {
     .Void => {
-      out := body.append(Instr.I32Const(0))
-      out = out.append(Instr.RefI31)
-      out.append(Instr.LocalSet(result_idx))
+      out := body.append(.I32Const(0))
+      out = out.append(.RefI31)
+      out.append(.LocalSet(result_idx))
     },
-    _ => body.append(Instr.LocalSet(result_idx)),
+    _ => body.append(.LocalSet(result_idx)),
   }
 }
 
@@ -1716,7 +1754,7 @@ fn emit_arm_chain(
   ctx: EmitCtx,
 ) Vector<Instr> {
   if arms.len() == 0 {
-    return [Instr.Unreachable]
+    return [.Unreachable]
   }
 
   head := arms[0]
@@ -1744,37 +1782,37 @@ fn emit_arm_chain(
 
   out: Vector<Instr> = []
   out = append_instrs(out, cond_instrs)
-  out = out.append(Instr.If(.None, then_body, else_body))
+  out = out.append(.If(.None, then_body, else_body))
   if both_div {
-    out = out.append(Instr.Unreachable)
+    out = out.append(.Unreachable)
   }
   out
 }
 
 fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   case pattern {
-    .Wildcard => [Instr.I32Const(1)],
-    .Var(_) => [Instr.I32Const(1)],
+    .Wildcard => [.I32Const(1)],
+    .Var(_) => [.I32Const(1)],
     .LitInt(n) => {
       out := clone_instrs(scrutinee_instrs)
-      out = out.append(Instr.I64Const(n))
-      out.append(Instr.I64Eq)
+      out = out.append(.I64Const(n))
+      out.append(.I64Eq)
     },
     .LitBool(b) => {
       out := clone_instrs(scrutinee_instrs)
-      out = out.append(Instr.I32Const(if b { 1 } else { 0 }))
-      out.append(Instr.I32Eq)
+      out = out.append(.I32Const(if b { 1 } else { 0 }))
+      out.append(.I32Eq)
     },
     .LitStr(s) => {
       // String comparison via rt_str__eq
       out := clone_instrs(scrutinee_instrs)
       case ctx.registry.string_pool[s] {
         .Some(entry) => {
-          out = out.append(Instr.Call(entry.getter_sym))
+          out = out.append(.Call(entry.getter_sym))
         },
         .None => error("emit_pattern_condition: string not in pool"),
       }
-      out.append(Instr.Call("rt_str__eq"))
+      out.append(.Call("rt_str__eq"))
     },
     .Variant(tid, vid, fields) => {
       emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx)
@@ -1790,9 +1828,9 @@ fn emit_variant_pattern_condition(
 
   // Tag check
   tag_check := clone_instrs(scrutinee_instrs)
-  tag_check = tag_check.append(Instr.StructGet(sum_layout.sym, 0))
-  tag_check = tag_check.append(Instr.I32Const(vid.id))
-  tag_check = tag_check.append(Instr.I32Eq)
+  tag_check = tag_check.append(.StructGet(sum_layout.sym, 0))
+  tag_check = tag_check.append(.I32Const(vid.id))
+  tag_check = tag_check.append(.I32Eq)
 
   // Check for non-trivial sub-patterns
   has_inner := false
@@ -1808,7 +1846,7 @@ fn emit_variant_pattern_condition(
     if !pattern_is_trivial(fp) {
       offset := variant_layout.struct_field_offset + i
       field_instrs := clone_instrs(scrutinee_instrs)
-      field_instrs = field_instrs.append(Instr.StructGet(sum_layout.sym, offset))
+      field_instrs = field_instrs.append(.StructGet(sum_layout.sym, offset))
       field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
       inner_checks = inner_checks.append(
         emit_pattern_condition(fp, field_instrs, field_mono, ctx)
@@ -1819,7 +1857,7 @@ fn emit_variant_pattern_condition(
   inner_cond := combine_and_checks(inner_checks)
 
   out := tag_check
-  out.append(Instr.If(.Some(.I32), inner_cond, [Instr.I32Const(0)]))
+  out.append(.If(.Some(.I32), inner_cond, [.I32Const(0)]))
 }
 
 fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -1831,7 +1869,7 @@ fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, 
     .Var(lid) => {
       entry := lookup_local(ctx, lid)
       out := clone_instrs(scrutinee_instrs)
-      out.append(Instr.LocalSet(entry.index))
+      out.append(.LocalSet(entry.index))
     },
     .Variant(tid, vid, fields) => {
       sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
@@ -1840,7 +1878,7 @@ fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, 
       for fp,i in fields {
         offset := variant_layout.struct_field_offset + i
         field_instrs := clone_instrs(scrutinee_instrs)
-        field_instrs = field_instrs.append(Instr.StructGet(sum_layout.sym, offset))
+        field_instrs = field_instrs.append(.StructGet(sum_layout.sym, offset))
         field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
         out = append_instrs(out, emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
       }
@@ -1856,13 +1894,13 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<LocalId>, ctx: EmitCtx) Vect
   out: Vector<Instr> = []
   for fv in free_vars {
     entry := lookup_local(ctx, fv)
-    out = out.append(Instr.LocalGet(entry.index))
+    out = out.append(.LocalGet(entry.index))
     out = append_instrs(out, emit_box_to_anyref(entry.mono, ctx.env))
   }
   if free_vars.len() > 0 {
-    out = out.append(Instr.ArrayNewFixed("rt_types__ClosureEnv", free_vars.len()))
+    out = out.append(.ArrayNewFixed("rt_types__ClosureEnv", free_vars.len()))
   } else {
-    out = out.append(Instr.RefNull(.None_))
+    out = out.append(.RefNull(.None_))
   }
 
   // Get closure layout from function's signature
@@ -1881,21 +1919,21 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<LocalId>, ctx: EmitCtx) Vect
 
       out2: Vector<Instr> = []
       // Field 0: universal funcref (trampoline)
-      out2 = out2.append(Instr.RefFunc(tramp_sym))
+      out2 = out2.append(.RefFunc(tramp_sym))
       // Field 1: env
       out2 = append_instrs(out2, env_instrs)
       // Field 2: typed funcref
-      out2 = out2.append(Instr.RefFunc(typed_tramp_sym))
-      out2 = out2.append(Instr.StructNew(closure_sym))
+      out2 = out2.append(.RefFunc(typed_tramp_sym))
+      out2 = out2.append(.StructNew(closure_sym))
       out2
     },
     .None => {
       // Universal closure (no typed path available).
       // rt_types__Closure is a 2-field struct (funcref, env) — push exactly 2.
       out2: Vector<Instr> = []
-      out2 = out2.append(Instr.RefFunc(tramp_sym))  // field 0: universal funcref
+      out2 = out2.append(.RefFunc(tramp_sym))  // field 0: universal funcref
       out2 = append_instrs(out2, out)               // field 1: env
-      out2.append(Instr.StructNew("rt_types__Closure"))
+      out2.append(.StructNew("rt_types__Closure"))
     },
   }
 }
@@ -1913,24 +1951,24 @@ fn emit_closure_call(callee: Atom, lid: LocalId, args: Vector<Atom>, result_idx:
 
       out: Vector<Instr> = []
       // Get env (field 1)
-      out = out.append(Instr.LocalGet(entry.index))
-      out = out.append(Instr.StructGet(closure_sym, 1))
+      out = out.append(.LocalGet(entry.index))
+      out = out.append(.StructGet(closure_sym, 1))
       // Push concrete args
       for a in args {
         out = append_instrs(out, emit_atom(a, ctx))
       }
       // Get typed funcref (field 2)
-      out = out.append(Instr.LocalGet(entry.index))
-      out = out.append(Instr.StructGet(closure_sym, 2))
+      out = out.append(.LocalGet(entry.index))
+      out = out.append(.StructGet(closure_sym, 2))
       // call_ref with typed func type
-      out = out.append(Instr.CallRef(typed_ft_sym))
+      out = out.append(.CallRef(typed_ft_sym))
       case result_mono {
         .Void => {
-          out = out.append(Instr.I32Const(0))
-          out = out.append(Instr.RefI31)
-          out.append(Instr.LocalSet(result_idx))
+          out = out.append(.I32Const(0))
+          out = out.append(.RefI31)
+          out.append(.LocalSet(result_idx))
         },
-        _ => out.append(Instr.LocalSet(result_idx)),
+        _ => out.append(.LocalSet(result_idx)),
       }
     },
     _ => {
@@ -1943,9 +1981,9 @@ fn emit_closure_call(callee: Atom, lid: LocalId, args: Vector<Atom>, result_idx:
 fn emit_universal_closure_call(entry: LocalEntry, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   out: Vector<Instr> = []
   // Get env (field 1)
-  out = out.append(Instr.LocalGet(entry.index))
-  out = out.append(Instr.RefCast(true, .Named("rt_types__Closure")))
-  out = out.append(Instr.StructGet("rt_types__Closure", 1))
+  out = out.append(.LocalGet(entry.index))
+  out = out.append(.RefCast(true, .Named("rt_types__Closure")))
+  out = out.append(.StructGet("rt_types__Closure", 1))
   // Pack args into anyref array
   if args.len() > 0 {
     for a in args {
@@ -1953,27 +1991,27 @@ fn emit_universal_closure_call(entry: LocalEntry, args: Vector<Atom>, result_idx
       mono := atom_mono(a, ctx)
       out = append_instrs(out, emit_box_to_anyref(mono, ctx.env))
     }
-    out = out.append(Instr.ArrayNewFixed("rt_types__Array", args.len()))
+    out = out.append(.ArrayNewFixed("rt_types__Array", args.len()))
   } else {
-    out = out.append(Instr.RefNull(.None_))
+    out = out.append(.RefNull(.None_))
   }
   // Get universal funcref (field 0)
-  out = out.append(Instr.LocalGet(entry.index))
-  out = out.append(Instr.RefCast(true, .Named("rt_types__Closure")))
-  out = out.append(Instr.StructGet("rt_types__Closure", 0))
+  out = out.append(.LocalGet(entry.index))
+  out = out.append(.RefCast(true, .Named("rt_types__Closure")))
+  out = out.append(.StructGet("rt_types__Closure", 0))
   // call_ref with universal func type
-  out = out.append(Instr.CallRef("rt_types__ClosureFunc"))
+  out = out.append(.CallRef("rt_types__ClosureFunc"))
   // Unbox result
   case result_mono {
     .Void => {
-      out = out.append(Instr.Drop)
-      out = out.append(Instr.I32Const(0))
-      out = out.append(Instr.RefI31)
-      out.append(Instr.LocalSet(result_idx))
+      out = out.append(.Drop)
+      out = out.append(.I32Const(0))
+      out = out.append(.RefI31)
+      out.append(.LocalSet(result_idx))
     },
     _ => {
       out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
-      out.append(Instr.LocalSet(result_idx))
+      out.append(.LocalSet(result_idx))
     },
   }
 }
@@ -2019,10 +2057,10 @@ fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitC
     .Some(captures) => {
       for cap,i in captures {
         // env is ref $ClosureEnv (array of anyref)
-        body = body.append(Instr.LocalGet(0))  // env
-        body = body.append(Instr.RefCast(true, .Named("rt_types__ClosureEnv")))
-        body = body.append(Instr.I32Const(i))
-        body = body.append(Instr.ArrayGet("rt_types__ClosureEnv"))
+        body = body.append(.LocalGet(0))  // env
+        body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+        body = body.append(.I32Const(i))
+        body = body.append(.ArrayGet("rt_types__ClosureEnv"))
         body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
       }
     },
@@ -2031,21 +2069,21 @@ fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitC
 
   // Extract args from args array (param 1)
   for p,i in func.params {
-    body = body.append(Instr.LocalGet(1))  // args array
-    body = body.append(Instr.RefCast(true, .Named("rt_types__Array")))
-    body = body.append(Instr.I32Const(i))
-    body = body.append(Instr.ArrayGet("rt_types__Array"))
+    body = body.append(.LocalGet(1))  // args array
+    body = body.append(.RefCast(true, .Named("rt_types__Array")))
+    body = body.append(.I32Const(i))
+    body = body.append(.ArrayGet("rt_types__Array"))
     body = append_instrs(body, emit_unbox_from_anyref(p.ty, ctx.env))
   }
 
   // Call the real function
-  body = body.append(Instr.Call(func_sym))
+  body = body.append(.Call(func_sym))
 
   // Box result to anyref
   case func.return_ty {
     .Void => {
-      body = body.append(Instr.I32Const(0))
-      body = body.append(Instr.RefI31)
+      body = body.append(.I32Const(0))
+      body = body.append(.RefI31)
     },
     .Never => {},
     _ => {
@@ -2084,10 +2122,10 @@ fn emit_typed_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) 
   case ctx.registry.capture_layouts[func.func_id.id] {
     .Some(captures) => {
       for cap,i in captures {
-        body = body.append(Instr.LocalGet(0))
-        body = body.append(Instr.RefCast(true, .Named("rt_types__ClosureEnv")))
-        body = body.append(Instr.I32Const(i))
-        body = body.append(Instr.ArrayGet("rt_types__ClosureEnv"))
+        body = body.append(.LocalGet(0))
+        body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+        body = body.append(.I32Const(i))
+        body = body.append(.ArrayGet("rt_types__ClosureEnv"))
         body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
       }
     },
@@ -2096,11 +2134,11 @@ fn emit_typed_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) 
 
   // Push concrete params (starting at index 1, after env)
   for _,i in func.params {
-    body = body.append(Instr.LocalGet(i + 1))
+    body = body.append(.LocalGet(i + 1))
   }
 
   // Call the real function
-  body = body.append(Instr.Call(func_sym))
+  body = body.append(.Call(func_sym))
 
   FuncDef.{
     name: typed_tramp_sym,
@@ -2131,9 +2169,9 @@ fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
   }
   layout := layout_of(mono, env)
   case layout {
-    .Scalar(.WI64) => [Instr.StructNew("rt_types__BoxedInt")],
-    .Scalar(.WF64) => [Instr.StructNew("rt_types__BoxedFloat")],
-    .Scalar(.WI32) => [Instr.RefI31],
+    .Scalar(.WI64) => [.StructNew("rt_types__BoxedInt")],
+    .Scalar(.WF64) => [.StructNew("rt_types__BoxedFloat")],
+    .Scalar(.WI32) => [.RefI31],
     .Scalar(.WAnyref) => [],  // already anyref
     // Reference types: struct refs are subtypes of anyref (implicit upcast)
     .Record(_) => [],
@@ -2148,37 +2186,37 @@ fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
 
 fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
   case mono {
-    .Never => { return [Instr.Unreachable] },
-    .Void => { return [Instr.Drop, Instr.I32Const(0), Instr.RefI31] },
-    .String => { return [Instr.RefCast(true, .Named("rt_types__String"))] },
+    .Never => { return [.Unreachable] },
+    .Void => { return [.Drop, .I32Const(0), .RefI31] },
+    .String => { return [.RefCast(true, .Named("rt_types__String"))] },
     _ => {},
   }
   layout := layout_of(mono, env)
   case layout {
     .Scalar(.WI64) => {
-      out: Vector<Instr> = [Instr.RefCast(false, .Named("rt_types__BoxedInt"))]
-      out.append(Instr.StructGet("rt_types__BoxedInt", 0))
+      out: Vector<Instr> = [.RefCast(false, .Named("rt_types__BoxedInt"))]
+      out.append(.StructGet("rt_types__BoxedInt", 0))
     },
     .Scalar(.WF64) => {
-      out: Vector<Instr> = [Instr.RefCast(false, .Named("rt_types__BoxedFloat"))]
-      out.append(Instr.StructGet("rt_types__BoxedFloat", 0))
+      out: Vector<Instr> = [.RefCast(false, .Named("rt_types__BoxedFloat"))]
+      out.append(.StructGet("rt_types__BoxedFloat", 0))
     },
     .Scalar(.WI32) => {
       // Could be Bool or Byte — both use i31ref
-      out: Vector<Instr> = [Instr.RefCast(false, .I31)]
+      out: Vector<Instr> = [.RefCast(false, .I31)]
       // Use I31GetU for unsigned (Byte uses unsigned)
       case mono {
-        .Byte => out.append(Instr.I31GetU),
-        _ => out.append(Instr.I31GetS),
+        .Byte => out.append(.I31GetU),
+        _ => out.append(.I31GetS),
       }
     },
     .Scalar(.WAnyref) => [],  // already anyref
-    .Record(r) => [Instr.RefCast(false, .Named(r.sym))],
-    .Sum(s) => [Instr.RefCast(false, .Named(s.sym))],
-    .Closure(c) => [Instr.RefCast(false, .Named(c.closure_sym))],
-    .Vector_(_) => [Instr.RefCast(false, .Named("rt_types__Array"))],
-    .Dict_(_, _) => [Instr.RefCast(false, .Named("rt_types__Dict"))],
-    .Iterator_(it) => [Instr.RefCast(false, .Named(it.state_sym))],
+    .Record(r) => [.RefCast(false, .Named(r.sym))],
+    .Sum(s) => [.RefCast(false, .Named(s.sym))],
+    .Closure(c) => [.RefCast(false, .Named(c.closure_sym))],
+    .Vector_(_) => [.RefCast(false, .Named("rt_types__PVec"))],
+    .Dict_(_, _) => [.RefCast(false, .Named("rt_types__Dict"))],
+    .Iterator_(it) => [.RefCast(false, .Named(it.state_sym))],
     .Cell_(inner) => {
       key := case inner {
         .Scalar(.WI32) => "i32",
@@ -2186,7 +2224,7 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
         .Scalar(.WF64) => "f64",
         _ => "anyref",
       }
-      [Instr.RefCast(false, .Named("$Cell_${key}"))]
+      [.RefCast(false, .Named("$Cell_${key}"))]
     },
   }
 }
@@ -2202,7 +2240,7 @@ fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
           name: entry.global_sym,
           mutable: true,
           ty: .Ref(true, .Named("rt_types__String")),
-          init: [Instr.RefNull(.Named("rt_types__String"))],
+          init: [.RefNull(.Named("rt_types__String"))],
         })
       },
       .None => {},
@@ -2218,17 +2256,17 @@ fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
       .Some(entry) => {
         // Getter: check global, if null → create from data segment, cache
         body: Vector<Instr> = []
-        body = body.append(Instr.GlobalGet(entry.global_sym))
-        body = body.append(Instr.RefIsNull)
+        body = body.append(.GlobalGet(entry.global_sym))
+        body = body.append(.RefIsNull)
         then_body: Vector<Instr> = []
         // Create string from data segment
-        then_body = then_body.append(Instr.I32Const(entry.byte_offset))
-        then_body = then_body.append(Instr.I32Const(entry.byte_len))
-        then_body = then_body.append(Instr.ArrayNewData("rt_types__String", entry.data_segment_name))
-        then_body = then_body.append(Instr.GlobalSet(entry.global_sym))
-        body = body.append(Instr.If(.None, then_body, []))
-        body = body.append(Instr.GlobalGet(entry.global_sym))
-        body = body.append(Instr.RefAsNonNull)
+        then_body = then_body.append(.I32Const(entry.byte_offset))
+        then_body = then_body.append(.I32Const(entry.byte_len))
+        then_body = then_body.append(.ArrayNewData("rt_types__String", entry.data_segment_name))
+        then_body = then_body.append(.GlobalSet(entry.global_sym))
+        body = body.append(.If(.None, then_body, []))
+        body = body.append(.GlobalGet(entry.global_sym))
+        body = body.append(.RefAsNonNull)
 
         funcs = funcs.append(FuncDef.{
           name: entry.getter_sym,
@@ -2290,19 +2328,19 @@ fn emit_checked_i32_narrow(atom: Atom, ctx: EmitCtx) Vector<Instr> {
   out: Vector<Instr> = []
   // Check: value >= 0
   out = append_instrs(out, emit_atom(atom, ctx))
-  out = out.append(Instr.I64Const(0))
-  out = out.append(Instr.I64GeS)
+  out = out.append(.I64Const(0))
+  out = out.append(.I64GeS)
   // Check: value <= 2147483647
   out = append_instrs(out, emit_atom(atom, ctx))
-  out = out.append(Instr.I64Const(2147483647))
-  out = out.append(Instr.I64LeS)
+  out = out.append(.I64Const(2147483647))
+  out = out.append(.I64LeS)
   // Both must hold
-  out = out.append(Instr.I32And)
-  out = out.append(Instr.I32Eqz)
-  out = out.append(Instr.If(.None, [Instr.Unreachable], []))
+  out = out.append(.I32And)
+  out = out.append(.I32Eqz)
+  out = out.append(.If(.None, [.Unreachable], []))
   // Actual narrowing
   out = append_instrs(out, emit_atom(atom, ctx))
-  out = out.append(Instr.I32WrapI64)
+  out = out.append(.I32WrapI64)
   out
 }
 
@@ -2310,21 +2348,21 @@ fn emit_checked_i32_narrow(atom: Atom, ctx: EmitCtx) Vector<Instr> {
 
 fn emit_default_value(vt: ValType) Vector<Instr> {
   case vt {
-    .I32 => [Instr.I32Const(0)],
-    .I64 => [Instr.I64Const(0)],
-    .F64 => [Instr.F64Const(0.0)],
-    .Anyref => [Instr.RefNull(.None_)],
-    .I31ref => [Instr.I32Const(0), Instr.RefI31],
-    .Funcref => [Instr.RefNull(.Func)],
+    .I32 => [.I32Const(0)],
+    .I64 => [.I64Const(0)],
+    .F64 => [.F64Const(0.0)],
+    .Anyref => [.RefNull(.None_)],
+    .I31ref => [.I32Const(0), .RefI31],
+    .Funcref => [.RefNull(.Func)],
     .Ref(nullable, heap) => {
-      if nullable { [Instr.RefNull(heap)] }
+      if nullable { [.RefNull(heap)] }
       else {
         // Non-nullable ref: can't produce a default. Use ref.null + cast
         // (This will trap at runtime if actually used — only valid for dead code paths)
-        [Instr.RefNull(heap), Instr.RefAsNonNull]
+        [.RefNull(heap), .RefAsNonNull]
       }
     },
-    .I8 => [Instr.I32Const(0)],
+    .I8 => [.I32Const(0)],
   }
 }
 
@@ -2450,12 +2488,12 @@ fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<Mon
 }
 
 fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
-  if checks.len() == 0 { return [Instr.I32Const(1)] }
+  if checks.len() == 0 { return [.I32Const(1)] }
   if checks.len() == 1 { return checks[0] }
   out := checks[0]
   idx := 1
   for idx < checks.len() {
-    out = out.append(Instr.If(.Some(.I32), checks[idx], [Instr.I32Const(0)]))
+    out = out.append(.If(.Some(.I32), checks[idx], [.I32Const(0)]))
     idx = idx + 1
   }
   out

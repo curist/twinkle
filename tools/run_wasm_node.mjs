@@ -248,7 +248,8 @@ async function main() {
   }
 
   const wasmPath = resolve(args[0]);
-  const programArgs = args.slice(1);
+  // Match twk run behavior: argv[0] is the program path, rest are user args
+  const programArgs = [wasmPath, ...args.slice(1)];
   const cwd = process.cwd();
 
   const wasmBytes = readFileSync(wasmPath);

@@ -61,17 +61,17 @@ pub fn suite() runner.Suite {
       }
     })
 
-    .test("intrinsic vector_set_in_place carries array ABI result", fn() {
+    .test("intrinsic vector_set_in_place carries PVec ABI result", fn() {
       reg := empty_registry().intrinsic("vector_set_in_place")
       entry := try reg.entry(reg.id("vector_set_in_place")).ok_or("missing")
       try assert.int_eq(entry.abi.result_types.len(), 1)
       case entry.abi.result_types[0] {
         .Ref(nullable, .Named(name)) => {
           try assert.bool_eq(nullable, false)
-          try assert.str_eq(name, "rt_types__Array")
+          try assert.str_eq(name, "rt_types__PVec")
           .Ok({})
         },
-        _ => .Err("expected vector_set_in_place ABI result to be non-null rt_types__Array"),
+        _ => .Err("expected vector_set_in_place ABI result to be non-null rt_types__PVec"),
       }
     })
 

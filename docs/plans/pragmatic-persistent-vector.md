@@ -437,6 +437,30 @@ Recommended execution order:
 
 ## Validation
 
+### Running boot tests during development
+
+The preferred way to run boot compiler tests during development is the two-step
+Node.js approach, which is ~5× faster than `twk run` (~3s vs ~16s):
+
+```bash
+# Full compile + run (~3s)
+tools/boot-test-fast.sh
+
+# Run-only, reuse last compiled .wasm (~1s)
+tools/boot-test-fast.sh --run-only
+```
+
+This compiles to Wasm via `twk build`, then executes via Node.js (whose V8 Wasm
+GC implementation is significantly faster than wasmtime for this workload).
+The `--run-only` flag is useful when iterating on test expectations without
+changing boot compiler source.
+
+The canonical full-fidelity command remains:
+
+```bash
+cargo run --release --bin twk -- run boot/tests/main.tw
+```
+
 ### Stage0/runtime status
 
 Stage0/runtime validation already includes trie-based runtime snapshots and the

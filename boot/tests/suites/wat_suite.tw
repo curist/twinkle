@@ -179,8 +179,8 @@ fn test_global_emission() Result<Void, String> {
     GlobalDef.{ name: "g2", mutable: false, ty: .I32, init: [Instr.I32Const(0)] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(global $g1 (mut i64) (i64.const 42))"), "mutable global")
-  try assert.ok(contains(wat, "(global $g2 i32 (i32.const 0))"), "immutable global")
+  try assert.ok(contains(wat, "(global $g1 (mut i64) i64.const 42)"), "mutable global")
+  try assert.ok(contains(wat, "(global $g2 i32 i32.const 0)"), "immutable global")
   .Ok({})
 }
 

@@ -34,6 +34,27 @@ fn find_type(types: Vector<TypeDef>, name: String) TypeDef? {
 
 fn type_count(m: WasmModule) Int { m.types.len() }
 
+// Recursively check if any instruction in a body (including nested blocks) matches a predicate.
+fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
+  for instr in body {
+    if pred(instr) { return true }
+    case instr {
+      .If(_, then_body, else_body) => {
+        if has_instr(then_body, pred) { return true }
+        if has_instr(else_body, pred) { return true }
+      },
+      .Block(_, _, inner) => {
+        if has_instr(inner, pred) { return true }
+      },
+      .Loop(_, _, inner) => {
+        if has_instr(inner, pred) { return true }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
 // ── rt.types tests ──────────────────────────────────────────────────
 
 fn test_rt_types_namespace() Result<Void, String> {
@@ -44,7 +65,7 @@ fn test_rt_types_namespace() Result<Void, String> {
 
 fn test_rt_types_count() Result<Void, String> {
   m := rt_types.module()
-  try assert.int_eq(type_count(m), 11)
+  try assert.int_eq(type_count(m), 14)
   .Ok({})
 }
 
@@ -156,6 +177,83 @@ fn test_rt_types_iter_state_non_final() Result<Void, String> {
       try assert.int_eq(fields.len(), 2)
     },
     _ => { return assert.fail("missing IterState type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_vec_children() Result<Void, String> {
+  m := rt_types.module()
+  // NOTE: uses two-step match instead of .Some(.Array(...)) due to a nested
+  // pattern match codegen issue with .Some(.Array(...)) in large compilation units.
+  td := try find_type(m.types, "VecChildren").ok_or("missing VecChildren type")
+  case td {
+    .Array(name, elem) => {
+      try assert.str_eq(name, "VecChildren")
+      try assert.ok(elem.mutable, "VecChildren should be mutable")
+      case elem.ty {
+        .Ref(nullable, .Eq) => {
+          try assert.ok(nullable, "VecChildren elem should be nullable eqref")
+        },
+        _ => { return assert.fail("VecChildren elem should be ref null eq") },
+      }
+    },
+    _ => { return assert.fail("VecChildren should be an Array type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_vec_internal() Result<Void, String> {
+  m := rt_types.module()
+  td := try find_type(m.types, "VecInternal").ok_or("missing VecInternal type")
+  case td {
+    .Struct(_, fields, _, _) => {
+      try assert.int_eq(fields.len(), 1)
+      try assert.ok(case fields[0].name { .Some(n) => n == "children", .None => false },
+        "field 0 should be children")
+      // children field should be non-null ref to VecChildren
+      case fields[0].ty {
+        .Ref(nullable, .Named(n)) => {
+          try assert.ok(!nullable, "children should be non-null ref")
+          try assert.str_eq(n, "VecChildren")
+        },
+        _ => { return assert.fail("children should be ref VecChildren") },
+      }
+    },
+    _ => { return assert.fail("VecInternal should be a Struct type") },
+  }
+  .Ok({})
+}
+
+fn test_rt_types_pvec() Result<Void, String> {
+  m := rt_types.module()
+  td := try find_type(m.types, "PVec").ok_or("missing PVec type")
+  case td {
+    .Struct(_, fields, _, _) => {
+      try assert.int_eq(fields.len(), 4)
+      try assert.ok(case fields[0].name { .Some(n) => n == "len", .None => false }, "field 0 should be len")
+      try assert.ok(case fields[0].ty { .I32 => true, _ => false }, "len should be i32")
+      try assert.ok(case fields[1].name { .Some(n) => n == "shift", .None => false }, "field 1 should be shift")
+      try assert.ok(case fields[1].ty { .I32 => true, _ => false }, "shift should be i32")
+      try assert.ok(case fields[2].name { .Some(n) => n == "root", .None => false }, "field 2 should be root")
+      // root: ref null VecInternal
+      case fields[2].ty {
+        .Ref(nullable, .Named(n)) => {
+          try assert.ok(nullable, "root should be nullable")
+          try assert.str_eq(n, "VecInternal")
+        },
+        _ => { return assert.fail("root should be ref null VecInternal") },
+      }
+      try assert.ok(case fields[3].name { .Some(n) => n == "tail", .None => false }, "field 3 should be tail")
+      // tail: ref Array (non-null)
+      case fields[3].ty {
+        .Ref(nullable, .Named(n)) => {
+          try assert.ok(!nullable, "tail should be non-null")
+          try assert.str_eq(n, "Array")
+        },
+        _ => { return assert.fail("tail should be ref Array") },
+      }
+    },
+    _ => { return assert.fail("PVec should be a Struct type") },
   }
   .Ok({})
 }
@@ -495,7 +593,8 @@ fn test_rt_arr_namespace() Result<Void, String> {
 
 fn test_rt_arr_func_count() Result<Void, String> {
   m := rt_arr.module()
-  try assert.int_eq(m.funcs.len(), 10)
+  // 6 internal helpers + 14 public API = 20 functions
+  try assert.int_eq(m.funcs.len(), 20)
   .Ok({})
 }
 
@@ -518,16 +617,47 @@ fn test_rt_arr_no_imports() Result<Void, String> {
   .Ok({})
 }
 
+fn test_rt_arr_has_globals() Result<Void, String> {
+  m := rt_arr.module()
+  // empty_leaf and empty_pvec globals
+  try assert.int_eq(m.globals.len(), 2)
+  .Ok({})
+}
+
+fn test_rt_arr_has_internal_helpers() Result<Void, String> {
+  m := rt_arr.module()
+  // Internal helpers: tailoff, get_leaf, new_path, push_tail, do_set, push
+  try assert.ok(find_func(m.funcs, "tailoff") != .None, "should have tailoff")
+  try assert.ok(find_func(m.funcs, "get_leaf") != .None, "should have get_leaf")
+  try assert.ok(find_func(m.funcs, "new_path") != .None, "should have new_path")
+  try assert.ok(find_func(m.funcs, "push_tail") != .None, "should have push_tail")
+  try assert.ok(find_func(m.funcs, "do_set") != .None, "should have do_set")
+  try assert.ok(find_func(m.funcs, "push") != .None, "should have push")
+  .Ok({})
+}
+
+fn test_rt_arr_has_bridge_helpers() Result<Void, String> {
+  m := rt_arr.module()
+  // Bridge helpers: from_array, to_array, from_read_file_result
+  try assert.ok(find_func(m.funcs, "from_array") != .None, "should have from_array")
+  try assert.ok(find_func(m.funcs, "to_array") != .None, "should have to_array")
+  try assert.ok(find_func(m.funcs, "from_read_file_result") != .None, "should have from_read_file_result")
+  .Ok({})
+}
+
+fn test_rt_arr_has_builder_extend() Result<Void, String> {
+  m := rt_arr.module()
+  try assert.ok(find_func(m.funcs, "builder_extend") != .None, "should have builder_extend")
+  .Ok({})
+}
+
 fn test_rt_arr_make() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "make").ok_or("missing make func")
   try assert.int_eq(f.params.len(), 2)
-  // Should use ArrayNew
-  found := false
-  for instr in f.body {
-    case instr { .ArrayNew(_) => { found = true }, _ => {} }
-  }
-  try assert.ok(found, "make should use array.new")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "push", _ => false }
+  }), "make should call push")
   .Ok({})
 }
 
@@ -535,33 +665,28 @@ fn test_rt_arr_get() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "get").ok_or("missing get func")
   try assert.int_eq(f.params.len(), 2)
-  found := false
-  for instr in f.body {
-    case instr { .ArrayGet(_) => { found = true }, _ => {} }
-  }
-  try assert.ok(found, "get should use array.get")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .StructGet(name, _) => name == "rt_types__PVec", _ => false }
+  }), "get should read PVec struct fields")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .ArrayGet(name) => name == "rt_types__Array", _ => false }
+  }), "get should read from Array leaf")
   .Ok({})
 }
 
-fn test_rt_arr_set_cow() Result<Void, String> {
+fn test_rt_arr_set_persistent() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "set").ok_or("missing set func")
   try assert.int_eq(f.params.len(), 3)
-  // COW: should have ArrayNew + ArrayCopy + ArraySet
-  found_new := false
-  found_copy := false
-  found_set := false
-  for instr in f.body {
-    case instr {
-      .ArrayNew(_) => { found_new = true },
-      .ArrayCopy(_, _) => { found_copy = true },
-      .ArraySet(_) => { found_set = true },
-      _ => {},
-    }
-  }
-  try assert.ok(found_new, "set should allocate new array (COW)")
-  try assert.ok(found_copy, "set should copy old array")
-  try assert.ok(found_set, "set should set the new value")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "tailoff", _ => false }
+  }), "set should call tailoff")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "do_set", _ => false }
+  }), "set should call do_set for trie path")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .StructNew(name) => name == "rt_types__PVec", _ => false }
+  }), "set should construct new PVec")
   .Ok({})
 }
 
@@ -569,35 +694,38 @@ fn test_rt_arr_len() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "len").ok_or("missing len func")
   try assert.int_eq(f.params.len(), 1)
+  // len reads PVec.len field via StructGet
   found := false
   for instr in f.body {
-    case instr { .ArrayLen => { found = true }, _ => {} }
+    case instr { .StructGet(name, 0) => { if name == "rt_types__PVec" { found = true } }, _ => {} }
   }
-  try assert.ok(found, "len should use array.len")
+  try assert.ok(found, "len should read PVec.len via struct.get")
   .Ok({})
 }
 
-fn test_rt_arr_concat_copies_both() Result<Void, String> {
+fn test_rt_arr_concat_iterates() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "concat").ok_or("missing concat func")
   try assert.int_eq(f.params.len(), 2)
-  copy_count := 0
-  for instr in f.body {
-    case instr { .ArrayCopy(_, _) => { copy_count = copy_count + 1 }, _ => {} }
-  }
-  try assert.ok(copy_count >= 2, "concat should use array.copy twice")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "get", _ => false }
+  }), "concat should call get")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "push", _ => false }
+  }), "concat should call push")
   .Ok({})
 }
 
-fn test_rt_arr_slice() Result<Void, String> {
+fn test_rt_arr_slice_iterates() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "slice").ok_or("missing slice func")
   try assert.int_eq(f.params.len(), 3)
-  found_copy := false
-  for instr in f.body {
-    case instr { .ArrayCopy(_, _) => { found_copy = true }, _ => {} }
-  }
-  try assert.ok(found_copy, "slice should use array.copy")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "get", _ => false }
+  }), "slice should call get")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "push", _ => false }
+  }), "slice should call push")
   .Ok({})
 }
 
@@ -627,19 +755,19 @@ fn test_rt_arr_builder_from() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_arr_builder_push_grows() Result<Void, String> {
+fn test_rt_arr_builder_push_tail() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "builder_push").ok_or("missing builder_push func")
   try assert.int_eq(f.params.len(), 2)
   try assert.int_eq(f.results.len(), 0)
-  // Should have If for capacity check (then=in-place, else=grow)
+  // Transient builder: has in-place path (tail_len < 32) and promote path
   found_if := false
   for instr in f.body {
     case instr { .If(_, _, else_body) => {
       if else_body.len() > 0 { found_if = true }
     }, _ => {} }
   }
-  try assert.ok(found_if, "builder_push should have capacity check with grow path")
+  try assert.ok(found_if, "builder_push should have tail-full check with promote path")
   .Ok({})
 }
 
@@ -647,11 +775,12 @@ fn test_rt_arr_builder_freeze() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "builder_freeze").ok_or("missing builder_freeze func")
   try assert.int_eq(f.params.len(), 1)
-  found_copy := false
-  for instr in f.body {
-    case instr { .ArrayCopy(_, _) => { found_copy = true }, _ => {} }
-  }
-  try assert.ok(found_copy, "builder_freeze should copy elements to exact-sized array")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .StructNew(name) => name == "rt_types__PVec", _ => false }
+  }), "builder_freeze should construct PVec")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .ArrayCopy(_, _) => true, _ => false }
+  }), "builder_freeze should copy tail to exact size")
   .Ok({})
 }
 
@@ -897,6 +1026,9 @@ pub fn suite() runner.Suite {
     .test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int)
     .test("rt.types: BoxedFloat has f64 field", test_rt_types_boxed_float)
     .test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final)
+    .test("rt.types: VecChildren is mutable eqref array", test_rt_types_vec_children)
+    .test("rt.types: VecInternal has children field", test_rt_types_vec_internal)
+    .test("rt.types: PVec has len/shift/root/tail", test_rt_types_pvec)
     .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
     // rt.core
     .test("rt.core: namespace", test_rt_core_namespace)
@@ -924,19 +1056,23 @@ pub fn suite() runner.Suite {
     .test("rt.str: emits valid WAT", test_rt_str_emits_wat)
     // rt.arr
     .test("rt.arr: namespace", test_rt_arr_namespace)
-    .test("rt.arr: 10 functions", test_rt_arr_func_count)
+    .test("rt.arr: 20 functions (6 internal + 14 public)", test_rt_arr_func_count)
     .test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs)
     .test("rt.arr: no imports", test_rt_arr_no_imports)
-    .test("rt.arr: make uses array.new", test_rt_arr_make)
-    .test("rt.arr: get uses array.get", test_rt_arr_get)
-    .test("rt.arr: set is COW", test_rt_arr_set_cow)
-    .test("rt.arr: len uses array.len", test_rt_arr_len)
-    .test("rt.arr: concat copies both halves", test_rt_arr_concat_copies_both)
-    .test("rt.arr: slice uses array.copy", test_rt_arr_slice)
+    .test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals)
+    .test("rt.arr: has internal trie helpers", test_rt_arr_has_internal_helpers)
+    .test("rt.arr: has bridge helpers", test_rt_arr_has_bridge_helpers)
+    .test("rt.arr: has builder_extend", test_rt_arr_has_builder_extend)
+    .test("rt.arr: make calls push", test_rt_arr_make)
+    .test("rt.arr: get navigates trie", test_rt_arr_get)
+    .test("rt.arr: set is persistent", test_rt_arr_set_persistent)
+    .test("rt.arr: len reads PVec.len", test_rt_arr_len)
+    .test("rt.arr: concat iterates and pushes", test_rt_arr_concat_iterates)
+    .test("rt.arr: slice iterates and pushes", test_rt_arr_slice_iterates)
     .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
     .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
-    .test("rt.arr: builder_push has grow path", test_rt_arr_builder_push_grows)
-    .test("rt.arr: builder_freeze copies to exact size", test_rt_arr_builder_freeze)
+    .test("rt.arr: builder_push has tail-full path", test_rt_arr_builder_push_tail)
+    .test("rt.arr: builder_freeze constructs PVec", test_rt_arr_builder_freeze)
     .test("rt.arr: emits valid WAT", test_rt_arr_emits_wat)
     // rt.dict
     .test("rt.dict: namespace", test_rt_dict_namespace)

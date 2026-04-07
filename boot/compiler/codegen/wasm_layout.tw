@@ -201,7 +201,7 @@ fn layout_of_sum_def(
       val_type_of_mono(field_ty, env)
     }
     vl := WasmVariantLayout.{
-      variant_id: VariantId.{ id: i },
+      variant_id: .{ id: i },
       name: v.name,
       payload_types: payload_types,
       struct_field_offset: offset,
@@ -226,13 +226,13 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
     tag_type: .I32,
     variants: [
       WasmVariantLayout.{
-        variant_id: VariantId.{ id: 0 },
+        variant_id: .{ id: 0 },
         name: "None",
         payload_types: [],
         struct_field_offset: 1,
       },
       WasmVariantLayout.{
-        variant_id: VariantId.{ id: 1 },
+        variant_id: .{ id: 1 },
         name: "Some",
         payload_types: [inner_vt],
         struct_field_offset: 1,
@@ -251,13 +251,13 @@ fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
     tag_type: .I32,
     variants: [
       WasmVariantLayout.{
-        variant_id: VariantId.{ id: 0 },
+        variant_id: .{ id: 0 },
         name: "Ok",
         payload_types: [ok_vt],
         struct_field_offset: 1,
       },
       WasmVariantLayout.{
-        variant_id: VariantId.{ id: 1 },
+        variant_id: .{ id: 1 },
         name: "Err",
         payload_types: [err_vt],
         struct_field_offset: 2,
@@ -332,7 +332,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Record(r) => .Ref(true, .Named(r.sym)),
     .Sum(s) => .Ref(true, .Named(s.sym)),
     .Closure(c) => .Ref(true, .Named(c.closure_sym)),
-    .Vector_(_) => .Ref(true, .Named("rt_types__Array")),
+    .Vector_(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict_(_, _) => .Ref(true, .Named("rt_types__Dict")),
     .Iterator_(it) => .Ref(true, .Named(it.state_sym)),
     .Cell_(inner) => .Ref(true, .Named("$Cell_${cell_layout_key(inner)}")),
@@ -383,7 +383,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
         .Alias(_, type_params, target) => val_type_of_mono(subst_type_params(target, type_params, args), env),
       }
     },
-    .Vector(_) => .Ref(true, .Named("rt_types__Array")),
+    .Vector(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict(_, _) => .Ref(true, .Named("rt_types__Dict")),
     .Function(params, ret) => {
       key := mono_to_key(.Function(params, ret))

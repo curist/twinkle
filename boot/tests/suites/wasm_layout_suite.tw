@@ -305,7 +305,7 @@ fn test_val_type_of_vector() Result<Void, String> {
   case vt {
     .Ref(nullable, ht) => {
       try assert.bool_eq(nullable, true)
-      case ht { .Named(s) => assert.str_eq(s, "rt_types__Array"), _ => assert.fail("expected Named rt_types__Array") }
+      case ht { .Named(s) => assert.str_eq(s, "rt_types__PVec"), _ => assert.fail("expected Named rt_types__PVec") }
     },
     _ => assert.fail("expected Ref"),
   }

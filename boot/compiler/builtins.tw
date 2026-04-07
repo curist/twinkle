@@ -42,6 +42,8 @@ fn str_n() ValType { ref_null("rt_types__String") }
 fn str_() ValType { ref_nn("rt_types__String") }
 fn arr_n() ValType { ref_null("rt_types__Array") }
 fn arr_() ValType { ref_nn("rt_types__Array") }
+fn pvec_n() ValType { ref_null("rt_types__PVec") }
+fn pvec_() ValType { ref_nn("rt_types__PVec") }
 fn dict_n() ValType { ref_null("rt_types__Dict") }
 fn dict_() ValType { ref_nn("rt_types__Dict") }
 fn variant_() ValType { ref_nn("rt_types__Variant") }
@@ -66,18 +68,18 @@ fn builtin_abi(name: String) AbiContract {
     "string_len" => abi([str_n()], [ValType.I32]),
     "string_concat" => abi([str_n(), str_n()], [str_()]),
     "string_substring" => abi([str_n(), ValType.I32, ValType.I32], [str_()]),
-    "vector_len" => abi([arr_n()], [ValType.I32]),
-    "vector_set_unsafe" => abi([arr_n(), ValType.I32, ValType.Anyref], [arr_()]),
-    "vector_concat" => abi([arr_n(), arr_n()], [arr_()]),
-    "vector_slice" => abi([arr_n(), ValType.I32, ValType.I32], [arr_()]),
+    "vector_len" => abi([pvec_n()], [ValType.I32]),
+    "vector_set_unsafe" => abi([pvec_n(), ValType.I32, ValType.Anyref], [pvec_()]),
+    "vector_concat" => abi([pvec_n(), pvec_n()], [pvec_()]),
+    "vector_slice" => abi([pvec_n(), ValType.I32, ValType.I32], [pvec_()]),
     "vector_builder_new" => abi([], [arr_()]),
     "vector_builder_push" => abi([arr_n(), ValType.Anyref], []),
-    "vector_builder_freeze" => abi([arr_n()], [arr_()]),
-    "vector_builder_from" => abi([arr_n()], [arr_()]),
+    "vector_builder_freeze" => abi([arr_n()], [pvec_()]),
+    "vector_builder_from" => abi([pvec_n()], [arr_()]),
     "dict_new" => abi([], [dict_()]),
     "dict_set" => abi([dict_n(), ValType.Anyref, ValType.Anyref], [dict_()]),
     "dict_set_in_place" => abi([dict_n(), ValType.Anyref, ValType.Anyref], [dict_()]),
-    "dict_keys" => abi([dict_n()], [arr_()]),
+    "dict_keys" => abi([dict_n()], [pvec_()]),
     "dict_get" => abi([dict_n(), ValType.Anyref], [variant_()]),
     "dict_len" => abi([dict_n()], [ValType.I32]),
     "dict_has" => abi([dict_n(), ValType.Anyref], [ValType.I32]),
@@ -95,11 +97,11 @@ fn builtin_abi(name: String) AbiContract {
     "host_exit" => abi([ValType.I64], []),
 
     // Intrinsics that still cross the anyref boundary after M4.
-    "vector_append" => abi([arr_n(), ValType.Anyref], [arr_()]),
-    "vector_get" => abi([arr_n(), ValType.I32], [ValType.Anyref]),
-    "vector_set" => abi([arr_n(), ValType.I32, ValType.Anyref], [variant_()]),
-    "vector_set_in_place" => abi([arr_n(), ValType.I32, ValType.Anyref], [arr_()]),
-    "vector_make" => abi([ValType.I32, ValType.Anyref], [arr_()]),
+    "vector_append" => abi([pvec_n(), ValType.Anyref], [pvec_()]),
+    "vector_get" => abi([pvec_n(), ValType.I32], [ValType.Anyref]),
+    "vector_set" => abi([pvec_n(), ValType.I32, ValType.Anyref], [variant_()]),
+    "vector_set_in_place" => abi([pvec_n(), ValType.I32, ValType.Anyref], [pvec_()]),
+    "vector_make" => abi([ValType.I32, ValType.Anyref], [pvec_()]),
     "dict_get_unsafe" => abi([dict_n(), ValType.Anyref], [ValType.Anyref]),
     "cell_new" => abi([ValType.Anyref], [cell_n()]),
     "cell_get" => abi([cell_n()], [ValType.Anyref]),

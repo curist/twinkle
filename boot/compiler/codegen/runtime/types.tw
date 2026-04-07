@@ -4,68 +4,91 @@
 // This module defines no functions — only type definitions that all
 // other runtime modules reference.
 
-use compiler.codegen.wasm_ir.{
-  ValType, HeapType, TypeDef, FieldDef, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ WasmModule }
 
 pub fn module() WasmModule {
-  WasmModule.{
+  .{
     namespace: "rt.types",
     types: [
       // (type $Array (array (mut anyref)))
-      TypeDef.Array("Array", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
+      .Array("Array", .{ name: .None, mutable: true, ty: .Anyref }),
 
       // (type $String (array (mut i8)))
-      TypeDef.Array("String", FieldDef.{ name: .None, mutable: true, ty: .I8 }),
+      .Array("String", .{ name: .None, mutable: true, ty: .I8 }),
 
       // (type $DictEntry (struct (field $key anyref) (field $val anyref)))
-      TypeDef.Struct("DictEntry", [
-        FieldDef.{ name: .Some("key"), mutable: false, ty: .Anyref },
-        FieldDef.{ name: .Some("val"), mutable: false, ty: .Anyref },
+      .Struct("DictEntry", [
+        .{ name: .Some("key"), mutable: false, ty: .Anyref },
+        .{ name: .Some("val"), mutable: false, ty: .Anyref },
       ], .None, true),
 
       // (type $Dict (array (mut (ref null $DictEntry))))
-      TypeDef.Array("Dict", FieldDef.{
+      .Array("Dict", .{
         name: .None, mutable: true,
-        ty: ValType.Ref(true, HeapType.Named("DictEntry")),
+        ty: .Ref(true, .Named("DictEntry")),
       }),
 
       // (type $ClosureEnv (array anyref))
-      TypeDef.Array("ClosureEnv", FieldDef.{ name: .None, mutable: false, ty: .Anyref }),
+      .Array("ClosureEnv", .{ name: .None, mutable: false, ty: .Anyref }),
 
       // (type $ClosureFunc (func (param anyref anyref) (result anyref)))
-      TypeDef.FuncType("ClosureFunc", [.Anyref, .Anyref], [.Anyref]),
+      .FuncType("ClosureFunc", [.Anyref, .Anyref], [.Anyref]),
 
       // (type $Closure (sub (struct ...))) — non-final for typed closure subtypes
-      TypeDef.Struct("Closure", [
-        FieldDef.{ name: .Some("func_ref"), mutable: false,
-          ty: ValType.Ref(true, HeapType.Named("ClosureFunc")) },
-        FieldDef.{ name: .Some("env"), mutable: false,
-          ty: ValType.Ref(true, HeapType.Named("ClosureEnv")) },
+      .Struct("Closure", [
+        .{ name: .Some("func_ref"), mutable: false,
+          ty: .Ref(true, .Named("ClosureFunc")) },
+        .{ name: .Some("env"), mutable: false,
+          ty: .Ref(true, .Named("ClosureEnv")) },
       ], .None, false),
 
       // (type $Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $Array))))
-      TypeDef.Struct("Variant", [
-        FieldDef.{ name: .Some("type_id"), mutable: false, ty: .I32 },
-        FieldDef.{ name: .Some("variant_id"), mutable: false, ty: .I32 },
-        FieldDef.{ name: .Some("payload"), mutable: false,
-          ty: ValType.Ref(true, HeapType.Named("Array")) },
+      .Struct("Variant", [
+        .{ name: .Some("type_id"), mutable: false, ty: .I32 },
+        .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
+        .{ name: .Some("payload"), mutable: false,
+          ty: .Ref(true, .Named("Array")) },
       ], .None, true),
 
       // (type $BoxedInt (struct (field $v i64)))
-      TypeDef.Struct("BoxedInt", [
-        FieldDef.{ name: .Some("v"), mutable: false, ty: .I64 },
+      .Struct("BoxedInt", [
+        .{ name: .Some("v"), mutable: false, ty: .I64 },
       ], .None, true),
 
       // (type $BoxedFloat (struct (field $v f64)))
-      TypeDef.Struct("BoxedFloat", [
-        FieldDef.{ name: .Some("v"), mutable: false, ty: .F64 },
+      .Struct("BoxedFloat", [
+        .{ name: .Some("v"), mutable: false, ty: .F64 },
+      ], .None, true),
+
+      // -- Persistent vector trie types --
+
+      // (type $VecChildren (array (mut (ref null eq))))
+      .Array("VecChildren", .{
+        name: .None, mutable: true,
+        ty: .Ref(true, .Eq),
+      }),
+
+      // (type $VecInternal (struct (field $children (ref $VecChildren))))
+      .Struct("VecInternal", [
+        .{ name: .Some("children"), mutable: false,
+          ty: .Ref(false, .Named("VecChildren")) },
+      ], .None, true),
+
+      // (type $PVec (struct (field $len i32) (field $shift i32)
+      //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
+      .Struct("PVec", [
+        .{ name: .Some("len"), mutable: false, ty: .I32 },
+        .{ name: .Some("shift"), mutable: false, ty: .I32 },
+        .{ name: .Some("root"), mutable: false,
+          ty: .Ref(true, .Named("VecInternal")) },
+        .{ name: .Some("tail"), mutable: false,
+          ty: .Ref(false, .Named("Array")) },
       ], .None, true),
 
       // (type $IterState (sub (struct (field $seed anyref) (field $step anyref))))
-      TypeDef.Struct("IterState", [
-        FieldDef.{ name: .Some("seed"), mutable: false, ty: .Anyref },
-        FieldDef.{ name: .Some("step"), mutable: false, ty: .Anyref },
+      .Struct("IterState", [
+        .{ name: .Some("seed"), mutable: false, ty: .Anyref },
+        .{ name: .Some("step"), mutable: false, ty: .Anyref },
       ], .None, false),
     ],
     imports: [],

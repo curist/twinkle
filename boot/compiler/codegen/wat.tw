@@ -109,9 +109,9 @@ fn emit_wat_parts(
     s := sym(g.name)
     vt := emit_val_type(g.ty)
     if g.mutable {
-      lines = lines.append("  (global ${s} (mut ${vt}) (${init_str}))")
+      lines = lines.append("  (global ${s} (mut ${vt}) ${init_str})")
     } else {
-      lines = lines.append("  (global ${s} ${vt} (${init_str}))")
+      lines = lines.append("  (global ${s} ${vt} ${init_str})")
     }
   }
 
@@ -254,8 +254,8 @@ fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Ve
   key := sig_key(params, results)
   if reg.keys.has(key) { return reg }
   idx := reg.entries.len()
-  FuncTypeRegistry.{
-    entries: reg.entries.append(FuncSigPair.{ params: params, results: results }),
+  .{
+    entries: reg.entries.append(.{ params: params, results: results }),
     keys: reg.keys.set(key, idx),
   }
 }
@@ -369,6 +369,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .I32GeU => ["${pad}i32.ge_u"],
     .I32And => ["${pad}i32.and"],
     .I32Or => ["${pad}i32.or"],
+    .I32Shl => ["${pad}i32.shl"],
     .I32ShrU => ["${pad}i32.shr_u"],
 
     // i64 arithmetic
