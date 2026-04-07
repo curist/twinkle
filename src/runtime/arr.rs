@@ -18,14 +18,25 @@ const B: i32 = 5;
 const BF: i32 = 1 << B; // 32
 const MASK: i32 = BF - 1; // 31
 
+fn ref_eq() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Eq,
+    }
+}
+
+fn ref_eq_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Eq,
+    }
+}
+
 /// $PVec field indices
 const PV_LEN: u32 = 0;
 const PV_SHIFT: u32 = 1;
 const PV_ROOT: u32 = 2;
 const PV_TAIL: u32 = 3;
-
-/// $VecLeaf field index
-const VL_DATA: u32 = 0;
 
 /// $VecInternal field index
 const VI_CHILDREN: u32 = 0;
@@ -38,11 +49,8 @@ pub fn make() -> ModuleIR {
     m.globals.push(GlobalDef {
         name: "empty_leaf".into(),
         mutable: false,
-        ty: ref_vec_leaf(),
-        init: vec![
-            Instr::ArrayNewFixed(T_ARRAY.into(), 0),
-            Instr::StructNew(T_VEC_LEAF.into()),
-        ],
+        ty: ref_array(),
+        init: vec![Instr::ArrayNewFixed(T_ARRAY.into(), 0)],
     });
     m.globals.push(GlobalDef {
         name: "empty_pvec".into(),
@@ -126,14 +134,7 @@ fn tailoff_fn() -> FuncDef {
 
 /// `get_leaf(vec: PVec, idx: i32) -> Array`
 /// Navigate trie to find the leaf array containing element at idx.
-///
-/// Hot-path shape:
-/// - small vectors (`len <= 32`) return tail directly
-/// - tail accesses return tail directly
-/// - trie descent starts from the statically-typed `root: ref null VecInternal`
-///   so we avoid the initial `VecNode` cast on every read
 fn get_leaf_fn() -> FuncDef {
-    // p0=vec, p1=idx, L2=len, L3=tailoff, L4=node(VecInternal), L5=level
     FuncDef {
         name: "get_leaf".into(),
         params: vec![ref_pvec(), ValType::I32],
@@ -145,23 +146,16 @@ fn get_leaf_fn() -> FuncDef {
             ValType::I32,
         ],
         body: vec![
-            // len = vec.len
             Instr::LocalGet(0),
             Instr::StructGet(T_PVEC.into(), PV_LEN),
             Instr::LocalSet(2),
-            // if len <= 32: return tail.data
             Instr::LocalGet(2),
             Instr::I32Const(BF),
             Instr::I32LeS,
             Instr::If {
                 result: Some(ref_array()),
-                then_body: vec![
-                    Instr::LocalGet(0),
-                    Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                    Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
-                ],
+                then_body: vec![Instr::LocalGet(0), Instr::StructGet(T_PVEC.into(), PV_TAIL)],
                 else_body: vec![
-                    // tailoff = ((len - 1) >> 5) << 5
                     Instr::LocalGet(2),
                     Instr::I32Const(1),
                     Instr::I32Sub,
@@ -170,7 +164,6 @@ fn get_leaf_fn() -> FuncDef {
                     Instr::I32Const(B),
                     Instr::I32Shl,
                     Instr::LocalSet(3),
-                    // if idx >= tailoff: return tail.data
                     Instr::LocalGet(1),
                     Instr::LocalGet(3),
                     Instr::I32GeS,
@@ -179,19 +172,15 @@ fn get_leaf_fn() -> FuncDef {
                         then_body: vec![
                             Instr::LocalGet(0),
                             Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                            Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                         ],
                         else_body: {
                             let mut b = vec![
-                                // node = root
                                 Instr::LocalGet(0),
                                 Instr::StructGet(T_PVEC.into(), PV_ROOT),
                                 Instr::LocalSet(4),
-                                // level = shift
                                 Instr::LocalGet(0),
                                 Instr::StructGet(T_PVEC.into(), PV_SHIFT),
                                 Instr::LocalSet(5),
-                                // While level > 5, descend through internal nodes.
                                 Instr::Block {
                                     label: "brk".into(),
                                     result: None,
@@ -203,7 +192,6 @@ fn get_leaf_fn() -> FuncDef {
                                             Instr::I32Const(B),
                                             Instr::I32LeS,
                                             Instr::BrIf("brk".into()),
-                                            // node = cast_internal(node.children[(idx >> level) & MASK])
                                             Instr::LocalGet(4),
                                             Instr::RefAsNonNull,
                                             Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
@@ -218,7 +206,6 @@ fn get_leaf_fn() -> FuncDef {
                                                 heap: HeapType::Named(T_VEC_INTERNAL.into()),
                                             },
                                             Instr::LocalSet(4),
-                                            // level -= B
                                             Instr::LocalGet(5),
                                             Instr::I32Const(B),
                                             Instr::I32Sub,
@@ -228,7 +215,6 @@ fn get_leaf_fn() -> FuncDef {
                                     }],
                                 },
                             ];
-                            // Final step: node.children[(idx >> level) & MASK] is a leaf.
                             b.push(Instr::LocalGet(4));
                             b.push(Instr::RefAsNonNull);
                             b.push(Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN));
@@ -240,9 +226,8 @@ fn get_leaf_fn() -> FuncDef {
                             b.push(Instr::ArrayGet(T_VEC_CHILDREN.into()));
                             b.push(Instr::RefCast {
                                 nullable: false,
-                                heap: HeapType::Named(T_VEC_LEAF.into()),
+                                heap: HeapType::Named(T_ARRAY.into()),
                             });
-                            b.push(Instr::StructGet(T_VEC_LEAF.into(), VL_DATA));
                             b
                         },
                     },
@@ -252,14 +237,13 @@ fn get_leaf_fn() -> FuncDef {
     }
 }
 
-/// `new_path(level: i32, node: VecNode) -> VecNode`
+/// `new_path(level: i32, node: eqref) -> eqref`
 /// Wrap node in a chain of VecInternal nodes from level down to 0.
 fn new_path_fn() -> FuncDef {
-    // p0=level, p1=node, L2=children(tmp)
     FuncDef {
         name: "new_path".into(),
-        params: vec![ValType::I32, ref_vec_node()],
-        results: vec![ref_vec_node()],
+        params: vec![ValType::I32, ref_eq()],
+        results: vec![ref_eq()],
         locals: vec![ref_vec_children_null()],
         body: vec![
             Instr::Block {
@@ -272,27 +256,23 @@ fn new_path_fn() -> FuncDef {
                         Instr::LocalGet(0),
                         Instr::I32Eqz,
                         Instr::BrIf("brk".into()),
-                        // children = new VecChildren(32, null)
-                        Instr::RefNull(HeapType::Named(T_VEC_NODE.into())),
+                        Instr::RefNull(HeapType::Eq),
                         Instr::I32Const(BF),
                         Instr::ArrayNew(T_VEC_CHILDREN.into()),
                         Instr::LocalSet(2),
-                        // children[0] = node
                         Instr::LocalGet(2),
                         Instr::RefAsNonNull,
                         Instr::I32Const(0),
                         Instr::LocalGet(1),
                         Instr::ArraySet(T_VEC_CHILDREN.into()),
-                        // node = VecInternal { children } as VecNode
                         Instr::LocalGet(2),
                         Instr::RefAsNonNull,
                         Instr::StructNew(T_VEC_INTERNAL.into()),
                         Instr::RefCast {
                             nullable: false,
-                            heap: HeapType::Named(T_VEC_NODE.into()),
+                            heap: HeapType::Eq,
                         },
                         Instr::LocalSet(1),
-                        // level -= B
                         Instr::LocalGet(0),
                         Instr::I32Const(B),
                         Instr::I32Sub,
@@ -306,45 +286,19 @@ fn new_path_fn() -> FuncDef {
     }
 }
 
-/// `push_tail(level: i32, parent: VecInternal, tail_node: VecNode) -> VecInternal`
-/// Path-copy the rightmost spine of `parent` and insert `tail_node` at the bottom.
+/// `push_tail(level: i32, parent: VecInternal, tail_node: eqref) -> eqref`
 fn push_tail_fn() -> FuncDef {
-    // push_tail(cnt: i32, level: i32, parent: VecInternal, tail_node: VecNode) -> VecNode
-    //
-    // Path-copy the rightmost spine of `parent` and insert `tail_node` at
-    // the bottom. Called when the current tail is full and needs to be
-    // promoted into the trie.
-    //
-    // Algorithm:
-    //   sub_idx = ((cnt - 1) >> level) & MASK
-    //   copy parent.children → new_children
-    //   if level == B (bottom of internal nodes):
-    //     new_children[sub_idx] = tail_node
-    //   else:
-    //     if parent.children[sub_idx] != null:
-    //       new_children[sub_idx] = push_tail(cnt, level-B, children[sub_idx], tail_node)
-    //     else:
-    //       new_children[sub_idx] = new_path(level-B, tail_node)
-    //   return VecInternal { new_children }
-    //
-    // p0=cnt, p1=level, p2=parent, p3=tail_node
-    // L4=new_children, L5=sub_idx, L6=child
     FuncDef {
         name: "push_tail".into(),
         params: vec![
             ValType::I32,
             ValType::I32,
             ref_vec_internal_null(),
-            ref_vec_node(),
+            ref_eq(),
         ],
-        results: vec![ref_vec_node()],
-        locals: vec![
-            ref_vec_children_null(), // L4: new_children
-            ValType::I32,            // L5: sub_idx
-            ref_vec_node_null(),     // L6: child
-        ],
+        results: vec![ref_eq()],
+        locals: vec![ref_vec_children_null(), ValType::I32, ref_eq_null()],
         body: vec![
-            // sub_idx = ((cnt - 1) >> level) & MASK
             Instr::LocalGet(0),
             Instr::I32Const(1),
             Instr::I32Sub,
@@ -353,12 +307,10 @@ fn push_tail_fn() -> FuncDef {
             Instr::I32Const(MASK),
             Instr::I32And,
             Instr::LocalSet(5),
-            // copy parent.children → new_children
-            Instr::RefNull(HeapType::Named(T_VEC_NODE.into())),
+            Instr::RefNull(HeapType::Eq),
             Instr::I32Const(BF),
             Instr::ArrayNew(T_VEC_CHILDREN.into()),
             Instr::LocalSet(4),
-            // array.copy new_children[0..32] <- parent.children[0..32]
             Instr::LocalGet(4),
             Instr::RefAsNonNull,
             Instr::I32Const(0),
@@ -368,14 +320,12 @@ fn push_tail_fn() -> FuncDef {
             Instr::I32Const(0),
             Instr::I32Const(BF),
             Instr::ArrayCopy(T_VEC_CHILDREN.into(), T_VEC_CHILDREN.into()),
-            // if level == B: insert tail_node directly
             Instr::LocalGet(1),
             Instr::I32Const(B),
             Instr::I32Eq,
             Instr::If {
                 result: None,
                 then_body: vec![
-                    // new_children[sub_idx] = tail_node
                     Instr::LocalGet(4),
                     Instr::RefAsNonNull,
                     Instr::LocalGet(5),
@@ -383,20 +333,17 @@ fn push_tail_fn() -> FuncDef {
                     Instr::ArraySet(T_VEC_CHILDREN.into()),
                 ],
                 else_body: vec![
-                    // child = parent.children[sub_idx]
                     Instr::LocalGet(2),
                     Instr::RefAsNonNull,
                     Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
                     Instr::LocalGet(5),
                     Instr::ArrayGet(T_VEC_CHILDREN.into()),
                     Instr::LocalSet(6),
-                    // if child != null: recurse; else: new_path
                     Instr::LocalGet(6),
                     Instr::RefIsNull,
                     Instr::If {
-                        result: Some(ref_vec_node()),
+                        result: Some(ref_eq()),
                         then_body: vec![
-                            // new_path(level - B, tail_node)
                             Instr::LocalGet(1),
                             Instr::I32Const(B),
                             Instr::I32Sub,
@@ -404,7 +351,6 @@ fn push_tail_fn() -> FuncDef {
                             Instr::Call("new_path".into()),
                         ],
                         else_body: vec![
-                            // push_tail(cnt, level - B, child as VecInternal, tail_node)
                             Instr::LocalGet(0),
                             Instr::LocalGet(1),
                             Instr::I32Const(B),
@@ -419,7 +365,6 @@ fn push_tail_fn() -> FuncDef {
                         ],
                     },
                     Instr::LocalSet(6),
-                    // new_children[sub_idx] = child (result of recurse)
                     Instr::LocalGet(4),
                     Instr::RefAsNonNull,
                     Instr::LocalGet(5),
@@ -427,144 +372,121 @@ fn push_tail_fn() -> FuncDef {
                     Instr::ArraySet(T_VEC_CHILDREN.into()),
                 ],
             },
-            // return VecInternal { new_children } as VecNode
             Instr::LocalGet(4),
             Instr::RefAsNonNull,
             Instr::StructNew(T_VEC_INTERNAL.into()),
             Instr::RefCast {
                 nullable: false,
-                heap: HeapType::Named(T_VEC_NODE.into()),
+                heap: HeapType::Eq,
             },
         ],
     }
 }
 
-/// `do_set(level: i32, node: VecNode, idx: i32, val: anyref) -> VecNode`
-/// Path-copy from current level down to the leaf, setting val at idx.
+/// `do_set(level: i32, node: eqref, idx: i32, val: anyref) -> eqref`
 fn do_set_fn() -> FuncDef {
-    // p0=level, p1=node, p2=idx, p3=val
-    // L4=new_children, L5=sub_idx, L6=new_data, L7=leaf_data
     FuncDef {
         name: "do_set".into(),
-        params: vec![ValType::I32, ref_vec_node(), ValType::I32, ValType::Anyref],
-        results: vec![ref_vec_node()],
+        params: vec![ValType::I32, ref_eq(), ValType::I32, ValType::Anyref],
+        results: vec![ref_eq()],
         locals: vec![
-            ref_vec_children_null(), // L4
-            ValType::I32,            // L5: sub_idx
-            ref_array_null(),        // L6: new_data
-            ref_array_null(),        // L7: leaf_data
+            ref_vec_children_null(),
+            ValType::I32,
+            ref_array_null(),
+            ref_array_null(),
         ],
         body: vec![
             Instr::LocalGet(0),
             Instr::I32Eqz,
             Instr::If {
-                result: Some(ref_vec_node()),
-                then_body: {
-                    // level == 0: this is a leaf node
-                    let mut b = vec![
-                        // leaf_data = cast_leaf(node).data
-                        Instr::LocalGet(1),
-                        Instr::RefCast {
-                            nullable: false,
-                            heap: HeapType::Named(T_VEC_LEAF.into()),
-                        },
-                        Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
-                        Instr::LocalSet(7),
-                        // new_data = new Array(leaf_data.len, null)
-                        Instr::RefNull(HeapType::None),
-                        Instr::LocalGet(7),
-                        Instr::RefAsNonNull,
-                        Instr::ArrayLen,
-                        Instr::ArrayNew(T_ARRAY.into()),
-                        Instr::LocalSet(6),
-                        // copy leaf_data → new_data
-                        Instr::LocalGet(6),
-                        Instr::RefAsNonNull,
-                        Instr::I32Const(0),
-                        Instr::LocalGet(7),
-                        Instr::RefAsNonNull,
-                        Instr::I32Const(0),
-                        Instr::LocalGet(7),
-                        Instr::RefAsNonNull,
-                        Instr::ArrayLen,
-                        Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
-                        // new_data[idx & MASK] = val
-                        Instr::LocalGet(6),
-                        Instr::RefAsNonNull,
-                        Instr::LocalGet(2),
-                        Instr::I32Const(MASK),
-                        Instr::I32And,
-                        Instr::LocalGet(3),
-                        Instr::ArraySet(T_ARRAY.into()),
-                        // return VecLeaf { new_data } as VecNode
-                        Instr::LocalGet(6),
-                        Instr::RefAsNonNull,
-                        Instr::StructNew(T_VEC_LEAF.into()),
-                    ];
-                    b.push(Instr::RefCast {
+                result: Some(ref_eq()),
+                then_body: vec![
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
                         nullable: false,
-                        heap: HeapType::Named(T_VEC_NODE.into()),
-                    });
-                    b
-                },
-                else_body: {
-                    // level > 0: internal node
-                    vec![
-                        // sub_idx = (idx >> level) & MASK
-                        Instr::LocalGet(2),
-                        Instr::LocalGet(0),
-                        Instr::I32ShrU,
-                        Instr::I32Const(MASK),
-                        Instr::I32And,
-                        Instr::LocalSet(5),
-                        // copy children
-                        Instr::RefNull(HeapType::Named(T_VEC_NODE.into())),
-                        Instr::I32Const(BF),
-                        Instr::ArrayNew(T_VEC_CHILDREN.into()),
-                        Instr::LocalSet(4),
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::I32Const(0),
-                        Instr::LocalGet(1),
-                        Instr::RefCast {
-                            nullable: false,
-                            heap: HeapType::Named(T_VEC_INTERNAL.into()),
-                        },
-                        Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
-                        Instr::I32Const(0),
-                        Instr::I32Const(BF),
-                        Instr::ArrayCopy(T_VEC_CHILDREN.into(), T_VEC_CHILDREN.into()),
-                        // new_children[sub_idx] = do_set(level-B, children[sub_idx], idx, val)
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::LocalGet(5),
-                        // call do_set
-                        Instr::LocalGet(0),
-                        Instr::I32Const(B),
-                        Instr::I32Sub,
-                        Instr::LocalGet(1),
-                        Instr::RefCast {
-                            nullable: false,
-                            heap: HeapType::Named(T_VEC_INTERNAL.into()),
-                        },
-                        Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
-                        Instr::LocalGet(5),
-                        Instr::ArrayGet(T_VEC_CHILDREN.into()),
-                        Instr::RefAsNonNull, // child must be non-null for valid idx
-                        Instr::LocalGet(2),
-                        Instr::LocalGet(3),
-                        Instr::Call("do_set".into()),
-                        Instr::ArraySet(T_VEC_CHILDREN.into()),
-                        // return VecInternal { new_children } as VecNode
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::StructNew(T_VEC_INTERNAL.into()),
-                        Instr::RefCast {
-                            nullable: false,
-                            heap: HeapType::Named(T_VEC_NODE.into()),
-                        },
-                    ]
-                },
+                        heap: HeapType::Named(T_ARRAY.into()),
+                    },
+                    Instr::LocalSet(7),
+                    Instr::RefNull(HeapType::None),
+                    Instr::LocalGet(7),
+                    Instr::RefAsNonNull,
+                    Instr::ArrayLen,
+                    Instr::ArrayNew(T_ARRAY.into()),
+                    Instr::LocalSet(6),
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(7),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(7),
+                    Instr::RefAsNonNull,
+                    Instr::ArrayLen,
+                    Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(2),
+                    Instr::I32Const(MASK),
+                    Instr::I32And,
+                    Instr::LocalGet(3),
+                    Instr::ArraySet(T_ARRAY.into()),
+                    Instr::LocalGet(6),
+                    Instr::RefAsNonNull,
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Eq,
+                    },
+                ],
+                else_body: vec![
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(0),
+                    Instr::I32ShrU,
+                    Instr::I32Const(MASK),
+                    Instr::I32And,
+                    Instr::LocalSet(5),
+                    Instr::RefNull(HeapType::Eq),
+                    Instr::I32Const(BF),
+                    Instr::ArrayNew(T_VEC_CHILDREN.into()),
+                    Instr::LocalSet(4),
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                    },
+                    Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                    Instr::I32Const(0),
+                    Instr::I32Const(BF),
+                    Instr::ArrayCopy(T_VEC_CHILDREN.into(), T_VEC_CHILDREN.into()),
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(5),
+                    Instr::LocalGet(0),
+                    Instr::I32Const(B),
+                    Instr::I32Sub,
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                    },
+                    Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                    Instr::LocalGet(5),
+                    Instr::ArrayGet(T_VEC_CHILDREN.into()),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(3),
+                    Instr::Call("do_set".into()),
+                    Instr::ArraySet(T_VEC_CHILDREN.into()),
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::StructNew(T_VEC_INTERNAL.into()),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Eq,
+                    },
+                ],
             },
         ],
     }
@@ -573,221 +495,176 @@ fn do_set_fn() -> FuncDef {
 /// `push(vec: PVec, val: anyref) -> PVec`
 /// Append a single element to the vector.
 fn push_fn() -> FuncDef {
-    // p0=vec, p1=val
-    // L2=len, L3=tail_len, L4=new_tail_data, L5=new_root, L6=new_shift, L7=children(overflow)
     FuncDef {
         name: "push".into(),
         params: vec![ref_pvec(), ValType::Anyref],
         results: vec![ref_pvec()],
         locals: vec![
-            ValType::I32,            // L2: len
-            ValType::I32,            // L3: tail_len
-            ref_array_null(),        // L4: new_tail_data
-            ref_vec_node_null(),     // L5: new_root (as VecNode for intermediate)
-            ValType::I32,            // L6: new_shift
-            ref_vec_children_null(), // L7: children array (for overflow)
+            ValType::I32,
+            ValType::I32,
+            ref_array_null(),
+            ref_eq_null(),
+            ValType::I32,
+            ref_vec_children_null(),
         ],
         body: vec![
-            // len = vec.len
             Instr::LocalGet(0),
             Instr::StructGet(T_PVEC.into(), PV_LEN),
             Instr::LocalSet(2),
-            // tail_len = vec.tail.data.len
             Instr::LocalGet(0),
             Instr::StructGet(T_PVEC.into(), PV_TAIL),
-            Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
             Instr::ArrayLen,
             Instr::LocalSet(3),
-            // if tail has room (tail_len < 32):
             Instr::LocalGet(3),
             Instr::I32Const(BF),
             Instr::I32LtS,
             Instr::If {
                 result: Some(ref_pvec()),
-                then_body: {
-                    // Copy tail data and append val
-                    vec![
-                        // new_tail_data = new Array(tail_len + 1, null)
-                        Instr::RefNull(HeapType::None),
-                        Instr::LocalGet(3),
-                        Instr::I32Const(1),
-                        Instr::I32Add,
-                        Instr::ArrayNew(T_ARRAY.into()),
-                        Instr::LocalSet(4),
-                        // copy old tail data
-                        Instr::LocalGet(3),
-                        Instr::I32Eqz,
-                        Instr::If {
-                            result: None,
-                            then_body: vec![],
-                            else_body: vec![
-                                Instr::LocalGet(4),
-                                Instr::RefAsNonNull,
-                                Instr::I32Const(0),
-                                Instr::LocalGet(0),
-                                Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                                Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
-                                Instr::I32Const(0),
-                                Instr::LocalGet(3),
-                                Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
-                            ],
-                        },
-                        // new_tail_data[tail_len] = val
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::LocalGet(3),
-                        Instr::LocalGet(1),
-                        Instr::ArraySet(T_ARRAY.into()),
-                        // return PVec { len+1, shift, root, VecLeaf{new_tail_data} }
-                        Instr::LocalGet(2),
-                        Instr::I32Const(1),
-                        Instr::I32Add,
-                        Instr::LocalGet(0),
-                        Instr::StructGet(T_PVEC.into(), PV_SHIFT),
-                        Instr::LocalGet(0),
-                        Instr::StructGet(T_PVEC.into(), PV_ROOT),
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::StructNew(T_VEC_LEAF.into()),
-                        Instr::StructNew(T_PVEC.into()),
-                    ]
-                },
-                else_body: {
-                    // Tail is full — promote old tail into trie
-                    vec![
-                        // Wrap old tail as VecNode
-                        // tail_node = VecLeaf(old_tail.data) as VecNode — already is a VecLeaf
-                        // new_shift = vec.shift
-                        Instr::LocalGet(0),
-                        Instr::StructGet(T_PVEC.into(), PV_SHIFT),
-                        Instr::LocalSet(6),
-                        // Check if root is null (tail-only vector that just filled up)
-                        Instr::LocalGet(0),
-                        Instr::StructGet(T_PVEC.into(), PV_ROOT),
-                        Instr::RefIsNull,
-                        Instr::If {
-                            result: None,
-                            then_body: vec![
-                                // No root yet: create root with old tail as child
-                                // new_shift = B
-                                Instr::I32Const(B),
-                                Instr::LocalSet(6),
-                                // new_root = new_path(B, old_tail as VecNode)
-                                // new_path wraps the leaf in one level of VecInternal
-                                Instr::I32Const(B),
-                                Instr::LocalGet(0),
-                                Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                                Instr::RefCast {
-                                    nullable: false,
-                                    heap: HeapType::Named(T_VEC_NODE.into()),
-                                },
-                                Instr::Call("new_path".into()),
-                                Instr::LocalSet(5),
-                            ],
-                            else_body: vec![
-                                // Root exists: check if trie is full at current depth
-                                // overflow? = (len >> B) > (1 << shift)
-                                // Simpler: overflow if ((len - 1) >> B) >= (1 << shift)
-                                // Actually: overflow when cnt >> B > 1 << shift
-                                // cnt = len (before adding new element, which has len = old_len)
-                                // The trie can hold (1 << (shift + B)) elements
-                                // Trie is full when trie_count == (1 << (shift + B))
-                                // trie_count = tailoff(len) = len - 32 (since tail is full, tail_len==32)
-                                // Equivalently: (len >> B) > (1 << shift)
-                                Instr::LocalGet(2),
-                                Instr::I32Const(B),
-                                Instr::I32ShrU,
-                                Instr::I32Const(1),
-                                Instr::LocalGet(6),
-                                Instr::I32Shl,
-                                Instr::I32GtU,
-                                Instr::If {
-                                    result: None,
-                                    then_body: vec![
-                                        // Overflow: need new root level
-                                        // new_root_children = [old_root, new_path(shift, old_tail)]
-                                        Instr::RefNull(HeapType::Named(T_VEC_NODE.into())),
-                                        Instr::I32Const(BF),
-                                        Instr::ArrayNew(T_VEC_CHILDREN.into()),
-                                        Instr::LocalSet(7),
-                                        // children[0] = old root as VecNode
-                                        Instr::LocalGet(7),
-                                        Instr::RefAsNonNull,
-                                        Instr::I32Const(0),
-                                        Instr::LocalGet(0),
-                                        Instr::StructGet(T_PVEC.into(), PV_ROOT),
-                                        Instr::RefAsNonNull,
-                                        Instr::RefCast {
-                                            nullable: false,
-                                            heap: HeapType::Named(T_VEC_NODE.into()),
-                                        },
-                                        Instr::ArraySet(T_VEC_CHILDREN.into()),
-                                        // children[1] = new_path(shift, old_tail as VecNode)
-                                        Instr::LocalGet(7),
-                                        Instr::RefAsNonNull,
-                                        Instr::I32Const(1),
-                                        Instr::LocalGet(6),
-                                        Instr::LocalGet(0),
-                                        Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                                        Instr::RefCast {
-                                            nullable: false,
-                                            heap: HeapType::Named(T_VEC_NODE.into()),
-                                        },
-                                        Instr::Call("new_path".into()),
-                                        Instr::ArraySet(T_VEC_CHILDREN.into()),
-                                        // new_root = VecInternal { children } as VecNode
-                                        Instr::LocalGet(7),
-                                        Instr::RefAsNonNull,
-                                        Instr::StructNew(T_VEC_INTERNAL.into()),
-                                        Instr::RefCast {
-                                            nullable: false,
-                                            heap: HeapType::Named(T_VEC_NODE.into()),
-                                        },
-                                        Instr::LocalSet(5),
-                                        // new_shift += B
-                                        Instr::LocalGet(6),
-                                        Instr::I32Const(B),
-                                        Instr::I32Add,
-                                        Instr::LocalSet(6),
-                                    ],
-                                    else_body: vec![
-                                        // Room in trie: push_tail
-                                        Instr::LocalGet(2),
-                                        Instr::LocalGet(6),
-                                        Instr::LocalGet(0),
-                                        Instr::StructGet(T_PVEC.into(), PV_ROOT),
-                                        Instr::LocalGet(0),
-                                        Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                                        Instr::RefCast {
-                                            nullable: false,
-                                            heap: HeapType::Named(T_VEC_NODE.into()),
-                                        },
-                                        Instr::Call("push_tail".into()),
-                                        Instr::LocalSet(5),
-                                    ],
-                                },
-                            ],
-                        },
-                        // Create new single-element tail
-                        Instr::LocalGet(1),
-                        Instr::ArrayNewFixed(T_ARRAY.into(), 1),
-                        Instr::LocalSet(4),
-                        // return PVec { len+1, new_shift, new_root as VecInternal, VecLeaf{new_tail} }
-                        Instr::LocalGet(2),
-                        Instr::I32Const(1),
-                        Instr::I32Add,
-                        Instr::LocalGet(6),
-                        Instr::LocalGet(5),
-                        Instr::RefCast {
-                            nullable: true,
-                            heap: HeapType::Named(T_VEC_INTERNAL.into()),
-                        },
-                        Instr::LocalGet(4),
-                        Instr::RefAsNonNull,
-                        Instr::StructNew(T_VEC_LEAF.into()),
-                        Instr::StructNew(T_PVEC.into()),
-                    ]
-                },
+                then_body: vec![
+                    Instr::RefNull(HeapType::None),
+                    Instr::LocalGet(3),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::ArrayNew(T_ARRAY.into()),
+                    Instr::LocalSet(4),
+                    Instr::LocalGet(3),
+                    Instr::I32Eqz,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![],
+                        else_body: vec![
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(0),
+                            Instr::StructGet(T_PVEC.into(), PV_TAIL),
+                            Instr::I32Const(0),
+                            Instr::LocalGet(3),
+                            Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                        ],
+                    },
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(3),
+                    Instr::LocalGet(1),
+                    Instr::ArraySet(T_ARRAY.into()),
+                    Instr::LocalGet(2),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::LocalGet(0),
+                    Instr::StructGet(T_PVEC.into(), PV_SHIFT),
+                    Instr::LocalGet(0),
+                    Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::StructNew(T_PVEC.into()),
+                ],
+                else_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::StructGet(T_PVEC.into(), PV_SHIFT),
+                    Instr::LocalSet(6),
+                    Instr::LocalGet(0),
+                    Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                    Instr::RefIsNull,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![
+                            Instr::I32Const(B),
+                            Instr::LocalSet(6),
+                            Instr::I32Const(B),
+                            Instr::LocalGet(0),
+                            Instr::StructGet(T_PVEC.into(), PV_TAIL),
+                            Instr::RefCast {
+                                nullable: false,
+                                heap: HeapType::Eq,
+                            },
+                            Instr::Call("new_path".into()),
+                            Instr::LocalSet(5),
+                        ],
+                        else_body: vec![
+                            Instr::LocalGet(2),
+                            Instr::I32Const(B),
+                            Instr::I32ShrU,
+                            Instr::I32Const(1),
+                            Instr::LocalGet(6),
+                            Instr::I32Shl,
+                            Instr::I32GtU,
+                            Instr::If {
+                                result: None,
+                                then_body: vec![
+                                    Instr::RefNull(HeapType::Eq),
+                                    Instr::I32Const(BF),
+                                    Instr::ArrayNew(T_VEC_CHILDREN.into()),
+                                    Instr::LocalSet(7),
+                                    Instr::LocalGet(7),
+                                    Instr::RefAsNonNull,
+                                    Instr::I32Const(0),
+                                    Instr::LocalGet(0),
+                                    Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                                    Instr::RefAsNonNull,
+                                    Instr::RefCast {
+                                        nullable: false,
+                                        heap: HeapType::Eq,
+                                    },
+                                    Instr::ArraySet(T_VEC_CHILDREN.into()),
+                                    Instr::LocalGet(7),
+                                    Instr::RefAsNonNull,
+                                    Instr::I32Const(1),
+                                    Instr::LocalGet(6),
+                                    Instr::LocalGet(0),
+                                    Instr::StructGet(T_PVEC.into(), PV_TAIL),
+                                    Instr::RefCast {
+                                        nullable: false,
+                                        heap: HeapType::Eq,
+                                    },
+                                    Instr::Call("new_path".into()),
+                                    Instr::ArraySet(T_VEC_CHILDREN.into()),
+                                    Instr::LocalGet(7),
+                                    Instr::RefAsNonNull,
+                                    Instr::StructNew(T_VEC_INTERNAL.into()),
+                                    Instr::RefCast {
+                                        nullable: false,
+                                        heap: HeapType::Eq,
+                                    },
+                                    Instr::LocalSet(5),
+                                    Instr::LocalGet(6),
+                                    Instr::I32Const(B),
+                                    Instr::I32Add,
+                                    Instr::LocalSet(6),
+                                ],
+                                else_body: vec![
+                                    Instr::LocalGet(2),
+                                    Instr::LocalGet(6),
+                                    Instr::LocalGet(0),
+                                    Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                                    Instr::LocalGet(0),
+                                    Instr::StructGet(T_PVEC.into(), PV_TAIL),
+                                    Instr::RefCast {
+                                        nullable: false,
+                                        heap: HeapType::Eq,
+                                    },
+                                    Instr::Call("push_tail".into()),
+                                    Instr::LocalSet(5),
+                                ],
+                            },
+                        ],
+                    },
+                    Instr::LocalGet(1),
+                    Instr::ArrayNewFixed(T_ARRAY.into(), 1),
+                    Instr::LocalSet(4),
+                    Instr::LocalGet(2),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::LocalGet(6),
+                    Instr::LocalGet(5),
+                    Instr::RefCast {
+                        nullable: true,
+                        heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                    },
+                    Instr::LocalGet(4),
+                    Instr::RefAsNonNull,
+                    Instr::StructNew(T_PVEC.into()),
+                ],
             },
         ],
     }
@@ -885,7 +762,6 @@ fn get_fn() -> FuncDef {
                     Instr::LocalGet(0),
                     Instr::RefAsNonNull,
                     Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                    Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                     Instr::LocalGet(1),
                     Instr::I32Const(MASK),
                     Instr::I32And,
@@ -911,7 +787,6 @@ fn get_fn() -> FuncDef {
                             Instr::LocalGet(0),
                             Instr::RefAsNonNull,
                             Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                            Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                             Instr::LocalGet(1),
                             Instr::I32Const(MASK),
                             Instr::I32And,
@@ -975,9 +850,8 @@ fn get_fn() -> FuncDef {
                                 Instr::ArrayGet(T_VEC_CHILDREN.into()),
                                 Instr::RefCast {
                                     nullable: false,
-                                    heap: HeapType::Named(T_VEC_LEAF.into()),
+                                    heap: HeapType::Named(T_ARRAY.into()),
                                 },
-                                Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                                 Instr::LocalGet(1),
                                 Instr::I32Const(MASK),
                                 Instr::I32And,
@@ -1024,7 +898,6 @@ fn set_fn() -> FuncDef {
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                        Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                         Instr::ArrayLen,
                         Instr::ArrayNew(T_ARRAY.into()),
                         Instr::LocalSet(4),
@@ -1034,12 +907,10 @@ fn set_fn() -> FuncDef {
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                        Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                         Instr::I32Const(0),
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_TAIL),
-                        Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
                         Instr::ArrayLen,
                         Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
                         // new_tail_data[idx - tailoff] = val
@@ -1050,7 +921,7 @@ fn set_fn() -> FuncDef {
                         Instr::I32Sub,
                         Instr::LocalGet(2),
                         Instr::ArraySet(T_ARRAY.into()),
-                        // PVec { len, shift, root, VecLeaf{new_tail_data} }
+                        // PVec { len, shift, root, new_tail_data }
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_LEN),
@@ -1062,7 +933,6 @@ fn set_fn() -> FuncDef {
                         Instr::StructGet(T_PVEC.into(), PV_ROOT),
                         Instr::LocalGet(4),
                         Instr::RefAsNonNull,
-                        Instr::StructNew(T_VEC_LEAF.into()),
                         Instr::StructNew(T_PVEC.into()),
                     ]
                 },
@@ -1075,7 +945,7 @@ fn set_fn() -> FuncDef {
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_SHIFT),
-                        // new_root = do_set(shift, root as VecNode, idx, val)
+                        // new_root = do_set(shift, root as eqref, idx, val)
                         Instr::LocalGet(0),
                         Instr::RefAsNonNull,
                         Instr::StructGet(T_PVEC.into(), PV_SHIFT),
@@ -1085,7 +955,7 @@ fn set_fn() -> FuncDef {
                         Instr::RefAsNonNull,
                         Instr::RefCast {
                             nullable: false,
-                            heap: HeapType::Named(T_VEC_NODE.into()),
+                            heap: HeapType::Eq,
                         },
                         Instr::LocalGet(1),
                         Instr::LocalGet(2),
@@ -1274,11 +1144,10 @@ fn builder_from_fn() -> FuncDef {
             ref_pvec_null(),  // L4: trie_prefix (pvec with empty tail)
         ],
         body: vec![
-            // tail_data = vec.tail.data
+            // tail_data = vec.tail
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::StructGet(T_PVEC.into(), PV_TAIL),
-            Instr::StructGet(T_VEC_LEAF.into(), VL_DATA),
             Instr::LocalSet(1),
             // tail_len = tail_data.len
             Instr::LocalGet(1),
@@ -1434,7 +1303,6 @@ fn builder_push_fn() -> FuncDef {
                     Instr::StructGet(T_PVEC.into(), PV_ROOT),
                     Instr::LocalGet(2),
                     Instr::RefAsNonNull,
-                    Instr::StructNew(T_VEC_LEAF.into()),
                     Instr::StructNew(T_PVEC.into()),
                     // push(temp, elem) — this promotes the full tail into the trie
                     Instr::LocalGet(1),
@@ -1615,7 +1483,7 @@ fn builder_freeze_fn() -> FuncDef {
                     Instr::I32Const(0),
                     Instr::LocalGet(2),
                     Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
-                    // return PVec { pvec_so_far.len + tail_len, shift, root, VecLeaf{final_tail} }
+                    // return PVec { pvec_so_far.len + tail_len, shift, root, final_tail }
                     Instr::LocalGet(1),
                     Instr::RefAsNonNull,
                     Instr::StructGet(T_PVEC.into(), PV_LEN),
@@ -1629,7 +1497,6 @@ fn builder_freeze_fn() -> FuncDef {
                     Instr::StructGet(T_PVEC.into(), PV_ROOT),
                     Instr::LocalGet(4),
                     Instr::RefAsNonNull,
-                    Instr::StructNew(T_VEC_LEAF.into()),
                     Instr::StructNew(T_PVEC.into()),
                 ],
             },
@@ -1676,7 +1543,6 @@ fn from_array_fn() -> FuncDef {
                             Instr::I32Const(0),
                             Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.into())),
                             Instr::LocalGet(0),
-                            Instr::StructNew(T_VEC_LEAF.into()),
                             Instr::StructNew(T_PVEC.into()),
                         ],
                         else_body: vec![

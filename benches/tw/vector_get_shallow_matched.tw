@@ -1,0 +1,21 @@
+// Benchmark: indexed reads on a shallow vector (len=1000, shift=5, depth=1)
+// with the same total read count as vector_get_deep (2.5M reads).
+// Isolates trie depth / ref.cast cost from cache pressure effects.
+// Expected output:
+//   1248750000
+
+n := 1000
+rounds := 2500
+xs := collect x in range(n) { x }
+
+checksum := 0
+r := 0
+for r < rounds {
+  i := 0
+  for i < n {
+    checksum = checksum + xs[i]
+    i = i + 1
+  }
+  r = r + 1
+}
+println("${checksum}")

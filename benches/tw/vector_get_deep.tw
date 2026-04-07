@@ -1,0 +1,22 @@
+// Benchmark: indexed reads on a large vector (len=50000, shift=10, depth=2).
+// Trie reads traverse 2 internal levels before hitting a leaf.
+// This is the same workload as vector_get_sum.tw but explicitly labeled
+// for Phase 1 comparison across trie depths.
+// Expected output:
+//   62498750000
+
+n := 50000
+rounds := 50
+xs := collect x in range(n) { x }
+
+checksum := 0
+r := 0
+for r < rounds {
+  i := 0
+  for i < n {
+    checksum = checksum + xs[i]
+    i = i + 1
+  }
+  r = r + 1
+}
+println("${checksum}")

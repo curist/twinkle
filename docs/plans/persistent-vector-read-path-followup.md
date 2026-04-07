@@ -19,22 +19,89 @@ That experiment included:
 The experiment made the backend more complex but did not materially improve the
 observed read-heavy regressions, so it is not the direction to keep pursuing.
 
-## What we learned
+## Phase 1 results: where the cost actually is
 
-The persistent vector algorithm itself is still the right family of data structure.
-The remaining regression appears more likely to come from the **Wasm GC access
-shape** than from the bit-partitioned trie design itself.
+### Benchmark matrix
 
-The current evidence points more toward:
-- dynamic `ref.cast` overhead during trie descent
-- nullable/non-null transitions in hot reads
-- GC object-graph traversal cost through `VecInternal` / `VecLeaf`
-- Wasmtime optimization limits around current Wasm GC patterns
+Criterion benchmarks in `benches/tw/` measure indexed reads (`xs[i]`) and
+iterator traversal (`for x in xs`) across vector sizes, trie depths, and
+access patterns. All times are median wall-clock from criterion with
+`sample_size(10)`.
 
-and less toward:
-- helper call layering alone
-- generic loop lowering alone
-- the persistent vector algorithm being fundamentally wrong for the use case
+```
+Benchmark                Depth  Total (ms)        Reads   ns/read  Notes
+------------------------------------------------------------------------------------------
+get_tiny                     0       119.5   32,000,000       3.7  tail-only, 32 elem
+get_shallow                  1       267.9   50,000,000       5.4  1000 elem, 50M reads
+get_shallow_matched          1        25.8    2,500,000      10.3  1000 elem, 2.5M reads
+get_1024                     1        26.2    2,560,000      10.2  depth boundary low
+get_1025                     2        26.8    2,562,500      10.5  depth boundary high
+get_deep                     2      1200.3    2,500,000     480.1  50k elem
+tail_48                      1        62.8   16,000,000       3.9  tail-only, 48-elem vec
+tail_1040                    2        75.4   16,000,000       4.7  tail-only, 1040-elem vec
+tail_50000                   2      1244.4   16,000,000      77.8  tail-only, 50k-elem vec
+iter_tiny                    0       112.0   32,000,000       3.5  iterator, 32 elem
+iter_sum                     2      1203.7    2,500,000     481.5  iterator, 50k elem
+```
+
+### Key findings
+
+**1. Trie depth / `ref.cast` overhead is negligible.**
+
+`get_1024` (depth 1) vs `get_1025` (depth 2): 10.2 vs 10.5 ns/read. Adding
+an entire trie level — with its `ref.cast` to `VecInternal` — costs ~0.3 ns.
+The unified node layout (old Phase 2) would save this amount, which is
+immaterial compared to the real bottleneck.
+
+**2. GC object graph size is the dominant cost.**
+
+Tail-only reads (no trie descent, no casts) prove this conclusively:
+
+| Vector size | GC objects | Tail ns/read | Ratio vs 48 |
+|---|---|---|---|
+| 48 elements | ~7 | 3.9 | 1× |
+| 1,040 elements | ~69 | 4.7 | 1.2× |
+| 50,000 elements | ~3,231 | 77.8 | **20×** |
+
+Going from 1,040 → 50,000 elements (same trie depth!) causes a 17× slowdown
+on reads that never touch the trie. The only difference is the number of GC
+objects reachable from the `$PVec` reference.
+
+**3. The 50k-vector penalty is a flat tax on every access.**
+
+- `get_deep` (trie reads on 50k): 480 ns/read
+- `tail_50000` (tail reads on 50k): 78 ns/read
+- Trie descent adds ~400 ns on top, but the 78 ns GC baseline is already 20×
+  worse than small vectors.
+
+**4. Cache warming matters but doesn't explain the gap.**
+
+`get_shallow` at 50M total reads amortizes to 5.4 ns/read; `get_shallow_matched`
+at 2.5M reads shows 10.3 ns/read (~2×). But `tail_50000` at 16M reads (plenty
+of warming) still shows 78 ns — the GC graph cost persists regardless of cache
+temperature.
+
+**5. Iterator overhead is negligible.**
+
+`iter_tiny` ≈ `get_tiny` (3.5 vs 3.7 ns), `iter_sum` ≈ `get_deep` (481 vs 480 ns).
+The `for x in xs` lowering adds no measurable cost beyond the underlying reads.
+
+### What this rules out
+
+The original plan focused on `ref.cast` elimination via a unified node layout.
+The data shows this would save ~0.3 ns/read — a rounding error against the
+~475 ns/read regression on large vectors.
+
+The bottleneck is not:
+- `ref.cast` vs `ref.as_non_null` (negligible difference)
+- trie depth (depth 1 vs 2 is identical)
+- iterator lowering (matches indexed reads)
+- helper call layering (already eliminated in previous cleanup)
+
+The bottleneck **is**:
+- the sheer number of GC objects reachable from a large `$PVec`
+- likely Wasmtime GC tracing / write-barrier / object-graph bookkeeping
+  scaling with the number of live reference-typed fields
 
 ## Current type hierarchy and where casts occur
 
@@ -52,241 +119,201 @@ and less toward:
                      (field $tail (ref $VecLeaf))))
 ```
 
-The root cause of all runtime casts: **`$VecChildren` stores `ref null $VecNode`**.
-Every `array.get` from a children array returns the abstract base type, forcing a
-`ref.cast` to recover the concrete `$VecInternal` or `$VecLeaf` type.
+### GC object count at branching factor 32
 
-### Cast inventory in `src/runtime/arr.rs`
+| Vector size | Leaf nodes | Internal nodes | Total GC objects* |
+|---|---|---|---|
+| 32 | 0 | 0 | 3 (PVec + tail leaf + tail array) |
+| 1,024 | 31 | 1 | ~67 |
+| 1,040 | 32 | 1 | ~69 |
+| 10,000 | 312 | 11 | ~649 |
+| 50,000 | 1,562 | 52 | ~3,231 |
 
-**Hot read path — `get` (27 total `RefCast` in file, breakdown below):**
+*Each leaf = 1 VecLeaf struct + 1 Array; each internal = 1 VecInternal struct + 1 VecChildren array; plus PVec + tail.
 
-| Location | Operation | Count per call |
-|---|---|---|
-| `get` loop body | `ref.cast (ref null $VecInternal)` after `array.get $VecChildren` | 1 per trie level |
-| `get` loop body | `ref.as_non_null` on nullable `$VecInternal` local | 1 per trie level |
-| `get` final step | `ref.cast (ref $VecLeaf)` after `array.get $VecChildren` | 1 |
+### Cast inventory (preserved for reference)
 
-For a vector with 1025–32768 elements (shift=10, depth=2 internal levels):
-- **2× `ref.cast` to `VecInternal`** (loop iterations)
-- **2× `ref.as_non_null`** (loop iterations)
-- **1× `ref.cast` to `VecLeaf`** (final step)
-- **Total: 5 dynamic type checks per trie read**
+See git history for the full cast inventory. The Phase 1 measurements show
+cast cost is ~0.3 ns per trie level, making it a non-issue for optimization.
 
-**Write paths — `push_tail`, `do_set`, `push`, `new_path`, `set`:**
+## Revised path forward
 
-| Function | Cast | Why |
-|---|---|---|
-| `push_tail` | `VecNode → VecInternal` (nullable) | Downcast child for recursion |
-| `push_tail` | `VecInternal → VecNode` | Upcast result to store in `$VecChildren` |
-| `do_set` (leaf branch) | `VecNode → VecLeaf` | Downcast to access `data` field |
-| `do_set` (leaf branch) | `VecLeaf → VecNode` | Upcast result to return as `VecNode` |
-| `do_set` (internal branch) | `VecNode → VecInternal` (×2) | Downcast for children copy + child access |
-| `do_set` (internal branch) | `VecInternal → VecNode` | Upcast result to return |
-| `push` (overflow) | `VecInternal → VecNode` | Upcast old root for `$VecChildren` storage |
-| `push` (overflow) | `VecLeaf → VecNode` | Upcast old tail for `new_path` |
-| `push` (no overflow) | `VecLeaf → VecNode` | Upcast old tail for `push_tail` |
-| `push` (result) | `VecNode → VecInternal` (nullable) | Downcast `push_tail`/`new_path` result for `$PVec.root` |
-| `new_path` | `VecInternal → VecNode` | Upcast newly created node to store in `$VecChildren` |
-| `set` | `VecInternal → VecNode` | Upcast root for `do_set` call |
-| `set` | `VecNode → VecInternal` | Downcast `do_set` result back for `$PVec.root` |
+The goal is to reduce the number of GC objects reachable from a `$PVec`,
+since that is the dominant cost driver.
 
-### Why existing optimization passes can't help
+### Phase 2: Reduce GC object count
 
-The monomorphization pass (`src/ir/monomorphize.rs`) and peephole optimizers
-(`src/opt/pipeline.rs`, `src/opt/passes.rs`) operate on Core IR / ANF IR — the
-user-level intermediate representations. The `ref.cast` instructions are emitted
-directly in the hand-written Wasm IR for the runtime (`src/runtime/arr.rs`) and
-in the codegen backend (`src/codegen/emit.rs`). These passes have no visibility
-into or control over the runtime's Wasm instructions.
+There are three complementary approaches, ordered by expected impact and
+implementation complexity.
 
-The uniqueness pass (`src/opt/uniqueness.rs`) can rewrite COW update operations
-(e.g. `VECTOR_APPEND → VECTOR_APPEND_IN_PLACE`) but doesn't affect the internal
-trie traversal shape — the in-place variant still uses the same `$VecNode` type
-hierarchy and the same cast-heavy descent.
+#### 2a. Eliminate leaf wrapper structs
 
-## Path forward
+**Current:** Each trie leaf is a `$VecLeaf` struct wrapping a `$Array`.
+Two GC objects per leaf.
 
-### Phase 1: Measure the remaining read cost more directly
+**Proposed:** Store `$Array` references directly in the children array.
+Use `(array (mut (ref null $VecNode)))` where `$VecNode` is `anyref` or
+an `eqref`, and cast to `$Array` at the leaf level.
 
-Add focused microbenchmarks or targeted WAT inspection around:
-- tiny vectors (`len <= 32`)
-- larger vectors hitting the tail path
-- trie reads with `shift == 5`
-- trie reads with `shift == 10`
+This halves the leaf-level GC objects (the largest contributor). For a
+50k vector: ~1,562 fewer GC objects.
 
-Goal:
-- separate small-vector behavior from true trie-descent behavior
-- identify whether the cost is mostly in casts, nullability, or depth
+**Trade-off:** Requires one `ref.cast` at the leaf step to recover the
+`$Array` type. Phase 1 showed a single cast costs ~0.3 ns — negligible.
 
-### Phase 2: Unified node layout (eliminates all trie-descent casts)
+**Complexity:** Moderate. Changes `$VecChildren` element type and the
+leaf construction/access patterns in `arr.rs`. Does not change the trie
+algorithm.
 
-Replace the `VecNode` / `VecLeaf` / `VecInternal` subtype hierarchy with a
-single non-abstract struct. This eliminates every `ref.cast` in the trie
-descent loop because `$VecChildren` array elements are already the concrete
-type — no downcast needed.
+#### 2b. Wider branching factor
 
-#### 2a. New type definitions (`src/runtime/types.rs`)
+**Current:** Branching factor 32 (B=5). A 50k vector has ~1,562 leaves
+and ~52 internal nodes.
 
-Remove `$VecNode`, `$VecLeaf`, `$VecInternal`. Replace with:
+**Proposed:** Branching factor 64 (B=6) or 128 (B=7).
 
-```wat
-;; Single unified node — no subtype hierarchy, no abstract base
-(type $VecUNode (struct
-  (field $children (ref null $VecUChildren))  ;; non-null for internal nodes, null for leaves
-  (field $data     (ref null $Array))))        ;; non-null for leaves, null for internal nodes
+| BF | Leaves (50k) | Internals | Total GC objects | Reduction |
+|---|---|---|---|---|
+| 32 | 1,562 | 52 | ~3,231 | baseline |
+| 64 | 781 | 13 | ~1,590 | ~51% |
+| 128 | 391 | 4 | ~793 | ~75% |
 
-(type $VecUChildren (array (mut (ref null $VecUNode))))
+**Trade-off:** Wider nodes waste more space on partially-filled children
+arrays. A BF=64 children array is 64 reference slots (~512 bytes) even if
+only a few are populated. For persistent updates, each `set` copies the
+affected children array, so wider = more copying per update.
 
-(type $PVec (struct
-  (field $len   i32)
-  (field $shift i32)
-  (field $root  (ref null $VecUNode))   ;; was: ref null $VecInternal
-  (field $tail  (ref $VecUNode))))      ;; was: ref $VecLeaf — always a leaf-shaped node
-```
+Write-path benchmarks (`vector_set_chain`, `vector_append_chain`) should
+be checked to ensure the write-cost increase doesn't outweigh the read
+improvement.
 
-Trade-off: every node carries one wasted null field (internal nodes have
-`data = null`, leaves have `children = null`). This is 1 reference-sized
-slot per node — negligible compared to the 32-slot children/data arrays
-they point to.
+**Complexity:** Low. Change `B` constant, update `MASK`/`BF`, adjust
+`tailoff`. The trie algorithm is parameterized on `B` already.
 
-#### 2b. Read path changes (`get` / `get_leaf` in `src/runtime/arr.rs`)
+#### 2c. Flatten small-to-medium vectors (not planned)
 
-**Before (current):**
-```
-loop:
-  node = ref.as_non_null(node_local)        ;; nullable → non-null
-  children = struct.get $VecInternal 0      ;; get children array
-  child = array.get $VecChildren (idx)      ;; returns ref null $VecNode
-  node_local = ref.cast (ref null $VecInternal) child  ;; DOWNCAST
-  ...
-final:
-  child = array.get $VecChildren (idx)      ;; returns ref null $VecNode
-  leaf = ref.cast (ref $VecLeaf) child      ;; DOWNCAST
-  data = struct.get $VecLeaf 0
-```
+This would use a flat `$Array` for vectors below some threshold, avoiding
+the trie entirely for small vectors. However, the complexity is high
+(representation tag, conditional dispatch in every operation, promotion
+logic) and the benefit is uncertain given that 2a+2b should already
+substantially reduce GC object count. If further optimization is needed
+after 2a+2b, Phase 3 (Wasmtime GC investigation) is a better direction.
 
-**After (unified):**
-```
-loop:
-  node = ref.as_non_null(node_local)        ;; still needed (root is nullable)
-  children = struct.get $VecUNode 0         ;; get children — statically typed
-  children_nn = ref.as_non_null(children)   ;; children is ref null, assert non-null
-  child = array.get $VecUChildren (idx)     ;; returns ref null $VecUNode — SAME type
-  node_local = child                        ;; NO CAST — already the right type
-  ...
-final:
-  child = array.get $VecUChildren (idx)     ;; returns ref null $VecUNode
-  child_nn = ref.as_non_null(child)         ;; assert non-null
-  data = struct.get $VecUNode 1             ;; get data field — statically typed
-  data_nn = ref.as_non_null(data)           ;; data is ref null $Array, assert non-null
-```
+### Phase 2 implementation order
 
-Net effect on a depth-2 read:
-- **Before:** 2× `ref.cast VecInternal` + 2× `ref.as_non_null` + 1× `ref.cast VecLeaf` = **5 dynamic checks**
-- **After:** 3× `ref.as_non_null` (root, children field, leaf data field) = **3 null checks, 0 casts**
+**2b (wider branching factor) was tried first and rejected.** Changing the
+branching factor from 32 to 64 made read performance materially worse:
 
-`ref.as_non_null` is cheaper than `ref.cast` — it's a null-pointer check, not a
-full runtime type test against the GC type hierarchy.
+| Benchmark | BF=32 ns/read | BF=64 ns/read | Change |
+|---|---|---|---|
+| `get_deep` | 480.1 | 705.7 | +47% |
+| `tail_50000` | 77.8 | 112.8 | +45% |
+| `iter_sum` | 480.2 | 705.6 | +47% |
 
-**Debuggability note:** With the unified layout, a bug causing trie traversal
-into a leaf node (accessing its null `children` field) would trap with a null
-deref rather than a `ref.cast` failure. Cast failures carry type information in
-the error; null traps don't. This is acceptable for a correct implementation but
-worth knowing when debugging trie invariant violations.
+This indicates Wasmtime's GC cost is sensitive not just to object count, but
+also to the number of reference slots per object. Wider `VecChildren` arrays
+scan worse than narrower ones, even though there are fewer total nodes.
 
-#### 2c. Write path changes (`push_tail`, `do_set`, `push`, `new_path`)
+**2a (eliminate leaf wrappers) is the active Phase 2 direction.** This keeps
+branching factor 32 but removes `VecLeaf` wrapper structs, storing leaf
+`Array` refs directly in `VecChildren` and in `PVec.tail`.
 
-All upcast/downcast pairs disappear because there's only one node type.
+Implementation status:
+- `VecNode` and `VecLeaf` removed from `src/runtime/types.rs`
+- `VecChildren` now stores `(ref null eq)`
+- `PVec.tail` is now `(ref $Array)`
+- `src/runtime/arr.rs` rewritten so leaf arrays are stored directly
+- `src/codegen/emit.rs` updated so vector literals construct `PVec` with a
+  bare array tail
+- `src/runtime/dict.rs` updated for the new `PVec` layout
 
-**`push_tail`:** Currently casts `VecNode → VecInternal` for recursion and
-`VecInternal → VecNode` when returning. Both become identity — the child
-from `array.get $VecUChildren` is already `ref null $VecUNode`, and the
-`struct.new $VecUNode` result is already the right type to store back.
+Measured result after 2a:
 
-**`do_set`:** Currently branches on `level == 0` and casts to `VecLeaf` or
-`VecInternal`. With unified nodes, the branch remains (to decide whether to
-copy `data` or `children`) but the casts become `struct.get $VecUNode 0/1`
-with null checks — no `ref.cast`.
+| Benchmark | Before ns/read | After ns/read | Change |
+|---|---|---|---|
+| `get_deep` | 480.1 | 392.0 | **-18.4%** |
+| `tail_50000` | 77.8 | 63.4 | **-18.5%** |
+| `iter_sum` | 481.5 | 392.9 | **-18.4%** |
+| `get_1025` | 10.5 | 9.5 | -9.2% |
+| `get_tiny` | 3.7 | 3.2 | -15.4% |
 
-**`new_path`:** Currently casts `VecInternal → VecNode` after wrapping.
-Becomes a direct `struct.new $VecUNode` — already the storage type.
+This confirms the earlier hypothesis: reducing GC object count helps, and it
+helps even when the access path never descends the trie (`tail_50000`).
 
-**`push`:** Currently casts `VecLeaf → VecNode` (old tail for promotion) and
-`VecNode → VecInternal` (result). Both become identity on the unified type.
+**2c (flat small vectors) is not planned.** The complexity of maintaining
+two representation paths (flat + trie) with conditional dispatch and
+promotion logic is high. If 2a is still insufficient, Phase 3 investigation
+into Wasmtime GC behavior is a better next step than adding representation
+complexity.
 
-#### 2d. Node construction helpers
+### Phase 2 validation
 
-Leaf construction (replaces `StructNew(T_VEC_LEAF)`):
-```wat
-ref.null $VecUChildren   ;; children = null (it's a leaf)
-<data ref>               ;; data = the element array
-struct.new $VecUNode
-```
+- `cargo build --release`
+- Run full `cargo bench --bench wasm_exec -- vector_read_depth` suite
+- Compare against current baseline (this document's Phase 1 numbers)
+- Run `cargo test`
+- Run `cargo run --release -- run boot/tests/main.tw`
+- Check write-path benchmarks (`vector_set_chain`, `vector_append_chain`)
+  to ensure no regression
 
-Internal construction (replaces `StructNew(T_VEC_INTERNAL)`):
-```wat
-<children ref>           ;; children = the children array
-ref.null $Array          ;; data = null (it's an internal node)
-struct.new $VecUNode
-```
+### Phase 3: Further investigation (if Phase 2 isn't sufficient)
 
-#### 2e. Files to change
+**3a. Wasmtime GC behavior profiling.**
+The tail-only read scaling (3.9 → 77.8 ns as vector size grows) suggests
+Wasmtime's GC is doing work proportional to the reachable object graph
+on every access. This could be:
+- write barriers on `struct.get` of reference fields
+- GC safepoint checks scaling with heap pressure
+- object layout / memory fragmentation from many small GC allocations
 
-| File | What changes |
-|---|---|
-| `src/runtime/types.rs` | Remove `VecNode`, `VecLeaf`, `VecInternal`, `VecChildren`. Add `VecUNode`, `VecUChildren`. Update `PVec` fields. Update type constant names and ref helpers. |
-| `src/runtime/arr.rs` | Rewrite all functions to use unified node. Remove all `RefCast` to/from `VecNode`/`VecLeaf`/`VecInternal`. Replace with `struct.get` + `ref.as_non_null`. |
-| `src/codegen/emit.rs` | Update any references to `T_VEC_LEAF`, `T_VEC_INTERNAL`, `T_VEC_NODE`, `T_VEC_CHILDREN` to use new type names. Update vector literal emission (currently does `ArrayNewFixed → StructNew VecLeaf`). |
-| `src/codegen/ctx.rs` | References `T_PVEC` (lines 14, 619, 2494). Changes likely minimal since `PVec` keeps its name — only needed if ref helpers for the old `VecLeaf`/`VecInternal`/`VecNode` types are used here. |
+Profiling Wasmtime itself (e.g. `perf record` on the host) during the
+`tail_50000` benchmark could identify the exact source.
 
-#### 2f. Validation
+**3b. Compact read-only snapshots.**
+If the boot compiler's hot loops are build-then-read (collect + iterate),
+the builder could freeze into a flat array representation that bypasses
+the trie entirely for reads. The `builder_freeze` path already exists —
+it could produce a compact `$Array`-backed `$PVec` variant.
 
-- `cargo test` — all existing tests pass
-- `cargo run --release -- run boot/tests/main.tw` — boot compiler tests pass
-- Manual WAT inspection of `get` to confirm zero `ref.cast` in trie descent
-- Compare benchmark against `795d1c8` for read-heavy workloads
+**3c. Investigate Wasmtime GC improvements.**
+The scaling behavior may improve in newer Wasmtime releases as Wasm GC
+support matures. Track Wasmtime's GC-related changelogs.
 
-### Phase 3: Further optimizations (if unified layout isn't sufficient)
+## Explicit non-goals
 
-These are independent follow-ups, only worth pursuing if Phase 2 doesn't
-close the gap. "Close the gap" means read-heavy benchmarks are within ~10%
-of the `795d1c8` baseline; if they're still >10% slower after Phase 2,
-investigate Phase 3 options with profiling data.
+Do **not** change the data structure family (RRB trees, finger trees,
+ropes, HAMT hybrids). The persistent bit-partitioned trie is correct for
+this use case — the problem is GC object count, not algorithmic complexity.
 
-**3a. Non-null children field for internal nodes.**
-The unified node uses `ref null $VecUChildren` for the children field, requiring
-`ref.as_non_null` during descent. An alternative: split into two struct types
-again but without a subtype relationship — use `anyref` in children array and
-a single `ref.cast` only at the leaf step. This is worse than unified if
-Wasmtime treats `ref.as_non_null` as nearly free (which it should).
+Do **not** reintroduce complex stage0 codegen special cases. The cost is
+in the runtime representation, not in how user code lowers to Wasm.
 
-**3b. Inline `get` at codegen time for constant-shift vectors.**
-If profiling shows the loop overhead (branch on `level > B`) matters for
-shallow tries, emit unrolled depth-specific `get` variants. Only justified
-if Phase 2 measurements show the loop branch itself is significant vs. the
-cast overhead we've already removed.
+The unified node layout (old Phase 2) is **deprioritized**. It eliminates
+`ref.cast` but saves only ~0.3 ns/read. It can be revisited as a cleanup
+after the GC object count reduction is done, but it is not an optimization
+priority.
 
-## Explicit non-goals for now
+## Benchmark files
 
-Do **not** rush into changing the representation family to something unrelated,
-such as:
-- RRB trees
-- finger trees
-- ropes
-- HAMT hybrids for vectors
+All benchmarks live in `benches/tw/` and are wired into criterion via
+`benches/wasm_exec.rs` under the `vector_read_depth` group.
 
-Those solve different problems and are not justified by the current evidence.
+| File | Size | Depth | Access | Total reads | Purpose |
+|---|---|---|---|---|---|
+| `vector_get_tiny.tw` | 32 | 0 | indexed | 32M | Tail-only baseline |
+| `vector_get_shallow.tw` | 1,000 | 1 | indexed | 50M | Depth 1, hot cache |
+| `vector_get_shallow_matched.tw` | 1,000 | 1 | indexed | 2.5M | Depth 1, matched reads |
+| `vector_get_1024.tw` | 1,024 | 1 | indexed | 2.56M | Depth boundary low |
+| `vector_get_1025.tw` | 1,025 | 2 | indexed | 2.56M | Depth boundary high |
+| `vector_get_deep.tw` | 50,000 | 2 | indexed | 2.5M | Depth 2, large working set |
+| `vector_get_tail_48.tw` | 48 | 1 | tail-only | 16M | GC graph baseline (small) |
+| `vector_get_tail_1040.tw` | 1,040 | 2 | tail-only | 16M | GC graph baseline (medium) |
+| `vector_get_deep_tail_only.tw` | 50,000 | 2 | tail-only | 16M | GC graph cost (large) |
+| `vector_iter_tiny.tw` | 32 | 0 | iterator | 32M | Iterator vs indexed comparison |
+| `vector_iter_sum.tw` | 50,000 | 2 | iterator | 2.5M | Iterator at scale |
 
-Also avoid reintroducing complex stage0-only codegen special cases unless a new
-measurement clearly shows that runtime representation costs are no longer the
-main bottleneck.
-
-## Recommended next implementation target
-
-1. Implement Phase 2 (unified node layout) in one pass:
-   - Update types in `src/runtime/types.rs`
-   - Rewrite `src/runtime/arr.rs` against the new types
-   - Update `src/codegen/emit.rs` references
-2. Validate with `cargo test` + boot compiler tests
-3. Inspect emitted WAT to confirm cast elimination
-4. Benchmark against `795d1c8`
+Existing write-path benchmarks (not yet in criterion):
+- `vector_append_chain.tw` — repeated persistent append
+- `vector_append_indirect.tw` — append through helper function
+- `vector_collect_sum.tw` — builder path construction
+- `vector_set_chain.tw` — persistent point updates

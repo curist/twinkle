@@ -108,12 +108,11 @@ fn keys_fn() -> FuncDef {
             Instr::RefAsNonNull,
             Instr::ArrayLen,
             Instr::LocalSet(1),
-            // result = PVec { 0, 0, null, VecLeaf(Array(0)) }
+            // result = PVec { 0, 0, null, Array(0) }
             Instr::I32Const(0),
             Instr::I32Const(0),
             Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.into())),
             Instr::ArrayNewFixed(T_ARRAY.into(), 0),
-            Instr::StructNew(T_VEC_LEAF.into()),
             Instr::StructNew(T_PVEC.into()),
             Instr::LocalSet(3),
             // i = 0

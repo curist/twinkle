@@ -14,8 +14,6 @@ pub const T_VARIANT: &str = "rt_types__Variant";
 pub const T_BOXED_INT: &str = "rt_types__BoxedInt";
 pub const T_BOXED_FLOAT: &str = "rt_types__BoxedFloat";
 pub const T_ITER_STATE: &str = "rt_types__IterState";
-pub const T_VEC_NODE: &str = "rt_types__VecNode";
-pub const T_VEC_LEAF: &str = "rt_types__VecLeaf";
 pub const T_VEC_CHILDREN: &str = "rt_types__VecChildren";
 pub const T_VEC_INTERNAL: &str = "rt_types__VecInternal";
 pub const T_PVEC: &str = "rt_types__PVec";
@@ -78,37 +76,6 @@ pub fn ref_pvec_null() -> ValType {
     ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_PVEC.into()),
-    }
-}
-
-/// Ref-to-VecNode (non-null)
-pub fn ref_vec_node() -> ValType {
-    ValType::Ref {
-        nullable: false,
-        heap: HeapType::Named(T_VEC_NODE.into()),
-    }
-}
-/// Ref-to-VecNode (nullable)
-pub fn ref_vec_node_null() -> ValType {
-    ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(T_VEC_NODE.into()),
-    }
-}
-
-/// Ref-to-VecLeaf (non-null)
-pub fn ref_vec_leaf() -> ValType {
-    ValType::Ref {
-        nullable: false,
-        heap: HeapType::Named(T_VEC_LEAF.into()),
-    }
-}
-/// Ref-to-VecLeaf (nullable)
-#[allow(dead_code)]
-pub fn ref_vec_leaf_null() -> ValType {
-    ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(T_VEC_LEAF.into()),
     }
 }
 
@@ -288,41 +255,28 @@ pub fn make() -> ModuleIR {
     });
 
     // -- Persistent vector trie types --
+    //
+    // Layout: VecChildren stores eqref (either VecInternal or Array directly).
+    // No VecNode base or VecLeaf wrapper — leaf arrays live directly in VecChildren.
+    // PVec.tail is a bare Array ref.
 
-    // (type $VecNode (sub (struct)))  — abstract trie node base
-    m.types.push(TypeDef::Struct {
-        name: "VecNode".into(),
-        supertype: None,
-        non_final: true,
-        fields: vec![],
-    });
-
-    // (type $VecLeaf (sub $VecNode (struct (field $data (ref $Array)))))
-    m.types.push(TypeDef::Struct {
-        name: "VecLeaf".into(),
-        supertype: Some("VecNode".into()),
-        non_final: false,
-        fields: vec![FieldDef {
-            name: Some("data".into()),
-            mutable: false,
-            ty: ref_array(),
-        }],
-    });
-
-    // (type $VecChildren (array (mut (ref null $VecNode))))
+    // (type $VecChildren (array (mut (ref null eq))))
     m.types.push(TypeDef::Array {
         name: "VecChildren".into(),
         elem: FieldDef {
             name: None,
             mutable: true,
-            ty: ref_vec_node_null(),
+            ty: ValType::Ref {
+                nullable: true,
+                heap: HeapType::Eq,
+            },
         },
     });
 
-    // (type $VecInternal (sub $VecNode (struct (field $children (ref $VecChildren)))))
+    // (type $VecInternal (struct (field $children (ref $VecChildren))))
     m.types.push(TypeDef::Struct {
         name: "VecInternal".into(),
-        supertype: Some("VecNode".into()),
+        supertype: None,
         non_final: false,
         fields: vec![FieldDef {
             name: Some("children".into()),
@@ -332,7 +286,7 @@ pub fn make() -> ModuleIR {
     });
 
     // (type $PVec (struct (field $len i32) (field $shift i32)
-    //                     (field $root (ref null $VecInternal)) (field $tail (ref $VecLeaf))))
+    //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
     m.types.push(TypeDef::Struct {
         name: "PVec".into(),
         supertype: None,
@@ -348,7 +302,7 @@ pub fn make() -> ModuleIR {
             FieldDef {
                 name: Some("tail".into()),
                 mutable: false,
-                ty: ref_vec_leaf(),
+                ty: ref_array(),
             },
         ],
     });

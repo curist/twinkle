@@ -1,0 +1,20 @@
+// Benchmark: indexed reads on a medium vector (len=1000, shift=5, depth=1).
+// Trie reads traverse 1 internal level before hitting a leaf.
+// Expected output:
+//   24975000000
+
+n := 1000
+rounds := 50000
+xs := collect x in range(n) { x }
+
+checksum := 0
+r := 0
+for r < rounds {
+  i := 0
+  for i < n {
+    checksum = checksum + xs[i]
+    i = i + 1
+  }
+  r = r + 1
+}
+println("${checksum}")

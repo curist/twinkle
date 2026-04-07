@@ -1,0 +1,26 @@
+// Benchmark: reads only from the tail region of a large vector (len=50000).
+// The last `len % 32` elements live in the tail, hitting the fast path
+// with no trie descent — but the vector itself is large (same GC object
+// graph as vector_get_deep). Isolates cache / GC-graph overhead from
+// trie-descent cast cost.
+// Expected output:
+//   799864000000
+
+n := 50000
+tail_start := n - (n % 32)  // 49984
+tail_len := n - tail_start   // 16
+rounds := 1000000
+
+xs := collect x in range(n) { x }
+
+checksum := 0
+r := 0
+for r < rounds {
+  i := tail_start
+  for i < n {
+    checksum = checksum + xs[i]
+    i = i + 1
+  }
+  r = r + 1
+}
+println("${checksum}")

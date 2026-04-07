@@ -1,0 +1,22 @@
+// Benchmark: tail-only reads on a small depth-1 vector (len=48, tail=16).
+// Reads only the last 16 elements (tail region), 1M rounds = 16M reads.
+// Compare with tail_1040 and tail_50000 to isolate GC graph size effects.
+// Expected output:
+//   632000000
+
+n := 48
+tail_start := n - 16
+rounds := 1000000
+xs := collect x in range(n) { x }
+
+checksum := 0
+r := 0
+for r < rounds {
+  i := tail_start
+  for i < n {
+    checksum = checksum + xs[i]
+    i = i + 1
+  }
+  r = r + 1
+}
+println("${checksum}")

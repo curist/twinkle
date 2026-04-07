@@ -22,8 +22,8 @@ use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_PVEC, T_STRING, T_VARIANT, T_VEC_LEAF, ref_array, ref_array_null, ref_dict_null,
-    ref_iter_state_null, ref_pvec, ref_pvec_null, ref_string, ref_string_null,
+    T_PVEC, T_STRING, T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_iter_state_null,
+    ref_pvec, ref_pvec_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -4010,7 +4010,7 @@ fn emit_array_literal(
         instrs.push(Instr::I32Const(elems.len() as i32));
         instrs.push(Instr::I32Const(0)); // shift = 0
         instrs.push(Instr::RefNull(HeapType::Named(T_VEC_INTERNAL.to_string())));
-        // Build tail: elements → ArrayNewFixed → StructNew VecLeaf
+        // Build tail: elements → ArrayNewFixed
         for elem in elems {
             if let Some(elem_ty) = elem_val_ty.as_ref() {
                 instrs.extend(emit_atom(elem, Some(elem_ty), ctx));
@@ -4023,7 +4023,6 @@ fn emit_array_literal(
             T_ARRAY.to_string(),
             elems.len() as u32,
         ));
-        instrs.push(Instr::StructNew(T_VEC_LEAF.to_string()));
         instrs.push(Instr::StructNew(T_PVEC.to_string()));
     } else {
         // Large literal (>32): use repeated push
@@ -9390,7 +9389,7 @@ mod tests {
 
     #[test]
     fn emit_array_lit_boxes_elements() {
-        use crate::runtime::types::{T_VEC_INTERNAL, T_VEC_LEAF};
+        use crate::runtime::types::T_VEC_INTERNAL;
         let type_env = TypeEnv::new();
         let prelude = build_prelude_map();
         let user_funcs = HashMap::new();
@@ -9415,7 +9414,6 @@ mod tests {
                 Instr::I32Const(1),
                 Instr::RefI31,
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 2),
-                Instr::StructNew(T_VEC_LEAF.to_string()),
                 Instr::StructNew(T_PVEC.to_string()),
                 Instr::LocalSet(0),
             ]
