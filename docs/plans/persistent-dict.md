@@ -155,22 +155,15 @@ Recommended shape for v1:
 
 Important dependency note:
 
-- `PVec` is only an obvious fit on stage0 because the persistent vector runtime
-  types already exist there
-- boot does not currently have matching persistent-vector runtime type coverage
-  in `boot/compiler/codegen/runtime/types.tw`
-- therefore `PVec`-backed ordering is not a free reuse on boot; it requires an
-  explicit dependency decision
+- this was originally written while persistent-vector parity was still pending
+- that dependency is now satisfied: stage0 and boot both have the pragmatic
+  `PVec` runtime shape and matching ABI/codegen support
+- therefore `PVec`-backed ordering is now the default first implementation
+  choice for both runtimes rather than a blocked prerequisite
 
-Acceptable ways to satisfy that dependency:
-
-1. add/mirror the persistent vector runtime types and any needed ABI support in
-   boot first, then use `PVec` for dict order in both runtimes
-2. choose a different ordering representation that already exists in both
-   runtimes for the first HAMT landing
-
-Until that decision is made, `PVec` should be treated as the default
-recommendation, not as already-available shared infrastructure.
+Alternative ordering representations are still possible if implementation
+experience suggests a better fit, but the HAMT rollout no longer needs a
+separate vector-parity project first.
 
 Operationally:
 
@@ -354,20 +347,14 @@ Minimum requirements:
 - `keys` reads from order rather than walking the HAMT directly
 - `for` / `collect` over dicts therefore continue to see stable insertion order
 
-Dependency decision required before implementation:
-
-- if `order` is backed by `PVec`, boot must first gain the necessary persistent
-  vector runtime type support
-- otherwise the first HAMT landing must choose an ordering representation that
-  is already available in both runtimes
-
 Implementation note:
 
-- `PVec` is the default recommendation for stage0
-- for boot, treat `PVec` as a dependency to be introduced explicitly, not as
-  already-present shared runtime machinery
+- `PVec` is now the default recommendation for both stage0 and boot
 - remove-from-order may remain O(N) in the first landing; that is acceptable
   for v1 if lookup/update still benefit from HAMT
+- if a different ordering representation turns out to simplify boot/runtime
+  implementation materially, it can still be considered, but it is no longer
+  required by missing vector infrastructure
 
 ### Task D: Hash + Equality Integration
 
@@ -443,9 +430,8 @@ must continue to apply after the HAMT migration.
 ## Staging
 
 1. Add HAMT type definitions in stage0 and boot runtimes, including `PDict.order`.
-2. Decide the first cross-runtime ordering representation:
-   - either introduce the missing boot-side support needed for `PVec` order
-   - or choose an ordering container already available in both runtimes.
+2. Use `PVec` as the first cross-runtime ordering representation unless an
+   implementation-specific reason emerges to choose a different container.
 3. Add deterministic hash helpers.
 4. Rewrite stage0 `rt.dict` to `PDict` + HAMT + ordered iteration metadata.
 5. Rewrite boot `rt.dict` to match.
