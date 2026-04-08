@@ -158,6 +158,9 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
   }
   case def {
     .Record(name, type_params, fields) => {
+      if args.len() < type_params.len() {
+        error("layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       sym := "$${name}_${mono_to_key(.Named(tid, args))}"
       field_layouts := collect f,i in fields {
         // Substitute type params with concrete args
@@ -175,9 +178,15 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
       })
     },
     .Sum(name, type_params, variants) => {
+      if args.len() < type_params.len() {
+        error("layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       layout_of_sum_def(tid, args, name, type_params, variants, env)
     },
-    .Alias(_, type_params, target) => {
+    .Alias(name, type_params, target) => {
+      if args.len() < type_params.len() {
+        error("layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       // Resolve alias and compute layout of the target
       layout_of(subst_type_params(target, type_params, args), env)
     },
@@ -291,7 +300,10 @@ fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<Mon
     .Var(name) => {
       for p,i in type_params {
         if p == name {
-          return args[i]
+          if i < args.len() {
+            return args[i]
+          }
+          error("subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)")
         }
       }
       ty

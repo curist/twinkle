@@ -88,14 +88,17 @@ pub fn plan_wasm_types(
     // Collect param types
     params := func.params
     for p in params {
+      validate_concrete_mono(p.ty, env, "function '${func.name}' parameter L${p.local.id}")
       reg = register_mono(reg, p.ty, env)
     }
     // Collect return type
+    validate_concrete_mono(func.return_ty, env, "function '${func.name}' return type")
     reg = register_mono(reg, func.return_ty, env)
     // Collect from op_result_mono
     mono_keys := func.op_result_mono.keys()
     for key in mono_keys {
       mono_val := unwrap_or(func.op_result_mono[key], .Void)
+      validate_concrete_mono(mono_val, env, "function '${func.name}' local L${key}")
       reg = register_mono(reg, mono_val, env)
     }
     // Walk function body
@@ -147,6 +150,57 @@ pub fn plan_wasm_types(
   reg = ensure_boundary_imports(reg)
 
   topo_sort_type_defs(reg)
+}
+
+fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
+  case ty {
+    .Var(name) => error("${context}: unbound type variable '${name}' reached Wasm planning"),
+    .Named(tid, args) => {
+      entry := find_type_entry(env, tid)
+      name := case entry.def {
+        .Some(def) => {
+          case def {
+            .Record(n, _, _) => n,
+            .Sum(n, _, _) => n,
+            .Alias(n, _, _) => n,
+          }
+        },
+        .None => "TypeId ${tid.id}",
+      }
+      if args.len() < entry.arity {
+        error("${context}: ${name} expects ${entry.arity} type arg(s), got ${args.len()}")
+      }
+      for arg in args {
+        validate_concrete_mono(arg, env, context)
+      }
+    },
+    .Vector(inner) => validate_concrete_mono(inner, env, context),
+    .Dict(k, v) => {
+      validate_concrete_mono(k, env, context)
+      validate_concrete_mono(v, env, context)
+    },
+    .Function(params, ret) => {
+      for param in params {
+        validate_concrete_mono(param, env, context)
+      }
+      validate_concrete_mono(ret, env, context)
+    },
+    .Optional(inner) => validate_concrete_mono(inner, env, context),
+    .Result(ok, err) => {
+      validate_concrete_mono(ok, env, context)
+      validate_concrete_mono(err, env, context)
+    },
+    .Int => {},
+    .Float => {},
+    .Bool => {},
+    .Byte => {},
+    .String => {},
+    .Void => {},
+    .Anyref_ => {},
+    .Never => {},
+    .MetaVar(_) => {},
+    .ErrorType => {},
+  }
 }
 
 fn ensure_boundary_imports(reg: WasmTypeRegistry) WasmTypeRegistry {
@@ -240,14 +294,20 @@ fn register_named_dependencies(reg: WasmTypeRegistry, tid: TypeId, args: Vector<
     .None => error("register_named_dependencies: TypeId ${tid.id} has no definition"),
   }
   case def {
-    .Record(_, type_params, fields) => {
+    .Record(name, type_params, fields) => {
+      if args.len() < type_params.len() {
+        error("register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       cur := reg
       for f in fields {
         cur = register_mono(cur, subst_type_params(f.ty, type_params, args), env)
       }
       cur
     },
-    .Sum(_, type_params, variants) => {
+    .Sum(name, type_params, variants) => {
+      if args.len() < type_params.len() {
+        error("register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       cur := reg
       for v in variants {
         for field_ty in v.fields {
@@ -256,7 +316,10 @@ fn register_named_dependencies(reg: WasmTypeRegistry, tid: TypeId, args: Vector<
       }
       cur
     },
-    .Alias(_, type_params, target) => {
+    .Alias(name, type_params, target) => {
+      if args.len() < type_params.len() {
+        error("register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}")
+      }
       register_mono(reg, subst_type_params(target, type_params, args), env)
     },
   }
@@ -280,7 +343,10 @@ fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<Mon
     .Var(name) => {
       for p,i in type_params {
         if p == name {
-          return args[i]
+          if i < args.len() {
+            return args[i]
+          }
+          error("subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)")
         }
       }
       ty
