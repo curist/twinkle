@@ -257,6 +257,15 @@ fn spec_key(func_id: FuncId, type_args: Vector<MonoType>) String {
 type InstQueue = .{ items: Vector<InstItem> }
 type InstItem = .{ func_id: FuncId, subst: Dict<String, MonoType> }
 
+fn subst_covers(type_params: Vector<String>, subst: Dict<String, MonoType>) Bool {
+  for tp in type_params {
+    if !subst.has(tp) {
+      return false
+    }
+  }
+  true
+}
+
 fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue) InstQueue {
   case expr.kind {
     .Call(callee, args) => {
@@ -265,38 +274,45 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
           if generic_ids.has(fid.id) {
             case func_map[fid.id] {
               .Some(gf) => {
+                type_params := collect_type_params(gf)
                 subst: Dict<String, MonoType> = Dict.new()
                 i := 0
                 for i < gf.params.len() and i < args.len() {
                   subst = match_type_against(gf.params[i].ty, args[i].ty, subst)
                   i = i + 1
                 }
-                if subst.keys().len() > 0 {
+                if subst_covers(type_params, subst) {
                   queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
                 }
               },
               .None => {},
             }
           }
+          args.fold(queue, fn(q, arg) {
+            collect_instantiations(arg, generic_ids, func_map, q)
+          })
         },
-        _ => {},
+        _ => {
+          args.fold(collect_instantiations(callee, generic_ids, func_map, queue), fn(q, arg) {
+            collect_instantiations(arg, generic_ids, func_map, q)
+          })
+        },
       }
-      args.fold(collect_instantiations(callee, generic_ids, func_map, queue), fn(q, arg) {
-        collect_instantiations(arg, generic_ids, func_map, q)
-      })
     },
     .GlobalFunc(fid) => {
       if generic_ids.has(fid.id) {
         case func_map[fid.id] {
           .Some(gf) => {
-            // Non-call position: match against expr.ty
+            // Non-call position: match against expr.ty.
+            // Only specialize fully-solved first-class references.
             param_tys: Vector<MonoType> = []
             for p in gf.params {
               param_tys = param_tys.append(p.ty)
             }
             generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
+            type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
-            if subst.keys().len() > 0 {
+            if subst_covers(type_params, subst) {
               queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
             }
           },
@@ -473,11 +489,14 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
                   subst = match_type_against(gf.params[i].ty, new_args[i].ty, subst)
                   i = i + 1
                 }
+                if !subst_covers(type_params, subst) {
+                  return .Call(rewrite_calls(callee, spec_map, generic_ids, func_map), new_args)
+                }
                 type_args: Vector<MonoType> = []
                 for tp in type_params {
                   case subst[tp] {
                     .Some(t) => { type_args = type_args.append(t) },
-                    .None => { type_args = type_args.append(MonoType.Void) },
+                    .None => {},
                   }
                 }
                 key := spec_key(fid, type_args)
@@ -507,11 +526,14 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
             generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, parent.ty, Dict.new())
+            if !subst_covers(type_params, subst) {
+              return parent.kind
+            }
             type_args: Vector<MonoType> = []
             for tp in type_params {
               case subst[tp] {
                 .Some(t) => { type_args = type_args.append(t) },
-                .None => { type_args = type_args.append(MonoType.Void) },
+                .None => {},
               }
             }
             key := spec_key(fid, type_args)
@@ -634,11 +656,15 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     case func_map[item.func_id.id] {
       .Some(gf) => {
         type_params := collect_type_params(gf)
+        if !subst_covers(type_params, item.subst) {
+          continue
+        }
+
         type_args: Vector<MonoType> = []
         for tp in type_params {
           case item.subst[tp] {
             .Some(t) => { type_args = type_args.append(t) },
-            .None => { type_args = type_args.append(MonoType.Void) },
+            .None => {},
           }
         }
 
