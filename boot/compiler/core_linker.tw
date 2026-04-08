@@ -37,13 +37,19 @@ pub fn link(
   //         Build (module_path, func_name) → global_FuncId mapping.
   next_global := builtin_count
   global_ids: Dict<String, Dict<String, Int>> = Dict.new()  // path → (name → global_id)
+  defined_ids: Dict<String, Dict<Int, Int>> = Dict.new()    // path → (local FuncId → global FuncId)
   for m in modules {
     name_to_id: Dict<String, Int> = Dict.new()
+    local_to_global: Dict<Int, Int> = Dict.new()
     for f in m.core.functions {
+      local_to_global[f.func_id.id] = next_global
+      // Keep named lookup for external refs. Hoisted lambdas may share names
+      // like "__lambda", but external refs only target named exports.
       name_to_id[f.name] = next_global
       next_global = next_global + 1
     }
     global_ids[m.path] = name_to_id
+    defined_ids[m.path] = local_to_global
   }
 
   // Step 2: Build per-module remap tables and rewrite functions.
@@ -55,13 +61,14 @@ pub fn link(
   for m in modules {
     remap: Dict<Int, Int> = Dict.new()
 
-    // Map defined functions: local FuncId → global FuncId
-    mod_globals: Dict<String, Int> = case global_ids[m.path] {
+    // Map defined functions: local FuncId → global FuncId.
+    // Use original FuncIds, not names, because hoisted lambdas share names.
+    mod_defined: Dict<Int, Int> = case defined_ids[m.path] {
       .Some(g) => g,
       .None => Dict.new(),
     }
     for f in m.core.functions {
-      case mod_globals[f.name] {
+      case mod_defined[f.func_id.id] {
         .Some(gid) => { remap[f.func_id.id] = gid },
         .None => {},
       }

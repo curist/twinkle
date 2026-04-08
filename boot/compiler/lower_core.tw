@@ -274,40 +274,67 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
 // ── Record / variant / pattern helpers ───────────────────────────────
 
 fn find_field_index(env: ResolvedEnv, tid: TypeId, field_name: String) Int {
-  case env.lookup_type_def(tid) {
-    .Some(def) => {
-      case def {
-        .Record(_, _, fields) => {
-          for i in range(fields.len()) {
-            if fields[i].name == field_name {
-              return i
-            }
+  find_field_index_in_type(env, .Named(tid, []), field_name)
+}
+
+fn find_field_index_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) Int {
+  case ty {
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record(_, _, fields) => {
+              for i in range(fields.len()) {
+                if fields[i].name == field_name {
+                  return i
+                }
+              }
+              -1
+            },
+            .Alias(_, type_params, target) => {
+              expanded := subst_vars(target, build_var_map(type_params, args))
+              find_field_index_in_type(env, expanded, field_name)
+            },
+            _ => -1,
           }
-          -1
         },
-        _ => -1,
+        .None => -1,
       }
     },
-    .None => -1,
+    _ => -1,
   }
 }
 
 fn find_field_type(env: ResolvedEnv, tid: TypeId, field_name: String) MonoType {
-  case env.lookup_type_def(tid) {
-    .Some(def) => {
-      case def {
-        .Record(_, _, fields) => {
-          for f in fields {
-            if f.name == field_name {
-              return f.ty
-            }
+  find_field_type_in_type(env, .Named(tid, []), field_name)
+}
+
+fn find_field_type_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) MonoType {
+  case ty {
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record(_, type_params, fields) => {
+              var_map := build_var_map(type_params, args)
+              for f in fields {
+                if f.name == field_name {
+                  return subst_vars(f.ty, var_map)
+                }
+              }
+              .Void
+            },
+            .Alias(_, type_params, target) => {
+              expanded := subst_vars(target, build_var_map(type_params, args))
+              find_field_type_in_type(env, expanded, field_name)
+            },
+            _ => .Void,
           }
-          .Void
         },
-        _ => .Void,
+        .None => .Void,
       }
     },
-    .None => .Void,
+    _ => .Void,
   }
 }
 
@@ -472,7 +499,7 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
   fields: Vector<FieldInit> = []
   cur_ctx := ctx
   for entry in entries {
-    fid_idx := find_field_index(cur_ctx.env, tid, entry.name)
+    fid_idx := find_field_index_in_type(cur_ctx.env, ty, entry.name)
     fid := FieldId.{ id: fid_idx }
     case entry.value {
       .Some(val_expr) => {
@@ -484,7 +511,7 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
         // Field punning: `name` means `name: name`
         case cur_ctx.lookup_local(entry.name) {
           .Some(local_id) => {
-            val_ty := find_field_type(cur_ctx.env, tid, entry.name)
+            val_ty := find_field_type_in_type(cur_ctx.env, ty, entry.name)
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
             fields = fields.append(FieldInit.{ field: fid, value: val })
           },
@@ -1201,8 +1228,7 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
     .Match(scrut, arms) => {
       st := collect_free_vars_inner(scrut, bound, captured, result)
       for arm in arms {
-        arm_bound := st.bound
-        collect_pattern_bound(arm.pattern, arm_bound)
+        arm_bound := collect_pattern_bound(arm.pattern, st.bound)
         st = collect_free_vars_inner(arm.body, arm_bound, st.captured, st.result)
       }
       st
@@ -1264,15 +1290,20 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
   }
 }
 
-fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Void {
+fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Dict<Int, Bool> {
   case pattern {
-    .Var(id) => { bound[id.id] = true },
-    .Variant(_, _, sub_pats) => {
-      for sp in sub_pats {
-        collect_pattern_bound(sp, bound)
-      }
+    .Var(id) => {
+      bound[id.id] = true
+      bound
     },
-    _ => {},
+    .Variant(_, _, sub_pats) => {
+      cur := bound
+      for sp in sub_pats {
+        cur = collect_pattern_bound(sp, cur)
+      }
+      cur
+    },
+    _ => bound,
   }
 }
 
@@ -2065,7 +2096,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
                 .Some(id) => id,
                 .None => { return .None },
               }
-              fid_idx := find_field_index(ctx.env, tid, field_name)
+              fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
               fid := FieldId.{ id: fid_idx }
               // Use GlobalLocal for module globals, Local for function locals
               base_kind: CoreExprKind = case ctx.module_globals[name] {
@@ -2094,7 +2125,7 @@ fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span) Lv
             .Some(id) => id,
             .None => { return .None },
           }
-          fid_idx := find_field_index(ctx.env, tid, field_name)
+          fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
           fid := FieldId.{ id: fid_idx }
           // We need to read the current base value to build the update.
           // For nested chains, we lower_lvalue_assign on `base` with

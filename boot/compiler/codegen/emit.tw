@@ -169,10 +169,24 @@ type FuncResult = .{
 }
 
 fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
-  // Set up params
+  // Set up params. Hoisted closures receive captured locals first,
+  // followed by their declared parameters.
   local_map: Dict<Int, LocalEntry> = Dict.new()
   param_types: Vector<ValType> = []
   idx := 0
+
+  case base_ctx.registry.capture_layouts[func.func_id.id] {
+    .Some(captures) => {
+      for cap in captures {
+        vt := val_type_of_mono(cap.ty, base_ctx.env)
+        local_map[cap.local_id.id] = LocalEntry.{ index: idx, val_type: vt, mono: cap.ty }
+        param_types = param_types.append(vt)
+        idx = idx + 1
+      }
+    },
+    .None => {},
+  }
+
   for p in func.params {
     vt := val_type_of_mono(p.ty, base_ctx.env)
     local_map[p.local.id] = LocalEntry.{ index: idx, val_type: vt, mono: p.ty }
@@ -1461,16 +1475,27 @@ fn emit_intrinsic_iterator_next(args: Vector<Atom>, result_idx: Int, result_mono
 
 // ── Record operations ──────────────────────────────────────────────────
 
-fn emit_record_literal(tid: TypeId, fields: Vector<FieldAtom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  layout := layout_of(result_mono, ctx.env)
-  sym := case layout {
-    .Record(r) => r.sym,
-    _ => error("emit_record_literal: expected Record layout"),
-  }
-  rec_layout := case layout {
+fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
+  layout := layout_of(mono, env)
+  case layout {
     .Record(r) => r,
-    _ => error("emit_record_literal: expected Record layout"),
+    _ => {
+      case mono {
+        .Named(tid, args) => {
+          case env.lookup_type_def(tid) {
+            .Some(.Alias(_, type_params, target)) => record_layout_of(subst_type_params(target, type_params, args), env),
+            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+          }
+        },
+        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+      }
+    },
   }
+}
+
+fn emit_record_literal(tid: TypeId, fields: Vector<FieldAtom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  rec_layout := record_layout_of(result_mono, ctx.env)
+  sym := rec_layout.sym
 
   // Emit fields in order of the struct definition
   out: Vector<Instr> = []
@@ -1490,26 +1515,40 @@ fn emit_record_literal(tid: TypeId, fields: Vector<FieldAtom>, result_mono: Mono
 }
 
 fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  // Determine the record type from the target atom's mono type
+  // Determine the record type from the target atom's mono type.
+  // Dead/impossible branches can leave a pattern-bound local typed as Void;
+  // in that case emit an arbitrary default of the requested result type.
   target_mono := atom_mono(target, ctx)
-  layout := layout_of(target_mono, ctx.env)
-  rec := case layout {
-    .Record(r) => r,
-    _ => error("emit_record_get: expected Record layout"),
+  case target_mono {
+    .Void => emit_default_value(val_type_of_mono(result_mono, ctx.env)),
+    _ => {
+      rec := record_layout_of(target_mono, ctx.env)
+      field_idx := find_field_index(rec, fid)
+      out := emit_atom(target, ctx)
+      out.append(.StructGet(rec.sym, field_idx))
+    },
   }
-  // Find field index
-  field_idx := find_field_index(rec, fid)
-  out := emit_atom(target, ctx)
-  out.append(.StructGet(rec.sym, field_idx))
 }
 
 fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   base_mono := atom_mono(base, ctx)
-  layout := layout_of(base_mono, ctx.env)
-  rec := case layout {
-    .Record(r) => r,
-    _ => error("emit_record_update: expected Record layout"),
+  case base_mono {
+    .Void => {
+      rec := record_layout_of(result_mono, ctx.env)
+      out: Vector<Instr> = []
+      for fl in rec.fields {
+        if fl.field_id.id == fid.id {
+          out = append_instrs(out, emit_atom(value, ctx))
+        } else {
+          out = append_instrs(out, emit_default_value(fl.val_type))
+        }
+      }
+      return out.append(.StructNew(rec.sym))
+    },
+    _ => {},
   }
+
+  rec := record_layout_of(base_mono, ctx.env)
   field_idx := find_field_index(rec, fid)
 
   if can_reuse {
@@ -1789,6 +1828,21 @@ fn emit_arm_chain(
   out
 }
 
+fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
+  case scrutinee_mono {
+    .Optional(_) => true,
+    .Result(_, _) => true,
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(.Sum(_, _, _)) => true,
+        .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(subst_type_params(target, type_params, args), env),
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
 fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   case pattern {
     .Wildcard => [.I32Const(1)],
@@ -1815,7 +1869,11 @@ fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>,
       out.append(.Call("rt_str__eq"))
     },
     .Variant(tid, vid, fields) => {
-      emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx)
+      if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
+        [.I32Const(0)]
+      } else {
+        emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx)
+      }
     },
   }
 }
@@ -1848,6 +1906,21 @@ fn emit_variant_pattern_condition(
       field_instrs := clone_instrs(scrutinee_instrs)
       field_instrs = field_instrs.append(.StructGet(sum_layout.sym, offset))
       field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+      case field_mono {
+        .Void => {
+          case fp {
+            .Variant(_, nested_vid, _) => {
+              fid_text := case ctx.current_func_id {
+                .Some(fid) => fid.id.to_string(),
+                .None => "?",
+              }
+              error("emit_variant_pattern_condition: nested variant pattern on void field in FuncId(${fid_text}), scrutinee=${mono_to_key(scrutinee_mono)}, variant=${vid.id}, field=${i}, nested_variant=${nested_vid.id}")
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
       inner_checks = inner_checks.append(
         emit_pattern_condition(fp, field_instrs, field_mono, ctx)
       )
@@ -1872,17 +1945,21 @@ fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, 
       out.append(.LocalSet(entry.index))
     },
     .Variant(tid, vid, fields) => {
-      sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
-      variant_layout := find_variant_layout(sum_layout, vid)
-      out: Vector<Instr> = []
-      for fp,i in fields {
-        offset := variant_layout.struct_field_offset + i
-        field_instrs := clone_instrs(scrutinee_instrs)
-        field_instrs = field_instrs.append(.StructGet(sum_layout.sym, offset))
-        field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
-        out = append_instrs(out, emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+      if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
+        []
+      } else {
+        sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
+        variant_layout := find_variant_layout(sum_layout, vid)
+        out: Vector<Instr> = []
+        for fp,i in fields {
+          offset := variant_layout.struct_field_offset + i
+          field_instrs := clone_instrs(scrutinee_instrs)
+          field_instrs = field_instrs.append(.StructGet(sum_layout.sym, offset))
+          field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+          out = append_instrs(out, emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+        }
+        out
       }
-      out
     },
   }
 }
@@ -2442,8 +2519,16 @@ fn variant_field_mono(scrutinee_mono: MonoType, vid: VariantId, field_idx: Int, 
       if vid.id == 1 and field_idx == 0 { return err }
       .Void
     },
-    .Named(tid, args) => resolve_named_variant_field(tid, args, vid, field_idx, env),
-    _ => error("variant_field_mono: unexpected scrutinee type"),
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(.Alias(_, type_params, target)) => {
+          variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env)
+        },
+        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      }
+    },
+    .Void => .Void,
+    _ => error("variant_field_mono: unexpected scrutinee type ${mono_to_key(scrutinee_mono)} for variant ${vid.id} field ${field_idx}"),
   }
 }
 
@@ -2594,11 +2679,15 @@ fn collect_pattern_binding_monos(pattern: CorePattern, scrutinee_mono: MonoType,
       out
     },
     .Variant(_, vid, fields) => {
-      for field,i in fields {
-        field_mono := variant_field_mono(scrutinee_mono, vid, i, env)
-        out = collect_pattern_binding_monos(field, field_mono, env, out)
+      if !can_match_variant_pattern(scrutinee_mono, env) {
+        out
+      } else {
+        for field,i in fields {
+          field_mono := variant_field_mono(scrutinee_mono, vid, i, env)
+          out = collect_pattern_binding_monos(field, field_mono, env, out)
+        }
+        out
       }
-      out
     },
     _ => out,
   }

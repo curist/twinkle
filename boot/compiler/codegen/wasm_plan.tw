@@ -2,7 +2,7 @@
 // of Wasm type definitions needed by the module before emission starts.
 
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, TypeEntry}
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, CorePattern}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
 use compiler.anf.{
@@ -496,6 +496,20 @@ fn walk_atoms(reg: WasmTypeRegistry, atoms: Vector<Atom>) WasmTypeRegistry {
   reg
 }
 
+fn walk_pattern(reg: WasmTypeRegistry, pattern: CorePattern) WasmTypeRegistry {
+  case pattern {
+    .LitStr(s) => register_string(reg, s),
+    .Variant(_, _, fields) => {
+      cur := reg
+      for field in fields {
+        cur = walk_pattern(cur, field)
+      }
+      cur
+    },
+    _ => reg,
+  }
+}
+
 // ── Call analysis helpers ─────────────────────────────────────────────
 
 fn register_func_sig(reg: WasmTypeRegistry, fid: FuncId, func_map: Dict<Int, AnfFunctionDef>) WasmTypeRegistry {
@@ -593,6 +607,7 @@ fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: Builtin
 
     .AMatch(scrutinee, arms) => {
       arms.fold(walk_atom(reg, scrutinee), fn(r, arm) {
+        r = walk_pattern(r, arm.pattern)
         walk_expr(r, arm.body, env, builtins, func_map, current_func)
       })
     },
