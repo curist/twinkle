@@ -60,6 +60,7 @@ from stage0, bootstrapping sequence)
 | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
+| [boot-function-identity-canonicalization.md](boot-function-identity-canonicalization.md) | Canonicalize imported function identity across resolver, lowering, and linking so alias spelling stops affecting cross-module linkage |
 | [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |

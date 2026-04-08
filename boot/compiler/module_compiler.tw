@@ -250,8 +250,25 @@ fn compile_module(
 
   // Build external_refs: phantom FuncIds → target module/function
   external_refs := build_external_refs(
-    lowered.func_table, lowered.module, func_origin, cur_state.builtins.next_id,
+    lowered.func_table, lowered.module, func_origin, check_result.env, cur_state.builtins.next_id,
   )
+  // DEBUG: check for unresolved external refs
+  if canonical == "boot/main.tw" {
+    defined: Dict<Int, Bool> = Dict.new()
+    for f in lowered.module.functions {
+      defined[f.func_id.id] = true
+    }
+    for n in lowered.func_table.keys() {
+      case lowered.func_table[n] {
+        .Some(fid) => {
+          if fid.id >= cur_state.builtins.next_id and !defined.has(fid.id) and !external_refs.has(fid.id) {
+            println("[DEBUG entry] UNRESOLVED FuncId=${fid.id} name='${n}'")
+          }
+        },
+        .None => {},
+      }
+    }
+  }
 
   // Extract exports for importing modules
   module_exports := extract_exports_for_module(check_result.env, parsed.value, canonical)
@@ -424,6 +441,7 @@ fn build_external_refs(
   func_table: Dict<String, FuncId>,
   core: CoreModule,
   func_origin: Dict<String, ExternalRef>,
+  env: ResolvedEnv,
   builtin_count: Int,
 ) Dict<Int, ExternalRef> {
   // Collect defined FuncIds
@@ -437,11 +455,26 @@ fn build_external_refs(
   for name in names {
     case func_table[name] {
       .Some(fid) => {
-        if fid.id >= builtin_count and !defined.has(fid.id) {
-          // Phantom FuncId — look up origin
+        if fid.id >= builtin_count and !defined.has(fid.id) and !refs.has(fid.id) {
+          // Phantom FuncId — look up origin directly or via binding target
           case func_origin[name] {
             .Some(origin) => { refs[fid.id] = origin },
-            .None => {},
+            .None => {
+              // Try the function binding's canonical target name.
+              // Method resolution may produce a qualified name (e.g.
+              // "app.command.add_required_positional") that differs from
+              // the direct-import name ("command.add_required_positional")
+              // recorded in func_origin.
+              case env.function_bindings[name] {
+                .Some(target) => {
+                  case func_origin[target] {
+                    .Some(origin) => { refs[fid.id] = origin },
+                    .None => {},
+                  }
+                },
+                .None => {},
+              }
+            },
           }
         }
       },

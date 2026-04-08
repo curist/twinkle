@@ -161,7 +161,7 @@ fn index_kind_name(kind: IndexKind) String {
   }
 }
 
-fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, indent: Int) Vector<String> {
+pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, indent: Int) Vector<String> {
   ty := mono(env, expr.ty)
   case expr.kind {
     .LitInt(n) => line(lines, indent, "LitInt(${n}) : ${ty}"),

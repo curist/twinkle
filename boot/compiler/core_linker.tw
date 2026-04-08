@@ -290,7 +290,7 @@ fn get_body_refs(func_map: Dict<Int, FunctionDef>, fid: Int) Vector<Int> {
 }
 
 /// Collect all FuncId references from an expression tree.
-fn collect_func_refs(expr: CoreExpr) Vector<Int> {
+pub fn collect_func_refs(expr: CoreExpr) Vector<Int> {
   refs: Vector<Int> = []
   collect_func_refs_into(expr, refs)
 }

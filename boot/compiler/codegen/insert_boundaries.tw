@@ -253,6 +253,16 @@ fn rewrite_call(
   ctx: BCtx,
 ) RewriteResult {
   // Only rewrite calls to builtins with ABI contracts
+  is_intrinsic := case callee {
+    .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
+      .Some(entry) => case entry.kind {
+        .Intrinsic => true,
+        .Runtime(_) => false,
+      },
+      .None => false,
+    },
+    _ => false,
+  }
   abi_contract: AbiContract? = case callee {
     .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
       .Some(entry) => if has_abi(entry.abi) { .Some(entry.abi) } else { .None },
@@ -300,17 +310,23 @@ fn rewrite_call(
         }
       }
 
-      // Phase 2: check if result needs unwrap
+      // Phase 2: check if result needs unwrap.
+      // Intrinsic builtins are emitted inline and handle their own result
+      // representation — never insert result unwrap for them, as it would
+      // clobber the result local's mono (setting it to Anyref_) which breaks
+      // intrinsic emitters that need the semantic type (e.g. Option<T>).
       result_mono := cur_ctx.local_types[result_local.id]
-      result_needs_unwrap := case result_mono {
-        .Some(mono) => {
-          if abi.result_types.len() > 0 {
-            needs_unwrap(mono, abi.result_types[0], cur_ctx.env)
-          } else {
-            false
-          }
-        },
-        .None => false,
+      result_needs_unwrap := if is_intrinsic { false } else {
+        case result_mono {
+          .Some(mono) => {
+            if abi.result_types.len() > 0 {
+              needs_unwrap(mono, abi.result_types[0], cur_ctx.env)
+            } else {
+              false
+            }
+          },
+          .None => false,
+        }
       }
 
       // Phase 3: build the rewritten let-chain
