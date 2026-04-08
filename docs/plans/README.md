@@ -56,6 +56,7 @@ from stage0, bootstrapping sequence)
 |------|-------------|
 | [persistent-dict.md](persistent-dict.md) | **Next up** — Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
+| [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) | Systematically close the boot self-hosted Wasm gap between typed layouts and erased `Anyref` values |
 | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
