@@ -52,7 +52,15 @@ pub fn link(
     defined_ids[m.path] = local_to_global
   }
 
-  // Step 2: Build per-module remap tables and rewrite functions.
+  // Step 2: Validate imported-link invariants before remapping.
+  for m in modules {
+    case validate_compiled_module_links(m, global_ids) {
+      .Ok(_) => {},
+      .Err(msg) => error(msg),
+    }
+  }
+
+  // Step 3: Build per-module remap tables and rewrite functions.
   all_functions: Vector<FunctionDef> = []
   all_init_ids: Vector<FuncId> = []
   entry_init: FuncId? = .None
@@ -125,11 +133,11 @@ pub fn link(
     }
   }
 
-  // Step 3: Create combined init that calls all inits in dependency order.
+  // Step 4: Create combined init that calls all inits in dependency order.
   combined_init := build_combined_init(all_init_ids, next_global)
   linked_functions := all_functions.concat(combined_init.functions)
 
-  // Step 4: Dead code elimination — keep only reachable functions.
+  // Step 5: Dead code elimination — keep only reachable functions.
   // Without this, unreachable prelude functions with generic types cause
   // downstream passes (monomorphize, lower_anf) to trip on unresolved types.
   // Roots: combined init + all entry module functions (the user's code).
@@ -146,6 +154,65 @@ pub fn link(
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
   }
+}
+
+// ── Imported-link validation ────────────────────────────────────────
+
+/// Validate that every imported phantom FuncId referenced by a compiled module
+/// has an external ref, and that every external ref points at a real function
+/// in a known target module.
+pub fn validate_compiled_module_links(
+  m: CompiledModule,
+  global_ids: Dict<String, Dict<String, Int>>,
+) Result<Void, String> {
+  defined: Dict<Int, Bool> = Dict.new()
+  for f in m.core.functions {
+    defined[f.func_id.id] = true
+  }
+
+  // Imported refs must either be builtins, locally defined functions, or have
+  // an ExternalRef recorded by the module compiler/lowering pipeline.
+  for f in m.core.functions {
+    refs := collect_func_refs(f.body)
+    for ref_id in refs {
+      if ref_id < m.builtin_count or defined.has(ref_id) {
+        continue
+      }
+      if !m.external_refs.has(ref_id) {
+        ref_name := func_name_for_id(m.func_table, ref_id)
+        label := case ref_name {
+          .Some(name) => " name='${name}'",
+          .None => "",
+        }
+        return .Err("core_linker.link: unresolved imported FuncId=${ref_id}${label} in module '${m.path}'")
+      }
+    }
+  }
+
+  // Every recorded external ref must resolve to a real target module/function.
+  for local_id in m.external_refs.keys() {
+    case m.external_refs[local_id] {
+      .Some(ext) => {
+        case global_ids[ext.module_path] {
+          .Some(target_globals) => {
+            if !target_globals.has(ext.func_name) {
+              return .Err(
+                "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'"
+              )
+            }
+          },
+          .None => {
+            return .Err(
+              "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'"
+            )
+          },
+        }
+      },
+      .None => {},
+    }
+  }
+
+  .Ok({})
 }
 
 // ── Combined init ───────────────────────────────────────────────────
@@ -459,6 +526,20 @@ fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>) Vector<CoreExpr> 
 // ── Helpers ─────────────────────────────────────────────────────────
 
 use lib.source.span.{Span}
+
+fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
+  for name in func_table.keys() {
+    case func_table[name] {
+      .Some(fid) => {
+        if fid.id == ref_id {
+          return .Some(name)
+        }
+      },
+      .None => {},
+    }
+  }
+  .None
+}
 
 fn dummy_span() Span {
   Span.{ file_id: 0, start: 0, end: 0 }

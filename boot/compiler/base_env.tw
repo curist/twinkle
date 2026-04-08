@@ -1,5 +1,6 @@
 use @std.path
 use lib.module.loader
+use compiler.imports
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeEntry, TypeId, ResolvedTypeDef}
 use compiler.signatures
@@ -120,6 +121,47 @@ fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.Sign
   cur
 }
 
+fn prelude_module_stem(receiver: String?) String? {
+  case receiver {
+    .None => .Some("range"),
+    .Some(recv) => case recv {
+      "Bool" => .Some("bool"),
+      "Byte" => .Some("byte"),
+      "Cell" => .Some("cell"),
+      "Dict" => .Some("dict"),
+      "Float" => .Some("float"),
+      "Int" => .Some("int"),
+      "Iterator" => .Some("iterator"),
+      "Option" => .Some("option"),
+      "Result" => .Some("result"),
+      "String" => .Some("string"),
+      "Vector" => .Some("vector"),
+      _ => .None,
+    },
+  }
+}
+
+fn set_prelude_function_origins(
+  env: ResolvedEnv,
+  groups: Vector<signatures.SignatureGroup>,
+  prelude_dir: String,
+  canonical_roots: imports.CanonicalRoots,
+) ResolvedEnv {
+  cur := env
+  for group in groups {
+    stem := case prelude_module_stem(group.receiver) {
+      .Some(s) => s,
+      .None => { continue },
+    }
+    module_path := imports.canonical_module_path(path.join(prelude_dir, "${stem}.tw"), canonical_roots)
+    for sig in group.sigs {
+      internal_name := signatures.to_internal_name(group.receiver, sig.name)
+      cur = cur.set_function_origin(internal_name, .{ module_path, func_name: sig.name })
+    }
+  }
+  cur
+}
+
 pub fn builtin_env() ResolvedEnv {
   // Locate the signatures directory relative to the project root.
   // find_project_root(".") returns "." when no twinkle.toml is found in or
@@ -130,6 +172,7 @@ pub fn builtin_env() ResolvedEnv {
   root := loader.find_project_root(".")
   prelude_dir := path.join(root, "prelude")
   sigs_dir := path.join(root, "prelude/signatures")
+  canonical_roots := imports.make_canonical_roots(root)
 
   // Load and resolve builtin/runtime signature stubs (parse + type-resolve only,
   // no codegen).
@@ -185,6 +228,11 @@ pub fn builtin_env() ResolvedEnv {
   env := resolver.empty_env()
     .with_types(builtin_named_types, builtin_named_type_names)
     .with_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
+
+  // Actual prelude module functions should carry canonical imported origins in
+  // the builtin environment so internal/prelude modules can link through the
+  // same imported-function identity model as user modules.
+  env = set_prelude_function_origins(env, prelude_groups, prelude_dir, canonical_roots)
 
   // First register methods derived from signature groups (these take priority
   // under the deduplication rule in register_methods).

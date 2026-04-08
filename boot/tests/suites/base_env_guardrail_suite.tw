@@ -7,7 +7,7 @@
 use tests.runner
 use tests.assert
 use compiler.base_env.{builtin_env}
-use compiler.resolver.{lookup_function, lookup_method, MonoType, FunctionSig, ty_to_string}
+use compiler.resolver.{lookup_function, lookup_function_origin, lookup_method, MonoType, FunctionSig, ty_to_string}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +130,17 @@ pub fn suite() runner.Suite {
       sig := try require_sig("iterator_unfold")
       try assert.int_eq(sig.type_params.len(), 2)
       .Ok({})
+    })
+
+    .test("builtin_env records canonical origin for prelude-backed functions", fn() {
+      case lookup_function_origin(builtin_env(), "vector_map") {
+        .Some(origin) => {
+          try assert.str_contains(origin.module_path, "prelude/vector.tw")
+          try assert.str_eq(origin.func_name, "map")
+          .Ok({})
+        },
+        .None => .Err("expected builtin_env to record origin for vector_map"),
+      }
     })
 
     .test("builtin_env has iterator_map", fn() {

@@ -2,7 +2,11 @@
 
 ## Status
 
-Steps 1–3 implemented. Step 4 (linker hardening) pending.
+Implemented.
+
+Core resolver/lowering/module-compiler/linker changes are in place. Follow-up
+regression coverage may still expand, especially around re-export and
+support-function cases.
 
 ## Problem
 

@@ -5,6 +5,7 @@ use compiler.resolver
 use compiler.checker
 use compiler.ast
 use compiler.core_ir
+use compiler.core_linker
 use compiler.lower_core
 use compiler.monomorphize
 use compiler.builtins.{make_builtin_registry}
@@ -1003,6 +1004,95 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
         .None => .Err("expected imported origin for shared prelude filter FuncId"),
+      }
+    })
+    .test("core linker validation rejects unresolved imported func ids", fn() Result<Void, String> {
+      s := span.Span.{ file_id: 0, start: 0, end: 0 }
+      body := core_ir.CoreExpr.{
+        kind: .Call(
+          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: resolver.MonoType.Void, span: s },
+          [],
+        ),
+        ty: resolver.MonoType.Void,
+        span: s,
+      }
+      func := core_ir.FunctionDef.{
+        func_id: core_ir.FuncId.{ id: 10 },
+        name: "main",
+        params: [],
+        body,
+        return_ty: resolver.MonoType.Void,
+      }
+      module := core_ir.CompiledModule.{
+        path: "test/main.tw",
+        core: core_ir.CoreModule.{
+          functions: [func],
+          type_env: resolver.empty_env(),
+          init_func_id: .None,
+        },
+        func_table: Dict.new(),
+        external_refs: Dict.new(),
+        builtin_count: 0,
+      }
+      global_ids: Dict<String, Dict<String, Int>> = Dict.new()
+      mod_globals: Dict<String, Int> = Dict.new()
+      mod_globals["main"] = 0
+      global_ids["test/main.tw"] = mod_globals
+
+      case core_linker.validate_compiled_module_links(module, global_ids) {
+        .Ok(_) => .Err("expected unresolved imported FuncId validation failure"),
+        .Err(msg) => {
+          try assert.str_contains(msg, "unresolved imported FuncId=100")
+          try assert.str_contains(msg, "test/main.tw")
+          .Ok({})
+        },
+      }
+    })
+    .test("core linker validation rejects missing external targets", fn() Result<Void, String> {
+      s := span.Span.{ file_id: 0, start: 0, end: 0 }
+      body := core_ir.CoreExpr.{
+        kind: .Call(
+          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: resolver.MonoType.Void, span: s },
+          [],
+        ),
+        ty: resolver.MonoType.Void,
+        span: s,
+      }
+      func := core_ir.FunctionDef.{
+        func_id: core_ir.FuncId.{ id: 10 },
+        name: "main",
+        params: [],
+        body,
+        return_ty: resolver.MonoType.Void,
+      }
+      ext_refs: Dict<Int, core_ir.ExternalRef> = Dict.new()
+      ext_refs[100] = core_ir.ExternalRef.{ module_path: "dep/math.tw", func_name: "missing" }
+      module := core_ir.CompiledModule.{
+        path: "test/main.tw",
+        core: core_ir.CoreModule.{
+          functions: [func],
+          type_env: resolver.empty_env(),
+          init_func_id: .None,
+        },
+        func_table: Dict.new(),
+        external_refs: ext_refs,
+        builtin_count: 0,
+      }
+      global_ids: Dict<String, Dict<String, Int>> = Dict.new()
+      main_globals: Dict<String, Int> = Dict.new()
+      main_globals["main"] = 0
+      dep_globals: Dict<String, Int> = Dict.new()
+      dep_globals["other"] = 1
+      global_ids["test/main.tw"] = main_globals
+      global_ids["dep/math.tw"] = dep_globals
+
+      case core_linker.validate_compiled_module_links(module, global_ids) {
+        .Ok(_) => .Err("expected missing external target validation failure"),
+        .Err(msg) => {
+          try assert.str_contains(msg, "missing function 'missing'")
+          try assert.str_contains(msg, "dep/math.tw")
+          .Ok({})
+        },
       }
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
