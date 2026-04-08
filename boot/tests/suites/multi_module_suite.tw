@@ -261,4 +261,22 @@ pub fn suite() runner.Suite {
         },
       }
     })
+
+    // ── Function identity canonicalization ──────────────────────────────
+
+    .test("prelude function aliases converge through canonical origins", fn() {
+      result := module_compiler.compile_entry("${dir}/func_identity_prelude_alias.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected prelude alias convergence, got: ${msg}"),
+      }
+    })
+
+    .test("selective and qualified imports of same function converge", fn() {
+      result := module_compiler.compile_entry("${dir}/func_identity_selective_qualified.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected selective+qualified convergence, got: ${msg}"),
+      }
+    })
 }

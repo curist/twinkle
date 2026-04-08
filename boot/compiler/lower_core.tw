@@ -14,7 +14,7 @@ use .ast.{
   Expr, ExprKind, BinOp as AstBinOp, UnOp as AstUnOp,
   CollectExpr, StringPart, Param as AstParam,
 }
-use .resolver.{MonoType, ResolvedEnv, TypeId}
+use .resolver.{MonoType, ResolvedEnv, TypeId, FunctionOrigin}
 use .checker
 use .checker.{CheckResult, MethodCallInfo}
 use .builder_family.{BuilderConfig, vector_builder_config}
@@ -41,6 +41,11 @@ type LowerCtx = .{
   current_fn_return_type: MonoType?,
   errors: Vector<Diagnostic>,
   method_calls: Dict<Int, MethodCallInfo>,
+  // Imported phantom FuncId → canonical defining-site origin.
+  // Built during lower_module; consumed by module_compiler to build external_refs.
+  imported_func_origins: Dict<Int, FunctionOrigin>,
+  // Cache: serialized origin key → FuncId, for deduplicating phantom FuncIds.
+  origin_cache: Dict<String, FuncId>,
 }
 
 // ── Result types ────────────────────────────────────────────────────
@@ -49,6 +54,7 @@ pub type LowerResult = .{
   module: CoreModule,
   diagnostics: Vector<Diagnostic>,
   func_table: Dict<String, FuncId>,
+  imported_func_origins: Dict<Int, FunctionOrigin>,
 }
 
 type ExprOut = .{ expr: CoreExpr, ctx: LowerCtx }
@@ -80,6 +86,8 @@ fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     current_fn_return_type: .None,
     errors: [],
     method_calls: check_result.method_calls,
+    imported_func_origins: Dict.new(),
+    origin_cache: Dict.new(),
   }
 }
 
@@ -2460,6 +2468,10 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // Reserve FuncIds for all visible functions, including imported ones.
   // The current module may not define their bodies, but lowering still needs
   // stable GlobalFunc references for module-qualified and imported calls.
+  //
+  // When two registered function names share the same canonical imported
+  // origin (e.g. prelude "filter" and "vector_filter"), they reuse one
+  // phantom FuncId so the linker sees a single cross-module reference.
   for sig in ctx.env.functions {
     if ctx.func_table.has(sig.name) { continue }
 
@@ -2475,9 +2487,31 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       .None => {},
     }
 
-    r := ctx.alloc_func_id()
-    ctx = r.ctx
-    ctx.func_table[sig.name] = r.func_id
+    // Deduplicate by canonical imported origin: if we already allocated a
+    // phantom FuncId for this origin, reuse it.
+    case ctx.env.function_origins[sig.name] {
+      .Some(origin) => {
+        origin_key := "${origin.module_path}\x00${origin.func_name}"
+        case ctx.origin_cache[origin_key] {
+          .Some(existing_fid) => {
+            ctx.func_table[sig.name] = existing_fid
+            continue
+          },
+          .None => {
+            r := ctx.alloc_func_id()
+            ctx = r.ctx
+            ctx.func_table[sig.name] = r.func_id
+            ctx.origin_cache[origin_key] = r.func_id
+            ctx.imported_func_origins[r.func_id.id] = origin
+          },
+        }
+      },
+      .None => {
+        r := ctx.alloc_func_id()
+        ctx = r.ctx
+        ctx.func_table[sig.name] = r.func_id
+      },
+    }
   }
 
   // Bind local aliases for imported functions to the same FuncIds as their
@@ -2653,5 +2687,6 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     },
     diagnostics: ctx.errors,
     func_table: ctx.func_table,
+    imported_func_origins: ctx.imported_func_origins,
   }
 }

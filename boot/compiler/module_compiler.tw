@@ -9,7 +9,7 @@ use @std.fs
 use @std.path
 use compiler.parser
 use compiler.resolver.{
-  ResolvedEnv, ModuleExports, FunctionSig, TypeEntry,
+  ResolvedEnv, ModuleExports, TypeEntry,
   extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
   extend_types_from,
 }
@@ -19,10 +19,10 @@ use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.core_ir.{CoreModule, FuncId, CompiledModule, ExternalRef}
+use compiler.core_ir.{CoreModule, CompiledModule, ExternalRef}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.anf.{AnfModule}
-use compiler.ast.{Module, ImportItem}
+use compiler.ast.{Module}
 use compiler.imports
 use compiler.core_linker
 use compiler.base_env.{builtin_env, add_internal_host_builtins}
@@ -171,7 +171,6 @@ fn compile_module(
     state.shared_types, state.shared_type_names, state.shared_type_origins,
   )
   cur_state := state
-  func_origin: Dict<String, ExternalRef> = Dict.new()
   for dep in dep_plan.dependencies {
     // Compile dependency against base_env extended with accumulated types.
     // Name bindings are isolated (base_env only), but TypeIds are globally
@@ -196,23 +195,20 @@ fn compile_module(
       cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
     )
 
-    // Track function origins for linker
-    func_origin = track_func_origins(func_origin, dep, dep_result.exports)
-
     // Project exports into this module's env
     case dep.kind {
       .Import => {
         case dep.items {
           .Some(items) => {
-            env = env.merge_selective_imports(dep.alias, dep_result.exports, items)
+            env = env.merge_selective_imports(dep.alias, dep.canonical_path, dep_result.exports, items)
           },
           .None => {
-            env = env.merge_module_exports(dep.alias, dep_result.exports)
+            env = env.merge_module_exports(dep.alias, dep.canonical_path, dep_result.exports)
           },
         }
       },
       .Prelude => {
-        env = env.merge_prelude_exports(dep.alias, dep_result.exports)
+        env = env.merge_prelude_exports(dep.alias, dep.canonical_path, dep_result.exports)
       },
     }
   }
@@ -248,25 +244,17 @@ fn compile_module(
     return .Err(format_stage_error("lower", canonical, source, lowered.diagnostics))
   }
 
-  // Build external_refs: phantom FuncIds → target module/function
-  external_refs := build_external_refs(
-    lowered.func_table, lowered.module, func_origin, check_result.env, cur_state.builtins.next_id,
-  )
-  // DEBUG: check for unresolved external refs
-  if canonical == "boot/main.tw" {
-    defined: Dict<Int, Bool> = Dict.new()
-    for f in lowered.module.functions {
-      defined[f.func_id.id] = true
-    }
-    for n in lowered.func_table.keys() {
-      case lowered.func_table[n] {
-        .Some(fid) => {
-          if fid.id >= cur_state.builtins.next_id and !defined.has(fid.id) and !external_refs.has(fid.id) {
-            println("[DEBUG entry] UNRESOLVED FuncId=${fid.id} name='${n}'")
-          }
-        },
-        .None => {},
-      }
+  // Build external_refs directly from lowering's canonical imported origins.
+  external_refs: Dict<Int, ExternalRef> = Dict.new()
+  for fid in lowered.imported_func_origins.keys() {
+    case lowered.imported_func_origins[fid] {
+      .Some(origin) => {
+        external_refs[fid] = ExternalRef.{
+          module_path: origin.module_path,
+          func_name: origin.func_name,
+        }
+      },
+      .None => {},
     }
   }
 
@@ -320,168 +308,6 @@ fn capture_local_types(
   }
 
   state
-}
-
-// ── Linker metadata helpers ──────────────────────────────────────────
-
-fn prelude_internal_function_name(alias: String, exported_name: String) String {
-  stem := if alias.starts_with("__prelude_") {
-    alias.slice(10, alias.len())
-  } else {
-    alias
-  }
-
-  if stem == "range" {
-    return exported_name
-  }
-  if stem == "string" {
-    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_code_point" {
-      return exported_name
-    }
-  }
-
-  prefix := case stem {
-    "bool" => "bool",
-    "byte" => "byte",
-    "cell" => "cell",
-    "dict" => "dict",
-    "float" => "float",
-    "int" => "int",
-    "iterator" => "iterator",
-    "option" => "option",
-    "result" => "result",
-    "string" => "string",
-    "vector" => "vector",
-    _ => "",
-  }
-  if prefix == "" {
-    exported_name
-  } else {
-    "${prefix}_${exported_name}"
-  }
-}
-
-/// Record which imported function names come from which dependency module.
-/// Returns the updated func_origin dict (dicts are COW in Twinkle).
-fn track_func_origins(
-  func_origin: Dict<String, ExternalRef>,
-  dep: imports.PlannedDep,
-  exports: ModuleExports,
-) Dict<String, ExternalRef> {
-  exported_functions := exports.functions.concat(exports.support_functions)
-  case dep.kind {
-    .Import => {
-      case dep.items {
-        .Some(items) => {
-          // Selective import: track canonical qualified origins plus any
-          // selected local bindings.
-          for exported in exported_functions {
-            func_origin["${dep.alias}.${exported.name}"] = .{
-              module_path: dep.canonical_path,
-              func_name: exported.source_name,
-            }
-          }
-          for item in items {
-            case item {
-              .Value(v) => {
-                exported := case exports.functions.find(fn(f) { f.name == v.name }) {
-                  .Some(found) => found,
-                  .None => { continue },
-                }
-                binding := case v.alias {
-                  .Some(a) => a,
-                  .None => v.name,
-                }
-                func_origin[binding] = .{
-                  module_path: dep.canonical_path,
-                  func_name: exported.source_name,
-                }
-              },
-              .Type(_) => {},
-            }
-          }
-        },
-        .None => {
-          // Full import: qualified names "alias.func_name"
-          for exported in exported_functions {
-            func_origin["${dep.alias}.${exported.name}"] = .{
-              module_path: dep.canonical_path,
-              func_name: exported.source_name,
-            }
-          }
-        },
-      }
-    },
-    .Prelude => {
-      // Prelude: unqualified names plus internal receiver-prefixed aliases
-      // used by the base signature environment (e.g. vector_all, byte_compare).
-      for exported in exported_functions {
-        if !func_origin.has(exported.name) {
-          func_origin[exported.name] = .{
-            module_path: dep.canonical_path,
-            func_name: exported.source_name,
-          }
-        }
-
-        internal_name := prelude_internal_function_name(dep.alias, exported.name)
-        if internal_name != exported.name and !func_origin.has(internal_name) {
-          func_origin[internal_name] = .{
-            module_path: dep.canonical_path,
-            func_name: exported.source_name,
-          }
-        }
-      }
-    },
-  }
-  func_origin
-}
-
-/// Build external_refs by matching phantom func_table entries to their origins.
-fn build_external_refs(
-  func_table: Dict<String, FuncId>,
-  core: CoreModule,
-  func_origin: Dict<String, ExternalRef>,
-  env: ResolvedEnv,
-  builtin_count: Int,
-) Dict<Int, ExternalRef> {
-  // Collect defined FuncIds
-  defined: Dict<Int, Bool> = Dict.new()
-  for f in core.functions {
-    defined[f.func_id.id] = true
-  }
-
-  refs: Dict<Int, ExternalRef> = Dict.new()
-  names := func_table.keys()
-  for name in names {
-    case func_table[name] {
-      .Some(fid) => {
-        if fid.id >= builtin_count and !defined.has(fid.id) and !refs.has(fid.id) {
-          // Phantom FuncId — look up origin directly or via binding target
-          case func_origin[name] {
-            .Some(origin) => { refs[fid.id] = origin },
-            .None => {
-              // Try the function binding's canonical target name.
-              // Method resolution may produce a qualified name (e.g.
-              // "app.command.add_required_positional") that differs from
-              // the direct-import name ("command.add_required_positional")
-              // recorded in func_origin.
-              case env.function_bindings[name] {
-                .Some(target) => {
-                  case func_origin[target] {
-                    .Some(origin) => { refs[fid.id] = origin },
-                    .None => {},
-                  }
-                },
-                .None => {},
-              }
-            },
-          }
-        }
-      },
-      .None => {},
-    }
-  }
-  refs
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ use tests.assert
 use compiler.parser
 use compiler.resolver
 use compiler.ast
+use compiler.imports
+use lib.module.loader
 use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1283,7 +1285,7 @@ pub fn suite() runner.Suite {
 
       // Merge into a fresh env under alias "m"
       env := resolver.empty_env()
-      env = env.merge_module_exports("m", exports)
+      env = env.merge_module_exports("m", "", exports)
 
       // Should be able to look up "m.Foo"
       try assert.is_true(resolver.has_type(env, "m.Foo"))
@@ -1307,12 +1309,12 @@ pub fn suite() runner.Suite {
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") }],
-        functions: [resolver.ExportedFunction.{ name: "expose", sig, source_name: "expose" }],
+        functions: [resolver.ExportedFunction.{ name: "expose", sig, source_name: "expose", origin: .None }],
         support_functions: [],
         methods: Dict.new(),
       }
 
-      env := resolver.empty_env().merge_module_exports("mod", exports)
+      env := resolver.empty_env().merge_module_exports("mod", "", exports)
 
       try assert.is_true(!resolver.has_type(env, "dep.Support"))
       try assert.is_true(resolver.has_function(env, "mod.expose"))
@@ -1327,7 +1329,7 @@ pub fn suite() runner.Suite {
       exports := resolver.extract_exports(r.env, parsed.value)
 
       env := resolver.empty_env()
-      env = env.merge_module_exports("mymod", exports)
+      env = env.merge_module_exports("mymod", "", exports)
 
       // Should have "mymod.greet" as a function
       try assert.is_true(resolver.has_function(env, "mymod.greet"))
@@ -1354,7 +1356,7 @@ pub fn suite() runner.Suite {
       ]
 
       env := resolver.empty_env()
-      env = env.merge_selective_imports("math", exports, items)
+      env = env.merge_selective_imports("math", "", exports, items)
 
       // "add" should be available unqualified
       try assert.is_true(resolver.has_function(env, "add"))
@@ -1377,8 +1379,8 @@ pub fn suite() runner.Suite {
       ]
 
       env := resolver.empty_env()
-      env = env.merge_selective_imports("diagnostic", exports, items)
-      env = env.merge_module_exports("diag", exports)
+      env = env.merge_selective_imports("diagnostic", "", exports, items)
+      env = env.merge_module_exports("diag", "", exports)
 
       bare := try resolver.lookup_type(env, "Diagnostic").ok_or("missing selective type binding")
       aliased := try resolver.lookup_type(env, "diag.Diagnostic").ok_or("missing aliased module type binding")
@@ -1394,8 +1396,8 @@ pub fn suite() runner.Suite {
       exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic")
 
       env := resolver.empty_env()
-      env = env.merge_module_exports("diag_a", exports)
-      env = env.merge_module_exports("diag_b", exports)
+      env = env.merge_module_exports("diag_a", "", exports)
+      env = env.merge_module_exports("diag_b", "", exports)
 
       first := try resolver.lookup_type(env, "diag_a.Diagnostic").ok_or("missing first aliased module type binding")
       second := try resolver.lookup_type(env, "diag_b.Diagnostic").ok_or("missing second aliased module type binding")
@@ -1415,7 +1417,7 @@ pub fn suite() runner.Suite {
       ]
 
       env := resolver.empty_env()
-      env = env.merge_selective_imports("mod", exports, items)
+      env = env.merge_selective_imports("mod", "", exports, items)
 
       // Should be available as "calc", not "calculate"
       try assert.is_true(resolver.has_function(env, "calc"))
@@ -1433,7 +1435,7 @@ pub fn suite() runner.Suite {
         .Value(ast.ImportValueItem.{ name: "add", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
       ]
 
-      env := resolver.empty_env().merge_selective_imports("math", exports, items)
+      env := resolver.empty_env().merge_selective_imports("math", "", exports, items)
 
       try assert.is_true(resolver.has_function(env, "add"))
       try assert.is_true(!resolver.has_function(env, "math.add"))
@@ -1470,7 +1472,7 @@ pub fn suite() runner.Suite {
       ]
 
       env := resolver.empty_env()
-      env = env.merge_selective_imports("geom", exports, items)
+      env = env.merge_selective_imports("geom", "", exports, items)
 
       try assert.is_true(resolver.has_type(env, "Point"))
       try assert.is_true(!resolver.has_type(env, "$import$.geom.Point"))
@@ -1501,7 +1503,7 @@ pub fn suite() runner.Suite {
       exports := resolver.extract_exports(r.env, parsed.value)
 
       env := resolver.empty_env()
-      env = env.merge_prelude_exports(exports)
+      env = env.merge_prelude_exports("", "", exports)
 
       // Should be available as unqualified "helper"
       try assert.is_true(resolver.has_function(env, "helper"))
@@ -1522,7 +1524,7 @@ pub fn suite() runner.Suite {
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
 
-      env = env.merge_prelude_exports(exports)
+      env = env.merge_prelude_exports("", "", exports)
 
       // Should still have the builtin version (String param, not Int)
       case resolver.lookup_function(env, "len") {
@@ -1543,12 +1545,128 @@ pub fn suite() runner.Suite {
 
       // Merge into env
       env := resolver.empty_env()
-      env = env.merge_module_exports("gfx", exports)
+      env = env.merge_module_exports("gfx", "", exports)
 
       // Now resolve a module that uses gfx.Color
       src2 := "type Canvas = .{ bg: gfx.Color }"
       r2 := env.resolve(parser.parse(src2, 0).value)
       try assert.int_eq(r2.diagnostics.len(), 0)
       .Ok({})
+    })
+
+    .test("merge_module_exports sets canonical function origins", fn() {
+      src := "pub fn greet(name: String) String { name }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      env := resolver.empty_env()
+      env = env.merge_module_exports("mymod", "test/mymod.tw", exports)
+
+      // The registered function "mymod.greet" should have an origin
+      case resolver.lookup_function_origin(env, "mymod.greet") {
+        .Some(origin) => {
+          try assert.str_eq(origin.module_path, "test/mymod.tw")
+          try assert.str_eq(origin.func_name, "greet")
+          .Ok({})
+        },
+        .None => .Err("expected function origin for mymod.greet"),
+      }
+    })
+
+    .test("merge_selective_imports sets canonical function origins", fn() {
+      src := "pub fn add(a: Int, b: Int) Int { a + b }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      items: Vector<ast.ImportItem> = [
+        .Value(ast.ImportValueItem.{ name: "add", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
+      ]
+
+      env := resolver.empty_env()
+      env = env.merge_selective_imports("math", "test/math.tw", exports, items)
+
+      // The registered function "math.add" should have an origin
+      case resolver.lookup_function_origin(env, "math.add") {
+        .Some(origin) => {
+          try assert.str_eq(origin.module_path, "test/math.tw")
+          try assert.str_eq(origin.func_name, "add")
+          .Ok({})
+        },
+        .None => .Err("expected function origin for math.add"),
+      }
+    })
+
+    .test("merge_prelude_exports sets canonical function origins", fn() {
+      src := "pub fn filter(v: Vector<Int>) Vector<Int> { v }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      root := loader.find_project_root("boot")
+      roots := imports.make_canonical_roots(root)
+      prelude_vector := imports.canonical_module_path("${loader.resolve_prelude_root(root)}/vector.tw", roots)
+
+      env := resolver.empty_env()
+      env = env.merge_prelude_exports("__prelude_vector", prelude_vector, exports)
+
+      case resolver.lookup_function_origin(env, "filter") {
+        .Some(origin) => {
+          try assert.str_eq(origin.module_path, prelude_vector)
+          try assert.str_eq(origin.func_name, "filter")
+          .Ok({})
+        },
+        .None => .Err("expected function origin for prelude filter"),
+      }
+    })
+
+    .test("local function shadows prelude origin", fn() {
+      src := "pub fn filter(v: Vector<Int>) Vector<Int> { v }"
+      parsed := parser.parse(src, 0)
+      r := resolver.empty_env().resolve(parsed.value)
+      exports := resolver.extract_exports(r.env, parsed.value)
+
+      env := resolver.empty_env()
+      env = env.merge_prelude_exports("__prelude_vector", "prelude/vector.tw", exports)
+
+      // Verify origin exists
+      try assert.is_some(resolver.lookup_function_origin(env, "filter"))
+
+      // Now add a local function that shadows it
+      env = env.add_function(resolver.FunctionSig.{
+        name: "filter", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      })
+
+      // Origin should be cleared for the now-local function
+      case resolver.lookup_function_origin(env, "filter") {
+        .Some(_) => .Err("expected stale origin to be cleared after local shadow"),
+        .None => .Ok({}),
+      }
+    })
+
+    .test("with_functions drops origins for removed registered targets", fn() {
+      imported := resolver.FunctionSig.{
+        name: "filter", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      }
+      local := resolver.FunctionSig.{
+        name: "local_only", type_params: [], param_names: [],
+        params: [], ret: .Some(resolver.MonoType.Void),
+      }
+
+      env := resolver.empty_env()
+        .with_functions([imported, local])
+        .set_function_origin("filter", .{ module_path: "prelude/vector.tw", func_name: "filter" })
+
+      try assert.is_some(resolver.lookup_function_origin(env, "filter"))
+
+      env = env.with_functions([local])
+
+      case resolver.lookup_function_origin(env, "filter") {
+        .Some(_) => .Err("expected removed function origin to be dropped by with_functions"),
+        .None => .Ok({}),
+      }
     })
 }

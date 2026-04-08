@@ -968,6 +968,43 @@ pub fn suite() runner.Suite {
         _ => .Err("expected Match"),
       }
     })
+    .test("imported prelude aliases reuse one phantom func id", fn() Result<Void, String> {
+      filter_sig := resolver.FunctionSig.{
+        name: "filter",
+        type_params: ["T"],
+        param_names: ["xs", "pred"],
+        params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
+        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
+      }
+      vector_filter_sig := resolver.FunctionSig.{
+        name: "vector_filter",
+        type_params: ["T"],
+        param_names: ["xs", "pred"],
+        params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
+        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
+      }
+      origin := resolver.FunctionOrigin.{ module_path: "prelude/vector.tw", func_name: "filter" }
+
+      env := resolver.empty_env()
+        .with_functions([filter_sig, vector_filter_sig])
+        .set_function_origin("filter", origin)
+        .set_function_origin("vector_filter", origin)
+
+      lr := try lower_src_with_env("fn main() Int { 0 }", env)
+
+      filter_id := try lr.func_table["filter"].ok_or("expected filter in func_table")
+      vector_filter_id := try lr.func_table["vector_filter"].ok_or("expected vector_filter in func_table")
+      try assert.int_eq(filter_id.id, vector_filter_id.id)
+
+      case lr.imported_func_origins[filter_id.id] {
+        .Some(found) => {
+          try assert.str_eq(found.module_path, "prelude/vector.tw")
+          try assert.str_eq(found.func_name, "filter")
+          .Ok({})
+        },
+        .None => .Err("expected imported origin for shared prelude filter FuncId"),
+      }
+    })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"
       lr := try lower_src(src)

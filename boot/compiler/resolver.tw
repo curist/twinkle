@@ -63,6 +63,14 @@ pub type FunctionSig = .{
   ret: MonoType?,
 }
 
+/// Canonical defining-site identity for an imported function.
+/// Equivalent to core_ir.ExternalRef but owned by the resolver to avoid
+/// circular imports.
+pub type FunctionOrigin = .{
+  module_path: String,
+  func_name: String,
+}
+
 pub type ExportedType = .{
   name: String,
   entry: TypeEntry,
@@ -73,6 +81,7 @@ pub type ExportedFunction = .{
   name: String,
   sig: FunctionSig,
   source_name: String,
+  origin: FunctionOrigin?,
 }
 
 pub type ModuleExports = .{
@@ -104,6 +113,7 @@ pub type ResolvedEnv = .{
   type_origins: Dict<Int, String>,
   functions: Vector<FunctionSig>,
   function_bindings: Dict<String, String>,
+  function_origins: Dict<String, FunctionOrigin>,
   methods: Dict<String, Vector<MethodEntry>>,
   methods_by_type: Dict<Int, Vector<MethodEntry>>,
   type_index: Dict<String, Int>,
@@ -118,6 +128,7 @@ pub fn empty_env() ResolvedEnv {
     type_origins: Dict.new(),
     functions: [],
     function_bindings: Dict.new(),
+    function_origins: Dict.new(),
     methods: Dict.new(),
     methods_by_type: Dict.new(),
     type_index: Dict.new(),
@@ -322,8 +333,21 @@ pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) Resolved
     }
   }
 
+  origins: Dict<String, FunctionOrigin> = Dict.new()
+  for name in env.function_origins.keys() {
+    case env.function_origins[name] {
+      .Some(origin) => {
+        if idx.has(name) {
+          origins[name] = origin
+        }
+      },
+      .None => {},
+    }
+  }
+
   env.functions = functions
   env.function_bindings = bindings
+  env.function_origins = origins
   env.func_index = idx
   env
 }
@@ -436,8 +460,20 @@ pub fn remove_function_binding(env: ResolvedEnv, name: String) ResolvedEnv {
   env
 }
 
+pub fn set_function_origin(env: ResolvedEnv, registered_name: String, origin: FunctionOrigin) ResolvedEnv {
+  env.function_origins[registered_name] = origin
+  env
+}
+
+pub fn lookup_function_origin(env: ResolvedEnv, registered_name: String) FunctionOrigin? {
+  env.function_origins[registered_name]
+}
+
 pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
-  env.register_function(sig).bind_function(sig.name, sig.name)
+  cur := env.register_function(sig).bind_function(sig.name, sig.name)
+  // Clear any stale imported origin when a local function shadows a prelude/imported name.
+  cur.function_origins = cur.function_origins.remove(sig.name)
+  cur
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
@@ -597,6 +633,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
               name: sig.name,
               sig,
               source_name: sig.name,
+              origin: .None,
             })
             visible_function_names[sig.name] = true
             visible_function_sources[sig.name] = true
@@ -690,6 +727,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       name: sig.name,
       sig,
       source_name: sig.name,
+      origin: env.function_origins[sig.name],
     })
   }
 
@@ -786,8 +824,8 @@ fn register_imported_interface_types(env: ResolvedEnv, alias: String, method_ali
   .{ env: cur.with_methods(methods).with_type_methods(methods_by_type), type_ids }
 }
 
-pub fn merge_selective_imports(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
-  merge_selective_via_registration(env, alias, exports, items)
+pub fn merge_selective_imports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+  merge_selective_via_registration(env, alias, module_path, exports, items)
 }
 
 fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
@@ -798,7 +836,7 @@ fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
   names
 }
 
-fn register_imported_functions(env: ResolvedEnv, alias: String, exports: ModuleExports, type_ids: Dict<Int, TypeId>, bind_qualified_names: Bool) ResolvedEnv {
+fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, type_ids: Dict<Int, TypeId>, bind_qualified_names: Bool) ResolvedEnv {
   cur := env
   visible_functions := visible_function_names(exports)
   for exported in all_exported_functions(exports) {
@@ -807,13 +845,20 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, exports: ModuleE
     if bind_qualified_names and visible_functions.has(exported.name) {
       cur = cur.bind_function(qualified_name, qualified_name)
     }
+    // Set canonical imported origin for this registered function.
+    // Re-exports preserve the original defining origin.
+    origin := case exported.origin {
+      .Some(o) => o,
+      .None => FunctionOrigin.{ module_path, func_name: exported.source_name },
+    }
+    cur = cur.set_function_origin(qualified_name, origin)
   }
   cur
 }
 
-pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv {
+pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports) ResolvedEnv {
   reg := register_imported_interface_types(env, alias, alias, exports, true)
-  cur := register_imported_functions(reg.env, alias, exports, reg.type_ids, true)
+  cur := register_imported_functions(reg.env, alias, module_path, exports, reg.type_ids, true)
 
   methods := cur.methods
   module_entries := collect exported in exports.functions {
@@ -829,9 +874,9 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, exports: ModuleExpo
 // When this is a standalone selective import (no prior full import),
 // register the full imported interface first, then bind only the
 // selected type and value names.
-fn merge_selective_via_registration(env: ResolvedEnv, alias: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
   reg := register_imported_interface_types(env, alias, alias, exports, false)
-  cur := register_imported_functions(reg.env, alias, exports, reg.type_ids, false)
+  cur := register_imported_functions(reg.env, alias, module_path, exports, reg.type_ids, false)
   methods := cur.methods
   methods_by_type := cur.methods_by_type
 
@@ -911,7 +956,7 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
   }
 }
 
-pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv {
+pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports) ResolvedEnv {
   reg := register_imported_interface_types(env, "", "", exports, true)
   cur := reg.env
   visible_functions := visible_function_names(exports)
@@ -927,6 +972,16 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, exports: ModuleExp
     internal_name := prelude_internal_function_name(alias, exported.name)
     if internal_name != exported.name and cur.has_function(internal_name) {
       cur = cur.bind_function(internal_name, exported.name)
+    }
+
+    // Set canonical imported origin for the registered function name.
+    // Re-exports preserve the original defining origin.
+    origin := case exported.origin {
+      .Some(o) => o,
+      .None => FunctionOrigin.{ module_path, func_name: exported.source_name },
+    }
+    if !cur.function_origins.has(exported.name) {
+      cur = cur.set_function_origin(exported.name, origin)
     }
   }
 

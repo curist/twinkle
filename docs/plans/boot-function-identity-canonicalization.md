@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Steps 1–3 implemented. Step 4 (linker hardening) pending.
 
 ## Problem
 
