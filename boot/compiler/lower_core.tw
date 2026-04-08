@@ -62,6 +62,9 @@ fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
   func_table: Dict<String, FuncId> = Dict.new()
   for entry in reg.entries {
     func_table[entry.name] = entry.func_id
+    if entry.name.starts_with("host_") {
+      func_table["__${entry.name}"] = entry.func_id
+    }
   }
   .{
     type_map: check_result.type_map,
@@ -2428,6 +2431,19 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // stable GlobalFunc references for module-qualified and imported calls.
   for sig in ctx.env.functions {
     if ctx.func_table.has(sig.name) { continue }
+
+    // Signature-only aliases (notably internal prelude helper names like
+    // vector_all → all) should reuse their target FuncId rather than reserve a
+    // fresh phantom ID that can collide after linking.
+    case ctx.env.function_bindings[sig.name] {
+      .Some(target_name) => {
+        if target_name != sig.name {
+          continue
+        }
+      },
+      .None => {},
+    }
+
     r := ctx.alloc_func_id()
     ctx = r.ctx
     ctx.func_table[sig.name] = r.func_id

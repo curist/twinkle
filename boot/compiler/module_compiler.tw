@@ -9,8 +9,9 @@ use @std.fs
 use @std.path
 use compiler.parser
 use compiler.resolver.{
-  ResolvedEnv, ModuleExports, FunctionSig,
+  ResolvedEnv, ModuleExports, FunctionSig, TypeEntry,
   extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
+  extend_types_from,
 }
 use compiler.checker
 use compiler.lower_core
@@ -38,6 +39,12 @@ pub type CompileState = .{
   builtins: BuiltinRegistry,
   project_root: String,
   canonical_roots: imports.CanonicalRoots,
+  // Accumulated type definitions across all modules.
+  // TypeIds are indices into this vector, so it must grow monotonically
+  // to prevent overlapping TypeIds from different modules.
+  shared_types: Vector<TypeEntry>,
+  shared_type_names: Vector<String>,
+  shared_type_origins: Dict<Int, String>,
 }
 
 /// Result of compiling a single module.
@@ -61,15 +68,17 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   canonical_entry := imports.canonical_module_path(entry_path, canonical_roots)
 
   builtins := make_builtin_registry()
+  base_env := builtin_env()
   state := CompileState.{
     cache: Dict.new(),
     compiled_modules: [],
     builtins,
     project_root,
     canonical_roots,
+    shared_types: base_env.types,
+    shared_type_names: base_env.type_names,
+    shared_type_origins: base_env.type_origins,
   }
-
-  base_env := builtin_env()
   importing_stack: Vector<String> = []
 
   result := try compile_module(
@@ -110,9 +119,10 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
 
 /// Compile a single module and all its dependencies recursively.
 ///
-/// Each dependency is compiled against the base_env (builtins only), and
-/// only its exports are projected into the current module's environment.
-/// This mirrors the Rust stage0's snapshot/restore/project pattern.
+/// Each dependency is compiled against the base_env (builtins + name bindings)
+/// extended with accumulated shared types so that TypeIds are globally unique.
+/// This mirrors the Rust stage0's snapshot/restore/project pattern where
+/// type definitions accumulate but name bindings are scoped.
 fn compile_module(
   file_path: String,
   alias: String,
@@ -157,19 +167,34 @@ fn compile_module(
 
   // Compile dependencies and build up the env for this module.
   // Also track function origins for the linker's external_refs.
-  env := base_env
+  env := base_env.extend_types_from(
+    state.shared_types, state.shared_type_names, state.shared_type_origins,
+  )
   cur_state := state
   func_origin: Dict<String, ExternalRef> = Dict.new()
   for dep in dep_plan.dependencies {
-    // Compile dependency against base_env (isolation)
+    // Compile dependency against base_env extended with accumulated types.
+    // Name bindings are isolated (base_env only), but TypeIds are globally
+    // unique because shared_types grows monotonically.
+    dep_base := base_env.extend_types_from(
+      cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
+    )
     dep_result := try compile_module(
       dep.canonical_path,
       dep.alias,
-      base_env,
+      dep_base,
       cur_state,
       stack,
     )
     cur_state = dep_result.state
+
+    // Extend env with the latest shared types before merging exports.
+    // This ensures plan_export_type_ids finds the dep's types already
+    // present (with correct globally unique TypeIds) rather than
+    // allocating new overlapping IDs.
+    env = env.extend_types_from(
+      cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
+    )
 
     // Track function origins for linker
     func_origin = track_func_origins(func_origin, dep, dep_result.exports)
@@ -187,7 +212,7 @@ fn compile_module(
         }
       },
       .Prelude => {
-        env = env.merge_prelude_exports(dep_result.exports)
+        env = env.merge_prelude_exports(dep.alias, dep_result.exports)
       },
     }
   }
@@ -195,6 +220,10 @@ fn compile_module(
   if dep_plan.is_internal {
     env = add_internal_host_builtins(env)
   }
+
+  // Imports may append interface types into the per-module env, but only
+  // types declared by this module should be promoted into shared_types.
+  local_type_start := env.types.len()
 
   // Resolve this module with the accumulated env
   resolved := env.resolve(parsed.value)
@@ -207,6 +236,11 @@ fn compile_module(
   if check_result.diagnostics.len() > 0 {
     return .Err(format_stage_error("check", canonical, source, check_result.diagnostics))
   }
+
+  // Capture only this module's own type definitions into shared state so
+  // subsequent modules see globally unique TypeIds without re-sharing
+  // per-import remapped interface copies.
+  cur_state = capture_local_types(cur_state, check_result.env, canonical, local_type_start)
 
   // Lower to Core IR
   lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
@@ -235,7 +269,80 @@ fn compile_module(
   .Ok(.{ exports: module_exports, env: check_result.env, state: cur_state })
 }
 
+// ── Type accumulation ────────────────────────────────────────────────
+
+/// Capture only this module's local type entries into the shared state.
+/// Imported interface types may be remapped per-import inside the module env,
+/// so re-sharing them would duplicate nominal identities across modules.
+fn capture_local_types(
+  state: CompileState,
+  env: ResolvedEnv,
+  canonical: String,
+  local_type_start: Int,
+) CompileState {
+  if env.types.len() <= local_type_start {
+    return state
+  }
+
+  for i in range_from(local_type_start, env.types.len()) {
+    entry := env.types[i]
+    name := env.type_names[i]
+    state.shared_types = state.shared_types.append(entry)
+    state.shared_type_names = state.shared_type_names.append(name)
+
+    case env.type_origins[entry.id.id] {
+      .Some(origin) => {
+        if !state.shared_type_origins.has(entry.id.id) {
+          state.shared_type_origins[entry.id.id] = origin
+        }
+      },
+      .None => {
+        state.shared_type_origins[entry.id.id] = "${canonical}::${name}"
+      },
+    }
+  }
+
+  state
+}
+
 // ── Linker metadata helpers ──────────────────────────────────────────
+
+fn prelude_internal_function_name(alias: String, exported_name: String) String {
+  stem := if alias.starts_with("__prelude_") {
+    alias.slice(10, alias.len())
+  } else {
+    alias
+  }
+
+  if stem == "range" {
+    return exported_name
+  }
+  if stem == "string" {
+    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_code_point" {
+      return exported_name
+    }
+  }
+
+  prefix := case stem {
+    "bool" => "bool",
+    "byte" => "byte",
+    "cell" => "cell",
+    "dict" => "dict",
+    "float" => "float",
+    "int" => "int",
+    "iterator" => "iterator",
+    "option" => "option",
+    "result" => "result",
+    "string" => "string",
+    "vector" => "vector",
+    _ => "",
+  }
+  if prefix == "" {
+    exported_name
+  } else {
+    "${prefix}_${exported_name}"
+  }
+}
 
 /// Record which imported function names come from which dependency module.
 /// Returns the updated func_origin dict (dicts are COW in Twinkle).
@@ -289,10 +396,19 @@ fn track_func_origins(
       }
     },
     .Prelude => {
-      // Prelude: unqualified names (skip if already registered)
+      // Prelude: unqualified names plus internal receiver-prefixed aliases
+      // used by the base signature environment (e.g. vector_all, byte_compare).
       for exported in exported_functions {
         if !func_origin.has(exported.name) {
           func_origin[exported.name] = .{
+            module_path: dep.canonical_path,
+            func_name: exported.source_name,
+          }
+        }
+
+        internal_name := prelude_internal_function_name(dep.alias, exported.name)
+        if internal_name != exported.name and !func_origin.has(internal_name) {
+          func_origin[internal_name] = .{
             module_path: dep.canonical_path,
             func_name: exported.source_name,
           }

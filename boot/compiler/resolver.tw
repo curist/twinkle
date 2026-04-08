@@ -239,8 +239,10 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
       .None => {},
     }
   }
-  for i in range(type_names.len()) {
-    bindings[type_names[i]] = types[i].id
+  if env.type_bindings.len() == 0 {
+    for i in range(type_names.len()) {
+      bindings[type_names[i]] = types[i].id
+    }
   }
 
   origins: Dict<Int, String> = Dict.new()
@@ -260,6 +262,39 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
   env.type_bindings = bindings
   env.type_origins = origins
   env.type_index = idx
+  env
+}
+
+/// Extend the types vector with entries from a larger accumulated vector.
+/// Keeps existing type_bindings intact; only adds new type entries
+/// (those beyond the current env.types.len()) without creating bindings.
+/// This ensures TypeIds are globally unique across modules.
+pub fn extend_types_from(
+  env: ResolvedEnv,
+  acc_types: Vector<TypeEntry>,
+  acc_type_names: Vector<String>,
+  acc_type_origins: Dict<Int, String>,
+) ResolvedEnv {
+  if acc_types.len() <= env.types.len() {
+    return env
+  }
+  // Append only the new entries
+  for i in range_from(env.types.len(), acc_types.len()) {
+    env.types = env.types.append(acc_types[i])
+    env.type_names = env.type_names.append(acc_type_names[i])
+    env.type_index[acc_type_names[i]] = i
+  }
+  // Merge origins for new entries
+  for tid in acc_type_origins.keys() {
+    if tid >= env.types.len() {
+      // skip - this shouldn't happen but guard
+    } else if !env.type_origins.has(tid) {
+      case acc_type_origins[tid] {
+        .Some(origin) => { env.type_origins[tid] = origin },
+        .None => {},
+      }
+    }
+  }
   env
 }
 
@@ -839,16 +874,59 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, exports: Mo
   cur.with_methods(methods).with_type_methods(methods_by_type)
 }
 
-pub fn merge_prelude_exports(env: ResolvedEnv, exports: ModuleExports) ResolvedEnv {
+fn prelude_internal_function_name(alias: String, exported_name: String) String {
+  stem := if alias.starts_with("__prelude_") {
+    alias.slice(10, alias.len())
+  } else {
+    alias
+  }
+
+  if stem == "range" {
+    return exported_name
+  }
+  if stem == "string" {
+    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_code_point" {
+      return exported_name
+    }
+  }
+
+  prefix := case stem {
+    "bool" => "bool",
+    "byte" => "byte",
+    "cell" => "cell",
+    "dict" => "dict",
+    "float" => "float",
+    "int" => "int",
+    "iterator" => "iterator",
+    "option" => "option",
+    "result" => "result",
+    "string" => "string",
+    "vector" => "vector",
+    _ => "",
+  }
+  if prefix == "" {
+    exported_name
+  } else {
+    "${prefix}_${exported_name}"
+  }
+}
+
+pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, exports: ModuleExports) ResolvedEnv {
   reg := register_imported_interface_types(env, "", "", exports, true)
   cur := reg.env
   visible_functions := visible_function_names(exports)
 
   for exported in all_exported_functions(exports) {
-    if cur.has_function(exported.name) { continue }
-    cur = cur.register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
+    if !cur.has_function(exported.name) {
+      cur = cur.register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
+    }
     if visible_functions.has(exported.name) {
       cur = cur.bind_function(exported.name, exported.name)
+    }
+
+    internal_name := prelude_internal_function_name(alias, exported.name)
+    if internal_name != exported.name and cur.has_function(internal_name) {
+      cur = cur.bind_function(internal_name, exported.name)
     }
   }
 
@@ -1335,6 +1413,20 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
   ids
 }
 
+fn is_builtin_interface_type(name: String) Bool {
+  case name {
+    "Option" => true,
+    "Result" => true,
+    "Cell" => true,
+    "Range" => true,
+    "Iterator" => true,
+    "IterItem" => true,
+    "UnfoldStep" => true,
+    "Order" => true,
+    _ => false,
+  }
+}
+
 fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<String, Bool>) Dict<String, Bool> {
   case ty {
     .Named(tid, args) => {
@@ -1347,7 +1439,7 @@ fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<Str
         .Some(found) => found,
         .None => { return cur },
       }
-      if !name.contains(".") or cur.has(name) {
+      if is_builtin_interface_type(name) or cur.has(name) {
         return cur
       }
 
