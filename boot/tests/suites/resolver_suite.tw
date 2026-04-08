@@ -1669,4 +1669,64 @@ pub fn suite() runner.Suite {
         .None => .Ok({}),
       }
     })
+
+    .test("merge_module_exports preserves original defining origin across re-export metadata", fn() {
+      sig := resolver.FunctionSig.{
+        name: "foo", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      }
+      exports := resolver.ModuleExports.{
+        visible_types: [],
+        support_types: [],
+        functions: [resolver.ExportedFunction.{
+          name: "foo",
+          sig,
+          source_name: "foo",
+          origin: .Some(.{ module_path: "test/a.tw", func_name: "foo" }),
+        }],
+        support_functions: [],
+        methods: Dict.new(),
+      }
+
+      env := resolver.empty_env().merge_module_exports("bridge", "test/b.tw", exports)
+
+      case resolver.lookup_function_origin(env, "bridge.foo") {
+        .Some(origin) => {
+          try assert.str_eq(origin.module_path, "test/a.tw")
+          try assert.str_eq(origin.func_name, "foo")
+          .Ok({})
+        },
+        .None => .Err("expected re-exported function to preserve original defining origin"),
+      }
+    })
+
+    .test("merge_module_exports preserves support function origins", fn() {
+      helper_sig := resolver.FunctionSig.{
+        name: "helper", type_params: [], param_names: ["x"],
+        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+      }
+      exports := resolver.ModuleExports.{
+        visible_types: [],
+        support_types: [],
+        functions: [],
+        support_functions: [resolver.ExportedFunction.{
+          name: "helper",
+          sig: helper_sig,
+          source_name: "helper",
+          origin: .Some(.{ module_path: "test/support.tw", func_name: "helper" }),
+        }],
+        methods: Dict.new(),
+      }
+
+      env := resolver.empty_env().merge_module_exports("support_mod", "test/bridge.tw", exports)
+
+      case resolver.lookup_function_origin(env, "support_mod.helper") {
+        .Some(origin) => {
+          try assert.str_eq(origin.module_path, "test/support.tw")
+          try assert.str_eq(origin.func_name, "helper")
+          .Ok({})
+        },
+        .None => .Err("expected support function to preserve canonical origin"),
+      }
+    })
 }
