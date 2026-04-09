@@ -1,9 +1,18 @@
 // Backend preparation boundary.
 //
-// prepare_backend() is the single, explicit entry point between optimized
-// semantic ANF and the backend pipeline. Nothing in wasm_plan.tw or emit.tw
-// should be given raw optimized ANF directly — all backend passes must flow
-// through this boundary.
+// prepare_backend() is the explicit entry point for slot assignment and
+// representation assignment. It is NOT the absolute first backend consumer
+// of optimized ANF: the caller (codegen.tw) runs compute_closure_captures()
+// and plan_wasm_types() on raw ANF before calling prepare_backend(), because
+// planning is still a legacy pass that has not yet been migrated (Phase 6a).
+//
+// Once Phase 6a is complete, planning will consume prepared IR, and at that
+// point prepare_backend() will be the single sanctioned entry boundary.
+// Until then, the comment below describes the intended post-Phase-6 contract
+// rather than the current transitional reality.
+//
+// Nothing in wasm_plan.tw or emit.tw should be given raw optimized ANF
+// directly for new work — all new backend facts must flow through PreparedModule.
 //
 // Phase 4a: boundary insertion absorbed into preparation.
 //   - insert_boundaries() runs inside prepare_backend(), producing post-boundary ANF.

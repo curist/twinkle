@@ -1106,7 +1106,19 @@ Update this section as implementation proceeds.
 - **slot_assign defaults**: SlotInfo.repr=OpaqueAnyref, wasm_type=Anyref until
   repr_assign runs. The defaults are placeholders, not authoritative.
 - **wasm_type derivation**: for TypedRef/TypedSum, calls val_type_of_mono(mono, env).
-  For ClosureRef/ErasedSum/OpaqueAnyref/DeadValue → Anyref.
+  For ClosureRef, calls val_type_of_mono(mono, env) — returns the typed closure
+  struct ref (.Ref(true, Named("$closure_..."))), not plain Anyref. This matches
+  what val_type_of_mono(.Function(...)) produces and what the planner/emitter expect.
+  For ErasedSum/OpaqueAnyref/DeadValue → Anyref.
+- **Alias-backed scalar reprs**: repr_of_named .Scalar(_) case now calls
+  val_type_of_mono(mono, env) and maps the result (I64/F64/I32/Anyref/Ref) to
+  the correct ReprKind instead of unconditionally returning OpaqueAnyref. This
+  handles aliases like `type MyInt = Int` (→ I64) and `type MyStr = String`
+  (→ TypedRef) correctly.
+- **prepare_backend() boundary comment**: updated to reflect that
+  compute_closure_captures() and plan_wasm_types() still run on raw ANF before
+  prepare_backend() (Phase 6a legacy). The comment previously overstated the
+  boundary guarantee.
 - **Branch join**: derived implicitly from mono (type checker already unified).
   No explicit join pass needed for Phase 4b; the post-boundary mono is consistent.
 

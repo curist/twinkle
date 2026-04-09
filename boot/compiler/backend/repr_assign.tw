@@ -168,7 +168,20 @@ fn repr_of_named(mono: MonoType, env: ResolvedEnv) ReprKind {
     .Vector_(_) => .TypedRef(mono),
     .Dict_(_, _) => .TypedRef(mono),
     .Iterator_(_) => .TypedRef(mono),
-    .Scalar(_) => .OpaqueAnyref,  // alias resolves to scalar — treat as anyref
+    // Alias resolves to a scalar-backed type (Int, Float, Bool, Byte, Void,
+    // Anyref_, or String). Use val_type_of_mono to handle the alias chain and
+    // map to the correct repr rather than blindly returning OpaqueAnyref.
+    .Scalar(_) => {
+      vt := val_type_of_mono(mono, env)
+      case vt {
+        .I64 => .I64,
+        .F64 => .F64,
+        .I32 => .I32,
+        .Anyref => .OpaqueAnyref,
+        // Ref means the alias target is a typed heap value (e.g. String).
+        .Ref(_, _) => .TypedRef(mono),
+      }
+    },
   }
 }
 
@@ -181,7 +194,10 @@ fn wasm_type_of_repr(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValType {
     .I32 => .I32,
     .TypedRef(m) => val_type_of_mono(m, env),
     .TypedSum(m) => val_type_of_mono(m, env),
-    .ClosureRef => .Anyref,
+    // ClosureRef carries a typed closure struct ref, not plain anyref.
+    // val_type_of_mono resolves Function(params, ret) → Ref(true, Named("$closure_..."))
+    // and also handles Named aliases to function types through their alias chain.
+    .ClosureRef => val_type_of_mono(mono, env),
     .ErasedSum => .Anyref,
     .OpaqueAnyref => .Anyref,
     .DeadValue => .Anyref,  // placeholder; dead slots are never read
