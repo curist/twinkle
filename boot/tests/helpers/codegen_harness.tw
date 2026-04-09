@@ -4,9 +4,9 @@ use compiler.resolver.{ResolvedEnv}
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.insert_boundaries.{insert_boundaries}
 use compiler.codegen.linker.{link, LinkedModule}
 use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.closure_convert.{compute_closure_captures}
 use compiler.pipeline
 
 pub type CodegenInputs = .{
@@ -33,10 +33,10 @@ pub fn codegen_path(path: String) Result<String, String> {
 // Returns the linked module for structural inspection (before WAT emission).
 pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   inputs := try codegen_inputs(src)
-  prepared := prepare_backend(inputs.anf, inputs.env)
-  registry := plan_wasm_types(inputs.anf, inputs.env, inputs.builtins, prepared.closure_captures)
-  anf2 := insert_boundaries(inputs.anf, registry, inputs.builtins, inputs.env)
-  user_module := emit_module(anf2, registry, inputs.builtins, inputs.env)
+  closure_captures := compute_closure_captures(inputs.anf)
+  registry := plan_wasm_types(inputs.anf, inputs.env, inputs.builtins, closure_captures)
+  prepared := prepare_backend(inputs.anf, inputs.env, inputs.builtins, registry, closure_captures)
+  user_module := emit_module(prepared.anf, registry, inputs.builtins, inputs.env)
   modules := runtime_modules().append(user_module)
   case link(modules, .None) {
     .Ok(linked) => .Ok(linked),

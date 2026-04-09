@@ -880,8 +880,8 @@ Why last:
 - [x] Phase 1 complete: backend boundary settled and architecture blockers closed
 - [x] Phase 2 complete: final closure conversion implemented and tested
 - [x] Phase 3 complete: slot assignment implemented and tested
-- [ ] Phase 4a complete: boundary semantics settled and implemented
-- [ ] Phase 4b complete: representation assignment implemented and tested
+- [x] Phase 4a complete: boundary semantics settled and implemented
+- [x] Phase 4b complete: representation assignment implemented and tested
 - [ ] Phase 5 complete: backend verifier enforced in pipeline
 - [ ] Phase 6a complete: Wasm planning consumes prepared backend IR
 - [ ] Phase 6b complete: emitter local handling is slot-based
@@ -1090,6 +1090,40 @@ Update this section as implementation proceeds.
   quarantined in the test entrypoints by using `append(...)` instead of direct
   vector-literal inclusion. Treat this as a backend representation-consistency
   bug under this rewrite plan, not as an isolated test-only workaround.
+
+### Phase 4b settled decisions
+
+- **`ReprKind` taxonomy**: I64, F64, I32, TypedRef(MonoType), TypedSum(MonoType),
+  ClosureRef, ErasedSum (reserved), OpaqueAnyref, DeadValue. Bool and Byte both
+  map to I32 (same physical type). String maps to TypedRef (not Scalar despite
+  wasm_layout returning Scalar(WAnyref)). ErasedSum is not yet produced.
+- **Derivation from MonoType**: `repr_of_mono(mono, env)` in `repr_assign.tw`.
+  Named types use `layout_of` to distinguish Record (→TypedRef) from Sum (→TypedSum).
+- **Boundary override**: AWrapAnyref result locals always get OpaqueAnyref regardless
+  of their op_result_mono (which is Anyref_). AUnwrapAnyref result locals get
+  repr derived from the unwrap target MonoType embedded in the AUnwrapAnyref op.
+- **DeadPlaceholder → DeadValue**: role check precedes mono derivation.
+- **slot_assign defaults**: SlotInfo.repr=OpaqueAnyref, wasm_type=Anyref until
+  repr_assign runs. The defaults are placeholders, not authoritative.
+- **wasm_type derivation**: for TypedRef/TypedSum, calls val_type_of_mono(mono, env).
+  For ClosureRef/ErasedSum/OpaqueAnyref/DeadValue → Anyref.
+- **Branch join**: derived implicitly from mono (type checker already unified).
+  No explicit join pass needed for Phase 4b; the post-boundary mono is consistent.
+
+### Phase 4a settled decisions
+
+- **Boundary insertion absorbed into prepare_backend()**: `insert_boundaries()` is
+  now called inside `prepare_backend()`, after which `assign_slots_for_module()`
+  runs on the post-boundary ANF. `PreparedModule.anf` holds post-boundary ANF.
+  Callers must not call `insert_boundaries()` separately.
+- **closure_captures computed by caller**: `compute_closure_captures()` is extracted
+  to the `codegen()` pipeline before `plan_wasm_types()`, so planning and preparation
+  share the same capture map. `prepare_backend()` accepts it as a parameter.
+- **Repr transition creates new slots**: wrap/unwrap temporaries allocated by
+  boundary insertion get their own `SlotInfo` entries (role `Local`) in the slot
+  map. They are not annotations on existing slots.
+- **PreparedModule.anf is unambiguously post-boundary**: no downstream pass
+  (planner, emitter) should need to insert boundaries; they read post-boundary ANF.
 
 ## Open Questions
 

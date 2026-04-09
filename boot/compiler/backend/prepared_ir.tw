@@ -2,14 +2,18 @@
 //
 // Phase 2: CaptureParam for explicit closure capture representation.
 // Phase 3: SlotId, SlotRole, SlotInfo, PreparedFunc — explicit slot identity.
+// Phase 4a: PreparedFunc.body now holds post-boundary AnfExpr; slot maps
+//           include AWrapAnyref/AUnwrapAnyref temporaries.
+// Phase 4b: ReprKind — runtime representation category per slot.
+//           SlotInfo.repr and SlotInfo.wasm_type filled by repr_assign pass.
 //
 // Later phases will add:
-//   Phase 4b: ReprKind, representation categories per slot
 //   Phase 5+: verifier-checked invariants over PreparedModule
 
 use compiler.core_ir.{LocalId, FuncId, Param}
 use compiler.resolver.{MonoType}
 use compiler.anf.{AnfExpr}
+use compiler.codegen.wasm_ir.{ValType}
 
 // ── Phase 2: CaptureParam ───────────────────────────────────────────
 
@@ -42,22 +46,56 @@ pub type SlotRole = {
   DeadPlaceholder, // Never-typed; allocated for Wasm validation but never read
 }
 
+// ── Phase 4b: ReprKind ─────────────────────────────────────────────
+
+// ReprKind is the runtime representation category for a prepared slot.
+//
+// This drives typed-layout operation gating in the verifier and emitter:
+// - Typed ref/sum operations require TypedRef or TypedSum repr
+// - Scalar arithmetic requires I64/F64/I32
+// - ErasedSum/OpaqueAnyref slots cannot use typed-layout helpers
+// - DeadValue slots are unreachable and should only appear in dead paths
+//
+// ErasedSum is produced when a sum type value has crossed an anyref boundary
+// and is held as opaque anyref. Use it when you need to distinguish a
+// formerly-typed sum from a plain OpaqueAnyref (reserved for future repr
+// tracking; not yet produced by repr_assign in Phase 4b).
+pub type ReprKind = {
+  I64,               // unboxed i64 (Int)
+  F64,               // unboxed f64 (Float)
+  I32,               // unboxed i32 (Bool, Byte)
+  TypedRef(MonoType),  // typed GC ref: String, record, Vector, Dict, Cell, Iterator
+  TypedSum(MonoType),  // typed sum: Optional<T>, Result<T,E>, user sum types
+  ClosureRef,        // closure/function reference
+  ErasedSum,         // sum type erased to anyref at a boundary (reserved; not yet emitted)
+  OpaqueAnyref,      // opaque anyref: Void, Anyref_, AWrapAnyref result
+  DeadValue,         // Never type — slot is unreachable
+}
+
 // SlotInfo is the complete backend record for one physical slot.
 //
-// Phase 3: includes role, source_local, and mono.
-// Phase 4b will add ReprKind and wasm_type once representation assignment is complete.
+// Phase 3: role, source_local, mono.
+// Phase 4b: repr (runtime representation category) and wasm_type (physical
+//   Wasm storage type). slot_assign sets defaults (OpaqueAnyref / Anyref);
+//   repr_assign fills in the correct values for all live slots.
 pub type SlotInfo = .{
   slot: SlotId,
   source_local: LocalId,
   role: SlotRole,
   mono: MonoType,
+  repr: ReprKind,    // Phase 4b: representation category (OpaqueAnyref until repr_assign runs)
+  wasm_type: ValType, // Phase 4b: physical Wasm type (Anyref until repr_assign runs)
 }
 
 // PreparedFunc is the explicit backend representation of one function.
 //
-// Phase 3: captures, params, and locals are explicit slot lists. The body is
-// still semantic AnfExpr — body rewriting is deferred to Phase 3+ (slot-based
-// body refs are a Phase 6b concern). The slot map is the primary new artifact.
+// Phase 3: captures, params, and locals are explicit slot lists. The slot map
+// is the primary new artifact.
+// Phase 4a: body is post-boundary AnfExpr (AWrapAnyref/AUnwrapAnyref inserted);
+//           slot maps include wrap/unwrap temporaries as ordinary Local slots.
+// Phase 4b: SlotInfo.repr and SlotInfo.wasm_type are filled in by repr_assign.
+//           Body LocalId references are still semantic (slot-based body rewriting
+//           is a Phase 6b concern).
 //
 // Slot ABI order: captures → params → locals.
 // The emitter should read this instead of rebuilding the local map via pre-scan.

@@ -24,8 +24,9 @@ use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, lookup_type_def}
 use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, Atom}
 use compiler.backend.prepared_ir.{
-  CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc,
+  CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc, ReprKind,
 }
+use compiler.codegen.wasm_ir.{ValType}
 
 // assign_slots_for_module builds a PreparedFunc for every function in the
 // module, using precomputed_captures for closure ABI ordering.
@@ -62,6 +63,8 @@ pub fn assign_slots(
           source_local: cap.local_id,
           role: .CaptureParam,
           mono: cap.ty,
+          repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+          wasm_type: .Anyref,
         }
         local_to_slot[cap.local_id.id] = sid
         capture_slots = capture_slots.append(sid)
@@ -79,6 +82,8 @@ pub fn assign_slots(
       source_local: p.local,
       role: .Param,
       mono: p.ty,
+      repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+      wasm_type: .Anyref,
     }
     local_to_slot[p.local.id] = sid
     param_slots = param_slots.append(sid)
@@ -110,6 +115,8 @@ pub fn assign_slots(
       source_local: LocalId.{ id: lid },
       role: role,
       mono: mono,
+      repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+      wasm_type: .Anyref,
     }
     local_to_slot[lid] = sid
     local_slots = local_slots.append(sid)

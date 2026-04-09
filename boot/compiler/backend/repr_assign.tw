@@ -1,0 +1,189 @@
+// Representation assignment pass — Phase 4b.
+//
+// assign_repr_for_module() takes a vector of PreparedFuncs (with slot_assign
+// defaults: OpaqueAnyref / Anyref) and fills in the correct ReprKind and
+// wasm_type for each slot, using:
+//
+//   1. MonoType → ReprKind derivation (covers most slots)
+//   2. Boundary-node override:
+//      - AWrapAnyref result locals → OpaqueAnyref (the result is untyped anyref)
+//      - AUnwrapAnyref result locals → repr derived from the unwrap target MonoType
+//   3. DeadPlaceholder slots → DeadValue
+//
+// Branch join rules: the type checker already unified branch result types,
+// so the let-bound result local's MonoType is consistent. The mono-derived
+// repr is correct for all branch joins that do not involve erasing boundaries.
+// Erasing boundaries are explicit in post-boundary ANF as AUnwrapAnyref nodes,
+// so the override in rule 2 handles those cases correctly.
+//
+// ErasedSum is reserved for future use. It is not currently produced by this
+// pass (it would require tracking which anyrefs previously held typed sums).
+
+use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.core_ir.{LocalId}
+use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
+use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc}
+
+// ── Public entry ────────────────────────────────────────────────────
+
+// assign_repr_for_module refines repr and wasm_type for all slots in all
+// prepared functions. Call after assign_slots_for_module in prepare_backend().
+pub fn assign_repr_for_module(
+  funcs: Vector<PreparedFunc>,
+  env: ResolvedEnv,
+) Vector<PreparedFunc> {
+  collect pf in funcs {
+    assign_repr_for_func(pf, env)
+  }
+}
+
+fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
+  // Pre-scan: find LocalIds bound by boundary ops.
+  // AWrapAnyref result → OpaqueAnyref
+  // AUnwrapAnyref result → repr derived from unwrap target MonoType (stored in op)
+  wrap_lids: Dict<Int, Bool> = Dict.new()
+  unwrap_monos: Dict<Int, MonoType> = Dict.new()
+  scan_body(pf.body, wrap_lids, unwrap_monos)
+
+  // Refine each slot.
+  new_slots: Dict<Int, SlotInfo> = Dict.new()
+  for sid_int in pf.slots.keys() {
+    case pf.slots[sid_int] {
+      .None => {},
+      .Some(info) => {
+        lid := info.source_local.id
+        new_repr: ReprKind = case info.role {
+          .DeadPlaceholder => .DeadValue,
+          _ => case wrap_lids[lid] {
+            .Some(_) => .OpaqueAnyref,
+            .None => case unwrap_monos[lid] {
+              .Some(target_mono) => repr_of_mono(target_mono, env),
+              .None => repr_of_mono(info.mono, env),
+            },
+          },
+        }
+        new_wasm_type := wasm_type_of_repr(new_repr, info.mono, env)
+        new_slots[sid_int] = SlotInfo.{
+          slot: info.slot,
+          source_local: info.source_local,
+          role: info.role,
+          mono: info.mono,
+          repr: new_repr,
+          wasm_type: new_wasm_type,
+        }
+      },
+    }
+  }
+
+  PreparedFunc.{
+    func_id: pf.func_id,
+    name: pf.name,
+    captures: pf.captures,
+    params: pf.params,
+    locals: pf.locals,
+    slots: new_slots,
+    local_to_slot: pf.local_to_slot,
+    body: pf.body,
+    return_mono: pf.return_mono,
+    orig_params: pf.orig_params,
+  }
+}
+
+// ── Body scanning ────────────────────────────────────────────────────
+
+fn scan_body(
+  expr: AnfExpr,
+  wrap_lids: Dict<Int, Bool>,
+  unwrap_monos: Dict<Int, MonoType>,
+) Void {
+  case expr {
+    .Let(local, op, body) => {
+      scan_op(local.id, op, wrap_lids, unwrap_monos)
+      scan_body(body, wrap_lids, unwrap_monos)
+    },
+    _ => {},
+  }
+}
+
+fn scan_op(
+  result_lid: Int,
+  op: AnfOp,
+  wrap_lids: Dict<Int, Bool>,
+  unwrap_monos: Dict<Int, MonoType>,
+) Void {
+  case op {
+    .AWrapAnyref(_, _) => {
+      wrap_lids[result_lid] = true
+    },
+    .AUnwrapAnyref(_, target_mono) => {
+      unwrap_monos[result_lid] = target_mono
+    },
+    .AIf(_, then_e, else_e) => {
+      scan_body(then_e, wrap_lids, unwrap_monos)
+      scan_body(else_e, wrap_lids, unwrap_monos)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms { scan_body(arm.body, wrap_lids, unwrap_monos) }
+    },
+    .ALoop(inner) => scan_body(inner, wrap_lids, unwrap_monos),
+    _ => {},
+  }
+}
+
+// ── ReprKind derivation ─────────────────────────────────────────────
+
+// repr_of_mono derives the ReprKind for a given MonoType.
+// Never callers must handle .Never before calling (DeadPlaceholder role does).
+pub fn repr_of_mono(mono: MonoType, env: ResolvedEnv) ReprKind {
+  case mono {
+    .Never => .DeadValue,
+    .Void => .OpaqueAnyref,
+    .Anyref_ => .OpaqueAnyref,
+    .Int => .I64,
+    .Float => .F64,
+    .Bool => .I32,
+    .Byte => .I32,
+    .String => .TypedRef(.String),
+    .Function(_, _) => .ClosureRef,
+    .Optional(_) => .TypedSum(mono),
+    .Result(_, _) => .TypedSum(mono),
+    .Vector(_) => .TypedRef(mono),
+    .Dict(_, _) => .TypedRef(mono),
+    .Named(_, _) => repr_of_named(mono, env),
+    // Var/MetaVar should not appear in prepared IR; fall back to OpaqueAnyref.
+    _ => .OpaqueAnyref,
+  }
+}
+
+fn repr_of_named(mono: MonoType, env: ResolvedEnv) ReprKind {
+  // Use layout_of to distinguish record vs sum vs alias.
+  // layout_of errors on Never (already handled above).
+  case layout_of(mono, env) {
+    .Record(_) => .TypedRef(mono),
+    .Sum(_) => .TypedSum(mono),
+    .Closure(_) => .ClosureRef,
+    .Cell_(_) => .TypedRef(mono),
+    .Vector_(_) => .TypedRef(mono),
+    .Dict_(_, _) => .TypedRef(mono),
+    .Iterator_(_) => .TypedRef(mono),
+    .Scalar(_) => .OpaqueAnyref,  // alias resolves to scalar — treat as anyref
+  }
+}
+
+// ── ValType derivation ───────────────────────────────────────────────
+
+fn wasm_type_of_repr(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValType {
+  case repr {
+    .I64 => .I64,
+    .F64 => .F64,
+    .I32 => .I32,
+    .TypedRef(m) => val_type_of_mono(m, env),
+    .TypedSum(m) => val_type_of_mono(m, env),
+    .ClosureRef => .Anyref,
+    .ErasedSum => .Anyref,
+    .OpaqueAnyref => .Anyref,
+    .DeadValue => .Anyref,  // placeholder; dead slots are never read
+  }
+}
