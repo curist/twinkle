@@ -69,6 +69,25 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
   .Ok({})
 }
 
+fn test_count_uses_closure_free_var_inside_match_arm() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(4), .AMatch(.ALocal(lid(0)), [
+    AnfMatchArm.{
+      pattern: .LitBool(true),
+      body: .Let(lid(1), .AInit(.ALitStr("interp")),
+        .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+          .Atom(.ALocal(lid(2))))),
+    },
+    AnfMatchArm.{
+      pattern: .Wildcard,
+      body: .Atom(.ALitVoid),
+    },
+  ]), .Atom(.ALocal(lid(4))))
+  uses := count_uses(expr)
+  try assert.int_eq(uses_for(uses, 1), 1)
+  try assert.int_eq(uses_for(uses, 2), 1)
+  .Ok({})
+}
+
 fn test_count_uses_multiple_refs() Result<Void, String> {
   // Let(0, ABinOp(Add, ALocal(1), ALocal(1), Int), Atom(ALocal(0)))
   // local 1 used twice
@@ -189,6 +208,24 @@ fn test_dead_let_keeps_assigned() Result<Void, String> {
     .Let(local, _, _) => assert.int_eq(local.id, 5),
     _ => .Err("expected Let(5) preserved"),
   }
+}
+
+fn test_dead_let_keeps_match_arm_binding_used_by_closure_free_var() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(4), .AMatch(.ALocal(lid(0)), [
+    AnfMatchArm.{
+      pattern: .LitBool(true),
+      body: .Let(lid(1), .AInit(.ALitStr("interp")),
+        .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),
+          .Atom(.ALocal(lid(2))))),
+    },
+    AnfMatchArm.{
+      pattern: .Wildcard,
+      body: .Atom(.ALitVoid),
+    },
+  ]), .Atom(.ALocal(lid(4))))
+  result := dead_let_elim(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
 }
 
 fn test_dead_let_nested_in_if() Result<Void, String> {
@@ -419,6 +456,7 @@ pub fn suite() runner.Suite {
   s = s.test("uses: assign target not counted", test_count_uses_assign_target_not_counted)
   s = s.test("uses: closure free vars", test_count_uses_closure_free_vars)
   s = s.test("uses: excluding free vars", test_count_uses_excluding_free_vars)
+  s = s.test("uses: closure free var inside match arm", test_count_uses_closure_free_var_inside_match_arm)
   s = s.test("uses: multiple refs", test_count_uses_multiple_refs)
   // is_pure
   s = s.test("pure: init", test_is_pure_init)
@@ -443,6 +481,7 @@ pub fn suite() runner.Suite {
   s = s.test("dead_let: keeps impure", test_dead_let_keeps_impure)
   s = s.test("dead_let: keeps int div", test_dead_let_keeps_int_div)
   s = s.test("dead_let: keeps assigned", test_dead_let_keeps_assigned)
+  s = s.test("dead_let: keeps match arm binding used by closure free var", test_dead_let_keeps_match_arm_binding_used_by_closure_free_var)
   s = s.test("dead_let: nested in if", test_dead_let_nested_in_if)
   s = s.test("dead_let: drops unused pure if", test_dead_let_drops_unused_pure_if)
   s = s.test("dead_let: keeps unused impure if", test_dead_let_keeps_unused_impure_if)

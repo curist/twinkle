@@ -40,11 +40,13 @@ pub fn codegen(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) String {
+  eprintln("[codegen] closure_convert")
   // 1. Final closure conversion.
   //    Must happen before preparation so rewritten hoisted bodies and capture
   //    metadata stay in sync across the backend pipeline.
-  closure_conversion := convert_closures(anf)
+  closure_conversion := convert_closures(anf, env)
 
+  eprintln("[codegen] prepare_backend")
   // 2. Prepare backend IR.
   //    Boundary insertion happens inside prepare_backend().
   //    prepared.anf holds post-boundary ANF; slot maps include boundary temps.
@@ -56,6 +58,7 @@ pub fn codegen(
     closure_conversion.captures,
   )
 
+  eprintln("[codegen] verify_prepared")
   // 3. Verify prepared backend IR.
   //    This is the hard stop before planning/emission can drift into
   //    unreadable later failures.
@@ -64,12 +67,15 @@ pub fn codegen(
     .Err(msg) => error(msg),
   }
 
+  eprintln("[codegen] plan_wasm_types")
   // 4. Plan Wasm types from prepared backend IR.
   registry := plan_wasm_types(prepared, env, builtins)
 
+  eprintln("[codegen] emit_module")
   // 5. Emit user module from prepared backend IR.
   user_module := emit_module(prepared, registry, builtins, env)
 
+  eprintln("[codegen] link")
   // 6. Link with runtime
   modules := runtime_modules().append(user_module)
   linked := case link(modules, .None) {
@@ -87,6 +93,7 @@ pub fn codegen(
     },
   }
 
+  eprintln("[codegen] emit_wat")
   // 7. Emit WAT
   emit_wat(linked)
 }

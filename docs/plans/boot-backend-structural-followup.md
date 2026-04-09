@@ -6,9 +6,9 @@ structural mismatch: some prepared-body paths are broader than neighboring
 prepared-body representations assume.
 
 The goal here is not wording cleanup. It is to audit and close the remaining
-representation seams that can still produce backend failures of the form “this
+representation seams that can still produce backend failures of the form "this
 value category is valid in one place, but impossible in the adjacent IR node or
-consumer”.
+consumer".
 
 ## Problem statement
 
@@ -21,226 +21,205 @@ important class of issue can still remain after most of the rewrite is done:
 - later passes inherit the mismatch and fail when a real program uses the valid
   but unmodeled case
 
-A concrete example is closure construction payloads:
+## Audit results (completed 2026-04-09)
 
-- prepared operands already distinguish ordinary function-local values from
-  non-slot operands such as explicit module-global references
-- but closure payload representation may still assume every captured value is a
-  slot
-- that makes some valid captures impossible to represent even though the rest of
-  the prepared IR already admits them
+A full audit of all backend passes was performed. The findings below replace the
+original speculative audit focus list.
 
-This plan is a targeted audit for remaining mismatches of that shape.
+### Finding 1: AGlobalLocal verifier bypass — CONFIRMED, actionable
 
-## Goals
+All 6 verification points in `verify.tw` unconditionally accept `AGlobalLocal`
+with no type or repr validation:
 
-- find prepared/backend representations that are narrower than the real value
-  space accepted by adjacent passes
-- unify operand/value categories across lowering, verifier, planner, and emitter
-- add regression tests that stress category boundaries rather than only happy
-  paths
-- make future backend bugs fail in the verifier or in narrow, obvious lowering
-  code rather than during end-to-end boot execution
+| Function | Line | Behavior |
+|---|---|---|
+| `infer_atom_mono` | 547 | Returns `.None` — no type inferred |
+| `verify_atom_mapped` | 583 | Returns `.Ok({})` |
+| `verify_atom_use` | 594 | Returns `.Ok({})` |
+| `verify_opkind_atom` | 684 | Returns `.Ok({})` — Int-as-condition not caught |
+| `verify_condition_atom` | 699 | Returns `.Ok({})` — no I32 check |
+| `require_local_repr_if_local` | 740 | Returns `.Ok({})` — no repr check |
 
-## Audit focus
+The emitter derives mono/repr on-the-fly from `registry.module_globals`
+(`emit.tw` lines 525-551), but the verifier never cross-references that
+registry. Type mismatches (e.g., an Int-typed module global used as a branch
+condition) pass verification silently and only surface during emission or Wasm
+validation.
 
-Search for places where the code assumes a value is:
+The planning pass (`wasm_plan_impl.tw:87-98`) is the only strict checkpoint —
+it panics on unregistered globals. But type-level mismatches are not caught
+anywhere before the emitter.
 
-- always a `SlotId`
-- always function-local
-- always representable as a prepared slot operand rather than a general prepared
-  operand
-- always typed / never erased
-- always discoverable from syntax instead of explicit prepared metadata
-- always unique by `source_local` in a way that excludes valid multiple roles or
-  bridge cases
+### Finding 2: AMakeClosure slot-only invariant — SAFE by construction
 
-High-signal patterns to inspect:
+The original concern was that module globals could leak into closure free_vars
+via `AMakeClosure(FuncId, Vector<SlotId>)`. The audit confirmed this cannot
+happen:
 
-- `lookup_slot(...)`
-- `find_slot_by_source_local(...)`
-- `source_local` reverse-lookup logic
-- `PreparedOp` fields typed as `Vector<SlotId>` or `SlotId` where a broader
-  operand type may be more correct
-- `AGlobalLocal(...)` bridge handling
-- verifier helpers that treat non-slot operands as automatically valid
-- planner scans that infer backend facts from syntax instead of prepared facts
-- emitter helpers that assume every closure/env/member/value source is a slot
+1. `lower_core.tw:246-248` — module globals produce `GlobalLocal(gid)` in
+   Core IR, a distinct variant from `Local(id)`
+2. `collect_free_vars_inner` (`lower_core.tw:1198`) — only captures `.Local(id)`
+   (line 1200); `GlobalLocal` falls through to the `_ =>` catch-all (line 1297)
+   and is not collected
+3. Free-var collection happens on Core IR **before** ANF lowering erases the
+   distinction (`lower_anf.tw:256/513` converts both to `ALocal`)
 
-## Work plan
+The invariant holds. However, it is enforced only by a runtime trap in
+`slot_assign.tw:253` (`lookup_slot` errors on missing ID) rather than by a
+verifier rule. A defense-in-depth assertion would improve diagnostics.
 
-### 1. Audit prepared operand categories for structural mismatches
+**No prepared IR widening is needed.** `AMakeClosure(FuncId, Vector<SlotId>)`
+is the correct representation — closures genuinely only capture function-local
+slots.
 
-Target:
-- `boot/compiler/backend/prepared_ir.tw`
-- `boot/compiler/backend/slot_assign.tw`
-- `boot/compiler/backend/verify.tw`
-- `boot/compiler/codegen/emit.tw`
-- `boot/compiler/codegen/wasm_plan_impl.tw`
-- `boot/compiler/codegen/wasm_plan_scan.tw`
+### Finding 3: source_local ID collision — SAFE by numeric invariant
 
-Deliverables:
-- a list of prepared ops whose operand/result categories are too narrow
-- a decision for each case: widen representation, prove invariant, or reject in
-  verifier
-- explicit handling rules for bridge operands such as module globals
+The emitter checks `module_globals[entry.source_local.id]` for every `ASlot`
+in non-init functions (`emit.tw:492`). The concern was that a closure capture
+param's `source_local` might numerically match a module global ID.
+
+This is safe because IDs are allocated in guaranteed-disjoint ranges:
+1. Module globals get IDs 0..N via `next_global` (`lower_core.tw:2540`)
+2. Function locals start at `max(next_local, next_global)` (`lower_core.tw:2583`)
+3. Closure conversion allocates `param_local` IDs above
+   `max_local_id_module(anf) + 1` (`closure_convert.tw:30`)
+
+Capture param IDs are always strictly above module global IDs. No collision is
+possible under the current allocation scheme. However, this safety relies on an
+implicit cross-pass numeric invariant with no assertion.
+
+### Finding 4: repr_assign coverage — SOUND
+
+repr_assign treats all slot categories (CaptureParam, Param, Local,
+PatternLocal) identically through the same `repr_of_mono` path. Only
+`DeadPlaceholder → DeadValue` is special-cased. Boundary nodes are handled
+correctly:
+- `AWrapAnyref` result → forced to `OpaqueAnyref`
+- `AUnwrapAnyref` result → repr derived from target mono
+- All others → `repr_of_mono(info.mono, env)`
+
+The emitter has hard `require_typed_record_atom` / `require_typed_sum_atom` /
+`require_closure_atom` guards that catch repr mismatches at emit time.
+
+**No changes needed.**
+
+### Finding 5: Emitter silent fallbacks — low risk, poor hygiene
+
+`atom_mono` returns `.Void` and `atom_repr` returns `.OpaqueAnyref` when an
+`AGlobalLocal` isn't in the registry (`emit.tw` lines 528, 549). In practice
+these are unreachable because `emit_atom` (line 504) panics first. But the
+fallbacks mask errors if call ordering ever changes.
+
+## Remaining work plan
+
+### 1. Tighten verifier for AGlobalLocal (primary deliverable)
+
+This is the only confirmed structural gap with real risk. The verifier should
+resolve `AGlobalLocal` mono/repr from registry data and validate it the same
+way it validates `ASlot` operands.
+
+Concrete changes in `boot/compiler/backend/verify.tw`:
+
+- **`infer_atom_mono` (line 547):** Look up `AGlobalLocal(lid)` in a
+  module_globals map and return `Some(mono)` instead of `None`. This requires
+  threading module_globals data into the verifier (currently it only receives
+  `closure_captures` and `funcs`).
+- **`verify_opkind_atom` (line 684):** Resolve the global's repr and check it
+  against the allowed set for the op kind, same as the `ASlot` path.
+- **`verify_condition_atom` (line 699):** Resolve the global's repr and check
+  for I32 compatibility.
+- **`require_local_repr_if_local` (line 740):** Resolve the global's repr and
+  check against the allowed set.
+- **`verify_atom_use` (line 594):** Confirm the global exists in the registry
+  (catch unregistered globals before they reach the emitter).
+
+The verifier's `verify_prepared_module` function will need to accept a
+module_globals map (or a broader registry reference) as an additional parameter.
 
 Exit criteria:
-- every prepared op has an intentional operand category design
-- no value category is accepted in one pass but structurally unrepresentable in
-  the next pass
+- `AGlobalLocal` operands are validated for mono/repr compatibility
+- Unregistered globals are rejected with a clear diagnostic
+- No `.Ok({})` bypass remains for `AGlobalLocal` in validation paths
 
-### 2. Widen underspecified prepared ops where necessary
+### 2. Defense-in-depth assertions (low priority)
 
-Examples of likely candidates:
-- closure payload operands
-- bridge cases involving `AGlobalLocal(...)`
-- any op whose payload is currently slot-only but semantically may include a
-  non-slot prepared operand
+These address invariants that are currently safe but rely on implicit
+cross-pass properties:
 
-Deliverables:
-- prepared IR changes where needed
-- lowering updates in slot assignment
-- verifier/planner/emitter updates aligned to the new contract
+- **Closure capture assertion:** Add a verifier check that every `SlotId` in
+  `AMakeClosure` free_vars has role `CaptureParam`, `Param`, or `Local` — not
+  `DeadPlaceholder`. (The current verifier at line 279 already checks capture
+  count and source_local alignment, but doesn't check roles.)
+- **source_local disjointness:** Consider an assertion in `wasm_plan_impl.tw`
+  that no `module_globals` key appears as a `source_local.id` in any non-init
+  function's slot map.
+- **Emitter fallback cleanup:** Replace the silent `.Void` / `.OpaqueAnyref`
+  fallbacks in `atom_mono` / `atom_repr` (lines 528, 549) with `error()` calls,
+  since `emit_atom` already panics on missing globals.
 
-Exit criteria:
-- prepared IR can represent all valid backend cases exercised by the language
-- slot-only assumptions remain only where they are truly semantic invariants
+### 3. Regression tests
 
-### 3. Tighten verifier boundaries around bridge categories
+Focus on the confirmed gap (AGlobalLocal validation) and defense-in-depth
+cases. The original test matrix has been trimmed to match actual findings.
 
-Deliverables:
-- verifier rules for any intentionally non-slot operands
-- verifier rejection for category combinations that remain intentionally illegal
-- diagnostics that name the precise prepared op / operand mismatch
+#### A. Module global usage matrix
 
-Exit criteria:
-- category mismatches fail in verifier or early lowering, not deep in codegen
-- bridge operands have explicit rules instead of implicit tolerance
+Test `AGlobalLocal` in every position where verifier validation was previously
+skipped:
 
-### 4. Add structural regression suites
+- module global as arithmetic operand (Int binop)
+- module global as if-condition (Bool)
+- module global as record-get target
+- module global as match scrutinee (sum type)
+- module global as call argument
+- module global as closure call callee (function-typed global)
+- module global as return value
 
-The main value here is not more tests in general; it is tests that force values
-across representation-category boundaries where structural mismatches tend to
-hide.
+These directly exercise the new verifier rules from step 1.
 
-## Test patterns to add
+#### B. Closure capture category matrix
 
-These patterns are meant to surface bugs like the recent closure-capture/module-
-global mismatch.
-
-### A. Closure capture category matrix
-
-For each captured value kind, construct a closure and then exercise planning,
-verification, and emission:
+Verify that all capture value kinds round-trip through the pipeline:
 
 - captured declared param
 - captured let-bound local
 - captured pattern-bound local
-- captured reassigned local (`AAssign` target and later use)
-- captured module global
-- captured value flowing through wrap/unwrap boundaries
+- captured reassigned local
 - captured closure value (closure captures closure)
 
-Why this helps:
-- exposes places where closure payloads assume “slot only” or “typed only”
-- catches mismatches between closure conversion, slot lowering, verifier, and
-  emitter
+Note: "captured module global" is intentionally excluded — the audit confirmed
+this is impossible by construction. A test that a module global referenced
+inside a closure body compiles correctly (via `AGlobalLocal`, not capture) is
+useful instead.
 
-### B. Use-site matrix for non-slot operands
+#### C. Higher-order bare function matrix
 
-For every non-slot prepared operand category currently allowed, test whether it
-appears in each place it might plausibly flow:
-
-- direct call arg
-- closure payload
-- record field
-- variant payload
-- array literal element
-- branch condition / match scrutinee if applicable
-- return / break value if applicable
-
-Why this helps:
-- surfaces asymmetric IR designs where one op accepts a value category but an
-  adjacent op cannot represent it
-
-### C. Higher-order bare function matrix
-
-Test direct bare global-function use in all higher-order positions:
+Test bare `AGlobalFunc` in higher-order positions:
 
 - user function parameter of function type
 - nested higher-order call
-- passed through another function before invocation
-- used in a branch before being passed onward
-- mixed with closure-wrapped functions in the same call family
+- mixed with closure-wrapped functions in the same call
 
-Why this helps:
-- catches planner/emitter gaps around function signature/trampoline planning
-- finds places where closure and bare-function paths diverge structurally
+#### D. End-to-end stress fixture
 
-### D. Bridge operand persistence tests
-
-Where a compatibility bridge exists, verify that it survives every relevant pass
-without accidental narrowing:
-
-- lower to prepared body
-- verify prepared body
-- plan Wasm types
-- emit Wasm module
-
-Good examples:
-- `AGlobalLocal(...)`
-- erased/opaque anyref values crossing explicit boundaries
-
-Why this helps:
-- catches bugs where a bridge is modeled in one pass but forgotten in another
-
-### E. Duplicate-source and alias-role stress tests
-
-Construct cases where a semantic origin participates in more than one backend
-role or flows through rewritten identities:
-
-- captured local rewritten to capture param and also referenced at construction
-  site
-- pattern-local and ordinary local interactions in nested matches
-- reassigned value reused after branch/loop boundaries
-
-Why this helps:
-- surfaces over-strong uniqueness assumptions around `source_local`
-- catches verifier logic that accidentally assumes a one-to-one identity where
-  the backend contract now has a rewritten or bridged form
-
-### F. Real-program end-to-end stress fixtures
-
-Keep a small set of boot-style fixtures that deliberately combine the risky
-categories above in one program:
-
-- module globals + closures + higher-order calls
-- pattern-bound values captured by closures
-- boundary wrap/unwrap temps captured or returned through branches
-- container literals carrying mixed operand categories
-
-Why this helps:
-- some structural mismatches only show up once several individually-valid
-  bridges compose in the same function/module
+One fixture combining module globals + closures + higher-order calls +
+pattern-bound captures in a single module, exercising all the above paths
+together.
 
 ## Recommended execution order
 
-1. audit prepared operand categories
-2. widen underspecified prepared ops
-3. tighten verifier boundaries for bridge categories
-4. add the structural regression suites above
-5. rerun boot self-hosted paths and keep the new fixtures in the regular boot
-   test path
+1. Thread module_globals into verifier; add `AGlobalLocal` validation rules
+2. Add module global usage matrix tests (A) to confirm verifier catches errors
+3. Clean up emitter silent fallbacks
+4. Add defense-in-depth assertions
+5. Add remaining regression tests (B, C, D)
 
 ## Success criteria
 
-This follow-up is successful when:
-
-- no prepared/backend value category is broader in one pass than the next pass
-  can represent
-- slot-only assumptions are explicit semantic invariants, not accidental shape
-  restrictions
-- bridge operands have clear verifier-backed rules
-- category-mismatch bugs are caught by targeted tests or verifier failures
+- `AGlobalLocal` operands are validated by the verifier for type/repr
+  compatibility, matching the same rigor applied to `ASlot` operands
+- Unregistered module globals are caught by the verifier, not by emitter panics
+- The closure slot-only invariant and source_local disjointness invariant have
+  explicit assertions rather than relying on implicit numeric properties
+- Category-mismatch bugs are caught by targeted tests or verifier failures
   before they become boot-runtime crashes

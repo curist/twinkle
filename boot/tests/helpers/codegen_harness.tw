@@ -33,7 +33,7 @@ pub fn codegen_path(path: String) Result<String, String> {
 // Returns the linked module for structural inspection (before WAT emission).
 pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   inputs := try codegen_inputs(src)
-  closure_conversion := convert_closures(inputs.anf)
+  closure_conversion := convert_closures(inputs.anf, inputs.env)
   prepared := prepare_backend(
     closure_conversion.anf,
     inputs.env,

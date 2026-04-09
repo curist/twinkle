@@ -7,9 +7,11 @@
 // Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
 
 use compiler.core_ir.{LocalId, FuncId}
+use compiler.resolver.{MonoType}
 use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
 use compiler.anf_analysis.{set_has}
 use compiler.opt.analysis.{base_reusable_after_binding, collect_tainted, next_local_id}
+use compiler.builder_family.{BuilderConfig}
 use compiler.opt.loop_builder.{rewrite_loop_region}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, op_has_fresh_result, optimizer_semantics_from_cow_config, reusable_update_site}
 
@@ -250,6 +252,67 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
   .None
 }
 
+// ── Mono repair for synthesized builder locals ─────────────────────
+
+fn resolve_local_mono(monos: Dict<Int, MonoType>, func: AnfFunctionDef, local: LocalId) MonoType {
+  for p in func.params {
+    if p.local.id == local.id { return p.ty }
+  }
+  case monos[local.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}
+
+fn repair_builder_region_monos(expr: AnfExpr, func: AnfFunctionDef, monos: Dict<Int, MonoType>, builder: BuilderConfig) Dict<Int, MonoType> {
+  case expr {
+    .Let(builder_local, init_op, body) => {
+      case init_op {
+        .ACall(.AGlobalFunc(init_fid), _) => {
+          is_builder_init := init_fid.id == builder.builder_new_id.id or init_fid.id == builder.builder_from_id.id
+          if is_builder_init {
+            case body {
+              .Let(_, .ALoop(loop_body), after_loop) => {
+                monos = repair_builder_region_monos(loop_body, func, monos, builder)
+                case after_loop {
+                  .Let(freeze_local, .ACall(.AGlobalFunc(freeze_fid), freeze_args), after_freeze) => {
+                    if freeze_fid.id == builder.builder_freeze_id.id and freeze_args.len() == 1 {
+                      case freeze_args[0] {
+                        .ALocal(freeze_src) => {
+                          if freeze_src.id == builder_local.id {
+                            case after_freeze {
+                              .Let(assign_local, .AAssign(base_local, .ALocal(assign_value)), cont) => {
+                                if assign_value.id == freeze_local.id {
+                                  base_mono := resolve_local_mono(monos, func, base_local)
+                                  monos[builder_local.id] = base_mono
+                                  monos[freeze_local.id] = base_mono
+                                  monos[assign_local.id] = .Void
+                                  return repair_builder_region_monos(cont, func, monos, builder)
+                                }
+                              },
+                              _ => {},
+                            }
+                          }
+                        },
+                        _ => {},
+                      }
+                    }
+                  },
+                  _ => {},
+                }
+              },
+              _ => {},
+            }
+          }
+        },
+        _ => {},
+      }
+      repair_builder_region_monos(body, func, monos, builder)
+    },
+    _ => monos,
+  }
+}
+
 // ── Entry point ────────────────────────────────────────────────────
 
 pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
@@ -262,11 +325,12 @@ pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: Optimizer
     next_local: next_local_id(func),
   }
   new_body := rewrite_expr(func.body, st)
+  new_mono := repair_builder_region_monos(new_body, func, func.op_result_mono, config.builder)
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
     params: func.params,
-    op_result_mono: func.op_result_mono,
+    op_result_mono: new_mono,
     body: new_body,
     return_ty: func.return_ty,
   }

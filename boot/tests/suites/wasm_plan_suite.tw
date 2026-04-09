@@ -123,7 +123,7 @@ fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeReg
 }
 
 fn plan_with_closures(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
-  closure_conversion := convert_closures(anf)
+  closure_conversion := convert_closures(anf, env)
   prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
   plan_wasm_types(prepared, env, builtins)
 }

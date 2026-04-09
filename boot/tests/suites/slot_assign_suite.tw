@@ -326,6 +326,70 @@ fn test_source_locals_are_unique() Result<Void, String> {
   .Ok({})
 }
 
+// Nested locals under ADefer still need slots because prepare_backend runs
+// after boundary insertion and defer elimination is later.
+fn test_collects_locals_inside_defer_body() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.Void
+  mono[2] = MonoType.Int
+  mono[3] = MonoType.Void
+  func := mk_func_def(100, "defer_locals",
+    [],
+    MonoType.Void,
+    .Let(mk_local(1), .ADefer(
+      .Let(mk_local(2), .AInit(.ALitInt(1)),
+        .Let(mk_local(3), .AAssign(mk_local(2), .ALitInt(2)),
+          .Atom(.ALitVoid)))),
+      .Atom(.ALitVoid)),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert_role(pf, 1, .Local)
+  try assert_role(pf, 2, .Local)
+  try assert_role(pf, 3, .Local)
+  .Ok({})
+}
+
+// Closure free vars can reference locals declared earlier inside a match arm.
+fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.String
+  mono[2] = MonoType.String
+  mono[3] = MonoType.Function([], MonoType.String)
+  mono[4] = MonoType.Function([], MonoType.String)
+  mono[5] = MonoType.String
+  mono[6] = MonoType.Function([], MonoType.String)
+  func := mk_func_def(100, "arm_closure",
+    [Param.{ local: mk_local(0), ty: MonoType.Bool }],
+    MonoType.Function([], MonoType.String),
+    .Let(mk_local(4), .AMatch(.ALocal(mk_local(0)), [
+      AnfMatchArm.{
+        pattern: .LitBool(true),
+        body: .Let(mk_local(1), .AInit(.ALitStr("interp")),
+          .Let(mk_local(2), .AInit(.ALocal(mk_local(1))),
+            .Let(mk_local(3), .AMakeClosure(mk_func(999), [mk_local(2)]),
+              .Atom(.ALocal(mk_local(3)))))),
+      },
+      AnfMatchArm.{
+        pattern: .Wildcard,
+        body: .Let(mk_local(5), .AInit(.ALitStr("wasm")),
+          .Let(mk_local(6), .AMakeClosure(mk_func(999), [mk_local(5)]),
+            .Atom(.ALocal(mk_local(6))))),
+      },
+    ]),
+    .Atom(.ALocal(mk_local(4)))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert_role(pf, 2, .Local)
+  try assert_role(pf, 3, .Local)
+  try assert_role(pf, 5, .Local)
+  try assert_role(pf, 6, .Local)
+  .Ok({})
+}
+
 // ── Suite ────────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -338,4 +402,6 @@ pub fn suite() runner.Suite {
     .test("pattern local in match arm", test_pattern_local_in_match)
     .test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns)
     .test("source locals are unique", test_source_locals_are_unique)
+    .test("collects locals inside defer body", test_collects_locals_inside_defer_body)
+    .test("collects arm locals used as closure free vars", test_collects_arm_locals_used_as_closure_free_vars)
 }

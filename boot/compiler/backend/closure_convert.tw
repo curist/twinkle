@@ -12,7 +12,7 @@
 // that path remains transitional and should be absorbed here later.
 
 use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, FieldId, VariantId, BinOp, UnOp}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm, Atom, FieldAtom}
 use compiler.backend.prepared_ir.{CaptureParam}
 
@@ -26,12 +26,12 @@ pub type ClosureConversion = .{
 // It computes capture metadata and rewrites hoisted function bodies so captured
 // locals are explicit leading parameters with fresh LocalIds. The rewritten ANF
 // and capture metadata must travel together.
-pub fn convert_closures(anf: AnfModule) ClosureConversion {
+pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   next_local := max_local_id_module(anf) + 1
   state := ConversionState.{ captures: Dict.new(), next_local: next_local }
 
   for func in anf.functions {
-    state = scan_expr(func.body, func, state)
+    state = scan_expr(func.body, func, env, state)
   }
 
   .{
@@ -48,12 +48,13 @@ type ConversionState = .{
 fn scan_expr(
   expr: AnfExpr,
   enclosing: AnfFunctionDef,
+  env: ResolvedEnv,
   state: ConversionState,
 ) ConversionState {
   case expr {
     .Let(_, op, body) => {
-      state = scan_op(op, enclosing, state)
-      scan_expr(body, enclosing, state)
+      state = scan_op(op, enclosing, env, state)
+      scan_expr(body, enclosing, env, state)
     },
     _ => state,
   }
@@ -62,21 +63,22 @@ fn scan_expr(
 fn scan_op(
   op: AnfOp,
   enclosing: AnfFunctionDef,
+  env: ResolvedEnv,
   state: ConversionState,
 ) ConversionState {
   case op {
-    .AMakeClosure(fid, free_vars) => record_captures(fid, free_vars, enclosing, state),
+    .AMakeClosure(fid, free_vars) => record_captures(fid, free_vars, enclosing, env, state),
     .AIf(_, then_e, else_e) => {
-      state = scan_expr(then_e, enclosing, state)
-      scan_expr(else_e, enclosing, state)
+      state = scan_expr(then_e, enclosing, env, state)
+      scan_expr(else_e, enclosing, env, state)
     },
     .AMatch(_, arms) => {
       arms.fold(state, fn(cur, arm) {
-        scan_expr(arm.body, enclosing, cur)
+        scan_expr(arm.body, enclosing, env, cur)
       })
     },
-    .ALoop(body) => scan_expr(body, enclosing, state),
-    .ADefer(body) => scan_expr(body, enclosing, state),
+    .ALoop(body) => scan_expr(body, enclosing, env, state),
+    .ADefer(body) => scan_expr(body, enclosing, env, state),
     _ => state,
   }
 }
@@ -85,6 +87,7 @@ fn record_captures(
   fid: FuncId,
   free_vars: Vector<LocalId>,
   enclosing: AnfFunctionDef,
+  env: ResolvedEnv,
   state: ConversionState,
 ) ConversionState {
   params: Vector<CaptureParam> = []
@@ -93,7 +96,7 @@ fn record_captures(
     params = params.append(CaptureParam.{
       local_id: fv,
       param_local: LocalId.{ id: next_local },
-      ty: resolve_capture_type(enclosing, fv),
+      ty: resolve_capture_type(enclosing, fv, env),
     })
     next_local = next_local + 1
   }
@@ -161,7 +164,7 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
     .ALoop(body) => .ALoop(rewrite_expr(body, rename)),
     .ABinOp(bop, lhs, rhs, kind) => .ABinOp(bop, rewrite_atom(lhs, rename), rewrite_atom(rhs, rename), kind),
     .AUnOp(uop, atom, kind) => .AUnOp(uop, rewrite_atom(atom, rename), kind),
-    .AMakeClosure(fid, free_vars) => .AMakeClosure(fid, free_vars),
+    .AMakeClosure(fid, free_vars) => .AMakeClosure(fid, collect fv in free_vars { rewrite_local(fv, rename) }),
     .ARecord(tid, fields) => .ARecord(tid, collect field in fields {
       FieldAtom.{ field: field.field, value: rewrite_atom(field.value, rename) }
     }),
@@ -307,16 +310,207 @@ fn max_int(a: Int, b: Int) Int {
   if a > b { a } else { b }
 }
 
-// resolve_capture_type resolves the MonoType of a captured local from its
-// enclosing function definition. Checks params first, then op_result_mono.
-fn resolve_capture_type(func: AnfFunctionDef, local: LocalId) MonoType {
+fn collect_pattern_monos(
+  expr: AnfExpr,
+  func: AnfFunctionDef,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case expr {
+    .Let(_, op, body) => {
+      out = collect_pattern_monos_op(op, func, env, out)
+      collect_pattern_monos(body, func, env, out)
+    },
+    _ => out,
+  }
+}
+
+fn collect_pattern_monos_op(
+  op: AnfOp,
+  func: AnfFunctionDef,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = collect_pattern_monos(then_e, func, env, out)
+      collect_pattern_monos(else_e, func, env, out)
+    },
+    .AMatch(scrutinee, arms) => {
+      scrut_mono := atom_mono(func, scrutinee, out)
+      for arm in arms {
+        out = collect_binding_monos(arm.pattern, scrut_mono, env, out)
+        out = collect_pattern_monos(arm.body, func, env, out)
+      }
+      out
+    },
+    .ALoop(body) => collect_pattern_monos(body, func, env, out),
+    .ADefer(body) => collect_pattern_monos(body, func, env, out),
+    _ => out,
+  }
+}
+
+fn collect_binding_monos(
+  pattern: CorePattern,
+  scrutinee_mono: MonoType,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case pattern {
+    .Var(lid) => {
+      out[lid.id] = scrutinee_mono
+      out
+    },
+    .Variant(_, vid, fields) => {
+      if !is_matchable_sum(scrutinee_mono, env) {
+        out
+      } else {
+        for field,i in fields {
+          field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
+          out = collect_binding_monos(field, field_mono, env, out)
+        }
+        out
+      }
+    },
+    _ => out,
+  }
+}
+
+fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType>) MonoType {
+  case atom {
+    .ALocal(lid) => resolve_capture_type_from_maps(func, lid, pattern_monos),
+    .AGlobalFunc(_) => .Anyref_,
+    .ALitInt(_) => .Int,
+    .ALitFloat(_) => .Float,
+    .ALitBool(_) => .Bool,
+    .ALitStr(_) => .String,
+    .ALitVoid => .Void,
+  }
+}
+
+fn is_matchable_sum(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Optional(_) => true,
+    .Result(_, _) => true,
+    .Named(tid, args) => {
+      case lookup_type_def(env, tid) {
+        .Some(def) => case def {
+          .Sum(_, _, _) => true,
+          .Alias(_, type_params, target) =>
+            is_matchable_sum(subst_type_params(target, type_params, args), env),
+          _ => false,
+        },
+        .None => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+fn get_variant_field_mono(
+  scrutinee_mono: MonoType,
+  vid: VariantId,
+  field_idx: Int,
+  env: ResolvedEnv,
+) MonoType {
+  case scrutinee_mono {
+    .Optional(inner) => {
+      if vid.id == 1 and field_idx == 0 { return inner }
+      .Void
+    },
+    .Result(ok, err) => {
+      if vid.id == 0 and field_idx == 0 { return ok }
+      if vid.id == 1 and field_idx == 0 { return err }
+      .Void
+    },
+    .Named(tid, args) => {
+      case lookup_type_def(env, tid) {
+        .Some(def) => case def {
+          .Alias(_, type_params, target) =>
+            get_variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env),
+          _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+        },
+        .None => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      }
+    },
+    _ => .Void,
+  }
+}
+
+fn resolve_named_variant_field(
+  tid: TypeId,
+  args: Vector<MonoType>,
+  vid: VariantId,
+  field_idx: Int,
+  env: ResolvedEnv,
+) MonoType {
+  case lookup_type_def(env, tid) {
+    .Some(def) => case def {
+      .Sum(_, type_params, variants) => {
+        v := variants[vid.id]
+        field_ty := v.fields[field_idx]
+        subst_type_params(field_ty, type_params, args)
+      },
+      _ => .Void,
+    },
+    .None => .Void,
+  }
+}
+
+fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      for p,i in type_params {
+        if p == name { return args[i] }
+      }
+      ty
+    },
+    .Named(tid, inner_args) => {
+      .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) })
+    },
+    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
+    .Dict(k, v) => .Dict(
+      subst_type_params(k, type_params, args),
+      subst_type_params(v, type_params, args),
+    ),
+    .Function(ps, r) => {
+      .Function(
+        collect p in ps { subst_type_params(p, type_params, args) },
+        subst_type_params(r, type_params, args),
+      )
+    },
+    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
+    .Result(ok, err) => .Result(
+      subst_type_params(ok, type_params, args),
+      subst_type_params(err, type_params, args),
+    ),
+    _ => ty,
+  }
+}
+
+fn resolve_capture_type_from_maps(
+  func: AnfFunctionDef,
+  local: LocalId,
+  pattern_monos: Dict<Int, MonoType>,
+) MonoType {
   for p in func.params {
     if p.local.id == local.id { return p.ty }
   }
-  case func.op_result_mono[local.id] {
+  case pattern_monos[local.id] {
     .Some(ty) => ty,
-    .None => .Void,
+    .None => case func.op_result_mono[local.id] {
+      .Some(ty) => ty,
+      .None => .Void,
+    },
   }
+}
+
+// resolve_capture_type resolves the MonoType of a captured local from its
+// enclosing function definition. Checks params first, then pattern-bound locals,
+// then op_result_mono.
+fn resolve_capture_type(func: AnfFunctionDef, local: LocalId, env: ResolvedEnv) MonoType {
+  pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
+  resolve_capture_type_from_maps(func, local, pattern_monos)
 }
 
 fn mono_eq(a: MonoType, b: MonoType) Bool {
