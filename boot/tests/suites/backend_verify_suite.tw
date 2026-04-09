@@ -7,6 +7,7 @@ use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
 use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotId, SlotInfo}
 use compiler.backend.prepare.{prepare_backend, PreparedModule}
@@ -17,7 +18,7 @@ fn fid(n: Int) FuncId { FuncId.{ id: n } }
 fn empty_env() ResolvedEnv { resolver.empty_env() }
 
 fn empty_registry() WasmTypeRegistry {
-  WasmTypeRegistry.{
+  .{
     type_defs: [],
     layout_cache: Dict.new(),
     in_progress: Dict.new(),
@@ -33,13 +34,13 @@ fn empty_registry() WasmTypeRegistry {
 }
 
 fn empty_builtins() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
+  .{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
 }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
 fn mk_param(id: Int, ty: MonoType) Param {
-  Param.{ local: lid(id), ty: ty }
+  .{ local: lid(id), ty: ty }
 }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
@@ -56,18 +57,14 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
-    func_id: fid(id),
-    name: name,
-    params: params,
-    op_result_mono: mono_map,
-    body: body,
-    return_ty: ret,
-  }
+  func_id := fid(id)
+  op_result_mono := mono_map
+  return_ty := ret
+  .{ func_id, name, params, op_result_mono, body, return_ty }
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{ functions: funcs, init_func_id: .None }
+  .{ functions: funcs, init_func_id: .None }
 }
 
 fn prepared_module(
@@ -81,8 +78,12 @@ fn prepared_module(
   prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
 }
 
+fn first_func(prepared: PreparedModule) PreparedFunc {
+  prepared.funcs[0]
+}
+
 fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
-  PreparedModule.{
+  .{
     anf: prepared.anf,
     closure_captures: prepared.closure_captures,
     funcs: [pf],
@@ -101,6 +102,54 @@ fn rewrite_func(
 
 fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
   assert.err_contains(verify_prepared_module(prepared, empty_env()), expected)
+}
+
+fn local_to_slot_without(pf: PreparedFunc, skip_lid: Int) Dict<Int, SlotId> {
+  out: Dict<Int, SlotId> = Dict.new()
+  for lid_id in pf.local_to_slot.keys() {
+    if lid_id == skip_lid { continue }
+    case pf.local_to_slot[lid_id] {
+      .Some(sid) => { out[lid_id] = sid },
+      .None => {},
+    }
+  }
+  out
+}
+
+fn slots_without(pf: PreparedFunc, skip_sid: Int) Dict<Int, SlotInfo> {
+  out: Dict<Int, SlotInfo> = Dict.new()
+  for sid in pf.slots.keys() {
+    if sid == skip_sid { continue }
+    case pf.slots[sid] {
+      .Some(info) => { out[sid] = info },
+      .None => {},
+    }
+  }
+  out
+}
+
+fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) Dict<Int, SlotInfo> {
+  out: Dict<Int, SlotInfo> = Dict.new()
+  for sid in pf.slots.keys() {
+    case pf.slots[sid] {
+      .Some(info) => {
+        out[sid] = if sid == target_sid {
+          .{
+            slot: info.slot,
+            source_local: info.source_local,
+            role: info.role,
+            mono: info.mono,
+            repr: info.repr,
+            wasm_type: wasm_type,
+          }
+        } else {
+          info
+        }
+      },
+      .None => {},
+    }
+  }
+  out
 }
 
 pub fn suite() runner.Suite {
@@ -128,17 +177,8 @@ pub fn suite() runner.Suite {
       mk_mono_map([10], [MonoType.Int]),
       .Int)
 
-    pf := prepared.funcs[0]
-    broken_map: Dict<Int, SlotId> = Dict.new()
-    for lid_id in pf.local_to_slot.keys() {
-      if lid_id != 10 {
-        case pf.local_to_slot[lid_id] {
-          .Some(sid) => { broken_map[lid_id] = sid },
-          .None => {},
-        }
-      }
-    }
-    broken := rewrite_func(pf, pf.slots, broken_map)
+    pf := first_func(prepared)
+    broken := rewrite_func(pf, pf.slots, local_to_slot_without(pf, 10))
 
     verify_err(replace_func(prepared, broken), "slot S1 for L10 is missing from local_to_slot")
   })
@@ -153,17 +193,8 @@ pub fn suite() runner.Suite {
       mk_mono_map([10], [MonoType.Int]),
       .Int)
 
-    pf := prepared.funcs[0]
-    broken_slots: Dict<Int, SlotInfo> = Dict.new()
-    for sid in pf.slots.keys() {
-      if sid != 1 {
-        case pf.slots[sid] {
-          .Some(info) => { broken_slots[sid] = info },
-          .None => {},
-        }
-      }
-    }
-    broken := rewrite_func(pf, broken_slots, pf.local_to_slot)
+    pf := first_func(prepared)
+    broken := rewrite_func(pf, slots_without(pf, 1), pf.local_to_slot)
 
     verify_err(replace_func(prepared, broken), "references missing slot S1")
   })
@@ -228,29 +259,8 @@ pub fn suite() runner.Suite {
   .test("slot metadata mismatch is rejected", fn() {
     body: AnfExpr = .Atom(.ALocal(lid(0)))
     prepared := prepared_module([mk_param(0, .Int)], body, Dict.new(), .Int)
-    pf := prepared.funcs[0]
-
-    broken_slots: Dict<Int, SlotInfo> = Dict.new()
-    for sid in pf.slots.keys() {
-      case pf.slots[sid] {
-        .Some(info) => {
-          broken_slots[sid] = if sid == 0 {
-            SlotInfo.{
-              slot: info.slot,
-              source_local: info.source_local,
-              role: info.role,
-              mono: info.mono,
-              repr: info.repr,
-              wasm_type: .Anyref,
-            }
-          } else {
-            info
-          }
-        },
-        .None => {},
-      }
-    }
-    broken := rewrite_func(pf, broken_slots, pf.local_to_slot)
+    pf := first_func(prepared)
+    broken := rewrite_func(pf, slots_with_wasm_type(pf, 0, .Anyref), pf.local_to_slot)
 
     verify_err(replace_func(prepared, broken), "wasm_type Anyref does not match repr I64 / mono Int")
   })
