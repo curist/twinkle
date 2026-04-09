@@ -4,27 +4,13 @@ use tests.suites.wasm_layout_suite
 use tests.suites.wasm_plan_suite
 use tests.suites.insert_boundaries_suite
 
-runner.run_all([
+suites := [
   wasm_ir_suite.suite(),
   wasm_layout_suite.suite(),
-  runner.suite("wasm plan")
-    .test("FuncSigEntry construction", wasm_plan_suite.test_func_sig_entry)
-    .test("CaptureEntry construction", wasm_plan_suite.test_capture_entry)
-    .test("StringPoolEntry construction", wasm_plan_suite.test_string_pool_entry)
-    .test("WasmTypeRegistry empty", wasm_plan_suite.test_registry_empty)
-    .test("plan empty module", wasm_plan_suite.test_plan_empty_module)
-    .test("plan primitive func", wasm_plan_suite.test_plan_primitive_func)
-    .test("plan record type", wasm_plan_suite.test_plan_record_type)
-    .test("plan string literals", wasm_plan_suite.test_plan_string_literals)
-    .test("plan string pool byte offsets", wasm_plan_suite.test_plan_string_offsets)
-    .test("plan closure", wasm_plan_suite.test_plan_closure)
-    .test("plan closure registers functype", wasm_plan_suite.test_plan_closure_registers_func_type)
-    .test("plan closure capture types", wasm_plan_suite.test_plan_capture_types)
-    .test("plan closure populates concrete_func_sigs", wasm_plan_suite.test_plan_closure_func_sigs)
-    .test("plan runtime imports", wasm_plan_suite.test_plan_runtime_imports)
-    .test("plan optional type", wasm_plan_suite.test_plan_optional_type)
-    .test("plan module globals", wasm_plan_suite.test_plan_module_globals)
-    .test("plan nested record dependencies are ordered", wasm_plan_suite.test_plan_nested_record_dependencies_are_ordered)
-    .test("plan recursive record terminates", wasm_plan_suite.test_plan_recursive_record_terminates),
-  insert_boundaries_suite.suite(),
-])
+]
+// Using append here avoids a current boot-compiler cast failure when a
+// cross-module populated Suite value appears directly inside a vector literal.
+suites = suites.append(wasm_plan_suite.suite())
+suites = suites.append(insert_boundaries_suite.suite())
+
+runner.run_all(suites)
