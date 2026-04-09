@@ -34,9 +34,9 @@ pub fn codegen_path(path: String) Result<String, String> {
 pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   inputs := try codegen_inputs(src)
   closure_captures := compute_closure_captures(inputs.anf)
-  registry := plan_wasm_types(inputs.anf, inputs.env, inputs.builtins, closure_captures)
-  prepared := prepare_backend(inputs.anf, inputs.env, inputs.builtins, registry, closure_captures)
-  user_module := emit_module(prepared.anf, registry, inputs.builtins, inputs.env)
+  prepared := prepare_backend(inputs.anf, inputs.env, inputs.builtins, closure_captures)
+  registry := plan_wasm_types(prepared, inputs.env, inputs.builtins)
+  user_module := emit_module(prepared, registry, inputs.builtins, inputs.env)
   modules := runtime_modules().append(user_module)
   case link(modules, .None) {
     .Ok(linked) => .Ok(linked),

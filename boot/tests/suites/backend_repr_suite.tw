@@ -169,7 +169,7 @@ fn prepared_pf(
 ) PreparedFunc {
   func := mk_func_def(1, "f", params, ret, body, mono_map)
   anf := mk_module([func])
-  prepared := prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
+  prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
   prepared.funcs[0]
 }
 
@@ -307,7 +307,7 @@ pub fn suite() runner.Suite {
       mk_mono_map([10], [MonoType.Void]))
     anf := mk_module([func])
 
-    prepared := prepare_backend(anf, empty_env(), builtins, empty_registry(), no_captures())
+    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
     pf := prepared.funcs[0]
 
     // The wrap temp (allocated after L10) must be OpaqueAnyref
@@ -343,7 +343,7 @@ pub fn suite() runner.Suite {
       mk_mono_map([10], [MonoType.Int]))
     anf := mk_module([func])
 
-    prepared := prepare_backend(anf, empty_env(), builtins, empty_registry(), no_captures())
+    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
     pf := prepared.funcs[0]
 
     // L10 was the call result (now replaced by unwrap chain):

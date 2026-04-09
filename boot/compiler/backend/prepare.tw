@@ -1,15 +1,12 @@
 // Backend preparation boundary.
 //
 // prepare_backend() is the explicit entry point for slot assignment and
-// representation assignment. It is NOT the absolute first backend consumer
-// of optimized ANF: the caller (codegen.tw) runs compute_closure_captures()
-// and plan_wasm_types() on raw ANF before calling prepare_backend(), because
-// planning is still a legacy pass that has not yet been migrated (Phase 6a).
+// representation assignment.
 //
-// Once Phase 6a is complete, planning will consume prepared IR, and at that
-// point prepare_backend() will be the single sanctioned entry boundary.
-// Until then, the comment below describes the intended post-Phase-6 contract
-// rather than the current transitional reality.
+// Phase 6a: planning now runs after preparation and consumes PreparedModule,
+// so prepare_backend() is the single sanctioned boundary between optimized ANF
+// and the backend. The remaining transitional use of `.anf` exists only to
+// support legacy planner/emitter body traversal while they finish migration.
 //
 // Nothing in wasm_plan.tw or emit.tw should be given raw optimized ANF
 // directly for new work — all new backend facts must flow through PreparedModule.
@@ -56,7 +53,7 @@ pub type PreparedModule = .{
   anf: AnfModule,
 
   // Authoritative closure capture map: FuncId.id → ordered capture params.
-  // Computed by caller via compute_closure_captures() before plan_wasm_types().
+  // Computed by caller via compute_closure_captures() before prepare_backend().
   // All backend passes must read from here.
   closure_captures: Dict<Int, Vector<CaptureParam>>,
 
@@ -68,24 +65,21 @@ pub type PreparedModule = .{
 
 // prepare_backend converts optimized semantic ANF into prepared backend IR.
 //
-// This is the only sanctioned entry into the backend pipeline. Call this
-// after plan_wasm_types() (registry is needed for boundary insertion) and
-// before any emit pass.
+// This is the only sanctioned entry into the backend pipeline. Call this after
+// compute_closure_captures() and before planning/emission.
 //
 // closure_captures must be computed by the caller via compute_closure_captures()
-// before calling plan_wasm_types(), so planning and preparation share the same
-// capture map.
+// so preparation and later planning share the same authoritative capture map.
 pub fn prepare_backend(
   anf: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-  registry: WasmTypeRegistry,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
 ) PreparedModule {
   // Phase 4a: boundary insertion (absorbed from codegen.tw).
   // Runs on pre-boundary ANF; produces post-boundary ANF with explicit
   // AWrapAnyref/AUnwrapAnyref nodes at every representation-crossing point.
-  anf2 := insert_boundaries(anf, registry, builtins, env)
+  anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
 
   // Phase 3: slot assignment on post-boundary ANF.
   // Running after boundary insertion ensures wrap/unwrap temporaries are
@@ -101,5 +95,21 @@ pub fn prepare_backend(
     anf: anf2,
     closure_captures: closure_captures,
     funcs: funcs2,
+  }
+}
+
+fn empty_registry() WasmTypeRegistry {
+  .{
+    type_defs: [],
+    layout_cache: Dict.new(),
+    in_progress: Dict.new(),
+    type_index: Dict.new(),
+    concrete_func_sigs: Dict.new(),
+    capture_layouts: Dict.new(),
+    module_globals: Dict.new(),
+    module_globals_order: [],
+    string_pool: Dict.new(),
+    string_pool_order: [],
+    runtime_imports: [],
   }
 }

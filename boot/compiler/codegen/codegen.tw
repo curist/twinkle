@@ -1,10 +1,10 @@
 // Phase D M11: Integration — full codegen pipeline.
 //
-// Wires closure_captures → plan_wasm_types → prepare_backend → emit_module → link → emit_wat.
+// Wires closure_captures → prepare_backend → verify → plan_wasm_types →
+// emit_module → link → emit_wat.
 //
-// Phase 4a: boundary insertion is now absorbed into prepare_backend(). The
-// pipeline no longer calls insert_boundaries() directly. closure_captures is
-// computed first so both planning and preparation share the same capture map.
+// Phase 6a: planning now consumes PreparedModule after preparation/verification.
+// Phase 4a: boundary insertion remains absorbed into prepare_backend().
 //
 // ARCHITECTURE NOTE: prepare_backend() is the explicit boundary between
 // optimized semantic ANF and the backend. All backend passes must flow
@@ -44,21 +44,17 @@ pub fn codegen(
   builtins: BuiltinRegistry,
 ) String {
   // 1. Compute closure captures.
-  //    Must happen before planning (planner needs capture layouts) and
-  //    before prepare_backend (which now takes closure_captures as a parameter).
+  //    Must happen before preparation so PreparedModule and later planning
+  //    share the same authoritative capture metadata.
   closure_captures := compute_closure_captures(anf)
 
-  // 2. Plan Wasm types (legacy — consumes semantic ANF; migrate in Phase 6a).
-  registry := plan_wasm_types(anf, env, builtins, closure_captures)
-
-  // 3. Prepare backend IR.
-  //    Phase 4a: boundary insertion now happens inside prepare_backend().
+  // 2. Prepare backend IR.
+  //    Phase 4a: boundary insertion happens inside prepare_backend().
   //    prepared.anf holds post-boundary ANF; slot maps include boundary temps.
   //    This is the boundary between optimized semantic ANF and the backend.
-  //    New backend passes belong in prepare_backend(), not below this line.
-  prepared := prepare_backend(anf, env, builtins, registry, closure_captures)
+  prepared := prepare_backend(anf, env, builtins, closure_captures)
 
-  // 4. Verify prepared backend IR.
+  // 3. Verify prepared backend IR.
   //    Phase 5: authoritative hard stop before planning/emission can drift
   //    into unreadable later failures.
   case verify_prepared_module(prepared, env) {
@@ -66,8 +62,11 @@ pub fn codegen(
     .Err(msg) => error(msg),
   }
 
-  // 5. Emit user module (legacy — consumes post-boundary prepared.anf).
-  user_module := emit_module(prepared.anf, registry, builtins, env)
+  // 4. Plan Wasm types from prepared backend IR.
+  registry := plan_wasm_types(prepared, env, builtins)
+
+  // 5. Emit user module (legacy — still consumes post-boundary prepared.anf).
+  user_module := emit_module(prepared, registry, builtins, env)
 
   // 6. Link with runtime
   modules := runtime_modules().append(user_module)

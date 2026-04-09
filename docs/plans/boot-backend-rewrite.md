@@ -883,9 +883,9 @@ Why last:
 - [x] Phase 4a complete: boundary semantics settled and implemented
 - [x] Phase 4b complete: representation assignment implemented and tested
 - [x] Phase 5 complete: backend verifier enforced in pipeline
-- [ ] Phase 6a complete: Wasm planning consumes prepared backend IR
-- [ ] Phase 6b complete: emitter local handling is slot-based
-- [ ] Phase 6c complete: emitter repr handling is mechanical and prepared-IR-driven
+- [x] Phase 6a complete: Wasm planning consumes prepared backend IR
+- [x] Phase 6b complete: emitter local handling is slot-based
+- [x] Phase 6c complete: emitter repr handling is mechanical and prepared-IR-driven
 - [ ] Phase 7 complete: legacy inference heuristics removed
 
 ### PR review checklist
@@ -1115,12 +1115,68 @@ Update this section as implementation proceeds.
   the correct ReprKind instead of unconditionally returning OpaqueAnyref. This
   handles aliases like `type MyInt = Int` (→ I64) and `type MyStr = String`
   (→ TypedRef) correctly.
-- **prepare_backend() boundary comment**: updated to reflect that
-  compute_closure_captures() and plan_wasm_types() still run on raw ANF before
-  prepare_backend() (Phase 6a legacy). The comment previously overstated the
-  boundary guarantee.
+- **prepare_backend() boundary contract**: updated for Phase 6a so
+  `prepare_backend()` again serves as the single sanctioned backend entry.
+  Planning now runs after preparation and consumes `PreparedModule`.
 - **Branch join**: derived implicitly from mono (type checker already unified).
   No explicit join pass needed for Phase 4b; the post-boundary mono is consistent.
+
+### Phase 6c settled decisions
+
+- **Local repr facts now flow into emission**: `emit.tw` carries `SlotInfo.repr`
+  into its local entries, so repr-sensitive helpers can read verified prepared
+  metadata instead of re-deriving representation from ad hoc emitter state.
+- **Typed-layout helpers are gated by prepared repr**: record access/update,
+  sum-pattern matching over local scrutinees, closure calls, and cell helpers now
+  require the appropriate verified local repr (`TypedRef`, `TypedSum`,
+  `ClosureRef`) before using typed layout operations.
+- **Emitter errors become contract violations, not inference fallbacks**:
+  when a repr-sensitive helper sees an incompatible local repr, it now reports a
+  direct backend contract mismatch instead of silently proceeding on the basis
+  of semantic type inference alone.
+- **Transitional semantic fallback remains quarantined**: literals and other
+  non-local atoms still use mechanical mono-based lowering where no prepared
+  slot metadata exists, but local repr-sensitive emission now reads prepared IR
+  first.
+
+### Phase 6b settled decisions
+
+- **Emitter local allocation now comes from prepared slots**: `emit_module()` now
+  accepts `PreparedModule`, looks up the corresponding `PreparedFunc`, and
+  `emit_func()` builds Wasm params/locals directly from `PreparedFunc.captures`,
+  `PreparedFunc.params`, `PreparedFunc.locals`, and `SlotInfo.wasm_type`.
+- **No production local pre-scan**: the old emitter path that re-scanned ANF to
+  rediscover locals, pattern-local monos, and assignment-target monos is no
+  longer used in `emit_func()`.
+- **Semantic LocalId lookups are verifier-backed**: expression emission still
+  addresses locals by `LocalId` because body rewriting is deferred, but the
+  emitted local map is now derived from verified `PreparedFunc.local_to_slot`
+  / `SlotInfo` metadata rather than ad hoc reconstruction.
+- **Wasm local ordering follows slot ABI order**: captures first, then declared
+  params, then prepared locals. This matches the prepared backend contract and
+  removes the old duplication between slot assignment and emitter allocation.
+
+### Phase 6a settled decisions
+
+- **Planning boundary moved to prepared IR**: `codegen.tw` now runs
+  `prepare_backend(...)`, then `verify_prepared_module(...)`, then
+  `plan_wasm_types(prepared, ...)`. The production path no longer plans from
+  raw optimized ANF.
+- **Capture layouts are authoritative prepared metadata**:
+  `plan_wasm_types()` converts `PreparedModule.closure_captures` into planner
+  `capture_layouts`. Planner traversal of `AMakeClosure` no longer re-derives
+  or overwrites capture layouts from semantic ANF free-vars.
+- **Planner function signatures come from prepared functions**:
+  closure and higher-order function signature registration now reads
+  `PreparedFunc.params`, `PreparedFunc.slots`, and `PreparedFunc.return_mono`
+  instead of raw `AnfFunctionDef` params/return types.
+- **Transitional ANF use is quarantined**: the planner still traverses
+  `prepared.anf` for body-discovery concerns such as strings, builtin calls,
+  and module-global scanning, but those reads are explicitly transitional and
+  no longer the source of truth for capture/layout facts.
+- **prepare_backend() no longer needs planner state**: boundary insertion does
+  not depend on precomputed planner output, so preparation now runs before
+  planning.
 
 ### Phase 5 settled decisions
 

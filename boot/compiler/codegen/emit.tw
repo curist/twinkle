@@ -27,7 +27,8 @@ use compiler.codegen.wasm_layout.{
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{CaptureParam}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotId, SlotInfo, ReprKind}
+use compiler.backend.prepare.{PreparedModule}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ pub type LocalEntry = .{
   index: Int,
   val_type: ValType,
   mono: MonoType,
+  repr: ReprKind,
 }
 
 pub type LabelPair = .{
@@ -53,6 +55,7 @@ pub type EmitCtx = .{
   current_func_id: FuncId?,
   func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
   func_defs: Dict<Int, AnfFunctionDef>,
+  prepared_funcs: Dict<Int, PreparedFunc>,
   init_func_id: FuncId?,
   loop_depth: Int,
 }
@@ -60,18 +63,24 @@ pub type EmitCtx = .{
 // ── Module emission ────────────────────────────────────────────────────
 
 pub fn emit_module(
-  anf: AnfModule,
+  prepared: PreparedModule,
   reg: WasmTypeRegistry,
   builtins: BuiltinRegistry,
   env: ResolvedEnv,
 ) WasmModule {
+  anf := prepared.anf
+
   // Build FuncId → symbol map and func lookup
   func_sym_map: Dict<Int, String> = Dict.new()
   func_defs: Dict<Int, AnfFunctionDef> = Dict.new()
+  prepared_funcs: Dict<Int, PreparedFunc> = Dict.new()
   for func in anf.functions {
     sym := "$f${func.func_id.id}_${sanitize_name(func.name)}"
     func_sym_map[func.func_id.id] = sym
     func_defs[func.func_id.id] = func
+  }
+  for pf in prepared.funcs {
+    prepared_funcs[pf.func_id.id] = pf
   }
 
   // Base context (per-function state will be reset in emit_func)
@@ -86,6 +95,7 @@ pub fn emit_module(
     current_func_id: .None,
     func_sym_map: func_sym_map,
     func_defs: func_defs,
+    prepared_funcs: prepared_funcs,
     init_func_id: anf.init_func_id,
     loop_depth: 0,
   }
@@ -94,7 +104,11 @@ pub fn emit_module(
   funcs: Vector<FuncDef> = []
   trampolines: Vector<FuncDef> = []
   for func in anf.functions {
-    result := emit_func(func, base_ctx)
+    pf := case prepared_funcs[func.func_id.id] {
+      .Some(f) => f,
+      .None => error("emit_module: missing PreparedFunc for F${func.func_id.id}"),
+    }
+    result := emit_func(func, pf, base_ctx)
     funcs = funcs.append(result.func_def)
     for t in result.trampolines { trampolines = trampolines.append(t) }
   }
@@ -169,66 +183,38 @@ type FuncResult = .{
   trampolines: Vector<FuncDef>,
 }
 
-fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
-  // Set up params. Hoisted closures receive captured locals first,
-  // followed by their declared parameters.
+fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) FuncResult {
+  // Phase 6b: local handling is slot-based. PreparedFunc provides the
+  // authoritative ABI/local ordering, so emission no longer reconstructs it by
+  // pre-scanning semantic ANF.
   local_map: Dict<Int, LocalEntry> = Dict.new()
   param_types: Vector<ValType> = []
+  extra_locals: Vector<ValType> = []
   idx := 0
 
-  case base_ctx.registry.capture_layouts[func.func_id.id] {
-    .Some(captures) => {
-      for cap in captures {
-        vt := val_type_of_mono(cap.ty, base_ctx.env)
-        local_map[cap.local_id.id] = LocalEntry.{ index: idx, val_type: vt, mono: cap.ty }
-        param_types = param_types.append(vt)
-        idx = idx + 1
-      }
-    },
-    .None => {},
-  }
-
-  for p in func.params {
-    vt := val_type_of_mono(p.ty, base_ctx.env)
-    local_map[p.local.id] = LocalEntry.{ index: idx, val_type: vt, mono: p.ty }
-    param_types = param_types.append(vt)
+  for sid in prepared.captures {
+    info := slot_info(prepared, sid)
+    local_map[info.source_local.id] = LocalEntry.{ index: idx, val_type: info.wasm_type, mono: info.mono, repr: info.repr }
+    param_types = param_types.append(info.wasm_type)
     idx = idx + 1
   }
 
-  // Pre-scan body to allocate all Let-bound locals (including AAssign targets)
-  pattern_local_monos := collect_pattern_local_monos(func.body, func, base_ctx.env, Dict.new())
-  assign_target_monos := collect_assign_target_monos(func.body, func)
-  all_locals := collect_all_let_locals(func.body)
-  extra_locals: Vector<ValType> = []
-  for lid in all_locals {
-    if !local_map.has(lid) {
-      mono := case pattern_local_monos[lid] {
-        .Some(pattern_mono) => pattern_mono,
-        .None => case assign_target_monos[lid] {
-          .Some(assign_mono) => assign_mono,
-          .None => resolve_local_mono(func, LocalId.{ id: lid }),
-        },
-      }
-      case mono {
-        .Never => {
-          // Never-typed locals still need a slot (for Wasm validation)
-          // but won't be read. Use anyref as placeholder.
-          local_map[lid] = LocalEntry.{ index: idx, val_type: .Anyref, mono: .Never }
-          extra_locals = extra_locals.append(.Anyref)
-          idx = idx + 1
-        },
-        _ => {
-          vt := val_type_of_mono(mono, base_ctx.env)
-          local_map[lid] = LocalEntry.{ index: idx, val_type: vt, mono: mono }
-          extra_locals = extra_locals.append(vt)
-          idx = idx + 1
-        },
-      }
-    }
+  for sid in prepared.params {
+    info := slot_info(prepared, sid)
+    local_map[info.source_local.id] = LocalEntry.{ index: idx, val_type: info.wasm_type, mono: info.mono, repr: info.repr }
+    param_types = param_types.append(info.wasm_type)
+    idx = idx + 1
+  }
+
+  for sid in prepared.locals {
+    info := slot_info(prepared, sid)
+    local_map[info.source_local.id] = LocalEntry.{ index: idx, val_type: info.wasm_type, mono: info.mono, repr: info.repr }
+    extra_locals = extra_locals.append(info.wasm_type)
+    idx = idx + 1
   }
 
   // Return type
-  ret_vt: Vector<ValType> = case func.return_ty {
+  ret_vt: Vector<ValType> = case prepared.return_mono {
     .Void => [],
     .Never => [],
     _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
@@ -245,11 +231,12 @@ fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
     current_func_id: .Some(func.func_id),
     func_sym_map: base_ctx.func_sym_map,
     func_defs: base_ctx.func_defs,
+    prepared_funcs: base_ctx.prepared_funcs,
     init_func_id: base_ctx.init_func_id,
     loop_depth: 0,
   }
 
-  body_instrs := emit_expr(func.body, func.return_ty, ctx)
+  body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx)
 
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
   fd := FuncDef.{
@@ -264,16 +251,6 @@ fn emit_func(func: AnfFunctionDef, base_ctx: EmitCtx) FuncResult {
   tramps := emit_trampolines_for_func(func, ctx)
 
   FuncResult.{ func_def: fd, trampolines: tramps }
-}
-
-fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
-  for p in func.params {
-    if p.local.id == lid.id { return p.ty }
-  }
-  case func.op_result_mono[lid.id] {
-    .Some(ty) => ty,
-    .None => .Void,
-  }
 }
 
 fn lookup_func_sym(map: Dict<Int, String>, fid: FuncId) String {
@@ -524,6 +501,53 @@ fn atom_mono(atom: Atom, ctx: EmitCtx) MonoType {
       entry.mono
     },
     .AGlobalFunc(_) => .Void,  // function refs handled specially
+  }
+}
+
+fn atom_repr(atom: Atom, ctx: EmitCtx) ReprKind {
+  case atom {
+    .ALitInt(_) => .I64,
+    .ALitFloat(_) => .F64,
+    .ALitBool(_) => .I32,
+    .ALitStr(_) => .TypedRef(.String),
+    .ALitVoid => .OpaqueAnyref,
+    .ALocal(lid) => {
+      entry := lookup_local(ctx, lid)
+      entry.repr
+    },
+    .AGlobalFunc(_) => .ClosureRef,
+  }
+}
+
+fn require_typed_record_atom(atom: Atom, ctx: EmitCtx, context: String) MonoType {
+  mono := atom_mono(atom, ctx)
+  repr := atom_repr(atom, ctx)
+  case mono {
+    .Void => .Void,
+    _ => {
+      case repr {
+        .TypedRef(_) => mono,
+        _ => error("${context}: expected typed record ref, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
+      }
+    },
+  }
+}
+
+fn require_typed_sum_atom(atom: Atom, ctx: EmitCtx, context: String) MonoType {
+  mono := atom_mono(atom, ctx)
+  repr := atom_repr(atom, ctx)
+  case repr {
+    .TypedSum(_) => mono,
+    _ => error("${context}: expected typed sum repr, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
+  }
+}
+
+fn require_closure_atom(atom: Atom, ctx: EmitCtx, context: String) MonoType {
+  mono := atom_mono(atom, ctx)
+  repr := atom_repr(atom, ctx)
+  case repr {
+    .ClosureRef => mono,
+    _ => error("${context}: expected closure repr, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
   }
 }
 
@@ -1339,7 +1363,7 @@ fn emit_intrinsic_cell_new(args: Vector<Atom>, result_idx: Int, result_mono: Mon
 
 fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Get Cell<T>'s inner type from the cell arg's mono
-  cell_mono := atom_mono(args[0], ctx)
+  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_get")
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
@@ -1353,7 +1377,7 @@ fn emit_intrinsic_cell_get(args: Vector<Atom>, result_idx: Int, result_mono: Mon
 }
 
 fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
-  cell_mono := atom_mono(args[0], ctx)
+  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_set")
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
@@ -1372,7 +1396,7 @@ fn emit_intrinsic_cell_set(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Ve
 
 fn emit_intrinsic_cell_update(args: Vector<Atom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   // cell_update(cell, fn(T) T) — apply function to cell value, store result
-  cell_mono := atom_mono(args[0], ctx)
+  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_update")
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
@@ -1519,7 +1543,7 @@ fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoTyp
   // Determine the record type from the target atom's mono type.
   // Dead/impossible branches can leave a pattern-bound local typed as Void;
   // in that case emit an arbitrary default of the requested result type.
-  target_mono := atom_mono(target, ctx)
+  target_mono := require_typed_record_atom(target, ctx, "emit_record_get")
   case target_mono {
     .Void => emit_default_value(val_type_of_mono(result_mono, ctx.env)),
     _ => {
@@ -1532,7 +1556,7 @@ fn emit_record_get(target: Atom, fid: FieldId, tid: TypeId, result_mono: MonoTyp
 }
 
 fn emit_record_update(base: Atom, fid: FieldId, value: Atom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  base_mono := atom_mono(base, ctx)
+  base_mono := require_typed_record_atom(base, ctx, "emit_record_update")
   case base_mono {
     .Void => {
       rec := record_layout_of(result_mono, ctx.env)
@@ -1746,6 +1770,7 @@ fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCt
     current_func_id: ctx.current_func_id,
     func_sym_map: ctx.func_sym_map,
     func_defs: ctx.func_defs,
+    prepared_funcs: ctx.prepared_funcs,
     init_func_id: ctx.init_func_id,
     loop_depth: ctx.loop_depth + 1,
   }
@@ -1780,7 +1805,10 @@ fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoTy
 // ── Match emission ─────────────────────────────────────────────────────
 
 fn emit_match_op(scrutinee: Atom, arms: Vector<AnfMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  scrutinee_mono := atom_mono(scrutinee, ctx)
+  scrutinee_mono := case scrutinee {
+    .ALocal(_) => require_typed_sum_atom(scrutinee, ctx, "emit_match_op"),
+    _ => atom_mono(scrutinee, ctx),
+  }
   scrutinee_instrs := emit_atom(scrutinee, ctx)
   emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx)
 }
@@ -2020,7 +2048,7 @@ fn emit_closure_call(callee: Atom, lid: LocalId, args: Vector<Atom>, result_idx:
   entry := lookup_local(ctx, lid)
 
   // Check if we have a typed closure signature
-  callee_mono := entry.mono
+  callee_mono := require_closure_atom(callee, ctx, "emit_closure_call")
   case callee_mono {
     .Function(param_types, ret_type) => {
       closure_key := mono_to_key(callee_mono)
@@ -2450,10 +2478,41 @@ fn emit_default_value(vt: ValType) Vector<Instr> {
 
 // ── Helper utilities ───────────────────────────────────────────────────
 
+fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
+  case func.slots[sid.id] {
+    .Some(info) => info,
+    .None => error("emit: missing SlotInfo for S${sid.id} in F${func.func_id.id}"),
+  }
+}
+
 fn lookup_local(ctx: EmitCtx, lid: LocalId) LocalEntry {
   case ctx.local_map[lid.id] {
     .Some(entry) => entry,
     .None => error("lookup_local: unknown LocalId L${lid.id}"),
+  }
+}
+
+fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
+  for p in func.params {
+    if p.local.id == lid.id { return p.ty }
+  }
+  case func.op_result_mono[lid.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}
+
+fn repr_name(repr: ReprKind) String {
+  case repr {
+    .I64 => "I64",
+    .F64 => "F64",
+    .I32 => "I32",
+    .TypedRef(_) => "TypedRef",
+    .TypedSum(_) => "TypedSum",
+    .ClosureRef => "ClosureRef",
+    .ErasedSum => "ErasedSum",
+    .OpaqueAnyref => "OpaqueAnyref",
+    .DeadValue => "DeadValue",
   }
 }
 

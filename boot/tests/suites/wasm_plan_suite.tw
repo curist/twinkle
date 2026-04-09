@@ -17,6 +17,7 @@ use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
 use compiler.backend.prepared_ir.{CaptureParam}
+use compiler.backend.prepare.{prepare_backend, PreparedModule}
 use compiler.backend.closure_convert.{compute_closure_captures}
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -108,21 +109,22 @@ fn env_with_recursive_record() ResolvedEnv {
   resolver.empty_env().add_type(node, "Node")
 }
 
-// plan helper: wraps plan_wasm_types with empty precomputed_captures for
-// tests that don't involve closures.
 fn empty_captures() Dict<Int, Vector<CaptureParam>> {
   d: Dict<Int, Vector<CaptureParam>> = Dict.new()
   d
 }
 
-fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
-  plan_wasm_types(anf, env, builtins, empty_captures())
+fn prepare(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) PreparedModule {
+  prepare_backend(anf, env, builtins, empty_captures())
 }
 
-// plan_with_closures helper: uses compute_closure_captures to produce the
-// precomputed capture map, then calls plan_wasm_types.
+fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+  plan_wasm_types(prepare(anf, env, builtins), env, builtins)
+}
+
 fn plan_with_closures(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
-  plan_wasm_types(anf, env, builtins, compute_closure_captures(anf))
+  prepared := prepare_backend(anf, env, builtins, compute_closure_captures(anf))
+  plan_wasm_types(prepared, env, builtins)
 }
 
 // ── Registry types construction ─────────────────────────────────────
@@ -164,7 +166,7 @@ pub fn test_plan_empty_module() Result<Void, String> {
   anf := AnfModule.{ functions: [], init_func_id: .None }
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins, empty_captures())
+  reg := plan(anf, env, builtins)
   try assert.int_eq(reg.string_pool.len(), 0)
   .Ok({})
 }

@@ -75,7 +75,7 @@ fn prepared_module(
 ) PreparedModule {
   func := mk_func_def(1, "f", params, ret, body, mono_map)
   anf := mk_module([func])
-  prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
+  prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 }
 
 fn first_func(prepared: PreparedModule) PreparedFunc {
@@ -243,7 +243,7 @@ pub fn suite() runner.Suite {
       .Atom(.ALocal(lid(0))),
       Dict.new())
     anf := mk_module([outer, inner])
-    prepared := prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
+    prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 
     bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
     bad_caps[99] = [CaptureParam.{ local_id: lid(1), ty: .Int }]
