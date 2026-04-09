@@ -57,6 +57,75 @@ Likely touched helpers:
 - `boot/compiler/opt/builder_region.tw`
 - optimizer tests that assert builder rewrite behavior
 
+## Workaround cleanup inventory
+
+This plan should also be used to retire or reclassify the workaround-shaped fixes
+that accumulated while debugging self-host.
+
+### Current inventory
+
+#### 1. `uniqueness.tw` post-hoc mono repair
+
+Status:
+
+- temporary debugging workaround
+- should be removed as part of this plan
+
+Why it is workaround-shaped:
+
+- it infers builder-local monos by re-reading rewritten ANF shape
+- it lives downstream of the transform that actually created the locals
+
+Desired end state:
+
+- delete it
+- synthesize the same mono entries at loop-builder rewrite time
+
+#### 2. `slot_assign.tw` merge of `func.op_result_mono.keys()` into `all_lids`
+
+Status:
+
+- still under suspicion
+- useful for keeping self-host moving, but not clearly the right final model
+
+Why it is workaround-shaped:
+
+- slot creation falls back to metadata keys when structural local discovery is incomplete
+- this can hide the real source of local-category drift
+
+Desired end state:
+
+- either prove that metadata keys are intentionally authoritative for some local classes
+- or remove the merge once all producer passes model those local classes structurally
+
+For this plan's purposes, treat it as related cleanup debt even if the code change
+lands in a follow-up patch rather than the first uniqueness refactor.
+
+#### 3. Verifier diagnostics that were added to expose bad atoms/local monos
+
+Status:
+
+- diagnostic aid, not necessarily a workaround
+
+Desired end state:
+
+- keep them if they continue to improve failure readability at low cost
+- otherwise trim them after the structural fixes land
+
+### Cleanup rule
+
+When a pass creates or rewrites locals, the preferred fix is always:
+
+- produce the structural binder
+- produce the mono metadata
+- keep both facts in sync at the transform boundary
+
+and not:
+
+- repair metadata later
+- discover missing locals from downstream scans
+- guess categories from whatever data happens to still exist
+
 ## Proposed design
 
 ### 1. Make uniqueness rewrite return metadata, not just syntax
@@ -153,3 +222,7 @@ and treat the next failure, if any, as the next real blocker.
 - no downstream mono-repair pass is needed for builder-region locals
 - backend verifier no longer fails on optimizer-generated locals whose metadata drifted from structure
 - `op_result_mono` remains the authoritative local-mono source for backend preparation
+- the workaround inventory above is reduced, with each remaining item explicitly classified as:
+  - intended architecture
+  - temporary stopgap
+  - or diagnostic-only support
