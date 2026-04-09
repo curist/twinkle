@@ -8,6 +8,7 @@ use tests.suites.linker_suite
 use tests.suites.runtime_suite
 use tests.suites.codegen_integration_suite
 use tests.suites.slot_assign_suite
+use tests.suites.backend_verify_suite
 
 suites := [
   wasm_ir_suite.suite(),
@@ -23,6 +24,7 @@ suites = suites.concat([
   runtime_suite.suite(),
   codegen_integration_suite.suite(),
   slot_assign_suite.suite(),
+  backend_verify_suite.suite(),
 ])
 
 runner.run_all(suites)

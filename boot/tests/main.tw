@@ -38,6 +38,7 @@ use tests.suites.insert_boundaries_suite
 use tests.suites.slot_assign_suite
 use tests.suites.backend_prepare_suite
 use tests.suites.backend_repr_suite
+use tests.suites.backend_verify_suite
 use tests.suites.wat_suite
 use tests.suites.linker_suite
 use tests.suites.runtime_suite
@@ -92,6 +93,7 @@ suites := [
 suites = suites.append(wasm_plan_suite.suite())
 suites = suites.append(backend_prepare_suite.suite())
 suites = suites.append(backend_repr_suite.suite())
+suites = suites.append(backend_verify_suite.suite())
 suites = suites.concat([
   insert_boundaries_suite.suite(),
   slot_assign_suite.suite(),

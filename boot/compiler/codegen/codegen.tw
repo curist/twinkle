@@ -25,6 +25,7 @@ use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.verify.{verify_prepared_module}
 use compiler.backend.closure_convert.{compute_closure_captures}
 
 pub fn runtime_modules() Vector<WasmModule> {
@@ -57,10 +58,18 @@ pub fn codegen(
   //    New backend passes belong in prepare_backend(), not below this line.
   prepared := prepare_backend(anf, env, builtins, registry, closure_captures)
 
-  // 4. Emit user module (legacy — consumes post-boundary prepared.anf).
+  // 4. Verify prepared backend IR.
+  //    Phase 5: authoritative hard stop before planning/emission can drift
+  //    into unreadable later failures.
+  case verify_prepared_module(prepared, env) {
+    .Ok(_) => {},
+    .Err(msg) => error(msg),
+  }
+
+  // 5. Emit user module (legacy — consumes post-boundary prepared.anf).
   user_module := emit_module(prepared.anf, registry, builtins, env)
 
-  // 5. Link with runtime
+  // 6. Link with runtime
   modules := runtime_modules().append(user_module)
   linked := case link(modules, .None) {
     .Ok(l) => l,
@@ -77,6 +86,6 @@ pub fn codegen(
     },
   }
 
-  // 6. Emit WAT
+  // 7. Emit WAT
   emit_wat(linked)
 }

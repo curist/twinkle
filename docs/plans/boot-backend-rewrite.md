@@ -882,7 +882,7 @@ Why last:
 - [x] Phase 3 complete: slot assignment implemented and tested
 - [x] Phase 4a complete: boundary semantics settled and implemented
 - [x] Phase 4b complete: representation assignment implemented and tested
-- [ ] Phase 5 complete: backend verifier enforced in pipeline
+- [x] Phase 5 complete: backend verifier enforced in pipeline
 - [ ] Phase 6a complete: Wasm planning consumes prepared backend IR
 - [ ] Phase 6b complete: emitter local handling is slot-based
 - [ ] Phase 6c complete: emitter repr handling is mechanical and prepared-IR-driven
@@ -1121,6 +1121,36 @@ Update this section as implementation proceeds.
   boundary guarantee.
 - **Branch join**: derived implicitly from mono (type checker already unified).
   No explicit join pass needed for Phase 4b; the post-boundary mono is consistent.
+
+### Phase 5 settled decisions
+
+- **Authoritative pipeline stop**: `codegen.tw` now calls
+  `verify_prepared_module(prepared, env)` immediately after
+  `prepare_backend(...)` and before legacy emission. Verifier failure is a hard
+  error and stops codegen before later planner/emitter/runtime failures.
+- **Verifier scope for current prepared IR**: Phase 5 verifies invariants that
+  are already explicit and stable in prepared IR today:
+  - slot-table and local-to-slot integrity
+  - slot metadata completeness/consistency (`role`, `mono`, `repr`, `wasm_type`)
+  - `DeadPlaceholder` → `DeadValue` correctness and rejection of dead-slot use in
+    live operand positions
+  - typed-layout gating for prepared operations that already encode layout intent
+    (`ARecord*`, `AVariant`, typed `AMatch` scrutinees, `AArrayLit`, `AIndex`,
+    `AWrapAnyref`, `AUnwrapAnyref`, closure construction/calls)
+  - closure capture alignment between `PreparedFunc.captures`,
+    `PreparedFunc.local_to_slot`, and `PreparedModule.closure_captures`
+- **Transitional calibration**: the verifier intentionally does **not** yet try
+  to prove all arithmetic/branch operand repr details from legacy semantic ANF
+  shapes. Early Phase 5 implementation showed those checks were too aggressive
+  for the current migration stage and produced false positives on valid boot
+  programs. Those tighter checks should wait for later planner/emitter migration
+  when more operations are fully prepared-IR-driven.
+- **Diagnostics shape**: verifier errors report function and slot/local context
+  (`function name`, `FuncId`, `SlotId`, `LocalId`) so failures are readable and
+  localizable.
+- **Verifier coverage**: added `backend_verify_suite.tw` with positive and
+  negative cases for unmapped locals, missing slots, dead-placeholder misuse,
+  typed-layout misuse, capture-layout mismatch, and slot metadata mismatch.
 
 ### Phase 4a settled decisions
 

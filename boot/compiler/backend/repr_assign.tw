@@ -174,10 +174,13 @@ fn repr_of_named(mono: MonoType, env: ResolvedEnv) ReprKind {
     .Scalar(_) => {
       vt := val_type_of_mono(mono, env)
       case vt {
+        .I8 => .I32,
         .I64 => .I64,
         .F64 => .F64,
         .I32 => .I32,
         .Anyref => .OpaqueAnyref,
+        .I31ref => .I32,
+        .Funcref => .ClosureRef,
         // Ref means the alias target is a typed heap value (e.g. String).
         .Ref(_, _) => .TypedRef(mono),
       }

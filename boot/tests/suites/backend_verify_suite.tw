@@ -1,0 +1,257 @@
+// Tests for boot/compiler/backend/verify.tw — Phase 5.
+
+use tests.runner
+use tests.assert
+use compiler.resolver
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotId, SlotInfo}
+use compiler.backend.prepare.{prepare_backend, PreparedModule}
+use compiler.backend.verify.{verify_prepared_module}
+
+fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn empty_env() ResolvedEnv { resolver.empty_env() }
+
+fn empty_registry() WasmTypeRegistry {
+  WasmTypeRegistry.{
+    type_defs: [],
+    layout_cache: Dict.new(),
+    in_progress: Dict.new(),
+    type_index: Dict.new(),
+    concrete_func_sigs: Dict.new(),
+    capture_layouts: Dict.new(),
+    module_globals: Dict.new(),
+    module_globals_order: [],
+    string_pool: Dict.new(),
+    string_pool_order: [],
+    runtime_imports: [],
+  }
+}
+
+fn empty_builtins() BuiltinRegistry {
+  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
+}
+
+fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+
+fn mk_param(id: Int, ty: MonoType) Param {
+  Param.{ local: lid(id), ty: ty }
+}
+
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
+  d: Dict<Int, MonoType> = Dict.new()
+  for k,i in entries { d[k] = types[i] }
+  d
+}
+
+fn mk_func_def(
+  id: Int,
+  name: String,
+  params: Vector<Param>,
+  ret: MonoType,
+  body: AnfExpr,
+  mono_map: Dict<Int, MonoType>,
+) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(id),
+    name: name,
+    params: params,
+    op_result_mono: mono_map,
+    body: body,
+    return_ty: ret,
+  }
+}
+
+fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{ functions: funcs, init_func_id: .None }
+}
+
+fn prepared_module(
+  params: Vector<Param>,
+  body: AnfExpr,
+  mono_map: Dict<Int, MonoType>,
+  ret: MonoType,
+) PreparedModule {
+  func := mk_func_def(1, "f", params, ret, body, mono_map)
+  anf := mk_module([func])
+  prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
+}
+
+fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
+  PreparedModule.{
+    anf: prepared.anf,
+    closure_captures: prepared.closure_captures,
+    funcs: [pf],
+  }
+}
+
+fn rewrite_func(
+  pf: PreparedFunc,
+  slots: Dict<Int, SlotInfo>,
+  local_to_slot: Dict<Int, SlotId>,
+) PreparedFunc {
+  pf.slots = slots
+  pf.local_to_slot = local_to_slot
+  pf
+}
+
+fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
+  assert.err_contains(verify_prepared_module(prepared, empty_env()), expected)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("backend verify (Phase 5)")
+
+  .test("valid prepared module passes verification", fn() {
+    body: AnfExpr = .Let(lid(10),
+      .AInit(.ALocal(lid(0))),
+      .Atom(.ALocal(lid(10))))
+    prepared := prepared_module(
+      [mk_param(0, .Int)],
+      body,
+      mk_mono_map([10], [MonoType.Int]),
+      .Int)
+    assert.is_ok(verify_prepared_module(prepared, empty_env()))
+  })
+
+  .test("missing local_to_slot mapping is rejected", fn() {
+    body: AnfExpr = .Let(lid(10),
+      .AInit(.ALocal(lid(0))),
+      .Atom(.ALocal(lid(10))))
+    prepared := prepared_module(
+      [mk_param(0, .Int)],
+      body,
+      mk_mono_map([10], [MonoType.Int]),
+      .Int)
+
+    pf := prepared.funcs[0]
+    broken_map: Dict<Int, SlotId> = Dict.new()
+    for lid_id in pf.local_to_slot.keys() {
+      if lid_id != 10 {
+        case pf.local_to_slot[lid_id] {
+          .Some(sid) => { broken_map[lid_id] = sid },
+          .None => {},
+        }
+      }
+    }
+    broken := rewrite_func(pf, pf.slots, broken_map)
+
+    verify_err(replace_func(prepared, broken), "slot S1 for L10 is missing from local_to_slot")
+  })
+
+  .test("missing slot referenced from local_to_slot is rejected", fn() {
+    body: AnfExpr = .Let(lid(10),
+      .AInit(.ALocal(lid(0))),
+      .Atom(.ALocal(lid(10))))
+    prepared := prepared_module(
+      [mk_param(0, .Int)],
+      body,
+      mk_mono_map([10], [MonoType.Int]),
+      .Int)
+
+    pf := prepared.funcs[0]
+    broken_slots: Dict<Int, SlotInfo> = Dict.new()
+    for sid in pf.slots.keys() {
+      if sid != 1 {
+        case pf.slots[sid] {
+          .Some(info) => { broken_slots[sid] = info },
+          .None => {},
+        }
+      }
+    }
+    broken := rewrite_func(pf, broken_slots, pf.local_to_slot)
+
+    verify_err(replace_func(prepared, broken), "references missing slot S1")
+  })
+
+  .test("dead placeholder used in live context is rejected", fn() {
+    body: AnfExpr = .Let(lid(10),
+      .AInit(.ALitVoid),
+      .Let(lid(11),
+        .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]),
+        .Atom(.ALocal(lid(11)))))
+    prepared := prepared_module([], body, mk_mono_map([10, 11], [MonoType.Never, MonoType.Void]), .Void)
+    verify_err(prepared, "uses dead placeholder slot")
+  })
+
+  .test("typed layout op on opaque anyref is rejected", fn() {
+    // let r: Anyref_ = init(void); let x: Int = record_get(r, ...)
+    body: AnfExpr = .Let(lid(10),
+      .AInit(.ALitVoid),
+      .Let(lid(11),
+        .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        .Atom(.ALocal(lid(11)))))
+    prepared := prepared_module(
+      [],
+      body,
+      mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
+      .Int)
+    verify_err(prepared, "record get target has incompatible repr OpaqueAnyref")
+  })
+
+  .test("capture metadata mismatch is rejected", fn() {
+    outer_body: AnfExpr = .Let(lid(10),
+      .AMakeClosure(fid(99), [lid(0)]),
+      .Atom(.ALocal(lid(10))))
+    outer := mk_func_def(
+      1,
+      "outer",
+      [mk_param(0, .Int)],
+      .Function([.Int], .Int),
+      outer_body,
+      mk_mono_map([10], [MonoType.Function([.Int], .Int)]))
+    inner := mk_func_def(
+      99,
+      "inner",
+      [],
+      .Int,
+      .Atom(.ALocal(lid(0))),
+      Dict.new())
+    anf := mk_module([outer, inner])
+    prepared := prepare_backend(anf, empty_env(), empty_builtins(), empty_registry(), no_captures())
+
+    bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
+    bad_caps[99] = [CaptureParam.{ local_id: lid(1), ty: .Int }]
+    broken := PreparedModule.{
+      anf: prepared.anf,
+      closure_captures: bad_caps,
+      funcs: prepared.funcs,
+    }
+
+    verify_err(broken, "capture 0 uses L0, expected L1")
+  })
+
+  .test("slot metadata mismatch is rejected", fn() {
+    body: AnfExpr = .Atom(.ALocal(lid(0)))
+    prepared := prepared_module([mk_param(0, .Int)], body, Dict.new(), .Int)
+    pf := prepared.funcs[0]
+
+    broken_slots: Dict<Int, SlotInfo> = Dict.new()
+    for sid in pf.slots.keys() {
+      case pf.slots[sid] {
+        .Some(info) => {
+          broken_slots[sid] = if sid == 0 {
+            SlotInfo.{
+              slot: info.slot,
+              source_local: info.source_local,
+              role: info.role,
+              mono: info.mono,
+              repr: info.repr,
+              wasm_type: .Anyref,
+            }
+          } else {
+            info
+          }
+        },
+        .None => {},
+      }
+    }
+    broken := rewrite_func(pf, broken_slots, pf.local_to_slot)
+
+    verify_err(replace_func(prepared, broken), "wasm_type Anyref does not match repr I64 / mono Int")
+  })
+}
