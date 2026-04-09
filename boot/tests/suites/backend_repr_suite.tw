@@ -22,7 +22,7 @@ use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, Atom}
 use compiler.codegen.wasm_ir.{ValType, AbiContract}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{CaptureParam, ReprKind, PreparedFunc}
+use compiler.backend.prepared_ir.{CaptureParam, ReprKind, PreparedFunc, SlotInfo}
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.prepare.{prepare_backend}
 
@@ -75,32 +75,37 @@ fn assert_repr(mono: MonoType, expected: ReprKind) Result<Void, String> {
   if repr_ok { .Ok({}) } else { assert.fail("wrong repr for mono") }
 }
 
+fn slot_for_local(pf: PreparedFunc, lid_id: Int) SlotInfo? {
+  for sid in pf.slots.keys() {
+    case pf.slots[sid] {
+      .Some(info) => if info.source_local.id == lid_id { return .Some(info) },
+      .None => {},
+    }
+  }
+  .None
+}
+
 // assert_slot_repr: check ReprKind for a given LocalId's slot in a PreparedFunc
 fn assert_slot_repr(
   pf: PreparedFunc,
   lid_id: Int,
   expected: ReprKind,
 ) Result<Void, String> {
-  case pf.local_to_slot[lid_id] {
+  case slot_for_local(pf, lid_id) {
     .None => { return .Err("L${lid_id} has no slot") },
-    .Some(sid) => {
-      case pf.slots[sid.id] {
-        .None => { return .Err("slot ${sid.id} missing from slots dict") },
-        .Some(info) => {
-          repr_ok := case expected {
-            .I64 => case info.repr { .I64 => true, _ => false },
-            .F64 => case info.repr { .F64 => true, _ => false },
-            .I32 => case info.repr { .I32 => true, _ => false },
-            .TypedRef(_) => case info.repr { .TypedRef(_) => true, _ => false },
-            .TypedSum(_) => case info.repr { .TypedSum(_) => true, _ => false },
-            .ClosureRef => case info.repr { .ClosureRef => true, _ => false },
-            .OpaqueAnyref => case info.repr { .OpaqueAnyref => true, _ => false },
-            .DeadValue => case info.repr { .DeadValue => true, _ => false },
-            .ErasedSum => case info.repr { .ErasedSum => true, _ => false },
-          }
-          if repr_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong repr") }
-        },
+    .Some(info) => {
+      repr_ok := case expected {
+        .I64 => case info.repr { .I64 => true, _ => false },
+        .F64 => case info.repr { .F64 => true, _ => false },
+        .I32 => case info.repr { .I32 => true, _ => false },
+        .TypedRef(_) => case info.repr { .TypedRef(_) => true, _ => false },
+        .TypedSum(_) => case info.repr { .TypedSum(_) => true, _ => false },
+        .ClosureRef => case info.repr { .ClosureRef => true, _ => false },
+        .OpaqueAnyref => case info.repr { .OpaqueAnyref => true, _ => false },
+        .DeadValue => case info.repr { .DeadValue => true, _ => false },
+        .ErasedSum => case info.repr { .ErasedSum => true, _ => false },
       }
+      if repr_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong repr") }
     },
   }
 }
@@ -111,22 +116,17 @@ fn assert_wasm_type(
   lid_id: Int,
   expected: ValType,
 ) Result<Void, String> {
-  case pf.local_to_slot[lid_id] {
+  case slot_for_local(pf, lid_id) {
     .None => { return .Err("L${lid_id} has no slot") },
-    .Some(sid) => {
-      case pf.slots[sid.id] {
-        .None => { return .Err("slot ${sid.id} missing") },
-        .Some(info) => {
-          wt_ok := case expected {
-            .I64 => case info.wasm_type { .I64 => true, _ => false },
-            .F64 => case info.wasm_type { .F64 => true, _ => false },
-            .I32 => case info.wasm_type { .I32 => true, _ => false },
-            .Anyref => case info.wasm_type { .Anyref => true, _ => false },
-            _ => false,
-          }
-          if wt_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong wasm_type") }
-        },
+    .Some(info) => {
+      wt_ok := case expected {
+        .I64 => case info.wasm_type { .I64 => true, _ => false },
+        .F64 => case info.wasm_type { .F64 => true, _ => false },
+        .I32 => case info.wasm_type { .I32 => true, _ => false },
+        .Anyref => case info.wasm_type { .Anyref => true, _ => false },
+        _ => false,
       }
+      if wt_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong wasm_type") }
     },
   }
 }

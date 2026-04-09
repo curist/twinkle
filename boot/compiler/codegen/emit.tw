@@ -8,7 +8,7 @@
 //   - Pattern match emission is inline (single implementation)
 
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant}
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, Param, BinOp, UnOp}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, BinOp, UnOp}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
 use compiler.anf.{
@@ -29,6 +29,7 @@ use compiler.codegen.wasm_plan_types.{
 use compiler.backend.prepared_ir.{
   CaptureParam, PreparedFunc, SlotId, SlotInfo, ReprKind,
   PreparedAtom, PreparedExpr, PreparedOp, PreparedFieldAtom, PreparedMatchArm,
+  PreparedPattern,
 }
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.repr_assign.{repr_of_mono}
@@ -53,7 +54,6 @@ pub type EmitCtx = .{
   builtins: BuiltinRegistry,
   env: ResolvedEnv,
   local_map: Dict<Int, LocalEntry>,  // SlotId.id → LocalEntry
-  local_to_slot: Dict<Int, SlotId>,
   next_local: Int,
   wasm_locals: Vector<ValType>,       // additional locals (beyond params)
   label_stack: Vector<LabelPair>,
@@ -91,7 +91,6 @@ pub fn emit_module(
     builtins: builtins,
     env: env,
     local_map: Dict.new(),
-    local_to_slot: Dict.new(),
     next_local: 0,
     wasm_locals: [],
     label_stack: [],
@@ -244,7 +243,6 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     builtins: base_ctx.builtins,
     env: base_ctx.env,
     local_map: local_map,
-    local_to_slot: prepared.local_to_slot,
     next_local: idx,
     wasm_locals: extra_locals,
     label_stack: [],
@@ -1802,7 +1800,6 @@ fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ctx: E
     builtins: ctx.builtins,
     env: ctx.env,
     local_map: ctx.local_map,
-    local_to_slot: ctx.local_to_slot,
     next_local: ctx.next_local,
     wasm_locals: ctx.wasm_locals,
     label_stack: new_labels,
@@ -1910,7 +1907,7 @@ fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+fn emit_pattern_condition(pattern: PreparedPattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   case pattern {
     .Wildcard => [.I32Const(1)],
     .Var(_) => [.I32Const(1)],
@@ -1946,7 +1943,7 @@ fn emit_pattern_condition(pattern: CorePattern, scrutinee_instrs: Vector<Instr>,
 }
 
 fn emit_variant_pattern_condition(
-  tid: TypeId, vid: VariantId, fields: Vector<CorePattern>,
+  tid: TypeId, vid: VariantId, fields: Vector<PreparedPattern>,
   scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx,
 ) Vector<Instr> {
   sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
@@ -2000,14 +1997,14 @@ fn emit_variant_pattern_condition(
   out.append(.If(.Some(.I32), inner_cond, [.I32Const(0)]))
 }
 
-fn emit_pattern_bindings(pattern: CorePattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   case pattern {
     .Wildcard => [],
     .LitInt(_) => [],
     .LitBool(_) => [],
     .LitStr(_) => [],
-    .Var(lid) => {
-      entry := lookup_pattern_local(ctx, lid)
+    .Var(sid) => {
+      entry := lookup_slot(ctx, sid)
       out := clone_instrs(scrutinee_instrs)
       out.append(.LocalSet(entry.index))
     },
@@ -2514,13 +2511,6 @@ fn lookup_slot(ctx: EmitCtx, sid: SlotId) LocalEntry {
   }
 }
 
-fn lookup_pattern_local(ctx: EmitCtx, lid: LocalId) LocalEntry {
-  case ctx.local_to_slot[lid.id] {
-    .Some(sid) => lookup_slot(ctx, sid),
-    .None => error("lookup_pattern_local: unknown LocalId L${lid.id}"),
-  }
-}
-
 fn repr_name(repr: ReprKind) String {
   case repr {
     .I64 => "I64",
@@ -2564,7 +2554,7 @@ fn all_arms_diverge(arms: Vector<PreparedMatchArm>) Bool {
   true
 }
 
-fn pattern_is_trivial(p: CorePattern) Bool {
+fn pattern_is_trivial(p: PreparedPattern) Bool {
   case p {
     .Wildcard => true,
     .Var(_) => true,

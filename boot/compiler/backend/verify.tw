@@ -12,13 +12,14 @@
 // prepared-IR-driven.
 
 use compiler.backend.prepared_ir.{PreparedMatchArm}
-use compiler.core_ir.{LocalId, CorePattern}
+use compiler.core_ir.{LocalId}
+use compiler.anf.{OpKind}
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.backend.prepared_ir.{
   CaptureParam, SlotId, SlotRole, SlotInfo, ReprKind, PreparedFunc,
-  PreparedExpr, PreparedOp, PreparedAtom,
+  PreparedExpr, PreparedOp, PreparedAtom, PreparedPattern,
 }
 use compiler.backend.prepare.{PreparedModule}
 
@@ -60,21 +61,6 @@ fn verify_prepared_func(
     try verify_local_slot_membership(pf, sid, env)
   }
 
-  for lid in pf.local_to_slot.keys() {
-    case pf.local_to_slot[lid] {
-      .None => {},
-      .Some(sid) => {
-        info := try slot_info(pf, sid, "local_to_slot[L${lid}]")
-        if info.source_local.id != lid {
-          return fail_func(
-            pf,
-            "local_to_slot[L${lid}] points to S${sid.id}, but that slot belongs to L${info.source_local.id}",
-          )
-        }
-      },
-    }
-  }
-
   for sid_int in pf.slots.keys() {
     case pf.slots[sid_int] {
       .None => {},
@@ -82,19 +68,7 @@ fn verify_prepared_func(
         if info.slot.id != sid_int {
           return fail_func(pf, "slot table key S${sid_int} stores mismatched SlotId S${info.slot.id}")
         }
-        case pf.local_to_slot[info.source_local.id] {
-          .None => {
-            return fail_func(pf, "slot S${sid_int} for L${info.source_local.id} is missing from local_to_slot")
-          },
-          .Some(backref) => {
-            if backref.id != sid_int {
-              return fail_func(
-                pf,
-                "slot S${sid_int} for L${info.source_local.id} disagrees with local_to_slot → S${backref.id}",
-              )
-            }
-          },
-        }
+        try verify_unique_source_local(pf, info)
         try verify_slot_metadata(pf, info, env)
       },
     }
@@ -253,18 +227,8 @@ fn verify_expr(
       verify_expr(pf, closure_captures, funcs_by_id, env, body)
     },
     .Atom(atom) => verify_atom_mapped(pf, atom, "atom"),
-    .Return(atom) => {
-      case atom {
-        .Some(a) => verify_atom_mapped(pf, a, "return"),
-        .None => .Ok({}),
-      }
-    },
-    .Break(atom) => {
-      case atom {
-        .Some(a) => verify_atom_mapped(pf, a, "break"),
-        .None => .Ok({}),
-      }
-    },
+    .Return(atom) => verify_return_expr(pf, atom, funcs_by_id),
+    .Break(atom) => verify_break_expr(pf, atom),
     .Continue => .Ok({}),
   }
 }
@@ -281,10 +245,12 @@ fn verify_op(
     .ACall(callee, args) => {
       try verify_call_callee(pf, callee)
       for arg in args { try verify_atom_use(pf, arg, "call arg") }
+      try verify_call_shape(pf, callee, args, funcs_by_id)
       .Ok({})
     },
     .AIf(cond, then_e, else_e) => {
       try verify_atom_use(pf, cond, "if condition")
+      try verify_condition_atom(pf, cond)
       try verify_expr(pf, closure_captures, funcs_by_id, env, then_e)
       verify_expr(pf, closure_captures, funcs_by_id, env, else_e)
     },
@@ -300,11 +266,16 @@ fn verify_op(
       .Ok({})
     },
     .ALoop(body) => verify_expr(pf, closure_captures, funcs_by_id, env, body),
-    .ABinOp(_, lhs, rhs, _) => {
+    .ABinOp(_, lhs, rhs, kind) => {
       try verify_atom_use(pf, lhs, "binary lhs")
-      verify_atom_use(pf, rhs, "binary rhs")
+      try verify_atom_use(pf, rhs, "binary rhs")
+      try verify_opkind_atom(pf, lhs, kind, "binary lhs")
+      verify_opkind_atom(pf, rhs, kind, "binary rhs")
     },
-    .AUnOp(_, atom, _) => verify_atom_use(pf, atom, "unary operand"),
+    .AUnOp(_, atom, kind) => {
+      try verify_atom_use(pf, atom, "unary operand")
+      verify_opkind_atom(pf, atom, kind, "unary operand")
+    },
     .AMakeClosure(fid, free_vars) => {
       case funcs_by_id[fid.id] {
         .None => {
@@ -387,11 +358,15 @@ fn verify_op(
       try require_local_repr_if_local(pf, base, [.TypedRef(.Void)], "index base")
       .Ok({})
     },
-    .AInit(atom) => verify_atom_use(pf, atom, "init value"),
+    .AInit(atom) => {
+      try verify_atom_use(pf, atom, "init value")
+      verify_value_for_slot(pf, result_info, atom, funcs_by_id, "init value")
+    },
     .AAssign(target, atom) => {
       target_info := try slot_info(pf, target, "assign target")
       try reject_dead_use(pf, target_info, "assign target")
-      verify_atom_use(pf, atom, "assign value")
+      try verify_atom_use(pf, atom, "assign value")
+      verify_value_for_slot(pf, target_info, atom, funcs_by_id, "assign value")
     },
     .ADefer(body) => verify_expr(pf, closure_captures, funcs_by_id, env, body),
     .AWrapAnyref(atom, _) => {
@@ -421,6 +396,168 @@ fn verify_op(
       }
     },
   }
+}
+
+fn verify_call_shape(
+  pf: PreparedFunc,
+  callee: PreparedAtom,
+  args: Vector<PreparedAtom>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+) Result<Void, String> {
+  case callee {
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, "call callee")
+      case info.mono {
+        .Function(params, _) => {
+          if args.len() != params.len() {
+            return fail_slot(
+              pf,
+              info,
+              "closure call passes ${args.len()} arg(s), expected ${params.len()}",
+            )
+          }
+          for arg,i in args {
+            try verify_call_arg_type(pf, arg, params[i], funcs_by_id, "closure call arg ${i}")
+          }
+          .Ok({})
+        },
+        _ => fail_slot(pf, info, "closure call callee must have Function mono, got ${mono_name(info.mono)}"),
+      }
+    },
+    .AGlobalFunc(fid) => {
+      case funcs_by_id[fid.id] {
+        .Some(target) => {
+          if args.len() != target.params.len() {
+            return fail_func(
+              pf,
+              "direct call to ${target.name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.params.len()}",
+            )
+          }
+          for arg,i in args {
+            expected_info := try slot_info(target, target.params[i], "direct call param")
+            try verify_call_arg_type(pf, arg, expected_info.mono, funcs_by_id, "direct call arg ${i} to ${target.name}")
+          }
+          .Ok({})
+        },
+        .None => .Ok({}),
+      }
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn verify_return_expr(
+  pf: PreparedFunc,
+  atom: PreparedAtom?,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+) Result<Void, String> {
+  case pf.return_mono {
+    .Void => {
+      case atom {
+        .Some(_) => fail_func(pf, "void function must not return a value"),
+        .None => .Ok({}),
+      }
+    },
+    .Never => {
+      case atom {
+        .Some(_) => fail_func(pf, "never-returning function must not return a value"),
+        .None => .Ok({}),
+      }
+    },
+    _ => {
+      case atom {
+        .Some(a) => {
+          try verify_atom_use(pf, a, "return")
+          try verify_return_value_type(pf, a, funcs_by_id)
+          .Ok({})
+        },
+        .None => fail_func(pf, "non-void function must return a value"),
+      }
+    },
+  }
+}
+
+fn verify_break_expr(pf: PreparedFunc, atom: PreparedAtom?) Result<Void, String> {
+  case atom {
+    .Some(_) => fail_func(pf, "break with value is not supported in prepared backend IR"),
+    .None => .Ok({}),
+  }
+}
+
+fn verify_return_value_type(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+) Result<Void, String> {
+  case infer_atom_mono(pf, atom, funcs_by_id) {
+    .Some(actual) => {
+      if mono_eq(actual, pf.return_mono) {
+        .Ok({})
+      } else {
+        fail_func(
+          pf,
+          "return value has mono ${mono_name(actual)}, expected ${mono_name(pf.return_mono)}",
+        )
+      }
+    },
+    .None => .Ok({}),
+  }
+}
+
+fn verify_call_arg_type(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  expected: MonoType,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  context: String,
+) Result<Void, String> {
+  case infer_atom_mono(pf, atom, funcs_by_id) {
+    .Some(actual) => {
+      if mono_eq(actual, expected) {
+        .Ok({})
+      } else {
+        .Err(
+          "backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} has mono ${mono_name(actual)}, expected ${mono_name(expected)}"
+        )
+      }
+    },
+    .None => .Ok({}),
+  }
+}
+
+fn infer_atom_mono(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+) MonoType? {
+  case atom {
+    .ASlot(sid) => case pf.slots[sid.id] {
+      .Some(info) => .Some(info.mono),
+      .None => .None,
+    },
+    .AGlobalFunc(fid) => case funcs_by_id[fid.id] {
+      .Some(target) => .Some(.Function(func_param_monos(target), target.return_mono)),
+      .None => .None,
+    },
+    .ALitInt(_) => .Some(.Int),
+    .ALitFloat(_) => .Some(.Float),
+    .ALitBool(_) => .Some(.Bool),
+    .ALitStr(_) => .Some(.String),
+    .ALitVoid => .Some(.Void),
+    .AGlobalLocal(_) => .None,
+  }
+}
+
+fn func_param_monos(pf: PreparedFunc) Vector<MonoType> {
+  out: Vector<MonoType> = []
+  for sid in pf.params {
+    info := case pf.slots[sid.id] {
+      .Some(i) => i,
+      .None => error("backend verifier: missing param slot S${sid.id} in function ${pf.name} (F${pf.func_id.id})"),
+    }
+    out = out.append(info.mono)
+  }
+  out
 }
 
 fn verify_call_callee(pf: PreparedFunc, atom: PreparedAtom) Result<Void, String> {
@@ -459,11 +596,14 @@ fn verify_atom_use(pf: PreparedFunc, atom: PreparedAtom, context: String) Result
   }
 }
 
-fn verify_pattern_bindings(pf: PreparedFunc, pattern: CorePattern) Result<Void, String> {
+fn verify_pattern_bindings(pf: PreparedFunc, pattern: PreparedPattern) Result<Void, String> {
   case pattern {
-    .Var(lid) => {
-      _ := try local_info(pf, lid, "pattern binding")
-      .Ok({})
+    .Var(sid) => {
+      info := try slot_info(pf, sid, "pattern binding")
+      case info.role {
+        .PatternLocal => .Ok({}),
+        _ => fail_slot(pf, info, "pattern binding must target PatternLocal slot"),
+      }
     },
     .Variant(_, _, fields) => {
       for field in fields { try verify_pattern_bindings(pf, field) }
@@ -480,10 +620,84 @@ fn match_uses_variant_patterns(arms: Vector<PreparedMatchArm>) Bool {
   false
 }
 
-fn pattern_uses_variant(pattern: CorePattern) Bool {
+fn pattern_uses_variant(pattern: PreparedPattern) Bool {
   case pattern {
     .Variant(_, _, _) => true,
     _ => false,
+  }
+}
+
+fn verify_value_for_slot(
+  pf: PreparedFunc,
+  target: SlotInfo,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  context: String,
+) Result<Void, String> {
+  case atom {
+    .ALitVoid => { return .Ok({}) },
+    _ => {},
+  }
+  case infer_atom_mono(pf, atom, funcs_by_id) {
+    .Some(actual) => {
+      if mono_eq(actual, target.mono) {
+        .Ok({})
+      } else {
+        fail_slot(
+          pf,
+          target,
+          "${context} has mono ${mono_name(actual)}, expected ${mono_name(target.mono)}",
+        )
+      }
+    },
+    .None => .Ok({}),
+  }
+}
+
+fn verify_opkind_atom(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  kind: OpKind,
+  context: String,
+) Result<Void, String> {
+  case atom {
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, context)
+      allowed := case kind {
+        .Int => [ReprKind.I64, ReprKind.I32],
+        .Float => [ReprKind.F64],
+        .Bool => [ReprKind.I32],
+        .Str => [ReprKind.TypedRef(.Void)],
+      }
+      if repr_matches_any(info.repr, allowed) {
+        .Ok({})
+      } else {
+        fail_slot(pf, info, "${context} has incompatible repr ${repr_name(info.repr)} for ${op_kind_name(kind)} op")
+      }
+    },
+    .ALitInt(_) => case kind { .Int => .Ok({}), _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind") },
+    .ALitFloat(_) => case kind { .Float => .Ok({}), _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind") },
+    .ALitBool(_) => case kind { .Bool => .Ok({}), _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind") },
+    .ALitStr(_) => case kind { .Str => .Ok({}), _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind") },
+    .ALitVoid => fail_func(pf, "${context} must not be Void in ${op_kind_name(kind)} op"),
+    .AGlobalFunc(_) => fail_func(pf, "${context} must not be a function value in ${op_kind_name(kind)} op"),
+    .AGlobalLocal(_) => .Ok({}),
+  }
+}
+
+fn verify_condition_atom(pf: PreparedFunc, atom: PreparedAtom) Result<Void, String> {
+  case atom {
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, "if condition")
+      if repr_matches_category(info.repr, .I32) {
+        .Ok({})
+      } else {
+        fail_slot(pf, info, "if condition has incompatible repr ${repr_name(info.repr)}")
+      }
+    },
+    .ALitBool(_) => .Ok({}),
+    .AGlobalLocal(_) => .Ok({}),
+    _ => fail_func(pf, "if condition must be Bool/I32-valued atom"),
   }
 }
 
@@ -556,11 +770,38 @@ fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Voi
   }
 }
 
-fn local_info(pf: PreparedFunc, lid: LocalId, context: String) Result<SlotInfo, String> {
-  case pf.local_to_slot[lid.id] {
-    .None => .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} references unmapped local L${lid.id}"),
-    .Some(sid) => slot_info(pf, sid, "${context} local L${lid.id}"),
+fn verify_unique_source_local(pf: PreparedFunc, target: SlotInfo) Result<Void, String> {
+  for sid_int in pf.slots.keys() {
+    case pf.slots[sid_int] {
+      .Some(info) => {
+        if info.slot.id != target.slot.id and info.source_local.id == target.source_local.id {
+          return fail_func(
+            pf,
+            "slot S${target.slot.id} and slot S${info.slot.id} both claim source local L${target.source_local.id}",
+          )
+        }
+      },
+      .None => {},
+    }
   }
+  .Ok({})
+}
+
+fn local_info(pf: PreparedFunc, lid: LocalId, context: String) Result<SlotInfo, String> {
+  case find_slot_by_source_local(pf, lid.id) {
+    .Some(info) => .Ok(info),
+    .None => .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} references unmapped local L${lid.id}"),
+  }
+}
+
+fn find_slot_by_source_local(pf: PreparedFunc, lid: Int) SlotInfo? {
+  for sid_int in pf.slots.keys() {
+    case pf.slots[sid_int] {
+      .Some(info) => if info.source_local.id == lid { return .Some(info) },
+      .None => {},
+    }
+  }
+  .None
 }
 
 fn slot_info(pf: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, String> {
@@ -595,6 +836,15 @@ fn slot_role_name(role: SlotRole) String {
     .Local => "Local",
     .PatternLocal => "PatternLocal",
     .DeadPlaceholder => "DeadPlaceholder",
+  }
+}
+
+fn op_kind_name(kind: OpKind) String {
+  case kind {
+    .Int => "Int",
+    .Float => "Float",
+    .Bool => "Bool",
+    .Str => "Str",
   }
 }
 

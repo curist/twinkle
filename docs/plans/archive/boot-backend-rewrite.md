@@ -588,7 +588,7 @@ Size: S
 
 Target files:
 
-- `docs/plans/boot-backend-rewrite.md`
+- `docs/plans/archive/boot-backend-rewrite.md`
 - `boot/compiler/codegen/codegen.tw`
 - `boot/compiler/backend/prepare.tw`
 

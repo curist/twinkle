@@ -171,19 +171,23 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
     .AArrayLit(items) => .AArrayLit(collect item in items { rewrite_atom(item, rename) }),
     .AIndex(base, index, kind, mono) => .AIndex(rewrite_atom(base, rename), rewrite_atom(index, rename), kind, mono),
     .AInit(atom) => .AInit(rewrite_atom(atom, rename)),
-    .AAssign(target, atom) => .AAssign(target, rewrite_atom(atom, rename)),
+    .AAssign(target, atom) => .AAssign(rewrite_local(target, rename), rewrite_atom(atom, rename)),
     .ADefer(body) => .ADefer(rewrite_expr(body, rename)),
     .AWrapAnyref(atom, mono) => .AWrapAnyref(rewrite_atom(atom, rename), mono),
     .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(rewrite_atom(atom, rename), mono),
   }
 }
 
+fn rewrite_local(local: LocalId, rename: Dict<Int, LocalId>) LocalId {
+  case rename[local.id] {
+    .Some(new_lid) => new_lid,
+    .None => local,
+  }
+}
+
 fn rewrite_atom(atom: Atom, rename: Dict<Int, LocalId>) Atom {
   case atom {
-    .ALocal(lid) => case rename[lid.id] {
-      .Some(new_lid) => .ALocal(new_lid),
-      .None => atom,
-    },
+    .ALocal(lid) => .ALocal(rewrite_local(lid, rename)),
     _ => atom,
   }
 }

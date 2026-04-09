@@ -82,7 +82,6 @@ fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
     params: pf.params,
     locals: pf.locals,
     slots: new_slots,
-    local_to_slot: pf.local_to_slot,
     body: pf.body,
     return_mono: pf.return_mono,
   }

@@ -25,6 +25,7 @@ use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, Atom}
 use compiler.backend.prepared_ir.{
   CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc, ReprKind,
   PreparedExpr, PreparedOp, PreparedAtom, PreparedFieldAtom, PreparedMatchArm,
+  PreparedPattern,
 }
 use compiler.codegen.wasm_ir.{ValType}
 
@@ -132,7 +133,6 @@ pub fn assign_slots(
     params: param_slots,
     locals: local_slots,
     slots: slots,
-    local_to_slot: local_to_slot,
     body: lower_expr(func.body, local_to_slot),
     return_mono: func.return_ty,
   }
@@ -166,7 +166,7 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>) PreparedOp {
     .AMatch(scrutinee, arms) => .AMatch(
       lower_atom(scrutinee, local_to_slot),
       collect arm in arms {
-        PreparedMatchArm.{ pattern: arm.pattern, body: lower_expr(arm.body, local_to_slot) }
+        PreparedMatchArm.{ pattern: lower_pattern(arm.pattern, local_to_slot), body: lower_expr(arm.body, local_to_slot) }
       },
     ),
     .ALoop(body) => .ALoop(lower_expr(body, local_to_slot)),
@@ -227,6 +227,19 @@ fn lower_atom(atom: Atom, local_to_slot: Dict<Int, SlotId>) PreparedAtom {
     .ALitBool(b) => .ALitBool(b),
     .ALitStr(s) => .ALitStr(s),
     .ALitVoid => .ALitVoid,
+  }
+}
+
+fn lower_pattern(pattern: CorePattern, local_to_slot: Dict<Int, SlotId>) PreparedPattern {
+  case pattern {
+    .Wildcard => .Wildcard,
+    .Var(lid) => .Var(lookup_slot(local_to_slot, lid.id)),
+    .LitInt(n) => .LitInt(n),
+    .LitBool(b) => .LitBool(b),
+    .LitStr(s) => .LitStr(s),
+    .Variant(tid, vid, fields) => .Variant(tid, vid, collect field in fields {
+      lower_pattern(field, local_to_slot)
+    }),
   }
 }
 

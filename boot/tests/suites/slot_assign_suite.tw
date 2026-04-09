@@ -47,60 +47,60 @@ fn captures_for(fid: Int, caps: Vector<CaptureParam>) Dict<Int, Vector<CapturePa
   d
 }
 
+fn slot_for_local(pf: PreparedFunc, lid: Int) SlotInfo? {
+  for sid in pf.slots.keys() {
+    case pf.slots[sid] {
+      .Some(info) => if info.source_local.id == lid { return .Some(info) },
+      .None => {},
+    }
+  }
+  .None
+}
+
 // assert_slot_id: check that LocalId lid maps to slot with the given id.
 fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<Void, String> {
-  case pf.local_to_slot[lid] {
-    .Some(s) => assert.int_eq(s.id, expected_sid),
+  case slot_for_local(pf, lid) {
+    .Some(info) => assert.int_eq(info.slot.id, expected_sid),
     .None => assert.fail("L${lid} has no slot"),
   }
 }
 
 // assert_role: check that the slot for LocalId lid has the given SlotRole.
 fn assert_role(pf: PreparedFunc, lid: Int, expected: SlotRole) Result<Void, String> {
-  case pf.local_to_slot[lid] {
+  case slot_for_local(pf, lid) {
     .None => assert.fail("no slot for L${lid}"),
-    .Some(sid) => {
-      case pf.slots[sid.id] {
-        .None => assert.fail("slot ${sid.id} missing from slots dict"),
-        .Some(info) => {
-          role_ok := case info.role {
-            .Param => case expected { .Param => true, _ => false },
-            .CaptureParam => case expected { .CaptureParam => true, _ => false },
-            .Local => case expected { .Local => true, _ => false },
-            .PatternLocal => case expected { .PatternLocal => true, _ => false },
-            .DeadPlaceholder => case expected { .DeadPlaceholder => true, _ => false },
-          }
-          if role_ok { .Ok({}) } else { assert.fail("L${lid}: wrong role") }
-        },
+    .Some(info) => {
+      role_ok := case info.role {
+        .Param => case expected { .Param => true, _ => false },
+        .CaptureParam => case expected { .CaptureParam => true, _ => false },
+        .Local => case expected { .Local => true, _ => false },
+        .PatternLocal => case expected { .PatternLocal => true, _ => false },
+        .DeadPlaceholder => case expected { .DeadPlaceholder => true, _ => false },
       }
+      if role_ok { .Ok({}) } else { assert.fail("L${lid}: wrong role") }
     },
   }
 }
 
 // assert_mono: check that the slot for LocalId lid has the given MonoType.
 fn assert_mono(pf: PreparedFunc, lid: Int, expected: MonoType) Result<Void, String> {
-  case pf.local_to_slot[lid] {
+  case slot_for_local(pf, lid) {
     .None => assert.fail("no slot for L${lid}"),
-    .Some(sid) => {
-      case pf.slots[sid.id] {
-        .None => assert.fail("slot ${sid.id} missing from slots dict"),
-        .Some(info) => {
-          mono_ok := case info.mono {
-            .Int => case expected { .Int => true, _ => false },
-            .Float => case expected { .Float => true, _ => false },
-            .Bool => case expected { .Bool => true, _ => false },
-            .String => case expected { .String => true, _ => false },
-            .Void => case expected { .Void => true, _ => false },
-            .Never => case expected { .Never => true, _ => false },
-            .Optional(inner) => case expected {
-              .Optional(_) => true,
-              _ => false,
-            },
-            _ => false,
-          }
-          if mono_ok { .Ok({}) } else { assert.fail("L${lid}: wrong mono") }
+    .Some(info) => {
+      mono_ok := case info.mono {
+        .Int => case expected { .Int => true, _ => false },
+        .Float => case expected { .Float => true, _ => false },
+        .Bool => case expected { .Bool => true, _ => false },
+        .String => case expected { .String => true, _ => false },
+        .Void => case expected { .Void => true, _ => false },
+        .Never => case expected { .Never => true, _ => false },
+        .Optional(inner) => case expected {
+          .Optional(_) => true,
+          _ => false,
         },
+        _ => false,
       }
+      if mono_ok { .Ok({}) } else { assert.fail("L${lid}: wrong mono") }
     },
   }
 }
@@ -291,8 +291,8 @@ fn test_no_slots_for_non_binding_patterns() Result<Void, String> {
   .Ok({})
 }
 
-// local_to_slot is a complete inverse of each slot's source_local.
-fn test_local_to_slot_is_consistent() Result<Void, String> {
+// source_local uniquely identifies each slot's semantic origin.
+fn test_source_locals_are_unique() Result<Void, String> {
   mono: Dict<Int, MonoType> = Dict.new()
   mono[2] = MonoType.String
   mono[3] = MonoType.Bool
@@ -309,17 +309,15 @@ fn test_local_to_slot_is_consistent() Result<Void, String> {
   )
   pf := assign_slots(func, no_captures(), resolver.empty_env())
 
-  // For every slot, local_to_slot[slot.source_local.id] must point back to that slot.
+  seen: Dict<Int, Int> = Dict.new()
   for k in pf.slots.keys() {
     case pf.slots[k] {
       .Some(info) => {
-        case pf.local_to_slot[info.source_local.id] {
-          .Some(sid) => {
-            if sid.id != info.slot.id {
-              return assert.fail("slot ${info.slot.id}: local_to_slot[${info.source_local.id}] = ${sid.id}")
-            }
+        case seen[info.source_local.id] {
+          .Some(other_sid) => {
+            return assert.fail("L${info.source_local.id} appears in both slot ${other_sid} and slot ${info.slot.id}")
           },
-          .None => { return assert.fail("slot ${info.slot.id}: L${info.source_local.id} not in local_to_slot") },
+          .None => { seen[info.source_local.id] = info.slot.id },
         }
       },
       .None => {},
@@ -339,5 +337,5 @@ pub fn suite() runner.Suite {
     .test("assign target is Local", test_assign_target_is_local)
     .test("pattern local in match arm", test_pattern_local_in_match)
     .test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns)
-    .test("local_to_slot is consistent", test_local_to_slot_is_consistent)
+    .test("source locals are unique", test_source_locals_are_unique)
 }

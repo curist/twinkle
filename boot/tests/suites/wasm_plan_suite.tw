@@ -470,6 +470,52 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
   }
 }
 
+pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Void, String> {
+  adder := mk_func_def(300, "adder",
+    [Param.{ local: mk_local(20), ty: MonoType.Int }],
+    MonoType.Int,
+    .Atom(.ALocal(mk_local(20))),
+    Dict.new(),
+  )
+  apply_mono: Dict<Int, MonoType> = Dict.new()
+  apply_mono[10] = MonoType.Int
+  apply := mk_func_def(200, "apply",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Function([MonoType.Int], MonoType.Int) },
+      Param.{ local: mk_local(1), ty: MonoType.Int },
+    ],
+    MonoType.Int,
+    .Let(mk_local(10), .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      .Atom(.ALocal(mk_local(10)))),
+    apply_mono,
+  )
+  caller_mono: Dict<Int, MonoType> = Dict.new()
+  caller_mono[11] = MonoType.Int
+  caller := mk_func_def(100, "caller", [], MonoType.Int,
+    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.AGlobalFunc(mk_func(300)), .ALitInt(7)]),
+      .Atom(.ALocal(mk_local(11)))),
+    caller_mono,
+  )
+
+  reg := plan(mk_module([caller, apply, adder]), resolver.empty_env(), empty_builtins())
+
+  case reg.concrete_func_sigs[300] {
+    .Some(sig) => {
+      try assert.int_eq(sig.param_types.len(), 1)
+      try assert.ok(
+        case sig.param_types[0] { .Int => true, _ => false },
+        "expected higher-order bare global arg param type Int",
+      )
+      try assert.ok(
+        case sig.return_type { .Int => true, _ => false },
+        "expected higher-order bare global arg return type Int",
+      )
+      .Ok({})
+    },
+    .None => assert.fail("missing concrete_func_sigs entry for bare global function argument"),
+  }
+}
+
 // ── plan_wasm_types: collects runtime imports ───────────────────────
 
 pub fn test_plan_runtime_imports() Result<Void, String> {
@@ -558,6 +604,41 @@ pub fn test_registry_empty() Result<Void, String> {
 }
 
 // ── plan_wasm_types: module globals ──────────────────────────────────
+
+pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() Result<Void, String> {
+  // apply(f, x) calls a function-typed parameter directly.
+  apply_fn := mk_func_def(3, "apply",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Function([MonoType.Int], MonoType.Int) },
+      Param.{ local: mk_local(1), ty: MonoType.Int },
+    ],
+    MonoType.Int,
+    .Let(mk_local(2), .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      .Atom(.ALocal(mk_local(2)))),
+    mono1(2, MonoType.Int),
+  )
+  double_fn := mk_func_def(4, "double",
+    [Param.{ local: mk_local(10), ty: MonoType.Int }],
+    MonoType.Int,
+    .Let(mk_local(11), .ABinOp(.Add, .ALocal(mk_local(10)), .ALocal(mk_local(10)), .Int),
+      .Atom(.ALocal(mk_local(11)))),
+    mono1(11, MonoType.Int),
+  )
+  main_fn := mk_func_def(5, "main",
+    [],
+    MonoType.Int,
+    .Let(mk_local(20), .ACall(.AGlobalFunc(mk_func(3)), [.AGlobalFunc(mk_func(4)), .ALitInt(21)]),
+      .Atom(.ALocal(mk_local(20)))),
+    mono1(20, MonoType.Int),
+  )
+
+  reg := plan(mk_module([apply_fn, double_fn, main_fn]), resolver.empty_env(), empty_builtins())
+
+  case reg.capture_layouts[4] {
+    .Some(_) => assert.fail("higher-order global function should not get synthesized empty capture layout"),
+    .None => .Ok({}),
+  }
+}
 
 pub fn test_plan_module_globals() Result<Void, String> {
   // __init__ function defines local 0 and local 1
@@ -658,8 +739,10 @@ pub fn suite() runner.Suite {
     .test("plan closure registers functype", test_plan_closure_registers_func_type)
     .test("plan closure capture types", test_plan_capture_types)
     .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
+    .test("plan bare higher-order global function arg registers concrete func sig", test_plan_higher_order_global_function_arg_registers_func_sig)
     .test("plan runtime imports", test_plan_runtime_imports)
     .test("plan optional type", test_plan_optional_type)
+    .test("plan higher-order global func does not synthesize capture layout", test_plan_higher_order_global_func_does_not_synthesize_capture_layout)
     .test("plan module globals", test_plan_module_globals)
     .test("plan nested record dependencies are ordered", test_plan_nested_record_dependencies_are_ordered)
     .test("plan recursive record terminates", test_plan_recursive_record_terminates)

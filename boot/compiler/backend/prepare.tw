@@ -25,10 +25,10 @@ use compiler.codegen.insert_boundaries.{insert_boundaries}
 
 // PreparedModule is the codegen contract between optimized ANF and emission.
 //
-// `.anf` holds the post-boundary ANF body. Slot maps in `.funcs` cover all
+// `.anf` holds the post-boundary ANF body. Slot metadata in `.funcs` covers all
 // post-boundary locals, including wrap/unwrap temporaries. Backend logic must
 // read explicit facts from `.funcs` and `.closure_captures`; `.anf` is the
-// expression tree those facts describe.
+// source syntax tree those prepared facts describe.
 pub type PreparedModule = .{
   // Post-boundary ANF body tree described by the prepared metadata below.
   anf: AnfModule,

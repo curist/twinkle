@@ -20,7 +20,7 @@ use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, Atom}
 use compiler.codegen.wasm_ir.{ValType, AbiContract}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{CaptureParam, SlotRole}
+use compiler.backend.prepared_ir.{CaptureParam, SlotRole, PreparedFunc}
 use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.closure_convert.{convert_closures}
 
@@ -97,6 +97,26 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
   AbiContract.{ param_types: params, result_types: results }
+}
+
+fn find_slot_id_by_local(pf: PreparedFunc, local_id: Int) Int {
+  for sid in pf.slots.keys() {
+    case pf.slots[sid] {
+      .Some(info) => if info.source_local.id == local_id { return info.slot.id },
+      .None => {},
+    }
+  }
+  error("find_slot_id_by_local: missing slot for L${local_id}")
+}
+
+fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<Int, String> {
+  for sid in pf.slots.keys() {
+    case pf.slots[sid] {
+      .Some(info) => if info.source_local.id == local_id { return .Ok(info.slot.id) },
+      .None => {},
+    }
+  }
+  .Err("let-bound local L${local_id} missing from slot map")
 }
 
 // ── ANF inspection helpers ───────────────────────────────────────────
@@ -192,14 +212,8 @@ pub fn suite() runner.Suite {
     try assert.int_eq(pf.params.len(), 1)
     try assert.int_eq(pf.locals.len(), 1)
     // L0 → slot 0 (Param), L10 → slot 1 (Local)
-    case pf.local_to_slot[0] {
-      .None => { return .Err("L0 has no slot") },
-      .Some(s) => try assert.int_eq(s.id, 0),
-    }
-    case pf.local_to_slot[10] {
-      .None => { return .Err("L10 has no slot") },
-      .Some(s) => try assert.int_eq(s.id, 1),
-    }
+    try assert.int_eq(find_slot_id_by_local(pf, 0), 0)
+    try assert.int_eq(find_slot_id_by_local(pf, 10), 1)
     .Ok({})
   })
 
@@ -232,10 +246,7 @@ pub fn suite() runner.Suite {
     // all_lids includes the wrap temp (allocated at next_local = 11) and t0
     pf := prepared.funcs[0]
     for l in all_lids {
-      case pf.local_to_slot[l] {
-        .None => { return .Err("let-bound local L${l} missing from slot map") },
-        .Some(_) => {},
-      }
+      _ := try find_slot_id_by_local_result(pf, l)
     }
     .Ok({})
   })
@@ -289,10 +300,7 @@ pub fn suite() runner.Suite {
     all_lids := collect_let_lids_expr(result_body)
     pf := prepared.funcs[0]
     for l in all_lids {
-      case pf.local_to_slot[l] {
-        .None => { return .Err("let-bound local L${l} missing from slot map after unwrap insertion") },
-        .Some(_) => {},
-      }
+      _ := try find_slot_id_by_local_result(pf, l)
     }
     .Ok({})
   })
@@ -347,6 +355,33 @@ pub fn suite() runner.Suite {
         case rewritten.body {
           .Atom(.ALocal(l)) => try assert.int_eq(l.id, caps[0].param_local.id),
           _ => { return .Err("rewritten hoisted body did not use the explicit capture param") },
+        }
+        .Ok({})
+      },
+    }
+  })
+
+  .test("closure conversion rewrites captured assign target to explicit capture param", fn() {
+    outer_body: AnfExpr = .Let(lid(10),
+      .AMakeClosure(fid(99), [lid(0)]),
+      .Atom(.ALocal(lid(10))))
+    outer := mk_func_def(1, "outer", [mk_param(0, .Int)], .Function([], .Void), outer_body,
+      mk_mono_map([10], [MonoType.Function([], .Void)]))
+    inner_body: AnfExpr = .Let(lid(11),
+      .AAssign(lid(0), .ALitInt(42)),
+      .Atom(.ALocal(lid(11))))
+    inner := mk_func_def(99, "inner", [], .Void, inner_body,
+      mk_mono_map([11], [MonoType.Void]))
+
+    converted := convert_closures(mk_module([outer, inner]))
+
+    case converted.captures[99] {
+      .None => .Err("missing closure capture metadata for inner"),
+      .Some(caps) => {
+        rewritten := converted.anf.functions[1]
+        case rewritten.body {
+          .Let(_, .AAssign(target, _), _) => try assert.int_eq(target.id, caps[0].param_local.id),
+          _ => { return .Err("rewritten hoisted body did not rewrite captured assign target") },
         }
         .Ok({})
       },

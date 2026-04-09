@@ -1,13 +1,15 @@
-// Lightweight ANF scan for wasm planning.
+// Lightweight prepared-body scan for wasm planning.
 //
 // This deliberately collects only planner-side body facts:
 // - string literals
 // - closure target FuncIds from AMakeClosure
 // - runtime builtin FuncIds from direct global calls
+// - explicit module-global references from non-init prepared bodies
 
-use compiler.core_ir.{FuncId, CorePattern}
+use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedOp, PreparedAtom, PreparedPattern, PreparedFunc, SlotId}
+use compiler.core_ir.{FuncId}
 use compiler.resolver.{MonoType}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 
@@ -16,38 +18,49 @@ pub type ScanResult = .{
   closure_funcs: Dict<Int, Bool>,
   ho_global_funcs: Dict<Int, Bool>,
   builtin_calls: Dict<Int, Bool>,
+  module_globals: Dict<Int, Bool>,
 }
 
-pub fn scan_module_bodies(anf: AnfModule, builtins: BuiltinRegistry) ScanResult {
-  out := ScanResult.{ strings: Dict.new(), closure_funcs: Dict.new(), ho_global_funcs: Dict.new(), builtin_calls: Dict.new() }
-  funcs := anf.functions
-  for func in funcs {
-    out = scan_expr(func.body, builtins, funcs, out)
+pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) ScanResult {
+  out := ScanResult.{
+    strings: Dict.new(),
+    closure_funcs: Dict.new(),
+    ho_global_funcs: Dict.new(),
+    builtin_calls: Dict.new(),
+    module_globals: Dict.new(),
+  }
+  init_fid := input.anf.init_func_id
+  for func in input.funcs {
+    is_init := case init_fid {
+      .Some(fid) => fid.id == func.func_id.id,
+      .None => false,
+    }
+    out = scan_expr(func.body, builtins, input.funcs, func.func_id.id, is_init, out)
   }
   out
 }
 
-fn scan_expr(expr: AnfExpr, builtins: BuiltinRegistry, funcs: Vector<AnfFunctionDef>, out: ScanResult) ScanResult {
+fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc>, current_fid: Int, is_init: Bool, out: ScanResult) ScanResult {
   case expr {
     .Let(_, op, body) => {
-      cur := scan_op(op, builtins, funcs, out)
-      scan_expr(body, builtins, funcs, cur)
+      cur := scan_op(op, builtins, funcs, current_fid, is_init, out)
+      scan_expr(body, builtins, funcs, current_fid, is_init, cur)
     },
-    .Atom(atom) => scan_atom(atom, out),
-    .Return(.Some(atom)) => scan_atom(atom, out),
-    .Break(.Some(atom)) => scan_atom(atom, out),
+    .Atom(atom) => scan_atom(atom, is_init, out),
+    .Return(.Some(atom)) => scan_atom(atom, is_init, out),
+    .Break(.Some(atom)) => scan_atom(atom, is_init, out),
     .Return(.None) => out,
     .Break(.None) => out,
     .Continue => out,
   }
 }
 
-fn scan_op(op: AnfOp, builtins: BuiltinRegistry, funcs: Vector<AnfFunctionDef>, out: ScanResult) ScanResult {
+fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc>, current_fid: Int, is_init: Bool, out: ScanResult) ScanResult {
   case op {
     .ACall(callee, args) => {
-      cur := scan_atom(callee, out)
+      cur := scan_atom(callee, is_init, out)
       for arg in args {
-        cur = scan_atom(arg, cur)
+        cur = scan_atom(arg, is_init, cur)
       }
       case callee {
         .AGlobalFunc(fid) => {
@@ -56,124 +69,135 @@ fn scan_op(op: AnfOp, builtins: BuiltinRegistry, funcs: Vector<AnfFunctionDef>, 
               cur.builtin_calls[fid.id] = true
               cur
             },
-            .None => scan_higher_order_user_call(callee, args, funcs, cur),
+            .None => scan_higher_order_user_call(fid, args, funcs, is_init, cur),
           }
         },
         _ => cur,
       }
     },
     .AIf(cond, then_e, else_e) => {
-      cur := scan_atom(cond, out)
-      cur = scan_expr(then_e, builtins, funcs, cur)
-      scan_expr(else_e, builtins, funcs, cur)
+      cur := scan_atom(cond, is_init, out)
+      cur = scan_expr(then_e, builtins, funcs, current_fid, is_init, cur)
+      scan_expr(else_e, builtins, funcs, current_fid, is_init, cur)
     },
     .AMatch(scrutinee, arms) => {
-      cur := scan_atom(scrutinee, out)
+      cur := scan_atom(scrutinee, is_init, out)
       for arm in arms {
         cur = scan_pattern(arm.pattern, cur)
-        cur = scan_expr(arm.body, builtins, funcs, cur)
+        cur = scan_expr(arm.body, builtins, funcs, current_fid, is_init, cur)
       }
       cur
     },
-    .ALoop(body) => scan_expr(body, builtins, funcs, out),
-    .ADefer(body) => scan_expr(body, builtins, funcs, out),
+    .ALoop(body) => scan_expr(body, builtins, funcs, current_fid, is_init, out),
+    .ADefer(body) => scan_expr(body, builtins, funcs, current_fid, is_init, out),
     .ABinOp(_, left, right, _) => {
-      cur := scan_atom(left, out)
-      scan_atom(right, cur)
+      cur := scan_atom(left, is_init, out)
+      scan_atom(right, is_init, cur)
     },
-    .AUnOp(_, inner, _) => scan_atom(inner, out),
+    .AUnOp(_, inner, _) => scan_atom(inner, is_init, out),
     .AMakeClosure(fid, free_vars) => {
       cur := out
       cur.closure_funcs[fid.id] = true
       for fv in free_vars {
+        cur = scan_atom(.ASlot(fv), is_init, cur)
       }
       cur
     },
     .ARecord(_, fields) => {
       cur := out
       for field in fields {
-        cur = scan_atom(field.value, cur)
+        cur = scan_atom(field.value, is_init, cur)
       }
       cur
     },
-    .ARecordGet(target, _, _) => scan_atom(target, out),
+    .ARecordGet(target, _, _) => scan_atom(target, is_init, out),
     .ARecordUpdate(base, _, value, _, _) => {
-      cur := scan_atom(base, out)
-      scan_atom(value, cur)
+      cur := scan_atom(base, is_init, out)
+      scan_atom(value, is_init, cur)
     },
-    .AVariant(_, _, args) => scan_atoms(args, out),
-    .AArrayLit(items) => scan_atoms(items, out),
+    .AVariant(_, _, args) => scan_atoms(args, is_init, out),
+    .AArrayLit(items) => scan_atoms(items, is_init, out),
     .AIndex(base, index, _, _) => {
-      cur := scan_atom(base, out)
-      scan_atom(index, cur)
+      cur := scan_atom(base, is_init, out)
+      scan_atom(index, is_init, cur)
     },
-    .AInit(atom) => scan_atom(atom, out),
-    .AAssign(_, atom) => scan_atom(atom, out),
-    .AWrapAnyref(atom, _) => scan_atom(atom, out),
-    .AUnwrapAnyref(atom, _) => scan_atom(atom, out),
+    .AInit(atom) => scan_atom(atom, is_init, out),
+    .AAssign(_, atom) => scan_atom(atom, is_init, out),
+    .AWrapAnyref(atom, _) => scan_atom(atom, is_init, out),
+    .AUnwrapAnyref(atom, _) => scan_atom(atom, is_init, out),
   }
 }
 
-fn scan_atoms(atoms: Vector<Atom>, out: ScanResult) ScanResult {
+fn scan_atoms(atoms: Vector<PreparedAtom>, is_init: Bool, out: ScanResult) ScanResult {
   cur := out
   for atom in atoms {
-    cur = scan_atom(atom, cur)
+    cur = scan_atom(atom, is_init, cur)
   }
   cur
 }
 
-fn scan_atom(atom: Atom, out: ScanResult) ScanResult {
+fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
   case atom {
     .ALitStr(s) => {
       cur := out
       cur.strings[s] = true
       cur
     },
+    .AGlobalLocal(lid) => {
+      if is_init { return out }
+      cur := out
+      cur.module_globals[lid.id] = true
+      cur
+    },
     _ => out,
   }
 }
 
-fn find_func_def(funcs: Vector<AnfFunctionDef>, fid: FuncId) AnfFunctionDef? {
+fn scan_higher_order_user_call(fid: FuncId, args: Vector<PreparedAtom>, funcs: Vector<PreparedFunc>, is_init: Bool, out: ScanResult) ScanResult {
+  case find_func_def(funcs, fid) {
+    .Some(func) => {
+      cur := out
+      for arg,i in args {
+        case arg {
+          .AGlobalFunc(arg_fid) => {
+            if param_expects_function(func, i) {
+              cur.ho_global_funcs[arg_fid.id] = true
+            }
+          },
+          _ => {},
+        }
+        cur = scan_atom(arg, is_init, cur)
+      }
+      cur
+    },
+    .None => out,
+  }
+}
+
+fn find_func_def(funcs: Vector<PreparedFunc>, fid: FuncId) PreparedFunc? {
   for func in funcs {
     if func.func_id.id == fid.id { return .Some(func) }
   }
   .None
 }
 
-fn param_expects_function(func: AnfFunctionDef, index: Int) Bool {
+fn param_expects_function(func: PreparedFunc, index: Int) Bool {
   if index >= func.params.len() { return false }
-  case func.params[index].ty {
-    .Function(_, _) => true,
+  sid := func.params[index]
+  case slot_mono(func, sid) {
+    .Some(.Function(_, _)) => true,
     _ => false,
   }
 }
 
-fn scan_higher_order_user_call(callee: Atom, args: Vector<Atom>, funcs: Vector<AnfFunctionDef>, out: ScanResult) ScanResult {
-  case callee {
-    .AGlobalFunc(fid) => {
-      case find_func_def(funcs, fid) {
-        .Some(func) => {
-          cur := out
-          for arg,i in args {
-            case arg {
-              .AGlobalFunc(arg_fid) => {
-                if param_expects_function(func, i) {
-                  cur.ho_global_funcs[arg_fid.id] = true
-                }
-              },
-              _ => {},
-            }
-          }
-          cur
-        },
-        .None => out,
-      }
-    },
-    _ => out,
+fn slot_mono(func: PreparedFunc, sid: SlotId) MonoType? {
+  case func.slots[sid.id] {
+    .Some(info) => .Some(info.mono),
+    .None => .None,
   }
 }
 
-fn scan_pattern(pattern: CorePattern, out: ScanResult) ScanResult {
+fn scan_pattern(pattern: PreparedPattern, out: ScanResult) ScanResult {
   case pattern {
     .LitStr(s) => {
       cur := out

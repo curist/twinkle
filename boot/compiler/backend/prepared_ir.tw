@@ -4,7 +4,7 @@
 // representation metadata explicit so later backend passes can consume verified
 // facts instead of rediscovering them.
 
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, BinOp, UnOp}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp}
 use compiler.resolver.{MonoType, TypeId}
 use compiler.anf.{OpKind, IndexKind}
 use compiler.codegen.wasm_ir.{ValType}
@@ -130,7 +130,17 @@ pub type PreparedOp = {
 }
 
 pub type PreparedFieldAtom = .{ field: FieldId, value: PreparedAtom }
-pub type PreparedMatchArm = .{ pattern: CorePattern, body: PreparedExpr }
+
+pub type PreparedPattern = {
+  Wildcard,
+  Var(SlotId),
+  LitInt(Int),
+  LitBool(Bool),
+  LitStr(String),
+  Variant(TypeId, VariantId, Vector<PreparedPattern>),
+}
+
+pub type PreparedMatchArm = .{ pattern: PreparedPattern, body: PreparedExpr }
 
 // PreparedFunc is the explicit backend representation of one function.
 //
@@ -141,6 +151,8 @@ pub type PreparedMatchArm = .{ pattern: CorePattern, body: PreparedExpr }
 //
 // Slot ABI order: captures → params → locals.
 // The emitter reads this directly as the backend source of truth.
+// Semantic LocalId → SlotId mapping is now preparation-local machinery rather
+// than persistent prepared-function metadata.
 pub type PreparedFunc = .{
   func_id: FuncId,
   name: String,
@@ -148,9 +160,8 @@ pub type PreparedFunc = .{
   captures: Vector<SlotId>,    // CaptureParam slots (empty for non-closures)
   params: Vector<SlotId>,      // Param slots (declared parameters)
   locals: Vector<SlotId>,      // Local/PatternLocal/DeadPlaceholder slots
-  // Lookup tables:
-  slots: Dict<Int, SlotInfo>,       // SlotId.id → SlotInfo
-  local_to_slot: Dict<Int, SlotId>, // LocalId.id → SlotId
+  // Lookup table:
+  slots: Dict<Int, SlotInfo>,  // SlotId.id → SlotInfo
   // Slot-native post-boundary prepared body:
   body: PreparedExpr,
   return_mono: MonoType,

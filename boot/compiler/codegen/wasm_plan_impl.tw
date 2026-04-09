@@ -1,25 +1,19 @@
 // Wasm type registry and plan_wasm_types: pre-computes the complete set
 // of Wasm type definitions needed by the module before emission starts.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, TypeEntry}
-use compiler.core_ir.{FuncId, FieldId, VariantId, Param, CorePattern}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry}
+use compiler.core_ir.{FuncId}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
-use compiler.anf.{
-  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
-  AnfFunctionDef,
-}
+use compiler.builtins.{BuiltinRegistry, BuiltinEntry, RuntimeInfo}
 use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
-use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{PreparedFunc}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo, PreparedExpr, PreparedOp, PreparedAtom}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
 use compiler.codegen.wasm_layout.{
-  WasmLayout, WasmValType, WasmRecordLayout, WasmFieldLayout,
-  WasmSumLayout, WasmVariantLayout, WasmClosureLayout, WasmIteratorLayout,
+  WasmLayout, WasmClosureLayout,
   layout_of, val_type_of, mono_to_key,
 }
 
@@ -45,20 +39,26 @@ pub fn plan_wasm_types_impl(
     runtime_imports: [],
   }
 
-  scan := scan_module_bodies(input.anf, builtins)
+  scan := scan_module_bodies(input, builtins)
 
-  for func in input.anf.functions {
-    for p in func.params {
-      validate_concrete_mono(p.ty, env, "function '${func.name}' parameter L${p.local.id}")
-      reg = register_mono(reg, p.ty, env)
+  for func in input.funcs {
+    for sid in func.captures {
+      info := slot_info(func, sid)
+      validate_concrete_mono(info.mono, env, "function '${func.name}' capture slot S${sid.id} / L${info.source_local.id}")
+      reg = register_mono(reg, info.mono, env)
     }
-    validate_concrete_mono(func.return_ty, env, "function '${func.name}' return type")
-    reg = register_mono(reg, func.return_ty, env)
-    for key in func.op_result_mono.keys() {
-      mono_val := unwrap_or(func.op_result_mono[key], .Void)
-      validate_concrete_mono(mono_val, env, "function '${func.name}' local L${key}")
-      reg = register_mono(reg, mono_val, env)
+    for sid in func.params {
+      info := slot_info(func, sid)
+      validate_concrete_mono(info.mono, env, "function '${func.name}' parameter slot S${sid.id} / L${info.source_local.id}")
+      reg = register_mono(reg, info.mono, env)
     }
+    for sid in func.locals {
+      info := slot_info(func, sid)
+      validate_concrete_mono(info.mono, env, "function '${func.name}' local slot S${sid.id} / L${info.source_local.id}")
+      reg = register_mono(reg, info.mono, env)
+    }
+    validate_concrete_mono(func.return_mono, env, "function '${func.name}' return type")
+    reg = register_mono(reg, func.return_mono, env)
   }
 
   for s in scan.strings.keys() {
@@ -70,10 +70,8 @@ pub fn plan_wasm_types_impl(
   }
   for fid in scan.ho_global_funcs.keys() {
     reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, input.funcs)
-    if !reg.capture_layouts.has(fid) {
-      reg.capture_layouts[fid] = []
-    }
   }
+  reg = register_higher_order_global_func_sigs(reg, input.funcs, builtins)
 
   for fid in scan.builtin_calls.keys() {
     case bi.entry(builtins, FuncId.{ id: fid }) {
@@ -84,41 +82,19 @@ pub fn plan_wasm_types_impl(
     }
   }
 
-  // Compute module globals: locals bound in __init__ and referenced by other functions
+  // Compute module globals from explicit prepared-body AGlobalLocal operands.
+  // The referenced LocalIds must resolve back to slots in __init__.
   case input.anf.init_func_id {
     .Some(init_fid) => {
-      init_bound: Dict<Int, Bool> = Dict.new()
-      init_func_ref: AnfFunctionDef? = .None
-      for f in input.anf.functions {
-        if f.func_id.id == init_fid.id {
-          init_bound = collect_bound_locals(f.body)
-          init_func_ref = .Some(f)
+      init_func := find_prepared_func(input.funcs, init_fid)
+      for k in scan.module_globals.keys() {
+        mono := resolve_module_global_mono(init_func, k)
+        if !reg.module_globals.has(k) {
+          reg.module_globals_order = reg.module_globals_order.append(k)
         }
-      }
-      for f in input.anf.functions {
-        if f.func_id.id != init_fid.id {
-          declared: Dict<Int, Bool> = Dict.new()
-          for p in f.params { declared[p.local.id] = true }
-          free := collect_free_locals(f.body, declared)
-          for k in free.keys() {
-            if set_has(init_bound, k) {
-              // Resolve the local's MonoType from the init function
-              mono: MonoType = case init_func_ref {
-                .Some(ifn) => case ifn.op_result_mono[k] {
-                  .Some(ty) => ty,
-                  .None => error("module global L${k} has no MonoType in op_result_mono"),
-                },
-                .None => error("module global L${k} but no init function found"),
-              }
-              if !reg.module_globals.has(k) {
-                reg.module_globals_order = reg.module_globals_order.append(k)
-              }
-              reg.module_globals[k] = ModuleGlobalEntry.{
-                sym: "global_local_${k}",
-                mono: mono,
-              }
-            }
-          }
+        reg.module_globals[k] = ModuleGlobalEntry.{
+          sym: "global_local_${k}",
+          mono: mono,
         }
       }
     },
@@ -438,112 +414,19 @@ fn register_closure_func_type(reg: WasmTypeRegistry, layout: WasmClosureLayout) 
   }
 }
 
-// ── ANF walking ─────────────────────────────────────────────────────
-
-fn walk_expr(reg: WasmTypeRegistry, expr: AnfExpr, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  case expr {
-    .Let(local, op, body) => {
-      reg = walk_op(reg, op, env, builtins, func_map)
-      walk_expr(reg, body, env, builtins, func_map)
-    },
-    .Atom(a) => walk_atom(reg, a),
-    .Return(a_opt) => {
-      case a_opt {
-        .Some(a) => walk_atom(reg, a),
-        .None => reg,
-      }
-    },
-    .Break(a_opt) => {
-      case a_opt {
-        .Some(a) => walk_atom(reg, a),
-        .None => reg,
-      }
-    },
-    .Continue => reg,
-  }
-}
-
-fn walk_atom(reg: WasmTypeRegistry, atom: Atom) WasmTypeRegistry {
-  case atom {
-    .ALitStr(s) => register_string(reg, s),
-    _ => reg,
-  }
-}
-
-fn walk_atoms(reg: WasmTypeRegistry, atoms: Vector<Atom>) WasmTypeRegistry {
-  for a in atoms { reg = walk_atom(reg, a) }
-  reg
-}
-
-fn walk_pattern(reg: WasmTypeRegistry, pattern: CorePattern) WasmTypeRegistry {
-  case pattern {
-    .LitStr(s) => register_string(reg, s),
-    .Variant(_, _, fields) => {
-      cur := reg
-      for field in fields {
-        cur = walk_pattern(cur, field)
-      }
-      cur
-    },
-    _ => reg,
-  }
-}
-
-// ── Call analysis helpers ─────────────────────────────────────────────
+// ── Prepared helpers ────────────────────────────────────────────────
 
 fn register_func_sig_by_id(reg: WasmTypeRegistry, fid: FuncId, funcs: Vector<PreparedFunc>) WasmTypeRegistry {
   for func in funcs {
     if func.func_id.id == fid.id {
       reg.concrete_func_sigs[fid.id] = FuncSigEntry.{
-        param_types: collect sid in func.params {
-          case func.slots[sid.id] {
-            .Some(info) => info.mono,
-            .None => error("register_func_sig_by_id: missing slot S${sid.id} for F${fid.id}"),
-          }
-        },
+        param_types: collect sid in func.params { slot_info(func, sid).mono },
         return_type: func.return_mono,
       }
       return reg
     }
   }
   reg
-}
-
-fn register_func_sig(reg: WasmTypeRegistry, fid: FuncId, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  case func_map[fid.id] {
-    .Some(target) => {
-      sig := FuncSigEntry.{
-        param_types: collect sid in target.params {
-          case target.slots[sid.id] {
-            .Some(info) => info.mono,
-            .None => error("register_func_sig: missing slot S${sid.id} for F${fid.id}"),
-          }
-        },
-        return_type: target.return_mono,
-      }
-      reg.concrete_func_sigs[fid.id] = sig
-      reg
-    },
-    .None => reg,
-  }
-}
-
-fn register_empty_capture_layout(reg: WasmTypeRegistry, fid: FuncId) WasmTypeRegistry {
-  captures: Vector<CaptureEntry> = []
-  reg.capture_layouts[fid.id] = captures
-  reg
-}
-
-fn param_expects_function(callee_def: PreparedFunc, index: Int) Bool {
-  if index >= callee_def.params.len() { return false }
-  sid := callee_def.params[index]
-  case callee_def.slots[sid.id] {
-    .Some(info) => case info.mono {
-      .Function(_, _) => true,
-      _ => false,
-    },
-    .None => false,
-  }
 }
 
 fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegistry {
@@ -553,124 +436,117 @@ fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegi
   }
 }
 
-fn analyze_user_func_call(reg: WasmTypeRegistry, callee_fid: FuncId, args: Vector<Atom>, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  case func_map[callee_fid.id] {
-    .Some(callee_def) => {
-      for arg,i in args {
-        reg = maybe_register_closure_arg(reg, arg, i, callee_def, func_map)
-      }
-      reg
-    },
-    .None => reg,
+fn find_prepared_func(funcs: Vector<PreparedFunc>, fid: FuncId) PreparedFunc {
+  for func in funcs {
+    if func.func_id.id == fid.id { return func }
+  }
+  error("find_prepared_func: missing prepared function F${fid.id}")
+}
+
+fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
+  case find_slot_by_source_local(init_func, local_id) {
+    .Some(info) => info.mono,
+    .None => error("resolve_module_global_mono: __init__ has no slot for module global L${local_id}"),
   }
 }
 
-fn maybe_register_closure_arg(reg: WasmTypeRegistry, arg: Atom, index: Int, callee_def: PreparedFunc, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  case arg {
-    .AGlobalFunc(arg_fid) => {
-      if !param_expects_function(callee_def, index) { return reg }
-      reg = register_func_sig(reg, arg_fid, func_map)
-      register_empty_capture_layout(reg, arg_fid)
+fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
+  for sid in func.slots.keys() {
+    case func.slots[sid] {
+      .Some(info) => if info.source_local.id == local_id { return .Some(info) },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
+  case func.slots[sid.id] {
+    .Some(info) => info,
+    .None => error("slot_info: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})"),
+  }
+}
+
+fn register_higher_order_global_func_sigs(
+  reg: WasmTypeRegistry,
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+) WasmTypeRegistry {
+  cur := reg
+  for func in funcs {
+    cur = collect_higher_order_global_func_sigs(cur, func.body, funcs, builtins)
+  }
+  cur
+}
+
+fn collect_higher_order_global_func_sigs(
+  reg: WasmTypeRegistry,
+  expr: PreparedExpr,
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+) WasmTypeRegistry {
+  case expr {
+    .Let(_, op, body) => {
+      reg = collect_higher_order_global_func_sigs_op(reg, op, funcs, builtins)
+      collect_higher_order_global_func_sigs(reg, body, funcs, builtins)
     },
     _ => reg,
   }
 }
 
-fn walk_call(reg: WasmTypeRegistry, callee: Atom, args: Vector<Atom>, builtins: BuiltinRegistry, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  reg = walk_atom(reg, callee)
-  reg = walk_atoms(reg, args)
-  case callee {
-    .AGlobalFunc(fid) => {
-      case bi.entry(builtins, fid) {
-        .Some(entry) => analyze_builtin_call(reg, entry),
-        .None => analyze_user_func_call(reg, fid, args, func_map),
-      }
-    },
-    _ => reg,
-  }
-}
-
-fn register_made_closure(reg: WasmTypeRegistry, fid: FuncId, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
-  register_func_sig(reg, fid, func_map)
-}
-
-// ── Main traversal ───────────────────────────────────────────────────
-
-fn walk_op(reg: WasmTypeRegistry, op: AnfOp, env: ResolvedEnv, builtins: BuiltinRegistry, func_map: Dict<Int, PreparedFunc>) WasmTypeRegistry {
+fn collect_higher_order_global_func_sigs_op(
+  reg: WasmTypeRegistry,
+  op: PreparedOp,
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+) WasmTypeRegistry {
   case op {
-    .ACall(callee, args) =>
-      walk_call(reg, callee, args, builtins, func_map),
-
-    .AIf(cond, then_body, else_body) => {
-      reg = walk_atom(reg, cond)
-      reg = walk_expr(reg, then_body, env, builtins, func_map)
-      walk_expr(reg, else_body, env, builtins, func_map)
+    .ACall(.AGlobalFunc(callee_fid), args) => {
+      case bi.entry(builtins, callee_fid) {
+        .Some(_) => reg,
+        .None => {
+          callee := find_prepared_func(funcs, callee_fid)
+          cur := reg
+          for arg,i in args {
+            case arg {
+              .AGlobalFunc(arg_fid) => {
+                if prepared_param_expects_function(callee, i) {
+                  cur = register_func_sig_by_id(cur, arg_fid, funcs)
+                }
+              },
+              _ => {},
+            }
+          }
+          cur
+        },
+      }
     },
-
-    .AMatch(scrutinee, arms) => {
-      arms.fold(walk_atom(reg, scrutinee), fn(r, arm) {
-        r = walk_pattern(r, arm.pattern)
-        walk_expr(r, arm.body, env, builtins, func_map)
-      })
+    .AIf(_, then_e, else_e) => {
+      reg = collect_higher_order_global_func_sigs(reg, then_e, funcs, builtins)
+      collect_higher_order_global_func_sigs(reg, else_e, funcs, builtins)
     },
-
-    .ALoop(body) =>
-      walk_expr(reg, body, env, builtins, func_map),
-
-    .ABinOp(_, left, right, _) => {
-      reg = walk_atom(reg, left)
-      walk_atom(reg, right)
+    .AMatch(_, arms) => {
+      cur := reg
+      for arm in arms {
+        cur = collect_higher_order_global_func_sigs(cur, arm.body, funcs, builtins)
+      }
+      cur
     },
+    .ALoop(body) => collect_higher_order_global_func_sigs(reg, body, funcs, builtins),
+    .ADefer(body) => collect_higher_order_global_func_sigs(reg, body, funcs, builtins),
+    _ => reg,
+  }
+}
 
-    .AUnOp(_, operand, _) =>
-      walk_atom(reg, operand),
-
-    .AMakeClosure(fid, _) =>
-      register_made_closure(reg, fid, func_map),
-
-    .ARecord(tid, fields) => {
-      for f in fields { reg = walk_atom(reg, f.value) }
-      reg
+fn prepared_param_expects_function(func: PreparedFunc, index: Int) Bool {
+  if index >= func.params.len() { return false }
+  sid := func.params[index]
+  case func.slots[sid.id] {
+    .Some(info) => case info.mono {
+      .Function(_, _) => true,
+      _ => false,
     },
-
-    .ARecordGet(target, _, _) =>
-      walk_atom(reg, target),
-
-    .ARecordUpdate(base, _, value, _, _) => {
-      reg = walk_atom(reg, base)
-      walk_atom(reg, value)
-    },
-
-    .AVariant(tid, vid, args) =>
-      walk_atoms(reg, args),
-
-    .AArrayLit(items) =>
-      walk_atoms(reg, items),
-
-    .AIndex(base, index, _, result_ty) => {
-      reg = walk_atom(reg, base)
-      reg = walk_atom(reg, index)
-      register_mono(reg, result_ty, env)
-    },
-
-    .AInit(atom) =>
-      walk_atom(reg, atom),
-
-    .AAssign(_, atom) =>
-      walk_atom(reg, atom),
-
-    .ADefer(_) =>
-      error("ADefer must be eliminated before codegen"),
-
-    .AWrapAnyref(atom, mono) => {
-      reg = walk_atom(reg, atom)
-      register_mono(reg, mono, env)
-    },
-
-    .AUnwrapAnyref(atom, mono) => {
-      reg = walk_atom(reg, atom)
-      register_mono(reg, mono, env)
-    },
+    .None => false,
   }
 }
 
@@ -863,9 +739,3 @@ fn append_unique(base: Vector<String>, extra: Vector<String>) Vector<String> {
   out
 }
 
-fn unwrap_or(opt: MonoType?, default: MonoType) MonoType {
-  case opt {
-    .Some(v) => v,
-    .None => default,
-  }
-}
