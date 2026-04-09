@@ -14,7 +14,7 @@ use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, ImportDef}
 use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, mono_to_key}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wasm_plan_types.{
-  WasmTypeRegistry, FuncSigEntry, StringPoolEntry, ModuleGlobalEntry,
+  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.backend.closure_convert.{compute_closure_captures}
@@ -137,8 +137,7 @@ pub fn test_func_sig_entry() Result<Void, String> {
 }
 
 pub fn test_capture_entry() Result<Void, String> {
-  // CaptureEntry is kept for backwards compat; CaptureParam is the prepared IR type.
-  e := CaptureParam.{
+  e := CaptureEntry.{
     local_id: mk_local(5),
     ty: MonoType.Int,
   }
