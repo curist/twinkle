@@ -1083,6 +1083,13 @@ Update this section as implementation proceeds.
   optional.
 - **No new inference in wasm_plan.tw / emit.tw**: any new backend fact must
   live in PreparedModule or a sub-record, not in a new emitter heuristic.
+- **Deferred structural follow-up**: release-mode investigation after Phase 3
+  exposed a cast failure when a populated imported `runner.Suite` appears
+  directly inside a `Vector<Suite>` literal passed to `run_all(...)`, while the
+  same suite works when appended into an existing vector. This is currently
+  quarantined in the test entrypoints by using `append(...)` instead of direct
+  vector-literal inclusion. Treat this as a backend representation-consistency
+  bug under this rewrite plan, not as an isolated test-only workaround.
 
 ## Open Questions
 
