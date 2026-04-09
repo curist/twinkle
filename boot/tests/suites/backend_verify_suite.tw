@@ -246,7 +246,7 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 
     bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
-    bad_caps[99] = [CaptureParam.{ local_id: lid(1), ty: .Int }]
+    bad_caps[99] = [CaptureParam.{ local_id: lid(1), param_local: lid(100), ty: .Int }]
     broken := PreparedModule.{
       anf: prepared.anf,
       closure_captures: bad_caps,

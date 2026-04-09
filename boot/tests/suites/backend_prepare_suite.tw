@@ -22,6 +22,7 @@ use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{CaptureParam, SlotRole}
 use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.closure_convert.{convert_closures}
 
 // ── Construction helpers ─────────────────────────────────────────────
 
@@ -322,6 +323,36 @@ pub fn suite() runner.Suite {
     .Ok({})
   })
 
+  // ── Closure conversion rewrite ──
+
+  .test("closure conversion rewrites hoisted body to explicit capture param", fn() {
+    outer_body: AnfExpr = .Let(lid(10),
+      .AMakeClosure(fid(99), [lid(0)]),
+      .Atom(.ALocal(lid(10))))
+    outer := mk_func_def(1, "outer", [mk_param(0, .Int)], .Function([], .Int), outer_body,
+      mk_mono_map([10], [MonoType.Function([], .Int)]))
+    inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+
+    converted := convert_closures(mk_module([outer, inner]))
+
+    case converted.captures[99] {
+      .None => .Err("missing closure capture metadata for inner"),
+      .Some(caps) => {
+        try assert.int_eq(caps.len(), 1)
+        try assert.int_eq(caps[0].local_id.id, 0)
+
+        rewritten := converted.anf.functions[1]
+        try assert.int_eq(rewritten.params.len(), 1)
+        try assert.int_eq(rewritten.params[0].local.id, caps[0].param_local.id)
+        case rewritten.body {
+          .Atom(.ALocal(l)) => try assert.int_eq(l.id, caps[0].param_local.id),
+          _ => { return .Err("rewritten hoisted body did not use the explicit capture param") },
+        }
+        .Ok({})
+      },
+    }
+  })
+
   // ── Closure captures preserved ──
 
   .test("closure_captures from caller are stored in PreparedModule", fn() {
@@ -331,7 +362,7 @@ pub fn suite() runner.Suite {
     func := mk_func_def(1, "h", [], .Void, body, Dict.new())
     anf := mk_module([func])
 
-    cap: CaptureParam = CaptureParam.{ local_id: lid(0), ty: .Int }
+    cap: CaptureParam = CaptureParam.{ local_id: lid(0), param_local: lid(100), ty: .Int }
     captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
     captures[42] = [cap]
 

@@ -20,11 +20,9 @@
 // pass (it would require tracking which anyrefs previously held typed sums).
 
 use compiler.resolver.{MonoType, ResolvedEnv}
-use compiler.core_ir.{LocalId}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
-use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc}
+use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp}
 
 // ── Public entry ────────────────────────────────────────────────────
 
@@ -43,9 +41,9 @@ fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
   // Pre-scan: find LocalIds bound by boundary ops.
   // AWrapAnyref result → OpaqueAnyref
   // AUnwrapAnyref result → repr derived from unwrap target MonoType (stored in op)
-  wrap_lids: Dict<Int, Bool> = Dict.new()
+  wrap_slots: Dict<Int, Bool> = Dict.new()
   unwrap_monos: Dict<Int, MonoType> = Dict.new()
-  scan_body(pf.body, wrap_lids, unwrap_monos)
+  scan_body(pf.body, wrap_slots, unwrap_monos)
 
   // Refine each slot.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -53,12 +51,12 @@ fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
     case pf.slots[sid_int] {
       .None => {},
       .Some(info) => {
-        lid := info.source_local.id
+        sid := info.slot.id
         new_repr: ReprKind = case info.role {
           .DeadPlaceholder => .DeadValue,
-          _ => case wrap_lids[lid] {
+          _ => case wrap_slots[sid] {
             .Some(_) => .OpaqueAnyref,
-            .None => case unwrap_monos[lid] {
+            .None => case unwrap_monos[sid] {
               .Some(target_mono) => repr_of_mono(target_mono, env),
               .None => repr_of_mono(info.mono, env),
             },
@@ -93,40 +91,40 @@ fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
 // ── Body scanning ────────────────────────────────────────────────────
 
 fn scan_body(
-  expr: AnfExpr,
-  wrap_lids: Dict<Int, Bool>,
+  expr: PreparedExpr,
+  wrap_slots: Dict<Int, Bool>,
   unwrap_monos: Dict<Int, MonoType>,
 ) Void {
   case expr {
-    .Let(local, op, body) => {
-      scan_op(local.id, op, wrap_lids, unwrap_monos)
-      scan_body(body, wrap_lids, unwrap_monos)
+    .Let(slot, op, body) => {
+      scan_op(slot.id, op, wrap_slots, unwrap_monos)
+      scan_body(body, wrap_slots, unwrap_monos)
     },
     _ => {},
   }
 }
 
 fn scan_op(
-  result_lid: Int,
-  op: AnfOp,
-  wrap_lids: Dict<Int, Bool>,
+  result_sid: Int,
+  op: PreparedOp,
+  wrap_slots: Dict<Int, Bool>,
   unwrap_monos: Dict<Int, MonoType>,
 ) Void {
   case op {
     .AWrapAnyref(_, _) => {
-      wrap_lids[result_lid] = true
+      wrap_slots[result_sid] = true
     },
     .AUnwrapAnyref(_, target_mono) => {
-      unwrap_monos[result_lid] = target_mono
+      unwrap_monos[result_sid] = target_mono
     },
     .AIf(_, then_e, else_e) => {
-      scan_body(then_e, wrap_lids, unwrap_monos)
-      scan_body(else_e, wrap_lids, unwrap_monos)
+      scan_body(then_e, wrap_slots, unwrap_monos)
+      scan_body(else_e, wrap_slots, unwrap_monos)
     },
     .AMatch(_, arms) => {
-      for arm in arms { scan_body(arm.body, wrap_lids, unwrap_monos) }
+      for arm in arms { scan_body(arm.body, wrap_slots, unwrap_monos) }
     },
-    .ALoop(inner) => scan_body(inner, wrap_lids, unwrap_monos),
+    .ALoop(inner) => scan_body(inner, wrap_slots, unwrap_monos),
     _ => {},
   }
 }

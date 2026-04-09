@@ -153,7 +153,7 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
     mono,
   )
   captures := captures_for(200, [
-    CaptureParam.{ local_id: mk_local(5), ty: MonoType.String },
+    CaptureParam.{ local_id: mk_local(5), param_local: mk_local(50), ty: MonoType.String },
   ])
   pf := assign_slots(func, captures, resolver.empty_env())
 
@@ -161,10 +161,10 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
   try assert.int_eq(pf.params.len(), 1)
   try assert.int_eq(pf.locals.len(), 0)
 
-  // L5 (capture) → slot 0; L10 (param) → slot 1
-  try assert_slot_id(pf, 5, 0)
-  try assert_role(pf, 5, .CaptureParam)
-  try assert_mono(pf, 5, MonoType.String)
+  // rewritten capture param L50 → slot 0; user param L10 → slot 1
+  try assert_slot_id(pf, 50, 0)
+  try assert_role(pf, 50, .CaptureParam)
+  try assert_mono(pf, 50, MonoType.String)
   try assert_slot_id(pf, 10, 1)
   try assert_role(pf, 10, .Param)
   .Ok({})
@@ -179,19 +179,19 @@ fn test_multiple_captures_ordered() Result<Void, String> {
     Dict.new(),
   )
   captures := captures_for(300, [
-    CaptureParam.{ local_id: mk_local(1), ty: MonoType.Int },
-    CaptureParam.{ local_id: mk_local(3), ty: MonoType.Float },
-    CaptureParam.{ local_id: mk_local(7), ty: MonoType.Bool },
+    CaptureParam.{ local_id: mk_local(1), param_local: mk_local(21), ty: MonoType.Int },
+    CaptureParam.{ local_id: mk_local(3), param_local: mk_local(23), ty: MonoType.Float },
+    CaptureParam.{ local_id: mk_local(7), param_local: mk_local(27), ty: MonoType.Bool },
   ])
   pf := assign_slots(func, captures, resolver.empty_env())
 
   try assert.int_eq(pf.captures.len(), 3)
-  try assert_slot_id(pf, 1, 0)
-  try assert_slot_id(pf, 3, 1)
-  try assert_slot_id(pf, 7, 2)
-  try assert_role(pf, 1, .CaptureParam)
-  try assert_role(pf, 3, .CaptureParam)
-  try assert_role(pf, 7, .CaptureParam)
+  try assert_slot_id(pf, 21, 0)
+  try assert_slot_id(pf, 23, 1)
+  try assert_slot_id(pf, 27, 2)
+  try assert_role(pf, 21, .CaptureParam)
+  try assert_role(pf, 23, .CaptureParam)
+  try assert_role(pf, 27, .CaptureParam)
   .Ok({})
 }
 

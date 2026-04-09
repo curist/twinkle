@@ -23,7 +23,7 @@ use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.verify.{verify_prepared_module}
-use compiler.backend.closure_convert.{compute_closure_captures}
+use compiler.backend.closure_convert.{convert_closures}
 
 pub fn runtime_modules() Vector<WasmModule> {
   [
@@ -40,16 +40,21 @@ pub fn codegen(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) String {
-  // 1. Compute closure captures.
-  //    Must happen before preparation so PreparedModule and later planning
-  //    share the same authoritative capture metadata.
-  closure_captures := compute_closure_captures(anf)
+  // 1. Final closure conversion.
+  //    Must happen before preparation so rewritten hoisted bodies and capture
+  //    metadata stay in sync across the backend pipeline.
+  closure_conversion := convert_closures(anf)
 
   // 2. Prepare backend IR.
   //    Boundary insertion happens inside prepare_backend().
   //    prepared.anf holds post-boundary ANF; slot maps include boundary temps.
   //    This is the boundary between optimized semantic ANF and the backend.
-  prepared := prepare_backend(anf, env, builtins, closure_captures)
+  prepared := prepare_backend(
+    closure_conversion.anf,
+    env,
+    builtins,
+    closure_conversion.captures,
+  )
 
   // 3. Verify prepared backend IR.
   //    This is the hard stop before planning/emission can drift into

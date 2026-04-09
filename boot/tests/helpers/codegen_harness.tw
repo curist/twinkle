@@ -6,7 +6,7 @@ use compiler.codegen.emit.{emit_module}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.linker.{link, LinkedModule}
 use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.closure_convert.{compute_closure_captures}
+use compiler.backend.closure_convert.{convert_closures}
 use compiler.pipeline
 
 pub type CodegenInputs = .{
@@ -33,8 +33,13 @@ pub fn codegen_path(path: String) Result<String, String> {
 // Returns the linked module for structural inspection (before WAT emission).
 pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   inputs := try codegen_inputs(src)
-  closure_captures := compute_closure_captures(inputs.anf)
-  prepared := prepare_backend(inputs.anf, inputs.env, inputs.builtins, closure_captures)
+  closure_conversion := convert_closures(inputs.anf)
+  prepared := prepare_backend(
+    closure_conversion.anf,
+    inputs.env,
+    inputs.builtins,
+    closure_conversion.captures,
+  )
   registry := plan_wasm_types(prepared, inputs.env, inputs.builtins)
   user_module := emit_module(prepared, registry, inputs.builtins, inputs.env)
   modules := runtime_modules().append(user_module)

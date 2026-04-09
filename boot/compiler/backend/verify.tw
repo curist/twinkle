@@ -11,13 +11,14 @@
 // land later once planning/emission migration makes more operations fully
 // prepared-IR-driven.
 
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, Atom}
+use compiler.backend.prepared_ir.{PreparedMatchArm}
 use compiler.core_ir.{LocalId, CorePattern}
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.backend.prepared_ir.{
   CaptureParam, SlotId, SlotRole, SlotInfo, ReprKind, PreparedFunc,
+  PreparedExpr, PreparedOp, PreparedAtom,
 }
 use compiler.backend.prepare.{PreparedModule}
 
@@ -163,10 +164,10 @@ fn verify_capture_alignment(
       for sid,i in pf.captures {
         info := try slot_info(pf, sid, "capture slot")
         cap := captures[i]
-        if info.source_local.id != cap.local_id.id {
+        if info.source_local.id != cap.param_local.id {
           return fail_func(
             pf,
-            "capture slot ${i} uses L${info.source_local.id}, expected L${cap.local_id.id}",
+            "capture slot ${i} uses L${info.source_local.id}, expected rewritten capture param L${cap.param_local.id}",
           )
         }
         if !mono_eq(info.mono, cap.ty) {
@@ -243,11 +244,11 @@ fn verify_expr(
   closure_captures: Dict<Int, Vector<CaptureParam>>,
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
-  expr: AnfExpr,
+  expr: PreparedExpr,
 ) Result<Void, String> {
   case expr {
-    .Let(local, op, body) => {
-      result_info := try local_info(pf, local, "let result")
+    .Let(slot, op, body) => {
+      result_info := try slot_info(pf, slot, "let result")
       try verify_op(pf, closure_captures, funcs_by_id, env, result_info, op)
       verify_expr(pf, closure_captures, funcs_by_id, env, body)
     },
@@ -274,7 +275,7 @@ fn verify_op(
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
   result_info: SlotInfo,
-  op: AnfOp,
+  op: PreparedOp,
 ) Result<Void, String> {
   case op {
     .ACall(callee, args) => {
@@ -332,20 +333,20 @@ fn verify_op(
             )
           }
           for fv,i in free_vars {
-            info := try local_info(pf, fv, "closure capture")
+            info := try slot_info(pf, fv, "closure capture")
             cap := caps[i]
-            if fv.id != cap.local_id.id {
+            if info.source_local.id != cap.local_id.id {
               return fail_slot(
                 pf,
                 result_info,
-                "AMakeClosure capture ${i} uses L${fv.id}, expected L${cap.local_id.id}",
+                "AMakeClosure capture ${i} uses L${info.source_local.id}, expected L${cap.local_id.id}",
               )
             }
             if !mono_eq(info.mono, cap.ty) {
               return fail_slot(
                 pf,
                 result_info,
-                "AMakeClosure capture ${i} for L${fv.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
+                "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
               )
             }
             try reject_dead_use(pf, info, "closure capture")
@@ -388,7 +389,7 @@ fn verify_op(
     },
     .AInit(atom) => verify_atom_use(pf, atom, "init value"),
     .AAssign(target, atom) => {
-      target_info := try local_info(pf, target, "assign target")
+      target_info := try slot_info(pf, target, "assign target")
       try reject_dead_use(pf, target_info, "assign target")
       verify_atom_use(pf, atom, "assign value")
     },
@@ -422,11 +423,11 @@ fn verify_op(
   }
 }
 
-fn verify_call_callee(pf: PreparedFunc, atom: Atom) Result<Void, String> {
+fn verify_call_callee(pf: PreparedFunc, atom: PreparedAtom) Result<Void, String> {
   try verify_atom_use(pf, atom, "call callee")
   case atom {
-    .ALocal(lid) => {
-      info := try local_info(pf, lid, "call callee")
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, "call callee")
       case info.repr {
         .ClosureRef => .Ok({}),
         _ => fail_slot(pf, info, "call callee must have ClosureRef repr, got ${repr_name(info.repr)}"),
@@ -436,22 +437,24 @@ fn verify_call_callee(pf: PreparedFunc, atom: Atom) Result<Void, String> {
   }
 }
 
-fn verify_atom_mapped(pf: PreparedFunc, atom: Atom, context: String) Result<Void, String> {
+fn verify_atom_mapped(pf: PreparedFunc, atom: PreparedAtom, context: String) Result<Void, String> {
   case atom {
-    .ALocal(lid) => {
-      _ := try local_info(pf, lid, context)
+    .ASlot(sid) => {
+      _ := try slot_info(pf, sid, context)
       .Ok({})
     },
+    .AGlobalLocal(_) => .Ok({}),
     _ => .Ok({}),
   }
 }
 
-fn verify_atom_use(pf: PreparedFunc, atom: Atom, context: String) Result<Void, String> {
+fn verify_atom_use(pf: PreparedFunc, atom: PreparedAtom, context: String) Result<Void, String> {
   case atom {
-    .ALocal(lid) => {
-      info := try local_info(pf, lid, context)
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, context)
       reject_dead_use(pf, info, context)
     },
+    .AGlobalLocal(_) => .Ok({}),
     _ => .Ok({}),
   }
 }
@@ -470,7 +473,7 @@ fn verify_pattern_bindings(pf: PreparedFunc, pattern: CorePattern) Result<Void, 
   }
 }
 
-fn match_uses_variant_patterns(arms: Vector<AnfMatchArm>) Bool {
+fn match_uses_variant_patterns(arms: Vector<PreparedMatchArm>) Bool {
   for arm in arms {
     if pattern_uses_variant(arm.pattern) { return true }
   }
@@ -503,13 +506,13 @@ fn require_result_repr(
 
 fn require_local_repr_if_local(
   pf: PreparedFunc,
-  atom: Atom,
+  atom: PreparedAtom,
   allowed: Vector<ReprKind>,
   context: String,
 ) Result<Void, String> {
   case atom {
-    .ALocal(lid) => {
-      info := try local_info(pf, lid, context)
+    .ASlot(sid) => {
+      info := try slot_info(pf, sid, context)
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
@@ -520,6 +523,7 @@ fn require_local_repr_if_local(
         )
       }
     },
+    .AGlobalLocal(_) => .Ok({}),
     _ => .Ok({}),
   }
 }

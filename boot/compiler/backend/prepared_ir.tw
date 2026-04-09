@@ -4,16 +4,18 @@
 // representation metadata explicit so later backend passes can consume verified
 // facts instead of rediscovering them.
 
-use compiler.core_ir.{LocalId, FuncId}
-use compiler.resolver.{MonoType}
-use compiler.anf.{AnfExpr}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern, BinOp, UnOp}
+use compiler.resolver.{MonoType, TypeId}
+use compiler.anf.{OpKind, IndexKind}
 use compiler.codegen.wasm_ir.{ValType}
 
 // ── Capture parameters ──────────────────────────────────────────────
 
 // CaptureParam records one explicitly captured outer local in a hoisted function.
 //
-// local_id: the outer LocalId captured (same id referenced in the hoisted body)
+// local_id: the outer LocalId captured at the AMakeClosure construction site
+// param_local: the rewritten hoisted-function parameter LocalId that receives
+//              that captured value in the rewritten body
 // ty: the MonoType of the captured value as seen in the enclosing function
 //
 // The ordering of CaptureParams in a function's capture list is canonical:
@@ -21,6 +23,7 @@ use compiler.codegen.wasm_ir.{ValType}
 // All backend passes must use this ordering — never reorder or re-derive.
 pub type CaptureParam = .{
   local_id: LocalId,
+  param_local: LocalId,
   ty: MonoType,
 }
 
@@ -81,14 +84,60 @@ pub type SlotInfo = .{
   wasm_type: ValType, // physical Wasm type (Anyref until repr_assign runs)
 }
 
+// ── Prepared body IR ───────────────────────────────────────────────
+
+// PreparedAtom is the slot-native backend operand form.
+// Any function-local value reference is explicit via SlotId rather than
+// semantic LocalId.
+pub type PreparedAtom = {
+  ASlot(SlotId),
+  AGlobalLocal(LocalId),
+  AGlobalFunc(FuncId),
+  ALitInt(Int),
+  ALitFloat(Float),
+  ALitBool(Bool),
+  ALitStr(String),
+  ALitVoid,
+}
+
+pub type PreparedExpr = {
+  Let(SlotId, PreparedOp, PreparedExpr),
+  Atom(PreparedAtom),
+  Return(PreparedAtom?),
+  Break(PreparedAtom?),
+  Continue,
+}
+
+pub type PreparedOp = {
+  ACall(PreparedAtom, Vector<PreparedAtom>),
+  AIf(PreparedAtom, PreparedExpr, PreparedExpr),
+  AMatch(PreparedAtom, Vector<PreparedMatchArm>),
+  ALoop(PreparedExpr),
+  ABinOp(BinOp, PreparedAtom, PreparedAtom, OpKind),
+  AUnOp(UnOp, PreparedAtom, OpKind),
+  AMakeClosure(FuncId, Vector<SlotId>),
+  ARecord(TypeId, Vector<PreparedFieldAtom>),
+  ARecordGet(PreparedAtom, FieldId, TypeId),
+  ARecordUpdate(PreparedAtom, FieldId, PreparedAtom, Bool, TypeId),
+  AVariant(TypeId, VariantId, Vector<PreparedAtom>),
+  AArrayLit(Vector<PreparedAtom>),
+  AIndex(PreparedAtom, PreparedAtom, IndexKind, MonoType),
+  AInit(PreparedAtom),
+  AAssign(SlotId, PreparedAtom),
+  ADefer(PreparedExpr),
+  AWrapAnyref(PreparedAtom, MonoType),
+  AUnwrapAnyref(PreparedAtom, MonoType),
+}
+
+pub type PreparedFieldAtom = .{ field: FieldId, value: PreparedAtom }
+pub type PreparedMatchArm = .{ pattern: CorePattern, body: PreparedExpr }
+
 // PreparedFunc is the explicit backend representation of one function.
 //
 // captures, params, and locals are explicit slot lists. The slot map is the
 // primary backend artifact.
-// body is post-boundary AnfExpr (AWrapAnyref/AUnwrapAnyref already inserted),
-// and slot maps include wrap/unwrap temporaries as ordinary Local slots.
+// body is a slot-native post-boundary prepared tree.
 // SlotInfo.repr and SlotInfo.wasm_type are filled in by repr_assign.
-// Body LocalId references are still semantic ANF.
 //
 // Slot ABI order: captures → params → locals.
 // The emitter reads this directly as the backend source of truth.
@@ -102,7 +151,7 @@ pub type PreparedFunc = .{
   // Lookup tables:
   slots: Dict<Int, SlotInfo>,       // SlotId.id → SlotInfo
   local_to_slot: Dict<Int, SlotId>, // LocalId.id → SlotId
-  // Still semantic ANF body with LocalId references:
-  body: AnfExpr,
+  // Slot-native post-boundary prepared body:
+  body: PreparedExpr,
   return_mono: MonoType,
 }
