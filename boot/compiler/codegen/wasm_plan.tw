@@ -1,9 +1,8 @@
 // Wasm planner public facade.
 //
-// Phase 6a: planning now consumes PreparedModule directly. Capture layouts are
-// authoritative prepared-backend facts; the planner may still traverse
-// `prepared.anf` for transitional body facts like strings and builtin calls,
-// but it must not rediscover closure capture layouts from raw semantic ANF.
+// Planning consumes PreparedModule directly. Capture layouts are authoritative
+// prepared-backend facts; planner traversal of `prepared.anf` is limited to
+// body-discovery concerns like strings and builtin calls.
 
 use compiler.resolver.{ResolvedEnv}
 use compiler.builtins.{BuiltinRegistry}

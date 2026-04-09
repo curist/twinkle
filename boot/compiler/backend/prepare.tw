@@ -1,30 +1,15 @@
 // Backend preparation boundary.
 //
-// prepare_backend() is the explicit entry point for slot assignment and
-// representation assignment.
+// prepare_backend() is the explicit entry point into backend preparation.
+// It inserts representation boundaries, assigns slots, and assigns runtime
+// representation metadata.
 //
-// Phase 6a: planning now runs after preparation and consumes PreparedModule,
-// so prepare_backend() is the single sanctioned boundary between optimized ANF
-// and the backend. The remaining transitional use of `.anf` exists only to
-// support legacy planner/emitter body traversal while they finish migration.
+// Planner and emitter code must consume PreparedModule rather than rediscover
+// backend facts from optimized ANF.
 //
-// Nothing in wasm_plan.tw or emit.tw should be given raw optimized ANF
-// directly for new work — all new backend facts must flow through PreparedModule.
-//
-// Phase 4a: boundary insertion absorbed into preparation.
-//   - insert_boundaries() runs inside prepare_backend(), producing post-boundary ANF.
-//   - Slot assignment runs on post-boundary ANF (wrap/unwrap temps included).
-//   - PreparedModule.anf holds post-boundary ANF.
-//
-// Phase 4b (current): representation assignment added.
-//   - assign_repr_for_module() runs after slot assignment.
-//   - SlotInfo.repr and SlotInfo.wasm_type are filled with correct values.
-//   - AWrapAnyref result locals → OpaqueAnyref; AUnwrapAnyref → typed repr.
-//   - DeadPlaceholder slots → DeadValue.
-//   - All other slots: repr derived from MonoType via repr_of_mono().
-//
-// The `.anf` transitional field must be removed once Phase 6 is complete and
-// all legacy planner/emitter code consumes prepared IR directly.
+// PreparedModule retains the post-boundary ANF body alongside explicit
+// prepared metadata. Backend passes must treat the prepared metadata as the
+// source of truth and use `.anf` only as the expression tree being lowered.
 //
 // INVARIANT: Do not add new inference logic in wasm_plan.tw or emit.tw.
 //            New backend facts belong in PreparedModule or its sub-records.
@@ -40,16 +25,12 @@ use compiler.codegen.insert_boundaries.{insert_boundaries}
 
 // PreparedModule is the codegen contract between optimized ANF and emission.
 //
-// Phase 4a: `.anf` now holds post-boundary ANF (AWrapAnyref/AUnwrapAnyref
-// nodes inserted). Slot maps in `.funcs` cover post-boundary locals including
-// wrap/unwrap temporaries. Callers must use `.anf` directly for emission;
-// no separate boundary insertion step is needed.
-//
-// The `.anf` field is a transitional adapter for the legacy planner/emitter.
-// It must not be used for new backend logic introduced after Phase 4a.
+// `.anf` holds the post-boundary ANF body. Slot maps in `.funcs` cover all
+// post-boundary locals, including wrap/unwrap temporaries. Backend logic must
+// read explicit facts from `.funcs` and `.closure_captures`; `.anf` is the
+// expression tree those facts describe.
 pub type PreparedModule = .{
-  // TRANSITIONAL — legacy planner/emitter adapter. Remove after Phase 6.
-  // Phase 4a: contains post-boundary ANF (boundaries already inserted).
+  // Post-boundary ANF body tree described by the prepared metadata below.
   anf: AnfModule,
 
   // Authoritative closure capture map: FuncId.id → ordered capture params.
@@ -59,7 +40,7 @@ pub type PreparedModule = .{
 
   // Authoritative slot map: one PreparedFunc per function in the module,
   // in the same order as AnfModule.functions. Includes slots for boundary
-  // temporaries (AWrapAnyref/AUnwrapAnyref locals). Emitter reads in Phase 6b.
+  // temporaries (AWrapAnyref/AUnwrapAnyref locals).
   funcs: Vector<PreparedFunc>,
 }
 
@@ -76,19 +57,15 @@ pub fn prepare_backend(
   builtins: BuiltinRegistry,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
 ) PreparedModule {
-  // Phase 4a: boundary insertion (absorbed from codegen.tw).
-  // Runs on pre-boundary ANF; produces post-boundary ANF with explicit
-  // AWrapAnyref/AUnwrapAnyref nodes at every representation-crossing point.
+  // Insert explicit wrap/unwrap nodes at every representation-crossing point.
   anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
 
-  // Phase 3: slot assignment on post-boundary ANF.
-  // Running after boundary insertion ensures wrap/unwrap temporaries are
-  // included in slot maps.
+  // Assign slots after boundary insertion so wrap/unwrap temporaries are
+  // included in the slot maps.
   funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
 
-  // Phase 4b: representation assignment.
-  // Refines SlotInfo.repr and SlotInfo.wasm_type from the OpaqueAnyref defaults
-  // set by slot_assign, using MonoType and boundary-op overrides.
+  // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
+  // defaults using MonoType and boundary-op overrides.
   funcs2 := assign_repr_for_module(funcs, env)
 
   .{

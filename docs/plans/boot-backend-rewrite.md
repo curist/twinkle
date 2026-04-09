@@ -886,7 +886,7 @@ Why last:
 - [x] Phase 6a complete: Wasm planning consumes prepared backend IR
 - [x] Phase 6b complete: emitter local handling is slot-based
 - [x] Phase 6c complete: emitter repr handling is mechanical and prepared-IR-driven
-- [ ] Phase 7 complete: legacy inference heuristics removed
+- [x] Phase 7 complete: legacy inference heuristics removed
 
 ### PR review checklist
 
@@ -1066,9 +1066,9 @@ Update this section as implementation proceeds.
   `PreparedModule` and `prepare_backend(anf) PreparedModule`. This is the only
   sanctioned entry into the backend pipeline. `codegen.tw` calls it before any
   other backend pass.
-- **Transitional adapter**: `PreparedModule.anf` carries the raw semantic
-  `AnfModule` for use by the legacy planner/emitter during migration. It is
-  explicitly marked transitional and must be removed after Phase 6.
+- **Prepared body tree**: `PreparedModule.anf` carries the post-boundary ANF
+  expression tree described by prepared backend metadata. Planner/emitter body
+  traversal may use it as syntax, but backend facts live in prepared metadata.
 - **Migration unit**: whole-module. A given module is either on the legacy
   semantic-ANF path or the new prepared-backend path within a single compile.
   No per-function mixed mode.
@@ -1120,6 +1120,22 @@ Update this section as implementation proceeds.
   Planning now runs after preparation and consumes `PreparedModule`.
 - **Branch join**: derived implicitly from mono (type checker already unified).
   No explicit join pass needed for Phase 4b; the post-boundary mono is consistent.
+
+### Phase 7 settled decisions
+
+- **Emitter pre-scan heuristics deleted**: the old emit-time local discovery,
+  pattern-local mono reconstruction, and assign-target mono reconstruction
+  helpers have been removed from the production backend path.
+- **Legacy emitter compatibility fields removed**: `PreparedFunc.orig_params`
+  is gone, and prepared slots / return metadata are now the only production
+  function-shape contract consumed by emission.
+- **Prepared function metadata drives more of emission mechanically**:
+  direct-call parameter inspection and trampoline generation now read prepared
+  params, captures, and return metadata instead of raw function definitions or
+  planner-side capture rediscovery.
+- **PreparedModule comments/docs updated to the final contract**: `.anf` is no
+  longer described as a temporary legacy adapter; it is the post-boundary body
+  tree paired with explicit prepared metadata.
 
 ### Phase 6c settled decisions
 

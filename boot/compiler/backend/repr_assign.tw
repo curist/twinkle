@@ -1,4 +1,4 @@
-// Representation assignment pass — Phase 4b.
+// Representation assignment pass.
 //
 // assign_repr_for_module() takes a vector of PreparedFuncs (with slot_assign
 // defaults: OpaqueAnyref / Anyref) and fills in the correct ReprKind and
@@ -87,7 +87,6 @@ fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
     local_to_slot: pf.local_to_slot,
     body: pf.body,
     return_mono: pf.return_mono,
-    orig_params: pf.orig_params,
   }
 }
 

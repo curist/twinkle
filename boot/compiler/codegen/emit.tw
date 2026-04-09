@@ -1,6 +1,6 @@
-// Phase D: Core emission — ANF → WasmModule
+// Core emission — prepared backend module → WasmModule
 //
-// Translates optimized ANF (with boundaries pre-inserted) into Wasm IR.
+// Translates the prepared backend module into Wasm IR.
 // Key simplification vs stage0:
 //   - No flow-sensitive metadata — layout derived from MonoType via registry
 //   - No SumRepr — all sums are typed structs
@@ -54,7 +54,6 @@ pub type EmitCtx = .{
   label_stack: Vector<LabelPair>,
   current_func_id: FuncId?,
   func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
-  func_defs: Dict<Int, AnfFunctionDef>,
   prepared_funcs: Dict<Int, PreparedFunc>,
   init_func_id: FuncId?,
   loop_depth: Int,
@@ -70,14 +69,12 @@ pub fn emit_module(
 ) WasmModule {
   anf := prepared.anf
 
-  // Build FuncId → symbol map and func lookup
+  // Build FuncId → symbol map and prepared-function lookup
   func_sym_map: Dict<Int, String> = Dict.new()
-  func_defs: Dict<Int, AnfFunctionDef> = Dict.new()
   prepared_funcs: Dict<Int, PreparedFunc> = Dict.new()
   for func in anf.functions {
     sym := "$f${func.func_id.id}_${sanitize_name(func.name)}"
     func_sym_map[func.func_id.id] = sym
-    func_defs[func.func_id.id] = func
   }
   for pf in prepared.funcs {
     prepared_funcs[pf.func_id.id] = pf
@@ -94,7 +91,6 @@ pub fn emit_module(
     label_stack: [],
     current_func_id: .None,
     func_sym_map: func_sym_map,
-    func_defs: func_defs,
     prepared_funcs: prepared_funcs,
     init_func_id: anf.init_func_id,
     loop_depth: 0,
@@ -184,9 +180,8 @@ type FuncResult = .{
 }
 
 fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) FuncResult {
-  // Phase 6b: local handling is slot-based. PreparedFunc provides the
-  // authoritative ABI/local ordering, so emission no longer reconstructs it by
-  // pre-scanning semantic ANF.
+  // Local handling is slot-based. PreparedFunc provides the authoritative
+  // ABI/local ordering, so emission does not reconstruct it by scanning ANF.
   local_map: Dict<Int, LocalEntry> = Dict.new()
   param_types: Vector<ValType> = []
   extra_locals: Vector<ValType> = []
@@ -230,7 +225,6 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     label_stack: [],
     current_func_id: .Some(func.func_id),
     func_sym_map: base_ctx.func_sym_map,
-    func_defs: base_ctx.func_defs,
     prepared_funcs: base_ctx.prepared_funcs,
     init_func_id: base_ctx.init_func_id,
     loop_depth: 0,
@@ -248,7 +242,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   }
 
   // Generate trampolines if this function is used as a closure
-  tramps := emit_trampolines_for_func(func, ctx)
+  tramps := emit_trampolines_for_func(prepared, ctx)
 
   FuncResult.{ func_def: fd, trampolines: tramps }
 }
@@ -724,9 +718,11 @@ fn emit_call(callee: Atom, args: Vector<Atom>, result_idx: Int, result_mono: Mon
 fn emit_direct_call(fid: FuncId, args: Vector<Atom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out: Vector<Instr> = []
-  // Look up callee's param types for closure wrapping
-  callee_params: Vector<MonoType> = case ctx.func_defs[fid.id] {
-    .Some(fdef) => collect p in fdef.params { p.ty },
+  // Look up callee's param types from prepared slots for closure wrapping.
+  callee_params: Vector<MonoType> = case ctx.prepared_funcs[fid.id] {
+    .Some(pf) => collect sid in pf.params {
+      slot_info(pf, sid).mono
+    },
     .None => [],
   }
   for a,i in args {
@@ -1769,7 +1765,6 @@ fn emit_loop_op(body: AnfExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCt
     label_stack: new_labels,
     current_func_id: ctx.current_func_id,
     func_sym_map: ctx.func_sym_map,
-    func_defs: ctx.func_defs,
     prepared_funcs: ctx.prepared_funcs,
     init_func_id: ctx.init_func_id,
     loop_depth: ctx.loop_depth + 1,
@@ -2124,8 +2119,8 @@ fn emit_universal_closure_call(entry: LocalEntry, args: Vector<Atom>, result_idx
 
 // ── Trampoline emission ────────────────────────────────────────────────
 
-fn emit_trampolines_for_func(func: AnfFunctionDef, ctx: EmitCtx) Vector<FuncDef> {
-  // Only generate trampolines for functions that are used as closures
+fn emit_trampolines_for_func(func: PreparedFunc, ctx: EmitCtx) Vector<FuncDef> {
+  // Only generate trampolines for functions that are used as closures.
   case ctx.registry.concrete_func_sigs[func.func_id.id] {
     .Some(sig) => {
       tramps: Vector<FuncDef> = []
@@ -2134,23 +2129,20 @@ fn emit_trampolines_for_func(func: AnfFunctionDef, ctx: EmitCtx) Vector<FuncDef>
       tramps
     },
     .None => {
-      // Check if captured (has capture layout)
-      case ctx.registry.capture_layouts[func.func_id.id] {
-        .Some(_) => {
-          // Need at least universal trampoline
-          sig := FuncSigEntry.{
-            param_types: collect p in func.params { p.ty },
-            return_type: func.return_ty,
-          }
-          [emit_universal_trampoline(func, sig, ctx)]
-        },
-        .None => [],
+      if func.captures.len() > 0 {
+        sig := FuncSigEntry.{
+          param_types: collect sid in func.params { slot_info(func, sid).mono },
+          return_type: func.return_mono,
+        }
+        [emit_universal_trampoline(func, sig, ctx)]
+      } else {
+        []
       }
     },
   }
 }
 
-fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   // Universal trampoline: (env: anyref, args: anyref) → anyref
   tramp_sym := "$tramp_${func.func_id.id}"
   func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
@@ -2159,41 +2151,35 @@ fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitC
   locals: Vector<ValType> = []
 
   // Extract captures from env (param 0)
-  case ctx.registry.capture_layouts[func.func_id.id] {
-    .Some(captures) => {
-      for cap,i in captures {
-        // env is ref $ClosureEnv (array of anyref)
-        body = body.append(.LocalGet(0))  // env
-        body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
-        body = body.append(.I32Const(i))
-        body = body.append(.ArrayGet("rt_types__ClosureEnv"))
-        body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
-      }
-    },
-    .None => {},
+  for sid,i in func.captures {
+    cap := slot_info(func, sid)
+    body = body.append(.LocalGet(0))
+    body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+    body = body.append(.I32Const(i))
+    body = body.append(.ArrayGet("rt_types__ClosureEnv"))
+    body = append_instrs(body, emit_unbox_from_anyref(cap.mono, ctx.env))
   }
 
   // Extract args from args array (param 1)
-  for p,i in func.params {
-    body = body.append(.LocalGet(1))  // args array
+  for sid,i in func.params {
+    p := slot_info(func, sid)
+    body = body.append(.LocalGet(1))
     body = body.append(.RefCast(true, .Named("rt_types__Array")))
     body = body.append(.I32Const(i))
     body = body.append(.ArrayGet("rt_types__Array"))
-    body = append_instrs(body, emit_unbox_from_anyref(p.ty, ctx.env))
+    body = append_instrs(body, emit_unbox_from_anyref(p.mono, ctx.env))
   }
 
-  // Call the real function
   body = body.append(.Call(func_sym))
 
-  // Box result to anyref
-  case func.return_ty {
+  case func.return_mono {
     .Void => {
       body = body.append(.I32Const(0))
       body = body.append(.RefI31)
     },
     .Never => {},
     _ => {
-      body = append_instrs(body, emit_box_to_anyref(func.return_ty, ctx.env))
+      body = append_instrs(body, emit_box_to_anyref(func.return_mono, ctx.env))
     },
   }
 
@@ -2206,44 +2192,37 @@ fn emit_universal_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitC
   }
 }
 
-fn emit_typed_trampoline(func: AnfFunctionDef, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+fn emit_typed_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   // Typed trampoline: (env: anyref, p1: T1, p2: T2, ...) → R
   typed_tramp_sym := "$typed_tramp_${func.func_id.id}"
   func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
 
-  param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]  // env
-  for p in sig.param_types {
-    param_vts = param_vts.append(val_type_of_mono(p, ctx.env))
+  param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]
+  for sid in func.params {
+    param_vts = param_vts.append(slot_info(func, sid).wasm_type)
   }
 
-  result_vts: Vector<ValType> = case sig.return_type {
+  result_vts: Vector<ValType> = case func.return_mono {
     .Void => [],
     .Never => [],
-    _ => [val_type_of_mono(sig.return_type, ctx.env)],
+    _ => [val_type_of_mono(func.return_mono, ctx.env)],
   }
 
   body: Vector<Instr> = []
 
-  // Extract captures from env (param 0)
-  case ctx.registry.capture_layouts[func.func_id.id] {
-    .Some(captures) => {
-      for cap,i in captures {
-        body = body.append(.LocalGet(0))
-        body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
-        body = body.append(.I32Const(i))
-        body = body.append(.ArrayGet("rt_types__ClosureEnv"))
-        body = append_instrs(body, emit_unbox_from_anyref(cap.ty, ctx.env))
-      }
-    },
-    .None => {},
+  for sid,i in func.captures {
+    cap := slot_info(func, sid)
+    body = body.append(.LocalGet(0))
+    body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+    body = body.append(.I32Const(i))
+    body = body.append(.ArrayGet("rt_types__ClosureEnv"))
+    body = append_instrs(body, emit_unbox_from_anyref(cap.mono, ctx.env))
   }
 
-  // Push concrete params (starting at index 1, after env)
   for _,i in func.params {
     body = body.append(.LocalGet(i + 1))
   }
 
-  // Call the real function
   body = body.append(.Call(func_sym))
 
   FuncDef.{
@@ -2492,16 +2471,6 @@ fn lookup_local(ctx: EmitCtx, lid: LocalId) LocalEntry {
   }
 }
 
-fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
-  for p in func.params {
-    if p.local.id == lid.id { return p.ty }
-  }
-  case func.op_result_mono[lid.id] {
-    .Some(ty) => ty,
-    .None => .Void,
-  }
-}
-
 fn repr_name(repr: ReprKind) String {
   case repr {
     .I64 => "I64",
@@ -2648,154 +2617,3 @@ fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
   out
 }
 
-// ── Local pre-scan ─────────────────────────────────────────────────────
-
-fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
-  out: Vector<Int> = []
-  collect_let_locals_expr(expr, out)
-}
-
-fn collect_let_locals_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
-  case expr {
-    .Let(local, op, body) => {
-      out = out.append(local.id)
-      out = collect_let_locals_op(op, out)
-      collect_let_locals_expr(body, out)
-    },
-    .Atom(_) => out,
-    .Return(_) => out,
-    .Break(_) => out,
-    .Continue => out,
-  }
-}
-
-fn collect_let_locals_op(op: AnfOp, out: Vector<Int>) Vector<Int> {
-  case op {
-    .AIf(_, then_e, else_e) => {
-      out = collect_let_locals_expr(then_e, out)
-      collect_let_locals_expr(else_e, out)
-    },
-    .AMatch(_, arms) => {
-      for arm in arms {
-        // Also collect pattern bindings
-        out = collect_pattern_locals(arm.pattern, out)
-        out = collect_let_locals_expr(arm.body, out)
-      }
-      out
-    },
-    .AAssign(target, _) => {
-      out = out.append(target.id)
-      out
-    },
-    .ALoop(body) => collect_let_locals_expr(body, out),
-    _ => out,
-  }
-}
-
-fn collect_pattern_locals(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
-  case pattern {
-    .Var(lid) => out.append(lid.id),
-    .Variant(_, _, fields) => {
-      for f in fields { out = collect_pattern_locals(f, out) }
-      out
-    },
-    _ => out,
-  }
-}
-
-fn collect_pattern_local_monos(expr: AnfExpr, func: AnfFunctionDef, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case expr {
-    .Let(_, op, body) => {
-      out = collect_pattern_local_monos_op(op, func, env, out)
-      collect_pattern_local_monos(body, func, env, out)
-    },
-    _ => out,
-  }
-}
-
-fn collect_pattern_local_monos_op(op: AnfOp, func: AnfFunctionDef, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case op {
-    .AIf(_, then_e, else_e) => {
-      out = collect_pattern_local_monos(then_e, func, env, out)
-      collect_pattern_local_monos(else_e, func, env, out)
-    },
-    .AMatch(scrutinee, arms) => {
-      scrutinee_mono := atom_mono_for_scan(func, scrutinee)
-      for arm in arms {
-        out = collect_pattern_binding_monos(arm.pattern, scrutinee_mono, env, out)
-        out = collect_pattern_local_monos(arm.body, func, env, out)
-      }
-      out
-    },
-    .ALoop(body) => collect_pattern_local_monos(body, func, env, out),
-    _ => out,
-  }
-}
-
-fn collect_pattern_binding_monos(pattern: CorePattern, scrutinee_mono: MonoType, env: ResolvedEnv, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case pattern {
-    .Var(lid) => {
-      out[lid.id] = scrutinee_mono
-      out
-    },
-    .Variant(_, vid, fields) => {
-      if !can_match_variant_pattern(scrutinee_mono, env) {
-        out
-      } else {
-        for field,i in fields {
-          field_mono := variant_field_mono(scrutinee_mono, vid, i, env)
-          out = collect_pattern_binding_monos(field, field_mono, env, out)
-        }
-        out
-      }
-    },
-    _ => out,
-  }
-}
-
-fn atom_mono_for_scan(func: AnfFunctionDef, atom: Atom) MonoType {
-  case atom {
-    .ALocal(lid) => resolve_local_mono(func, lid),
-    .AGlobalFunc(_) => .Anyref_,
-    .ALitInt(_) => .Int,
-    .ALitFloat(_) => .Float,
-    .ALitBool(_) => .Bool,
-    .ALitStr(_) => .String,
-    .ALitVoid => .Void,
-  }
-}
-
-// Collect mono types for AAssign targets by looking at the source atom.
-fn collect_assign_target_monos(expr: AnfExpr, func: AnfFunctionDef) Dict<Int, MonoType> {
-  out: Dict<Int, MonoType> = Dict.new()
-  collect_assign_monos_expr(expr, func, out)
-}
-
-fn collect_assign_monos_expr(expr: AnfExpr, func: AnfFunctionDef, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case expr {
-    .Let(_, op, body) => {
-      out = collect_assign_monos_op(op, func, out)
-      collect_assign_monos_expr(body, func, out)
-    },
-    _ => out,
-  }
-}
-
-fn collect_assign_monos_op(op: AnfOp, func: AnfFunctionDef, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case op {
-    .AAssign(target, value) => {
-      out[target.id] = atom_mono_for_scan(func, value)
-      out
-    },
-    .AIf(_, then_e, else_e) => {
-      out = collect_assign_monos_expr(then_e, func, out)
-      collect_assign_monos_expr(else_e, func, out)
-    },
-    .AMatch(_, arms) => {
-      for arm in arms { out = collect_assign_monos_expr(arm.body, func, out) }
-      out
-    },
-    .ALoop(body) => collect_assign_monos_expr(body, func, out),
-    _ => out,
-  }
-}

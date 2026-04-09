@@ -4,8 +4,7 @@
 // and produces a PreparedFunc with explicit, queryable slot metadata.
 //
 // Slot ABI order: captures → declared params → body locals.
-// This matches the ordering the legacy emitter builds in emit_func(), making
-// PreparedFunc a drop-in verifiable source of truth for Phase 6b migration.
+// This is the physical function-local ordering consumed by emission.
 //
 // Role classification:
 //   - CaptureParam:    locals from closure_captures[func_id]
@@ -63,7 +62,7 @@ pub fn assign_slots(
           source_local: cap.local_id,
           role: .CaptureParam,
           mono: cap.ty,
-          repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+          repr: .OpaqueAnyref,  // default placeholder; repr_assign refines
           wasm_type: .Anyref,
         }
         local_to_slot[cap.local_id.id] = sid
@@ -82,7 +81,7 @@ pub fn assign_slots(
       source_local: p.local,
       role: .Param,
       mono: p.ty,
-      repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+      repr: .OpaqueAnyref,  // default placeholder; repr_assign refines
       wasm_type: .Anyref,
     }
     local_to_slot[p.local.id] = sid
@@ -115,7 +114,7 @@ pub fn assign_slots(
       source_local: LocalId.{ id: lid },
       role: role,
       mono: mono,
-      repr: .OpaqueAnyref,  // Phase 4b default; repr_assign refines
+      repr: .OpaqueAnyref,  // default placeholder; repr_assign refines
       wasm_type: .Anyref,
     }
     local_to_slot[lid] = sid
@@ -133,7 +132,6 @@ pub fn assign_slots(
     local_to_slot: local_to_slot,
     body: func.body,
     return_mono: func.return_ty,
-    orig_params: func.params,
   }
 }
 
