@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Phase 1 complete. Boundary locked, architecture decisions settled, `prepare_backend()` wired into pipeline.
 
 ## Summary
 
@@ -877,9 +877,9 @@ Why last:
 
 ### Phase checklist
 
-- [ ] Phase 1 complete: backend boundary settled and architecture blockers closed
-- [ ] Phase 2 complete: final closure conversion implemented and tested
-- [ ] Phase 3 complete: slot assignment implemented and tested
+- [x] Phase 1 complete: backend boundary settled and architecture blockers closed
+- [x] Phase 2 complete: final closure conversion implemented and tested
+- [x] Phase 3 complete: slot assignment implemented and tested
 - [ ] Phase 4a complete: boundary semantics settled and implemented
 - [ ] Phase 4b complete: representation assignment implemented and tested
 - [ ] Phase 5 complete: backend verifier enforced in pipeline
@@ -1059,6 +1059,30 @@ Update this section as implementation proceeds.
 - Initial direction: make closure capture an explicit ABI rewrite.
 - Settled direction: module globals are explicit backend operands/nodes in
   prepared backend IR, not ordinary locals.
+
+### Phase 1 settled decisions
+
+- **prepare_backend() boundary**: `boot/compiler/backend/prepare.tw` defines
+  `PreparedModule` and `prepare_backend(anf) PreparedModule`. This is the only
+  sanctioned entry into the backend pipeline. `codegen.tw` calls it before any
+  other backend pass.
+- **Transitional adapter**: `PreparedModule.anf` carries the raw semantic
+  `AnfModule` for use by the legacy planner/emitter during migration. It is
+  explicitly marked transitional and must be removed after Phase 6.
+- **Migration unit**: whole-module. A given module is either on the legacy
+  semantic-ANF path or the new prepared-backend path within a single compile.
+  No per-function mixed mode.
+- **Module globals**: not modeled as ordinary locals in prepared IR. They will
+  be explicit backend operands or prepared nodes in Phase 2+.
+- **Boundary insertion**: currently lives between plan_wasm_types and
+  emit_module in the legacy pipeline. Its architectural home is preparation;
+  it will be absorbed into prepare_backend() in Phase 4a. No other placement
+  is acceptable for new work.
+- **Verifier will be authoritative**: once Phase 5 lands, verifier failure is a
+  hard pipeline stop before Wasm planning and emission. The verifier is not
+  optional.
+- **No new inference in wasm_plan.tw / emit.tw**: any new backend fact must
+  live in PreparedModule or a sub-record, not in a new emitter heuristic.
 
 ## Open Questions
 

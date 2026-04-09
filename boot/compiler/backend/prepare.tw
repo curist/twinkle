@@ -1,0 +1,65 @@
+// Backend preparation boundary.
+//
+// prepare_backend() is the single, explicit entry point between optimized
+// semantic ANF and the backend pipeline. Nothing in wasm_plan.tw or emit.tw
+// should be given raw optimized ANF directly — all backend passes must flow
+// through this boundary.
+//
+// Phase 3 (current): slot assignment. prepare_backend() now computes explicit
+// slot maps for all functions (captures → params → locals) and stores them
+// in PreparedModule.funcs as PreparedFunc records. Later backend passes can
+// use these instead of the emitter's local pre-scan.
+//
+// Subsequent phases will extend prepare_backend() with:
+//   Phase 4a — boundary insertion absorbed into preparation
+//   Phase 4b — representation assignment
+//
+// The `.anf` transitional field must be removed once Phase 6 is complete and
+// all legacy planner/emitter code consumes prepared IR directly.
+//
+// INVARIANT: Do not add new inference logic in wasm_plan.tw or emit.tw.
+//            New backend facts belong in PreparedModule or its sub-records.
+
+use compiler.anf.{AnfModule}
+use compiler.resolver.{ResolvedEnv}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
+use compiler.backend.closure_convert.{compute_closure_captures}
+use compiler.backend.slot_assign.{assign_slots_for_module}
+
+// PreparedModule is the codegen contract between optimized ANF and emission.
+//
+// Phase 3: adds funcs — the vector of PreparedFunc records with explicit slot
+// maps for all functions. The emitter can use these in Phase 6b instead of
+// its own local pre-scan.
+//
+// The `.anf` field is a transitional adapter for the legacy planner/emitter.
+// It must not be used for new backend logic introduced after Phase 2.
+pub type PreparedModule = .{
+  // TRANSITIONAL — legacy planner/emitter adapter. Remove after Phase 6.
+  anf: AnfModule,
+
+  // Authoritative closure capture map: FuncId.id → ordered capture params.
+  // Computed once in prepare_backend(). All backend passes must read from here.
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+
+  // Authoritative slot map: one PreparedFunc per function in the module,
+  // in the same order as AnfModule.functions. Emitter reads in Phase 6b.
+  funcs: Vector<PreparedFunc>,
+}
+
+// prepare_backend converts optimized semantic ANF into prepared backend IR.
+//
+// This is the only sanctioned entry into the backend pipeline. Call this
+// immediately after optimization and before plan_wasm_types or any other
+// backend pass.
+pub fn prepare_backend(anf: AnfModule, env: ResolvedEnv) PreparedModule {
+  // Phase 2: closure capture computation.
+  closure_captures := compute_closure_captures(anf)
+  // Phase 3: slot assignment.
+  funcs := assign_slots_for_module(anf.functions, closure_captures, env)
+  .{
+    anf: anf,
+    closure_captures: closure_captures,
+    funcs: funcs,
+  }
+}

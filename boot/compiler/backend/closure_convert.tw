@@ -1,0 +1,92 @@
+// Final closure conversion pass.
+//
+// Walks optimized ANF and computes the explicit capture set for every
+// hoisted closure function. The result is stored in PreparedModule so that
+// later backend passes share a single authoritative source of truth about
+// capture layouts instead of each re-deriving them from raw ANF.
+//
+// Capture ordering: matches the free_vars order in AMakeClosure exactly.
+// Construction sites and hoisted function ABIs are in agreement by construction.
+//
+// Phase 2 scope: computes captures from AMakeClosure nodes only.
+// GlobalFunc-as-argument cases (functions passed to higher-order callers
+// without a closure wrapper) receive empty capture lists in wasm_plan.tw —
+// that path is marked transitional and will be absorbed here in a later phase.
+//
+// Phase 3 will extend this pass to rewrite hoisted function bodies so they
+// reference explicit SlotId capture params rather than ambient outer LocalIds.
+
+use compiler.core_ir.{LocalId, FuncId, Param}
+use compiler.resolver.{MonoType}
+use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm}
+use compiler.backend.prepared_ir.{CaptureParam}
+
+// compute_closure_captures walks all functions in the module and builds an
+// explicit capture map: FuncId.id → ordered Vector<CaptureParam>.
+//
+// Only functions created via AMakeClosure receive an entry. Functions with
+// no closures in their bodies contribute nothing to the result.
+pub fn compute_closure_captures(anf: AnfModule) Dict<Int, Vector<CaptureParam>> {
+  captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
+  for func in anf.functions {
+    captures = scan_expr(func.body, func, captures)
+  }
+  captures
+}
+
+fn scan_expr(
+  expr: AnfExpr,
+  enclosing: AnfFunctionDef,
+  captures: Dict<Int, Vector<CaptureParam>>,
+) Dict<Int, Vector<CaptureParam>> {
+  case expr {
+    .Let(_, op, body) => {
+      captures = scan_op(op, enclosing, captures)
+      scan_expr(body, enclosing, captures)
+    },
+    _ => captures,
+  }
+}
+
+fn scan_op(
+  op: AnfOp,
+  enclosing: AnfFunctionDef,
+  captures: Dict<Int, Vector<CaptureParam>>,
+) Dict<Int, Vector<CaptureParam>> {
+  case op {
+    .AMakeClosure(fid, free_vars) => {
+      params := collect fv in free_vars {
+        CaptureParam.{
+          local_id: fv,
+          ty: resolve_capture_type(enclosing, fv),
+        }
+      }
+      captures[fid.id] = params
+      captures
+    },
+    .AIf(_, then_e, else_e) => {
+      captures = scan_expr(then_e, enclosing, captures)
+      scan_expr(else_e, enclosing, captures)
+    },
+    .AMatch(_, arms) => {
+      arms.fold(captures, fn(c, arm) {
+        scan_expr(arm.body, enclosing, c)
+      })
+    },
+    .ALoop(body) => scan_expr(body, enclosing, captures),
+    .ADefer(body) => scan_expr(body, enclosing, captures),
+    _ => captures,
+  }
+}
+
+// resolve_capture_type resolves the MonoType of a captured local from its
+// enclosing function definition. Checks params first, then op_result_mono.
+fn resolve_capture_type(func: AnfFunctionDef, local: LocalId) MonoType {
+  for p in func.params {
+    if p.local.id == local.id { return p.ty }
+  }
+  case func.op_result_mono[local.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}

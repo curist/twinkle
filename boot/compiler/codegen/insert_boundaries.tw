@@ -10,7 +10,7 @@ use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of, val_type_of_mono, mono_to_key}
-use compiler.codegen.wasm_plan.{WasmTypeRegistry}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.anf.{
   Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom,
   AnfFunctionDef, AnfModule, IndexKind,

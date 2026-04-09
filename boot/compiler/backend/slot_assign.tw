@@ -1,0 +1,367 @@
+// Backend slot assignment pass.
+//
+// assign_slots() takes an AnfFunctionDef and the precomputed closure captures
+// and produces a PreparedFunc with explicit, queryable slot metadata.
+//
+// Slot ABI order: captures → declared params → body locals.
+// This matches the ordering the legacy emitter builds in emit_func(), making
+// PreparedFunc a drop-in verifiable source of truth for Phase 6b migration.
+//
+// Role classification:
+//   - CaptureParam:    locals from closure_captures[func_id]
+//   - Param:           declared params in func.params
+//   - PatternLocal:    locals bound by match-arm CorePattern.Var or Variant
+//   - DeadPlaceholder: Never-typed locals (allocated for Wasm validation)
+//   - Local:           all other let-bound locals and AAssign targets
+//
+// Mono resolution priority (mirrors emit.tw's collect_pattern_local_monos logic):
+//   1. Pattern-derived mono (from scrutinee type via env — needed for variant fields)
+//   2. op_result_mono (covers Let-bound and AAssign targets from lower_anf)
+//   3. params (checked first in resolve_local_mono fallback)
+//   Fallback: .Void (indicates a missing type; should not occur for live locals)
+
+use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, lookup_type_def}
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, Atom}
+use compiler.backend.prepared_ir.{
+  CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc,
+}
+
+// assign_slots_for_module builds a PreparedFunc for every function in the
+// module, using precomputed_captures for closure ABI ordering.
+pub fn assign_slots_for_module(
+  functions: Vector<AnfFunctionDef>,
+  precomputed_captures: Dict<Int, Vector<CaptureParam>>,
+  env: ResolvedEnv,
+) Vector<PreparedFunc> {
+  collect f in functions {
+    assign_slots(f, precomputed_captures, env)
+  }
+}
+
+// assign_slots builds the explicit slot map for a single function.
+pub fn assign_slots(
+  func: AnfFunctionDef,
+  precomputed_captures: Dict<Int, Vector<CaptureParam>>,
+  env: ResolvedEnv,
+) PreparedFunc {
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  local_to_slot: Dict<Int, SlotId> = Dict.new()
+  capture_slots: Vector<SlotId> = []
+  param_slots: Vector<SlotId> = []
+  local_slots: Vector<SlotId> = []
+  next_slot := 0
+
+  // ── 1. Capture params ───────────────────────────────────────────────
+  case precomputed_captures[func.func_id.id] {
+    .Some(captures) => {
+      for cap in captures {
+        sid := SlotId.{ id: next_slot }
+        slots[next_slot] = SlotInfo.{
+          slot: sid,
+          source_local: cap.local_id,
+          role: .CaptureParam,
+          mono: cap.ty,
+        }
+        local_to_slot[cap.local_id.id] = sid
+        capture_slots = capture_slots.append(sid)
+        next_slot = next_slot + 1
+      }
+    },
+    .None => {},
+  }
+
+  // ── 2. Declared params ──────────────────────────────────────────────
+  for p in func.params {
+    sid := SlotId.{ id: next_slot }
+    slots[next_slot] = SlotInfo.{
+      slot: sid,
+      source_local: p.local,
+      role: .Param,
+      mono: p.ty,
+    }
+    local_to_slot[p.local.id] = sid
+    param_slots = param_slots.append(sid)
+    next_slot = next_slot + 1
+  }
+
+  // ── 3. Body locals ──────────────────────────────────────────────────
+  // Pre-scan to classify role and resolve mono. pattern_monos contains the
+  // scrutinee-derived mono for pattern-bound locals in match arms.
+  pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
+  all_lids := collect_all_let_locals(func.body)
+
+  for lid in all_lids {
+    if local_to_slot.has(lid) { continue }  // already a capture or param slot
+
+    mono := case pattern_monos[lid] {
+      .Some(m) => m,
+      .None => resolve_local_mono(func, LocalId.{ id: lid }),
+    }
+
+    role: SlotRole = case mono {
+      .Never => .DeadPlaceholder,
+      _ => if pattern_monos.has(lid) { .PatternLocal } else { .Local },
+    }
+
+    sid := SlotId.{ id: next_slot }
+    slots[next_slot] = SlotInfo.{
+      slot: sid,
+      source_local: LocalId.{ id: lid },
+      role: role,
+      mono: mono,
+    }
+    local_to_slot[lid] = sid
+    local_slots = local_slots.append(sid)
+    next_slot = next_slot + 1
+  }
+
+  PreparedFunc.{
+    func_id: func.func_id,
+    name: func.name,
+    captures: capture_slots,
+    params: param_slots,
+    locals: local_slots,
+    slots: slots,
+    local_to_slot: local_to_slot,
+    body: func.body,
+    return_mono: func.return_ty,
+    orig_params: func.params,
+  }
+}
+
+// ── Mono resolution ─────────────────────────────────────────────────
+
+fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
+  for p in func.params {
+    if p.local.id == lid.id { return p.ty }
+  }
+  case func.op_result_mono[lid.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}
+
+// ── Body scanning: all let-bound local ids (in encounter order) ──────
+
+fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
+  collect_let_expr(expr, [])
+}
+
+fn collect_let_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
+  case expr {
+    .Let(local, op, body) => {
+      out = out.append(local.id)
+      out = collect_let_op(op, out)
+      collect_let_expr(body, out)
+    },
+    _ => out,
+  }
+}
+
+fn collect_let_op(op: AnfOp, out: Vector<Int>) Vector<Int> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = collect_let_expr(then_e, out)
+      collect_let_expr(else_e, out)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        out = collect_pattern_lids(arm.pattern, out)
+        out = collect_let_expr(arm.body, out)
+      }
+      out
+    },
+    .AAssign(target, _) => out.append(target.id),
+    .ALoop(body) => collect_let_expr(body, out),
+    _ => out,
+  }
+}
+
+fn collect_pattern_lids(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
+  case pattern {
+    .Var(lid) => out.append(lid.id),
+    .Variant(_, _, fields) => {
+      for f in fields { out = collect_pattern_lids(f, out) }
+      out
+    },
+    _ => out,
+  }
+}
+
+// ── Pattern mono derivation (needs env for variant field types) ──────
+
+fn collect_pattern_monos(
+  expr: AnfExpr,
+  func: AnfFunctionDef,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case expr {
+    .Let(_, op, body) => {
+      out = collect_pattern_monos_op(op, func, env, out)
+      collect_pattern_monos(body, func, env, out)
+    },
+    _ => out,
+  }
+}
+
+fn collect_pattern_monos_op(
+  op: AnfOp,
+  func: AnfFunctionDef,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = collect_pattern_monos(then_e, func, env, out)
+      collect_pattern_monos(else_e, func, env, out)
+    },
+    .AMatch(scrutinee, arms) => {
+      scrut_mono := atom_mono(func, scrutinee)
+      for arm in arms {
+        out = collect_binding_monos(arm.pattern, scrut_mono, env, out)
+        out = collect_pattern_monos(arm.body, func, env, out)
+      }
+      out
+    },
+    .ALoop(body) => collect_pattern_monos(body, func, env, out),
+    _ => out,
+  }
+}
+
+fn collect_binding_monos(
+  pattern: CorePattern,
+  scrutinee_mono: MonoType,
+  env: ResolvedEnv,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case pattern {
+    .Var(lid) => {
+      out[lid.id] = scrutinee_mono
+      out
+    },
+    .Variant(_, vid, fields) => {
+      if !is_matchable_sum(scrutinee_mono, env) {
+        out
+      } else {
+        for field,i in fields {
+          field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
+          out = collect_binding_monos(field, field_mono, env, out)
+        }
+        out
+      }
+    },
+    _ => out,
+  }
+}
+
+fn atom_mono(func: AnfFunctionDef, atom: Atom) MonoType {
+  case atom {
+    .ALocal(lid) => resolve_local_mono(func, lid),
+    .AGlobalFunc(_) => .Anyref_,
+    .ALitInt(_) => .Int,
+    .ALitFloat(_) => .Float,
+    .ALitBool(_) => .Bool,
+    .ALitStr(_) => .String,
+    .ALitVoid => .Void,
+  }
+}
+
+// ── Variant field mono resolution (mirrors emit.tw logic) ───────────
+
+fn is_matchable_sum(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Optional(_) => true,
+    .Result(_, _) => true,
+    .Named(tid, args) => {
+      case lookup_type_def(env, tid) {
+        .Some(.Sum(_, _, _)) => true,
+        .Some(.Alias(_, type_params, target)) =>
+          is_matchable_sum(subst_type_params(target, type_params, args), env),
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+fn get_variant_field_mono(
+  scrutinee_mono: MonoType,
+  vid: VariantId,
+  field_idx: Int,
+  env: ResolvedEnv,
+) MonoType {
+  case scrutinee_mono {
+    .Optional(inner) => {
+      if vid.id == 1 and field_idx == 0 { return inner }
+      .Void
+    },
+    .Result(ok, err) => {
+      if vid.id == 0 and field_idx == 0 { return ok }
+      if vid.id == 1 and field_idx == 0 { return err }
+      .Void
+    },
+    .Named(tid, args) => {
+      case lookup_type_def(env, tid) {
+        .Some(.Alias(_, type_params, target)) =>
+          get_variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env),
+        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      }
+    },
+    _ => .Void,
+  }
+}
+
+fn resolve_named_variant_field(
+  tid: TypeId,
+  args: Vector<MonoType>,
+  vid: VariantId,
+  field_idx: Int,
+  env: ResolvedEnv,
+) MonoType {
+  for entry in env.types {
+    if entry.id.id == tid.id {
+      case entry.def {
+        .Some(.Sum(_, type_params, variants)) => {
+          v := variants[vid.id]
+          field_ty := v.fields[field_idx]
+          return subst_type_params(field_ty, type_params, args)
+        },
+        _ => { return .Void },
+      }
+    }
+  }
+  .Void
+}
+
+fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      for p,i in type_params {
+        if p == name { return args[i] }
+      }
+      ty
+    },
+    .Named(tid, inner_args) => {
+      .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) })
+    },
+    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
+    .Dict(k, v) => .Dict(
+      subst_type_params(k, type_params, args),
+      subst_type_params(v, type_params, args),
+    ),
+    .Function(ps, r) => {
+      .Function(
+        collect p in ps { subst_type_params(p, type_params, args) },
+        subst_type_params(r, type_params, args),
+      )
+    },
+    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
+    .Result(ok, err) => .Result(
+      subst_type_params(ok, type_params, args),
+      subst_type_params(err, type_params, args),
+    ),
+    _ => ty,
+  }
+}

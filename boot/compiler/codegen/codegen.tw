@@ -1,6 +1,11 @@
 // Phase D M11: Integration — full codegen pipeline.
 //
-// Wires plan_wasm_types → insert_boundaries → emit_module → link → emit_wat.
+// Wires prepare_backend → plan_wasm_types → insert_boundaries → emit_module → link → emit_wat.
+//
+// ARCHITECTURE NOTE: prepare_backend() is the explicit boundary between
+// optimized semantic ANF and the backend. All backend passes must flow
+// through that boundary. See boot/compiler/backend/prepare.tw for the
+// migration contract and per-phase plan.
 
 use compiler.resolver.{ResolvedEnv}
 use compiler.builtins.{BuiltinRegistry}
@@ -16,6 +21,7 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
+use compiler.backend.prepare.{prepare_backend}
 
 pub fn runtime_modules() Vector<WasmModule> {
   [
@@ -32,16 +38,27 @@ pub fn codegen(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) String {
-  // 1. Plan Wasm types
-  registry := plan_wasm_types(anf, env, builtins)
+  // 1. Prepare backend IR.
+  //    This is the boundary between optimized semantic ANF and the backend.
+  //    New backend passes belong in prepare_backend(), not below this line.
+  prepared := prepare_backend(anf, env)
 
-  // 2. Insert boundary conversions
-  anf2 := insert_boundaries(anf, registry, builtins, env)
+  // TRANSITIONAL adapter: extract semantic ANF for legacy planner/emitter.
+  // Remove this binding once Phase 6 migration is complete.
+  legacy_anf := prepared.anf
 
-  // 3. Emit user module
+  // 2. Plan Wasm types (legacy — consumes semantic ANF; migrate in Phase 6a)
+  //    Phase 2: passes prepared.closure_captures so planner uses precomputed layouts.
+  registry := plan_wasm_types(legacy_anf, env, builtins, prepared.closure_captures)
+
+  // 3. Insert boundary conversions (legacy — will be absorbed into
+  //    prepare_backend() in Phase 4a)
+  anf2 := insert_boundaries(legacy_anf, registry, builtins, env)
+
+  // 4. Emit user module (legacy)
   user_module := emit_module(anf2, registry, builtins, env)
 
-  // 4. Link with runtime
+  // 5. Link with runtime
   modules := runtime_modules().append(user_module)
   linked := case link(modules, .None) {
     .Ok(l) => l,
@@ -58,6 +75,6 @@ pub fn codegen(
     },
   }
 
-  // 5. Emit WAT
+  // 6. Emit WAT
   emit_wat(linked)
 }

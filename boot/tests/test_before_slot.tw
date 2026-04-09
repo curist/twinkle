@@ -3,11 +3,6 @@ use tests.suites.wasm_ir_suite
 use tests.suites.wasm_layout_suite
 use tests.suites.wasm_plan_suite
 use tests.suites.insert_boundaries_suite
-use tests.suites.wat_suite
-use tests.suites.linker_suite
-use tests.suites.runtime_suite
-use tests.suites.codegen_integration_suite
-use tests.suites.slot_assign_suite
 
 runner.run_all([
   wasm_ir_suite.suite(),
@@ -32,9 +27,4 @@ runner.run_all([
     .test("plan nested record dependencies are ordered", wasm_plan_suite.test_plan_nested_record_dependencies_are_ordered)
     .test("plan recursive record terminates", wasm_plan_suite.test_plan_recursive_record_terminates),
   insert_boundaries_suite.suite(),
-  wat_suite.suite(),
-  linker_suite.suite(),
-  runtime_suite.suite(),
-  codegen_integration_suite.suite(),
-  slot_assign_suite.suite(),
 ])

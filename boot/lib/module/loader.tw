@@ -8,7 +8,9 @@ use @std.path
 use @std.proc
 
 /// Walk up from `start` looking for `twinkle.toml`.
-/// Falls back to `start` if not found.
+/// Falls back to the current working directory when no project file is found.
+/// This keeps relative entry paths rooted at the caller's workspace instead of
+/// treating the entry file's directory as an isolated project root.
 /// If `TWINKLE_ROOT` env var is set, uses that instead.
 pub fn find_project_root(start: String) String {
   case proc.env("TWINKLE_ROOT") {
@@ -23,11 +25,11 @@ pub fn find_project_root(start: String) String {
     }
     parent := path.dirname(dir)
     if parent == dir {
-      return start
+      return path.normalize(".")
     }
     dir = parent
   }
-  start
+  path.normalize(".")
 }
 
 /// Resolve module path segments to a `.tw` file path.

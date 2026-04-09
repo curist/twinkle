@@ -1,0 +1,79 @@
+// Prepared backend IR types.
+//
+// Phase 2: CaptureParam for explicit closure capture representation.
+// Phase 3: SlotId, SlotRole, SlotInfo, PreparedFunc — explicit slot identity.
+//
+// Later phases will add:
+//   Phase 4b: ReprKind, representation categories per slot
+//   Phase 5+: verifier-checked invariants over PreparedModule
+
+use compiler.core_ir.{LocalId, FuncId, Param}
+use compiler.resolver.{MonoType}
+use compiler.anf.{AnfExpr}
+
+// ── Phase 2: CaptureParam ───────────────────────────────────────────
+
+// CaptureParam records one explicitly captured outer local in a hoisted function.
+//
+// local_id: the outer LocalId captured (same id referenced in the hoisted body)
+// ty: the MonoType of the captured value as seen in the enclosing function
+//
+// The ordering of CaptureParams in a function's capture list is canonical:
+// it matches the free_vars order from AMakeClosure at the construction site.
+// All backend passes must use this ordering — never reorder or re-derive.
+pub type CaptureParam = .{
+  local_id: LocalId,
+  ty: MonoType,
+}
+
+// ── Phase 3: Slot types ─────────────────────────────────────────────
+
+// SlotId is the physical backend identifier for a function's parameter or local.
+// It is distinct from semantic LocalId. SlotIds are assigned in ABI order:
+//   captures (0..n), params (n..m), locals (m..k)
+pub type SlotId = .{ id: Int }
+
+// SlotRole classifies the purpose of a backend slot.
+pub type SlotRole = {
+  Param,           // declared function parameter
+  CaptureParam,    // captured outer local (hoisted closure only; always before Params)
+  Local,           // let-bound local or AAssign target in the function body
+  PatternLocal,    // local bound by a match-arm pattern
+  DeadPlaceholder, // Never-typed; allocated for Wasm validation but never read
+}
+
+// SlotInfo is the complete backend record for one physical slot.
+//
+// Phase 3: includes role, source_local, and mono.
+// Phase 4b will add ReprKind and wasm_type once representation assignment is complete.
+pub type SlotInfo = .{
+  slot: SlotId,
+  source_local: LocalId,
+  role: SlotRole,
+  mono: MonoType,
+}
+
+// PreparedFunc is the explicit backend representation of one function.
+//
+// Phase 3: captures, params, and locals are explicit slot lists. The body is
+// still semantic AnfExpr — body rewriting is deferred to Phase 3+ (slot-based
+// body refs are a Phase 6b concern). The slot map is the primary new artifact.
+//
+// Slot ABI order: captures → params → locals.
+// The emitter should read this instead of rebuilding the local map via pre-scan.
+pub type PreparedFunc = .{
+  func_id: FuncId,
+  name: String,
+  // Slots in ABI order:
+  captures: Vector<SlotId>,    // CaptureParam slots (empty for non-closures)
+  params: Vector<SlotId>,      // Param slots (declared parameters)
+  locals: Vector<SlotId>,      // Local/PatternLocal/DeadPlaceholder slots
+  // Lookup tables:
+  slots: Dict<Int, SlotInfo>,       // SlotId.id → SlotInfo
+  local_to_slot: Dict<Int, SlotId>, // LocalId.id → SlotId
+  // Still semantic ANF (Phase 3 does not rewrite body LocalId references):
+  body: AnfExpr,
+  return_mono: MonoType,
+  // Preserved original params for legacy emitter compatibility (remove in Phase 6b):
+  orig_params: Vector<Param>,
+}

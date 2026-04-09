@@ -1,0 +1,343 @@
+// Tests for boot/compiler/backend/slot_assign.tw
+//
+// Verifies that assign_slots() correctly classifies function locals into
+// CaptureParam, Param, Local, PatternLocal, and DeadPlaceholder slots,
+// with correct ABI ordering and mono type resolution.
+
+use tests.runner
+use tests.assert
+use compiler.resolver
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, CorePattern}
+use compiler.anf.{
+  AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule, Atom,
+}
+use compiler.backend.prepared_ir.{CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc}
+use compiler.backend.slot_assign.{assign_slots}
+use lib.source.span
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn mk_local(n: Int) LocalId { LocalId.{ id: n } }
+fn mk_func(n: Int) FuncId { FuncId.{ id: n } }
+
+fn mk_func_def(
+  id: Int,
+  name: String,
+  params: Vector<Param>,
+  return_ty: MonoType,
+  body: AnfExpr,
+  op_result_mono: Dict<Int, MonoType>,
+) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: mk_func(id),
+    name: name,
+    params: params,
+    return_ty: return_ty,
+    body: body,
+    op_result_mono: op_result_mono,
+  }
+}
+
+fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+
+fn captures_for(fid: Int, caps: Vector<CaptureParam>) Dict<Int, Vector<CaptureParam>> {
+  d: Dict<Int, Vector<CaptureParam>> = Dict.new()
+  d[fid] = caps
+  d
+}
+
+// assert_slot_id: check that LocalId lid maps to slot with the given id.
+fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<Void, String> {
+  case pf.local_to_slot[lid] {
+    .Some(s) => assert.int_eq(s.id, expected_sid),
+    .None => assert.fail("L${lid} has no slot"),
+  }
+}
+
+// assert_role: check that the slot for LocalId lid has the given SlotRole.
+fn assert_role(pf: PreparedFunc, lid: Int, expected: SlotRole) Result<Void, String> {
+  case pf.local_to_slot[lid] {
+    .None => assert.fail("no slot for L${lid}"),
+    .Some(sid) => {
+      case pf.slots[sid.id] {
+        .None => assert.fail("slot ${sid.id} missing from slots dict"),
+        .Some(info) => {
+          role_ok := case info.role {
+            .Param => case expected { .Param => true, _ => false },
+            .CaptureParam => case expected { .CaptureParam => true, _ => false },
+            .Local => case expected { .Local => true, _ => false },
+            .PatternLocal => case expected { .PatternLocal => true, _ => false },
+            .DeadPlaceholder => case expected { .DeadPlaceholder => true, _ => false },
+          }
+          if role_ok { .Ok({}) } else { assert.fail("L${lid}: wrong role") }
+        },
+      }
+    },
+  }
+}
+
+// assert_mono: check that the slot for LocalId lid has the given MonoType.
+fn assert_mono(pf: PreparedFunc, lid: Int, expected: MonoType) Result<Void, String> {
+  case pf.local_to_slot[lid] {
+    .None => assert.fail("no slot for L${lid}"),
+    .Some(sid) => {
+      case pf.slots[sid.id] {
+        .None => assert.fail("slot ${sid.id} missing from slots dict"),
+        .Some(info) => {
+          mono_ok := case info.mono {
+            .Int => case expected { .Int => true, _ => false },
+            .Float => case expected { .Float => true, _ => false },
+            .Bool => case expected { .Bool => true, _ => false },
+            .String => case expected { .String => true, _ => false },
+            .Void => case expected { .Void => true, _ => false },
+            .Never => case expected { .Never => true, _ => false },
+            .Optional(inner) => case expected {
+              .Optional(_) => true,
+              _ => false,
+            },
+            _ => false,
+          }
+          if mono_ok { .Ok({}) } else { assert.fail("L${lid}: wrong mono") }
+        },
+      }
+    },
+  }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+// Simple function: no closures, just params and a let-local.
+fn test_simple_params_and_local() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[2] = MonoType.Int
+  func := mk_func_def(100, "add",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Int },
+      Param.{ local: mk_local(1), ty: MonoType.Int },
+    ],
+    MonoType.Int,
+    .Let(mk_local(2), .ABinOp(.Add, .ALocal(mk_local(0)), .ALocal(mk_local(1)), .Int),
+      .Atom(.ALocal(mk_local(2)))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert.int_eq(pf.captures.len(), 0)
+  try assert.int_eq(pf.params.len(), 2)
+  try assert.int_eq(pf.locals.len(), 1)
+
+  // params get Param role in ABI order
+  try assert_role(pf, 0, .Param)
+  try assert_role(pf, 1, .Param)
+  // let-local gets Local role with correct mono
+  try assert_role(pf, 2, .Local)
+  try assert_mono(pf, 2, MonoType.Int)
+
+  // slot ids: L0→slot 0, L1→slot 1, L2→slot 2
+  try assert_slot_id(pf, 0, 0)
+  try assert_slot_id(pf, 1, 1)
+  try assert_slot_id(pf, 2, 2)
+  .Ok({})
+}
+
+// Closure function: capture params come first in ABI order.
+fn test_capture_params_precede_declared_params() Result<Void, String> {
+  // Hoisted fn(Int) Int with one capture (L5: String from outer scope)
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[10] = MonoType.Int
+  func := mk_func_def(200, "adder",
+    [Param.{ local: mk_local(10), ty: MonoType.Int }],
+    MonoType.Int,
+    .Atom(.ALocal(mk_local(10))),
+    mono,
+  )
+  captures := captures_for(200, [
+    CaptureParam.{ local_id: mk_local(5), ty: MonoType.String },
+  ])
+  pf := assign_slots(func, captures, resolver.empty_env())
+
+  try assert.int_eq(pf.captures.len(), 1)
+  try assert.int_eq(pf.params.len(), 1)
+  try assert.int_eq(pf.locals.len(), 0)
+
+  // L5 (capture) → slot 0; L10 (param) → slot 1
+  try assert_slot_id(pf, 5, 0)
+  try assert_role(pf, 5, .CaptureParam)
+  try assert_mono(pf, 5, MonoType.String)
+  try assert_slot_id(pf, 10, 1)
+  try assert_role(pf, 10, .Param)
+  .Ok({})
+}
+
+// Multiple captures, ordering preserved.
+fn test_multiple_captures_ordered() Result<Void, String> {
+  func := mk_func_def(300, "use_both",
+    [],
+    MonoType.Int,
+    .Atom(.ALitInt(0)),
+    Dict.new(),
+  )
+  captures := captures_for(300, [
+    CaptureParam.{ local_id: mk_local(1), ty: MonoType.Int },
+    CaptureParam.{ local_id: mk_local(3), ty: MonoType.Float },
+    CaptureParam.{ local_id: mk_local(7), ty: MonoType.Bool },
+  ])
+  pf := assign_slots(func, captures, resolver.empty_env())
+
+  try assert.int_eq(pf.captures.len(), 3)
+  try assert_slot_id(pf, 1, 0)
+  try assert_slot_id(pf, 3, 1)
+  try assert_slot_id(pf, 7, 2)
+  try assert_role(pf, 1, .CaptureParam)
+  try assert_role(pf, 3, .CaptureParam)
+  try assert_role(pf, 7, .CaptureParam)
+  .Ok({})
+}
+
+// Never-typed local gets DeadPlaceholder role.
+fn test_dead_placeholder_for_never_local() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.Never
+  func := mk_func_def(100, "diverge",
+    [],
+    MonoType.Never,
+    .Let(mk_local(1), .ACall(.AGlobalFunc(mk_func(999)), []),
+      .Return(.None)),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert_role(pf, 1, .DeadPlaceholder)
+  try assert_mono(pf, 1, MonoType.Never)
+  .Ok({})
+}
+
+// AAssign target and init local both get Local role.
+fn test_assign_target_is_local() Result<Void, String> {
+  // let x = 0; let _v = assign(x = 1); x
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[0] = MonoType.Int
+  mono[1] = MonoType.Void
+  func := mk_func_def(100, "counter",
+    [],
+    MonoType.Int,
+    .Let(mk_local(0), .AInit(.ALitInt(0)),
+      .Let(mk_local(1), .AAssign(mk_local(0), .ALitInt(1)),
+        .Atom(.ALocal(mk_local(0))))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert_role(pf, 0, .Local)
+  try assert_mono(pf, 0, MonoType.Int)
+  try assert_role(pf, 1, .Local)
+  .Ok({})
+}
+
+// Pattern local in match arm gets PatternLocal role with correct mono
+// derived from the Optional scrutinee type.
+fn test_pattern_local_in_match() Result<Void, String> {
+  // case x { .Some(v) => v, .None => 0 }
+  // L0: Option<Int> (param), L1: match result (Int), L2: pattern var v (Int)
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.Int
+  func := mk_func_def(100, "unwrap",
+    [Param.{ local: mk_local(0), ty: MonoType.Optional(MonoType.Int) }],
+    MonoType.Int,
+    .Let(mk_local(1), .AMatch(.ALocal(mk_local(0)), [
+      AnfMatchArm.{
+        pattern: .Variant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.Var(mk_local(2))]),
+        body: .Atom(.ALocal(mk_local(2))),
+      },
+      AnfMatchArm.{
+        pattern: .Variant(TypeId.{ id: -1 }, VariantId.{ id: 0 }, []),
+        body: .Atom(.ALitInt(0)),
+      },
+    ]),
+    .Atom(.ALocal(mk_local(1)))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  // L0: Param, L1: Local (let result), L2: PatternLocal with mono=Int
+  try assert_role(pf, 0, .Param)
+  try assert_role(pf, 1, .Local)
+  try assert_role(pf, 2, .PatternLocal)
+  try assert_mono(pf, 2, MonoType.Int)
+  .Ok({})
+}
+
+// Wildcard and literal patterns don't introduce extra locals.
+fn test_no_slots_for_non_binding_patterns() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.Void
+  func := mk_func_def(100, "check",
+    [Param.{ local: mk_local(0), ty: MonoType.Int }],
+    MonoType.Void,
+    .Let(mk_local(1), .AMatch(.ALocal(mk_local(0)), [
+      AnfMatchArm.{ pattern: .LitInt(0), body: .Atom(.ALitVoid) },
+      AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitVoid) },
+    ]),
+    .Atom(.ALitVoid)),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  // Only param L0 and let-result L1 — no phantom pattern locals
+  try assert.int_eq(pf.captures.len(), 0)
+  try assert.int_eq(pf.params.len(), 1)
+  try assert.int_eq(pf.locals.len(), 1)
+  .Ok({})
+}
+
+// local_to_slot is a complete inverse of each slot's source_local.
+fn test_local_to_slot_is_consistent() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[2] = MonoType.String
+  mono[3] = MonoType.Bool
+  func := mk_func_def(100, "f",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Int },
+      Param.{ local: mk_local(1), ty: MonoType.Float },
+    ],
+    MonoType.Void,
+    .Let(mk_local(2), .AInit(.ALitStr("hi")),
+      .Let(mk_local(3), .AInit(.ALitBool(true)),
+        .Atom(.ALitVoid))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  // For every slot, local_to_slot[slot.source_local.id] must point back to that slot.
+  for k in pf.slots.keys() {
+    case pf.slots[k] {
+      .Some(info) => {
+        case pf.local_to_slot[info.source_local.id] {
+          .Some(sid) => {
+            if sid.id != info.slot.id {
+              return assert.fail("slot ${info.slot.id}: local_to_slot[${info.source_local.id}] = ${sid.id}")
+            }
+          },
+          .None => { return assert.fail("slot ${info.slot.id}: L${info.source_local.id} not in local_to_slot") },
+        }
+      },
+      .None => {},
+    }
+  }
+  .Ok({})
+}
+
+// ── Suite ────────────────────────────────────────────────────────────
+
+pub fn suite() runner.Suite {
+  runner.suite("slot assignment")
+    .test("simple params and local", test_simple_params_and_local)
+    .test("capture params precede declared params", test_capture_params_precede_declared_params)
+    .test("multiple captures in order", test_multiple_captures_ordered)
+    .test("never local is dead placeholder", test_dead_placeholder_for_never_local)
+    .test("assign target is Local", test_assign_target_is_local)
+    .test("pattern local in match arm", test_pattern_local_in_match)
+    .test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns)
+    .test("local_to_slot is consistent", test_local_to_slot_is_consistent)
+}

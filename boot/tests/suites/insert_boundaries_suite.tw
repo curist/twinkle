@@ -11,9 +11,10 @@ use compiler.anf.{
 }
 use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
 use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, val_type_of, mono_to_key}
-use compiler.codegen.wasm_plan.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry,
+use compiler.codegen.wasm_plan_types.{
+  WasmTypeRegistry, FuncSigEntry, StringPoolEntry,
 }
+use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
 
 // ── Helpers ─────────────────────────────────────────────────────────

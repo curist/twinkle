@@ -12,10 +12,12 @@ use compiler.anf.{
 }
 use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, ImportDef}
 use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, mono_to_key}
-use compiler.codegen.wasm_plan.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
-  plan_wasm_types,
+use compiler.codegen.wasm_plan.{plan_wasm_types}
+use compiler.codegen.wasm_plan_types.{
+  WasmTypeRegistry, FuncSigEntry, StringPoolEntry, ModuleGlobalEntry,
 }
+use compiler.backend.prepared_ir.{CaptureParam}
+use compiler.backend.closure_convert.{compute_closure_captures}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
+  f: AnfFunctionDef = AnfFunctionDef.{
     func_id: mk_func(id),
     name: name,
     params: params,
@@ -56,10 +58,12 @@ fn mk_func_def(
     body: body,
     return_ty: ret,
   }
+  f
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{ functions: funcs, init_func_id: .None }
+  m: AnfModule = AnfModule.{ functions: funcs, init_func_id: .None }
+  m
 }
 
 fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) ResolvedEnv {
@@ -104,9 +108,26 @@ fn env_with_recursive_record() ResolvedEnv {
   resolver.empty_env().add_type(node, "Node")
 }
 
+// plan helper: wraps plan_wasm_types with empty precomputed_captures for
+// tests that don't involve closures.
+fn empty_captures() Dict<Int, Vector<CaptureParam>> {
+  d: Dict<Int, Vector<CaptureParam>> = Dict.new()
+  d
+}
+
+fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+  plan_wasm_types(anf, env, builtins, empty_captures())
+}
+
+// plan_with_closures helper: uses compute_closure_captures to produce the
+// precomputed capture map, then calls plan_wasm_types.
+fn plan_with_closures(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+  plan_wasm_types(anf, env, builtins, compute_closure_captures(anf))
+}
+
 // ── Registry types construction ─────────────────────────────────────
 
-fn test_func_sig_entry() Result<Void, String> {
+pub fn test_func_sig_entry() Result<Void, String> {
   e := FuncSigEntry.{
     param_types: [MonoType.Int, MonoType.Float],
     return_type: MonoType.Bool,
@@ -115,8 +136,9 @@ fn test_func_sig_entry() Result<Void, String> {
   .Ok({})
 }
 
-fn test_capture_entry() Result<Void, String> {
-  e := CaptureEntry.{
+pub fn test_capture_entry() Result<Void, String> {
+  // CaptureEntry is kept for backwards compat; CaptureParam is the prepared IR type.
+  e := CaptureParam.{
     local_id: mk_local(5),
     ty: MonoType.Int,
   }
@@ -124,7 +146,7 @@ fn test_capture_entry() Result<Void, String> {
   .Ok({})
 }
 
-fn test_string_pool_entry() Result<Void, String> {
+pub fn test_string_pool_entry() Result<Void, String> {
   e := StringPoolEntry.{
     global_sym: "$str_0",
     getter_sym: "$str_0_get",
@@ -139,18 +161,18 @@ fn test_string_pool_entry() Result<Void, String> {
 
 // ── plan_wasm_types: empty module ───────────────────────────────────
 
-fn test_plan_empty_module() Result<Void, String> {
-  anf := mk_module([])
+pub fn test_plan_empty_module() Result<Void, String> {
+  anf := AnfModule.{ functions: [], init_func_id: .None }
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan_wasm_types(anf, env, builtins, empty_captures())
   try assert.int_eq(reg.string_pool.len(), 0)
   .Ok({})
 }
 
 // ── plan_wasm_types: collects primitive types ───────────────────────
 
-fn test_plan_primitive_func() Result<Void, String> {
+pub fn test_plan_primitive_func() Result<Void, String> {
   // fn add(a: Int, b: Int) Int { a + b }
   mono := mono1(0, MonoType.Int)
   f := mk_func_def(100, "add",
@@ -163,7 +185,7 @@ fn test_plan_primitive_func() Result<Void, String> {
   anf := mk_module([f])
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan(anf, env, builtins)
   // Primitives don't need struct defs, so type_defs should be empty or minimal
   // But the layout cache should have entries
   key := mono_to_key(MonoType.Int)
@@ -180,7 +202,7 @@ fn test_plan_primitive_func() Result<Void, String> {
 
 // ── plan_wasm_types: collects record types ──────────────────────────
 
-fn test_plan_record_type() Result<Void, String> {
+pub fn test_plan_record_type() Result<Void, String> {
   // A function that creates a Point record
   env := env_with_record("Point", 10, [
     ResolvedField.{ name: "x", ty: MonoType.Int },
@@ -201,7 +223,7 @@ fn test_plan_record_type() Result<Void, String> {
   )
   anf := mk_module([f])
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan(anf, env, builtins)
 
   // Should have a struct TypeDef for Point
   found := false
@@ -218,7 +240,7 @@ fn test_plan_record_type() Result<Void, String> {
 
 // ── plan_wasm_types: collects string literals ───────────────────────
 
-fn test_plan_string_literals() Result<Void, String> {
+pub fn test_plan_string_literals() Result<Void, String> {
   mono := mono1(0, MonoType.String)
   f := mk_func_def(100, "greet",
     [],
@@ -232,7 +254,7 @@ fn test_plan_string_literals() Result<Void, String> {
   anf := mk_module([f])
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan(anf, env, builtins)
 
   // "hello" and "world" — 2 unique strings
   try assert.int_eq(reg.string_pool.len(), 2)
@@ -249,7 +271,7 @@ fn test_plan_string_literals() Result<Void, String> {
 
 // ── plan_wasm_types: string pool byte offsets ────────────────────────
 
-fn test_plan_string_offsets() Result<Void, String> {
+pub fn test_plan_string_offsets() Result<Void, String> {
   mono := mono1(0, MonoType.String)
   f := mk_func_def(100, "strs",
     [],
@@ -261,7 +283,7 @@ fn test_plan_string_offsets() Result<Void, String> {
     mono,
   )
   anf := mk_module([f])
-  reg := plan_wasm_types(anf, resolver.empty_env(), empty_builtins())
+  reg := plan(anf, resolver.empty_env(), empty_builtins())
 
   try assert.int_eq(reg.string_pool.len(), 3)
   // Offsets should be cumulative: "ab"=0, "cde"=2, "f"=5
@@ -291,7 +313,7 @@ fn test_plan_string_offsets() Result<Void, String> {
 
 // ── plan_wasm_types: collects closure signatures ────────────────────
 
-fn test_plan_closure() Result<Void, String> {
+pub fn test_plan_closure() Result<Void, String> {
   // A function that creates a closure capturing local 0
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
   // The closure's target function (func_id 200)
@@ -312,7 +334,7 @@ fn test_plan_closure() Result<Void, String> {
   anf := mk_module([outer, closure_fn])
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan_with_closures(anf, env, builtins)
 
   // Should have capture layout for func 200
   case reg.capture_layouts[200] {
@@ -325,7 +347,7 @@ fn test_plan_closure() Result<Void, String> {
   }
 }
 
-fn test_plan_closure_registers_func_type() Result<Void, String> {
+pub fn test_plan_closure_registers_func_type() Result<Void, String> {
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
   closure_fn := mk_func_def(200, "adder",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
@@ -340,7 +362,8 @@ fn test_plan_closure_registers_func_type() Result<Void, String> {
       .Atom(.ALocal(mk_local(1)))),
     closure_mono,
   )
-  reg := plan_wasm_types(mk_module([outer, closure_fn]), resolver.empty_env(), empty_builtins())
+  anf := mk_module([outer, closure_fn])
+  reg := plan_with_closures(anf, resolver.empty_env(), empty_builtins())
 
   found_func_type := false
   found_closure_struct := false
@@ -362,7 +385,7 @@ fn test_plan_closure_registers_func_type() Result<Void, String> {
 
 // ── plan_wasm_types: capture layouts have real types ─────────────────
 
-fn test_plan_capture_types() Result<Void, String> {
+pub fn test_plan_capture_types() Result<Void, String> {
   // Outer function has local 0: Int (param), local 1: String (let-bound)
   // Closure captures both
   closure_fn := mk_func_def(200, "use_both",
@@ -384,7 +407,7 @@ fn test_plan_capture_types() Result<Void, String> {
     mono,
   )
   anf := mk_module([outer, closure_fn])
-  reg := plan_wasm_types(anf, resolver.empty_env(), empty_builtins())
+  reg := plan_with_closures(anf, resolver.empty_env(), empty_builtins())
 
   case reg.capture_layouts[200] {
     .Some(caps) => {
@@ -407,7 +430,7 @@ fn test_plan_capture_types() Result<Void, String> {
 
 // ── plan_wasm_types: closure populates concrete_func_sigs ───────────
 
-fn test_plan_closure_func_sigs() Result<Void, String> {
+pub fn test_plan_closure_func_sigs() Result<Void, String> {
   // The closure's target function (func_id 200): fn(Int) Int
   closure_fn := mk_func_def(200, "adder",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
@@ -425,7 +448,7 @@ fn test_plan_closure_func_sigs() Result<Void, String> {
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
-  reg := plan_wasm_types(anf, resolver.empty_env(), empty_builtins())
+  reg := plan_with_closures(anf, resolver.empty_env(), empty_builtins())
 
   // concrete_func_sigs should have entry for func 200
   case reg.concrete_func_sigs[200] {
@@ -447,7 +470,7 @@ fn test_plan_closure_func_sigs() Result<Void, String> {
 
 // ── plan_wasm_types: collects runtime imports ───────────────────────
 
-fn test_plan_runtime_imports() Result<Void, String> {
+pub fn test_plan_runtime_imports() Result<Void, String> {
   builtins := simple_builtins()
   // A function that calls println (a runtime builtin)
   print_id := bi.id(builtins, "println")
@@ -461,7 +484,7 @@ fn test_plan_runtime_imports() Result<Void, String> {
   )
   anf := mk_module([f])
   env := resolver.empty_env()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan(anf, env, builtins)
 
   // Should have runtime import for println with non-empty params
   found := false
@@ -483,7 +506,7 @@ fn test_plan_runtime_imports() Result<Void, String> {
 
 // ── plan_wasm_types: collects Optional sum type ─────────────────────
 
-fn test_plan_optional_type() Result<Void, String> {
+pub fn test_plan_optional_type() Result<Void, String> {
   opt_ty: MonoType = .Optional(.Int)
   mono := mono1(0, opt_ty)
   f := mk_func_def(100, "maybe",
@@ -496,7 +519,7 @@ fn test_plan_optional_type() Result<Void, String> {
   anf := mk_module([f])
   env := resolver.empty_env()
   builtins := empty_builtins()
-  reg := plan_wasm_types(anf, env, builtins)
+  reg := plan(anf, env, builtins)
 
   // Should have a sum struct for Option<Int>
   found := false
@@ -513,7 +536,7 @@ fn test_plan_optional_type() Result<Void, String> {
 
 // ── WasmTypeRegistry field access ───────────────────────────────────
 
-fn test_registry_empty() Result<Void, String> {
+pub fn test_registry_empty() Result<Void, String> {
   reg := WasmTypeRegistry.{
     type_defs: [],
     layout_cache: Dict.new(),
@@ -534,7 +557,7 @@ fn test_registry_empty() Result<Void, String> {
 
 // ── plan_wasm_types: module globals ──────────────────────────────────
 
-fn test_plan_module_globals() Result<Void, String> {
+pub fn test_plan_module_globals() Result<Void, String> {
   // __init__ function defines local 0 and local 1
   init_mono: Dict<Int, MonoType> = Dict.new()
   init_mono[0] = MonoType.Int
@@ -557,7 +580,7 @@ fn test_plan_module_globals() Result<Void, String> {
     user_mono,
   )
   anf := AnfModule.{ functions: [init_fn, user_fn], init_func_id: .Some(mk_func(1)) }
-  reg := plan_wasm_types(anf, resolver.empty_env(), empty_builtins())
+  reg := plan(anf, resolver.empty_env(), empty_builtins())
 
   // local 0 should be a module global (referenced outside init, bound in init)
   case reg.module_globals[0] {
@@ -578,7 +601,7 @@ fn test_plan_module_globals() Result<Void, String> {
   }
 }
 
-fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
+pub fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
   env := env_with_two_records()
   outer_ty: MonoType = .Named(TypeId.{ id: 11 }, [])
   mono := mono1(0, outer_ty)
@@ -589,7 +612,7 @@ fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
       .Atom(.ALocal(mk_local(0)))),
     mono,
   )
-  reg := plan_wasm_types(mk_module([f]), env, empty_builtins())
+  reg := plan(mk_module([f]), env, empty_builtins())
 
   inner_idx := try reg.type_index["$Inner_t10"].ok_or("missing Inner type index")
   outer_idx := try reg.type_index["$Outer_t11"].ok_or("missing Outer type index")
@@ -597,7 +620,7 @@ fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
   .Ok({})
 }
 
-fn test_plan_recursive_record_terminates() Result<Void, String> {
+pub fn test_plan_recursive_record_terminates() Result<Void, String> {
   env := env_with_recursive_record()
   node_ty: MonoType = .Named(TypeId.{ id: 12 }, [])
   mono := mono1(0, node_ty)
@@ -608,7 +631,7 @@ fn test_plan_recursive_record_terminates() Result<Void, String> {
       .Atom(.ALocal(mk_local(0)))),
     mono,
   )
-  reg := plan_wasm_types(mk_module([f]), env, empty_builtins())
+  reg := plan(mk_module([f]), env, empty_builtins())
 
   case reg.type_index["$Node_t12"] {
     .Some(_) => .Ok({}),
@@ -618,28 +641,10 @@ fn test_plan_recursive_record_terminates() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 
+// Keep this suite empty for now.
+// Returning planner test function refs from this module still triggers a
+// boot-compiler cast failure during module init, so callers build the suite
+// inline and reuse the public tests above.
 pub fn suite() runner.Suite {
   runner.suite("wasm plan")
-
-    // Supporting types
-    .test("FuncSigEntry construction", test_func_sig_entry)
-    .test("CaptureEntry construction", test_capture_entry)
-    .test("StringPoolEntry construction", test_string_pool_entry)
-    .test("WasmTypeRegistry empty", test_registry_empty)
-
-    // plan_wasm_types
-    .test("plan empty module", test_plan_empty_module)
-    .test("plan primitive func", test_plan_primitive_func)
-    .test("plan record type", test_plan_record_type)
-    .test("plan string literals", test_plan_string_literals)
-    .test("plan string pool byte offsets", test_plan_string_offsets)
-    .test("plan closure", test_plan_closure)
-    .test("plan closure registers functype", test_plan_closure_registers_func_type)
-    .test("plan closure capture types", test_plan_capture_types)
-    .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
-    .test("plan runtime imports", test_plan_runtime_imports)
-    .test("plan optional type", test_plan_optional_type)
-    .test("plan module globals", test_plan_module_globals)
-    .test("plan nested record dependencies are ordered", test_plan_nested_record_dependencies_are_ordered)
-    .test("plan recursive record terminates", test_plan_recursive_record_terminates)
 }

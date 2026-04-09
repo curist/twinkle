@@ -24,9 +24,10 @@ use compiler.codegen.wasm_layout.{
   WasmSumLayout, WasmVariantLayout, WasmClosureLayout, WasmIteratorLayout,
   layout_of, val_type_of, val_type_of_mono, mono_to_key,
 }
-use compiler.codegen.wasm_plan.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
+use compiler.codegen.wasm_plan_types.{
+  WasmTypeRegistry, FuncSigEntry, StringPoolEntry, ModuleGlobalEntry,
 }
+use compiler.backend.prepared_ir.{CaptureParam}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
