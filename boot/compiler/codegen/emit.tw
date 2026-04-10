@@ -571,7 +571,7 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
       out.append(.LocalSet(result_idx))
     },
     .AIndex(base, index, kind, mono) => {
-      out := emit_index_op(base, index, kind, mono, ctx)
+      out := emit_index_op(base, index, kind, mono, result_vt, ctx)
       out.append(.LocalSet(result_idx))
     },
     .AMakeClosure(fid, free_vars) => {
@@ -675,6 +675,27 @@ fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
       }
     },
     .AGlobalFunc(_) => .ClosureRef,
+  }
+}
+
+fn atom_val_type(atom: PreparedAtom, ctx: EmitCtx) ValType {
+  case atom {
+    .ALitInt(_) => .I64,
+    .ALitFloat(_) => .F64,
+    .ALitBool(_) => .I32,
+    .ALitStr(_) => .Ref(true, .Named("rt_types__String")),
+    .ALitVoid => .Anyref,
+    .ASlot(sid) => {
+      entry := lookup_slot(ctx, sid)
+      entry.val_type
+    },
+    .AGlobalLocal(lid) => {
+      case ctx.registry.module_globals[lid.id] {
+        .Some(gentry) => val_type_of_mono(gentry.mono, ctx.env),
+        .None => .Anyref,
+      }
+    },
+    .AGlobalFunc(_) => .Ref(false, .Func),
   }
 }
 
@@ -942,6 +963,67 @@ fn is_vector_builder_push(name: String) Bool {
   name == "vector_builder_push"
 }
 
+fn abi_accepts_anyref_subtype(vt: ValType) Bool {
+  case vt {
+    .Anyref => true,
+    .I31ref => true,
+    .Ref(_, _) => true,
+    _ => false,
+  }
+}
+
+fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: String, ctx: EmitCtx) Vector<Instr> {
+  needs_narrow := case abi {
+    .Some(ab) => {
+      if index < ab.param_types.len() {
+        case ab.param_types[index] {
+          .I32 => case atom_mono(a, ctx) { .Int => true, _ => false },
+          _ => false,
+        }
+      } else {
+        false
+      }
+    },
+    .None => false,
+  }
+  if needs_narrow {
+    return emit_checked_i32_narrow(a, ctx)
+  }
+
+  out := emit_atom(a, ctx)
+  needs_box := case abi {
+    .Some(ab) => {
+      if index < ab.param_types.len() {
+        if abi_accepts_anyref_subtype(ab.param_types[index]) {
+          case atom_val_type(a, ctx) {
+            .I64 => true,
+            .F64 => true,
+            .I32 => true,
+            _ => false,
+          }
+        } else {
+          false
+        }
+      } else {
+        false
+      }
+    },
+    .None => false,
+  }
+  if needs_box {
+    out = append_instrs(out, emit_box_to_anyref(atom_mono(a, ctx), ctx.env))
+  }
+  // Builder regions keep transient builders as erased anyref locals.
+  if is_vector_builder_array_arg(entry_name, index) {
+    out = out.append(.RefCast(true, .Named("rt_types__Array")))
+  }
+  // host_write_bytes: convert PVec arg → flat Array for host
+  if is_host_vector_arg(entry_name) and index == 1 {
+    out = out.append(.Call("rt_arr__to_array"))
+  }
+  out
+}
+
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   import_sym := "${info.wasm_module}__${info.wasm_name}"
   out: Vector<Instr> = []
@@ -954,33 +1036,7 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
     .None => "",
   }
   for a,i in args {
-    // Check if ABI expects i32 and the arg is Int-typed → checked narrowing
-    needs_narrow := case abi {
-      .Some(ab) => {
-        if i < ab.param_types.len() {
-          case ab.param_types[i] {
-            .I32 => case atom_mono(a, ctx) { .Int => true, _ => false },
-            _ => false,
-          }
-        } else {
-          false
-        }
-      },
-      .None => false,
-    }
-    if needs_narrow {
-      out = append_instrs(out, emit_checked_i32_narrow(a, ctx))
-    } else {
-      out = append_instrs(out, emit_atom(a, ctx))
-      // Builder regions keep transient builders as erased anyref locals.
-      if is_vector_builder_array_arg(entry_name, i) {
-        out = out.append(.RefCast(true, .Named("rt_types__Array")))
-      }
-      // host_write_bytes: convert PVec arg → flat Array for host
-      if is_host_vector_arg(entry_name) and i == 1 {
-        out = out.append(.Call("rt_arr__to_array"))
-      }
-    }
+    out = append_instrs(out, emit_runtime_arg(a, abi, i, entry_name, ctx))
   }
   out = out.append(.Call(import_sym))
   // Host boundary: wrap flat Array results → PVec
@@ -1010,6 +1066,87 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
   }
 }
 
+fn heap_type_eq(a: HeapType, b: HeapType) Bool {
+  case a {
+    .Named(name_a) => case b { .Named(name_b) => name_a == name_b, _ => false },
+    .Any => case b { .Any => true, _ => false },
+    .Eq => case b { .Eq => true, _ => false },
+    .I31 => case b { .I31 => true, _ => false },
+    .Func => case b { .Func => true, _ => false },
+    .None_ => case b { .None_ => true, _ => false },
+    .Extern => case b { .Extern => true, _ => false },
+  }
+}
+
+fn val_type_eq(a: ValType, b: ValType) Bool {
+  case a {
+    .I8 => case b { .I8 => true, _ => false },
+    .I32 => case b { .I32 => true, _ => false },
+    .I64 => case b { .I64 => true, _ => false },
+    .F64 => case b { .F64 => true, _ => false },
+    .Anyref => case b { .Anyref => true, _ => false },
+    .I31ref => case b { .I31ref => true, _ => false },
+    .Funcref => case b { .Funcref => true, _ => false },
+    .Ref(nullable_a, heap_a) => case b {
+      .Ref(nullable_b, heap_b) => nullable_a == nullable_b and heap_type_eq(heap_a, heap_b),
+      _ => false,
+    },
+  }
+}
+
+fn emit_coerce_stack(from: ValType, to: ValType, mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  if val_type_eq(from, to) { return [] }
+  case to {
+    .Anyref => { return emit_box_to_anyref(mono, ctx.env) },
+    _ => {},
+  }
+  case from {
+    .Anyref => { return emit_unbox_from_anyref(mono, ctx.env) },
+    _ => {},
+  }
+  case from {
+    .I32 => {
+      case to {
+        .I64 => { return [.I64ExtendI32S] },
+        _ => {},
+      }
+    },
+    .I64 => {
+      case to {
+        .I32 => { return [.I32WrapI64] },
+        _ => {},
+      }
+    },
+    .Ref(false, from_heap) => {
+      case to {
+        .Ref(true, to_heap) => {
+          if heap_type_eq(from_heap, to_heap) { return [] }
+        },
+        _ => {},
+      }
+    },
+    .Ref(true, from_heap) => {
+      case to {
+        .Ref(false, to_heap) => {
+          if heap_type_eq(from_heap, to_heap) { return [.RefAsNonNull] }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  case from {
+    .Ref(_, _) => {
+      case to {
+        .Ref(nullable, heap) => { return [.RefCast(nullable, heap)] },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  []
+}
+
 fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   abi_opt: AbiContract? = case ctx.builtins.by_id[fid.id] {
     .Some(entry) => .Some(entry.abi),
@@ -1018,15 +1155,7 @@ fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector
   case abi_opt {
     .Some(abi) => {
       if abi.result_types.len() == 1 {
-        case result_mono {
-          .Int => {
-            case abi.result_types[0] {
-              .I32 => [.I64ExtendI32S],
-              _ => [],
-            }
-          },
-          _ => [],
-        }
+        emit_coerce_stack(abi.result_types[0], val_type_of_mono(result_mono, ctx.env), result_mono, ctx)
       } else {
         []
       }
@@ -1150,11 +1279,21 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
 
 // ── vector_append: COW append via concat ─────────────────────────────────
 
+fn emit_erased_anyref_arg(arg: PreparedAtom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(arg, ctx)
+  case atom_val_type(arg, ctx) {
+    .I64 => append_instrs(out, emit_box_to_anyref(atom_mono(arg, ctx), ctx.env)),
+    .F64 => append_instrs(out, emit_box_to_anyref(atom_mono(arg, ctx), ctx.env)),
+    .I32 => append_instrs(out, emit_box_to_anyref(atom_mono(arg, ctx), ctx.env)),
+    _ => out,
+  }
+}
+
 fn emit_intrinsic_vector_append(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   // vector_append(vec, elem) → rt_arr__push(vec, elem)
   out := emit_atom(args[0], ctx)  // vec (PVec, nullable)
   out = out.append(.RefAsNonNull)  // push takes non-null PVec
-  out = append_instrs(out, emit_atom(args[1], ctx))  // elem (already anyref after boundary)
+  out = append_instrs(out, emit_erased_anyref_arg(args[1], ctx))
   out = out.append(.Call("rt_arr__push"))
   out.append(.LocalSet(result_idx))
 }
@@ -1164,6 +1303,10 @@ fn emit_intrinsic_vector_append(args: Vector<PreparedAtom>, result_idx: Int, ctx
 fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Result is Option<T> → typed sum struct
   sum_layout := get_sum_layout(result_mono, ctx.env)
+  elem_mono := case result_mono {
+    .Optional(inner) => inner,
+    _ => .Anyref_,
+  }
 
   out: Vector<Instr> = []
   // Bounds check: 0 <= index < len
@@ -1185,6 +1328,7 @@ fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
   then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
   then_instrs = then_instrs.append(.Call("rt_arr__get"))   // anyref element
+  then_instrs = append_instrs(then_instrs, emit_unbox_from_anyref(elem_mono, ctx.env))
   then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
   // Else: None
@@ -1225,7 +1369,7 @@ fn emit_intrinsic_vector_set(args: Vector<PreparedAtom>, result_idx: Int, result
   then_instrs = then_instrs.append(.I32Const(1))  // tag = Some
   then_instrs = append_instrs(then_instrs, emit_atom(args[0], ctx))  // vec
   then_instrs = append_instrs(then_instrs, emit_checked_i32_narrow(args[1], ctx))  // index
-  then_instrs = append_instrs(then_instrs, emit_atom(args[2], ctx))  // value (anyref after boundary)
+  then_instrs = append_instrs(then_instrs, emit_erased_anyref_arg(args[2], ctx))
   then_instrs = then_instrs.append(.Call("rt_arr__set"))
   then_instrs = then_instrs.append(.StructNew(sum_layout.sym))
 
@@ -1248,7 +1392,7 @@ fn emit_intrinsic_vector_set(args: Vector<PreparedAtom>, result_idx: Int, result
 fn emit_intrinsic_vector_make(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   out: Vector<Instr> = []
   out = append_instrs(out, emit_checked_i32_narrow(args[0], ctx))  // size (i32)
-  out = append_instrs(out, emit_atom(args[1], ctx))  // default value (anyref)
+  out = append_instrs(out, emit_erased_anyref_arg(args[1], ctx))
   out = out.append(.Call("rt_arr__make"))
   out.append(.LocalSet(result_idx))
 }
@@ -1260,7 +1404,7 @@ fn emit_intrinsic_vector_set_in_place(args: Vector<PreparedAtom>, result_idx: In
   out: Vector<Instr> = []
   out = append_instrs(out, emit_atom(args[0], ctx))  // vec
   out = append_instrs(out, emit_checked_i32_narrow(args[1], ctx))  // index
-  out = append_instrs(out, emit_atom(args[2], ctx))  // value (anyref)
+  out = append_instrs(out, emit_erased_anyref_arg(args[2], ctx))
   out = out.append(.Call("rt_arr__set"))
   out.append(.LocalSet(result_idx))
 }
@@ -1531,6 +1675,28 @@ fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
   "$Cell_${key}"
 }
 
+fn emit_cell_value_arg(arg: PreparedAtom, inner_mono: MonoType, sym: String, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(arg, ctx)
+  actual_vt := atom_val_type(arg, ctx)
+  wants_anyref := sym == "$Cell_anyref"
+  is_actual_anyref := case actual_vt {
+    .Anyref => true,
+    .I31ref => true,
+    .Ref(_, _) => true,
+    _ => false,
+  }
+  if wants_anyref {
+    if is_actual_anyref {
+      return out
+    }
+    return append_instrs(out, emit_box_to_anyref(atom_mono(arg, ctx), ctx.env))
+  }
+  if is_actual_anyref {
+    return append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
+  }
+  out
+}
+
 fn emit_intrinsic_cell_new(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Cell<T> is a single-field mutable struct
   inner_mono : MonoType = case result_mono {
@@ -1540,10 +1706,7 @@ fn emit_intrinsic_cell_new(args: Vector<PreparedAtom>, result_idx: Int, result_m
     _ => .Void,
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
-  out := emit_atom(args[0], ctx)
-  if sym == "$Cell_anyref" {
-    out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
-  }
+  out := emit_cell_value_arg(args[0], inner_mono, sym, ctx)
   out = out.append(.StructNew(sym))
   out.append(.LocalSet(result_idx))
 }
@@ -1576,10 +1739,7 @@ fn emit_intrinsic_cell_set(args: Vector<PreparedAtom>, result_idx: Int, ctx: Emi
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)   // cell ref
-  out = append_instrs(out, emit_atom(args[1], ctx))  // new value
-  if sym == "$Cell_anyref" {
-    out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
-  }
+  out = append_instrs(out, emit_cell_value_arg(args[1], inner_mono, sym, ctx))
   out = out.append(.StructSet(sym, 0))
   // Return void
   out = out.append(.I32Const(0))
@@ -1858,11 +2018,22 @@ fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ctx: E
 
 // ── Index operations ───────────────────────────────────────────────────
 
-fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, result_ty: MonoType, ctx: EmitCtx) Vector<Instr> {
+fn emit_dict_key_arg(index: PreparedAtom, ctx: EmitCtx) Vector<Instr> {
+  out := emit_atom(index, ctx)
+  case atom_val_type(index, ctx) {
+    .I64 => append_instrs(out, emit_box_to_anyref(atom_mono(index, ctx), ctx.env)),
+    .F64 => append_instrs(out, emit_box_to_anyref(atom_mono(index, ctx), ctx.env)),
+    .I32 => append_instrs(out, emit_box_to_anyref(atom_mono(index, ctx), ctx.env)),
+    _ => out,
+  }
+}
+
+fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, result_ty: MonoType, result_vt: ValType?, ctx: EmitCtx) Vector<Instr> {
   case kind {
     .Array => {
-      // Vector indexing: trap on OOB, return element via rt_arr__get
-      // Boundary pass handles unwrap of anyref element
+      // Vector indexing returns erased anyref from rt_arr__get. Cast/unbox here
+      // when the destination slot is already typed; leave raw anyref alone when
+      // boundary insertion requested an intermediate anyref local.
       out: Vector<Instr> = []
       // Bounds check in i64 domain
       out = append_instrs(out, emit_atom(index, ctx))
@@ -1881,13 +2052,25 @@ fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, resul
       out = append_instrs(out, emit_atom(base, ctx))
       out = append_instrs(out, emit_checked_i32_narrow(index, ctx))
       out = out.append(.Call("rt_arr__get"))
+      needs_unwrap := case result_vt {
+        .Some(.Anyref) => false,
+        .Some(.I31ref) => false,
+        .Some(.Ref(_, _)) => true,
+        .Some(.I32) => true,
+        .Some(.I64) => true,
+        .Some(.F64) => true,
+        _ => false,
+      }
+      if needs_unwrap {
+        out = append_instrs(out, emit_unbox_from_anyref(result_ty, ctx.env))
+      }
       out
     },
     .Dict => {
-      // Dict indexing: call rt_dict__get_option, returns $Variant
+      // Dict indexing crosses the erased anyref key boundary.
       out: Vector<Instr> = []
       out = append_instrs(out, emit_atom(base, ctx))
-      out = append_instrs(out, emit_atom(index, ctx))
+      out = append_instrs(out, emit_dict_key_arg(index, ctx))
       out = out.append(.Call("rt_dict__get_option"))
       out
     },

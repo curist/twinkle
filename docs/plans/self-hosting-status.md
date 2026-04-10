@@ -26,17 +26,29 @@ snapshot.
 | A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker landed. Remaining checker work is parity/hardening follow-up rather than missing core pipeline stages. |
 | B | Core IR lowering + monomorphization | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — core IR, lowering, and monomorphization are in place. |
 | C | ANF lowering + optimization | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) — ANF lowering, optimization passes, liveness, uniqueness rewrite, and defer elimination landed. |
-| D | Codegen + linker | In Progress | The full boot codegen pipeline exists and the boot compiler can compile itself to Wasm, but self-hosted execution still exposes remaining backend correctness gaps around representation parity and iterator lowering. |
+| D | Codegen + linker | In Progress | The full boot codegen pipeline exists and the boot compiler can compile itself to Wasm, but self-hosted execution still exposes remaining backend correctness gaps around representation parity, physical type adaptation at erased boundaries, and iterator lowering. |
 | E | Integration + self-hosting loop | In Progress | Multi-module/self-host execution works far enough to drive backend debugging. The remaining work is no longer foundation-library setup; it is closing the self-hosted Wasm correctness gap. |
 
 ---
 
 ## Active Subplans
 
+Current backend execution order:
+
+1. [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md)
+   tracks the active self-hosting blocker categories and overall sequencing.
+2. [boot-backend-physical-typing.md](boot-backend-physical-typing.md)
+   is the near-term execution plan for current backend stabilization at erased
+   boundaries.
+3. [backend-anyref-elimination.md](backend-anyref-elimination.md)
+   remains the longer-term architecture plan after the current self-hosted
+   backend stops advancing by validator mismatch cleanup.
+
 | Area | Status | Plan |
 |------|--------|------|
 | Multi-module integration | In Progress | [boot-multi-module.md](boot-multi-module.md) |
 | Self-hosted Wasm repr parity | In Progress | [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) |
+| Backend physical typing | Planned | [boot-backend-physical-typing.md](boot-backend-physical-typing.md) |
 | Iterator codegen correctness | In Progress | [boot-iterator-codegen-parity.md](boot-iterator-codegen-parity.md) |
 | Uniqueness mono sync | In Progress | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) |
 | Checker inference consistency | In Progress | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) |

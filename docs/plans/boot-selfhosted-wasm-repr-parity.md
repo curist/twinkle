@@ -68,6 +68,37 @@ semantic typed meaning and when an erased runtime value can be reinterpreted as
 that typed shape. Stage0 does this with explicit codegen metadata; boot mostly
 tries to infer from raw `MonoType` alone.
 
+## Plan Role And Sequencing
+
+This document is the umbrella plan for the current self-hosted Wasm
+representation cleanup.
+
+It answers:
+
+- what self-hosting failures are still representation-driven
+- what categories of backend drift are blocking reliable `boot/main.tw`
+  execution
+- what sequence of work should be active now versus later
+
+Related plans have narrower roles:
+
+- [boot-backend-physical-typing.md](boot-backend-physical-typing.md)
+  - near-term execution plan for current backend stabilization
+  - centralizes actual-vs-expected `ValType` adaptation at erased boundaries
+  - should drive the current emitter / verifier cleanup work
+- [backend-anyref-elimination.md](backend-anyref-elimination.md)
+  - longer-term architecture plan
+  - removes or shrinks erased helper/container boundaries after current
+    stabilization is in place
+
+Recommended execution order:
+
+1. use this plan to track active self-hosting blockers and repr categories
+2. execute the physical typing plan to stop recurring validator mismatches in
+   the current backend architecture
+3. use the `anyref` elimination plan to replace remaining erased families once
+   self-hosted stability is no longer advancing one boundary bug at a time
+
 ## Strategy
 
 Address the issue in layers instead of chasing the next panic site.
@@ -288,4 +319,5 @@ This plan is successful when:
 - [self-hosting.md](self-hosting.md)
 - [self-hosting-status.md](self-hosting-status.md)
 - [boot-multi-module.md](boot-multi-module.md)
+- [boot-backend-physical-typing.md](boot-backend-physical-typing.md)
 - [backend-anyref-elimination.md](backend-anyref-elimination.md)

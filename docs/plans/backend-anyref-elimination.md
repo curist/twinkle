@@ -4,6 +4,22 @@
 
 Eliminate non-essential `anyref` from the Twinkle Wasm backend.
 
+## Plan Role
+
+This is the longer-term architecture plan for reducing and eventually removing
+most erased backend/runtime boundaries.
+
+It should not be the first response to current self-hosted validation failures.
+For the active cleanup sequence:
+
+1. [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md)
+   tracks the current self-hosting representation blockers
+2. [boot-backend-physical-typing.md](boot-backend-physical-typing.md)
+   stabilizes the current backend by making erased-boundary adaptation explicit
+   and verifiable
+3. this plan then shrinks or removes those erased surfaces by introducing typed
+   helper/container families and a stricter representation policy
+
 For concrete monomorphized programs, the backend should prefer concrete Wasm
 layouts, concrete helper families, and concrete container families throughout.
 `anyref` should stop being the default representation strategy and become a
