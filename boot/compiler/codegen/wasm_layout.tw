@@ -146,10 +146,29 @@ fn is_cell_type(env: ResolvedEnv, tid: TypeId) Bool {
   }
 }
 
+fn is_iterator_type(env: ResolvedEnv, tid: TypeId) Bool {
+  case env.type_index["Iterator"] {
+    .Some(idx) => env.types[idx].id.id == tid.id,
+    .None => false,
+  }
+}
+
+fn layout_of_iterator(args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
+  yield_ty := if args.len() > 0 { args[0] } else { MonoType.Void }
+  .Iterator_(WasmIteratorLayout.{
+    state_sym: "rt_types__IterState",
+    step_sym: "rt_types__Closure",
+    yield_layout: layout_hint_of(yield_ty, env),
+  })
+}
+
 fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
   if is_cell_type(env, tid) {
     inner := if args.len() > 0 { args[0] } else { MonoType.Void }
     return .Cell_(layout_hint_of(inner, env))
+  }
+  if is_iterator_type(env, tid) {
+    return layout_of_iterator(args, env)
   }
   entry := find_type_entry(env, tid)
   def := case entry.def {
@@ -383,6 +402,9 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       if is_cell_type(env, tid) {
         inner := if args.len() > 0 { args[0] } else { MonoType.Void }
         return val_type_of(.Cell_(layout_hint_of(inner, env)))
+      }
+      if is_iterator_type(env, tid) {
+        return val_type_of(layout_of_iterator(args, env))
       }
       entry := find_type_entry(env, tid)
       def := case entry.def {

@@ -22,7 +22,10 @@
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
-use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp}
+use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp, PreparedAtom}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId}
+use compiler.builtins as bi
 
 // ── Public entry ────────────────────────────────────────────────────
 
@@ -31,19 +34,22 @@ use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr
 pub fn assign_repr_for_module(
   funcs: Vector<PreparedFunc>,
   env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Vector<PreparedFunc> {
+  builder_new := bi.id(builtins, "vector_builder_new")
+  builder_from := bi.id(builtins, "vector_builder_from")
   collect pf in funcs {
-    assign_repr_for_func(pf, env)
+    assign_repr_for_func(pf, env, builder_new, builder_from)
   }
 }
 
-fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv) PreparedFunc {
+fn assign_repr_for_func(pf: PreparedFunc, env: ResolvedEnv, builder_new: FuncId, builder_from: FuncId) PreparedFunc {
   // Pre-scan: find LocalIds bound by boundary ops.
   // AWrapAnyref result → OpaqueAnyref
   // AUnwrapAnyref result → repr derived from unwrap target MonoType (stored in op)
   wrap_slots: Dict<Int, Bool> = Dict.new()
   unwrap_monos: Dict<Int, MonoType> = Dict.new()
-  scan_body(pf.body, wrap_slots, unwrap_monos)
+  scan_body(pf.body, wrap_slots, unwrap_monos, builder_new, builder_from)
 
   // Refine each slot.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -93,11 +99,13 @@ fn scan_body(
   expr: PreparedExpr,
   wrap_slots: Dict<Int, Bool>,
   unwrap_monos: Dict<Int, MonoType>,
+  builder_new: FuncId,
+  builder_from: FuncId,
 ) Void {
   case expr {
     .Let(slot, op, body) => {
-      scan_op(slot.id, op, wrap_slots, unwrap_monos)
-      scan_body(body, wrap_slots, unwrap_monos)
+      scan_op(slot.id, op, wrap_slots, unwrap_monos, builder_new, builder_from)
+      scan_body(body, wrap_slots, unwrap_monos, builder_new, builder_from)
     },
     _ => {},
   }
@@ -108,6 +116,8 @@ fn scan_op(
   op: PreparedOp,
   wrap_slots: Dict<Int, Bool>,
   unwrap_monos: Dict<Int, MonoType>,
+  builder_new: FuncId,
+  builder_from: FuncId,
 ) Void {
   case op {
     .AWrapAnyref(_, _) => {
@@ -116,14 +126,24 @@ fn scan_op(
     .AUnwrapAnyref(_, target_mono) => {
       unwrap_monos[result_sid] = target_mono
     },
+    .ACall(callee, _) => {
+      case callee {
+        .AGlobalFunc(fid) => {
+          if fid.id == builder_new.id or fid.id == builder_from.id {
+            wrap_slots[result_sid] = true
+          }
+        },
+        _ => {},
+      }
+    },
     .AIf(_, then_e, else_e) => {
-      scan_body(then_e, wrap_slots, unwrap_monos)
-      scan_body(else_e, wrap_slots, unwrap_monos)
+      scan_body(then_e, wrap_slots, unwrap_monos, builder_new, builder_from)
+      scan_body(else_e, wrap_slots, unwrap_monos, builder_new, builder_from)
     },
     .AMatch(_, arms) => {
-      for arm in arms { scan_body(arm.body, wrap_slots, unwrap_monos) }
+      for arm in arms { scan_body(arm.body, wrap_slots, unwrap_monos, builder_new, builder_from) }
     },
-    .ALoop(inner) => scan_body(inner, wrap_slots, unwrap_monos),
+    .ALoop(inner) => scan_body(inner, wrap_slots, unwrap_monos, builder_new, builder_from),
     _ => {},
   }
 }

@@ -7,6 +7,156 @@ we found that the boot compiler's iterator path is not just missing a helper
 function. The generated WAT shows that iterator lowering itself is currently not
 coherent.
 
+## Current status
+
+The first iterator-representation fix is now in place:
+
+- `Iterator<T>` is recognized explicitly in `boot/compiler/codegen/wasm_layout.tw`
+- iterator layout now lowers to the runtime `rt_types__IterState`
+- `val_type_of_mono(...)` no longer falls back to a user record for `Iterator<T>`
+
+That corrected the earlier bad representation selection. Generated WAT now shows
+iterator construction through `struct.new $rt_types__IterState`, and
+`IterItem.rest` uses `rt_types__IterState` instead of an accidental empty user
+iterator struct.
+
+A first pass at specialized iterator-next helper emission also landed in
+`boot/compiler/codegen/emit.tw`:
+
+- iterator-next call sites now target a result-specific helper symbol
+- helper discovery tracks which concrete `Option<IterItem<T>>` results are used
+- helper emission now produces monomorphized helper bodies such as
+  `$user__iterator_next_helper_opt_t5_str`
+
+That fixed the old missing-symbol failure for `$iterator_next_helper`.
+
+## New blocker discovered after helper work
+
+The current failure is now earlier and more structural than the helper body
+itself. Validating the generated Wasm fails with:
+
+- `unknown type 276: type index out of bounds`
+
+Using `wasm-tools dump` on the parsed binary shows the problematic type entry is
+not an iterator helper type. It is a user recursive AST type:
+
+- type 255 references type 276
+- those correspond to `Expr` and `ExprKind`
+
+In other words, the new iterator work got us far enough that validation now
+exposes a separate backend limitation: boot is still emitting recursive GC type
+cycles as individually ordered types rather than as an explicit recursive type
+group.
+
+This matters because a pair like:
+
+- `Expr` → `ExprKind`
+- `ExprKind` → `Expr`
+
+cannot be made valid by simple reordering alone. One direction will always be a
+forward type reference unless the backend emits a proper recursive group.
+
+So the immediate blocker was no longer “iterator helper missing” and may not
+even be “iterator helper body is malformed”. The generated helper can still need
+more work, but the first validation error was pointing at recursive type
+emission.
+
+## Follow-up debugging after the recursive-type fix
+
+After teaching the WAT emitter to emit explicit `(rec ...)` groups and ordering
+those SCCs topologically, validation moved past the old type-index error.
+
+That exposed a second set of backend issues unrelated to iterator layout:
+
+- `Never`-returning calls were still being lowered as though they produced a
+  value, leading to invalid `local.set` sites after calls like `host_exit`
+- helper imports that return erased `anyref` values were being stored directly
+  into typed locals without unboxing or `ref.cast`
+- host `read_file` needed an explicit cast back to `rt_types__Variant` before
+  calling the array-result bridge helper
+
+Those fixes moved validation further forward again.
+
+## Current blocker after those fixes
+
+The next validator failure is now in vector-builder lowering, not iterator-next:
+
+- boot is lowering transient builder operations through runtime functions such
+  as `rt_arr__builder_new`
+- the runtime builder API uses raw `rt_types__Array` builder values
+- the boot compiler is still assigning ordinary `Vector<T>` / `rt_types__PVec`
+  storage types to those temporaries in emitted functions
+
+That currently produces Wasm type mismatches at builder call sites, for example
+when storing the result of `rt_arr__builder_new` into a local that is still
+typed as `PVec`.
+
+So the latest state is:
+
+1. iterator representation is fixed
+2. specialized iterator-next helper symbol emission is in place
+3. recursive GC type groups are now emitted correctly
+4. validation now fails later in vector-builder transient representation
+
+## Additional progress after the builder investigation
+
+The builder mismatch was partially fixed:
+
+- builder temporaries discovered through `vector_builder_new` / `from` and
+  simple alias propagation are now emitted as erased `anyref` locals in codegen
+- `vector_builder_push` / `vector_builder_freeze` now cast their builder input
+  back to `rt_types__Array` at the runtime boundary
+- `vector_builder_push` no longer assumes the runtime helper returns a value;
+  codegen now synthesizes a placeholder result for the rewritten-but-unused ANF
+  binding
+
+Fixing that moved validation forward again.
+
+## Additional backend issues exposed while validating further
+
+As validation progressed, several other representation mismatches surfaced and
+were fixed:
+
+- `iterator_unfold` now boxes scalar seeds before storing them in
+  `rt_types__IterState.seed : anyref`
+- `Cell<anyref-backed>` operations now box and unbox correctly for
+  `cell_new`, `cell_get`, `cell_set`, and `cell_update`
+- `from_code_point` now narrows its integer argument to the helper's expected
+  `i32` ABI before calling the import
+
+These are not iterator-specific bugs, but they were previously hidden behind
+earlier validation failures.
+
+## Current blocker
+
+Validation now reaches even later functions and currently fails in another
+representation mismatch:
+
+- function `user__$f219_110101119`
+- `type mismatch: expected i64, found anyref`
+
+So the current state is now:
+
+1. iterator representation fix is in place
+2. specialized iterator-next helper symbols and bodies are emitted
+3. recursive GC type groups are emitted with `(rec ...)`
+4. builder-region transient storage is partially repaired
+5. several anyref/scalar boxing bugs have been fixed
+6. validation still fails later in unrelated backend representation plumbing
+
+## Recommended next step from here
+
+Continue the same validator-driven cleanup loop:
+
+- inspect the failing `user__$f219_110101119` body around the reported offset
+- identify which intrinsic/runtime boundary is still leaving an `anyref` where
+  a scalar `i64` is expected
+- patch that boundary in the emitter rather than papering over it in WAT
+
+At this point the iterator-next helper is no longer the first blocker. The work
+has turned into a broader boot-backend representation cleanup that the iterator
+changes helped uncover.
+
 The visible validation error was:
 
 - missing `iterator_next_helper`

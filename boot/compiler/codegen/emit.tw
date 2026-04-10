@@ -115,6 +115,11 @@ pub fn emit_module(
   }
   for t in trampolines { funcs = funcs.append(t) }
 
+  iterator_helpers := collect_iterator_next_helpers(prepared.funcs, builtins)
+  for mono in iterator_helpers {
+    funcs = funcs.append(emit_iterator_next_helper(mono, env))
+  }
+
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
   str_getters := emit_string_pool_getters(reg)
@@ -222,6 +227,7 @@ type FuncResult = .{
 fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) FuncResult {
   // Local handling is slot-based. PreparedFunc provides the authoritative
   // ABI/local ordering, so emission does not reconstruct it by scanning ANF.
+  builder_slots := collect_vector_builder_slots(prepared.body, base_ctx.builtins)
   local_map: Dict<Int, LocalEntry> = Dict.new()
   param_types: Vector<ValType> = []
   extra_locals: Vector<ValType> = []
@@ -229,40 +235,46 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.captures {
     info := slot_info(prepared, sid)
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
       index: idx,
-      val_type: info.wasm_type,
+      val_type: vt,
       mono: info.mono,
-      repr: info.repr,
+      repr: repr,
       source_local: info.source_local,
     }
-    param_types = param_types.append(info.wasm_type)
+    param_types = param_types.append(vt)
     idx = idx + 1
   }
 
   for sid in prepared.params {
     info := slot_info(prepared, sid)
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
       index: idx,
-      val_type: info.wasm_type,
+      val_type: vt,
       mono: info.mono,
-      repr: info.repr,
+      repr: repr,
       source_local: info.source_local,
     }
-    param_types = param_types.append(info.wasm_type)
+    param_types = param_types.append(vt)
     idx = idx + 1
   }
 
   for sid in prepared.locals {
     info := slot_info(prepared, sid)
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
       index: idx,
-      val_type: info.wasm_type,
+      val_type: vt,
       mono: info.mono,
-      repr: info.repr,
+      repr: repr,
       source_local: info.source_local,
     }
-    extra_locals = extra_locals.append(info.wasm_type)
+    extra_locals = extra_locals.append(vt)
     idx = idx + 1
   }
 
@@ -309,6 +321,84 @@ fn lookup_func_sym(map: Dict<Int, String>, fid: FuncId) String {
   case map[fid.id] {
     .Some(s) => s,
     .None => error("lookup_func_sym: unknown FuncId ${fid.id}"),
+  }
+}
+
+fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
+  builder_new := bi.id(builtins, "vector_builder_new")
+  builder_from := bi.id(builtins, "vector_builder_from")
+  builder_push := bi.id(builtins, "vector_builder_push")
+  builder_freeze := bi.id(builtins, "vector_builder_freeze")
+  collect_vector_builder_slots_expr(expr, builder_new, builder_from, builder_push, builder_freeze, Dict.new())
+}
+
+fn collect_vector_builder_slots_expr(
+  expr: PreparedExpr,
+  builder_new: FuncId,
+  builder_from: FuncId,
+  builder_push: FuncId,
+  builder_freeze: FuncId,
+  known: Dict<Int, Bool>,
+) Dict<Int, Bool> {
+  case expr {
+    .Let(sid, op, body) => {
+      cur := known
+      cur = collect_vector_builder_slots_op(op, sid, builder_new, builder_from, builder_push, builder_freeze, cur)
+      collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur)
+    },
+    _ => known,
+  }
+}
+
+fn collect_vector_builder_slots_op(
+  op: PreparedOp,
+  sid: SlotId,
+  builder_new: FuncId,
+  builder_from: FuncId,
+  builder_push: FuncId,
+  builder_freeze: FuncId,
+  known: Dict<Int, Bool>,
+) Dict<Int, Bool> {
+  cur := known
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => {
+      if fid.id == builder_new.id or fid.id == builder_from.id {
+        cur[sid.id] = true
+      }
+      if (fid.id == builder_push.id or fid.id == builder_freeze.id) and args.len() > 0 {
+        case args[0] {
+          .ASlot(builder_sid) => cur[builder_sid.id] = true,
+          _ => {},
+        }
+      }
+      cur
+    },
+    .AInit(.ASlot(src)) => {
+      if known.has(src.id) {
+        cur[sid.id] = true
+      }
+      cur
+    },
+    .AAssign(target, .ASlot(src)) => {
+      if known.has(src.id) {
+        cur[target.id] = true
+      }
+      cur
+    },
+    .AIf(_, then_e, else_e) => {
+      cur = collect_vector_builder_slots_expr(then_e, builder_new, builder_from, builder_push, builder_freeze, cur)
+      collect_vector_builder_slots_expr(else_e, builder_new, builder_from, builder_push, builder_freeze, cur)
+    },
+    .AMatch(_, arms) => {
+      out := cur
+      for arm in arms {
+        out = collect_vector_builder_slots_expr(arm.body, builder_new, builder_from, builder_push, builder_freeze, out)
+      }
+      out
+    },
+    .ALoop(body) => collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur),
+    .ADefer(body) => collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur),
+    _ => cur,
   }
 }
 
@@ -828,6 +918,7 @@ fn emit_direct_call(fid: FuncId, args: Vector<PreparedAtom>, result_idx: Int, re
       out = out.append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
+    .Never => out,
     _ => out.append(.LocalSet(result_idx)),
   }
 }
@@ -841,6 +932,14 @@ fn is_host_read_file(name: String) Bool {
 }
 fn is_host_vector_arg(name: String) Bool {
   name == "host_write_bytes"
+}
+
+fn is_vector_builder_array_arg(name: String, index: Int) Bool {
+  (name == "vector_builder_push" and index == 0) or (name == "vector_builder_freeze" and index == 0)
+}
+
+fn is_vector_builder_push(name: String) Bool {
+  name == "vector_builder_push"
 }
 
 fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
@@ -873,6 +972,10 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
       out = append_instrs(out, emit_checked_i32_narrow(a, ctx))
     } else {
       out = append_instrs(out, emit_atom(a, ctx))
+      // Builder regions keep transient builders as erased anyref locals.
+      if is_vector_builder_array_arg(entry_name, i) {
+        out = out.append(.RefCast(true, .Named("rt_types__Array")))
+      }
       // host_write_bytes: convert PVec arg → flat Array for host
       if is_host_vector_arg(entry_name) and i == 1 {
         out = out.append(.Call("rt_arr__to_array"))
@@ -885,17 +988,23 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
     out = out.append(.Call("rt_arr__from_array"))
   }
   if is_host_read_file(entry_name) {
+    out = out.append(.RefCast(true, .Named("rt_types__Variant")))
     out = out.append(.Call("rt_arr__from_read_file_result"))
   }
-  // Some runtime calls return void
+  // Some runtime calls return void or never return at all.
   case result_mono {
     .Void => {
       out = out.append(.I32Const(0))
       out = out.append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
+    .Never => out,
     _ => {
-      out = append_instrs(out, adapt_runtime_result(fid, result_mono, ctx))
+      if is_vector_builder_push(entry_name) {
+        out = append_instrs(out, emit_default_value(val_type_of_mono(result_mono, ctx.env)))
+      } else {
+        out = append_instrs(out, adapt_runtime_result(fid, result_mono, ctx))
+      }
       out.append(.LocalSet(result_idx))
     },
   }
@@ -1026,11 +1135,13 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
   if name == "int_from_string" {
     out := emit_atom(args[0], ctx)
     out = out.append(.Call("int_from_string_helper"))
+    out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
     return out.append(.LocalSet(result_idx))
   }
   if name == "float_from_string" {
     out := emit_atom(args[0], ctx)
     out = out.append(.Call("float_from_string_helper"))
+    out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
     return out.append(.LocalSet(result_idx))
   }
 
@@ -1343,8 +1454,9 @@ fn emit_intrinsic_from_char_code(args: Vector<PreparedAtom>, result_idx: Int, re
 
 fn emit_intrinsic_from_code_point(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Delegate to helper function
-  out := emit_atom(args[0], ctx)
+  out := emit_checked_i32_narrow(args[0], ctx)
   out = out.append(.Call("from_code_point_helper"))
+  out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1365,6 +1477,7 @@ fn emit_intrinsic_string_from_utf8(args: Vector<PreparedAtom>, result_idx: Int, 
   // User passes PVec; helper expects flat $Array
   out = out.append(.Call("rt_arr__to_array"))
   out = out.append(.Call("string_from_utf8_helper"))
+  out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1428,6 +1541,9 @@ fn emit_intrinsic_cell_new(args: Vector<PreparedAtom>, result_idx: Int, result_m
   }
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)
+  if sym == "$Cell_anyref" {
+    out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
+  }
   out = out.append(.StructNew(sym))
   out.append(.LocalSet(result_idx))
 }
@@ -1444,6 +1560,9 @@ fn emit_intrinsic_cell_get(args: Vector<PreparedAtom>, result_idx: Int, result_m
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)
   out = out.append(.StructGet(sym, 0))
+  if sym == "$Cell_anyref" {
+    out = append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
+  }
   out.append(.LocalSet(result_idx))
 }
 
@@ -1458,6 +1577,9 @@ fn emit_intrinsic_cell_set(args: Vector<PreparedAtom>, result_idx: Int, ctx: Emi
   sym := cell_struct_sym(inner_mono, ctx.env)
   out := emit_atom(args[0], ctx)   // cell ref
   out = append_instrs(out, emit_atom(args[1], ctx))  // new value
+  if sym == "$Cell_anyref" {
+    out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
+  }
   out = out.append(.StructSet(sym, 0))
   // Return void
   out = out.append(.I32Const(0))
@@ -1485,16 +1607,21 @@ fn emit_intrinsic_cell_update(args: Vector<PreparedAtom>, result_idx: Int, ctx: 
   // Get current cell value, box to anyref
   out = append_instrs(out, emit_atom(args[0], ctx))
   out = out.append(.StructGet(sym, 0))
-  out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
+  if sym != "$Cell_anyref" {
+    out = append_instrs(out, emit_box_to_anyref(inner_mono, ctx.env))
+  }
   out = out.append(.ArrayNewFixed("rt_types__Array", 1))  // args array
   // Get funcref from closure
   out = append_instrs(out, emit_atom(args[1], ctx))
   out = out.append(.StructGet("rt_types__Closure", 0))  // universal funcref (field 0)
   out = out.append(.CallRef("rt_types__ClosureFunc"))
-  // Unbox result back to T
-  out = append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
-  // Store back
-  out = out.append(.StructSet(sym, 0))
+  // Unbox result back to T when needed, then store back
+  if sym == "$Cell_anyref" {
+    out = out.append(.StructSet(sym, 0))
+  } else {
+    out = append_instrs(out, emit_unbox_from_anyref(inner_mono, ctx.env))
+    out = out.append(.StructSet(sym, 0))
+  }
   // Return void
   out = out.append(.I32Const(0))
   out = out.append(.RefI31)
@@ -1556,16 +1683,19 @@ fn emit_intrinsic_iterator_unfold(args: Vector<PreparedAtom>, result_idx: Int, r
     _ => error("iterator_unfold: unexpected layout"),
   }
   out := emit_atom(args[0], ctx)  // seed
+  out = append_instrs(out, emit_box_to_anyref(atom_mono(args[0], ctx), ctx.env))
   out = append_instrs(out, emit_atom(args[1], ctx))  // step closure
   out = out.append(.StructNew(sym))
   out.append(.LocalSet(result_idx))
 }
 
+fn iterator_next_helper_sym(result_mono: MonoType) String {
+  "iterator_next_helper_${mono_to_key(result_mono)}"
+}
+
 fn emit_intrinsic_iterator_next(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  // iterator_next(state) → calls helper
-  // The helper function should be emitted as part of the module
   out := emit_atom(args[0], ctx)
-  out = out.append(.Call("iterator_next_helper"))
+  out = out.append(.Call(iterator_next_helper_sym(result_mono)))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1868,6 +1998,7 @@ fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoTy
       out = out.append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
+    .Never => body,
     _ => body.append(.LocalSet(result_idx)),
   }
 }
@@ -2141,6 +2272,7 @@ fn emit_closure_call(callee: PreparedAtom, lid: SlotId, args: Vector<PreparedAto
           out = out.append(.RefI31)
           out.append(.LocalSet(result_idx))
         },
+        .Never => out,
         _ => out.append(.LocalSet(result_idx)),
       }
     },
@@ -2182,6 +2314,7 @@ fn emit_universal_closure_call(entry: LocalEntry, args: Vector<PreparedAtom>, re
       out = out.append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
+    .Never => out,
     _ => {
       out = append_instrs(out, emit_unbox_from_anyref(result_mono, ctx.env))
       out.append(.LocalSet(result_idx))
@@ -2387,6 +2520,163 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
 }
 
 // ── String pool emission ───────────────────────────────────────────────
+
+fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<MonoType> {
+  want_fid := bi.id(builtins, "iterator_next")
+  seen: Dict<String, MonoType> = Dict.new()
+  order: Vector<String> = []
+  for func in funcs {
+    result := collect_iterator_next_helpers_expr(func.body, func, want_fid)
+    for mono in result {
+      key := mono_to_key(mono)
+      if !seen.has(key) {
+        seen[key] = mono
+        order = order.append(key)
+      }
+    }
+  }
+  collect key in order {
+    case seen[key] {
+      .Some(mono) => mono,
+      .None => error("collect_iterator_next_helpers: missing mono for ${key}"),
+    }
+  }
+}
+
+fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, want_fid: FuncId) Vector<MonoType> {
+  case expr {
+    .Let(sid, op, body) => {
+      out := collect_iterator_next_helpers_op(op, func, want_fid)
+      case func.slots[sid.id] {
+        .Some(info) => {
+          case op {
+            .ACall(.AGlobalFunc(fid), _) => {
+              if fid.id == want_fid.id {
+                out = out.append(info.mono)
+              }
+            },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+      more := collect_iterator_next_helpers_expr(body, func, want_fid)
+      for mono in more { out = out.append(mono) }
+      out
+    },
+    _ => [],
+  }
+}
+
+fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<MonoType> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out := collect_iterator_next_helpers_expr(then_e, func, want_fid)
+      more := collect_iterator_next_helpers_expr(else_e, func, want_fid)
+      for mono in more { out = out.append(mono) }
+      out
+    },
+    .AMatch(_, arms) => {
+      out: Vector<MonoType> = []
+      for arm in arms {
+        more := collect_iterator_next_helpers_expr(arm.body, func, want_fid)
+        for mono in more { out = out.append(mono) }
+      }
+      out
+    },
+    .ALoop(body) => collect_iterator_next_helpers_expr(body, func, want_fid),
+    .ADefer(body) => collect_iterator_next_helpers_expr(body, func, want_fid),
+    _ => [],
+  }
+}
+
+fn emit_iterator_next_helper(result_mono: MonoType, env: ResolvedEnv) FuncDef {
+  iter_item_mono := case result_mono {
+    .Optional(inner) => inner,
+    _ => error("emit_iterator_next_helper: expected Option<IterItem>, got ${mono_to_key(result_mono)}"),
+  }
+  option_layout := case layout_of(result_mono, env) {
+    .Sum(s) => s,
+    _ => error("emit_iterator_next_helper: expected Option sum layout"),
+  }
+  option_sym := option_layout.sym
+  iter_item_layout := case layout_of(iter_item_mono, env) {
+    .Record(r) => r,
+    _ => error("emit_iterator_next_helper: expected IterItem record layout"),
+  }
+  value_mono := case iter_item_mono {
+    .Named(_, args) => if args.len() > 0 { args[0] } else { .Void },
+    _ => .Void,
+  }
+  some_payload_vt := if option_layout.variants.len() > 1 and option_layout.variants[1].payload_types.len() > 0 {
+    option_layout.variants[1].payload_types[0]
+  } else {
+    .Anyref
+  }
+
+  none_body: Vector<Instr> = [.I32Const(0)]
+  none_body = append_instrs(none_body, emit_default_value(some_payload_vt))
+  none_body = none_body.append(.StructNew(option_sym))
+
+  some_body: Vector<Instr> = [
+    .LocalGet(1),
+    .StructGet("rt_types__Variant", 2),
+    .RefCast(true, .Named("rt_types__Array")),
+    .LocalSet(3),
+    .I32Const(1),
+    .LocalGet(3),
+    .I32Const(0),
+    .ArrayGet("rt_types__Array"),
+  ]
+  some_body = append_instrs(some_body, emit_unbox_from_anyref(value_mono, env))
+  some_body = append_instrs(some_body, [
+    .LocalGet(3),
+    .I32Const(1),
+    .ArrayGet("rt_types__Array"),
+    .LocalGet(4),
+    .StructGet("rt_types__IterState", 1),
+    .StructNew("rt_types__IterState"),
+    .StructNew(iter_item_layout.sym),
+    .StructNew(option_sym),
+  ])
+
+  FuncDef.{
+    name: iterator_next_helper_sym(result_mono),
+    params: [.Ref(true, .Named("rt_types__IterState"))],
+    results: [.Ref(true, .Named(option_sym))],
+    locals: [
+      .Ref(true, .Named("rt_types__Variant")),
+      .I32,
+      .Ref(true, .Named("rt_types__Array")),
+      .Ref(true, .Named("rt_types__IterState")),
+    ],
+    body: [
+      .LocalGet(0),
+      .RefCast(true, .Named("rt_types__IterState")),
+      .LocalSet(4),
+      .LocalGet(4),
+      .StructGet("rt_types__IterState", 1),
+      .RefCast(false, .Named("rt_types__Closure")),
+      .StructGet("rt_types__Closure", 1),
+      .LocalGet(4),
+      .StructGet("rt_types__IterState", 0),
+      .ArrayNewFixed("rt_types__Array", 1),
+      .LocalGet(4),
+      .StructGet("rt_types__IterState", 1),
+      .RefCast(false, .Named("rt_types__Closure")),
+      .StructGet("rt_types__Closure", 0),
+      .CallRef("rt_types__ClosureFunc"),
+      .RefCast(false, .Named("rt_types__Variant")),
+      .LocalSet(1),
+      .LocalGet(1),
+      .StructGet("rt_types__Variant", 1),
+      .LocalSet(2),
+      .LocalGet(2),
+      .I32Eqz,
+      .If(.Some(.Ref(true, .Named(option_sym))), none_body, some_body),
+    ],
+  }
+}
 
 fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []

@@ -66,7 +66,7 @@ pub fn prepare_backend(
 
   // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
   // defaults using MonoType and boundary-op overrides.
-  funcs2 := assign_repr_for_module(funcs, env)
+  funcs2 := assign_repr_for_module(funcs, env, builtins)
 
   .{
     anf: anf2,
