@@ -78,17 +78,28 @@ pub fn reverse<A>(xs: Vector<A>) Vector<A> {
 /// Join strings with sep.
 pub fn join(xs: Vector<String>, sep: String) String {
   n := xs.len()
-  if n == 0 {
-    return ""
-  }
+  if n == 0 { return "" }
+  if n == 1 { return xs[0] }
 
-  out := xs[0]
-  i := 1
+  sep_bytes := sep.utf8_bytes()
+  buf: Vector<Byte> = []
+  i := 0
   for i < n {
-    out = "${out}${sep}${xs[i]}"
+    if i > 0 {
+      for b in sep_bytes {
+        buf = buf.append(b)
+      }
+    }
+    s_bytes := xs[i].utf8_bytes()
+    for b in s_bytes {
+      buf = buf.append(b)
+    }
     i = i + 1
   }
-  out
+  case String.from_utf8(buf) {
+    .Some(s) => s,
+    .None => error("join: invalid utf8"),
+  }
 }
 
 fn is_lt(o: Order) Bool {

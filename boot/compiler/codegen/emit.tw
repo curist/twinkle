@@ -144,6 +144,41 @@ pub fn emit_module(
 
   type_defs: Vector<TypeDef> = reg.type_defs
   runtime_imports: Vector<ImportDef> = reg.runtime_imports
+  runtime_imports = runtime_imports.append(ImportDef.{
+    module: "codegen.intrinsics",
+    name: "int_from_string_helper",
+    as_sym: "int_from_string_helper",
+    params: [.Ref(true, .Named("rt_types__String"))],
+    results: [.Anyref],
+  })
+  runtime_imports = runtime_imports.append(ImportDef.{
+    module: "codegen.intrinsics",
+    name: "from_code_point_helper",
+    as_sym: "from_code_point_helper",
+    params: [.I32],
+    results: [.Anyref],
+  })
+  runtime_imports = runtime_imports.append(ImportDef.{
+    module: "codegen.intrinsics",
+    name: "string_utf8_bytes_helper",
+    as_sym: "string_utf8_bytes_helper",
+    params: [.Ref(true, .Named("rt_types__String"))],
+    results: [.Ref(false, .Named("rt_types__Array"))],
+  })
+  runtime_imports = runtime_imports.append(ImportDef.{
+    module: "codegen.intrinsics",
+    name: "string_from_utf8_helper",
+    as_sym: "string_from_utf8_helper",
+    params: [.Ref(true, .Named("rt_types__Array"))],
+    results: [.Anyref],
+  })
+  runtime_imports = runtime_imports.append(ImportDef.{
+    module: "codegen.intrinsics",
+    name: "float_from_string_helper",
+    as_sym: "float_from_string_helper",
+    params: [.Ref(true, .Named("rt_types__String"))],
+    results: [.Anyref],
+  })
 
   WasmModule.{
     namespace: "user",
@@ -990,12 +1025,12 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
 
   if name == "int_from_string" {
     out := emit_atom(args[0], ctx)
-    out = out.append(.Call("$int_from_string_helper"))
+    out = out.append(.Call("int_from_string_helper"))
     return out.append(.LocalSet(result_idx))
   }
   if name == "float_from_string" {
     out := emit_atom(args[0], ctx)
-    out = out.append(.Call("$float_from_string_helper"))
+    out = out.append(.Call("float_from_string_helper"))
     return out.append(.LocalSet(result_idx))
   }
 
@@ -1309,7 +1344,7 @@ fn emit_intrinsic_from_char_code(args: Vector<PreparedAtom>, result_idx: Int, re
 fn emit_intrinsic_from_code_point(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   // Delegate to helper function
   out := emit_atom(args[0], ctx)
-  out = out.append(.Call("$from_code_point_helper"))
+  out = out.append(.Call("from_code_point_helper"))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1317,7 +1352,7 @@ fn emit_intrinsic_from_code_point(args: Vector<PreparedAtom>, result_idx: Int, r
 
 fn emit_intrinsic_string_utf8_bytes(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
   out := emit_atom(args[0], ctx)
-  out = out.append(.Call("$string_utf8_bytes_helper"))
+  out = out.append(.Call("string_utf8_bytes_helper"))
   // Helper returns flat $Array; wrap to PVec
   out = out.append(.Call("rt_arr__from_array"))
   out.append(.LocalSet(result_idx))
@@ -1329,7 +1364,7 @@ fn emit_intrinsic_string_from_utf8(args: Vector<PreparedAtom>, result_idx: Int, 
   out := emit_atom(args[0], ctx)
   // User passes PVec; helper expects flat $Array
   out = out.append(.Call("rt_arr__to_array"))
-  out = out.append(.Call("$string_from_utf8_helper"))
+  out = out.append(.Call("string_from_utf8_helper"))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1530,7 +1565,7 @@ fn emit_intrinsic_iterator_next(args: Vector<PreparedAtom>, result_idx: Int, res
   // iterator_next(state) → calls helper
   // The helper function should be emitted as part of the module
   out := emit_atom(args[0], ctx)
-  out = out.append(.Call("$iterator_next_helper"))
+  out = out.append(.Call("iterator_next_helper"))
   out.append(.LocalSet(result_idx))
 }
 
@@ -1840,10 +1875,7 @@ fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoTy
 // ── Match emission ─────────────────────────────────────────────────────
 
 fn emit_match_op(scrutinee: PreparedAtom, arms: Vector<PreparedMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  scrutinee_mono := case scrutinee {
-    .ASlot(_) => require_typed_sum_atom(scrutinee, ctx, "emit_match_op"),
-    _ => atom_mono(scrutinee, ctx),
-  }
+  scrutinee_mono := atom_mono(scrutinee, ctx)
   scrutinee_instrs := emit_atom(scrutinee, ctx)
   emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx)
 }

@@ -1,0 +1,489 @@
+// codegen.intrinsics — internal helper functions for boot intrinsic lowering.
+//
+// These helpers support the backend's lowering strategy, but they are not part
+// of the public runtime module surface. Keeping them here lets emit.tw lower to
+// helper calls without also owning the helper implementations.
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, FuncDef, ImportDef, ExportDef, WasmModule,
+}
+
+fn str_null() ValType { .Ref(true, .Named("rt_types__String")) }
+fn str_ref() ValType { .Ref(false, .Named("rt_types__String")) }
+fn arr_null() ValType { .Ref(true, .Named("rt_types__Array")) }
+fn arr_ref() ValType { .Ref(false, .Named("rt_types__Array")) }
+
+pub fn module() WasmModule {
+  funcs := [
+    int_from_string_helper_fn(),
+    from_code_point_helper_fn(),
+    string_utf8_bytes_helper_fn(),
+    string_from_utf8_helper_fn(),
+    float_from_string_helper_fn(),
+  ]
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
+  .{
+    namespace: "codegen.intrinsics",
+    types: [],
+    imports: [
+      ImportDef.{
+        module: "host", name: "parse_float", as_sym: "host_parse_float",
+        params: [str_null()], results: [.F64, .I32],
+      },
+    ],
+    funcs: funcs,
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: exports,
+    data: [],
+    start: .None,
+  }
+}
+
+fn append_instrs(base: Vector<Instr>, tail: Vector<Instr>) Vector<Instr> {
+  out := base
+  for i in tail { out = out.append(i) }
+  out
+}
+
+fn int_from_string_helper_fn() FuncDef {
+  done_label := "done_int_parse"
+  loop_label := "digit_loop"
+  some_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(1),
+    .LocalGet(1),
+    .LocalGet(4),
+    .I64Mul,
+    .StructNew("rt_types__BoxedInt"),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+  none_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(0),
+    .ArrayNewFixed("rt_types__Array", 0),
+    .StructNew("rt_types__Variant"),
+  ]
+
+  FuncDef.{
+    name: "int_from_string_helper",
+    params: [str_null()],
+    results: [.Anyref],
+    locals: [.I64, .I32, .I32, .I64, .I32, .I32],
+    body: [
+      .I64Const(1),
+      .LocalSet(4),
+      .I32Const(1),
+      .LocalSet(6),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(3),
+      .LocalGet(3),
+      .I32Eqz,
+      .If(.None, [
+        .I32Const(0),
+        .LocalSet(6),
+      ], [
+        .LocalGet(0),
+        .RefAsNonNull,
+        .I32Const(0),
+        .ArrayGetU("rt_types__String"),
+        .LocalSet(5),
+        .LocalGet(5),
+        .I32Const(45),
+        .I32Eq,
+        .If(.None, [
+          .I64Const(-1),
+          .LocalSet(4),
+          .I32Const(1),
+          .LocalSet(2),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Eq,
+          .If(.None, [.I32Const(0), .LocalSet(6)], []),
+        ], [
+          .LocalGet(5),
+          .I32Const(43),
+          .I32Eq,
+          .If(.None, [
+            .I32Const(1),
+            .LocalSet(2),
+            .LocalGet(3),
+            .I32Const(1),
+            .I32Eq,
+            .If(.None, [.I32Const(0), .LocalSet(6)], []),
+          ], [
+            .I32Const(0),
+            .LocalSet(2),
+          ]),
+        ]),
+        .LocalGet(6),
+        .If(.None, [
+          .Block(done_label, .None, [
+            .Loop(loop_label, .None, [
+              .LocalGet(2),
+              .LocalGet(3),
+              .I32GeS,
+              .BrIf(done_label),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .LocalGet(2),
+              .ArrayGetU("rt_types__String"),
+              .LocalSet(5),
+              .LocalGet(5),
+              .I32Const(48),
+              .I32LtS,
+              .LocalGet(5),
+              .I32Const(57),
+              .I32GtS,
+              .I32Or,
+              .If(.None, [
+                .I32Const(0),
+                .LocalSet(6),
+                .Br(done_label),
+              ], []),
+              .LocalGet(1),
+              .I64Const(10),
+              .I64Mul,
+              .LocalGet(5),
+              .I32Const(48),
+              .I32Sub,
+              .I64ExtendI32U,
+              .I64Add,
+              .LocalSet(1),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br(loop_label),
+            ]),
+          ]),
+        ], []),
+      ]),
+      .LocalGet(6),
+      .If(.Some(.Anyref), some_body, none_body),
+    ],
+  }
+}
+
+fn from_code_point_helper_fn() FuncDef {
+  none_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(0),
+    .ArrayNewFixed("rt_types__Array", 0),
+    .StructNew("rt_types__Variant"),
+  ]
+  some_1: Vector<Instr> = [
+    .I32Const(0), .I32Const(1),
+    .LocalGet(0),
+    .ArrayNewFixed("rt_types__String", 1),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+  some_2: Vector<Instr> = [
+    .I32Const(0), .I32Const(1),
+    .LocalGet(0), .I32Const(6), .I32ShrU, .I32Const(0xC0), .I32Or,
+    .LocalGet(0), .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .ArrayNewFixed("rt_types__String", 2),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+  some_3: Vector<Instr> = [
+    .I32Const(0), .I32Const(1),
+    .LocalGet(0), .I32Const(12), .I32ShrU, .I32Const(0xE0), .I32Or,
+    .LocalGet(0), .I32Const(6), .I32ShrU, .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .LocalGet(0), .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .ArrayNewFixed("rt_types__String", 3),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+  some_4: Vector<Instr> = [
+    .I32Const(0), .I32Const(1),
+    .LocalGet(0), .I32Const(18), .I32ShrU, .I32Const(0xF0), .I32Or,
+    .LocalGet(0), .I32Const(12), .I32ShrU, .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .LocalGet(0), .I32Const(6), .I32ShrU, .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .LocalGet(0), .I32Const(0x3F), .I32And, .I32Const(0x80), .I32Or,
+    .ArrayNewFixed("rt_types__String", 4),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+
+  FuncDef.{
+    name: "from_code_point_helper",
+    params: [.I32],
+    results: [.Anyref],
+    locals: [],
+    body: [
+      .LocalGet(0), .I32Const(0), .I32LtS,
+      .If(.Some(.Anyref), none_body, [
+        .LocalGet(0), .I32Const(0x80), .I32LtU,
+        .If(.Some(.Anyref), some_1, [
+          .LocalGet(0), .I32Const(0x800), .I32LtU,
+          .If(.Some(.Anyref), some_2, [
+            .LocalGet(0), .I32Const(0xD800), .I32GeU,
+            .LocalGet(0), .I32Const(0xDFFF), .I32LeU,
+            .I32And,
+            .If(.Some(.Anyref), none_body, [
+              .LocalGet(0), .I32Const(0xFFFF), .I32LeU,
+              .If(.Some(.Anyref), some_3, [
+                .LocalGet(0), .I32Const(0x10FFFF), .I32LeU,
+                .If(.Some(.Anyref), some_4, none_body),
+              ]),
+            ]),
+          ]),
+        ]),
+      ]),
+    ],
+  }
+}
+
+fn string_utf8_bytes_helper_fn() FuncDef {
+  FuncDef.{
+    name: "string_utf8_bytes_helper",
+    params: [str_null()],
+    results: [arr_ref()],
+    locals: [.I32, .I32, arr_ref()],
+    body: [
+      .LocalGet(0),
+      .ArrayLen,
+      .LocalSet(1),
+      .LocalGet(1),
+      .ArrayNewDefault("rt_types__Array"),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(2),
+      .Block("utf8_bytes_break", .None, [
+        .Loop("utf8_bytes_continue", .None, [
+          .LocalGet(2), .LocalGet(1), .I32GeU,
+          .BrIf("utf8_bytes_break"),
+          .LocalGet(3),
+          .LocalGet(2),
+          .LocalGet(0),
+          .LocalGet(2),
+          .ArrayGetU("rt_types__String"),
+          .RefI31,
+          .ArraySet("rt_types__Array"),
+          .LocalGet(2), .I32Const(1), .I32Add,
+          .LocalSet(2),
+          .Br("utf8_bytes_continue"),
+        ]),
+      ]),
+      .LocalGet(3),
+    ],
+  }
+}
+
+fn utf8_validate_multibyte(n: Int) Vector<Instr> {
+  instrs: Vector<Instr> = [
+    .LocalGet(2),
+    .I32Const(n - 1),
+    .I32Add,
+    .LocalGet(1),
+    .I32GeU,
+    .If(.None, [
+      .I32Const(0),
+      .LocalSet(5),
+      .Br("utf8_validate_break"),
+    ], []),
+  ]
+
+  off := 1
+  for off < n {
+    instrs = append_instrs(instrs, [
+      .LocalGet(0),
+      .LocalGet(2),
+      .I32Const(off),
+      .I32Add,
+      .ArrayGet("rt_types__Array"),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .I32Const(0xC0),
+      .I32And,
+      .I32Const(0x80),
+      .I32Ne,
+      .If(.None, [
+        .I32Const(0),
+        .LocalSet(5),
+        .Br("utf8_validate_break"),
+      ], []),
+    ])
+    off = off + 1
+  }
+
+  if n == 3 {
+    instrs = append_instrs(instrs, [
+      .LocalGet(4), .I32Const(0xE0), .I32Eq,
+      .If(.None, [
+        .LocalGet(0), .LocalGet(2), .I32Const(1), .I32Add,
+        .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+        .I32Const(0xA0), .I32LtU,
+        .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+      ], []),
+      .LocalGet(4), .I32Const(0xED), .I32Eq,
+      .If(.None, [
+        .LocalGet(0), .LocalGet(2), .I32Const(1), .I32Add,
+        .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+        .I32Const(0xA0), .I32GeU,
+        .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+      ], []),
+    ])
+  }
+
+  if n == 4 {
+    instrs = append_instrs(instrs, [
+      .LocalGet(4), .I32Const(0xF0), .I32Eq,
+      .If(.None, [
+        .LocalGet(0), .LocalGet(2), .I32Const(1), .I32Add,
+        .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+        .I32Const(0x90), .I32LtU,
+        .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+      ], []),
+      .LocalGet(4), .I32Const(0xF4), .I32Eq,
+      .If(.None, [
+        .LocalGet(0), .LocalGet(2), .I32Const(1), .I32Add,
+        .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+        .I32Const(0x90), .I32GeU,
+        .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+      ], []),
+    ])
+  }
+
+  append_instrs(instrs, [
+    .LocalGet(2),
+    .I32Const(n),
+    .I32Add,
+    .LocalSet(2),
+  ])
+}
+
+fn string_from_utf8_helper_fn() FuncDef {
+  none_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(0),
+    .ArrayNewFixed("rt_types__Array", 0),
+    .StructNew("rt_types__Variant"),
+  ]
+  some_body: Vector<Instr> = [
+    .LocalGet(1),
+    .ArrayNewDefault("rt_types__String"),
+    .LocalSet(3),
+    .I32Const(0),
+    .LocalSet(2),
+    .Block("utf8_copy_break", .None, [
+      .Loop("utf8_copy_continue", .None, [
+        .LocalGet(2), .LocalGet(1), .I32GeU,
+        .BrIf("utf8_copy_break"),
+        .LocalGet(3),
+        .LocalGet(2),
+        .LocalGet(0),
+        .LocalGet(2),
+        .ArrayGet("rt_types__Array"),
+        .RefCast(false, .I31),
+        .I31GetU,
+        .ArraySet("rt_types__String"),
+        .LocalGet(2), .I32Const(1), .I32Add,
+        .LocalSet(2),
+        .Br("utf8_copy_continue"),
+      ]),
+    ]),
+    .I32Const(0),
+    .I32Const(1),
+    .LocalGet(3),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+
+  FuncDef.{
+    name: "string_from_utf8_helper",
+    params: [arr_null()],
+    results: [.Anyref],
+    locals: [.I32, .I32, str_null(), .I32, .I32, .I32],
+    body: [
+      .LocalGet(0), .ArrayLen, .LocalSet(1),
+      .I32Const(1), .LocalSet(5),
+      .I32Const(0), .LocalSet(2),
+      .Block("utf8_validate_break", .None, [
+        .Loop("utf8_validate_continue", .None, [
+          .LocalGet(2), .LocalGet(1), .I32GeU,
+          .BrIf("utf8_validate_break"),
+          .LocalGet(0), .LocalGet(2), .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+          .LocalSet(4),
+          .LocalGet(4), .I32Const(0x80), .I32LtU,
+          .If(.None, [
+            .LocalGet(2), .I32Const(1), .I32Add, .LocalSet(2),
+          ], [
+            .LocalGet(4), .I32Const(0xC0), .I32GeU,
+            .LocalGet(4), .I32Const(0xDF), .I32LeU,
+            .I32And,
+            .If(.None, [
+              .LocalGet(4), .I32Const(0xC2), .I32LtU,
+              .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+              .LocalGet(2), .I32Const(1), .I32Add,
+              .LocalGet(1), .I32GeU,
+              .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+              .LocalGet(0), .LocalGet(2), .I32Const(1), .I32Add,
+              .ArrayGet("rt_types__Array"), .RefCast(false, .I31), .I31GetU,
+              .LocalSet(6),
+              .LocalGet(6), .I32Const(0xC0), .I32And,
+              .I32Const(0x80), .I32Ne,
+              .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
+              .LocalGet(2), .I32Const(2), .I32Add, .LocalSet(2),
+            ], [
+              .LocalGet(4), .I32Const(0xE0), .I32GeU,
+              .LocalGet(4), .I32Const(0xEF), .I32LeU,
+              .I32And,
+              .If(.None, utf8_validate_multibyte(3), [
+                .LocalGet(4), .I32Const(0xF0), .I32GeU,
+                .LocalGet(4), .I32Const(0xF4), .I32LeU,
+                .I32And,
+                .If(.None, utf8_validate_multibyte(4), [
+                  .I32Const(0), .LocalSet(5), .Br("utf8_validate_break"),
+                ]),
+              ]),
+            ]),
+          ]),
+          .Br("utf8_validate_continue"),
+        ]),
+      ]),
+      .LocalGet(5), .I32Eqz,
+      .If(.Some(.Anyref), none_body, some_body),
+    ],
+  }
+}
+
+fn float_from_string_helper_fn() FuncDef {
+  some_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(1),
+    .LocalGet(1),
+    .StructNew("rt_types__BoxedFloat"),
+    .ArrayNewFixed("rt_types__Array", 1),
+    .StructNew("rt_types__Variant"),
+  ]
+  none_body: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(0),
+    .ArrayNewFixed("rt_types__Array", 0),
+    .StructNew("rt_types__Variant"),
+  ]
+
+  FuncDef.{
+    name: "float_from_string_helper",
+    params: [str_null()],
+    results: [.Anyref],
+    locals: [.F64, .I32],
+    body: [
+      .LocalGet(0),
+      .Call("host_parse_float"),
+      .LocalSet(2),
+      .LocalSet(1),
+      .LocalGet(2),
+      .If(.Some(.Anyref), some_body, none_body),
+    ],
+  }
+}

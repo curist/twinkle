@@ -21,6 +21,7 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
+use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.verify.{verify_prepared_module}
 use compiler.backend.closure_convert.{convert_closures}
@@ -32,6 +33,7 @@ pub fn runtime_modules() Vector<WasmModule> {
     rt_arr.module(),
     rt_dict.module(),
     rt_core.module(),
+    cg_intrinsics.module(),
   ]
 }
 
