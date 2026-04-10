@@ -1,6 +1,6 @@
 # Self-Hosting Status Tracker
 
-Last updated: 2026-03-27
+Last updated: 2026-04-10
 
 ## Purpose
 
@@ -23,11 +23,11 @@ snapshot.
 
 | Phase | Scope | Status | Notes |
 |------|-------|--------|-------|
-| A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker (M1–M9) all complete. Method registry M1–M4 done; M5 deferred to multi-module. Snapshot testing for diagnostics. |
-| B | Core IR lowering + monomorphization | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — IR types, lowering (all expr/stmt forms), monomorphization. All gaps and discrepancies resolved. |
-| C | ANF lowering + optimization | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) — All 12 milestones complete: ANF IR types, Core→ANF lowering, analysis utilities, dead-let/copy-prop/const-fold/branch-simp, pipeline, liveness, uniqueness rewrite, defer elimination, integration tests |
-| D | Codegen + linker | Done | [archive/boot-codegen.md](archive/boot-codegen.md) — full pipeline landed (plan_wasm_types → insert_boundaries → emit_module → link → emit_wat), 45/45 Wasmtime regression matrix green, match consolidation and boundary fixes complete. Closure-with-captures remains a known limitation. |
-| E | Integration + self-hosting loop | Planned | Depends on A-D milestones and `boot` module/graph/query libs. |
+| A | Frontend (lexer/parser/resolver/checker) | Done | Lexer, parser, resolver, type checker landed. Remaining checker work is parity/hardening follow-up rather than missing core pipeline stages. |
+| B | Core IR lowering + monomorphization | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — core IR, lowering, and monomorphization are in place. |
+| C | ANF lowering + optimization | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) — ANF lowering, optimization passes, liveness, uniqueness rewrite, and defer elimination landed. |
+| D | Codegen + linker | In Progress | The full boot codegen pipeline exists and the boot compiler can compile itself to Wasm, but self-hosted execution still exposes remaining backend correctness gaps around representation parity and iterator lowering. |
+| E | Integration + self-hosting loop | In Progress | Multi-module/self-host execution works far enough to drive backend debugging. The remaining work is no longer foundation-library setup; it is closing the self-hosted Wasm correctness gap. |
 
 ---
 
@@ -35,18 +35,13 @@ snapshot.
 
 | Area | Status | Plan |
 |------|--------|------|
-| Frontend gap closure | Done | [archive/boot-parser-gap-closure.md](archive/boot-parser-gap-closure.md) |
-| Resolver fixes | Done | [archive/boot-resolver-fixes.md](archive/boot-resolver-fixes.md) |
-| Type checker | Done | [archive/boot-type-checker.md](archive/boot-type-checker.md) — M1–M9 done |
-| Resolver method registry | Done | [archive/boot-resolver-method-registry.md](archive/boot-resolver-method-registry.md) — M1–M4 done, M5 deferred to multi-module |
-| Resolver hardening | Done | [archive/boot-resolver-hardening.md](archive/boot-resolver-hardening.md) |
-| Frontend fixes | Done | [archive/boot-frontend-fixes.md](archive/boot-frontend-fixes.md) — correctness, completeness, refactoring, test coverage |
-| Core IR & lowering | Done | [archive/boot-core-ir.md](archive/boot-core-ir.md) — Core IR types, AST→Core IR lowering, monomorphization |
-| Snapshot testing | Done | [archive/boot-snapshot-testing.md](archive/boot-snapshot-testing.md) — `.boot.expected` files for parser diagnostics |
-| ANF lowering + optimization | Done | [archive/boot-anf-lowering.md](archive/boot-anf-lowering.md) — M1–M12 complete |
-| Codegen + linker | Done | [archive/boot-codegen.md](archive/boot-codegen.md), [archive/boot-codegen-followup.md](archive/boot-codegen-followup.md) |
-| Deferred foundation libs (`module`, `graph`, `query`) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
-| Builtin signature source of truth | Planned | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) — dedup boot builtin signatures/method shapes against `prelude/signatures/*.tw` while keeping `builtins.tw` as dispatch/FuncId registry |
+| Multi-module integration | In Progress | [boot-multi-module.md](boot-multi-module.md) |
+| Self-hosted Wasm repr parity | In Progress | [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) |
+| Iterator codegen correctness | In Progress | [boot-iterator-codegen-parity.md](boot-iterator-codegen-parity.md) |
+| Uniqueness mono sync | In Progress | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) |
+| Checker inference consistency | In Progress | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) |
+| Boot Wasm serializer | Planned | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) |
+| Historical completed milestones | Done | See [archive/README.md](archive/README.md) for the earlier parser/resolver/checker/core/ANF/codegen milestone plans |
 
 ---
 

@@ -318,7 +318,7 @@ Expected primary implementation touch points:
 
 Likely supporting docs/tests:
 
-- `docs/plans/twinkle-vector-kickoff.md`
+- `docs/plans/archive/twinkle-vector-kickoff.md`
 - tests that inspect linked WAT for calls to `boot/lib` vector exports
 - compatibility tests comparing stage0 behavior before/after the boundary flip
 

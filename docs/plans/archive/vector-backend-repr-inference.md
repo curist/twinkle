@@ -37,7 +37,7 @@ This plan is subordinate to:
 
 - [backend-anyref-elimination.md](../backend-anyref-elimination.md)
 - [persistent-vector.md](../persistent-vector.md)
-- [twinkle-vector-kickoff.md](../twinkle-vector-kickoff.md)
+- [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md)
 
 If this document disagrees with those plans, follow them in that order.
 

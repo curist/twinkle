@@ -38,8 +38,9 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Phase E libs | `boot/lib/` module, graph, query (deferred) | Planned | [boot-foundation-libs.md](boot-foundation-libs.md) |
 | Integration | Multi-module, CLI, compatibility suite | In Progress | [boot-multi-module.md](boot-multi-module.md) |
+| Wasm repr parity | Close self-hosted/runtime representation mismatches uncovered by self-hosting | In Progress | [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) |
+| Iterator codegen | Build proper non-generic iterator lowering and helper support in boot | In Progress | [boot-iterator-codegen-parity.md](boot-iterator-codegen-parity.md) |
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
 
@@ -54,29 +55,18 @@ from stage0, bootstrapping sequence)
 
 | Plan | Description |
 |------|-------------|
-| [persistent-dict.md](persistent-dict.md) | **Next up** — Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
+| [persistent-dict.md](persistent-dict.md) | Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
-| [boot-backend-structural-followup.md](boot-backend-structural-followup.md) | Audit and close remaining structural backend mismatches where prepared operand categories are broader than adjacent IR nodes or consumers can represent |
-| [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) | Systematically close the boot self-hosted Wasm gap between typed layouts and erased `Anyref` values |
-| [archive/boot-backend-rewrite.md](archive/boot-backend-rewrite.md) | Completed historical plan for rewriting the boot Wasm backend around explicit closure ABI rewriting, backend slot assignment, representation assignment, and verifier-checked prepared IR |
+| [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) | Keep uniqueness-generated locals and rewritten ANF structure synchronized through the boot backend pipeline |
+| [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
 | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
-| [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
 | [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |
 
-### Deferred — Persistent Data Structure Enhancements
+### Historical / deferred strategy docs
 
-These plans defined a more ambitious architecture (typed per-element families,
-`boot/lib` ownership, runtime import boundaries) that was blocking progress.
-The pragmatic plans above supersede their **implementation strategy** while
-preserving them as future enhancement targets once the base trie/HAMT is
-working.
-
-| Plan | Description |
-|------|-------------|
-| [persistent-vector.md](persistent-vector.md) | Full typed-family persistent vector with per-element specialization |
-| [twinkle-vector-kickoff.md](twinkle-vector-kickoff.md) | Twinkle-authored persistent vector with `boot/lib` ownership |
-| [boot-lib-vector-consumption.md](boot-lib-vector-consumption.md) | ABI boundary for stage0 to consume `boot/lib` vector artifact |
-| [twinkle-runtime-import-boundary.md](twinkle-runtime-import-boundary.md) | Extern/import mechanism for `boot/lib` to bind runtime substrate symbols |
+Broader vector/library-boundary explorations and early runtime-comparison work
+have been moved to [archive/README.md](archive/README.md). They may still be
+useful background, but they are not part of the current active execution set.

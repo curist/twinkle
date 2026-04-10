@@ -461,8 +461,10 @@ land as a bootstrap-compatible MVP that preserves the backend direction in
 
 ### Phase E — Integration + Self-Hosting
 
-Prerequisite: [boot-foundation-libs.md](boot-foundation-libs.md) (`boot/lib/`
-module, graph, query — deferred until this phase).
+Foundation-library background: [archive/boot-foundation-libs.md](archive/boot-foundation-libs.md) (`boot/lib/`
+module, graph, query). Most of that work is now done; the remaining self-hosting
+critical path is multi-module integration plus backend/self-hosted Wasm
+correctness.
 
 - Wire up multi-module compilation with `SourceAdapter` capability
 - Implement `ProjectState` + dependency graph for incremental
