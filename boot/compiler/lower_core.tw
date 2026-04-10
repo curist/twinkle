@@ -731,6 +731,58 @@ fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: 
 
 // ── Call lowering ───────────────────────────────────────────────────
 
+fn prelude_method_alias(type_name: String, method_name: String) String? {
+  case type_name {
+    "Bool" => .Some("bool_${method_name}"),
+    "Byte" => .Some("byte_${method_name}"),
+    "Cell" => .Some("cell_${method_name}"),
+    "Dict" => .Some("dict_${method_name}"),
+    "Float" => .Some("float_${method_name}"),
+    "Int" => .Some("int_${method_name}"),
+    "Iterator" => .Some("iterator_${method_name}"),
+    "Option" => .Some("option_${method_name}"),
+    "Result" => .Some("result_${method_name}"),
+    "Vector" => .Some("vector_${method_name}"),
+    "String" => {
+      if method_name == "char_code_at" or method_name == "from_char_code" or method_name == "from_code_point" {
+        .None
+      } else {
+        .Some("string_${method_name}")
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn resolve_receiver_method_target(ctx: LowerCtx, base_ty: MonoType, method_name: String, fallback: String) String {
+  type_name: String? = case base_ty {
+    .Int => .Some("Int"),
+    .Float => .Some("Float"),
+    .Bool => .Some("Bool"),
+    .Byte => .Some("Byte"),
+    .String => .Some("String"),
+    .Vector(_) => .Some("Vector"),
+    .Dict(_, _) => .Some("Dict"),
+    .Optional(_) => .Some("Option"),
+    .Result(_, _) => .Some("Result"),
+    _ => .None,
+  }
+
+  case type_name {
+    .Some(name) => {
+      case prelude_method_alias(name, method_name) {
+        .Some(alias) => { return alias },
+        .None => {},
+      }
+      ctx.env.lookup_method(name, method_name).unwrap_or(fallback)
+    },
+    .None => case base_ty {
+      .Named(tid, _) => ctx.env.lookup_type_method(tid, method_name).unwrap_or(fallback),
+      _ => fallback,
+    },
+  }
+}
+
 fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
   // TypeName.Variant(args) — qualified variant construction
   case callee_expr.kind {
@@ -765,7 +817,15 @@ fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType
   // Check if this is a method/module-qualified call resolved by the checker
   case ctx.method_calls[callee_expr.id] {
     .Some(info) => {
-      case ctx.func_table[info.func_name] {
+      target_name := if info.has_receiver {
+        case callee_expr.kind {
+          .Field(receiver, method_name) => resolve_receiver_method_target(ctx, ctx.expr_type(receiver), method_name, info.func_name),
+          _ => info.func_name,
+        }
+      } else {
+        info.func_name
+      }
+      case ctx.func_table[target_name] {
         .Some(fid) => {
           callee_ty := ctx.expr_type(callee_expr)
           if info.has_receiver {

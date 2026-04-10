@@ -3,7 +3,15 @@
 //
 // Usage:
 //   node tools/run_wasm_node.mjs <file.wasm> [program args...]
+//   node tools/run_wasm_node.mjs <file.wasm> -- [program args...]
 //   bun  tools/run_wasm_node.mjs <file.wasm> [program args...]
+//   bun  tools/run_wasm_node.mjs <file.wasm> -- [program args...]
+//
+// The optional `--` is consumed by this runner and not forwarded to the Wasm
+// program. This is useful when the guest program itself expects command-like
+// args, e.g. running a compiled `boot/main.tw` as:
+//
+//   node tools/run_wasm_node.mjs out/boot-main.wasm -- build boot/main.tw
 //
 // Provides the "host" imports that Twinkle's stage0 compiler emits, using a
 // small bridge Wasm module to create/read Wasm GC values (since JS cannot
@@ -244,12 +252,17 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.error("Usage: node tools/run_wasm_node.mjs <file.wasm> [args...]");
+    console.error("   or: node tools/run_wasm_node.mjs <file.wasm> -- [args...]");
     process.exit(1);
   }
 
   const wasmPath = resolve(args[0]);
-  // Match twk run behavior: argv[0] is the program path, rest are user args
-  const programArgs = [wasmPath, ...args.slice(1)];
+  const sepIndex = args.indexOf("--", 1);
+  const guestArgs = sepIndex >= 0 ? args.slice(sepIndex + 1) : args.slice(1);
+
+  // Match twk run behavior: argv[0] is the program path, rest are user args.
+  // If `--` was used to separate runner args from guest args, do not forward it.
+  const programArgs = [wasmPath, ...guestArgs];
   const cwd = process.cwd();
 
   const wasmBytes = readFileSync(wasmPath);

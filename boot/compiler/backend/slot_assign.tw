@@ -399,7 +399,7 @@ fn collect_pattern_monos_op(
       collect_pattern_monos(else_e, func, env, out)
     },
     .AMatch(scrutinee, arms) => {
-      scrut_mono := atom_mono(func, scrutinee)
+      scrut_mono := atom_mono(func, scrutinee, out)
       for arm in arms {
         out = collect_binding_monos(arm.pattern, scrut_mono, env, out)
         out = collect_pattern_monos(arm.body, func, env, out)
@@ -438,9 +438,12 @@ fn collect_binding_monos(
   }
 }
 
-fn atom_mono(func: AnfFunctionDef, atom: Atom) MonoType {
+fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType>) MonoType {
   case atom {
-    .ALocal(lid) => resolve_local_mono(func, lid),
+    .ALocal(lid) => case pattern_monos[lid.id] {
+      .Some(mono) => mono,
+      .None => resolve_local_mono(func, lid),
+    },
     .AGlobalFunc(_) => .Anyref_,
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,

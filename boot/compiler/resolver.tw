@@ -920,10 +920,24 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path
 }
 
 fn prelude_internal_function_name(alias: String, exported_name: String) String {
-  stem := if alias.starts_with("__prelude_") {
-    alias.slice(10, alias.len())
-  } else {
-    alias
+  stem := case alias {
+    "__prelude_bool" => "bool",
+    "__prelude_byte" => "byte",
+    "__prelude_cell" => "cell",
+    "__prelude_dict" => "dict",
+    "__prelude_float" => "float",
+    "__prelude_int" => "int",
+    "__prelude_iterator" => "iterator",
+    "__prelude_option" => "option",
+    "__prelude_range" => "range",
+    "__prelude_result" => "result",
+    "__prelude_string" => "string",
+    "__prelude_vector" => "vector",
+    _ => if alias.starts_with("__prelude_") {
+      alias.slice(10, alias.len())
+    } else {
+      alias
+    },
   }
 
   if stem == "range" {
@@ -970,11 +984,11 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
     }
 
     internal_name := prelude_internal_function_name(alias, exported.name)
-    if internal_name != exported.name and cur.has_function(internal_name) {
-      cur = cur.bind_function(internal_name, exported.name)
+    if internal_name != exported.name and !cur.has_function(internal_name) {
+      cur = cur.register_function(remap_function_sig(exported.sig, internal_name, reg.type_ids))
     }
 
-    // Set canonical imported origin for the registered function name.
+    // Set canonical imported origin for registered prelude function names.
     // Re-exports preserve the original defining origin.
     origin := case exported.origin {
       .Some(o) => o,
@@ -982,6 +996,9 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
     }
     if !cur.function_origins.has(exported.name) {
       cur = cur.set_function_origin(exported.name, origin)
+    }
+    if internal_name != exported.name and !cur.function_origins.has(internal_name) {
+      cur = cur.set_function_origin(internal_name, origin)
     }
   }
 
@@ -991,12 +1008,16 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
     case exports.methods[exported.name] {
       .Some(entries) => {
         if entries.len() > 0 {
-          methods = register_methods(methods, exported.name, entries)
+          remapped_entries := collect entry in entries {
+            internal_name := prelude_internal_function_name(alias, entry.function_name)
+            me(entry.method_name, internal_name)
+          }
+          methods = register_methods(methods, exported.name, remapped_entries)
           remapped_id := case reg.type_ids[exported.entry.id.id] {
             .Some(id) => id,
             .None => exported.entry.id,
           }
-          methods_by_type = register_type_methods(methods_by_type, remapped_id, entries)
+          methods_by_type = register_type_methods(methods_by_type, remapped_id, remapped_entries)
         }
       },
       .None => {},

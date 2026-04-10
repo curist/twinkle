@@ -134,6 +134,17 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
   }
 }
 
+fn make_func_with_mono(body: AnfExpr, op_result_mono: Dict<Int, MonoType>) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(1),
+    name: "test",
+    params: [],
+    op_result_mono: op_result_mono,
+    body: body,
+    return_ty: .Void,
+  }
+}
+
 // ── Phase 1: Tainted detection (params) ─────────────────────────────
 
 fn test_params_tainted_no_rewrite() Result<Void, String> {
@@ -1189,6 +1200,39 @@ fn test_loop_rewrite_continues_into_cont() Result<Void, String> {
 
 // ── Issue 2: max_local_in_op must visit pattern-bound locals ────────
 
+fn test_loop_rewrite_authors_builder_monos() Result<Void, String> {
+  loop_body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+      .Continue))
+  body: AnfExpr = .Let(lid(0),
+    .AArrayLit([]),
+    .Let(lid(3), .ALoop(loop_body),
+      .Atom(.ALocal(lid(0)))))
+  monos: Dict<Int, MonoType> = Dict.new()
+  monos[0] = .Vector(.Int)
+  monos[1] = .Vector(.Int)
+  monos[2] = .Void
+  monos[3] = .Void
+  result := rewrite(make_func_with_mono(body, monos))
+
+  case result.op_result_mono[4] {
+    .Some(.Vector(.Int)) => {},
+    .Some(_) => { return .Err("expected builder local mono Vector<Int>") },
+    .None => { return .Err("expected builder local mono entry") },
+  }
+  case result.op_result_mono[5] {
+    .Some(.Vector(.Int)) => {},
+    .Some(_) => { return .Err("expected freeze local mono Vector<Int>") },
+    .None => { return .Err("expected freeze local mono entry") },
+  }
+  case result.op_result_mono[6] {
+    .Some(.Void) => .Ok({}),
+    .Some(_) => .Err("expected assign local mono Void"),
+    .None => .Err("expected assign local mono entry"),
+  }
+}
+
 fn test_max_local_pattern_bindings() Result<Void, String> {
   // A Variant pattern binds a local with a high ID that is unused in the body.
   // max_local_in_op must walk patterns, not just bodies.
@@ -1279,6 +1323,7 @@ pub fn suite() runner.Suite {
   // Phase 3: loop region rewrite
   s = s.test("loop accumulator → builder_new", test_loop_accumulator_rewrite)
   s = s.test("loop accumulator → builder_from", test_loop_accumulator_from)
+  s = s.test("loop rewrite authors builder monos", test_loop_rewrite_authors_builder_monos)
   s = s.test("loop tainted → no builder rewrite", test_loop_tainted_no_rewrite)
   s = s.test("loop base used in non-push way", test_loop_base_used_non_push)
   s = s.test("loop push in conditional branch", test_loop_push_in_branch)

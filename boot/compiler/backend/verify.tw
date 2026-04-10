@@ -388,8 +388,13 @@ fn verify_op(
       .Ok({})
     },
     .AInit(atom) => {
-      try verify_atom_use(pf, atom, "init value", module_globals)
-      verify_value_for_slot(pf, result_info, atom, funcs_by_id, module_globals, "init value")
+      case result_info.role {
+        .DeadPlaceholder => verify_dead_placeholder_value(pf, result_info, atom, funcs_by_id, module_globals, "init value"),
+        _ => {
+          try verify_atom_use(pf, atom, "init value", module_globals)
+          verify_value_for_slot(pf, result_info, atom, funcs_by_id, module_globals, "init value")
+        },
+      }
     },
     .AAssign(target, atom) => {
       target_info := try slot_info(pf, target, "assign target")
@@ -717,6 +722,34 @@ fn pattern_uses_variant(pattern: PreparedPattern) Bool {
   case pattern {
     .Variant(_, _, _) => true,
     _ => false,
+  }
+}
+
+fn verify_dead_placeholder_value(
+  pf: PreparedFunc,
+  target: SlotInfo,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  context: String,
+) Result<Void, String> {
+  case atom {
+    .ALitVoid => { return .Ok({}) },
+    _ => {},
+  }
+  case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+    .Some(actual) => {
+      if mono_eq(actual, .Never) {
+        .Ok({})
+      } else {
+        fail_slot(
+          pf,
+          target,
+          "${context} for dead placeholder has mono ${mono_name(actual)}, expected Never",
+        )
+      }
+    },
+    .None => .Ok({}),
   }
 }
 

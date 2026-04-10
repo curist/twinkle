@@ -33,6 +33,23 @@ cargo test
 cargo run --release -- run boot/tests/main.tw
 ```
 
+### Preferred boot compiler self-host loop
+When iterating on the boot compiler, prefer the compiled Node.js runner path over
+`cargo run --release -- run ...` for self-hosting commands because it is much
+faster in this repository.
+
+Typical workflow:
+```bash
+cargo run --release -- build boot/main.tw -o target/boot-main.wasm
+node tools/run_wasm_node.mjs target/boot-main.wasm -- build boot/main.tw
+```
+
+Use the same runner for other boot compiler commands, for example:
+```bash
+node tools/run_wasm_node.mjs target/boot-main.wasm -- ir boot/main.tw --opt
+node tools/run_wasm_node.mjs target/boot-main.wasm -- run boot/tests/main.tw
+```
+
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
 - `TWINKLE_ROOT` env var overrides project root (see Modules & Imports below).

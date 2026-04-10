@@ -352,6 +352,44 @@ fn test_collects_locals_inside_defer_body() Result<Void, String> {
 }
 
 // Closure free vars can reference locals declared earlier inside a match arm.
+fn test_nested_pattern_scrutinee_uses_pattern_mono() Result<Void, String> {
+  mono: Dict<Int, MonoType> = Dict.new()
+  mono[1] = MonoType.Int
+  func := mk_func_def(100, "nested_pattern_mono",
+    [Param.{ local: mk_local(0), ty: MonoType.Optional(MonoType.Optional(MonoType.Int)) }],
+    MonoType.Int,
+    .Let(mk_local(1), .AMatch(.ALocal(mk_local(0)), [
+      AnfMatchArm.{
+        pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.Var(mk_local(2))]),
+        body: .Let(mk_local(4), .AMatch(.ALocal(mk_local(2)), [
+          AnfMatchArm.{
+            pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.Var(mk_local(3))]),
+            body: .Atom(.ALocal(mk_local(3))),
+          },
+          AnfMatchArm.{
+            pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, []),
+            body: .Atom(.ALitInt(0)),
+          },
+        ]),
+          .Atom(.ALocal(mk_local(4)))),
+      },
+      AnfMatchArm.{
+        pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, []),
+        body: .Atom(.ALitInt(0)),
+      },
+    ]),
+    .Atom(.ALocal(mk_local(1)))),
+    mono,
+  )
+  pf := assign_slots(func, no_captures(), resolver.empty_env())
+
+  try assert_role(pf, 2, .PatternLocal)
+  try assert_role(pf, 3, .PatternLocal)
+  try assert_mono(pf, 2, MonoType.Optional(MonoType.Int))
+  try assert_mono(pf, 3, MonoType.Int)
+  .Ok({})
+}
+
 fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
   mono: Dict<Int, MonoType> = Dict.new()
   mono[1] = MonoType.String
@@ -403,5 +441,6 @@ pub fn suite() runner.Suite {
     .test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns)
     .test("source locals are unique", test_source_locals_are_unique)
     .test("collects locals inside defer body", test_collects_locals_inside_defer_body)
+    .test("nested pattern scrutinee uses pattern mono", test_nested_pattern_scrutinee_uses_pattern_mono)
     .test("collects arm locals used as closure free vars", test_collects_arm_locals_used_as_closure_free_vars)
 }

@@ -3,8 +3,15 @@
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
 use compiler.builder_family.{BuilderConfig}
+use compiler.resolver.{MonoType}
 use compiler.opt.analysis.{analyze_loop_push_sites, count_global_call_sites, loop_push_reassign_elem}
 use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
+
+pub type LoopRewrite = .{
+  expr: AnfExpr,
+  mono_updates: Dict<Int, MonoType>,
+  next_local: Int,
+}
 
 fn rewrite_loop_expr(expr: AnfExpr, base: LocalId, builder: LocalId, push_id: FuncId, builder_push_id: FuncId) AnfExpr {
   case expr {
@@ -53,7 +60,7 @@ fn rewrite_loop_op_subexpr(op: AnfOp, base: LocalId, builder: LocalId, push_id: 
   }
 }
 
-pub fn rewrite_loop_region(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, base: LocalId, next_local: Int, use_builder_new: Bool, builder: BuilderConfig) AnfExpr? {
+pub fn rewrite_loop_region(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, base: LocalId, base_mono: MonoType, next_local: Int, use_builder_new: Bool, builder: BuilderConfig) LoopRewrite? {
   sites := try analyze_loop_push_sites(loop_body, base, builder.push_id)
   if sites == 0 { return .None }
 
@@ -83,5 +90,14 @@ pub fn rewrite_loop_region(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExp
     cont: cont,
   }
 
-  .Some(lower_builder_region(region, builder))
+  mono_updates: Dict<Int, MonoType> = Dict.new()
+  mono_updates[builder_local.id] = base_mono
+  mono_updates[freeze_local.id] = base_mono
+  mono_updates[assign_local.id] = .Void
+
+  .Some(LoopRewrite.{
+    expr: lower_builder_region(region, builder),
+    mono_updates: mono_updates,
+    next_local: next_local + 3,
+  })
 }

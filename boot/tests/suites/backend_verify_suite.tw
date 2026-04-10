@@ -199,6 +199,18 @@ pub fn suite() runner.Suite {
     verify_err(prepared, "uses dead placeholder slot")
   })
 
+  .test("dead placeholder init into dead placeholder is allowed", fn() {
+    body: AnfExpr = .Let(lid(10),
+      .AIf(.ALitBool(true),
+        .Return(.Some(.ALitInt(1))),
+        .Return(.Some(.ALitInt(2)))),
+      .Let(lid(11),
+        .AInit(.ALocal(lid(10))),
+        .Atom(.ALitInt(0))))
+    prepared := prepared_module([], body, mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]), .Int)
+    assert.is_ok(verify_prepared_module(prepared, empty_env()))
+  })
+
   .test("if condition with non-bool repr is rejected", fn() {
     body: AnfExpr = .Let(lid(10),
       .AInit(.ALitVoid),

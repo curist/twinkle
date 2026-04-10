@@ -30,9 +30,9 @@ fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<Void, Stri
     .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue))
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), 10, true, mock_builder_config()) {
+  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, true, mock_builder_config()) {
     .Some(result) => {
-      case result {
+      case result.expr {
         .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
           try assert.int_eq(f.id, mock_builder_new().id)
           assert.int_eq(args.len(), 0)
@@ -50,9 +50,9 @@ fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<Void, Strin
     .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue))
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), 10, false, mock_builder_config()) {
+  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, false, mock_builder_config()) {
     .Some(result) => {
-      case result {
+      case result.expr {
         .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
           try assert.int_eq(f.id, mock_builder_from().id)
           try assert.int_eq(args.len(), 1)
@@ -74,7 +74,7 @@ fn test_rewrite_loop_region_rejects_non_push_base_use() Result<Void, String> {
     .Continue)
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), 10, true, mock_builder_config()) {
+  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, true, mock_builder_config()) {
     .Some(_) => .Err("expected invalid loop region to be rejected"),
     .None => .Ok({}),
   }
