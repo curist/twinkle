@@ -47,6 +47,7 @@ fn pvec_() ValType { ref_nn("rt_types__PVec") }
 fn dict_n() ValType { ref_null("rt_types__Dict") }
 fn dict_() ValType { ref_nn("rt_types__Dict") }
 fn variant_() ValType { ref_nn("rt_types__Variant") }
+fn variant_null() ValType { ref_null("rt_types__Variant") }
 fn closure_n() ValType { ref_null("rt_types__Closure") }
 fn cell_n() ValType { ref_null("rt_types__Cell") }
 
@@ -85,7 +86,7 @@ fn builtin_abi(name: String) AbiContract {
     "dict_has" => abi([dict_n(), ValType.Anyref], [ValType.I32]),
     "dict_remove" => abi([dict_n(), ValType.Anyref], [dict_()]),
     "dict_remove_in_place" => abi([dict_n(), ValType.Anyref], [dict_()]),
-    "host_read_file" => abi([str_n()], [ValType.Anyref]),
+    "host_read_file" => abi([str_n()], [variant_null()]),
     "host_write_file" => abi([str_n(), str_n()], []),
     "host_write_bytes" => abi([str_n(), arr_n()], []),
     "host_mkdirp" => abi([str_n()], []),
@@ -107,6 +108,29 @@ fn builtin_abi(name: String) AbiContract {
     "cell_get" => abi([cell_n()], [ValType.Anyref]),
     "cell_set" => abi([cell_n(), ValType.Anyref], []),
     "cell_update" => abi([cell_n(), closure_n()], []),
+    // String intrinsics
+    "string_to_string" => abi([str_n()], [str_()]),
+    "string_get" => abi([str_n(), ValType.I64], [ValType.Anyref]),
+    "string_slice" => abi([str_n(), ValType.I64, ValType.I64], [str_()]),
+    "char_code_at" => abi([str_n(), ValType.I64], [ValType.I64]),
+    "from_char_code" => abi([ValType.I64], [ValType.Anyref]),
+    "from_code_point" => abi([ValType.I64], [ValType.Anyref]),
+    "string_utf8_bytes" => abi([str_n()], [pvec_()]),
+    "string_from_utf8" => abi([pvec_n()], [ValType.Anyref]),
+    // Byte intrinsics
+    "byte_to_int" => abi([ValType.I32], [ValType.I64]),
+    "byte_from_int" => abi([ValType.I64], [ValType.Anyref]),
+    "byte_to_string" => abi([ValType.I32], [str_()]),
+    // Range intrinsics
+    "range" => abi([ValType.I64], [ValType.Anyref]),
+    "range_from" => abi([ValType.I64, ValType.I64], [ValType.Anyref]),
+    "range_step" => abi([ValType.I64, ValType.I64, ValType.I64], [ValType.Anyref]),
+    // Iterator intrinsics
+    "iterator_next" => abi([ValType.Anyref], [ValType.Anyref]),
+    "iterator_unfold" => abi([ValType.Anyref, closure_n()], [ValType.Anyref]),
+    // Numeric parsing
+    "int_from_string" => abi([str_n()], [ValType.Anyref]),
+    "float_from_string" => abi([str_n()], [ValType.Anyref]),
     _ => empty_abi(),
   }
 }

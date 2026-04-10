@@ -99,7 +99,7 @@ fn rewrite_func(
 }
 
 fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
-  assert.err_contains(verify_prepared_module(prepared, empty_env()), expected)
+  assert.err_contains(verify_prepared_module(prepared, empty_env(), empty_builtins()), expected)
 }
 
 fn slots_without(pf: PreparedFunc, skip_sid: Int) Dict<Int, SlotInfo> {
@@ -150,7 +150,7 @@ pub fn suite() runner.Suite {
       body,
       mk_mono_map([10], [MonoType.Int]),
       .Int)
-    assert.is_ok(verify_prepared_module(prepared, empty_env()))
+    assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
   })
 
   .test("missing slot referenced from body is rejected", fn() {
@@ -208,7 +208,7 @@ pub fn suite() runner.Suite {
         .AInit(.ALocal(lid(10))),
         .Atom(.ALitInt(0))))
     prepared := prepared_module([], body, mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]), .Int)
-    assert.is_ok(verify_prepared_module(prepared, empty_env()))
+    assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
   })
 
   .test("if condition with non-bool repr is rejected", fn() {

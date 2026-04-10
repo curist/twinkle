@@ -64,7 +64,7 @@ pub fn codegen(
   // 3. Verify prepared backend IR.
   //    This is the hard stop before planning/emission can drift into
   //    unreadable later failures.
-  case verify_prepared_module(prepared, env) {
+  case verify_prepared_module(prepared, env, builtins) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }

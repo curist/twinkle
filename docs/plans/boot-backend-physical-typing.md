@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+Done for the current stabilization scope.
 
 ## Plan Role
 
@@ -331,6 +331,33 @@ Exit criteria:
 - active backend cleanup work can be driven from the inventory instead of from
   validator offsets alone
 
+## Outcome
+
+This plan's current Milestones 1–4 are complete enough for the original
+problem scope.
+
+What landed in this pass:
+
+- canonical runtime argument/result coercion centered on `emit_coerce_stack`
+- named ABI shims for runtime/host surfaces that reshape representations
+  without mixing that logic into coercion rules
+- erased container ingress/egress cleanup across the main vector/dict/runtime
+  surfaces used by self-hosting
+- explicit field/payload coercion in typed record, variant, and update emission
+- verifier checks for missing erased-boundary adaptation at call edges plus
+  field/payload compatibility checks tied to typed layouts
+
+Result:
+
+- the recurring `expected X, found anyref` / `expected anyref, found scalar`
+  class of self-hosted backend failures is no longer the active blocker
+- self-hosted build/validate work gets past the original physical typing
+  failures that motivated this plan
+
+The current self-hosting blocker has moved elsewhere: sum match/pattern
+lowering for user sums is now the active failure source. That work belongs back
+under the umbrella repr parity plan rather than extending this plan's scope.
+
 ## Reproduction And Validation Loop
 
 Use the repository's preferred self-host loop so backend changes can be checked
@@ -386,16 +413,18 @@ Working conventions:
 
 - [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md)
   tracks the broader self-hosting representation gap that exposed these bugs.
-  This plan is the implementation discipline for one major slice of that work:
+  This plan was the implementation discipline for one major slice of that work:
   physical backend typing at erased boundaries.
 - [backend-anyref-elimination.md](backend-anyref-elimination.md) defines the
   longer-term destination where many of these erased boundaries disappear
-  entirely. This plan is a nearer-term stabilization step that makes the current
-  erased boundaries explicit and correct before they are removed.
+  entirely. This plan remains the nearer-term stabilization step that made the
+  current erased boundaries explicit and correct before they are removed.
 
 In sequence:
 
 1. parity plan identifies the blocker category and owns current status
-2. this plan stabilizes the current backend by centralizing coercion and
-   verification
-3. `anyref` elimination removes the remaining erased surfaces structurally
+2. this plan stabilized the current backend by centralizing coercion and
+   verification for erased-boundary physical typing
+3. current self-hosted failures now move back to the parity plan's remaining
+   repr/match-lowering work
+4. `anyref` elimination removes the remaining erased surfaces structurally

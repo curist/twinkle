@@ -33,6 +33,11 @@ That makes fixing the next failing site feel like whack-a-mole. The problem is
 no longer a single bad remap or one missing substitution; it is a representation
 parity gap.
 
+Recent progress narrowed that gap: the erased-boundary physical typing cleanup
+is now complete enough for its original scope, and current failures are no
+longer led by Wasm physical type mismatches. The active blocker has moved to
+sum match/pattern lowering for user sums in self-hosted code.
+
 ## Goal
 
 Make boot self-hosted Wasm codegen use a coherent, explicit representation model
@@ -96,7 +101,10 @@ Recommended execution order:
 1. use this plan to track active self-hosting blockers and repr categories
 2. execute the physical typing plan to stop recurring validator mismatches in
    the current backend architecture
-3. use the `anyref` elimination plan to replace remaining erased families once
+3. once that physical-typing scope is complete, continue remaining self-hosted
+   repr work here — currently centered on sum match/pattern lowering rather than
+   erased-boundary coercion
+4. use the `anyref` elimination plan to replace remaining erased families once
    self-hosted stability is no longer advancing one boundary bug at a time
 
 ## Strategy

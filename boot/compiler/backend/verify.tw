@@ -11,12 +11,13 @@
 // land later once planning/emission migration makes more operations fully
 // prepared-IR-driven.
 
-use compiler.backend.prepared_ir.{PreparedMatchArm}
-use compiler.core_ir.{LocalId}
+use compiler.backend.prepared_ir.{PreparedMatchArm, PreparedFieldAtom}
+use compiler.core_ir.{LocalId, FieldId, VariantId}
 use compiler.anf.{OpKind}
 use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
-use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.backend.prepared_ir.{
   CaptureParam, SlotId, SlotRole, SlotInfo, ReprKind, PreparedFunc,
   PreparedExpr, PreparedOp, PreparedAtom, PreparedPattern,
@@ -27,6 +28,7 @@ use compiler.backend.repr_assign.{repr_of_mono}
 pub fn verify_prepared_module(
   prepared: PreparedModule,
   env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
   for pf in prepared.funcs {
@@ -42,7 +44,7 @@ pub fn verify_prepared_module(
   module_globals := build_module_globals(prepared)
 
   for pf in prepared.funcs {
-    try verify_prepared_func(pf, prepared.closure_captures, funcs_by_id, env, module_globals)
+    try verify_prepared_func(pf, prepared.closure_captures, funcs_by_id, env, module_globals, builtins)
   }
 
   .Ok({})
@@ -77,6 +79,7 @@ fn verify_prepared_func(
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
   module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
   for sid in pf.captures {
     try verify_slot_membership(pf, sid, .CaptureParam, env, "capture slot")
@@ -102,7 +105,7 @@ fn verify_prepared_func(
   }
 
   try verify_capture_alignment(pf, closure_captures)
-  try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, pf.body)
+  try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, pf.body)
 
   .Ok({})
 }
@@ -246,13 +249,14 @@ fn verify_expr(
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
   module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
   expr: PreparedExpr,
 ) Result<Void, String> {
   case expr {
     .Let(slot, op, body) => {
       result_info := try slot_info(pf, slot, "let result")
-      try verify_op(pf, closure_captures, funcs_by_id, env, module_globals, result_info, op)
-      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, body)
+      try verify_op(pf, closure_captures, funcs_by_id, env, module_globals, builtins, result_info, op)
+      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body)
     },
     .Atom(atom) => verify_atom_mapped(pf, atom, "atom", module_globals),
     .Return(atom) => verify_return_expr(pf, atom, funcs_by_id, module_globals),
@@ -267,6 +271,7 @@ fn verify_op(
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
   module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
   result_info: SlotInfo,
   op: PreparedOp,
 ) Result<Void, String> {
@@ -274,14 +279,14 @@ fn verify_op(
     .ACall(callee, args) => {
       try verify_call_callee(pf, callee, module_globals)
       for arg in args { try verify_atom_use(pf, arg, "call arg", module_globals) }
-      try verify_call_shape(pf, callee, args, funcs_by_id, module_globals)
+      try verify_call_shape(pf, callee, args, funcs_by_id, module_globals, env, builtins)
       .Ok({})
     },
     .AIf(cond, then_e, else_e) => {
       try verify_atom_use(pf, cond, "if condition", module_globals)
       try verify_condition_atom(pf, cond, module_globals, env)
-      try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, then_e)
-      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, else_e)
+      try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, then_e)
+      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, else_e)
     },
     .AMatch(scrutinee, arms) => {
       try verify_atom_use(pf, scrutinee, "match scrutinee", module_globals)
@@ -290,11 +295,11 @@ fn verify_op(
       }
       for arm in arms {
         try verify_pattern_bindings(pf, arm.pattern)
-        try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, arm.body)
+        try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, arm.body)
       }
       .Ok({})
     },
-    .ALoop(body) => verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, body),
+    .ALoop(body) => verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body),
     .ABinOp(_, lhs, rhs, kind) => {
       try verify_atom_use(pf, lhs, "binary lhs", module_globals)
       try verify_atom_use(pf, rhs, "binary rhs", module_globals)
@@ -358,22 +363,25 @@ fn verify_op(
     .ARecord(_, fields) => {
       for field in fields { try verify_atom_use(pf, field.value, "record field", module_globals) }
       try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record literal result")
+      try verify_record_field_payloads(pf, result_info, fields, funcs_by_id, module_globals, env, "record field")
       .Ok({})
     },
     .ARecordGet(target, _, _) => {
       try verify_atom_use(pf, target, "record get target", module_globals)
       require_local_repr_if_local(pf, target, [.TypedRef(.Void)], "record get target", module_globals, env)
     },
-    .ARecordUpdate(base, _, value, _, _) => {
+    .ARecordUpdate(base, fid, value, _, _) => {
       try verify_atom_use(pf, base, "record update base", module_globals)
       try verify_atom_use(pf, value, "record update value", module_globals)
       try require_local_repr_if_local(pf, base, [.TypedRef(.Void)], "record update base", module_globals, env)
       try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record update result")
+      try verify_record_update_value(pf, result_info, fid, value, funcs_by_id, module_globals, env)
       .Ok({})
     },
-    .AVariant(_, _, args) => {
+    .AVariant(_, vid, args) => {
       for arg in args { try verify_atom_use(pf, arg, "variant arg", module_globals) }
       try require_result_repr(pf, result_info, [.TypedSum(.Void)], "variant result")
+      try verify_variant_payloads(pf, result_info, vid, args, funcs_by_id, module_globals, env)
       .Ok({})
     },
     .AArrayLit(items) => {
@@ -402,7 +410,7 @@ fn verify_op(
       try verify_atom_use(pf, atom, "assign value", module_globals)
       verify_value_for_slot(pf, target_info, atom, funcs_by_id, module_globals, "assign value")
     },
-    .ADefer(body) => verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, body),
+    .ADefer(body) => verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body),
     .AWrapAnyref(atom, _) => {
       try verify_atom_use(pf, atom, "wrap operand", module_globals)
       try require_result_repr(pf, result_info, [.OpaqueAnyref], "wrap result")
@@ -440,6 +448,8 @@ fn verify_call_shape(
   args: Vector<PreparedAtom>,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
   case callee {
     .ASlot(sid) => {
@@ -455,6 +465,8 @@ fn verify_call_shape(
           }
           for arg,i in args {
             try verify_call_arg_type(pf, arg, params[i], funcs_by_id, module_globals, "closure call arg ${i}")
+            expected_repr := repr_of_mono(params[i], env)
+            try verify_call_arg_repr(pf, arg, expected_repr, module_globals, env, "closure call arg ${i}")
           }
           .Ok({})
         },
@@ -473,13 +485,55 @@ fn verify_call_shape(
           for arg,i in args {
             expected_info := try slot_info(target, target.params[i], "direct call param")
             try verify_call_arg_type(pf, arg, expected_info.mono, funcs_by_id, module_globals, "direct call arg ${i} to ${target.name}")
+            try verify_call_arg_repr(pf, arg, expected_info.repr, module_globals, env, "direct call arg ${i} to ${target.name}")
           }
           .Ok({})
         },
-        .None => .Ok({}),
+        .None => verify_builtin_call_shape(pf, fid.id, args, module_globals, funcs_by_id, env, builtins),
       }
     },
     _ => .Ok({}),
+  }
+}
+
+fn abi_has_types(param_types: Vector<ValType>, result_types: Vector<ValType>) Bool {
+  param_types.len() > 0 or result_types.len() > 0
+}
+
+fn verify_builtin_call_shape(
+  pf: PreparedFunc,
+  fid: Int,
+  args: Vector<PreparedAtom>,
+  module_globals: Dict<Int, MonoType>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) Result<Void, String> {
+  case builtins.by_id[fid] {
+    .None => .Ok({}),
+    .Some(entry) => {
+      if !abi_has_types(entry.abi.param_types, entry.abi.result_types) {
+        return .Ok({})
+      }
+      if args.len() != entry.abi.param_types.len() {
+        return fail_func(
+          pf,
+          "builtin call to ${entry.name} (F${fid}) passes ${args.len()} arg(s), expected ${entry.abi.param_types.len()}",
+        )
+      }
+      for arg,i in args {
+        try verify_atom_coercible_to_val_type(
+          pf,
+          arg,
+          entry.abi.param_types[i],
+          funcs_by_id,
+          module_globals,
+          env,
+          "builtin call arg ${i} to ${entry.name}",
+        )
+      }
+      .Ok({})
+    },
   }
 }
 
@@ -622,6 +676,195 @@ fn infer_atom_mono(
   }
 }
 
+fn infer_atom_val_type(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) ValType? {
+  case atom {
+    .ASlot(sid) => case pf.slots[sid.id] {
+      .Some(info) => .Some(info.wasm_type),
+      .None => .None,
+    },
+    .AGlobalLocal(lid) => case module_globals[lid.id] {
+      .Some(mono) => .Some(val_type_of_mono(mono, env)),
+      .None => .None,
+    },
+    .ALitInt(_) => .Some(.I64),
+    .ALitFloat(_) => .Some(.F64),
+    .ALitBool(_) => .Some(.I32),
+    .ALitStr(_) => .Some(val_type_of_mono(.String, env)),
+    .ALitVoid => .Some(.Anyref),
+    .AGlobalFunc(_) => .Some(.Ref(false, .Func)),
+  }
+}
+
+fn can_emit_coerce_stack(from: ValType, to: ValType) Bool {
+  if val_type_eq(from, to) { return true }
+  case to {
+    .Anyref => true,
+    _ => case from {
+      .Anyref => true,
+      .I32 => case to { .I64 => true, _ => false },
+      .I64 => case to { .I32 => true, _ => false },
+      .Ref(false, from_heap) => case to {
+        .Ref(true, to_heap) => heap_type_eq(from_heap, to_heap),
+        .Ref(_, _) => true,
+        _ => false,
+      },
+      .Ref(true, from_heap) => case to {
+        .Ref(false, to_heap) => heap_type_eq(from_heap, to_heap),
+        .Ref(_, _) => true,
+        _ => false,
+      },
+      _ => false,
+    },
+  }
+}
+
+fn verify_atom_coercible_to_val_type(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  expected_vt: ValType,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  context: String,
+) Result<Void, String> {
+  actual_vt := case infer_atom_val_type(pf, atom, module_globals, env) {
+    .Some(vt) => vt,
+    .None => {return .Ok({})},
+  }
+  if can_emit_coerce_stack(actual_vt, expected_vt) {
+    return .Ok({})
+  }
+  actual_mono := case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+    .Some(mono) => mono_name(mono),
+    .None => "unknown",
+  }
+  fail_func(
+    pf,
+    "${context} has unsupported physical edge ${val_type_name(actual_vt)} -> ${val_type_name(expected_vt)} [mono=${actual_mono}, arg=${describe_atom(pf, atom, funcs_by_id, module_globals)}]",
+  )
+}
+
+fn record_field_val_type(result_mono: MonoType, fid: Int, env: ResolvedEnv) ValType? {
+  case layout_of(result_mono, env) {
+    .Record(rec) => {
+      for fl in rec.fields {
+        if fl.field_id.id == fid { return .Some(fl.val_type) }
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn verify_record_field_payloads(
+  pf: PreparedFunc,
+  result_info: SlotInfo,
+  fields: Vector<PreparedFieldAtom>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  context: String,
+) Result<Void, String> {
+  for field in fields {
+    expected_vt := case record_field_val_type(result_info.mono, field.field.id, env) {
+      .Some(vt) => vt,
+      .None => {return fail_slot(pf, result_info, "record field ${field.field.id} missing from layout")},
+    }
+    try verify_atom_coercible_to_val_type(
+      pf,
+      field.value,
+      expected_vt,
+      funcs_by_id,
+      module_globals,
+      env,
+      "${context} ${field.field.id}",
+    )
+  }
+  .Ok({})
+}
+
+fn verify_record_update_value(
+  pf: PreparedFunc,
+  result_info: SlotInfo,
+  fid: FieldId,
+  value: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) Result<Void, String> {
+  expected_vt := case record_field_val_type(result_info.mono, fid.id, env) {
+    .Some(vt) => vt,
+    .None => {return fail_slot(pf, result_info, "record update field ${fid.id} missing from layout")},
+  }
+  verify_atom_coercible_to_val_type(
+    pf,
+    value,
+    expected_vt,
+    funcs_by_id,
+    module_globals,
+    env,
+    "record update field ${fid.id}",
+  )
+}
+
+fn verify_variant_payloads(
+  pf: PreparedFunc,
+  result_info: SlotInfo,
+  vid: VariantId,
+  args: Vector<PreparedAtom>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) Result<Void, String> {
+  payload_types: Vector<ValType> = case layout_of(result_info.mono, env) {
+    .Sum(sum) => {
+      for variant in sum.variants {
+        if variant.variant_id.id == vid.id { return verify_variant_payloads_for_types(pf, result_info, vid, args, variant.payload_types, funcs_by_id, module_globals, env) }
+      }
+      return fail_slot(pf, result_info, "variant ${vid.id} missing from sum layout")
+    },
+    _ => {return fail_slot(pf, result_info, "variant result has non-sum layout")},
+  }
+  payload_types
+  .Ok({})
+}
+
+fn verify_variant_payloads_for_types(
+  pf: PreparedFunc,
+  result_info: SlotInfo,
+  vid: VariantId,
+  args: Vector<PreparedAtom>,
+  payload_types: Vector<ValType>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) Result<Void, String> {
+  if args.len() != payload_types.len() {
+    return fail_slot(
+      pf,
+      result_info,
+      "variant ${vid.id} passes ${args.len()} payload arg(s), expected ${payload_types.len()}",
+    )
+  }
+  for arg,i in args {
+    try verify_atom_coercible_to_val_type(
+      pf,
+      arg,
+      payload_types[i],
+      funcs_by_id,
+      module_globals,
+      env,
+      "variant ${vid.id} payload ${i}",
+    )
+  }
+  .Ok({})
+}
+
 fn func_param_monos(pf: PreparedFunc) Vector<MonoType> {
   out: Vector<MonoType> = []
   for sid in pf.params {
@@ -691,6 +934,55 @@ fn verify_atom_use(
       }
     },
     _ => .Ok({}),
+  }
+}
+
+fn is_matchable_sum_mono(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Optional(_) => true,
+    .Result(_, _) => true,
+    .Named(tid, _) => {
+      case env.lookup_type_def(tid) {
+        .Some(.Sum(_, _, _)) => true,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+fn infer_match_scrutinee_mono(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) MonoType? {
+  case infer_atom_repr(pf, atom, module_globals, env) {
+    .Some(.TypedSum(sum_mono)) => .Some(sum_mono),
+    _ => infer_atom_mono(pf, atom, funcs_by_id, module_globals),
+  }
+}
+
+fn verify_match_scrutinee_mono(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) Result<Void, String> {
+  case infer_match_scrutinee_mono(pf, atom, funcs_by_id, module_globals, env) {
+    .Some(mono) => {
+      if is_matchable_sum_mono(mono, env) {
+        .Ok({})
+      } else {
+        fail_func(
+          pf,
+          "match scrutinee has non-matchable mono ${mono_name(mono)} [scrutinee=${describe_atom(pf, atom, funcs_by_id, module_globals)}]",
+        )
+      }
+    },
+    .None => .Ok({}),
   }
 }
 
@@ -980,6 +1272,87 @@ fn slot_info(pf: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, St
   case pf.slots[sid.id] {
     .None => .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} references missing slot S${sid.id}"),
     .Some(info) => .Ok(info),
+  }
+}
+
+// ── Call arg repr compatibility (Milestone 4a) ────────────────────────────
+//
+// Catches physical type mismatches at call edges before WAT emission:
+//   - erased (OpaqueAnyref/ErasedSum) arg passed to typed param → missing AUnwrapAnyref
+//   - scalar (I64/F64/I32) arg passed to erased param → missing AWrapAnyref
+//
+// Note: TypedRef/TypedSum/ClosureRef → OpaqueAnyref is allowed (implicit Wasm subtyping).
+// Future 4b work: add field payload repr checks for ARecord/AVariant using layout types.
+
+fn infer_atom_repr(
+  pf: PreparedFunc,
+  atom: PreparedAtom,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+) ReprKind? {
+  case atom {
+    .ASlot(sid) => case pf.slots[sid.id] {
+      .Some(info) => .Some(info.repr),
+      .None => .None,
+    },
+    .AGlobalLocal(lid) => case module_globals[lid.id] {
+      .Some(mono) => .Some(repr_of_mono(mono, env)),
+      .None => .None,
+    },
+    .ALitInt(_) => .Some(.I64),
+    .ALitFloat(_) => .Some(.F64),
+    .ALitBool(_) => .Some(.I32),
+    .ALitStr(_) => .Some(.TypedRef(.String)),
+    .ALitVoid => .Some(.OpaqueAnyref),
+    .AGlobalFunc(_) => .Some(.ClosureRef),
+  }
+}
+
+fn repr_is_erased(repr: ReprKind) Bool {
+  case repr { .OpaqueAnyref => true, .ErasedSum => true, _ => false }
+}
+
+fn repr_is_scalar(repr: ReprKind) Bool {
+  case repr { .I64 => true, .F64 => true, .I32 => true, _ => false }
+}
+
+fn repr_is_typed_value(repr: ReprKind) Bool {
+  case repr {
+    .I64 => true,
+    .F64 => true,
+    .I32 => true,
+    .TypedRef(_) => true,
+    .TypedSum(_) => true,
+    .ClosureRef => true,
+    _ => false,
+  }
+}
+
+fn verify_call_arg_repr(
+  pf: PreparedFunc,
+  arg: PreparedAtom,
+  expected_repr: ReprKind,
+  module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  context: String,
+) Result<Void, String> {
+  case infer_atom_repr(pf, arg, module_globals, env) {
+    .None => .Ok({}),
+    .Some(actual) => {
+      if repr_is_erased(actual) and repr_is_typed_value(expected_repr) {
+        return fail_func(
+          pf,
+          "${context} passes erased repr ${repr_name(actual)} to typed param repr ${repr_name(expected_repr)} — missing AUnwrapAnyref?",
+        )
+      }
+      if repr_is_scalar(actual) and repr_is_erased(expected_repr) {
+        return fail_func(
+          pf,
+          "${context} passes scalar repr ${repr_name(actual)} to erased param repr ${repr_name(expected_repr)} — missing AWrapAnyref?",
+        )
+      }
+      .Ok({})
+    },
   }
 }
 
