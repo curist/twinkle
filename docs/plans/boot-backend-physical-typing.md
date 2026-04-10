@@ -331,6 +331,41 @@ Exit criteria:
 - active backend cleanup work can be driven from the inventory instead of from
   validator offsets alone
 
+## Reproduction And Validation Loop
+
+Use the repository's preferred self-host loop so backend changes can be checked
+quickly and consistently.
+
+Primary commands:
+
+```bash
+cargo run --release --bin twk -- build boot/main.tw -o /tmp/boot.wasm
+node tools/run_wasm_node.mjs /tmp/boot.wasm -- build boot/main.tw
+wasm-tools validate --generate-dwarf full --features all boot/main.wat
+cargo run --release -- run boot/main.wat
+```
+
+What each step is for:
+
+1. `cargo run --release --bin twk -- build ...`
+   - rebuild the boot compiler Wasm with stage0 Rust codegen
+2. `node tools/run_wasm_node.mjs /tmp/boot.wasm -- build boot/main.tw`
+   - run the boot compiler itself and regenerate `boot/main.wat`
+3. `wasm-tools validate --generate-dwarf full --features all boot/main.wat`
+   - catch physical type mismatches early with function/offset/source location
+     information
+4. `cargo run --release -- run boot/main.wat`
+   - exercise the runtime/import side after validation succeeds
+
+Working conventions:
+
+- prefer the Node runner path above over slower `cargo run --release -- run ...`
+  based self-host loops when iterating on boot backend fixes
+- treat `boot/main.wat` as a generated debugging artifact and do not commit it
+- when validation reports a byte offset, use the generated-dwarf location first;
+  if needed, inspect the nearby WAT and use `wasm-tools` around the reported
+  offset to find the exact instruction edge
+
 ## Immediate Next Steps
 
 1. Consolidate the recently added runtime/container coercion fixes under one
