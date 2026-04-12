@@ -7,6 +7,8 @@
 
 use @std.fs
 use @std.path
+use @std.date
+use @std.proc
 use compiler.parser
 use compiler.resolver.{
   ResolvedEnv, ModuleExports, TypeEntry,
@@ -94,16 +96,30 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     return .Err("no modules compiled")
   }
 
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+
   // Link all compiled modules into a single CoreModule
+  t0 := date.now()
   core := core_linker.link(
     state.compiled_modules,
     canonical_entry,
     result.env,
     state.builtins.next_id,
   )
+  t1 := date.now()
+  if timed { eprintln("[time] core_link: ${Float.to_string(t1 - t0)}ms") }
+
   mono := monomorphize.monomorphize(core)
+  t2 := date.now()
+  if timed { eprintln("[time] monomorphize: ${Float.to_string(t2 - t1)}ms") }
+
   anf := lower_anf.lower_module(mono)
+  t3 := date.now()
+  if timed { eprintln("[time] lower_anf: ${Float.to_string(t3 - t2)}ms") }
+
   opt := optimize_module(anf)
+  t4 := date.now()
+  if timed { eprintln("[time] optimize: ${Float.to_string(t4 - t3)}ms") }
 
   .Ok(.{
     env: result.env,

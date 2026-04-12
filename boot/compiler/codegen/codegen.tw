@@ -8,6 +8,8 @@
 // through that boundary. See boot/compiler/backend/prepare.tw for the
 // migration contract and per-phase plan.
 
+use @std.date
+use @std.proc
 use compiler.resolver.{ResolvedEnv}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.anf.{AnfModule}
@@ -27,6 +29,14 @@ use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.verify.{verify_prepared_module}
 use compiler.backend.closure_convert.{convert_closures}
 
+fn timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+}
+
+fn log_time(label: String, ms: Float) {
+  eprintln("[time] ${label}: ${Float.to_string(ms)}ms")
+}
+
 pub fn runtime_modules() Vector<WasmModule> {
   [
     rt_types.module(),
@@ -43,35 +53,41 @@ pub fn link_program(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) LinkedModule {
+  timed := timings_enabled()
+
   // 1. Final closure conversion.
-  //    Must happen before preparation so rewritten hoisted bodies and capture
-  //    metadata stay in sync across the backend pipeline.
+  t0 := date.now()
   closure_conversion := convert_closures(anf, env)
+  t1 := date.now()
+  if timed { log_time("closure_convert", t1 - t0) }
 
   // 2. Prepare backend IR.
-  //    Boundary insertion happens inside prepare_backend().
-  //    prepared.anf holds post-boundary ANF; slot maps include boundary temps.
-  //    This is the boundary between optimized semantic ANF and the backend.
   prepared := prepare_backend(
     closure_conversion.anf,
     env,
     builtins,
     closure_conversion.captures,
   )
+  t2 := date.now()
+  if timed { log_time("prepare_backend", t2 - t1) }
 
   // 3. Verify prepared backend IR.
-  //    This is the hard stop before planning/emission can drift into
-  //    unreadable later failures.
   case verify_prepared_module(prepared, env, builtins) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }
+  t3 := date.now()
+  if timed { log_time("verify", t3 - t2) }
 
   // 4. Plan Wasm types from prepared backend IR.
   registry := plan_wasm_types(prepared, env, builtins)
+  t4 := date.now()
+  if timed { log_time("plan_wasm_types", t4 - t3) }
 
   // 5. Emit user module from prepared backend IR.
   user_module := emit_module(prepared, registry, builtins, env)
+  t5 := date.now()
+  if timed { log_time("emit_module", t5 - t4) }
 
   // 6. Link with runtime
   modules := runtime_modules().append(user_module)
@@ -89,6 +105,8 @@ pub fn link_program(
       error(msg)
     },
   }
+  t6 := date.now()
+  if timed { log_time("link", t6 - t5) }
 
   linked
 }
