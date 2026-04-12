@@ -11,8 +11,8 @@ to in-place mutations where safe. All passes operate directly on the structured 
 
 1. **Fixed-point loop** (max 10 rounds): dead let elimination, copy propagation,
    constant folding, branch simplification -- repeated until no pass reports a change.
-2. **Post-loop passes** (single shot each): liveness-based record update annotation,
-   uniqueness/COW rewrite, defer elimination.
+2. **Post-loop passes** (single shot each): uniqueness/COW rewrite,
+   defer elimination.
 
 ```
 AnfModule
@@ -20,8 +20,7 @@ AnfModule
        loop {
          dead_let_elim -> copy_propagate -> constant_fold -> branch_simplify
        } until stable (or 10 rounds)
-       -> annotate_in_place   (liveness)
-       -> uniqueness_rewrite  (COW elimination)
+       -> uniqueness_rewrite  (ownership/COW elimination)
        -> eliminate_defers    (must be last)
   -> optimized AnfModule
 ```
@@ -114,7 +113,7 @@ into the continuation. Splicing walks the branch's let-chain:
 - If it ends in a terminal (`Return`/`Break`/`Continue`), drops the unreachable
   continuation.
 
-### liveness.tw -- Liveness Analysis & Record Update Annotation
+### liveness.tw -- Liveness Analysis & Standalone Record Update Annotation Helper
 
 **Liveness**: backward dataflow walk computing `live_after(expr)` -- the set of locals
 that may be read at or after each program point.
@@ -125,8 +124,10 @@ that may be read at or after each program point.
 - `AAssign(target, value)`: kills `target`, adds locals in `value`
 
 **annotate_in_place**: walks `ARecordUpdate` nodes and sets `can_reuse_in_place = true`
-when the base local is dead in the continuation. This tells the WAT backend it may emit
-`struct.set` (in-place mutation) instead of allocating a new struct.
+when the base local is dead in the continuation and is not a function parameter.
+This helper remains useful for focused tests and local reasoning about liveness,
+but the main optimization pipeline now relies on `uniqueness.tw` as the single
+owner of in-place reuse decisions.
 
 ### semantics.tw -- Shared Optimizer Semantics
 
@@ -161,17 +162,21 @@ in `analysis.tw`, and delegates loop-region builder construction to
 - Locals passed to non-COW, non-read-only calls
 - Alias copies (`let y = x` or `y = x`) where the source is still live after
 
-**Phase 2 -- Forward rewrite**: tracks a `unique` set of locals known to have sole
-ownership. Forward walk through the let-chain:
-- Fresh producers (`vector_make`, `dict_new`, array/record/variant literals) make
-  their result unique
-- `AInit(ALocal(src))` transfers uniqueness from source to target (source loses it)
-- `AAssign(target, ALocal(src))` similarly transfers
-- COW ops (`vector_set_unsafe`, `dict_set`, `dict_remove`) on a unique, non-tainted
-  base with a consume-reassign or dead-base pattern are rewritten to their in-place
-  counterparts (`vector_set_in_place`, `dict_set_in_place`, `dict_remove_in_place`)
-- `ARecordUpdate` on unique base gets `can_reuse_in_place = true`
-- Branches/loops are conservative: unique sets are not propagated out
+**Phase 2 -- Forward rewrite**: tracks ownership classes for locals rather than a
+single `unique` bit. Forward walk through the let-chain:
+- Deep producers (`vector_make`, `dict_new`, array literals, fresh collection results)
+  make their result deeply owned
+- Fresh wrapper aggregates such as records, record updates, and variants are tracked
+  as shallowly owned unless stronger proof exists
+- `AInit(ALocal(src))` and `AAssign(target, ALocal(src))` transfer the current
+  ownership class from source to target
+- COW ops (`vector_set_unsafe`, `dict_set`, `dict_remove`) require a deeply owned,
+  non-tainted base plus a consume-reassign or dead-base pattern before rewriting to
+  their in-place counterparts (`vector_set_in_place`, `dict_set_in_place`,
+  `dict_remove_in_place`)
+- `ARecordUpdate` shell reuse is decided in the same ownership-driven pass rather
+  than by a separate pipeline stage
+- Branches/loops are conservative: ownership facts are not propagated out
 
 **Phase 3 -- Loop region rewrite**: transforms the accumulator pattern
 `v = []; for ... { v = v.push(x) }` into the builder pattern

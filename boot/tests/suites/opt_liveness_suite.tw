@@ -24,6 +24,17 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
   }
 }
 
+fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(1),
+    name: "test",
+    params: params,
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
 // ── live_after: basic atom ──────────────────────────────────────────
 
 fn test_live_atom_local() Result<Void, String> {
@@ -272,6 +283,26 @@ fn test_annotate_nested_in_if() Result<Void, String> {
   }
 }
 
+// ── annotate_in_place: param base stays non-reusable ────────────────
+
+fn test_annotate_param_base_dead() Result<Void, String> {
+  // Function params come from outside the function, so a dead-base update should
+  // not mark the record update reusable in place.
+  body: AnfExpr = .Let(lid(1),
+    .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
+    .Atom(.ALocal(lid(1))))
+  params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
+  func := make_func_with_params(params, body)
+  result := annotate_in_place(func)
+
+  case result.body {
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
+      assert.is_true(!can_reuse)
+    },
+    _ => .Err("expected ARecordUpdate"),
+  }
+}
+
 // ── annotate_in_place: chained updates ──────────────────────────────
 
 fn test_annotate_chained_updates() Result<Void, String> {
@@ -376,6 +407,7 @@ pub fn suite() runner.Suite {
   s = s.test("annotate: base live", test_annotate_base_live)
   s = s.test("annotate: non-local base", test_annotate_non_local_base)
   s = s.test("annotate: nested in if", test_annotate_nested_in_if)
+  s = s.test("annotate: param base dead", test_annotate_param_base_dead)
   s = s.test("annotate: chained updates", test_annotate_chained_updates)
   s = s.test("annotate: consume-reassign", test_annotate_consume_reassign)
   s

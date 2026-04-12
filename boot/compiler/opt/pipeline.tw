@@ -10,7 +10,6 @@ use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimizer_semantics, cow_config_from_semantics, optimizer_semantics_from_cow_config}
-use compiler.opt.liveness.{annotate_in_place}
 use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics}
 use compiler.opt.defer_elim.{eliminate_defers}
 use @std.date
@@ -138,7 +137,6 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
   t_copy_prop: Float = 0.0
   t_const_fold: Float = 0.0
   t_branch_simp: Float = 0.0
-  t_annotate: Float = 0.0
   t_uniqueness: Float = 0.0
   t_defer: Float = 0.0
   total_rounds: Int = 0
@@ -193,10 +191,6 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
     }
 
     ta2 := date.now()
-    optimized = annotate_in_place(optimized)
-    tb2 := date.now()
-    t_annotate = t_annotate + (tb2 - ta2)
-
     optimized = case semantics {
       .Some(config) => uniqueness_rewrite_with_semantics(optimized, config),
       .None => case cow_config {
@@ -204,12 +198,12 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
         .None => optimized,
       },
     }
-    tc2 := date.now()
-    t_uniqueness = t_uniqueness + (tc2 - tb2)
+    tb2 := date.now()
+    t_uniqueness = t_uniqueness + (tb2 - ta2)
 
     result := eliminate_defers(optimized)
-    td2 := date.now()
-    t_defer = t_defer + (td2 - tc2)
+    tc2 := date.now()
+    t_defer = t_defer + (tc2 - tb2)
     result
   }
 
@@ -218,7 +212,7 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
     avg_rounds := Float.to_string(Int.to_float(total_rounds) / Int.to_float(n))
     eprintln("[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(total_rounds)}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(funcs_at_cap)}")
     eprintln("[time:opt] dead_let=${Float.to_string(t_dead_let)}ms  copy_prop=${Float.to_string(t_copy_prop)}ms  const_fold=${Float.to_string(t_const_fold)}ms  branch_simp=${Float.to_string(t_branch_simp)}ms")
-    eprintln("[time:opt] annotate_in_place=${Float.to_string(t_annotate)}ms  uniqueness=${Float.to_string(t_uniqueness)}ms  defer_elim=${Float.to_string(t_defer)}ms")
+    eprintln("[time:opt] uniqueness=${Float.to_string(t_uniqueness)}ms  defer_elim=${Float.to_string(t_defer)}ms")
   }
 
   AnfModule.{

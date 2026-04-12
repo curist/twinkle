@@ -1,5 +1,5 @@
 // Liveness analysis: backward dataflow computing which locals are live.
-// Used by annotate_in_place (record update optimization) and uniqueness rewrite.
+// Used by uniqueness rewrite and by the standalone annotate_in_place helper.
 //
 // Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
 
@@ -145,24 +145,28 @@ fn live_in_op(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool> {
 // Walk ARecordUpdate nodes; set can_reuse_in_place = true when the
 // base local is dead in the continuation.
 pub fn annotate_in_place(func: AnfFunctionDef) AnfFunctionDef {
+  param_locals: Dict<Int, Bool> = Dict.new()
+  for p in func.params {
+    param_locals[p.local.id] = true
+  }
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
     params: func.params,
     op_result_mono: func.op_result_mono,
-    body: annotate_expr(func.body),
+    body: annotate_expr(func.body, param_locals),
     return_ty: func.return_ty,
   }
 }
 
-fn annotate_expr(expr: AnfExpr) AnfExpr {
+fn annotate_expr(expr: AnfExpr, param_locals: Dict<Int, Bool>) AnfExpr {
   case expr {
     .Let(local, op, body) => {
       // Check if op is ARecordUpdate with an ALocal base
       new_op := case op {
         .ARecordUpdate(.ALocal(r), field, value, _, type_id) => {
           live := live_after(body)
-          if !set_has(live, r.id) {
+          if !set_has(live, r.id) and !set_has(param_locals, r.id) {
             AnfOp.ARecordUpdate(.ALocal(r), field, value, true, type_id)
           } else {
             op
@@ -171,26 +175,26 @@ fn annotate_expr(expr: AnfExpr) AnfExpr {
         _ => op,
       }
       // Recurse into sub-expressions of op, then into body
-      new_op = annotate_op(new_op)
-      AnfExpr.Let(local, new_op, annotate_expr(body))
+      new_op = annotate_op(new_op, param_locals)
+      AnfExpr.Let(local, new_op, annotate_expr(body, param_locals))
     },
     _ => expr,
   }
 }
 
-fn annotate_op(op: AnfOp) AnfOp {
+fn annotate_op(op: AnfOp, param_locals: Dict<Int, Bool>) AnfOp {
   case op {
     .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(cond, annotate_expr(then_e), annotate_expr(else_e))
+      AnfOp.AIf(cond, annotate_expr(then_e, param_locals), annotate_expr(else_e, param_locals))
     },
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
-        AnfMatchArm.{ pattern: arm.pattern, body: annotate_expr(arm.body) }
+        AnfMatchArm.{ pattern: arm.pattern, body: annotate_expr(arm.body, param_locals) }
       }
       AnfOp.AMatch(scrutinee, new_arms)
     },
-    .ALoop(body) => .ALoop(annotate_expr(body)),
-    .ADefer(inner) => .ADefer(annotate_expr(inner)),
+    .ALoop(body) => .ALoop(annotate_expr(body, param_locals)),
+    .ADefer(inner) => .ADefer(annotate_expr(inner, param_locals)),
     _ => op,
   }
 }
