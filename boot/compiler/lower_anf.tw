@@ -11,7 +11,7 @@ use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, CorePattern, FunctionDef, MatchArm,
   Param, BinOp, UnOp, FieldInit,
 }
-use .resolver.{MonoType, TypeId}
+use .resolver.{MonoType, TypeId, ty_to_string}
 use .anf.{
   Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm,
   FieldAtom, OpKind, IndexKind,
@@ -70,7 +70,7 @@ fn op_kind_from(ty: MonoType) OpKind {
     .Float => .Float,
     .Bool => .Bool,
     .String => .Str,
-    _ => error("op_kind_from: unexpected type"),
+    _ => error("op_kind_from: unexpected type ${ty_to_string(ty)}"),
   }
 }
 
@@ -79,7 +79,7 @@ fn index_kind_from(ty: MonoType) IndexKind {
     .Vector(_) => .Array,
     .Dict(_, _) => .Dict,
     .String => .Str,
-    _ => error("index_kind_from: unexpected type"),
+    _ => error("index_kind_from: unexpected type ${ty_to_string(ty)}"),
   }
 }
 

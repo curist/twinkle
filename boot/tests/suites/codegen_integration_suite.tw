@@ -416,6 +416,38 @@ fn has_type_named(linked: LinkedModule, name: String) Bool {
   false
 }
 
+fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
+  for instr in instrs {
+    case instr {
+      .Call(sym) => { if sym == target { return true } },
+      .Block(_, _, body) => { if instr_has_call(body, target) { return true } },
+      .Loop(_, _, body) => { if instr_has_call(body, target) { return true } },
+      .If(_, then_body, else_body) => {
+        if instr_has_call(then_body, target) { return true }
+        if instr_has_call(else_body, target) { return true }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
+  for instr in instrs {
+    case instr {
+      .StructNew(sym) => { if sym == target { return true } },
+      .Block(_, _, body) => { if instr_has_struct_new(body, target) { return true } },
+      .Loop(_, _, body) => { if instr_has_struct_new(body, target) { return true } },
+      .If(_, then_body, else_body) => {
+        if instr_has_struct_new(then_body, target) { return true }
+        if instr_has_struct_new(else_body, target) { return true }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
 fn test_structural_linked_module_has_start() Result<Void, String> {
   // A program with top-level statements must produce a start function.
   linked := try codegen_harness.codegen_linked("println(\"hello\")")
@@ -477,6 +509,33 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
   .Ok({})
 }
 
+fn test_dict_index_materializes_typed_option() Result<Void, String> {
+  linked := try codegen_harness.codegen_linked(
+    "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(int_to_string(d[\"x\"].unwrap_or(0)))"
+  )
+
+  found_get := false
+  found_get_option := false
+  found_option_struct := false
+
+  for f in linked.funcs {
+    if instr_has_call(f.body, "rt_dict__get") {
+      found_get = true
+    }
+    if instr_has_call(f.body, "rt_dict__get_option") {
+      found_get_option = true
+    }
+    if instr_has_struct_new(f.body, "user__$Option_opt_i64") {
+      found_option_struct = true
+    }
+  }
+
+  try assert.ok(found_get, "expected dict indexing to call rt_dict__get")
+  try assert.ok(!found_get_option, "dict indexing should not call rt_dict__get_option")
+  try assert.ok(found_option_struct, "expected dict indexing to construct a typed Option<Int>")
+  .Ok({})
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -500,6 +559,7 @@ pub fn suite() runner.Suite {
     .test("vector index emits checked i64→i32 narrowing", test_checked_narrowing_vector_index)
     .test("runtime call emits checked i64→i32 narrowing", test_checked_narrowing_runtime_call)
     .test("string index emits checked i64→i32 narrowing", test_checked_narrowing_string_index)
+    .test("dict index materializes typed Option without generic Variant helper", test_dict_index_materializes_typed_option)
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
     .test("typed closure struct is subtype of base", test_closure_struct_is_subtype_of_base)
     .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
