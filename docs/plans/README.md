@@ -60,6 +60,7 @@ from stage0, bootstrapping sequence)
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) | Keep uniqueness-generated locals and rewritten ANF structure synchronized through the boot backend pipeline |
 | [boot-uniqueness-deep-ownership.md](boot-uniqueness-deep-ownership.md) | Separate fresh wrapper values from deep ownership so boot uniqueness only performs in-place collection rewrites when reachable mutable state is truly unaliased |
+| [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) | Investigate and fix the stage2 trap triggered by semantically equivalent nested variant-pattern matches in boot codegen helpers |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
 | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
