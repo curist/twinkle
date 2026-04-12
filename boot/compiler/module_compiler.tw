@@ -82,7 +82,9 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     shared_type_origins: base_env.type_origins,
   }
   importing_stack: Vector<String> = []
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
 
+  t_modules_start := date.now()
   result := try compile_module(
     canonical_entry,
     "__entry",
@@ -91,12 +93,15 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     importing_stack,
   )
   state = result.state
+  t_modules_end := date.now()
+  if timed {
+    n := state.compiled_modules.len()
+    eprintln("[time] compile_modules (${Int.to_string(n)} modules): ${Float.to_string(t_modules_end - t_modules_start)}ms")
+  }
 
   if state.compiled_modules.len() == 0 {
     return .Err("no modules compiled")
   }
-
-  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
 
   // Link all compiled modules into a single CoreModule
   t0 := date.now()

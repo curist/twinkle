@@ -124,5 +124,11 @@ pub fn codegen_wasm(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) Vector<Byte> {
-  emit_linked_wasm(link_program(anf, env, builtins))
+  linked := link_program(anf, env, builtins)
+  timed := timings_enabled()
+  t0 := date.now()
+  bytes := emit_linked_wasm(linked)
+  t1 := date.now()
+  if timed { log_time("emit_wasm_binary", t1 - t0) }
+  bytes
 }
