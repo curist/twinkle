@@ -15,94 +15,94 @@ fn variant_ref() ValType { .Ref(false, .Named("Variant")) }
 fn i31_ref() ValType { .Ref(false, .I31) }
 
 fn export(f: FuncDef) ExportDef {
-  ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  .{ wasm_name: f.name, func_sym: f.name }
 }
 
 fn types() Vector<TypeDef> {
   [
-    TypeDef.Array("String", FieldDef.{ name: .None, mutable: true, ty: .I8 }),
-    TypeDef.Array("Array", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
-    TypeDef.Struct("Variant", [
-      FieldDef.{ name: .Some("type_id"), mutable: false, ty: .I32 },
-      FieldDef.{ name: .Some("variant_id"), mutable: false, ty: .I32 },
-      FieldDef.{ name: .Some("payload"), mutable: false, ty: array_null() },
+    .Array("String", FieldDef.{ name: .None, mutable: true, ty: .I8 }),
+    .Array("Array", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
+    .Struct("Variant", [
+      .{ name: .Some("type_id"), mutable: false, ty: .I32 },
+      .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
+      .{ name: .Some("payload"), mutable: false, ty: array_null() },
     ], .None, true),
   ]
 }
 
 fn funcs() Vector<FuncDef> {
   [
-    FuncDef.{
+    .{
       name: "string_len",
       params: [string_null()],
       results: [.I32],
       locals: [],
       body: [.LocalGet(0), .ArrayLen],
     },
-    FuncDef.{
+    .{
       name: "string_get",
       params: [string_null(), .I32],
       results: [.I32],
       locals: [],
       body: [.LocalGet(0), .LocalGet(1), .ArrayGetU("String")],
     },
-    FuncDef.{
+    .{
       name: "string_new",
       params: [.I32],
       results: [string_ref()],
       locals: [],
       body: [.I32Const(0), .LocalGet(0), .ArrayNew("String")],
     },
-    FuncDef.{
+    .{
       name: "string_set",
       params: [string_null(), .I32, .I32],
       results: [],
       locals: [],
       body: [.LocalGet(0), .LocalGet(1), .LocalGet(2), .ArraySet("String")],
     },
-    FuncDef.{
+    .{
       name: "array_new",
       params: [.I32],
       results: [array_ref()],
       locals: [],
       body: [.RefNull(.Any), .LocalGet(0), .ArrayNew("Array")],
     },
-    FuncDef.{
+    .{
       name: "array_get",
       params: [array_null(), .I32],
       results: [.Anyref],
       locals: [],
       body: [.LocalGet(0), .LocalGet(1), .ArrayGet("Array")],
     },
-    FuncDef.{
+    .{
       name: "array_set",
       params: [array_null(), .I32, .Anyref],
       results: [],
       locals: [],
       body: [.LocalGet(0), .LocalGet(1), .LocalGet(2), .ArraySet("Array")],
     },
-    FuncDef.{
+    .{
       name: "array_len",
       params: [array_null()],
       results: [.I32],
       locals: [],
       body: [.LocalGet(0), .ArrayLen],
     },
-    FuncDef.{
+    .{
       name: "variant_new",
       params: [.I32, .I32, array_null()],
       results: [variant_ref()],
       locals: [],
       body: [.LocalGet(0), .LocalGet(1), .LocalGet(2), .StructNew("Variant")],
     },
-    FuncDef.{
+    .{
       name: "i31_new",
       params: [.I32],
       results: [i31_ref()],
       locals: [],
       body: [.LocalGet(0), .RefI31],
     },
-    FuncDef.{
+    .{
       name: "i31_get",
       params: [i31_ref()],
       results: [.I32],
@@ -114,7 +114,7 @@ fn funcs() Vector<FuncDef> {
 
 pub fn module() WasmModule {
   fs := funcs()
-  WasmModule.{
+  .{
     namespace: "bridge",
     types: types(),
     imports: [],

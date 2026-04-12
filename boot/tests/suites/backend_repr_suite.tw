@@ -17,7 +17,7 @@ use tests.assert
 use compiler.resolver
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.core_ir.{LocalId, FuncId, Param}
-use compiler.builtins.{BuiltinRegistry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, Atom}
 use compiler.codegen.wasm_ir.{ValType, AbiContract}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
@@ -49,7 +49,7 @@ fn empty_registry() WasmTypeRegistry {
 }
 
 fn empty_builtins() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
+  make_builtin_registry()
 }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }

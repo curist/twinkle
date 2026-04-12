@@ -5,7 +5,7 @@ use compiler.resolver
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,
@@ -25,13 +25,15 @@ use compiler.backend.closure_convert.{convert_closures}
 fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
 
 fn empty_builtins() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
+  // Backend preparation now consults internal builder-family builtins even for
+  // modules that do not use collect lowering directly, so planner tests should
+  // start from the canonical builtin registry and rely on the input ANF to keep
+  // the resulting plan empty/minimal.
+  make_builtin_registry()
 }
 
 fn simple_builtins() BuiltinRegistry {
-  empty_builtins()
-    .runtime("print", "rt.core", "print")
-    .runtime("println", "rt.core", "println")
+  make_builtin_registry()
 }
 
 fn mk_local(n: Int) LocalId { LocalId.{ id: n } }

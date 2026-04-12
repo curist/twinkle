@@ -4,7 +4,7 @@ use compiler.resolver
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry, BuiltinKind, RuntimeInfo}
+use compiler.builtins.{BuiltinRegistry, BuiltinKind, RuntimeInfo, make_builtin_registry}
 use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,
@@ -50,7 +50,7 @@ fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
 }
 
 fn empty_builtins() BuiltinRegistry {
-  BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
+  make_builtin_registry()
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {

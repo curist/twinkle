@@ -122,12 +122,12 @@ pub fn emit_module(
   sum_helpers := collect_sum_variant_helpers(prepared.funcs, env)
   for mono in sum_helpers {
     funcs = funcs.append(emit_sum_to_variant_helper(mono, env))
-    funcs = funcs.append(emit_variant_to_sum_helper(mono, env))
+      .append(emit_variant_to_sum_helper(mono, env))
   }
   funcs = funcs.append(emit_host_read_file_result_helper(env))
-  funcs = funcs.append(emit_option_from_variant_helper(MonoType.String, env))
-  funcs = funcs.append(emit_option_from_variant_helper(MonoType.Int, env))
-  funcs = funcs.append(emit_option_from_variant_helper(MonoType.Float, env))
+    .append(emit_option_from_variant_helper(MonoType.String, env))
+    .append(emit_option_from_variant_helper(MonoType.Int, env))
+    .append(emit_option_from_variant_helper(MonoType.Float, env))
 
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
@@ -139,9 +139,7 @@ pub fn emit_module(
   mod_globals := emit_module_globals(reg, anf, env)
 
   // Assemble all globals
-  globals: Vector<GlobalDef> = []
-  for g in mod_globals { globals = globals.append(g) }
-  for g in str_globals { globals = globals.append(g) }
+  globals: Vector<GlobalDef> = mod_globals.concat(str_globals)
 
   // Data segments
   data: Vector<DataSegment> = []
@@ -157,36 +155,31 @@ pub fn emit_module(
   }
 
   type_defs: Vector<TypeDef> = reg.type_defs
-  runtime_imports: Vector<ImportDef> = reg.runtime_imports
-  runtime_imports = runtime_imports.append(ImportDef.{
+  runtime_imports: Vector<ImportDef> = reg.runtime_imports.append(.{
     module: "codegen.intrinsics",
     name: "int_from_string_helper",
     as_sym: "int_from_string_helper",
     params: [.Ref(true, .Named("rt_types__String"))],
     results: [.Anyref],
-  })
-  runtime_imports = runtime_imports.append(ImportDef.{
+  }).append(.{
     module: "codegen.intrinsics",
     name: "from_code_point_helper",
     as_sym: "from_code_point_helper",
     params: [.I32],
     results: [.Anyref],
-  })
-  runtime_imports = runtime_imports.append(ImportDef.{
+  }).append(.{
     module: "codegen.intrinsics",
     name: "string_utf8_bytes_helper",
     as_sym: "string_utf8_bytes_helper",
     params: [.Ref(true, .Named("rt_types__String"))],
     results: [.Ref(false, .Named("rt_types__Array"))],
-  })
-  runtime_imports = runtime_imports.append(ImportDef.{
+  }).append(.{
     module: "codegen.intrinsics",
     name: "string_from_utf8_helper",
     as_sym: "string_from_utf8_helper",
     params: [.Ref(true, .Named("rt_types__Array"))],
     results: [.Anyref],
-  })
-  runtime_imports = runtime_imports.append(ImportDef.{
+  }).append(.{
     module: "codegen.intrinsics",
     name: "float_from_string_helper",
     as_sym: "float_from_string_helper",
@@ -1821,20 +1814,38 @@ fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>,
 // ── Array operations ───────────────────────────────────────────────────
 
 fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
-  // Vector literal: build a tail-only PVec { len, shift=0, root=null, tail=ArrayNewFixed }
-  out: Vector<Instr> = []
-  // PVec fields first (len, shift, root) — these go on the stack before the tail
   n := items.len()
-  out = out.append(.I32Const(n))
-  out = out.append(.I32Const(0))  // shift = 0
-  out = out.append(.RefNull(.Named("rt_types__VecInternal")))  // root = null
-  // Build tail: all elements boxed to anyref for $Array
+
+  // Small literals fit entirely in the tail.
+  if n <= 32 {
+    out: Vector<Instr> = []
+    out = out.append(.I32Const(n))
+    out = out.append(.I32Const(0))
+    out = out.append(.RefNull(.Named("rt_types__VecInternal")))
+    for item in items {
+      out = out.concat(emit_atom(item, ctx))
+      out = out.concat(emit_box_to_anyref(atom_mono(item, ctx), ctx.env))
+    }
+    out = out.append(.ArrayNewFixed("rt_types__Array", n))
+    out = out.append(.StructNew("rt_types__PVec"))
+    return out
+  }
+
+  // Larger literals must populate the trie prefix as elements spill past the
+  // tail. Build them by repeated rt.arr.push calls so the runtime maintains the
+  // correct root/tail shape.
+  out: Vector<Instr> = [
+    .I32Const(0),
+    .I32Const(0),
+    .RefNull(.Named("rt_types__VecInternal")),
+    .ArrayNewFixed("rt_types__Array", 0),
+    .StructNew("rt_types__PVec"),
+  ]
   for item in items {
     out = out.concat(emit_atom(item, ctx))
     out = out.concat(emit_box_to_anyref(atom_mono(item, ctx), ctx.env))
+    out = out.append(.Call("rt_arr__push"))
   }
-  out = out.append(.ArrayNewFixed("rt_types__Array", n))
-  out = out.append(.StructNew("rt_types__PVec"))
   out
 }
 

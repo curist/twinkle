@@ -5,7 +5,7 @@ use tests.assert
 use compiler.resolver
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
 use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
-use compiler.builtins.{BuiltinRegistry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
@@ -34,7 +34,7 @@ fn empty_registry() WasmTypeRegistry {
 }
 
 fn empty_builtins() BuiltinRegistry {
-  .{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 100 }
+  make_builtin_registry()
 }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
@@ -328,7 +328,7 @@ pub fn suite() runner.Suite {
       .Atom(.ALocal(lid(0))),
       Dict.new())
     prepared := prepare_backend(mk_module([caller, callee]), empty_env(), empty_builtins(), no_captures())
-    verify_err(prepared, "direct call arg 0 to callee has mono Bool, expected Int")
+    verify_err(prepared, "direct call arg 0 to callee has mono Anyref_, expected Int")
   })
 
   .test("direct call arity mismatch is rejected", fn() {

@@ -271,6 +271,20 @@ pub fn suite() runner.Suite {
       try assert.int_eq(xs[39], 39)
       .Ok({})
     })
+    .test("33-element literal iterates across trie boundary", fn() {
+      xs: Vector<Int> = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+        30, 31, 32
+      ]
+      sum := 0
+      for x in xs {
+        sum = sum + x
+      }
+      try assert.int_eq(sum, 528)
+      .Ok({})
+    })
     .test("sort_by orders ascending and descending", fn() {
       xs: Vector<Int> = [5, 1, 4, 2, 3]
       asc := xs.sort_by(Int.compare)
