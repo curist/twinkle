@@ -102,6 +102,7 @@ Out of scope:
 Primary source of truth:
 
 - `boot/compiler/codegen/wasm_ir.tw`
+- `docs/internals/wasm-binary-subset-reference.md`
 
 Important consumers/producers to audit:
 
