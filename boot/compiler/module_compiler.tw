@@ -11,7 +11,7 @@ use compiler.parser
 use compiler.resolver.{
   ResolvedEnv, ModuleExports, TypeEntry,
   extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
-  extend_types_from,
+  extend_types_from, clone_env,
 }
 use compiler.checker
 use compiler.lower_core
@@ -167,7 +167,7 @@ fn compile_module(
 
   // Compile dependencies and build up the env for this module.
   // Also track function origins for the linker's external_refs.
-  env := base_env.extend_types_from(
+  env := clone_env(base_env).extend_types_from(
     state.shared_types, state.shared_type_names, state.shared_type_origins,
   )
   cur_state := state
@@ -175,7 +175,7 @@ fn compile_module(
     // Compile dependency against base_env extended with accumulated types.
     // Name bindings are isolated (base_env only), but TypeIds are globally
     // unique because shared_types grows monotonically.
-    dep_base := base_env.extend_types_from(
+    dep_base := clone_env(base_env).extend_types_from(
       cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
     )
     dep_result := try compile_module(

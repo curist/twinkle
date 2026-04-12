@@ -136,6 +136,110 @@ pub fn empty_env() ResolvedEnv {
   }
 }
 
+fn copy_type_bindings(src: Dict<String, TypeId>) Dict<String, TypeId> {
+  dst: Dict<String, TypeId> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(tid) => { dst[name] = tid },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_type_origins(src: Dict<Int, String>) Dict<Int, String> {
+  dst: Dict<Int, String> = Dict.new()
+  for tid in src.keys() {
+    case src[tid] {
+      .Some(origin) => { dst[tid] = origin },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_function_bindings(src: Dict<String, String>) Dict<String, String> {
+  dst: Dict<String, String> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(target) => { dst[name] = target },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_function_origins(src: Dict<String, FunctionOrigin>) Dict<String, FunctionOrigin> {
+  dst: Dict<String, FunctionOrigin> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(origin) => { dst[name] = origin },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_methods(src: Dict<String, Vector<MethodEntry>>) Dict<String, Vector<MethodEntry>> {
+  dst: Dict<String, Vector<MethodEntry>> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(entries) => { dst[name] = collect entry in entries { entry } },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_type_methods(src: Dict<Int, Vector<MethodEntry>>) Dict<Int, Vector<MethodEntry>> {
+  dst: Dict<Int, Vector<MethodEntry>> = Dict.new()
+  for tid in src.keys() {
+    case src[tid] {
+      .Some(entries) => { dst[tid] = collect entry in entries { entry } },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_type_index(src: Dict<String, Int>) Dict<String, Int> {
+  dst: Dict<String, Int> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(idx) => { dst[name] = idx },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn copy_func_index(src: Dict<String, Int>) Dict<String, Int> {
+  dst: Dict<String, Int> = Dict.new()
+  for name in src.keys() {
+    case src[name] {
+      .Some(idx) => { dst[name] = idx },
+      .None => {},
+    }
+  }
+  dst
+}
+
+pub fn clone_env(env: ResolvedEnv) ResolvedEnv {
+  .{
+    types: collect entry in env.types { entry },
+    type_names: collect name in env.type_names { name },
+    type_bindings: copy_type_bindings(env.type_bindings),
+    type_origins: copy_type_origins(env.type_origins),
+    functions: collect sig in env.functions { sig },
+    function_bindings: copy_function_bindings(env.function_bindings),
+    function_origins: copy_function_origins(env.function_origins),
+    methods: copy_methods(env.methods),
+    methods_by_type: copy_type_methods(env.methods_by_type),
+    type_index: copy_type_index(env.type_index),
+    func_index: copy_func_index(env.func_index),
+  }
+}
+
 fn lookup_method_entries(entries: Vector<MethodEntry>, method_name: String) String? {
   for e in entries {
     if e.method_name == method_name {
@@ -286,20 +390,16 @@ pub fn extend_types_from(
   acc_type_names: Vector<String>,
   acc_type_origins: Dict<Int, String>,
 ) ResolvedEnv {
-  if acc_types.len() <= env.types.len() {
-    return env
+  for i in range(acc_types.len()) {
+    entry := acc_types[i]
+    if find_type_entry_index(env, entry.id) == .None {
+      env.types = env.types.append(entry)
+      env.type_names = env.type_names.append(acc_type_names[i])
+      env.type_index[acc_type_names[i]] = env.types.len() - 1
+    }
   }
-  // Append only the new entries
-  for i in range_from(env.types.len(), acc_types.len()) {
-    env.types = env.types.append(acc_types[i])
-    env.type_names = env.type_names.append(acc_type_names[i])
-    env.type_index[acc_type_names[i]] = i
-  }
-  // Merge origins for new entries
   for tid in acc_type_origins.keys() {
-    if tid >= env.types.len() {
-      // skip - this shouldn't happen but guard
-    } else if !env.type_origins.has(tid) {
+    if !env.type_origins.has(tid) {
       case acc_type_origins[tid] {
         .Some(origin) => { env.type_origins[tid] = origin },
         .None => {},
@@ -1053,6 +1153,26 @@ fn is_reserved_type_name(name: String) Bool {
 
 // ── Pass 1: Collection ──────────────────────────────────────────────
 
+fn next_available_type_id(env: ResolvedEnv) Int {
+  max_id := -1
+  for entry in env.types {
+    if entry.id.id > max_id {
+      max_id = entry.id.id
+    }
+  }
+  for tid in env.type_origins.keys() {
+    if tid > max_id {
+      max_id = tid
+    }
+  }
+  for tid in env.methods_by_type.keys() {
+    if tid > max_id {
+      max_id = tid
+    }
+  }
+  max_id + 1
+}
+
 fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
   cur := env
   diags: Vector<Diagnostic> = []
@@ -1066,7 +1186,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
         } else if cur.has_type(decl.name) {
           diags = diags.append(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
         } else {
-          tid := TypeId.{ id: cur.types.len() }
+          tid := TypeId.{ id: next_available_type_id(cur) }
           cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
         }
       },
@@ -1264,13 +1384,17 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
 }
 
 fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEnv {
-  new_types := collect i in range(env.types.len()) {
-    if env.type_names[i] == name {
-      entry := env.types[i]
+  target_tid := case env.type_bindings[name] {
+    .Some(tid) => tid,
+    .None => { return env },
+  }
+
+  new_types := collect entry in env.types {
+    if entry.id.id == target_tid.id {
       entry.def = .Some(def)
       entry
     } else {
-      env.types[i]
+      entry
     }
   }
   env.with_types(new_types, env.type_names)
@@ -1464,7 +1588,7 @@ fn find_by_origin(env: ResolvedEnv, origin: String) TypeId? {
 
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
-  next_id := env.types.len()
+  next_id := next_available_type_id(env)
   for exported in all_exported_types(exports) {
     target_name := merged_export_type_name(alias, exported.name)
     existing_id: TypeId? = case lookup_registered_type(env, target_name) {
