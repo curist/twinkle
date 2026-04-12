@@ -24,6 +24,35 @@ each in turn before committing to any fix.
 
 ---
 
+## Findings (post fine-grained instrumentation)
+
+```
+[time:mod] boot/compiler/checker.tw    total=701ms  check=411ms  lower=61ms
+[time:mod] boot/compiler/lower_core.tw total=468ms  check=329ms  lower=57ms
+[time:mod] boot/compiler/emit.tw       total=637ms  check=518ms  lower=76ms
+[time:mod] boot/compiler/parser.tw     total=409ms  check=308ms
+[time:mod] boot/compiler/pipeline.tw   total=3167ms deps=3158ms  (almost all dep resolution time)
+[time:mod] boot/compiler/codegen.tw    total=1485ms deps=1475ms  (same)
+
+[time:opt] funcs=1354  total_rounds=3063  avg_rounds=2.26  at_cap=13
+[time:opt] dead_let=202ms  copy_prop=167ms  const_fold=4ms  branch_simp=3ms
+[time:opt] annotate_in_place=0.9ms  uniqueness=3001ms  defer_elim=3ms
+
+[time:verify] funcs=1354  total_slots=62185  slot_entries=62185
+[time:verify] slot_checks=2971ms  expr_walk=95ms
+
+[time:plan] funcs=1354  slot_reg_calls=63539  unique_types=402  strings=1484
+[time:plan] scan=45ms  register_slots=58ms  register_sigs=1362ms  topo_sort=4ms
+```
+
+Key findings:
+- **compile_modules**: dominated by a handful of large modules (checker.tw 411ms check, lower_core.tw 329ms, emit.tw 518ms). Most time is `check` inside those modules. The deps column for pipeline.tw/codegen.tw just propagates the big modules' costs up.
+- **optimize**: `uniqueness_rewrite` alone takes 3001ms — virtually all of the 3383ms total. dead_let+copy_prop are secondary (370ms combined). avg rounds is only 2.26, so the fixed-point loop is not the problem.
+- **verify**: slot checks dominate (2971ms vs 95ms for expr walk). With 62185 slots across 1354 functions, this points to an O(slots²) pattern inside `verify_unique_source_local`.
+- **plan_wasm_types**: `register_sigs` takes 1362ms of 1471ms total. This is `register_func_sig_by_id` + `register_higher_order_global_func_sigs` + `analyze_builtin_call`. The slot registration itself is only 58ms.
+
+---
+
 ## 1. `compile_modules` — 3735ms (84 modules)
 
 Average ~44ms per module.  Each module runs:
@@ -51,14 +80,20 @@ constraint solving may traverse deep type trees repeatedly.
 A few large modules (resolver.tw, checker.tw, emit.tw) may dominate.  We
 cannot tell yet because `compile_modules` is a single aggregate timing.
 
+### Findings
+
+Per-module sub-step timing shows `check` dominates in the large modules:
+checker.tw (411ms), emit.tw (518ms), lower_core.tw (329ms), parser.tw (308ms).
+The `deps` column for top-level files like pipeline.tw is just recursively
+accumulated cost from those modules, not new work.
+
 ### Investigation
 
-- Add per-module timing inside `compile_module` (log to stderr when
-  `TWINKLE_TIMINGS=1`).  Format: `[time] module <path>: <ms>ms`.
-- Add sub-step timing inside `compile_module`: separate timers for parse,
-  resolve, check, lower_core.
-- Count env clone size: log `base_env.types.len()` and `env.functions.len()`
-  at the start of each module to see if the environment explodes.
+- Add env size logging at the start of each module's check pass (how many
+  functions and types are in scope) — large envs could explain why check is
+  slow in the big files.
+- Profile whether it's HM unification depth, Dict lookup count, or sheer
+  expression count driving the check cost in those four modules.
 
 ---
 
@@ -89,15 +124,23 @@ monomorphic function variants.
 **H2.4 — `annotate_in_place` runs on every function unconditionally.**
 Even functions with no record-update ops pay the traversal cost.
 
+### Findings
+
+`uniqueness_rewrite` is 3001ms out of 3383ms total — it alone IS the
+optimize bottleneck.  The fixed-point loop is cheap: avg 2.26 rounds,
+only 13 functions hit the cap.  dead_let+copy_prop together are 370ms,
+a secondary target.
+
 ### Investigation
 
-- Count rounds per function: add a counter and log functions that hit the cap
-  or that need > 3 rounds (those are where the fixed-point is slow to close).
-- Time each of the four pipeline passes individually across the module (sum
-  across all functions).
-- Time `annotate_in_place` and `uniqueness_rewrite` separately from the loop.
-- Report function count and total node count (a proxy for AST size) at the
-  start of `optimize_module`.
+- Profile `uniqueness_rewrite` internals: the pre-scan (`collect_local_refs`)
+  and forward walk both traverse the full AST.  For 1354 monomorphized
+  functions the cumulative size is large.
+- Check whether most functions produce zero rewrites — if so, a cheap
+  pre-check (does this function contain any VECTOR_SET_UNSAFE?) could skip
+  the pass entirely for the majority.
+- Investigate dead_let+copy_prop: both do full AST traversals.  A combined
+  single-pass could halve that cost.
 
 ---
 
@@ -127,16 +170,25 @@ After mono, each generic function is expanded into N copies.  Verify sees all
 of them.  The total IR node count may be large enough that even a fast linear
 pass takes seconds.
 
+### Findings
+
+The split is decisive: slot_checks=2971ms vs expr_walk=95ms.
+With 62185 slots across 1354 functions (avg 45 slots/func), and
+slot_entries=62185 (1:1 ratio of slots to entries), the cost is inside
+the slot-check loop, not the expression walk.
+
+`verify_unique_source_local` is the prime suspect: it likely scans all
+slot entries to prove no two slots share the same source local, giving
+O(slots²) per function.  For avg 45 slots, that is ~2000 comparisons
+per function × 1354 functions = ~2.7M comparisons.
+
 ### Investigation
 
-- Add a counter for total slots visited and total expression nodes visited
-  across the whole module, logged under `TWINKLE_TIMINGS`.
-- Profile which check inside `verify_prepared_func` is the hot path by adding
-  per-check sub-timers (slot checks vs. expression walk).
-- Measure the function count and average slot count per function going into
-  verify.
-- Consider making verify opt-in (e.g. `TWINKLE_VERIFY=1`) so it can be
-  skipped in production builds while remaining available for CI.
+- Confirm `verify_unique_source_local` is O(slots²) by reading its body.
+- Fix: build a `seen_source_locals: Dict<Int, Bool>` once per function
+  (O(slots)) instead of re-scanning for each slot.
+- Secondary: consider making verify opt-in behind `TWINKLE_VERIFY=1` for
+  release builds.
 
 ---
 
@@ -166,14 +218,23 @@ that is quadratic in the number of struct types registered.
 String pool entries include a getter symbol name built by interpolation, which
 is hashed on every `dict.set` call.
 
+### Findings
+
+`register_sigs` takes 1362ms of 1471ms total (93%).  This covers
+`register_func_sig_by_id` for closure/ho-global funcs and
+`register_higher_order_global_func_sigs` + `analyze_builtin_call`.
+Slot registration (63539 calls) takes only 58ms — MonoType registration
+itself is cheap.  topo_sort is 4ms (not a problem).
+
 ### Investigation
 
-- Count the total number of `register_mono` calls and unique types registered.
-- Time `topo_sort_type_defs` separately (it is a single call at the end of
-  `plan_wasm_types`).
-- Count `runtime_imports.len()` at the point of each `register_runtime_import`
-  call to confirm whether the linear scan is a real cost.
-- Log total string pool size at the end of planning.
+- Add sub-timers inside register_sigs to split: closure_funcs registration
+  vs ho_global_funcs vs `register_higher_order_global_func_sigs` vs
+  `analyze_builtin_call`.
+- `register_higher_order_global_func_sigs` likely iterates all functions
+  looking for higher-order usages — check if it is O(funcs²) or uses a Dict.
+- `analyze_builtin_call` calls `register_runtime_import` which has a linear
+  dedup scan; with many distinct builtins this could be O(builtins²).
 
 ---
 
