@@ -130,10 +130,13 @@ names.sort_by(String.compare)
 | `Float.from_string` | `fn(s: String) Option<Float>` | Parse string to `Float` |
 | `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
 | `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
+| `Float.bits` | `fn(f: Float) Int` | Return the IEEE 754 bit pattern of the float as an `Int` |
 | `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value (ASCII range) |
 | `String.from_code_point` | `fn(n: Int) Option<String>` | String from Unicode code point (full range) |
 
 Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly.
+
+`Float.bits` is a low-level operation mainly useful for binary encoding, hashing, and other bit-exact work.
 
 ## Byte
 

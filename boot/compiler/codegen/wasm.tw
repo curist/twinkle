@@ -1,0 +1,1243 @@
+// Boot Wasm Binary Serializer — wasm.tw
+//
+// Serializes WasmModule / LinkedModule IR to .wasm binary bytes.
+// Scope: only the IR subset that boot/compiler/codegen currently emits.
+// Unsupported IR forms call error() rather than silently producing invalid wasm.
+
+use compiler.codegen.wasm_ir.{
+  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
+  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+}
+use compiler.codegen.linker.{LinkedModule}
+
+// ── Byte buffer primitives ─────────────────────────────────────────────
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => error("wasm: byte value out of range: ${n}"),
+  }
+}
+
+fn emit_u8(buf: Vector<Byte>, b: Int) Vector<Byte> {
+  buf.append(byte(b))
+}
+
+fn emit_bytes(buf: Vector<Byte>, bytes: Vector<Byte>) Vector<Byte> {
+  buf.concat(bytes)
+}
+
+// Unsigned LEB128 for u32 (all values must be >= 0).
+fn emit_u32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  cur := n
+  result := buf
+  done := false
+  for !done {
+    b := cur & 0x7F
+    cur = cur >> 7
+    if cur == 0 {
+      result = emit_u8(result, b)
+      done = true
+    } else {
+      result = emit_u8(result, b | 0x80)
+    }
+  }
+  result
+}
+
+// Signed LEB128 — handles positive and negative Int values.
+// Used for i32/i64 immediates and positive s33 type indices.
+fn emit_sleb128(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  cur := n
+  result := buf
+  done := false
+  for !done {
+    b := cur & 0x7F
+    cur = cur >> 7  // arithmetic right shift (I64ShrS), correct for signed LEB
+    sign_bit := (b >> 6) & 1
+    if (sign_bit == 0 and cur == 0) or (sign_bit == 1 and cur == -1) {
+      result = emit_u8(result, b)
+      done = true
+    } else {
+      result = emit_u8(result, b | 0x80)
+    }
+  }
+  result
+}
+
+fn emit_i32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+fn emit_i64_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+
+// Positive s33 for named type indices in heap type positions.
+fn emit_s33_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+
+// Wasm name: u32 byte length + UTF-8 bytes.
+fn emit_name(buf: Vector<Byte>, s: String) Vector<Byte> {
+  utf8 := s.utf8_bytes()
+  buf = emit_u32_leb(buf, utf8.len())
+  emit_bytes(buf, utf8)
+}
+
+fn emit_f64_bytes(buf: Vector<Byte>, v: Float) Vector<Byte> {
+  // IEEE-754 double as 8 little-endian bytes via Float.bits()
+  bits := v.bits()
+  emit_u64_le(buf, bits)
+}
+
+fn emit_u64_le(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  // Write Int (i64) as 8 little-endian bytes
+  b0 := byte(n & 0xFF)
+  b1 := byte((n >> 8) & 0xFF)
+  b2 := byte((n >> 16) & 0xFF)
+  b3 := byte((n >> 24) & 0xFF)
+  b4 := byte((n >> 32) & 0xFF)
+  b5 := byte((n >> 40) & 0xFF)
+  b6 := byte((n >> 48) & 0xFF)
+  b7 := byte((n >> 56) & 0xFF)
+  buf.append(b0).append(b1).append(b2).append(b3)
+     .append(b4).append(b5).append(b6).append(b7)
+}
+
+// Wrap a payload buffer as a wasm binary section.
+fn encode_section(id: Int, payload: Vector<Byte>) Vector<Byte> {
+  buf := emit_u8([], id)
+  buf = emit_u32_leb(buf, payload.len())
+  emit_bytes(buf, payload)
+}
+
+// ── Context ────────────────────────────────────────────────────────────
+
+type FuncSigPair = .{
+  params: Vector<ValType>,
+  results: Vector<ValType>,
+}
+
+type AnonFtState = .{
+  anon_ft: Vector<FuncSigPair>,
+  anon_ft_idx: Dict<String, Int>,
+}
+
+type WasmCtx = .{
+  type_idx: Dict<String, Int>,      // named type name → type section index
+  anon_ft: Vector<FuncSigPair>,     // anonymous func types in order (after named types)
+  anon_ft_idx: Dict<String, Int>,   // sig_key → type section index
+  anon_ft_base: Int,                // = total named type count (anon indices start here)
+  func_idx: Dict<String, Int>,      // func sym → func index (imports first)
+  global_idx: Dict<String, Int>,    // global name → global index
+  table_idx: Dict<String, Int>,     // table name → table index
+  data_idx: Dict<String, Int>,      // data name → data index
+}
+
+fn type_idx_of(ctx: WasmCtx, name: String) Int {
+  case ctx.type_idx[name] {
+    .Some(i) => i,
+    .None => error("wasm: unknown type '${name}'"),
+  }
+}
+
+fn func_idx_of(ctx: WasmCtx, name: String) Int {
+  case ctx.func_idx[name] {
+    .Some(i) => i,
+    .None => error("wasm: unknown func '${name}'"),
+  }
+}
+
+fn global_idx_of(ctx: WasmCtx, name: String) Int {
+  case ctx.global_idx[name] {
+    .Some(i) => i,
+    .None => error("wasm: unknown global '${name}'"),
+  }
+}
+
+fn table_idx_of(ctx: WasmCtx, name: String) Int {
+  case ctx.table_idx[name] {
+    .Some(i) => i,
+    .None => error("wasm: unknown table '${name}'"),
+  }
+}
+
+fn data_idx_of(ctx: WasmCtx, name: String) Int {
+  case ctx.data_idx[name] {
+    .Some(i) => i,
+    .None => error("wasm: unknown data segment '${name}'"),
+  }
+}
+
+fn anon_ft_idx_of(ctx: WasmCtx, params: Vector<ValType>, results: Vector<ValType>) Int {
+  key := ft_sig_key(params, results)
+  case ctx.anon_ft_idx[key] {
+    .Some(i) => i,
+    .None => error("wasm: unknown func sig '${key}'"),
+  }
+}
+
+// Stable text key for func type deduplication.
+fn val_type_key(vt: ValType) String {
+  case vt {
+    .I8      => "i8",
+    .I32     => "i32",
+    .I64     => "i64",
+    .F64     => "f64",
+    .Anyref  => "anyref",
+    .I31ref  => "i31ref",
+    .Funcref => "funcref",
+    .Ref(nullable, ht) => {
+      h := heap_type_key(ht)
+      if nullable { "ref_null_${h}" } else { "ref_${h}" }
+    },
+  }
+}
+
+fn heap_type_key(ht: HeapType) String {
+  case ht {
+    .Any    => "any",
+    .Eq     => "eq",
+    .I31    => "i31",
+    .Func   => "func",
+    .None_  => "none",
+    .Extern => "extern",
+    .Named(name) => "named_${name}",
+  }
+}
+
+fn ft_sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
+  p := collect vt in params { val_type_key(vt) }
+  r := collect vt in results { val_type_key(vt) }
+  "P(${p.join(",")})R(${r.join(",")})"
+}
+
+fn register_anon_ft(
+  anon_ft: Vector<FuncSigPair>,
+  anon_ft_idx: Dict<String, Int>,
+  base: Int,
+  params: Vector<ValType>,
+  results: Vector<ValType>,
+) AnonFtState {
+  key := ft_sig_key(params, results)
+  if anon_ft_idx.has(key) {
+    AnonFtState.{ anon_ft: anon_ft, anon_ft_idx: anon_ft_idx }
+  } else {
+    idx := base + anon_ft.len()
+    AnonFtState.{
+      anon_ft: anon_ft.append(.{ params: params, results: results }),
+      anon_ft_idx: anon_ft_idx.set(key, idx),
+    }
+  }
+}
+
+// ── SCC / type ordering (adapted from wat.tw) ──────────────────────────
+
+type TarjanTypeState = .{
+  next_index: Int,
+  indices: Dict<String, Int>,
+  lowlinks: Dict<String, Int>,
+  on_stack: Dict<String, Bool>,
+  stack: Vector<String>,
+  components: Vector<Vector<String>>,
+}
+
+fn type_def_name(td: TypeDef) String {
+  case td {
+    .Struct(name, _, _, _) => name,
+    .Array(name, _) => name,
+    .FuncType(name, _, _) => name,
+  }
+}
+
+fn type_def_deps(td: TypeDef) Vector<String> {
+  deps: Vector<String> = []
+  case td {
+    .Struct(_, fields, super_type, _) => {
+      case super_type {
+        .Some(parent) => deps = deps.append(parent),
+        .None => {},
+      }
+      for field in fields { deps = append_unique_wasm(deps, val_type_deps(field.ty)) }
+    },
+    .Array(_, field) => deps = append_unique_wasm(deps, val_type_deps(field.ty)),
+    .FuncType(_, params, results) => {
+      for vt in params { deps = append_unique_wasm(deps, val_type_deps(vt)) }
+      for vt in results { deps = append_unique_wasm(deps, val_type_deps(vt)) }
+    },
+  }
+  deps
+}
+
+fn val_type_deps(vt: ValType) Vector<String> {
+  case vt {
+    .Ref(_, .Named(name)) => [name],
+    _ => [],
+  }
+}
+
+fn append_unique_wasm(base: Vector<String>, extra: Vector<String>) Vector<String> {
+  out := base
+  for name in extra {
+    seen := false
+    for existing in out {
+      if existing == name { seen = true }
+    }
+    if !seen { out = out.append(name) }
+  }
+  out
+}
+
+fn contains_str(items: Vector<String>, want: String) Bool {
+  for item in items {
+    if item == want { return true }
+  }
+  false
+}
+
+fn reverse_str_vec(items: Vector<String>) Vector<String> {
+  out: Vector<String> = []
+  i := items.len() - 1
+  for i >= 0 {
+    out = out.append(items[i])
+    i = i - 1
+  }
+  out
+}
+
+fn dict_int_unwrap(d: Dict<String, Int>, key: String, ctx_msg: String) Int {
+  case d[key] {
+    .Some(v) => v,
+    .None => error("${ctx_msg}: ${key}"),
+  }
+}
+
+fn find_type_def(types: Vector<TypeDef>, name: String) TypeDef {
+  for td in types {
+    if type_def_name(td) == name { return td }
+  }
+  error("wasm: find_type_def: missing type '${name}'")
+}
+
+fn type_def_has_self_edge(td: TypeDef) Bool {
+  name := type_def_name(td)
+  for dep in type_def_deps(td) {
+    if dep == name { return true }
+  }
+  false
+}
+
+fn tarjan_visit(
+  name: String,
+  types: Vector<TypeDef>,
+  type_names: Vector<String>,
+  next_index: Int,
+  indices: Dict<String, Int>,
+  lowlinks: Dict<String, Int>,
+  on_stack: Dict<String, Bool>,
+  stack: Vector<String>,
+  components: Vector<Vector<String>>,
+) TarjanTypeState {
+  cur_next := next_index
+  cur_indices := indices
+  cur_lowlinks := lowlinks
+  cur_on_stack := on_stack
+  cur_stack := stack
+  cur_components := components
+
+  cur_indices[name] = cur_next
+  cur_lowlinks[name] = cur_next
+  cur_next = cur_next + 1
+  cur_stack = cur_stack.append(name)
+  cur_on_stack[name] = true
+
+  td := find_type_def(types, name)
+  for dep in type_def_deps(td) {
+    if !contains_str(type_names, dep) { continue }
+    if !cur_indices.has(dep) {
+      result := tarjan_visit(dep, types, type_names, cur_next, cur_indices, cur_lowlinks, cur_on_stack, cur_stack, cur_components)
+      cur_next = result.next_index
+      cur_indices = result.indices
+      cur_lowlinks = result.lowlinks
+      cur_on_stack = result.on_stack
+      cur_stack = result.stack
+      cur_components = result.components
+      dep_low  := dict_int_unwrap(cur_lowlinks, dep,  "tarjan_visit dep lowlink")
+      self_low := dict_int_unwrap(cur_lowlinks, name, "tarjan_visit self lowlink")
+      if dep_low < self_low { cur_lowlinks[name] = dep_low }
+    } else {
+      is_on_stack := case cur_on_stack[dep] { .Some(v) => v, .None => false }
+      if is_on_stack {
+        dep_idx  := dict_int_unwrap(cur_indices,  dep,  "tarjan_visit dep index")
+        self_low := dict_int_unwrap(cur_lowlinks, name, "tarjan_visit self lowlink 2")
+        if dep_idx < self_low { cur_lowlinks[name] = dep_idx }
+      }
+    }
+  }
+
+  name_low := dict_int_unwrap(cur_lowlinks, name, "tarjan_visit lowlink")
+  name_idx := dict_int_unwrap(cur_indices,  name, "tarjan_visit index")
+  if name_low == name_idx {
+    component: Vector<String> = []
+    done := false
+    for !done {
+      if cur_stack.len() == 0 { error("tarjan_visit: empty stack") }
+      top := cur_stack[cur_stack.len() - 1]
+      cur_stack = cur_stack.slice(0, cur_stack.len() - 1)
+      cur_on_stack[top] = false
+      component = component.append(top)
+      if top == name { done = true }
+    }
+    cur_components = cur_components.append(reverse_str_vec(component))
+  }
+
+  TarjanTypeState.{
+    next_index: cur_next,
+    indices: cur_indices,
+    lowlinks: cur_lowlinks,
+    on_stack: cur_on_stack,
+    stack: cur_stack,
+    components: cur_components,
+  }
+}
+
+fn find_type_component(name: String, components: Vector<Vector<String>>) Vector<String> {
+  for comp in components {
+    if contains_str(comp, name) { return comp }
+  }
+  error("wasm: find_type_component: missing component for '${name}'")
+}
+
+// Returns SCC groups in topological order (dependencies before dependents).
+// Each group is a Vector<String> of type names.
+fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
+  if types.len() == 0 { return [] }
+  names := collect td in types { type_def_name(td) }
+
+  next_index := 0
+  indices: Dict<String, Int> = Dict.new()
+  lowlinks: Dict<String, Int> = Dict.new()
+  on_stack: Dict<String, Bool> = Dict.new()
+  stack: Vector<String> = []
+  components: Vector<Vector<String>> = []
+
+  for name in names {
+    if !indices.has(name) {
+      result := tarjan_visit(name, types, names, next_index, indices, lowlinks, on_stack, stack, components)
+      next_index = result.next_index
+      indices    = result.indices
+      lowlinks   = result.lowlinks
+      on_stack   = result.on_stack
+      stack      = result.stack
+      components = result.components
+    }
+  }
+
+  // Topologically order SCCs (dependencies before dependents).
+  comp_ids := collect comp in components { comp.join("|") }
+  comp_members: Dict<String, Vector<String>> = Dict.new()
+  comp_deps: Dict<String, Vector<String>> = Dict.new()
+  for comp in components {
+    cid := comp.join("|")
+    comp_members[cid] = comp
+    deps: Vector<String> = []
+    for member in comp {
+      td := find_type_def(types, member)
+      for dep in type_def_deps(td) {
+        if contains_str(names, dep) {
+          dep_comp := find_type_component(dep, components)
+          dep_cid := dep_comp.join("|")
+          if dep_cid != cid {
+            deps = append_unique_wasm(deps, [dep_cid])
+          }
+        }
+      }
+    }
+    comp_deps[cid] = deps
+  }
+
+  ordered: Vector<String> = []
+  emitted: Dict<String, Bool> = Dict.new()
+  remaining := comp_ids.len()
+  for remaining > 0 {
+    progress := false
+    for cid in comp_ids {
+      if emitted.has(cid) { continue }
+      deps: Vector<String> = case comp_deps[cid] {
+        .Some(ds) => ds,
+        .None => ["__sentinel__"].slice(0, 0),
+      }
+      ready := true
+      for dep in deps {
+        if !emitted.has(dep) { ready = false }
+      }
+      if ready {
+        emitted[cid] = true
+        ordered = ordered.append(cid)
+        remaining = remaining - 1
+        progress = true
+      }
+    }
+    if !progress {
+      error("wasm: compute_type_order: cyclic component ordering failure")
+    }
+  }
+
+  result: Vector<Vector<String>> = []
+  for cid in ordered {
+    comp := case comp_members[cid] {
+      .Some(c) => c,
+      .None => error("wasm: compute_type_order: missing component '${cid}'"),
+    }
+    result = result.append(comp)
+  }
+  result
+}
+
+// ── Context builder ────────────────────────────────────────────────────
+
+fn build_ctx(
+  ordered_sccs: Vector<Vector<String>>,
+  imports: Vector<ImportDef>,
+  funcs: Vector<FuncDef>,
+  globals: Vector<GlobalDef>,
+  tables: Vector<TableDef>,
+  data: Vector<DataSegment>,
+) WasmCtx {
+  // Named type indices: one index per member, in SCC-topological order.
+  type_idx: Dict<String, Int> = Dict.new()
+  next_type_idx := 0
+  for scc in ordered_sccs {
+    for name in scc {
+      type_idx[name] = next_type_idx
+      next_type_idx = next_type_idx + 1
+    }
+  }
+  anon_ft_base := next_type_idx
+
+  // Anonymous func types (deduplicated) for imports and funcs.
+  anon_ft: Vector<FuncSigPair> = []
+  anon_ft_idx: Dict<String, Int> = Dict.new()
+  for imp in imports {
+    r := register_anon_ft(anon_ft, anon_ft_idx, anon_ft_base, imp.params, imp.results)
+    anon_ft = r.anon_ft
+    anon_ft_idx = r.anon_ft_idx
+  }
+  for f in funcs {
+    r := register_anon_ft(anon_ft, anon_ft_idx, anon_ft_base, f.params, f.results)
+    anon_ft = r.anon_ft
+    anon_ft_idx = r.anon_ft_idx
+  }
+
+  // Function indices (imports first, then defined funcs).
+  func_idx: Dict<String, Int> = Dict.new()
+  fi := 0
+  for imp in imports {
+    func_idx[imp.as_sym] = fi
+    fi = fi + 1
+  }
+  for f in funcs {
+    func_idx[f.name] = fi
+    fi = fi + 1
+  }
+
+  // Global indices.
+  global_idx: Dict<String, Int> = Dict.new()
+  for i in range(globals.len()) {
+    global_idx[globals[i].name] = i
+  }
+
+  // Table indices.
+  table_idx: Dict<String, Int> = Dict.new()
+  for i in range(tables.len()) {
+    table_idx[tables[i].name] = i
+  }
+
+  // Data segment indices.
+  data_idx: Dict<String, Int> = Dict.new()
+  for i in range(data.len()) {
+    data_idx[data[i].name] = i
+  }
+
+  WasmCtx.{
+    type_idx:     type_idx,
+    anon_ft:      anon_ft,
+    anon_ft_idx:  anon_ft_idx,
+    anon_ft_base: anon_ft_base,
+    func_idx:     func_idx,
+    global_idx:   global_idx,
+    table_idx:    table_idx,
+    data_idx:     data_idx,
+  }
+}
+
+// ── Type encoding ──────────────────────────────────────────────────────
+
+fn encode_heap_type(ht: HeapType, ctx: WasmCtx) Vector<Byte> {
+  case ht {
+    .Any    => emit_u8([], 0x6E),
+    .Eq     => emit_u8([], 0x6D),
+    .I31    => emit_u8([], 0x6C),
+    .Func   => emit_u8([], 0x70),
+    .None_  => emit_u8([], 0x71),
+    .Extern => emit_u8([], 0x6F),
+    .Named(name) => emit_s33_leb([], type_idx_of(ctx, name)),
+  }
+}
+
+fn encode_val_type(vt: ValType, ctx: WasmCtx) Vector<Byte> {
+  case vt {
+    .I32     => emit_u8([], 0x7F),
+    .I64     => emit_u8([], 0x7E),
+    .F64     => emit_u8([], 0x7C),
+    .I8      => error("encode_val_type: I8 is a packed storage type, not a standalone valtype"),
+    .Anyref  => emit_u8([], 0x6E),
+    .I31ref  => emit_u8([], 0x6C),
+    .Funcref => emit_u8([], 0x70),
+    .Ref(nullable, ht) => {
+      prefix := if nullable { 0x63 } else { 0x64 }
+      emit_bytes(emit_u8([], prefix), encode_heap_type(ht, ctx))
+    },
+  }
+}
+
+// Storage type: packed i8 or a regular valtype.
+fn encode_storage_type(vt: ValType, ctx: WasmCtx) Vector<Byte> {
+  case vt {
+    .I8 => emit_u8([], 0x78),
+    _   => encode_val_type(vt, ctx),
+  }
+}
+
+fn encode_field_type(f: FieldDef, ctx: WasmCtx) Vector<Byte> {
+  emit_u8(encode_storage_type(f.ty, ctx), if f.mutable { 0x01 } else { 0x00 })
+}
+
+fn encode_func_comptype(params: Vector<ValType>, results: Vector<ValType>, ctx: WasmCtx) Vector<Byte> {
+  buf := emit_u8([], 0x60)
+  buf = emit_u32_leb(buf, params.len())
+  for p in params { buf = emit_bytes(buf, encode_val_type(p, ctx)) }
+  buf = emit_u32_leb(buf, results.len())
+  for r in results { buf = emit_bytes(buf, encode_val_type(r, ctx)) }
+  buf
+}
+
+fn encode_comptype(td: TypeDef, ctx: WasmCtx) Vector<Byte> {
+  case td {
+    .Struct(_, fields, _, _) => {
+      buf := emit_u8([], 0x5F)
+      buf = emit_u32_leb(buf, fields.len())
+      for f in fields { buf = emit_bytes(buf, encode_field_type(f, ctx)) }
+      buf
+    },
+    .Array(_, field) => emit_bytes(emit_u8([], 0x5E), encode_field_type(field, ctx)),
+    .FuncType(_, params, results) => encode_func_comptype(params, results, ctx),
+  }
+}
+
+// Encode one subtype entry (used both standalone and inside rec groups).
+// Shorthand (just comptype) is used for final types with no supertypes.
+fn encode_subtype(td: TypeDef, ctx: WasmCtx) Vector<Byte> {
+  comptype := encode_comptype(td, ctx)
+  case td {
+    .Struct(_, _, super_type, is_final) => {
+      case super_type {
+        .None => {
+          if is_final {
+            comptype  // shorthand: final struct, no supers
+          } else {
+            buf := emit_u8([], 0x50)
+            buf = emit_u32_leb(buf, 0)
+            emit_bytes(buf, comptype)
+          }
+        },
+        .Some(parent) => {
+          tag := if is_final { 0x4F } else { 0x50 }
+          buf := emit_u8([], tag)
+          buf = emit_u32_leb(buf, 1)
+          buf = emit_u32_leb(buf, type_idx_of(ctx, parent))
+          emit_bytes(buf, comptype)
+        },
+      }
+    },
+    // Arrays and FuncTypes have no supertype flag in the IR — treat as final.
+    .Array(_, _)          => comptype,
+    .FuncType(_, _, _)    => comptype,
+  }
+}
+
+// Encode the type section payload.
+// Count = number of rectype entries (each SCC = 1 entry; each anon ft = 1 entry).
+fn encode_type_section_payload(
+  ordered_sccs: Vector<Vector<String>>,
+  types: Vector<TypeDef>,
+  anon_ft: Vector<FuncSigPair>,
+  ctx: WasmCtx,
+) Vector<Byte> {
+  entry_count := ordered_sccs.len() + anon_ft.len()
+  payload := emit_u32_leb([], entry_count)
+
+  for scc in ordered_sccs {
+    first_td := find_type_def(types, scc[0])
+    needs_rec := scc.len() > 1 or type_def_has_self_edge(first_td)
+    if needs_rec {
+      group_bytes: Vector<Byte> = []
+      for member in scc {
+        group_bytes = emit_bytes(group_bytes, encode_subtype(find_type_def(types, member), ctx))
+      }
+      payload = emit_u8(payload, 0x4E)
+      payload = emit_u32_leb(payload, scc.len())
+      payload = emit_bytes(payload, group_bytes)
+    } else {
+      payload = emit_bytes(payload, encode_subtype(first_td, ctx))
+    }
+  }
+
+  for ft in anon_ft {
+    payload = emit_bytes(payload, encode_func_comptype(ft.params, ft.results, ctx))
+  }
+
+  payload
+}
+
+// ── Section encoders ───────────────────────────────────────────────────
+
+fn encode_import_section_payload(imports: Vector<ImportDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], imports.len())
+  for imp in imports {
+    payload = emit_name(payload, imp.module)
+    payload = emit_name(payload, imp.name)
+    payload = emit_u8(payload, 0x00)  // func import
+    payload = emit_u32_leb(payload, anon_ft_idx_of(ctx, imp.params, imp.results))
+  }
+  payload
+}
+
+fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], funcs.len())
+  for f in funcs {
+    payload = emit_u32_leb(payload, anon_ft_idx_of(ctx, f.params, f.results))
+  }
+  payload
+}
+
+fn encode_table_section_payload(tables: Vector<TableDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], tables.len())
+  for tbl in tables {
+    payload = emit_bytes(payload, encode_val_type(tbl.elem_type, ctx))
+    case tbl.max {
+      .None => {
+        payload = emit_u8(payload, 0x00)
+        payload = emit_u32_leb(payload, tbl.min)
+      },
+      .Some(m) => {
+        payload = emit_u8(payload, 0x01)
+        payload = emit_u32_leb(payload, tbl.min)
+        payload = emit_u32_leb(payload, m)
+      },
+    }
+  }
+  payload
+}
+
+fn encode_global_section_payload(globals: Vector<GlobalDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], globals.len())
+  for g in globals {
+    payload = emit_bytes(payload, encode_val_type(g.ty, ctx))
+    payload = emit_u8(payload, if g.mutable { 0x01 } else { 0x00 })
+    payload = emit_bytes(payload, encode_instrs(g.init, [], ctx))
+    payload = emit_u8(payload, 0x0B)  // end
+  }
+  payload
+}
+
+fn encode_export_section_payload(exports: Vector<ExportDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], exports.len())
+  for exp in exports {
+    payload = emit_name(payload, exp.wasm_name)
+    payload = emit_u8(payload, 0x00)  // func export
+    payload = emit_u32_leb(payload, func_idx_of(ctx, exp.func_sym))
+  }
+  payload
+}
+
+fn encode_start_section_payload(start_name: String, ctx: WasmCtx) Vector<Byte> {
+  emit_u32_leb([], func_idx_of(ctx, start_name))
+}
+
+fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<String> {
+  seen: Dict<String, Bool> = Dict.new()
+
+  for f in funcs {
+    for instr in f.body {
+      seen = collect_ref_funcs_instr(instr, seen)
+    }
+  }
+
+  for elem in elems {
+    for s in elem.func_syms {
+      seen = seen.remove(s)
+    }
+  }
+
+  seen.keys().sort_by(String.compare)
+}
+
+fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, Bool> {
+  case instr {
+    .RefFunc(s) => seen.set(s, true),
+    .If(_, then_body, else_body) => {
+      s := seen
+      for i in then_body { s = collect_ref_funcs_instr(i, s) }
+      for i in else_body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    .Block(_, _, body) => {
+      s := seen
+      for i in body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    .Loop(_, _, body) => {
+      s := seen
+      for i in body { s = collect_ref_funcs_instr(i, s) }
+      s
+    },
+    _ => seen,
+  }
+}
+
+fn encode_elem_section_payload(elems: Vector<ElemDef>, funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
+  ref_func_syms := collect_ref_func_syms(funcs, elems)
+  extra_decl_count := if ref_func_syms.len() > 0 { 1 } else { 0 }
+  payload := emit_u32_leb([], elems.len() + extra_decl_count)
+
+  for elem in elems {
+    // Active explicit-table form (tag 2): tableidx, offset_expr, elemkind 0x00, vec(funcidx)
+    payload = emit_u32_leb(payload, 2)
+    payload = emit_u32_leb(payload, table_idx_of(ctx, elem.table))
+    payload = emit_bytes(payload, encode_instrs(elem.offset, [], ctx))
+    payload = emit_u8(payload, 0x0B)  // end
+    payload = emit_u8(payload, 0x00)  // elemkind: funcref
+    payload = emit_u32_leb(payload, elem.func_syms.len())
+    for sym in elem.func_syms {
+      payload = emit_u32_leb(payload, func_idx_of(ctx, sym))
+    }
+  }
+
+  if ref_func_syms.len() > 0 {
+    // Declarative func segment (tag 3): elemkind 0x00, vec(funcidx)
+    payload = emit_u32_leb(payload, 3)
+    payload = emit_u8(payload, 0x00)
+    payload = emit_u32_leb(payload, ref_func_syms.len())
+    for sym in ref_func_syms {
+      payload = emit_u32_leb(payload, func_idx_of(ctx, sym))
+    }
+  }
+
+  payload
+}
+
+type LocalGroup = .{ count: Int, ty: ValType }
+
+fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
+  groups: Vector<LocalGroup> = []
+  for vt in locals {
+    n := groups.len()
+    if n == 0 {
+      groups = groups.append(.{ count: 1, ty: vt })
+    } else {
+      last := groups[n - 1]
+      if val_type_key(last.ty) == val_type_key(vt) {
+        updated := case groups.set(n - 1, .{ count: last.count + 1, ty: vt }) {
+          .Some(v) => v,
+          .None => error("compress_locals: set out of bounds"),
+        }
+        groups = updated
+      } else {
+        groups = groups.append(.{ count: 1, ty: vt })
+      }
+    }
+  }
+  groups
+}
+
+fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], funcs.len())
+  for f in funcs {
+    // Encode function body into a temporary buffer to measure its size.
+    body_buf: Vector<Byte> = []
+    groups := compress_locals(f.locals)
+    body_buf = emit_u32_leb(body_buf, groups.len())
+    for g in groups {
+      body_buf = emit_u32_leb(body_buf, g.count)
+      body_buf = emit_bytes(body_buf, encode_val_type(g.ty, ctx))
+    }
+    body_buf = emit_bytes(body_buf, encode_instrs(f.body, [], ctx))
+    body_buf = emit_u8(body_buf, 0x0B)  // end
+    // Prefix entry with u32 byte size.
+    payload = emit_u32_leb(payload, body_buf.len())
+    payload = emit_bytes(payload, body_buf)
+  }
+  payload
+}
+
+fn encode_data_count_section_payload(data: Vector<DataSegment>) Vector<Byte> {
+  emit_u32_leb([], data.len())
+}
+
+fn encode_data_section_payload(data: Vector<DataSegment>, ctx: WasmCtx) Vector<Byte> {
+  payload := emit_u32_leb([], data.len())
+  for seg in data {
+    if seg.offset.len() == 0 {
+      // Passive segment: tag 1, vec(byte)
+      payload = emit_u32_leb(payload, 1)
+      payload = emit_u32_leb(payload, seg.bytes.len())
+      payload = emit_bytes(payload, seg.bytes)
+    } else {
+      // Active memory-0 segment: tag 0, offset_expr, vec(byte)
+      payload = emit_u32_leb(payload, 0)
+      payload = emit_bytes(payload, encode_instrs(seg.offset, [], ctx))
+      payload = emit_u8(payload, 0x0B)  // end
+      payload = emit_u32_leb(payload, seg.bytes.len())
+      payload = emit_bytes(payload, seg.bytes)
+    }
+  }
+  payload
+}
+
+// ── Instruction encoding ───────────────────────────────────────────────
+
+fn find_label_depth(label_stack: Vector<String>, label: String) Int {
+  n := label_stack.len()
+  i := n - 1
+  for i >= 0 {
+    if label_stack[i] == label { return n - 1 - i }
+    i = i - 1
+  }
+  error("wasm: label not found in stack: '${label}'")
+}
+
+fn encode_block_type(bt: ValType?, ctx: WasmCtx) Vector<Byte> {
+  case bt {
+    .None    => emit_u8([], 0x40),
+    .Some(vt) => encode_val_type(vt, ctx),
+  }
+}
+
+fn encode_instrs(instrs: Vector<Instr>, label_stack: Vector<String>, ctx: WasmCtx) Vector<Byte> {
+  buf: Vector<Byte> = []
+  for instr in instrs {
+    buf = emit_bytes(buf, encode_instr(instr, label_stack, ctx))
+  }
+  buf
+}
+
+fn encode_instr(instr: Instr, label_stack: Vector<String>, ctx: WasmCtx) Vector<Byte> {
+  case instr {
+    // Locals & globals
+    .LocalGet(i)   => emit_u32_leb(emit_u8([], 0x20), i),
+    .LocalSet(i)   => emit_u32_leb(emit_u8([], 0x21), i),
+    .LocalTee(i)   => emit_u32_leb(emit_u8([], 0x22), i),
+    .GlobalGet(name) => emit_u32_leb(emit_u8([], 0x23), global_idx_of(ctx, name)),
+    .GlobalSet(name) => emit_u32_leb(emit_u8([], 0x24), global_idx_of(ctx, name)),
+
+    // Constants
+    .I32Const(v) => emit_i32_leb(emit_u8([], 0x41), v),
+    .I64Const(v) => emit_i64_leb(emit_u8([], 0x42), v),
+    .F64Const(v) => emit_f64_bytes(emit_u8([], 0x44), v),
+
+    // i32 arithmetic
+    .I32Add  => emit_u8([], 0x6A),
+    .I32Sub  => emit_u8([], 0x6B),
+    .I32Mul  => emit_u8([], 0x6C),
+    .I32DivS => emit_u8([], 0x6D),
+    .I32RemS => emit_u8([], 0x6F),
+    .I32Eqz  => emit_u8([], 0x45),
+    .I32Eq   => emit_u8([], 0x46),
+    .I32Ne   => emit_u8([], 0x47),
+    .I32LtS  => emit_u8([], 0x48),
+    .I32LtU  => emit_u8([], 0x49),
+    .I32GtS  => emit_u8([], 0x4A),
+    .I32GtU  => emit_u8([], 0x4B),
+    .I32LeS  => emit_u8([], 0x4C),
+    .I32LeU  => emit_u8([], 0x4D),
+    .I32GeS  => emit_u8([], 0x4E),
+    .I32GeU  => emit_u8([], 0x4F),
+    .I32And  => emit_u8([], 0x71),
+    .I32Or   => emit_u8([], 0x72),
+    .I32Shl  => emit_u8([], 0x74),
+    .I32ShrU => emit_u8([], 0x76),
+
+    // i64 arithmetic
+    .I64Add  => emit_u8([], 0x7C),
+    .I64Sub  => emit_u8([], 0x7D),
+    .I64Mul  => emit_u8([], 0x7E),
+    .I64DivS => emit_u8([], 0x7F),
+    .I64RemS => emit_u8([], 0x81),
+    .I64Eqz  => emit_u8([], 0x50),
+    .I64Eq   => emit_u8([], 0x51),
+    .I64Ne   => emit_u8([], 0x52),
+    .I64LtS  => emit_u8([], 0x53),
+    .I64GtS  => emit_u8([], 0x55),
+    .I64LeS  => emit_u8([], 0x57),
+    .I64GeS  => emit_u8([], 0x59),
+    .I64And  => emit_u8([], 0x83),
+    .I64Or   => emit_u8([], 0x84),
+    .I64Xor  => emit_u8([], 0x85),
+    .I64Shl  => emit_u8([], 0x86),
+    .I64ShrS => emit_u8([], 0x87),
+    .I64ShrU => emit_u8([], 0x88),
+
+    // f64 arithmetic
+    .F64Add   => emit_u8([], 0xA0),
+    .F64Sub   => emit_u8([], 0xA1),
+    .F64Mul   => emit_u8([], 0xA2),
+    .F64Div   => emit_u8([], 0xA3),
+    .F64Eq    => emit_u8([], 0x61),
+    .F64Ne    => emit_u8([], 0x62),
+    .F64Lt    => emit_u8([], 0x63),
+    .F64Gt    => emit_u8([], 0x64),
+    .F64Le    => emit_u8([], 0x65),
+    .F64Ge    => emit_u8([], 0x66),
+    .F64Abs   => emit_u8([], 0x99),
+    .F64Neg   => emit_u8([], 0x9A),
+    .F64Ceil  => emit_u8([], 0x9B),
+    .F64Floor => emit_u8([], 0x9C),
+    .F64Sqrt  => emit_u8([], 0x9F),
+
+    // Misc
+    .Select => emit_u8([], 0x1B),
+    .Drop   => emit_u8([], 0x1A),
+
+    // Conversions
+    .I32WrapI64        => emit_u8([], 0xA7),
+    .I64ExtendI32S     => emit_u8([], 0xAC),
+    .I64ExtendI32U     => emit_u8([], 0xAD),
+    .I64TruncF64S      => emit_u8([], 0xB0),
+    .F64ConvertI64S    => emit_u8([], 0xB9),
+    .F64ReinterpretI32 => error("wasm: F64ReinterpretI32 is not a standard wasm opcode — unsupported"),
+    .I64ReinterpretF64 => emit_u8([], 0xBD),
+
+    // References (single-byte prefix)
+    .RefNull(ht)  => emit_bytes(emit_u8([], 0xD0), encode_heap_type(ht, ctx)),
+    .RefIsNull    => emit_u8([], 0xD1),
+    .RefFunc(name) => emit_u32_leb(emit_u8([], 0xD2), func_idx_of(ctx, name)),
+    .RefEq        => emit_u8([], 0xD3),
+    .RefAsNonNull => emit_u8([], 0xD4),
+
+    // GC / typed-reference (0xFB prefix)
+    .RefI31  => emit_u32_leb(emit_u8([], 0xFB), 28),
+    .I31GetS => emit_u32_leb(emit_u8([], 0xFB), 29),
+    .I31GetU => emit_u32_leb(emit_u8([], 0xFB), 30),
+    .RefTest(nullable, ht) => {
+      sub := if nullable { 21 } else { 20 }
+      emit_bytes(emit_u32_leb(emit_u8([], 0xFB), sub), encode_heap_type(ht, ctx))
+    },
+    .RefCast(nullable, ht) => {
+      sub := if nullable { 23 } else { 22 }
+      emit_bytes(emit_u32_leb(emit_u8([], 0xFB), sub), encode_heap_type(ht, ctx))
+    },
+
+    // Struct
+    .StructNew(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 0), type_idx_of(ctx, ty))
+    },
+    .StructGet(ty, field) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 2)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, ty)), field)
+    },
+    .StructGetS(ty, field) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 3)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, ty)), field)
+    },
+    .StructSet(ty, field) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 5)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, ty)), field)
+    },
+
+    // Array
+    .ArrayNew(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 6), type_idx_of(ctx, ty))
+    },
+    .ArrayNewDefault(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 7), type_idx_of(ctx, ty))
+    },
+    .ArrayNewFixed(ty, n) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 8)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, ty)), n)
+    },
+    .ArrayNewData(ty, data_name) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 9)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, ty)), data_idx_of(ctx, data_name))
+    },
+    .ArrayGet(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 11), type_idx_of(ctx, ty))
+    },
+    .ArrayGetU(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 13), type_idx_of(ctx, ty))
+    },
+    .ArraySet(ty) => {
+      emit_u32_leb(emit_u32_leb(emit_u8([], 0xFB), 14), type_idx_of(ctx, ty))
+    },
+    .ArrayLen => emit_u32_leb(emit_u8([], 0xFB), 15),
+    .ArrayCopy(dst, src) => {
+      buf := emit_u32_leb(emit_u8([], 0xFB), 17)
+      emit_u32_leb(emit_u32_leb(buf, type_idx_of(ctx, dst)), type_idx_of(ctx, src))
+    },
+
+    // Calls
+    .Call(name)        => emit_u32_leb(emit_u8([], 0x10), func_idx_of(ctx, name)),
+    .ReturnCall(name)  => emit_u32_leb(emit_u8([], 0x12), func_idx_of(ctx, name)),
+    .CallRef(ty)       => emit_u32_leb(emit_u8([], 0x14), type_idx_of(ctx, ty)),
+    .ReturnCallRef(ty) => emit_u32_leb(emit_u8([], 0x15), type_idx_of(ctx, ty)),
+    .CallIndirect(ty, table_idx_val) => {
+      buf := emit_u32_leb(emit_u8([], 0x11), type_idx_of(ctx, ty))
+      emit_u32_leb(buf, table_idx_val)
+    },
+
+    // Control flow
+    .Return      => emit_u8([], 0x0F),
+    .Unreachable => emit_u8([], 0x00),
+    .Nop         => emit_u8([], 0x01),
+    .Br(label)   => emit_u32_leb(emit_u8([], 0x0C), find_label_depth(label_stack, label)),
+    .BrIf(label) => emit_u32_leb(emit_u8([], 0x0D), find_label_depth(label_stack, label)),
+    .BrTable(labels, default_label) => {
+      buf := emit_u32_leb(emit_u8([], 0x0E), labels.len())
+      for lbl in labels {
+        buf = emit_u32_leb(buf, find_label_depth(label_stack, lbl))
+      }
+      emit_u32_leb(buf, find_label_depth(label_stack, default_label))
+    },
+    .If(bt, then_body, else_body) => {
+      buf := emit_bytes(emit_u8([], 0x04), encode_block_type(bt, ctx))
+      new_stack := label_stack.append("")  // If has no label in the IR
+      buf = emit_bytes(buf, encode_instrs(then_body, new_stack, ctx))
+      if else_body.len() > 0 {
+        buf = emit_u8(buf, 0x05)
+        buf = emit_bytes(buf, encode_instrs(else_body, new_stack, ctx))
+      }
+      emit_u8(buf, 0x0B)  // end
+    },
+    .Block(label, bt, body) => {
+      buf := emit_bytes(emit_u8([], 0x02), encode_block_type(bt, ctx))
+      buf = emit_bytes(buf, encode_instrs(body, label_stack.append(label), ctx))
+      emit_u8(buf, 0x0B)  // end
+    },
+    .Loop(label, bt, body) => {
+      buf := emit_bytes(emit_u8([], 0x03), encode_block_type(bt, ctx))
+      buf = emit_bytes(buf, encode_instrs(body, label_stack.append(label), ctx))
+      emit_u8(buf, 0x0B)  // end
+    },
+  }
+}
+
+// ── Module entry points ────────────────────────────────────────────────
+
+pub fn emit_wasm(module: WasmModule) Vector<Byte> {
+  emit_wasm_parts(
+    module.types,
+    module.imports,
+    module.funcs,
+    module.globals,
+    module.tables,
+    module.elems,
+    module.exports,
+    module.data,
+    module.start,
+  )
+}
+
+pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
+  emit_wasm_parts(
+    linked.types,
+    linked.imports,
+    linked.funcs,
+    linked.globals,
+    linked.tables,
+    linked.elems,
+    linked.exports,
+    linked.data,
+    linked.start,
+  )
+}
+
+fn emit_wasm_parts(
+  types: Vector<TypeDef>,
+  imports: Vector<ImportDef>,
+  funcs: Vector<FuncDef>,
+  globals: Vector<GlobalDef>,
+  tables: Vector<TableDef>,
+  elems: Vector<ElemDef>,
+  exports: Vector<ExportDef>,
+  data: Vector<DataSegment>,
+  start: String?,
+) Vector<Byte> {
+  ordered_sccs := compute_type_order(types)
+  ctx := build_ctx(ordered_sccs, imports, funcs, globals, tables, data)
+
+  // Module header: magic + version
+  buf: Vector<Byte> = [
+    byte(0x00), byte(0x61),
+    byte(0x73), byte(0x6D),
+    byte(0x01), byte(0x00),
+    byte(0x00), byte(0x00),
+  ]
+
+  // 1. Type section (id=1)
+  total_types := ctx.anon_ft_base + ctx.anon_ft.len()
+  if total_types > 0 {
+    buf = emit_bytes(buf, encode_section(1,
+      encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx)))
+  }
+
+  // 2. Import section (id=2)
+  if imports.len() > 0 {
+    buf = emit_bytes(buf, encode_section(2, encode_import_section_payload(imports, ctx)))
+  }
+
+  // 3. Function section (id=3)
+  if funcs.len() > 0 {
+    buf = emit_bytes(buf, encode_section(3, encode_function_section_payload(funcs, ctx)))
+  }
+
+  // 4. Table section (id=4)
+  if tables.len() > 0 {
+    buf = emit_bytes(buf, encode_section(4, encode_table_section_payload(tables, ctx)))
+  }
+
+  // (5 = memory — not used by Twinkle)
+
+  // 6. Global section (id=6)
+  if globals.len() > 0 {
+    buf = emit_bytes(buf, encode_section(6, encode_global_section_payload(globals, ctx)))
+  }
+
+  // 7. Export section (id=7)
+  if exports.len() > 0 {
+    buf = emit_bytes(buf, encode_section(7, encode_export_section_payload(exports, ctx)))
+  }
+
+  // 8. Start section (id=8)
+  case start {
+    .Some(name) => {
+      buf = emit_bytes(buf, encode_section(8, encode_start_section_payload(name, ctx)))
+    },
+    .None => {},
+  }
+
+  // 9. Element section (id=9)
+  if elems.len() > 0 or collect_ref_func_syms(funcs, elems).len() > 0 {
+    buf = emit_bytes(buf, encode_section(9, encode_elem_section_payload(elems, funcs, ctx)))
+  }
+
+  // 12. Data count section (id=12) — required before code when data segments exist
+  if data.len() > 0 {
+    buf = emit_bytes(buf, encode_section(12, encode_data_count_section_payload(data)))
+  }
+
+  // 10. Code section (id=10)
+  if funcs.len() > 0 {
+    buf = emit_bytes(buf, encode_section(10, encode_code_section_payload(funcs, ctx)))
+  }
+
+  // 11. Data section (id=11)
+  if data.len() > 0 {
+    buf = emit_bytes(buf, encode_section(11, encode_data_section_payload(data, ctx)))
+  }
+
+  buf
+}

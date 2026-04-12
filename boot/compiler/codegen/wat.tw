@@ -72,19 +72,16 @@ fn emit_wat_parts(
 ) String {
   lines: Vector<String> = ["(module"]
 
-  // 1. Named type definitions
   for block in emit_typedef_blocks(types) {
     lines = lines.concat(block)
   }
 
-  // 2. Anonymous functype dedup for imports + functions
   ft_registry := build_functype_registry(imports, funcs)
   for i in range(ft_registry.entries.len()) {
     entry := ft_registry.entries[i]
     lines = lines.append(emit_functype_def(i, entry.params, entry.results))
   }
 
-  // 3. Imports
   for imp in imports {
     idx := lookup_functype(ft_registry, imp.params, imp.results)
     s := sym(imp.as_sym)
@@ -92,7 +89,6 @@ fn emit_wat_parts(
     lines = lines.append("  (import \"${imp.module}\" \"${imp.name}\" (func ${s} (type ${ft})))")
   }
 
-  // 4. Tables
   for tbl in tables {
     max_str := case tbl.max {
       .Some(m) => " ${m}",
@@ -103,7 +99,6 @@ fn emit_wat_parts(
     lines = lines.append("  (table ${s} ${tbl.min}${max_str} ${vt})")
   }
 
-  // 5. Globals
   for g in globals {
     init_str := emit_instrs_inline(g.init)
     s := sym(g.name)
@@ -115,14 +110,12 @@ fn emit_wat_parts(
     }
   }
 
-  // 6. Functions
   for f in funcs {
     idx := lookup_functype(ft_registry, f.params, f.results)
     func_lines := emit_func_def(f, idx)
     for fl in func_lines { lines = lines.append(fl) }
   }
 
-  // 7. Element segments
   for elem in elems {
     offset_str := emit_instrs_inline(elem.offset)
     syms_str := collect s in elem.func_syms { sym(s) }.join(" ")
@@ -134,14 +127,12 @@ fn emit_wat_parts(
     }
   }
 
-  // 7b. Declarative element segment for ref.func
   ref_func_syms := collect_ref_func_syms(funcs, elems)
   if ref_func_syms.len() > 0 {
     syms_str := collect s in ref_func_syms { sym(s) }.join(" ")
     lines = lines.append("  (elem declare func ${syms_str})")
   }
 
-  // 8. Data segments
   for d in data {
     hex_str := bytes_to_hex(d.bytes)
     ds := sym(d.name)
@@ -153,13 +144,11 @@ fn emit_wat_parts(
     }
   }
 
-  // 9. Exports
   for e in exports {
     fs := sym(e.func_sym)
     lines = lines.append("  (export \"${e.wasm_name}\" (func ${fs}))")
   }
 
-  // 10. Start
   case start {
     .Some(s) => {
       ss := sym(s)
@@ -701,6 +690,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .F64ConvertI64S => ["${pad}f64.convert_i64_s"],
     .I64TruncF64S => ["${pad}i64.trunc_f64_s"],
     .F64ReinterpretI32 => ["${pad}f64.reinterpret_i32"],
+    .I64ReinterpretF64 => ["${pad}i64.reinterpret_f64"],
 
     // References
     .RefNull(ht) => ["${pad}ref.null ${emit_heap_type(ht)}"],

@@ -254,6 +254,7 @@ impl TypeEnv {
             // Primitives
             (BUILTIN_INT_TYPE_ID, "to_string", "Int.to_string"),
             (BUILTIN_FLOAT_TYPE_ID, "to_string", "Float.to_string"),
+            (BUILTIN_FLOAT_TYPE_ID, "bits", "Float.bits"),
             (BUILTIN_BOOL_TYPE_ID, "to_string", "Bool.to_string"),
             // Byte
             (BUILTIN_BYTE_TYPE_ID, "to_int", "Byte.to_int"),

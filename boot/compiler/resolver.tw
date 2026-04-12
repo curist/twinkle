@@ -612,6 +612,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   env = env.register_bound_methods("Float", [
     me("to_string", "float_to_string"), me("to_int", "to_int"),
     me("from_string", "float_from_string"), me("compare", "compare"),
+    me("bits", "float_bits"),
   ])
   env = env.register_bound_methods("Bool", [me("to_string", "bool_to_string")])
   env = env.register_bound_methods("Byte", [

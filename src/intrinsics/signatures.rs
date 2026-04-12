@@ -116,6 +116,15 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: MonoType::String,
             abi_result: Some(IntrinsicAbiResult::RefStringNullable),
         }),
+        id if id == prelude_ids::FLOAT_BITS => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Float.bits",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Float],
+            ret: MonoType::Int,
+            abi_result: Some(IntrinsicAbiResult::I64),
+        }),
         id if id == prelude_ids::CHAR_CODE_AT => Some(IntrinsicContract {
             func_id,
             twinkle_name: "String.char_code_at",

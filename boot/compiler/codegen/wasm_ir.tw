@@ -73,6 +73,7 @@ pub type Instr = {
   I32WrapI64, I64ExtendI32S, I64ExtendI32U,
   F64ConvertI64S, I64TruncF64S,
   F64ReinterpretI32,
+  I64ReinterpretF64,
 
   // References
   RefNull(HeapType),

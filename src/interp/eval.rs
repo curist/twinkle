@@ -702,6 +702,13 @@ impl<W: Write> Interpreter<W> {
                     _ => panic!("string_to_string: expected String"),
                 }
             }
+            prelude_ids::FLOAT_BITS => {
+                // Float.bits(f: Float) -> Int  (IEEE 754 double bit pattern)
+                match &args[0] {
+                    Value::Float(f) => Ok(Value::Int(f64::to_bits(*f) as i64)),
+                    _ => panic!("Float.bits: expected Float"),
+                }
+            }
             prelude_ids::BYTE_TO_INT => {
                 // Byte.to_int(b: Byte) -> Int
                 match &args[0] {

@@ -1,3 +1,6 @@
 /target
 /.worktrees
 .claude/worktrees/
+
+tools/bridge.wasm
+boot/tests/*.wasm

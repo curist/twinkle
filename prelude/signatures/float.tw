@@ -7,3 +7,9 @@ pub fn to_string(f: Float) String {
 pub fn from_string(s: String) Option<Float> {
   .None
 }
+
+/// Return the IEEE 754 bit pattern of a float as an Int.
+pub fn bits(f: Float) Int {
+  0
+}
+

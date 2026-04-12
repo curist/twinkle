@@ -121,6 +121,8 @@ fn builtin_abi(name: String) AbiContract {
     "byte_to_int" => abi([ValType.I32], [ValType.I64]),
     "byte_from_int" => abi([ValType.I64], [ValType.Anyref]),
     "byte_to_string" => abi([ValType.I32], [str_()]),
+    // Float intrinsics
+    "float_bits" => abi([ValType.F64], [ValType.I64]),
     // Range intrinsics
     "range" => abi([ValType.I64], [ValType.Anyref]),
     "range_from" => abi([ValType.I64, ValType.I64], [ValType.Anyref]),
@@ -265,6 +267,7 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .intrinsic("from_code_point")
     .intrinsic("string_utf8_bytes")
     .intrinsic("string_from_utf8")
+    .intrinsic("float_bits")
     .intrinsic("char_code_at")
     .intrinsic("from_char_code")
     // ── Vector ops ──
@@ -373,4 +376,6 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .with_canonical("Byte.to_int",    "byte_to_int")
     .with_canonical("Byte.from_int",  "byte_from_int")
     .with_canonical("Byte.to_string", "byte_to_string")
+    // Float ops
+    .with_canonical("Float.bits",     "float_bits")
 }

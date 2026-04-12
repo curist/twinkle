@@ -1,0 +1,48 @@
+// Phase 2 smoke test: emit a minimal .wasm binary and write it to disk.
+// Run:  twk run boot/tests/wasm_binary_smoke.tw
+// Then: node boot/tests/wasm_binary_smoke.mjs
+//
+// The module has one exported function: answer() -> i32  that returns 42.
+
+use @std.fs
+use compiler.codegen.wasm_ir.{
+  ValType, Instr, FuncDef, ExportDef, WasmModule, TypeDef,
+  ImportDef, GlobalDef, TableDef, ElemDef, DataSegment,
+}
+use compiler.codegen.wasm.{emit_wasm}
+
+fn answer_func() FuncDef {
+  FuncDef.{
+    name: "answer",
+    params: [],
+    results: [.I32],
+    locals: [],
+    body: [.I32Const(42), .Return],
+  }
+}
+
+fn answer_export() ExportDef {
+  ExportDef.{ wasm_name: "answer", func_sym: "answer" }
+}
+
+fn build_module() WasmModule {
+  WasmModule.{
+    namespace: "smoke",
+    types: [],
+    imports: [],
+    funcs: [answer_func()],
+    globals: [],
+    tables: [],
+    elems: [],
+    exports: [answer_export()],
+    data: [],
+    start: .None,
+  }
+}
+
+bytes := emit_wasm(build_module())
+out := "boot/tests/wasm_binary_smoke.wasm"
+case fs.write_bytes(out, bytes) {
+  .Ok(_) => println("wrote ${bytes.len()} bytes to ${out}"),
+  .Err(_) => error("write failed"),
+}

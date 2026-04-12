@@ -310,12 +310,10 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       }
     }
 
-    // Types
     for td in m.types {
       out_types = out_types.append(rewrite_type_def(type_renames, td))
     }
 
-    // Imports — only host imports survive
     for imp in m.imports {
       if imp.module == "host" {
         out_imports = out_imports.append(ImportDef.{
@@ -328,7 +326,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       }
     }
 
-    // Functions
     for f in m.funcs {
       out_funcs = out_funcs.append(FuncDef.{
         name: rename(combined, f.name),
@@ -339,7 +336,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       })
     }
 
-    // Globals
     for g in m.globals {
       out_globals = out_globals.append(GlobalDef.{
         name: rename(combined, g.name),
@@ -349,7 +345,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       })
     }
 
-    // Tables
     for t in m.tables {
       out_tables = out_tables.append(TableDef.{
         name: qualify(m.namespace, t.name),
@@ -359,7 +354,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       })
     }
 
-    // Elem segments
     for e in m.elems {
       out_elems = out_elems.append(ElemDef.{
         table: qualify(m.namespace, e.table),

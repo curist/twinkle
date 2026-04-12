@@ -1,11 +1,51 @@
 # Boot Wasm IR → Wasm Binary Serializer
 
+**Status:** Complete and archived on 2026-04-12.
+
+The serializer landed, direct `.wasm` emission is part of the boot compiler,
+the Node runner and self-host loop now use emitted wasm artifacts directly, and
+self-hosted stage2 output validates and runs under Node. The remaining
+self-hosting failure moved beyond wasm emission into later backend/codegen or
+runtime correctness, so this plan is considered complete.
+
 ## Goal
 
 Enable the boot compiler to emit real `.wasm` binaries from
 `boot/compiler/codegen/wasm_ir.tw`, so a standalone Node.js Twinkle toolchain
 can eventually compile Twinkle end to end without requiring the Rust `twk` CLI
 as a hard dependency.
+
+## Status
+
+Final status as of 2026-04-12:
+
+- Phases 1-6 are complete for the scope of this plan.
+- The serializer covers the runtime/linker and user-module surface needed for
+  direct boot compiler wasm emission.
+- The boot compiler can emit `.wasm` directly.
+- The Node runner and self-host loop now consume emitted wasm artifacts instead
+  of relying on a WAT conversion step.
+- Self-hosted stage2 output validates under `wasm-tools validate` and runs
+  under Node.
+- Follow-on failures are no longer serializer bring-up issues; they belong to
+  later self-hosted backend/codegen/runtime debugging.
+
+Completed work:
+
+- added a Twinkle-side Wasm binary serializer in
+  `boot/compiler/codegen/wasm.tw`
+- kept `Float.bits` as a public intrinsic-backed API instead of routing it
+  through a host capability
+- moved bridge module ownership into Twinkle via
+  `boot/compiler/codegen/bridge.tw`
+- taught the boot compiler to emit `.wasm` through `build ... -o out.wasm`
+- updated `tools/run_wasm_node.mjs` to load `tools/bridge.wasm`
+- updated `tools/selfhost_loop.sh` to use direct wasm emission instead of a WAT
+  conversion step
+
+This means the plan has shifted from "build the serializer" to "finish full
+module coverage and fix the remaining type-indexing / typed-ref serialization
+bug that only appears on the full self-hosted program."
 
 This plan is intentionally scoped to:
 
@@ -317,21 +357,47 @@ Goal:
 
 - support the subset needed by compiler-owned runtime modules
 
+Current status:
+
+- substantially complete for the currently linked runtime surface
+- the serializer can emit real linked modules and now successfully handles the
+  Twinkle-owned bridge module used by the Node runner
+- smaller runtime-heavy serializer tests pass, including direct binary smoke
+  coverage and linked-module coverage
+- remaining work is no longer broad runtime bring-up, but correctness under the
+  full linked type graph used by self-hosted `boot/main.tw`
+
 Suggested first targets:
 
 - `rt.types`
 - a small runtime module with simple funcs/exports
 - then more GC-heavy modules such as `rt.core` / `rt.str`
 
-Tasks:
+Completed/landed work in this phase:
 
-- add type encodings used by runtime modules
-- add GC-specific type/instruction support actually required by those modules
-- compare emitted binaries/behavior with stage0 references
+- implemented `emit_wasm(module: WasmModule)` and
+  `emit_linked_wasm(linked: LinkedModule)` in
+  `boot/compiler/codegen/wasm.tw`
+- added Twinkle-authored bridge emission in
+  `boot/compiler/codegen/bridge.tw`
+- added bridge generation coverage in `boot/tests/gen_bridge_wasm.tw`
+- switched the Node runner from inline bridge WAT to loading `tools/bridge.wasm`
+- validated smaller linked serializer outputs under both Twinkle and Node
+
+Tasks still open in this phase:
+
+- audit full runtime-linked type graphs for recursive type ordering stability
+- verify named GC type indexing across linker renaming and serialization
+- confirm function-type references used by imports, `call_ref`, and
+  `call_indirect` remain in the correct index space after named type emission
+- add runtime-focused validation cases that exercise the same typed-reference
+  patterns as the self-hosted compiler binary
 
 Acceptance:
 
 - selected runtime modules serialize and validate successfully
+- the linked runtime surface used by self-hosted `boot/main.tw` no longer trips
+  typed-reference validation failures
 
 ### Phase 5: Full User-Module Coverage
 
@@ -339,15 +405,56 @@ Goal:
 
 - support the IR used by normal boot-compiled user modules
 
+Current status:
+
+- partially complete
+- the boot compiler can now emit `.wasm` directly for user modules, and smaller
+  serializer-backed programs validate and run
+- the remaining gap is not basic user-module emission, but full validity on the
+  real self-hosted compiler workload, which exposes a deeper typed-reference
+  mismatch in the emitted binary
+
+Completed/landed work in this phase:
+
+- `boot/compiler/codegen/codegen.tw` now factors linked-module construction from
+  final emission and adds `codegen_wasm(...)`
+- `boot/compiler/pipeline.tw` now exposes an `emit_wasm(...)` path
+- `boot/main.tw` now supports `.wat` and `.wasm` output targets from `build`
+- `./target/release/twk build boot/main.tw -o /tmp/boot-selfhost-test.wasm`
+  succeeds
+- the resulting stage0-built boot compiler wasm runs under Node and can print
+  help successfully
+- self-hosted `check`, `ir`, and `build ... -o stage2.wasm` all work before the
+  stage2 validation failure is encountered
+
+Current blocker:
+
+- the stage2 binary emitted by the self-hosted compiler is invalid
+- Node reports:
+  `WebAssembly.compile(): Compiling function #70 failed: call[0] expected type (ref null 12), found ref.cast null of type (ref null 0)`
+- `wasm-tools validate` rejects the same file
+- this strongly suggests a serializer bug in one of these areas:
+  - recursive type-section ordering/index assignment
+  - function-type index assignment versus named GC type indices
+  - heap-type / ref-type encoding for nullable typed refs
+  - linker-renamed type graphs that serialize to different binary indices than
+    the WAT/debug representation implies
+
 Tasks:
 
 - implement remaining instruction encodings actually emitted by boot codegen
 - validate on real Twinkle programs
 - close gaps discovered by boot tests and realistic workloads
+- add a reduced repro from the failing self-hosted stage2 module if possible
+- inspect type-section and call-site metadata around the failing function to
+  prove whether the wrong index is assigned at definition time or referenced at
+  use sites
 
 Acceptance:
 
 - boot compiler can emit runnable `.wasm` for representative user programs
+- self-hosted stage2 output validates under `wasm-tools validate` and runs under
+  Node
 
 ### Phase 6: End-To-End Compiler Path
 
@@ -355,20 +462,35 @@ Goal:
 
 - make direct `.wasm` emission a normal boot compiler output path
 
-Tasks:
+Current status:
 
-- integrate the serializer into the boot compilation flow after `wasm_ir.tw`
-- add a raw wasm output path that writes bytes with `@std.fs.write_bytes`
-- preserve the existing WAT/debug path where it is still useful for inspection
-- validate emitted binaries by running them under Node
-- switch the self-host fixed-point loop to use emitted `.wasm` artifacts
-  directly instead of going through WAT parsing
+- mostly landed from a plumbing perspective
+- not yet complete from a self-hosting correctness perspective because the
+  serializer bug in stage2 still prevents a full fixed-point run
+
+Completed/landed work in this phase:
+
+- integrated the serializer into the boot compilation flow after `wasm_ir.tw`
+- added a raw wasm output path that writes bytes directly
+- preserved `.wat` output for debugging and inspection
+- switched the self-host fixed-point loop to use emitted `.wasm` artifacts
+  directly instead of a WAT parser/assembler bridge
+- changed fixed-point comparison to compare wasm bytes directly
+
+Remaining tasks:
+
+- fix the stage2 typed-reference validation failure
+- rerun the serializer-backed self-host loop until stage2/stage3 stabilize
+- keep the WAT path as a debugging aid, but confirm it is no longer needed for
+  any normal bootstrap step
 
 Acceptance:
 
 - boot compiler can compile Twinkle source to `.wasm` without relying on the
   Rust emitter backend
 - self-host fixed-point compilation no longer depends on a WAT-to-wasm bridge
+- the serializer-backed self-host loop reaches a valid stage2/stage3 fixed
+  point
 
 ## Validation Strategy
 
@@ -392,6 +514,8 @@ Acceptance:
 - the self-host loop can use emitted `.wasm` artifacts directly
 - fixed-point checking compares serializer-backed generations without a WAT
   conversion step
+- full self-hosted stage2 output validates under `wasm-tools validate` and runs
+  under Node
 
 ## Execution Notes
 

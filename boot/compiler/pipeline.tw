@@ -8,7 +8,7 @@ use compiler.builtins.{make_builtin_registry}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.base_env.{builtin_env}
 use compiler.module_compiler
-use compiler.codegen.codegen.{codegen}
+use compiler.codegen.codegen.{codegen, codegen_wasm}
 use lib.source.diagnostic.{format_source_diagnostics}
 
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
@@ -66,4 +66,8 @@ pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
 
 pub fn emit_wat(artifacts: PipelineArtifacts) String {
   codegen(artifacts.opt, artifacts.env, artifacts.builtins)
+}
+
+pub fn emit_wasm(artifacts: PipelineArtifacts) Vector<Byte> {
+  codegen_wasm(artifacts.opt, artifacts.env, artifacts.builtins)
 }

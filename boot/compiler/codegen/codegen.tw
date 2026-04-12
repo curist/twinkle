@@ -16,6 +16,7 @@ use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.linker.{link, LinkedModule, LinkError}
 use compiler.codegen.wat.{emit_wat}
+use compiler.codegen.wasm.{emit_linked_wasm}
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.str as rt_str
@@ -37,11 +38,11 @@ pub fn runtime_modules() Vector<WasmModule> {
   ]
 }
 
-pub fn codegen(
+pub fn link_program(
   anf: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-) String {
+) LinkedModule {
   eprintln("[codegen] closure_convert")
   // 1. Final closure conversion.
   //    Must happen before preparation so rewritten hoisted bodies and capture
@@ -95,7 +96,23 @@ pub fn codegen(
     },
   }
 
+  linked
+}
+
+pub fn codegen(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) String {
   eprintln("[codegen] emit_wat")
-  // 7. Emit WAT
-  emit_wat(linked)
+  emit_wat(link_program(anf, env, builtins))
+}
+
+pub fn codegen_wasm(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) Vector<Byte> {
+  eprintln("[codegen] emit_wasm")
+  emit_linked_wasm(link_program(anf, env, builtins))
 }

@@ -104,6 +104,12 @@ pub fn plan_wasm_types_impl(
   // Always register Array ↔ PVec boundary helpers (needed for host boundary)
   reg = ensure_boundary_imports(reg)
 
+  // always-emitted helpers (emit.tw lines 127-130) — ensure their types are registered
+  reg = register_mono(reg, MonoType.Result(MonoType.Vector(MonoType.Byte), MonoType.String), env)
+  reg = register_mono(reg, MonoType.Optional(MonoType.String), env)
+  reg = register_mono(reg, MonoType.Optional(MonoType.Int), env)
+  reg = register_mono(reg, MonoType.Optional(MonoType.Float), env)
+
   topo_sort_type_defs(reg)
 }
 

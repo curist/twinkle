@@ -4434,6 +4434,7 @@ fn emit_prelude_call(
         LoweringKind::ByteToInt => emit_byte_to_int_intrinsic(args, ctx),
         LoweringKind::ByteFromInt => emit_byte_from_int_intrinsic(args, ctx),
         LoweringKind::ByteToString => emit_byte_to_string_intrinsic(args, ctx),
+        LoweringKind::FloatBits => emit_float_bits_intrinsic(args, ctx),
     }
 }
 
@@ -6841,6 +6842,14 @@ fn emit_float_from_string_helper() -> FuncDef {
         locals: vec![ValType::F64, ValType::I32],
         body,
     }
+}
+
+fn emit_float_bits_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Float.bits(f: Float) -> Int  (IEEE 754 bit pattern)
+    // Float is f64, Int is i64
+    let mut instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
+    instrs.push(Instr::I64ReinterpretF64);
+    instrs
 }
 
 fn emit_byte_to_int_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {

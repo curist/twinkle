@@ -40,8 +40,8 @@ fn run_cmd() Command {
 }
 
 fn build_cmd() Command {
-  file_command("build", "Compile to linked WAT")
-    .add_short_option("output", "o", "Output path (.wat)")
+  file_command("build", "Compile to linked WAT or Wasm")
+    .add_short_option("output", "o", "Output path (.wat or .wasm)")
 }
 
 fn twk_app() App {
@@ -288,8 +288,9 @@ fn resolve_build_output(parsed: ParseResult, file: String) String!String {
     .Some(path) => path,
     .None => default_build_output(file),
   }
-  if path.extension(out) != ".wat" {
-    return .Err("boot build only supports .wat outputs")
+  ext := path.extension(out)
+  if ext != ".wat" and ext != ".wasm" {
+    return .Err("boot build only supports .wat or .wasm outputs")
   }
   .Ok(out)
 }
@@ -315,16 +316,31 @@ fn run_build_command(parsed: ParseResult) {
       proc.exit(1)
     },
   }
-  wat := pipeline.emit_wat(artifacts)
 
-  case fs.write_text(out, wat) {
-    .Ok(_) => {
-      println("WAT output: ${out}")
-    },
-    .Err(err) => {
-      eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
-      proc.exit(1)
-    },
+  ext := path.extension(out)
+  if ext == ".wasm" {
+    bytes := pipeline.emit_wasm(artifacts)
+    case fs.write_bytes(out, bytes) {
+      .Ok(_) => {
+        println("WASM output: ${out}")
+      },
+      .Err(err) => {
+        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+        proc.exit(1)
+      },
+    }
+  } else {
+    wat := pipeline.emit_wat(artifacts)
+
+    case fs.write_text(out, wat) {
+      .Ok(_) => {
+        println("WAT output: ${out}")
+      },
+      .Err(err) => {
+        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+        proc.exit(1)
+      },
+    }
   }
 }
 

@@ -18,7 +18,6 @@
 // directly construct or inspect Wasm GC arrays/structs).
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,64 +30,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // structural types as the compiled module — Wasm GC structural subtyping
 // makes references interchangeable across module boundaries.
 //
-// Types mirrored:
-//   $String  = (array (mut i8))
-//   $Array   = (array (mut anyref))
-//   $Variant = (struct (field $type_id i32)
-//                      (field $variant_id i32)
-//                      (field $payload (ref null $Array)))
+// The bridge wasm is emitted from Twinkle source in:
+//   boot/compiler/codegen/bridge.tw
+// Regenerate with:
+//   cargo run --release -- run boot/tests/gen_bridge_wasm.tw
 
-const BRIDGE_WAT = `
-(module
-  (type $String  (array (mut i8)))
-  (type $Array   (array (mut anyref)))
-  (type $Variant (struct (field $type_id i32)
-                         (field $variant_id i32)
-                         (field $payload (ref null $Array))))
+const BRIDGE_WASM_PATH = resolve(__dirname, "bridge.wasm");
 
-  ;; --- String helpers ---
-  (func (export "string_len") (param (ref null $String)) (result i32)
-    local.get 0  array.len)
-  (func (export "string_get") (param $s (ref null $String)) (param $i i32) (result i32)
-    local.get $s  local.get $i  array.get_u $String)
-  (func (export "string_new") (param $len i32) (result (ref $String))
-    i32.const 0  local.get $len  array.new $String)
-  (func (export "string_set") (param $s (ref null $String)) (param $i i32) (param $v i32)
-    local.get $s  local.get $i  local.get $v  array.set $String)
-
-  ;; --- Array helpers (anyref tuple) ---
-  (func (export "array_new") (param $len i32) (result (ref $Array))
-    ref.null any  local.get $len  array.new $Array)
-  (func (export "array_get") (param $a (ref null $Array)) (param $i i32) (result anyref)
-    local.get $a  local.get $i  array.get $Array)
-  (func (export "array_set") (param $a (ref null $Array)) (param $i i32) (param $v anyref)
-    local.get $a  local.get $i  local.get $v  array.set $Array)
-  (func (export "array_len") (param (ref null $Array)) (result i32)
-    local.get 0  array.len)
-
-  ;; --- Variant constructor ---
-  (func (export "variant_new") (param $type_id i32) (param $variant_id i32) (param $payload (ref null $Array)) (result (ref $Variant))
-    local.get $type_id  local.get $variant_id  local.get $payload
-    struct.new $Variant)
-
-  ;; --- i31 helpers (used for boxing bytes) ---
-  (func (export "i31_new") (param $v i32) (result (ref i31))
-    local.get $v  ref.i31)
-  (func (export "i31_get") (param (ref i31)) (result i32)
-    local.get 0  i31.get_s)
-)`;
-
-function compileBridgeWat() {
+function loadBridgeWasm() {
   try {
-    return execFileSync("wasm-tools", ["parse", "-"], {
-      input: BRIDGE_WAT,
-      maxBuffer: 1024 * 1024,
-    });
-  } catch (e) {
-    console.error(
-      "Error: 'wasm-tools' is required to compile the bridge module.",
-    );
-    console.error("Install: cargo install wasm-tools  (or brew install wasm-tools)");
+    return readFileSync(BRIDGE_WASM_PATH);
+  } catch {
+    console.error(`Error: missing bridge wasm at ${BRIDGE_WASM_PATH}`);
+    console.error("Regenerate with: cargo run --release -- run boot/tests/gen_bridge_wasm.tw");
     process.exit(1);
   }
 }
@@ -266,7 +220,7 @@ async function main() {
   const cwd = process.cwd();
 
   const wasmBytes = readFileSync(wasmPath);
-  const bridgeBytes = compileBridgeWat();
+  const bridgeBytes = loadBridgeWasm();
 
   const bridgeModule = await WebAssembly.compile(bridgeBytes);
   const bridgeInstance = await WebAssembly.instantiate(bridgeModule);

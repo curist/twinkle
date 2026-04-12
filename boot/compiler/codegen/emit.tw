@@ -1017,6 +1017,14 @@ fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: 
     return out.concat(emit_builder_arg_shim(entry_name, index))
   }
 
+  // Host boundary: host_write_bytes is surface-typed as Vector<Byte> / PVec,
+  // but the raw host ABI takes a flat Array. The explicit shim performs the
+  // PVec -> Array conversion, so the generic ABI coercion must not run first or
+  // it will insert an invalid PVec-as-Array ref.cast before rt_arr__to_array.
+  if is_host_vector_arg(entry_name) and index == 1 {
+    return out.concat(emit_host_arg_shim(entry_name, index))
+  }
+
   // Coercion: adapt actual physical type to expected ABI param type via canonical path.
   out = case param_vt {
     .Some(expected_vt) => out.concat(emit_coerce_stack(atom_val_type(a, ctx), expected_vt, atom_mono(a, ctx), ctx)),
@@ -1189,6 +1197,11 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "byte_to_int" => {
       out := emit_atom(args[0], ctx)
       out = out.append(.I64ExtendI32U)
+      out.append(.LocalSet(result_idx))
+    },
+    "float_bits" => {
+      out := emit_atom(args[0], ctx)
+      out = out.append(.I64ReinterpretF64)
       out.append(.LocalSet(result_idx))
     },
     "byte_from_int"  => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx),

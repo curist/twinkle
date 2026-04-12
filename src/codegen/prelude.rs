@@ -434,6 +434,7 @@ mod tests {
             prelude_ids::FROM_CHAR_CODE.0,
             prelude_ids::STRING_UTF8_BYTES.0,
             prelude_ids::STRING_FROM_UTF8.0,
+            prelude_ids::FLOAT_BITS.0,
             prelude_ids::INT_FROM_STRING.0,
             prelude_ids::FLOAT_FROM_STRING.0,
         ] {

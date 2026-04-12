@@ -43,6 +43,7 @@ pub enum LoweringKind {
     ByteToInt,
     ByteFromInt,
     ByteToString,
+    FloatBits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,6 +296,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         StringFromUtf8
     ),
+    spec!(FLOAT_BITS, "Float.bits", Intrinsic, true, true, FloatBits),
     spec!(
         INT_FROM_STRING,
         "Int.from_string",

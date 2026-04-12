@@ -1921,6 +1921,7 @@ impl<'a> EmitCtx<'a> {
                     },
                     id if id == ids::CELL_SET || id == ids::CELL_UPDATE => Some(MonoType::Void),
                     id if id == ids::BYTE_TO_INT => Some(MonoType::Int),
+                    id if id == ids::FLOAT_BITS => Some(MonoType::Int),
                     id if id == ids::BYTE_FROM_INT => Some(MonoType::Named {
                         type_id: OPTION_TYPE_ID,
                         args: vec![MonoType::Byte],
