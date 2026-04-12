@@ -1,5 +1,15 @@
 # Boot Compiler Performance Investigation
 
+## How to run
+
+```bash
+# 1. Build the boot compiler with stage0
+./target/release/twk build boot/main.tw -o /tmp/boot.wasm
+
+# 2. Run with timings enabled (compiles boot/main.tw with the compiled wasm)
+TWINKLE_TIMINGS=1 node tools/run_wasm_node.mjs /tmp/boot.wasm -- build boot/main.tw -o /tmp/stage2.wasm 2>&1 | grep '^\[time'
+```
+
 ## Baseline (boot/main.tw, 84 modules, Node/Wasm)
 
 ```
