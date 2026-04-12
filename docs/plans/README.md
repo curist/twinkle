@@ -38,12 +38,8 @@ from stage0, bootstrapping sequence)
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Integration | Multi-module, CLI, compatibility suite | In Progress | [boot-multi-module.md](boot-multi-module.md) |
-| Wasm repr parity | Close self-hosted/runtime representation mismatches uncovered by self-hosting | In Progress | [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) |
-| Physical typing | Centralize actual-vs-expected Wasm type adaptation at erased backend boundaries | Planned | [boot-backend-physical-typing.md](boot-backend-physical-typing.md) |
-| Iterator codegen | Build proper non-generic iterator lowering and helper support in boot | In Progress | [boot-iterator-codegen-parity.md](boot-iterator-codegen-parity.md) |
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
-| Tracking | Status snapshots and phase progress | In Progress | [self-hosting-status.md](self-hosting-status.md) |
+| Tracking | Status snapshots and phase progress | Done | [self-hosting-status.md](self-hosting-status.md) |
 
 ### Later — Tooling & Ecosystem
 

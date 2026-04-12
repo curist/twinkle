@@ -37,6 +37,16 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Self-Hosting Plans (Stage 10 — Fixed-Point Achieved)
+
+| Plan | Description |
+|------|-------------|
+| [boot-multi-module.md](boot-multi-module.md) | Phase E multi-module compilation — import scanning, env merging, recursive loading, linker integration; complete with fixed-point self-host loop |
+| [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) | Close self-hosted/runtime representation mismatches (sum match/pattern lowering, erased boundaries, alias-backed layouts) — unblocked by fixed-point self-hosting |
+| [boot-backend-physical-typing.md](boot-backend-physical-typing.md) | Centralize actual-vs-expected Wasm type adaptation at erased backend boundaries — canonical coercion helper, boundary shims, verifier edge checks |
+
+---
+
 ## Archived Cross-Cutting Plans
 
 | Plan | Description |
