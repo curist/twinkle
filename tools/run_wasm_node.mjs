@@ -142,6 +142,7 @@ function makeHostImports(b, programArgs, cwd) {
         const c = typeof code === "bigint" ? Number(code) : code;
         process.exit(c);
       },
+      now: () => performance.now(),
 
       // --- File system ---
       read_file: (pathRef) => {

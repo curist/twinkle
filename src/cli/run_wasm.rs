@@ -65,6 +65,7 @@ struct HostImportTypes {
     env: Option<FuncType>,
     cwd: Option<FuncType>,
     exit: Option<FuncType>,
+    now: Option<FuncType>,
     parse_int: Option<FuncType>,
     parse_float: Option<FuncType>,
     string_array_ty: Option<ArrayType>,
@@ -203,6 +204,10 @@ impl HostImportTypes {
                 "exit" => {
                     ensure!(out.exit.is_none(), "duplicate host import: exit");
                     out.exit = Some(func_ty);
+                }
+                "now" => {
+                    ensure!(out.now.is_none(), "duplicate host import: now");
+                    out.now = Some(func_ty);
                 }
                 "parse_int" => {
                     let str_ty = concrete_array_from_func_param(&func_ty, 0)
@@ -589,6 +594,19 @@ impl HostImportTypes {
                     Err(anyhow!("host.exit({code})"))
                 },
             )?;
+        }
+
+        if let Some(ty) = &self.now {
+            linker.func_new("host", "now", ty.clone(), |_caller, _params, results| {
+                ensure!(results.len() == 1, "host.now expected 1 result");
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0);
+                results[0] = Val::F64(ms.to_bits());
+                Ok(())
+            })?;
         }
 
         if let Some(ty) = &self.parse_int {

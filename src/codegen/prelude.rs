@@ -368,6 +368,14 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             vec![ValType::I64],
             vec![],
         )),
+        id if id == prelude_ids::HOST_NOW => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "host",
+            "now",
+            "host_now",
+            vec![],
+            vec![ValType::F64],
+        )),
         _ => None,
     }
 }
@@ -430,6 +438,7 @@ mod tests {
             prelude_ids::HOST_ENV.0,
             prelude_ids::HOST_CWD.0,
             prelude_ids::HOST_EXIT.0,
+            prelude_ids::HOST_NOW.0,
             prelude_ids::CHAR_CODE_AT.0,
             prelude_ids::FROM_CHAR_CODE.0,
             prelude_ids::STRING_UTF8_BYTES.0,

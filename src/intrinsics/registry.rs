@@ -329,6 +329,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(HOST_ENV, "__host_env", Runtime, false, false),
     spec!(HOST_CWD, "__host_cwd", Runtime, false, false),
     spec!(HOST_EXIT, "__host_exit", Runtime, false, false),
+    spec!(HOST_NOW, "__host_now", Runtime, false, false),
 ];
 
 pub fn all_specs() -> &'static [IntrinsicSpec] {
@@ -389,6 +390,7 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("__host_env", prelude_ids::HOST_ENV),
     ("__host_cwd", prelude_ids::HOST_CWD),
     ("__host_exit", prelude_ids::HOST_EXIT),
+    ("__host_now", prelude_ids::HOST_NOW),
 ];
 
 const LEGACY_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[

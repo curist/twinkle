@@ -96,6 +96,7 @@ fn builtin_abi(name: String) AbiContract {
     "host_args" => abi([], [arr_()]),
     "host_cwd" => abi([], [str_()]),
     "host_exit" => abi([ValType.I64], []),
+    "host_now" => abi([], [ValType.F64]),
 
     // Intrinsics that still cross the anyref boundary after M4.
     "vector_append" => abi([pvec_n(), ValType.Anyref], [pvec_()]),
@@ -326,6 +327,7 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .runtime("host_env",        "host", "env")
     .runtime("host_cwd",        "host", "cwd")
     .runtime("host_exit",       "host", "exit")
+    .runtime("host_now",        "host", "now")
     // ── Canonical name mappings (signature-backed surface) ──
     // to_string / from_string family
     .with_canonical("Int.to_string",     "int_to_string")

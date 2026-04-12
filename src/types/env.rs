@@ -978,6 +978,13 @@ impl ValueEnv {
                 ret: Box::new(MonoType::Never),
             },
         );
+        env.builtins.insert(
+            "__host_now".to_string(),
+            MonoType::Function {
+                params: vec![],
+                ret: Box::new(MonoType::Float),
+            },
+        );
 
         // Note: len() is intentionally NOT pre-registered as a builtin here.
         // It will be handled specially in check.rs::synth_call() to support both

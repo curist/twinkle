@@ -1429,6 +1429,15 @@ impl<W: Write> Interpreter<W> {
                     "host.exit({code})"
                 ))));
             }
+            prelude_ids::HOST_NOW => {
+                // __host_now() -> Float (milliseconds since process start)
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0);
+                Ok(Value::Float(ms))
+            }
             _ => panic!("unknown builtin FuncId({})", func_id.0),
         }
     }

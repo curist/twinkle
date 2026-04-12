@@ -270,7 +270,7 @@ Division by zero traps.
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`.
 
 ### `@std.path`
 
@@ -317,3 +317,11 @@ Process and environment.
 | `env` | `fn(name: String) Option<String>` | Environment variable lookup |
 | `cwd` | `fn() String` | Current working directory |
 | `exit` | `fn(code: Int)` | Exit process (never returns) |
+
+### `@std.date`
+
+Timing utilities.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `now` | `fn() Float` | Current time as milliseconds since the time origin (`performance.now()` in Node/browser; ms since Unix epoch in the interpreter) |
