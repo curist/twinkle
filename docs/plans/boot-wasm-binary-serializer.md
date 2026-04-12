@@ -27,6 +27,20 @@ bridge module by itself. It is the lack of a boot-side path from:
 As long as the last step depends on the Rust stage0 emitter, Node cannot become
 an end-to-end compiler/runtime on its own.
 
+This has also become a concrete self-hosting issue, not just an architectural
+gap. The current bootstrap loop can now drive second-generation self-hosted
+builds far enough to emit `boot/main.wat`, but closing the loop still depends on
+an external WAT parser/assembler. That creates an avoidable failure surface:
+
+- WAT tooling support for newer GC/reference text syntax is uneven
+- bootstrap progress can be blocked by text-format compatibility instead of
+  compiler correctness
+- the fixed-point self-host loop is more fragile than a direct wasm emission
+  path
+
+A boot-side binary serializer removes that entire WAT bridge from the critical
+path.
+
 ## Design Position
 
 ### 1. Twinkle Is The Intended Implementation Language
@@ -41,17 +55,17 @@ Reasoning:
 - builds on the existing `wasm_ir.tw` abstraction rather than bypassing it
 - moves the Node toolchain toward true independence from Rust `twk`
 
-### 2. A JS Spike Is Allowed Only As A Short-Lived Feasibility Tool
+### 2. Keep External Validation Temporary And Narrow
 
-A tiny JS-side proof of concept is acceptable only if it derisks one of the
-following:
+If an external script is useful while bringing up a particular encoding detail,
+it should be used only as a short-lived validation aid for:
 
 - modern Wasm GC binary encodings used by Twinkle
 - current Node/Bun acceptance of emitted binaries
 - exact opcode/type encodings for the subset Twinkle uses
 
-A JS serializer is **not** the target architecture and must not become a second
-maintained emitter.
+The maintained implementation remains the Twinkle serializer. External helpers
+should only help confirm encodings during bring-up, not become a second backend.
 
 ### 3. Support Only The IR Subset Boot Actually Emits
 
@@ -99,21 +113,26 @@ Important consumers/producers to audit:
 The serializer must match the **current emitted IR and runtime conventions**,
 not an older planned shape.
 
-## Key Unknown: Is Twinkle Comfortable Enough For Binary Work?
+## Useful Existing Building Blocks
 
-The main project risk is not conceptual complexity. It is whether current
-Twinkle ergonomics are good enough for binary-heavy code.
+The serializer should lean on the pieces Twinkle already has instead of
+introducing a large custom substrate up front.
 
-Areas to test early:
+Immediately useful pieces:
 
-- byte-buffer building
-- byte appends and concatenation
-- unsigned/signed LEB128 encoding
-- little-endian fixed-width integer emission
-- bit operations and masking ergonomics
-- file output for raw bytes
+- `prelude/vector.tw::join` already demonstrates the core serializer pattern:
+  build a `Vector<Byte>` buffer, append bytes incrementally, and convert at the
+  boundary when needed
+- `@std.fs.write_bytes(path, bytes)` now uses the natural serializer-facing API:
+  `fn(path: String, bytes: Vector<Byte>) !FsError`
+- `String.utf8_bytes()` provides the right boundary for wasm string/name
+  encoding
+- the current self-host loop already provides a concrete integration target:
+  replace the WAT bridge with direct `.wasm` emission
 
-This motivates an explicit feasibility spike before the full serializer.
+That means the initial implementation can start from plain `Vector<Byte>`
+construction and only introduce more specialized byte-building helpers when they
+pay for themselves.
 
 ## Proposed Architecture
 
@@ -133,6 +152,13 @@ Expected responsibilities:
 - fixed-width little-endian encoding where needed
 - section framing helpers
 - wasm vector/string encoding helpers
+
+Useful existing building blocks and patterns to reuse:
+
+- `Vector<Byte>` accumulation style already used by `prelude/vector.tw::join`
+- `@std.fs.write_bytes(path, bytes)` as the final output boundary for raw wasm
+  bytes
+- `String.utf8_bytes()` for wasm name/string payload encoding
 
 ### Layer B: Wasm IR Serializer
 
@@ -194,15 +220,68 @@ already emits.
 
 ## Phasing
 
-### Phase 0: Feasibility Spike
+### Phase 0: Audit The Actual Emitted Surface
 
 Goal:
 
-- determine whether current Twinkle is pleasant enough for binary emission work
+- lock the serializer scope to the Wasm IR the boot compiler already emits
 
-Deliverable:
+Tasks:
 
-- tiny Twinkle program that emits a minimal valid wasm module binary
+- inspect `boot/compiler/codegen/wasm_ir.tw`
+- inventory section, type, and instruction variants
+- identify which variants are actually constructed by current runtime builders
+  and user-module codegen
+- produce the first supported-surface checklist for the serializer
+
+Acceptance:
+
+- explicit list of sections, type forms, and instruction forms to implement
+- unsupported IR forms identified up front and marked for hard failure
+
+### Phase 1: Byte Utilities On `Vector<Byte>`
+
+Goal:
+
+- establish the byte-writing primitives the serializer will use everywhere
+
+Tasks:
+
+- adopt `Vector<Byte>` as the initial byte buffer representation
+- implement `emit_u8`
+- implement `emit_bytes`
+- implement unsigned and signed LEB128 helpers
+- implement fixed-width little-endian helpers where needed
+- implement wasm string/vector length-prefix helpers
+- add tests for all primitive encoders
+
+Notes:
+
+- use the same append-oriented style already demonstrated by
+  `prelude/vector.tw::join`
+- keep the first version simple and explicit
+- introduce a specialized byte builder only if repeated serializer code makes it
+  clearly worthwhile
+
+Acceptance:
+
+- primitive encoders produce correct byte sequences
+- tests cover boundary values and common section payload shapes
+
+### Phase 2: Minimal End-To-End Module
+
+Goal:
+
+- prove the end-to-end path from Twinkle serializer code to a runnable wasm
+  binary
+
+Tasks:
+
+- encode the wasm magic and version
+- encode the smallest useful section pipeline: type, function, export, code
+- encode a tiny function body with locals and `end`
+- write the result through `@std.fs.write_bytes`
+- validate and run the output under Node
 
 Suggested target module:
 
@@ -210,71 +289,26 @@ Suggested target module:
 
 Acceptance:
 
-- Twinkle code can build byte buffers sanely
-- LEB128 helpers are manageable
-- emitted module validates/runs under Node or another wasm runtime
+- Twinkle emits a valid `.wasm` binary directly
+- the binary validates and runs under the Node wasm runner
 
-Decision gate:
-
-- if Twinkle ergonomics are acceptable, continue in Twinkle
-- if not, identify the minimal Twinkle/runtime/library improvements needed
-  before continuing
-- only if uncertainty around encodings remains high should a tiny JS spike be
-  used as temporary validation scaffolding
-
-### Phase 1: IR Surface Audit
+### Phase 3: Serializer Core For Current `WasmModule`
 
 Goal:
 
-- enumerate the actual IR/types/instructions/sections that must be supported
+- move from the tiny bring-up module to the real boot `WasmModule` structure
 
 Tasks:
 
-- inspect `boot/compiler/codegen/wasm_ir.tw`
-- inventory constructors and variants
-- identify which are actually emitted by current boot compiler/runtime code
-- derive the minimal serializer matrix
+- map `WasmModule` fields to binary sections in canonical order
+- encode indices, names, locals, globals, exports, start, code, and data payloads
+- wire section omission rules for empty sections
+- keep unsupported forms as explicit hard errors
 
 Acceptance:
 
-- explicit list of supported IR forms
-- unsupported forms identified and marked for hard failure
-
-### Phase 2: Byte Utility Layer
-
-Goal:
-
-- establish reusable Twinkle primitives for binary output
-
-Tasks:
-
-- choose byte buffer representation
-- implement append and bulk-write helpers
-- implement LEB128 encoders
-- implement section framing helpers
-- add tests for all primitive encoders
-
-Acceptance:
-
-- utilities can encode standalone byte sequences correctly
-- tests cover corner cases for integer encodings
-
-### Phase 3: Minimal Module Serializer
-
-Goal:
-
-- serialize a tiny subset of `WasmModule` into valid `.wasm`
-
-Tasks:
-
-- encode magic/version
-- encode a minimal type/function/export/code pipeline
-- encode simple function bodies and locals
-- validate output against actual engines
-
-Acceptance:
-
-- minimal modules produced from Twinkle IR execute correctly
+- a real `WasmModule` value from Twinkle code can be serialized to bytes
+- section ordering and payload framing match engine expectations
 
 ### Phase 4: Runtime Module Coverage
 
@@ -314,58 +348,63 @@ Acceptance:
 
 - boot compiler can emit runnable `.wasm` for representative user programs
 
-### Phase 6: End-to-End Compiler Path
+### Phase 6: End-To-End Compiler Path
 
 Goal:
 
-- make the boot compiler produce final `.wasm` bytes as a normal output path
+- make direct `.wasm` emission a normal boot compiler output path
 
 Tasks:
 
-- integrate serializer into the boot compilation flow
-- add file-writing path for raw wasm bytes
-- validate against runtime execution under Node
+- integrate the serializer into the boot compilation flow after `wasm_ir.tw`
+- add a raw wasm output path that writes bytes with `@std.fs.write_bytes`
+- preserve the existing WAT/debug path where it is still useful for inspection
+- validate emitted binaries by running them under Node
+- switch the self-host fixed-point loop to use emitted `.wasm` artifacts
+  directly instead of going through WAT parsing
 
 Acceptance:
 
 - boot compiler can compile Twinkle source to `.wasm` without relying on the
   Rust emitter backend
+- self-host fixed-point compilation no longer depends on a WAT-to-wasm bridge
 
 ## Validation Strategy
 
-### Correctness
+### Encoding correctness
 
 - byte utility tests for primitive encodings
-- golden tests for tiny modules
-- runtime validation through Node/Bun/WebAssembly engines
-- comparisons against stage0-generated binaries where useful
+- focused checks for section framing, LEB128 lengths, names, and locals
+- tiny end-to-end module tests that validate and execute under Node
+- comparisons against stage0-generated binaries or structure dumps where useful
 
-### Scope discipline
+### Serializer discipline
 
 - serializer fails loudly on unsupported IR nodes
 - no silent widening into “best effort” encoding
+- each newly supported IR form gets a direct validation case when practical
 
-### Integration
+### Integration and self-hosting
 
-- boot test suites continue to pass where serializer-backed compilation is used
+- representative runtime modules serialize and validate successfully
 - representative Twinkle programs compile and run under Node
+- the self-host loop can use emitted `.wasm` artifacts directly
+- fixed-point checking compares serializer-backed generations without a WAT
+  conversion step
 
-## Risks
+## Execution Notes
 
-- Twinkle may currently be awkward for low-level byte manipulation
-- GC/reference type binary encodings must match current engine expectations
-- the emitted IR surface may be larger than initially expected
-- debugging binary mismatches can be time-consuming without good byte-level
-  diagnostics
-- performance of byte-buffer construction may require utility/runtime work
+To keep the work moving toward a shippable result:
 
-## Risk Mitigations
-
-- start with a tiny feasibility spike before full serializer work
-- implement only the emitted subset, not a general assembler
-- test early against Node/Bun engine validation
-- compare with stage0/runtime outputs and snapshots where practical
-- add byte-dump/debug helpers if needed
+- start from `Vector<Byte>` and existing stdlib helpers instead of designing a
+  custom buffer system first
+- complete one valid end-to-end `.wasm` emission path early, then widen support
+- keep the supported surface tied to the IR the boot compiler actually emits
+- validate early against Node engine loading and execution
+- add byte-dump and section-dump helpers whenever they speed up bring-up
+- preserve WAT output as a debugging aid, but remove it from the critical
+  self-host path
+- optimize byte construction only after the serializer is functionally complete
 
 ## Exit Criteria
 

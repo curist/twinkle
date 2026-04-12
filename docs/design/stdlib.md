@@ -53,7 +53,7 @@ pub type DirEntry = .{ name: String, kind: EntryKind }
 pub fn read_bytes(path: String) -> Result<Vector<Byte>, FsError>
 pub fn read_text(path: String) -> Result<String, FsError>
 pub fn write_text(path: String, content: String) -> Result<Void, FsError>
-pub fn write_bytes(path: String, bytes: Vector<Int>) -> Result<Void, FsError>
+pub fn write_bytes(path: String, bytes: Vector<Byte>) -> Result<Void, FsError>
 pub fn mkdirp(path: String) -> Result<Void, FsError>
 pub fn list_dir(path: String) -> Result<Vector<DirEntry>, FsError>
 pub fn exists(path: String) -> Bool

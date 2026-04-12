@@ -924,7 +924,7 @@ impl ValueEnv {
         env.builtins.insert(
             "__host_write_bytes".to_string(),
             MonoType::Function {
-                params: vec![MonoType::String, MonoType::Vector(Box::new(MonoType::Int))],
+                params: vec![MonoType::String, MonoType::Vector(Box::new(MonoType::Byte))],
                 ret: Box::new(MonoType::Void),
             },
         );

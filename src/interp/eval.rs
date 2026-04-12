@@ -1329,7 +1329,7 @@ impl<W: Write> Interpreter<W> {
                 Ok(Value::Void)
             }
             prelude_ids::HOST_WRITE_BYTES => {
-                // __host_write_bytes(path: String, bytes: Vector<Int>) -> Void
+                // __host_write_bytes(path: String, bytes: Vector<Byte>) -> Void
                 let path = match &args[0] {
                     Value::Str(s) => s.clone(),
                     _ => panic!("__host_write_bytes: expected String path"),
@@ -1338,8 +1338,8 @@ impl<W: Write> Interpreter<W> {
                     Value::Vec(v) => v
                         .iter()
                         .map(|val| match val {
-                            Value::Int(i) => *i as u8,
-                            _ => panic!("__host_write_bytes: expected Int elements"),
+                            Value::Byte(b) => *b,
+                            _ => panic!("__host_write_bytes: expected Byte elements"),
                         })
                         .collect::<Vec<u8>>(),
                     _ => panic!("__host_write_bytes: expected Vec"),

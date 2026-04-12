@@ -246,7 +246,7 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
   env
     .add_function(builtin_sig("__host_read_file", [], ["path"], [.String], .Some(.Result(.Vector(.Byte), .String))))
     .add_function(builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)))
-    .add_function(builtin_sig("__host_write_bytes", [], ["path", "bytes"], [.String, .Vector(.Int)], .Some(.Void)))
+    .add_function(builtin_sig("__host_write_bytes", [], ["path", "bytes"], [.String, .Vector(.Byte)], .Some(.Void)))
     .add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)))
     .add_function(builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))))
     .add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)))

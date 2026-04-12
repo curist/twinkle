@@ -17,7 +17,7 @@ They map 1:1 to host imports:
 |---|---|---|
 | `__host_read_file` | `host.read_file` | `fn(String) Vector<Byte>!String` |
 | `__host_write_file` | `host.write_file` | `fn(String, String) Void` |
-| `__host_write_bytes` | `host.write_bytes` | `fn(String, Vector<Int>) Void` |
+| `__host_write_bytes` | `host.write_bytes` | `fn(String, Vector<Byte>) Void` |
 | `__host_mkdirp` | `host.mkdirp` | `fn(String) Void` |
 | `__host_list_dir` | `host.list_dir` | `fn(String) Vector<String>` |
 | `__host_exists` | `host.exists` | `fn(String) Bool` |

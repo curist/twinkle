@@ -299,7 +299,7 @@ type DirEntry = .{ name: String, kind: EntryKind }
 | `read_bytes` | `fn(path: String) Vector<Byte>!FsError` | Read raw file bytes |
 | `read_text` | `fn(path: String) String!FsError` | Read UTF-8 text (`read_bytes` + decode) |
 | `write_text` | `fn(path: String, content: String) !FsError` | Write string to file |
-| `write_bytes` | `fn(path: String, bytes: Vector<Int>) !FsError` | Write bytes to file |
+| `write_bytes` | `fn(path: String, bytes: Vector<Byte>) !FsError` | Write bytes to file |
 | `mkdirp` | `fn(path: String) !FsError` | Create directory (and parents) |
 | `list_dir` | `fn(path: String) Vector<DirEntry>!FsError` | List directory entries |
 | `exists` | `fn(path: String) Bool` | Check if path exists |

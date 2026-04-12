@@ -24,7 +24,7 @@ pub fn write_text(path: String, content: String) !FsError {
   .Ok({})
 }
 
-pub fn write_bytes(path: String, bytes: Vector<Int>) !FsError {
+pub fn write_bytes(path: String, bytes: Vector<Byte>) !FsError {
   __host_write_bytes(path, bytes)
   .Ok({})
 }
