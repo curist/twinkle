@@ -13,6 +13,8 @@ use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimize
 use compiler.opt.liveness.{annotate_in_place}
 use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics}
 use compiler.opt.defer_elim.{eliminate_defers}
+use @std.date
+use @std.proc
 
 // ── compute_pinned ──────────────────────────────────────────────────
 
@@ -129,13 +131,72 @@ pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) An
 }
 
 fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) AnfModule {
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
   pinned := compute_pinned(module)
 
+  t_dead_let: Float = 0.0
+  t_copy_prop: Float = 0.0
+  t_const_fold: Float = 0.0
+  t_branch_simp: Float = 0.0
+  t_annotate: Float = 0.0
+  t_uniqueness: Float = 0.0
+  t_defer: Float = 0.0
+  total_rounds: Int = 0
+  funcs_at_cap: Int = 0
+
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
-    optimized := optimize_func(f, pinned, semantics)
-    // Post-loop pass: annotate record updates for in-place reuse
+    expr := f.body
+    round := 0
+
+    for round < 10 {
+      round = round + 1
+
+      ta := date.now()
+      r1 := case semantics {
+        .Some(sem) => dead_let_elim_with_pinned_and_semantics(expr, pinned, sem),
+        .None => dead_let_elim_with_pinned(expr, pinned),
+      }
+      expr = r1.expr
+      tb := date.now()
+      t_dead_let = t_dead_let + (tb - ta)
+
+      r2 := copy_propagate_with_pinned(expr, pinned)
+      expr = r2.expr
+      tc := date.now()
+      t_copy_prop = t_copy_prop + (tc - tb)
+
+      r3 := constant_fold(expr)
+      expr = r3.expr
+      td := date.now()
+      t_const_fold = t_const_fold + (td - tc)
+
+      r4 := branch_simplify(expr)
+      expr = r4.expr
+      te := date.now()
+      t_branch_simp = t_branch_simp + (te - td)
+
+      if !r1.changed and !r2.changed and !r3.changed and !r4.changed {
+        break
+      }
+    }
+
+    total_rounds = total_rounds + round
+    if round >= 10 { funcs_at_cap = funcs_at_cap + 1 }
+
+    optimized := AnfFunctionDef.{
+      func_id: f.func_id,
+      name: f.name,
+      params: f.params,
+      op_result_mono: f.op_result_mono,
+      body: expr,
+      return_ty: f.return_ty,
+    }
+
+    ta2 := date.now()
     optimized = annotate_in_place(optimized)
-    // Post-loop pass: uniqueness rewrite (COW elimination)
+    tb2 := date.now()
+    t_annotate = t_annotate + (tb2 - ta2)
+
     optimized = case semantics {
       .Some(config) => uniqueness_rewrite_with_semantics(optimized, config),
       .None => case cow_config {
@@ -143,8 +204,21 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
         .None => optimized,
       },
     }
-    // Post-loop pass: defer elimination (must be last)
-    eliminate_defers(optimized)
+    tc2 := date.now()
+    t_uniqueness = t_uniqueness + (tc2 - tb2)
+
+    result := eliminate_defers(optimized)
+    td2 := date.now()
+    t_defer = t_defer + (td2 - tc2)
+    result
+  }
+
+  if timed {
+    n := module.functions.len()
+    avg_rounds := Float.to_string(Int.to_float(total_rounds) / Int.to_float(n))
+    eprintln("[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(total_rounds)}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(funcs_at_cap)}")
+    eprintln("[time:opt] dead_let=${Float.to_string(t_dead_let)}ms  copy_prop=${Float.to_string(t_copy_prop)}ms  const_fold=${Float.to_string(t_const_fold)}ms  branch_simp=${Float.to_string(t_branch_simp)}ms")
+    eprintln("[time:opt] annotate_in_place=${Float.to_string(t_annotate)}ms  uniqueness=${Float.to_string(t_uniqueness)}ms  defer_elim=${Float.to_string(t_defer)}ms")
   }
 
   AnfModule.{

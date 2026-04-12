@@ -16,6 +16,8 @@ use compiler.codegen.wasm_layout.{
   WasmLayout, WasmClosureLayout,
   layout_of, val_type_of, mono_to_key,
 }
+use @std.date
+use @std.proc
 
 // ── plan_wasm_types ─────────────────────────────────────────────────
 
@@ -25,6 +27,8 @@ pub fn plan_wasm_types_impl(
   builtins: BuiltinRegistry,
   precomputed_captures: Dict<Int, Vector<CaptureEntry>>,
 ) WasmTypeRegistry {
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+
   reg := WasmTypeRegistry.{
     type_defs: [],
     layout_cache: Dict.new(),
@@ -39,27 +43,35 @@ pub fn plan_wasm_types_impl(
     runtime_imports: [],
   }
 
+  t0 := date.now()
   scan := scan_module_bodies(input, builtins)
+  t1 := date.now()
 
+  total_slot_reg: Int = 0
   for func in input.funcs {
     for sid in func.captures {
       info := slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' capture slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
+      total_slot_reg = total_slot_reg + 1
     }
     for sid in func.params {
       info := slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' parameter slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
+      total_slot_reg = total_slot_reg + 1
     }
     for sid in func.locals {
       info := slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' local slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
+      total_slot_reg = total_slot_reg + 1
     }
     validate_concrete_mono(func.return_mono, env, "function '${func.name}' return type")
     reg = register_mono(reg, func.return_mono, env)
+    total_slot_reg = total_slot_reg + 1
   }
+  t2 := date.now()
 
   for s in scan.strings.keys() {
     reg = register_string(reg, s)
@@ -81,6 +93,7 @@ pub fn plan_wasm_types_impl(
       .None => {},
     }
   }
+  t3 := date.now()
 
   // Compute module globals from explicit prepared-body AGlobalLocal operands.
   // The referenced LocalIds must resolve back to slots in __init__.
@@ -110,7 +123,15 @@ pub fn plan_wasm_types_impl(
   reg = register_mono(reg, MonoType.Optional(MonoType.Int), env)
   reg = register_mono(reg, MonoType.Optional(MonoType.Float), env)
 
-  topo_sort_type_defs(reg)
+  result := topo_sort_type_defs(reg)
+  t4 := date.now()
+
+  if timed {
+    eprintln("[time:plan] funcs=${Int.to_string(input.funcs.len())}  slot_reg_calls=${Int.to_string(total_slot_reg)}  unique_types=${Int.to_string(result.type_defs.len())}  strings=${Int.to_string(result.string_pool_order.len())}")
+    eprintln("[time:plan] scan=${Float.to_string(t1 - t0)}ms  register_slots=${Float.to_string(t2 - t1)}ms  register_sigs=${Float.to_string(t3 - t2)}ms  topo_sort=${Float.to_string(t4 - t3)}ms")
+  }
+
+  result
 }
 
 fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {

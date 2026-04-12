@@ -167,6 +167,9 @@ fn compile_module(
     return .Err("Circular import detected: '${file_path}' is already being compiled")
   }
 
+  timed_mod := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+  tm0 := date.now()
+
   // Read and parse
   source := case fs.read_text(canonical) {
     .Ok(text) => text,
@@ -179,6 +182,7 @@ fn compile_module(
   if parsed.diagnostics.len() > 0 {
     return .Err(format_stage_error("parse", canonical, source, parsed.diagnostics))
   }
+  tm1 := date.now()
 
   // Plan dependencies
   dep_plan := try imports.plan_dependencies(parsed.value, canonical, state.project_root)
@@ -233,6 +237,7 @@ fn compile_module(
       },
     }
   }
+  tm2 := date.now()
 
   if dep_plan.is_internal {
     env = add_internal_host_builtins(env)
@@ -247,12 +252,14 @@ fn compile_module(
   if resolved.diagnostics.len() > 0 {
     return .Err(format_stage_error("resolve", canonical, source, resolved.diagnostics))
   }
+  tm3 := date.now()
 
   // Type-check
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
     return .Err(format_stage_error("check", canonical, source, check_result.diagnostics))
   }
+  tm4 := date.now()
 
   // Capture only this module's own type definitions into shared state so
   // subsequent modules see globally unique TypeIds without re-sharing
@@ -263,6 +270,12 @@ fn compile_module(
   lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
   if lowered.diagnostics.len() > 0 {
     return .Err(format_stage_error("lower", canonical, source, lowered.diagnostics))
+  }
+  tm5 := date.now()
+
+  if timed_mod {
+    total := tm5 - tm0
+    eprintln("[time:mod] ${canonical}  total=${Float.to_string(total)}ms  parse=${Float.to_string(tm1 - tm0)}ms  deps=${Float.to_string(tm2 - tm1)}ms  resolve=${Float.to_string(tm3 - tm2)}ms  check=${Float.to_string(tm4 - tm3)}ms  lower=${Float.to_string(tm5 - tm4)}ms")
   }
 
   // Build external_refs directly from lowering's canonical imported origins.

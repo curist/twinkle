@@ -24,12 +24,16 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.repr_assign.{repr_of_mono}
+use @std.date
+use @std.proc
 
 pub fn verify_prepared_module(
   prepared: PreparedModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) Result<Void, String> {
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
   for pf in prepared.funcs {
     funcs_by_id[pf.func_id.id] = pf
@@ -43,8 +47,30 @@ pub fn verify_prepared_module(
 
   module_globals := build_module_globals(prepared)
 
+  total_slots: Int = 0
+  total_slot_entries: Int = 0
+  t_slots: Float = 0.0
+  t_expr: Float = 0.0
+
   for pf in prepared.funcs {
-    try verify_prepared_func(pf, prepared.closure_captures, funcs_by_id, env, module_globals, builtins)
+    slot_count := pf.captures.len() + pf.params.len() + pf.locals.len()
+    total_slots = total_slots + slot_count
+    total_slot_entries = total_slot_entries + pf.slots.len()
+
+    ta := date.now()
+    try verify_prepared_func_slots(pf, prepared.closure_captures, env)
+    tb := date.now()
+    try verify_prepared_func_expr(pf, prepared.closure_captures, funcs_by_id, env, module_globals, builtins)
+    tc := date.now()
+
+    t_slots = t_slots + (tb - ta)
+    t_expr = t_expr + (tc - tb)
+  }
+
+  if timed {
+    n := prepared.funcs.len()
+    eprintln("[time:verify] funcs=${Int.to_string(n)}  total_slots=${Int.to_string(total_slots)}  total_slot_entries=${Int.to_string(total_slot_entries)}")
+    eprintln("[time:verify] slot_checks=${Float.to_string(t_slots)}ms  expr_walk=${Float.to_string(t_expr)}ms")
   }
 
   .Ok({})
@@ -73,13 +99,10 @@ fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
   }
 }
 
-fn verify_prepared_func(
+fn verify_prepared_func_slots(
   pf: PreparedFunc,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
-  module_globals: Dict<Int, MonoType>,
-  builtins: BuiltinRegistry,
 ) Result<Void, String> {
   for sid in pf.captures {
     try verify_slot_membership(pf, sid, .CaptureParam, env, "capture slot")
@@ -104,10 +127,30 @@ fn verify_prepared_func(
     }
   }
 
-  try verify_capture_alignment(pf, closure_captures)
-  try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, pf.body)
+  verify_capture_alignment(pf, closure_captures)
+}
 
-  .Ok({})
+fn verify_prepared_func_expr(
+  pf: PreparedFunc,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  env: ResolvedEnv,
+  module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
+) Result<Void, String> {
+  verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, pf.body)
+}
+
+fn verify_prepared_func(
+  pf: PreparedFunc,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  env: ResolvedEnv,
+  module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
+) Result<Void, String> {
+  try verify_prepared_func_slots(pf, closure_captures, env)
+  verify_prepared_func_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins)
 }
 
 fn verify_slot_membership(
