@@ -10,7 +10,8 @@ use compiler.core_ir.{LocalId, FuncId}
 use compiler.resolver.{MonoType}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
 use compiler.anf_analysis.{set_has}
-use compiler.opt.analysis.{base_reusable_after_binding, collect_tainted, next_local_id}
+use compiler.opt.analysis.{base_reusable_after_binding_with_live, collect_tainted, next_local_id}
+use compiler.opt.liveness.{live_after_by_binding}
 use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, optimizer_semantics_from_cow_config, reusable_update_site, call_info}
 
@@ -18,12 +19,19 @@ use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, o
 
 fn has_cow_op_in_op(op: AnfOp, semantics: OptimizerSemantics) Bool {
   case op {
-    .ARecordUpdate(_, _, _, _, _) => true,
-    .ACall(.AGlobalFunc(func_id), _) => {
+    .ARecordUpdate(.ALocal(_), _, _, _, _) => true,
+    .ARecordUpdate(_, _, _, _, _) => false,
+    .ACall(.AGlobalFunc(func_id), args) => {
       case call_info(semantics, func_id) {
         .Some(info) => {
           case info.cow_base_arg {
-            .Some(_) => true,
+            .Some(base_arg) => {
+              if base_arg >= args.len() { return false }
+              case args[base_arg] {
+                .ALocal(_) => true,
+                _ => false,
+              }
+            },
             .None => false,
           }
         },
@@ -109,6 +117,7 @@ type RwState = .{
   tainted: Dict<Int, Bool>,
   ownership: Dict<Int, Ownership>,
   known_empty: Dict<Int, Bool>,
+  live_after_by_binding: Dict<Int, Dict<Int, Bool>>,
   config: OptimizerSemantics,
   next_local: Int,
   monos: Dict<Int, MonoType>,
@@ -157,6 +166,7 @@ fn with_metadata_from(st: RwState, other: RwState) RwState {
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: st.known_empty,
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: if other.next_local > st.next_local { other.next_local } else { st.next_local },
     monos: merge_mono_maps(st.monos, other.monos),
@@ -170,6 +180,7 @@ fn with_local_ownership(st: RwState, local: LocalId, ownership: Ownership) RwSta
     tainted: st.tainted,
     ownership: owned,
     known_empty: st.known_empty,
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
     monos: st.monos,
@@ -181,6 +192,7 @@ fn with_known_empty_local(st: RwState, local: LocalId) RwState {
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: set_add(st.known_empty, local.id),
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
     monos: st.monos,
@@ -192,6 +204,7 @@ fn without_local_ownership(st: RwState, local: LocalId) RwState {
     tainted: st.tainted,
     ownership: st.ownership.remove(local.id),
     known_empty: set_remove(st.known_empty, local.id),
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
     monos: st.monos,
@@ -214,6 +227,7 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
     tainted: st.tainted,
     ownership: owned,
     known_empty: st.known_empty,
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
     monos: st.monos,
@@ -223,6 +237,7 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
       tainted: st.tainted,
       ownership: st.ownership,
       known_empty: set_add(set_remove(st.known_empty, source.id), target.id),
+      live_after_by_binding: st.live_after_by_binding,
       config: st.config,
       next_local: st.next_local,
       monos: st.monos,
@@ -237,6 +252,7 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: set_remove(st.known_empty, local.id),
+    live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
     monos: st.monos,
@@ -245,12 +261,17 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
 
 fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: RwState) UpdateRewrite {
   new_op := op
+  empty_live: Dict<Int, Bool> = Dict.new()
+  live_after_body := case st.live_after_by_binding[bind_local.id] {
+    .Some(live) => live,
+    .None => empty_live,
+  }
   case reusable_update_site(new_op, st.config) {
     .Some(site) => {
-      reusable := base_reusable_after_binding(body, site.base_local, bind_local)
       case site.kind {
         .RecordUpdate => {
-          if local_has_shell_ownership(st, site.base_local) and reusable {
+          if local_has_shell_ownership(st, site.base_local)
+            and base_reusable_after_binding_with_live(body, site.base_local, bind_local, live_after_body) {
             case new_op {
               .ARecordUpdate(base, fld, value, _, type_id) => {
                 new_op = AnfOp.ARecordUpdate(base, fld, value, true, type_id)
@@ -260,7 +281,8 @@ fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: Rw
           }
         },
         .Call => {
-          if local_is_deep_owned(st, site.base_local) and reusable {
+          if local_is_deep_owned(st, site.base_local)
+            and base_reusable_after_binding_with_live(body, site.base_local, bind_local, live_after_body) {
             case site.in_place_equivalent {
               .Some(in_place) => {
                 case new_op {
@@ -295,6 +317,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) ExprRewrite {
                 tainted: st.tainted,
                 ownership: st.ownership,
                 known_empty: st.known_empty,
+                live_after_by_binding: st.live_after_by_binding,
                 config: st.config,
                 next_local: rewritten.next_local,
                 monos: merge_mono_maps(st.monos, rewritten.mono_updates),
@@ -370,6 +393,7 @@ fn rewrite_op(op: AnfOp, st: RwState) OpRewrite {
         tainted: st.tainted,
         ownership: Dict.new(),
         known_empty: Dict.new(),
+        live_after_by_binding: st.live_after_by_binding,
         config: st.config,
         next_local: st.next_local,
         monos: st.monos,
@@ -413,10 +437,12 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
 pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
   if !has_cow_op_in_expr(func.body, config) { return func }
   tainted := collect_tainted(func, config)
+  live_after_map := live_after_by_binding(func.body)
   st: RwState = RwState.{
     tainted: tainted,
     ownership: Dict.new(),
     known_empty: Dict.new(),
+    live_after_by_binding: live_after_map,
     config: config,
     next_local: next_local_id(func),
     monos: func.op_result_mono,

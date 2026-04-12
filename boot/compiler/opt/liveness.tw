@@ -36,8 +36,14 @@ fn add_atom(a: Atom, live: Dict<Int, Bool>) Dict<Int, Bool> {
 // ── live_after ──────────────────────────────────────────────────────
 
 // Compute the set of locals live at the entry of an expression.
+type LiveScan = .{ live_in: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>> }
+
 pub fn live_after(expr: AnfExpr) Dict<Int, Bool> {
   compute_live(expr, Dict.new())
+}
+
+pub fn live_after_by_binding(expr: AnfExpr) Dict<Int, Dict<Int, Bool>> {
+  compute_live_map(expr, Dict.new(), Dict.new()).by_binding
 }
 
 fn compute_live(expr: AnfExpr, live: Dict<Int, Bool>) Dict<Int, Bool> {
@@ -48,7 +54,7 @@ fn compute_live(expr: AnfExpr, live: Dict<Int, Bool>) Dict<Int, Bool> {
       // Kill the binding
       result = set_remove(result, local.id)
       // Add everything the op reads
-      live_in_op(op, result)
+      live_in_op_with_live_out(op, result)
     },
     .Atom(a) => add_atom(a, live),
     .Return(.Some(a)) => add_atom(a, live),
@@ -59,7 +65,28 @@ fn compute_live(expr: AnfExpr, live: Dict<Int, Bool>) Dict<Int, Bool> {
   }
 }
 
-fn live_in_op(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool> {
+fn compute_live_map(expr: AnfExpr, live: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>>) LiveScan {
+  case expr {
+    .Let(local, op, body) => {
+      body_r := compute_live_map(body, live, by_binding)
+      by_binding = body_r.by_binding
+      by_binding[local.id] = body_r.live_in
+      live_before_op := set_remove(body_r.live_in, local.id)
+      LiveScan.{
+        live_in: live_in_op_with_live_out(op, live_before_op),
+        by_binding,
+      }
+    },
+    .Atom(a) => LiveScan.{ live_in: add_atom(a, live), by_binding },
+    .Return(.Some(a)) => LiveScan.{ live_in: add_atom(a, live), by_binding },
+    .Return(.None) => LiveScan.{ live_in: live, by_binding },
+    .Break(.Some(a)) => LiveScan.{ live_in: add_atom(a, live), by_binding },
+    .Break(.None) => LiveScan.{ live_in: live, by_binding },
+    .Continue => LiveScan.{ live_in: live, by_binding },
+  }
+}
+
+pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool> {
   case op {
     .ACall(callee, args) => {
       result := add_atom(callee, live)

@@ -2,14 +2,33 @@
 
 use compiler.core_ir.{LocalId, FuncId, CorePattern}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef}
-use compiler.anf_analysis.{set_has}
-use compiler.opt.liveness.{live_after}
+use compiler.anf_analysis.{set_has, collect_pattern_bindings}
+use compiler.opt.liveness.{live_after, live_in_op_with_live_out}
 use compiler.opt.semantics.{OptimizerSemantics, call_info}
 
 fn atom_is_local(a: Atom, local: LocalId) Bool {
   case a {
     .ALocal(id) => id.id == local.id,
     _ => false,
+  }
+}
+
+type TaintScan = .{ tainted: Dict<Int, Bool>, live_in: Dict<Int, Bool> }
+
+fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
+  s[k] = true
+  s
+}
+
+fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
+  s = s.remove(k)
+  s
+}
+
+fn add_atom_live(a: Atom, live: Dict<Int, Bool>) Dict<Int, Bool> {
+  case a {
+    .ALocal(id) => set_add(live, id.id),
+    _ => live,
   }
 }
 
@@ -20,13 +39,18 @@ pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict
     tainted[p.local.id] = true
   }
   empty: Dict<Int, Bool> = Dict.new()
-  scan_tainted_expr(func.body, tainted, empty, semantics)
+  result := scan_tainted_expr(func.body, tainted, empty, semantics)
+  result.tainted
 }
 
 // The old base can be reused when the continuation immediately overwrites the
 // base with the new result, or when the old base is dead after the binding.
+pub fn base_reusable_after_binding_with_live(body: AnfExpr, base: LocalId, result: LocalId, live_after_body: Dict<Int, Bool>) Bool {
+  is_consume_reassign(body, base, result) or !set_has(live_after_body, base.id)
+}
+
 pub fn base_reusable_after_binding(body: AnfExpr, base: LocalId, result: LocalId) Bool {
-  is_consume_reassign(body, base, result) or !set_has(live_after(body), base.id)
+  base_reusable_after_binding_with_live(body, base, result, live_after(body))
 }
 
 // Matches the loop accumulator pattern:
@@ -49,10 +73,12 @@ pub fn loop_push_reassign_elem(op: AnfOp, body: AnfExpr, base: LocalId, push_id:
   }
 }
 
-fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, semantics: OptimizerSemantics) Dict<Int, Bool> {
+fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool>, semantics: OptimizerSemantics) TaintScan {
   case expr {
     .Let(local, op, body) => {
-      live_after_body := live_after(body)
+      body_r := scan_tainted_expr(body, tainted, live_out, semantics)
+      tainted = body_r.tainted
+      live_after_body := body_r.live_in
 
       init_alias_source: Int? = .None
       case op {
@@ -79,7 +105,6 @@ fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int
       }
 
       tainted = scan_tainted_op(op, tainted, live_after_body, semantics)
-      tainted = scan_tainted_expr(body, tainted, live_out, semantics)
 
       case init_alias_source {
         .Some(source_id) => {
@@ -90,9 +115,18 @@ fn scan_tainted_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, live_out: Dict<Int
         .None => {},
       }
 
-      tainted
+      live_before_op := set_remove(live_after_body, local.id)
+      TaintScan.{
+        tainted,
+        live_in: live_in_op_with_live_out(op, live_before_op),
+      }
     },
-    _ => tainted,
+    .Atom(a) => TaintScan.{ tainted, live_in: add_atom_live(a, live_out) },
+    .Return(.Some(a)) => TaintScan.{ tainted, live_in: add_atom_live(a, live_out) },
+    .Break(.Some(a)) => TaintScan.{ tainted, live_in: add_atom_live(a, live_out) },
+    .Return(.None) => TaintScan.{ tainted, live_in: live_out },
+    .Break(.None) => TaintScan.{ tainted, live_in: live_out },
+    .Continue => TaintScan.{ tainted, live_in: live_out },
   }
 }
 
@@ -160,15 +194,22 @@ fn scan_tainted_op(op: AnfOp, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool
       tainted
     },
     .AIf(_, then_e, else_e) => {
-      tainted = scan_tainted_expr(then_e, tainted, live_out, semantics)
-      scan_tainted_expr(else_e, tainted, live_out, semantics)
+      then_r := scan_tainted_expr(then_e, tainted, live_out, semantics)
+      scan_tainted_expr(else_e, then_r.tainted, live_out, semantics).tainted
     },
     .AMatch(_, arms) => {
-      for arm in arms { tainted = scan_tainted_expr(arm.body, tainted, live_out, semantics) }
+      for arm in arms {
+        bindings := collect_pattern_bindings(arm.pattern, Dict.new())
+        arm_r := scan_tainted_expr(arm.body, tainted, live_out, semantics)
+        tainted = arm_r.tainted
+        for k in bindings.keys() {
+          tainted = tainted.remove(k)
+        }
+      }
       tainted
     },
-    .ALoop(body) => scan_tainted_expr(body, tainted, live_out, semantics),
-    .ADefer(body) => scan_tainted_expr(body, tainted, live_out, semantics),
+    .ALoop(body) => scan_tainted_expr(body, tainted, live_out, semantics).tainted,
+    .ADefer(body) => scan_tainted_expr(body, tainted, live_out, semantics).tainted,
     _ => tainted,
   }
 }

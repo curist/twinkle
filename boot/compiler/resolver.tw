@@ -117,6 +117,7 @@ pub type ResolvedEnv = .{
   methods: Dict<String, Vector<MethodEntry>>,
   methods_by_type: Dict<Int, Vector<MethodEntry>>,
   type_index: Dict<String, Int>,
+  type_id_index: Dict<Int, Int>,
   func_index: Dict<String, Int>,
 }
 
@@ -132,6 +133,7 @@ pub fn empty_env() ResolvedEnv {
     methods: Dict.new(),
     methods_by_type: Dict.new(),
     type_index: Dict.new(),
+    type_id_index: Dict.new(),
     func_index: Dict.new(),
   }
 }
@@ -205,12 +207,7 @@ pub fn register_type_methods(methods: Dict<Int, Vector<MethodEntry>>, tid: TypeI
 }
 
 fn find_type_entry_index(env: ResolvedEnv, tid: TypeId) Int? {
-  for i in range(env.types.len()) {
-    if env.types[i].id.id == tid.id {
-      return .Some(i)
-    }
-  }
-  .None
+  env.type_id_index[tid.id]
 }
 
 fn lookup_type_by_id(env: ResolvedEnv, tid: TypeId) TypeEntry? {
@@ -235,8 +232,11 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
   }
 
   valid_type_ids: Dict<Int, Bool> = Dict.new()
-  for entry in types {
+  id_idx: Dict<Int, Int> = Dict.new()
+  for i in range(types.len()) {
+    entry := types[i]
     valid_type_ids[entry.id.id] = true
+    id_idx[entry.id.id] = i
   }
 
   bindings: Dict<String, TypeId> = Dict.new()
@@ -273,6 +273,7 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
   env.type_bindings = bindings
   env.type_origins = origins
   env.type_index = idx
+  env.type_id_index = id_idx
   env
 }
 
@@ -292,6 +293,7 @@ pub fn extend_types_from(
       env.types = env.types.append(entry)
       env.type_names = env.type_names.append(acc_type_names[i])
       env.type_index[acc_type_names[i]] = env.types.len() - 1
+      env.type_id_index[entry.id.id] = env.types.len() - 1
     }
   }
   for tid in acc_type_origins.keys() {
@@ -375,10 +377,12 @@ pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: S
   case find_type_entry_index(env, entry.id) {
     .Some(idx) => {
       env.type_index[preferred_name] = idx
+      env.type_id_index[entry.id.id] = idx
       env
     },
     .None => {
       env.type_index[preferred_name] = env.types.len()
+      env.type_id_index[entry.id.id] = env.types.len()
       env.types = env.types.append(entry)
       env.type_names = env.type_names.append(preferred_name)
       env
@@ -2073,10 +2077,8 @@ pub fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
 }
 
 pub fn find_type_name(env: ResolvedEnv, tid: TypeId) String? {
-  for i in range(env.types.len()) {
-    if env.types[i].id.id == tid.id {
-      return .Some(env.type_names[i])
-    }
+  case env.type_id_index[tid.id] {
+    .Some(i) => .Some(env.type_names[i]),
+    .None => .None,
   }
-  .None
 }

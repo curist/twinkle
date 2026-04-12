@@ -2082,20 +2082,15 @@ fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
     .Optional(_) => true,
     .Result(_, _) => true,
     .Named(tid, args) => {
-      for entry in env.types {
-        if entry.id.id == tid.id {
-          def := case entry.def {
-            .Some(d) => d,
-            .None => { return false },
-          }
-          case def {
-            .Sum(_, _, _) => { return true },
-            .Alias(_, type_params, target) => { return can_match_variant_pattern(subst_type_params(target, type_params, args), env) },
-            _ => { return false },
-          }
-        }
+      def := case env.lookup_type_def(tid) {
+        .Some(d) => d,
+        .None => { return false },
       }
-      false
+      case def {
+        .Sum(_, _, _) => true,
+        .Alias(_, type_params, target) => can_match_variant_pattern(subst_type_params(target, type_params, args), env),
+        _ => false,
+      }
     },
     _ => false,
   }
@@ -3179,23 +3174,18 @@ fn variant_field_mono(scrutinee_mono: MonoType, vid: VariantId, field_idx: Int, 
 }
 
 fn resolve_named_variant_field(tid: TypeId, args: Vector<MonoType>, vid: VariantId, field_idx: Int, env: ResolvedEnv) MonoType {
-  for entry in env.types {
-    if entry.id.id == tid.id {
-      def := case entry.def {
-        .Some(d) => d,
-        .None => error("resolve_named_variant_field: no def for TypeId ${tid.id}"),
-      }
-      case def {
-        .Sum(_, type_params, variants) => {
-          v := variants[vid.id]
-          field_ty := v.fields[field_idx]
-          return subst_type_params(field_ty, type_params, args)
-        },
-        _ => error("resolve_named_variant_field: not a Sum type"),
-      }
-    }
+  def := case env.lookup_type_def(tid) {
+    .Some(d) => d,
+    .None => { return .Void },
   }
-  error("resolve_named_variant_field: TypeId ${tid.id} not found")
+  case def {
+    .Sum(_, type_params, variants) => {
+      v := variants[vid.id]
+      field_ty := v.fields[field_idx]
+      subst_type_params(field_ty, type_params, args)
+    },
+    _ => .Void,
+  }
 }
 
 fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {

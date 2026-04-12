@@ -10,7 +10,7 @@
 TWINKLE_TIMINGS=1 node tools/run_wasm_node.mjs /tmp/boot.wasm -- build boot/main.tw -o /tmp/stage2.wasm 2>&1 | grep '^\[time'
 ```
 
-## Baseline (boot/main.tw, 84 modules, Node/Wasm)
+## Historical baseline (boot/main.tw, 84 modules, Node/Wasm)
 
 ```
 compile_modules   3735ms   (84 modules — parse/resolve/check/lower per file)
@@ -29,8 +29,33 @@ closure_convert     11ms
 total            ~14 000ms
 ```
 
-Top four bottlenecks account for ~11.6s (83%).  The plan below investigates
-each in turn before committing to any fix.
+This was the original investigation baseline. Several items below have since
+been fixed, so use the current snapshot for prioritization.
+
+## Current snapshot (after verifier/plan fixes and ownership cleanup)
+
+```
+compile_modules   3803ms
+optimize          3401ms
+emit_wasm_binary   870ms
+link               736ms
+emit_module        645ms
+prepare_backend    385ms
+verify             199ms
+plan_wasm_types    164ms
+lower_anf           54ms
+core_link           71ms
+monomorphize        25ms
+closure_convert     14ms
+```
+
+Current priority order:
+
+1. `compile_modules`
+2. `optimize` (still dominated by `uniqueness`)
+3. the codegen tail: `emit_wasm_binary`, `link`, `emit_module`
+
+`verify` and `plan_wasm_types` are no longer top-tier bottlenecks.
 
 ---
 
@@ -47,7 +72,19 @@ each in turn before committing to any fix.
 [time:opt] funcs=1354  total_rounds=3063  avg_rounds=2.26  at_cap=13
 [time:opt] dead_let=202ms  copy_prop=167ms  const_fold=4ms  branch_simp=3ms
 [time:opt] annotate_in_place=0.9ms  uniqueness=3001ms  defer_elim=3ms
+```
 
+These numbers were captured before the later ownership-model cleanup that:
+
+- removed `clone_env` from module compilation
+- deleted the resolver clone helpers
+- moved record-update reuse decisions under `uniqueness.tw`
+- removed `annotate_in_place` from the production optimization pipeline
+
+So the detailed timings below remain useful for historical root-cause analysis,
+but some hypotheses are now resolved and should not be treated as current work.
+
+```
 [time:verify] funcs=1354  total_slots=62185  slot_entries=62185
 [time:verify] slot_checks=2971ms  expr_walk=95ms
 
@@ -56,10 +93,10 @@ each in turn before committing to any fix.
 ```
 
 Key findings:
-- **compile_modules**: dominated by a handful of large modules (checker.tw 411ms check, lower_core.tw 329ms, emit.tw 518ms). Most time is `check` inside those modules. The deps column for pipeline.tw/codegen.tw just propagates the big modules' costs up.
-- **optimize**: `uniqueness_rewrite` alone takes 3001ms — virtually all of the 3383ms total. dead_let+copy_prop are secondary (370ms combined). avg rounds is only 2.26, so the fixed-point loop is not the problem.
-- **verify**: slot checks dominate (2971ms vs 95ms for expr walk). With 62185 slots across 1354 functions, this points to an O(slots²) pattern inside `verify_unique_source_local`.
-- **plan_wasm_types**: `register_sigs` takes 1362ms of 1471ms total. This is `register_func_sig_by_id` + `register_higher_order_global_func_sigs` + `analyze_builtin_call`. The slot registration itself is only 58ms.
+- **compile_modules** still concentrates in a handful of large modules, and their cost is still mostly `check`: checker.tw (~454ms), emit.tw (~576ms), parser.tw (~347ms), lower_core.tw (~333ms).
+- **optimize** is still dominated by `uniqueness` (~2946ms of ~3401ms). dead_let+copy_prop are secondary (~418ms combined). avg rounds remains low (~2.26), so the fixed-point loop is still not the problem.
+- **verify** is no longer a major issue (~199ms total after the earlier slot-check fix).
+- **plan_wasm_types** is no longer a major issue (~164ms total after the earlier signature-registration fix).
 
 ---
 
@@ -71,10 +108,12 @@ parse → resolve → check → lower_core
 ### Hypotheses
 
 **H1.1 — Per-module env cloning is expensive.**
-`compile_module` calls `clone_env(base_env)` and `extend_types_from` for every
-module and every dependency fan-out.  If `TypeEnv` / `ValueEnv` hold large
-persistent Dicts or Vectors that are fully copied on every call, this adds up
-fast across 84 modules with transitive dependencies.
+This was a plausible hypothesis when `compile_module` still called
+`clone_env(base_env)` before every `extend_types_from`.
+
+**Status:** resolved structurally. The clone workaround was removed after the
+boot optimizer was fixed to distinguish shallow wrapper freshness from deep
+ownership, so this is no longer a current optimization target.
 
 **H1.2 — Prelude modules re-compiled per entry point.**
 The 40+ prelude files are loaded and compiled as dependencies for every user
@@ -134,6 +173,10 @@ monomorphic function variants.
 **H2.4 — `annotate_in_place` runs on every function unconditionally.**
 Even functions with no record-update ops pay the traversal cost.
 
+**Status:** resolved structurally. Record-update reuse decisions now live under
+`uniqueness.tw`, and `annotate_in_place` is no longer in the production
+pipeline.
+
 ### Findings
 
 `uniqueness_rewrite` is 3001ms out of 3383ms total — it alone IS the
@@ -143,18 +186,26 @@ a secondary target.
 
 ### Investigation
 
-- Profile `uniqueness_rewrite` internals: the pre-scan (`collect_local_refs`)
-  and forward walk both traverse the full AST.  For 1354 monomorphized
-  functions the cumulative size is large.
-- Check whether most functions produce zero rewrites — if so, a cheap
-  pre-check (does this function contain any VECTOR_SET_UNSAFE?) could skip
-  the pass entirely for the majority.
-- Investigate dead_let+copy_prop: both do full AST traversals.  A combined
-  single-pass could halve that cost.
+Recent small wins already landed here:
+
+- fused taint collection with liveness propagation so the taint pre-scan no
+  longer recomputes `live_after(body)` at every let
+- stopped checking reusable-base liveness for update sites whose base is not
+  even owned, avoiding wasted `live_after` work in common negative cases
+
+These helped a bit, but `uniqueness` still dominates. The next likely work is:
+
+- profile `uniqueness_rewrite` internals under the current ownership model,
+  especially remaining `live_after(body)` calls in `base_reusable_after_binding`
+- check whether most functions still produce zero rewrites — if so, strengthen
+  the existing cheap pre-check so more functions skip the pass entirely
+- re-measure dead_let+copy_prop after uniqueness is reduced; both still do full
+  AST traversals and may become the next optimization target once uniqueness is
+  no longer overwhelmingly dominant
 
 ---
 
-## 3. `verify` — 3086ms
+## 3. `verify` — historical 3086ms, current ~199ms
 
 `verify_prepared_module` walks every `PreparedFunc`'s full body expression
 tree, checking slot membership, metadata, and expression shapes.
@@ -202,7 +253,7 @@ per function × 1354 functions = ~2.7M comparisons.
 
 ---
 
-## 4. `plan_wasm_types` — 1397ms
+## 4. `plan_wasm_types` — historical 1397ms, current ~164ms
 
 `plan_wasm_types` scans all prepared bodies and builds the `WasmTypeRegistry`:
 registers mono types, string pool entries, runtime imports, closure func sigs.
@@ -266,10 +317,12 @@ addressed.  Quick notes:
 
 ## Suggested investigation order
 
-1. Add per-module + per-sub-step timing to `compile_module` — quick win to
-   identify hot modules and whether clone_env or type-checking dominates.
-2. Add round-count logging and per-pass timing to `optimize_module` — reveals
-   whether the bottleneck is the fixed-point convergence or the post-loop passes.
+1. Re-run per-module + per-sub-step timings on the current tree to measure the
+   post-`clone_env` baseline and confirm whether type checking still dominates
+   `compile_modules`.
+2. Re-run per-pass timings on `optimize_module` after removing pipeline
+   `annotate_in_place`, then profile `uniqueness_rewrite` under the ownership
+   model rather than the older unique-bit implementation.
 3. Add slot/node count logging to `verify_prepared_module` — determines whether
    3s is unavoidable given IR size or whether specific checks are pathological.
 4. Add type-registration count and topo-sort timer to `plan_wasm_types`.
