@@ -994,13 +994,13 @@ fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: CoreExpr
 
   case unit_variant_tag(right) {
     .Some(tag) => {
-      case left.ty {
-        .Named(lhs_tid, _) => {
+      case type_id_from_mono(left.ty) {
+        .Some(lhs_tid) => {
           if lhs_tid.id == tag.tid.id {
             return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
           }
         },
-        _ => {},
+        .None => {},
       }
     },
     .None => {},
@@ -1008,13 +1008,13 @@ fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: CoreExpr
 
   case unit_variant_tag(left) {
     .Some(tag) => {
-      case right.ty {
-        .Named(rhs_tid, _) => {
+      case type_id_from_mono(right.ty) {
+        .Some(rhs_tid) => {
           if rhs_tid.id == tag.tid.id {
             return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
           }
         },
-        _ => {},
+        .None => {},
       }
     },
     .None => {},
@@ -1667,6 +1667,133 @@ fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: S
   }
 }
 
+fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ctx: LowerCtx) ExprOut {
+  case expr.kind {
+    .Continue => {
+      ao := ctx.alloc_anon_local()
+      cont := CoreExpr.{ kind: .Continue, ty: expr.ty, span: expr.span }
+      .{
+        expr: CoreExpr.{ kind: .Let(ao.local, before_continue, cont), ty: expr.ty, span: expr.span },
+        ctx: ao.ctx,
+      }
+    },
+    .Let(local, value, body) => {
+      value_r := rewrite_index_loop_continue(value, before_continue, ctx)
+      body_r := rewrite_index_loop_continue(body, before_continue, value_r.ctx)
+      .{ expr: CoreExpr.{ kind: .Let(local, value_r.expr, body_r.expr), ty: expr.ty, span: expr.span }, ctx: body_r.ctx }
+    },
+    .Assign(local, value) => {
+      value_r := rewrite_index_loop_continue(value, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .Assign(local, value_r.expr), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+    },
+    .BinOp(op, left, right) => {
+      left_r := rewrite_index_loop_continue(left, before_continue, ctx)
+      right_r := rewrite_index_loop_continue(right, before_continue, left_r.ctx)
+      .{ expr: CoreExpr.{ kind: .BinOp(op, left_r.expr, right_r.expr), ty: expr.ty, span: expr.span }, ctx: right_r.ctx }
+    },
+    .UnOp(op, inner) => {
+      inner_r := rewrite_index_loop_continue(inner, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .UnOp(op, inner_r.expr), ty: expr.ty, span: expr.span }, ctx: inner_r.ctx }
+    },
+    .Call(callee, args) => {
+      callee_r := rewrite_index_loop_continue(callee, before_continue, ctx)
+      new_args: Vector<CoreExpr> = []
+      cur := callee_r.ctx
+      for arg in args {
+        arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
+        new_args = new_args.append(arg_r.expr)
+        cur = arg_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Call(callee_r.expr, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .If(cond, then_e, else_e) => {
+      cond_r := rewrite_index_loop_continue(cond, before_continue, ctx)
+      then_r := rewrite_index_loop_continue(then_e, before_continue, cond_r.ctx)
+      else_r := rewrite_index_loop_continue(else_e, before_continue, then_r.ctx)
+      .{ expr: CoreExpr.{ kind: .If(cond_r.expr, then_r.expr, else_r.expr), ty: expr.ty, span: expr.span }, ctx: else_r.ctx }
+    },
+    .Match(scrutinee, arms) => {
+      scrutinee_r := rewrite_index_loop_continue(scrutinee, before_continue, ctx)
+      new_arms: Vector<MatchArm> = []
+      cur := scrutinee_r.ctx
+      for arm in arms {
+        body_r := rewrite_index_loop_continue(arm.body, before_continue, cur)
+        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: body_r.expr })
+        cur = body_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Match(scrutinee_r.expr, new_arms), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .Break(value) => {
+      case value {
+        .Some(v) => {
+          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+          .{ expr: CoreExpr.{ kind: .Break(.Some(value_r.expr)), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+        },
+        .None => .{ expr, ctx },
+      }
+    },
+    .Return(value) => {
+      case value {
+        .Some(v) => {
+          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+          .{ expr: CoreExpr.{ kind: .Return(.Some(value_r.expr)), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+        },
+        .None => .{ expr, ctx },
+      }
+    },
+    .Defer(inner) => {
+      inner_r := rewrite_index_loop_continue(inner, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .Defer(inner_r.expr), ty: expr.ty, span: expr.span }, ctx: inner_r.ctx }
+    },
+    .Record(tid, fields) => {
+      new_fields: Vector<FieldInit> = []
+      cur := ctx
+      for field in fields {
+        value_r := rewrite_index_loop_continue(field.value, before_continue, cur)
+        new_fields = new_fields.append(FieldInit.{ field: field.field, value: value_r.expr })
+        cur = value_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Record(tid, new_fields), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .RecordGet(target, fid) => {
+      target_r := rewrite_index_loop_continue(target, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .RecordGet(target_r.expr, fid), ty: expr.ty, span: expr.span }, ctx: target_r.ctx }
+    },
+    .RecordUpdate(target, fid, value) => {
+      target_r := rewrite_index_loop_continue(target, before_continue, ctx)
+      value_r := rewrite_index_loop_continue(value, before_continue, target_r.ctx)
+      .{ expr: CoreExpr.{ kind: .RecordUpdate(target_r.expr, fid, value_r.expr), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+    },
+    .Variant(tid, vid, args) => {
+      new_args: Vector<CoreExpr> = []
+      cur := ctx
+      for arg in args {
+        arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
+        new_args = new_args.append(arg_r.expr)
+        cur = arg_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Variant(tid, vid, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .ArrayLit(items) => {
+      new_items: Vector<CoreExpr> = []
+      cur := ctx
+      for item in items {
+        item_r := rewrite_index_loop_continue(item, before_continue, cur)
+        new_items = new_items.append(item_r.expr)
+        cur = item_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .ArrayLit(new_items), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .Index(base, index) => {
+      base_r := rewrite_index_loop_continue(base, before_continue, ctx)
+      index_r := rewrite_index_loop_continue(index, before_continue, base_r.ctx)
+      .{ expr: CoreExpr.{ kind: .Index(base_r.expr, index_r.expr), ty: expr.ty, span: expr.span }, ctx: index_r.ctx }
+    },
+    .Loop(_) => .{ expr, ctx },
+    _ => .{ expr, ctx },
+  }
+}
+
 fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
   int_ty := MonoType.Int
   bool_ty := MonoType.Bool
@@ -1712,6 +1839,8 @@ fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
     ty: void_ty,
     span: s,
   }
+  rewritten_action := rewrite_index_loop_continue(inner_action, idx_inc, ctx)
+  ctx = rewritten_action.ctx
   cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
   ao1 := ctx.alloc_anon_local()
   ctx = ao1.ctx
@@ -1719,7 +1848,7 @@ fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
 
   ao2 := ctx.alloc_anon_local()
   ctx = ao2.ctx
-  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, inner_action, inc_then_cont), ty: void_ty, span: s }
+  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, rewritten_action.expr, inc_then_cont), ty: void_ty, span: s }
 
   body_or_idx := case setup.idx_user_local {
     .Some(user_idx) => {
@@ -1879,6 +2008,8 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     span: s,
   }
 
+  rewritten_action := rewrite_index_loop_continue(inner_action, idx_inc, ctx)
+  ctx = rewritten_action.ctx
   cont := CoreExpr.{ kind: .Continue, ty: void_ty, span: s }
   ao1 := ctx.alloc_anon_local()
   ctx = ao1.ctx
@@ -1886,7 +2017,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
 
   ao2 := ctx.alloc_anon_local()
   ctx = ao2.ctx
-  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, inner_action, inc_then_cont), ty: void_ty, span: s }
+  action_then_inc := CoreExpr.{ kind: .Let(ao2.local, rewritten_action.expr, inc_then_cont), ty: void_ty, span: s }
 
   body_or_idx := case setup.idx_user_local {
     .Some(user_idx) => {
