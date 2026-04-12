@@ -8,11 +8,53 @@
 
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.resolver.{MonoType}
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
 use compiler.anf_analysis.{set_has}
 use compiler.opt.analysis.{base_reusable_after_binding, collect_tainted, next_local_id}
 use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
-use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, op_has_fresh_result, optimizer_semantics_from_cow_config, reusable_update_site}
+use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, op_has_fresh_result, optimizer_semantics_from_cow_config, reusable_update_site, call_info}
+
+// ── pre-check: does this function contain any reusable update site? ──
+
+fn has_cow_op_in_op(op: AnfOp, semantics: OptimizerSemantics) Bool {
+  case op {
+    .ARecordUpdate(_, _, _, _, _) => true,
+    .ACall(.AGlobalFunc(func_id), _) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => {
+          case info.cow_base_arg {
+            .Some(_) => true,
+            .None => false,
+          }
+        },
+        .None => false,
+      }
+    },
+    .AIf(_, then_expr, else_expr) => {
+      if has_cow_op_in_expr(then_expr, semantics) { return true }
+      has_cow_op_in_expr(else_expr, semantics)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if has_cow_op_in_expr(arm.body, semantics) { return true }
+      }
+      false
+    },
+    .ALoop(body) => has_cow_op_in_expr(body, semantics),
+    .ADefer(body) => has_cow_op_in_expr(body, semantics),
+    _ => false,
+  }
+}
+
+fn has_cow_op_in_expr(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
+  case expr {
+    .Let(_, op, body) => {
+      if has_cow_op_in_op(op, semantics) { return true }
+      has_cow_op_in_expr(body, semantics)
+    },
+    _ => false,
+  }
+}
 
 // ── set helpers ────────────────────────────────────────────────────
 
@@ -311,6 +353,7 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
 // ── Entry point ────────────────────────────────────────────────────
 
 pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
+  if !has_cow_op_in_expr(func.body, config) { return func }
   tainted := collect_tainted(func, config)
   st: RwState = RwState.{
     tainted: tainted,

@@ -44,6 +44,7 @@ fn empty_registry() WasmTypeRegistry {
     module_globals_order: [],
     string_pool: Dict.new(),
     string_pool_order: [],
+    string_pool_next_offset: 0,
     runtime_imports: [],
   }
 }

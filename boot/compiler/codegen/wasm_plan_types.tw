@@ -39,5 +39,6 @@ pub type WasmTypeRegistry = .{
   module_globals_order: Vector<Int>,
   string_pool: Dict<String, StringPoolEntry>,
   string_pool_order: Vector<String>,
+  string_pool_next_offset: Int,
   runtime_imports: Vector<ImportDef>,
 }

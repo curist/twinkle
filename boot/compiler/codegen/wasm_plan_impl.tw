@@ -9,7 +9,7 @@ use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo, PreparedExpr, PreparedOp, PreparedAtom}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo, PreparedExpr, PreparedOp}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
 use compiler.codegen.wasm_layout.{
@@ -40,6 +40,7 @@ pub fn plan_wasm_types_impl(
     module_globals_order: [],
     string_pool: Dict.new(),
     string_pool_order: [],
+    string_pool_next_offset: 0,
     runtime_imports: [],
   }
 
@@ -73,17 +74,22 @@ pub fn plan_wasm_types_impl(
   }
   t2 := date.now()
 
+  funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
+  for func in input.funcs {
+    funcs_by_id[func.func_id.id] = func
+  }
+
   for s in scan.strings.keys() {
     reg = register_string(reg, s)
   }
 
   for fid in scan.closure_funcs.keys() {
-    reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, input.funcs)
+    reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id)
   }
   for fid in scan.ho_global_funcs.keys() {
-    reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, input.funcs)
+    reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id)
   }
-  reg = register_higher_order_global_func_sigs(reg, input.funcs, builtins)
+  reg = register_higher_order_global_func_sigs(reg, funcs_by_id, builtins)
 
   for fid in scan.builtin_calls.keys() {
     case bi.entry(builtins, FuncId.{ id: fid }) {
@@ -99,7 +105,7 @@ pub fn plan_wasm_types_impl(
   // The referenced LocalIds must resolve back to slots in __init__.
   case input.anf.init_func_id {
     .Some(init_fid) => {
-      init_func := find_prepared_func(input.funcs, init_fid)
+      init_func := find_prepared_func(funcs_by_id, init_fid)
       for k in scan.module_globals.keys() {
         mono := resolve_module_global_mono(init_func, k)
         if !reg.module_globals.has(k) {
@@ -443,17 +449,17 @@ fn register_closure_func_type(reg: WasmTypeRegistry, layout: WasmClosureLayout) 
 
 // ── Prepared helpers ────────────────────────────────────────────────
 
-fn register_func_sig_by_id(reg: WasmTypeRegistry, fid: FuncId, funcs: Vector<PreparedFunc>) WasmTypeRegistry {
-  for func in funcs {
-    if func.func_id.id == fid.id {
+fn register_func_sig_by_id(reg: WasmTypeRegistry, fid: FuncId, funcs_by_id: Dict<Int, PreparedFunc>) WasmTypeRegistry {
+  case funcs_by_id[fid.id] {
+    .Some(func) => {
       reg.concrete_func_sigs[fid.id] = FuncSigEntry.{
         param_types: collect sid in func.params { slot_info(func, sid).mono },
         return_type: func.return_mono,
       }
-      return reg
-    }
+      reg
+    },
+    .None => reg,
   }
-  reg
 }
 
 fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegistry {
@@ -463,11 +469,11 @@ fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegi
   }
 }
 
-fn find_prepared_func(funcs: Vector<PreparedFunc>, fid: FuncId) PreparedFunc {
-  for func in funcs {
-    if func.func_id.id == fid.id { return func }
+fn find_prepared_func(funcs_by_id: Dict<Int, PreparedFunc>, fid: FuncId) PreparedFunc {
+  case funcs_by_id[fid.id] {
+    .Some(func) => func,
+    .None => error("find_prepared_func: missing prepared function F${fid.id}"),
   }
-  error("find_prepared_func: missing prepared function F${fid.id}")
 }
 
 fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
@@ -496,12 +502,17 @@ fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
 
 fn register_higher_order_global_func_sigs(
   reg: WasmTypeRegistry,
-  funcs: Vector<PreparedFunc>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
   builtins: BuiltinRegistry,
 ) WasmTypeRegistry {
   cur := reg
-  for func in funcs {
-    cur = collect_higher_order_global_func_sigs(cur, func.body, funcs, builtins)
+  for fid in funcs_by_id.keys() {
+    case funcs_by_id[fid] {
+      .Some(func) => {
+        cur = collect_higher_order_global_func_sigs(cur, func.body, funcs_by_id, builtins)
+      },
+      .None => {},
+    }
   }
   cur
 }
@@ -509,13 +520,13 @@ fn register_higher_order_global_func_sigs(
 fn collect_higher_order_global_func_sigs(
   reg: WasmTypeRegistry,
   expr: PreparedExpr,
-  funcs: Vector<PreparedFunc>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
   builtins: BuiltinRegistry,
 ) WasmTypeRegistry {
   case expr {
     .Let(_, op, body) => {
-      reg = collect_higher_order_global_func_sigs_op(reg, op, funcs, builtins)
-      collect_higher_order_global_func_sigs(reg, body, funcs, builtins)
+      reg = collect_higher_order_global_func_sigs_op(reg, op, funcs_by_id, builtins)
+      collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins)
     },
     _ => reg,
   }
@@ -524,7 +535,7 @@ fn collect_higher_order_global_func_sigs(
 fn collect_higher_order_global_func_sigs_op(
   reg: WasmTypeRegistry,
   op: PreparedOp,
-  funcs: Vector<PreparedFunc>,
+  funcs_by_id: Dict<Int, PreparedFunc>,
   builtins: BuiltinRegistry,
 ) WasmTypeRegistry {
   case op {
@@ -532,35 +543,39 @@ fn collect_higher_order_global_func_sigs_op(
       case bi.entry(builtins, callee_fid) {
         .Some(_) => reg,
         .None => {
-          callee := find_prepared_func(funcs, callee_fid)
-          cur := reg
-          for arg,i in args {
-            case arg {
-              .AGlobalFunc(arg_fid) => {
-                if prepared_param_expects_function(callee, i) {
-                  cur = register_func_sig_by_id(cur, arg_fid, funcs)
+          case funcs_by_id[callee_fid.id] {
+            .None => reg,
+            .Some(callee) => {
+              cur := reg
+              for arg,i in args {
+                case arg {
+                  .AGlobalFunc(arg_fid) => {
+                    if prepared_param_expects_function(callee, i) {
+                      cur = register_func_sig_by_id(cur, arg_fid, funcs_by_id)
+                    }
+                  },
+                  _ => {},
                 }
-              },
-              _ => {},
-            }
+              }
+              cur
+            },
           }
-          cur
         },
       }
     },
     .AIf(_, then_e, else_e) => {
-      reg = collect_higher_order_global_func_sigs(reg, then_e, funcs, builtins)
-      collect_higher_order_global_func_sigs(reg, else_e, funcs, builtins)
+      reg = collect_higher_order_global_func_sigs(reg, then_e, funcs_by_id, builtins)
+      collect_higher_order_global_func_sigs(reg, else_e, funcs_by_id, builtins)
     },
     .AMatch(_, arms) => {
       cur := reg
       for arm in arms {
-        cur = collect_higher_order_global_func_sigs(cur, arm.body, funcs, builtins)
+        cur = collect_higher_order_global_func_sigs(cur, arm.body, funcs_by_id, builtins)
       }
       cur
     },
-    .ALoop(body) => collect_higher_order_global_func_sigs(reg, body, funcs, builtins),
-    .ADefer(body) => collect_higher_order_global_func_sigs(reg, body, funcs, builtins),
+    .ALoop(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins),
+    .ADefer(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins),
     _ => reg,
   }
 }
@@ -584,23 +599,17 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
     .Some(_) => reg,
     .None => {
       idx := reg.string_pool_order.len()
-      // Compute byte offset from ordered entries
-      offset := 0
-      for prev in reg.string_pool_order {
-        case reg.string_pool[prev] {
-          .Some(existing) => { offset = offset + existing.byte_len },
-          .None => {},
-        }
-      }
+      byte_len := s.len()
       entry := StringPoolEntry.{
         global_sym: "$str_${idx}",
         getter_sym: "$str_${idx}_get",
         data_segment_name: "$data_strings",
-        byte_offset: offset,
-        byte_len: s.len(),
+        byte_offset: reg.string_pool_next_offset,
+        byte_len: byte_len,
       }
       reg.string_pool[s] = entry
       reg.string_pool_order = reg.string_pool_order.append(s)
+      reg.string_pool_next_offset = reg.string_pool_next_offset + byte_len
       reg
     },
   }
@@ -706,6 +715,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
     module_globals_order: reg.module_globals_order,
     string_pool: reg.string_pool,
     string_pool_order: reg.string_pool_order,
+    string_pool_next_offset: reg.string_pool_next_offset,
     runtime_imports: reg.runtime_imports,
   }
 }

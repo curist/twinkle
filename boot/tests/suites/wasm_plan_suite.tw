@@ -598,6 +598,7 @@ pub fn test_registry_empty() Result<Void, String> {
     module_globals_order: [],
     string_pool: Dict.new(),
     string_pool_order: [],
+    string_pool_next_offset: 0,
     runtime_imports: [],
   }
   try assert.int_eq(reg.type_defs.len(), 0)

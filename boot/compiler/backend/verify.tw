@@ -114,6 +114,7 @@ fn verify_prepared_func_slots(
     try verify_local_slot_membership(pf, sid, env)
   }
 
+  seen_source_locals: Dict<Int, Int> = Dict.new()
   for sid_int in pf.slots.keys() {
     case pf.slots[sid_int] {
       .None => {},
@@ -121,7 +122,18 @@ fn verify_prepared_func_slots(
         if info.slot.id != sid_int {
           return fail_func(pf, "slot table key S${sid_int} stores mismatched SlotId S${info.slot.id}")
         }
-        try verify_unique_source_local(pf, info)
+        src_id := info.source_local.id
+        case seen_source_locals[src_id] {
+          .Some(existing_sid) => {
+            return fail_func(
+              pf,
+              "slot S${existing_sid} and slot S${info.slot.id} both claim source local L${src_id}",
+            )
+          },
+          .None => {
+            seen_source_locals[src_id] = info.slot.id
+          },
+        }
         try verify_slot_metadata(pf, info, env)
       },
     }
@@ -1277,22 +1289,6 @@ fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Voi
   }
 }
 
-fn verify_unique_source_local(pf: PreparedFunc, target: SlotInfo) Result<Void, String> {
-  for sid_int in pf.slots.keys() {
-    case pf.slots[sid_int] {
-      .Some(info) => {
-        if info.slot.id != target.slot.id and info.source_local.id == target.source_local.id {
-          return fail_func(
-            pf,
-            "slot S${target.slot.id} and slot S${info.slot.id} both claim source local L${target.source_local.id}",
-          )
-        }
-      },
-      .None => {},
-    }
-  }
-  .Ok({})
-}
 
 fn local_info(pf: PreparedFunc, lid: LocalId, context: String) Result<SlotInfo, String> {
   case find_slot_by_source_local(pf, lid.id) {
