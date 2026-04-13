@@ -161,14 +161,23 @@ fn merge_mono_maps(base: Dict<Int, MonoType>, updates: Dict<Int, MonoType>) Dict
 }
 
 fn with_metadata_from(st: RwState, other: RwState) RwState {
+  // Loop rewrites are the only path that adds new monos entries, and they
+  // always advance next_local by 3.  When next_local is unchanged the two
+  // monos maps are identical, so skip the expensive merge.
+  next := if other.next_local > st.next_local { other.next_local } else { st.next_local }
+  monos := if other.next_local > st.next_local {
+    merge_mono_maps(st.monos, other.monos)
+  } else {
+    st.monos
+  }
   RwState.{
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: st.known_empty,
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
-    next_local: if other.next_local > st.next_local { other.next_local } else { st.next_local },
-    monos: merge_mono_maps(st.monos, other.monos),
+    next_local: next,
+    monos: monos,
   }
 }
 
