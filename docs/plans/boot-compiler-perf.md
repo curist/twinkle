@@ -32,28 +32,35 @@ total            ~14 000ms
 This was the original investigation baseline. Several items below have since
 been fixed, so use the current snapshot for prioritization.
 
-## Current snapshot (after verifier/plan fixes and ownership cleanup)
+## Current snapshot (after uniqueness dual pre-check, 2026-04-13)
 
 ```
-compile_modules   3803ms
-optimize          3401ms
-emit_wasm_binary   870ms
-link               736ms
-emit_module        645ms
-prepare_backend    385ms
-verify             199ms
-plan_wasm_types    164ms
-lower_anf           54ms
+compile_modules   3815ms
+optimize          2097ms  (uniqueness=1629ms, dead_let=226ms, copy_prop=190ms)
+emit_wasm_binary   800ms
+link               677ms
+emit_module        598ms
+prepare_backend    361ms
+verify             183ms
+plan_wasm_types    155ms
+lower_anf           56ms
 core_link           71ms
 monomorphize        25ms
-closure_convert     14ms
+closure_convert     12ms
 ```
+
+Changes since previous snapshot:
+- Fused collect_tainted + live_after_by_binding into single backward pass
+- Added taint-based second pre-check: skip rewrite_expr when all COW bases are
+  tainted (common for functions operating on dict/vector parameters)
+- uniqueness: 2963ms → 1629ms (~44% reduction)
+- optimize total: 3414ms → 2097ms
 
 Current priority order:
 
-1. `compile_modules`
-2. `optimize` (still dominated by `uniqueness`)
-3. the codegen tail: `emit_wasm_binary`, `link`, `emit_module`
+1. `compile_modules` (3815ms) — type-checker dominates large modules
+2. `optimize` (2097ms, still dominated by `uniqueness` 1629ms)
+3. the codegen tail: `emit_wasm_binary`, `link`, `emit_module` (~2075ms combined)
 
 `verify` and `plan_wasm_types` are no longer top-tier bottlenecks.
 
@@ -186,22 +193,27 @@ a secondary target.
 
 ### Investigation
 
-Recent small wins already landed here:
+Recent wins:
 
-- fused taint collection with liveness propagation so the taint pre-scan no
-  longer recomputes `live_after(body)` at every let
-- stopped checking reusable-base liveness for update sites whose base is not
-  even owned, avoiding wasted `live_after` work in common negative cases
+- Fused collect_tainted + live_after_by_binding into single backward pass
+  (collect_tainted_and_live in analysis.tw) — eliminates one O(n) traversal
+  per function for functions with COW ops
+- Added taint-based second pre-check (has_rewritable_cow_op_in_expr): after
+  taint analysis, if all COW-op base locals are tainted, skip rewrite_expr
+  entirely. This is the dominant win (~44% uniqueness reduction) because many
+  functions in large modules (checker.tw, emit.tw) operate on dict/vector
+  parameters that are always tainted, so rewrite_expr was wasting time finding
+  no rewrites.
 
-These helped a bit, but `uniqueness` still dominates. The next likely work is:
+Current state: uniqueness=1629ms. Next likely targets:
 
-- profile `uniqueness_rewrite` internals under the current ownership model,
-  especially remaining `live_after(body)` calls in `base_reusable_after_binding`
-- check whether most functions still produce zero rewrites — if so, strengthen
-  the existing cheap pre-check so more functions skip the pass entirely
-- re-measure dead_let+copy_prop after uniqueness is reduced; both still do full
-  AST traversals and may become the next optimization target once uniqueness is
-  no longer overwhelmingly dominant
+- Profile which functions still dominate uniqueness (presumably functions that
+  DO produce rewrites — loop accumulators, record builders). Are these few
+  large functions or many small ones?
+- Consider whether rewrite_expr can be made cheaper for functions that do
+  produce rewrites (reducing RwState allocation churn per Let binding)
+- dead_let+copy_prop now each take ~200ms and may become primary targets once
+  uniqueness is further reduced
 
 ---
 
