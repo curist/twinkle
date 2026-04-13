@@ -32,20 +32,20 @@ total            ~14 000ms
 This was the original investigation baseline. Several items below have since
 been fixed, so use the current snapshot for prioritization.
 
-## Current snapshot (after instantiate fast path, 2026-04-13)
+## Current snapshot (after wasm.tw accumulator refactor, 2026-04-13)
 
 ```
-compile_modules   3615ms
-optimize           534ms  (uniqueness=85ms, dead_let=225ms, copy_prop=190ms)
-emit_module        638ms
-link               651ms
-emit_wasm_binary   802ms
-prepare_backend    369ms
-verify             186ms
-plan_wasm_types    157ms
-lower_anf           55ms
-core_link           74ms
-monomorphize        26ms
+compile_modules   3558ms
+optimize           512ms  (uniqueness=78ms, dead_let=218ms, copy_prop=181ms)
+emit_module        601ms
+link               671ms
+emit_wasm_binary   453ms
+prepare_backend    351ms
+verify             188ms
+plan_wasm_types    158ms
+lower_anf           66ms
+core_link           68ms
+monomorphize        24ms
 closure_convert     12ms
 ```
 
@@ -55,12 +55,17 @@ Changes since previous snapshot:
 - Added instantiate() fast path for non-generic functions (the common case in all
   large modules): skips empty var_map allocation and params vector copy
   compile_modules: 3815ms → 3615ms (~5% reduction)
+- Refactored wasm.tw encode_instr/encode_instrs to accumulator pattern (buf-first):
+  eliminates one temporary Vector<Byte> per instruction and per control-flow nesting
+  level; section encoders updated to call encode_instrs(buf, ...) directly instead
+  of emit_bytes(buf, encode_instrs(...))
+  emit_wasm_binary: 802ms → 453ms (~44% reduction)
 
 Current priority order:
 
-1. `compile_modules` (3615ms) — type-checker dominates large modules
-2. the codegen tail: `emit_wasm_binary`, `link`, `emit_module` (~2091ms combined)
-3. `optimize` (534ms) — no longer a top bottleneck
+1. `compile_modules` (3558ms) — type-checker dominates large modules
+2. `emit_module` + `link` (~1272ms combined) — next codegen targets
+3. `optimize` (512ms) — no longer a top bottleneck
 
 `verify`, `plan_wasm_types`, and `optimize` are no longer top-tier bottlenecks.
 
