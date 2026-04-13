@@ -38,8 +38,7 @@ fn has_cow_op_in_op(op: AnfOp, semantics: OptimizerSemantics) Bool {
       }
     },
     .AIf(_, then_expr, else_expr) => {
-      if has_cow_op_in_expr(then_expr, semantics) { return true }
-      has_cow_op_in_expr(else_expr, semantics)
+      has_cow_op_in_expr(then_expr, semantics) or has_cow_op_in_expr(else_expr, semantics)
     },
     .AMatch(_, arms) => {
       for arm in arms {
@@ -61,18 +60,6 @@ fn has_cow_op_in_expr(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
     },
     _ => false,
   }
-}
-
-// ── set helpers ────────────────────────────────────────────────────
-
-fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
-  s[k] = true
-  s
-}
-
-fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
-  s = s.remove(k)
-  s
 }
 
 // ── Phase 2: Forward rewrite ───────────────────────────────────────
@@ -136,14 +123,14 @@ fn ownership_of(st: RwState, local: LocalId) Ownership? {
 }
 
 fn local_has_shell_ownership(st: RwState, local: LocalId) Bool {
-  case ownership_of(st, local) {
+  case st.ownership_of(local) {
     .Some(_) => true,
     .None => false,
   }
 }
 
 fn local_is_deep_owned(st: RwState, local: LocalId) Bool {
-  case ownership_of(st, local) {
+  case st.ownership_of(local) {
     .Some(.Deep) => true,
     _ => false,
   }
@@ -199,7 +186,7 @@ fn with_known_empty_local(st: RwState, local: LocalId) RwState {
   RwState.{
     tainted: st.tainted,
     ownership: st.ownership,
-    known_empty: set_add(st.known_empty, local.id),
+    known_empty: st.known_empty.set(local.id, true),
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
@@ -211,7 +198,7 @@ fn without_local_ownership(st: RwState, local: LocalId) RwState {
   RwState.{
     tainted: st.tainted,
     ownership: st.ownership.remove(local.id),
-    known_empty: set_remove(st.known_empty, local.id),
+    known_empty: st.known_empty.remove(local.id),
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
@@ -220,7 +207,7 @@ fn without_local_ownership(st: RwState, local: LocalId) RwState {
 }
 
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
-  moved := case ownership_of(st, source) {
+  moved := case st.ownership_of(source) {
     .Some(value) => value,
     .None => {
       return without_local_ownership(st, target)
@@ -244,7 +231,7 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
     st = RwState.{
       tainted: st.tainted,
       ownership: st.ownership,
-      known_empty: set_add(set_remove(st.known_empty, source.id), target.id),
+      known_empty: st.known_empty.remove(source.id).set(target.id, true),
       live_after_by_binding: st.live_after_by_binding,
       config: st.config,
       next_local: st.next_local,
@@ -259,7 +246,7 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   RwState.{
     tainted: st.tainted,
     ownership: st.ownership,
-    known_empty: set_remove(st.known_empty, local.id),
+    known_empty: st.known_empty.remove(local.id),
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
     next_local: st.next_local,
@@ -383,17 +370,17 @@ fn rewrite_op(op: AnfOp, st: RwState) OpRewrite {
       // Conservative: separate ownership sets for each branch, don't propagate out
       then_r := rewrite_expr(then_e, st)
       else_r := rewrite_expr(else_e, st)
-      merged := with_metadata_from(with_metadata_from(st, then_r.st), else_r.st)
-      OpRewrite.{ op: AnfOp.AIf(cond, then_r.expr, else_r.expr), st: merged }
+      merged := st.with_metadata_from(then_r.st).with_metadata_from(else_r.st)
+      .{ op: .AIf(cond, then_r.expr, else_r.expr), st: merged }
     },
     .AMatch(scrutinee, arms) => {
       acc := st
-      new_arms: Vector<AnfMatchArm> = collect arm in arms {
+      new_arms := collect arm in arms {
         arm_r := rewrite_expr(arm.body, st)
-        acc = with_metadata_from(acc, arm_r.st)
+        acc = acc.with_metadata_from(arm_r.st)
         AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr }
       }
-      OpRewrite.{ op: AnfOp.AMatch(scrutinee, new_arms), st: acc }
+      .{ op: .AMatch(scrutinee, new_arms), st: acc }
     },
     .ALoop(body) => {
       // Conservative: don't propagate ownership into loops
@@ -407,13 +394,13 @@ fn rewrite_op(op: AnfOp, st: RwState) OpRewrite {
         monos: st.monos,
       }
       body_r := rewrite_expr(body, empty_st)
-      OpRewrite.{ op: AnfOp.ALoop(body_r.expr), st: with_metadata_from(st, body_r.st) }
+      OpRewrite.{ op: .ALoop(body_r.expr), st: st.with_metadata_from(body_r.st) }
     },
     .ADefer(body) => {
       body_r := rewrite_expr(body, st)
-      OpRewrite.{ op: AnfOp.ADefer(body_r.expr), st: with_metadata_from(st, body_r.st) }
+      .{ op: .ADefer(body_r.expr), st: st.with_metadata_from(body_r.st) }
     },
-    _ => OpRewrite.{ op: op, st: st },
+    _ => .{ op, st },
   }
 }
 

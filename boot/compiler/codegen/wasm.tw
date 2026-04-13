@@ -553,15 +553,15 @@ fn build_ctx(
     data_idx[data[i].name] = i
   }
 
-  WasmCtx.{
-    type_idx:     type_idx,
-    anon_ft:      anon_ft,
-    anon_ft_idx:  anon_ft_idx,
-    anon_ft_base: anon_ft_base,
-    func_idx:     func_idx,
-    global_idx:   global_idx,
-    table_idx:    table_idx,
-    data_idx:     data_idx,
+  .{
+    type_idx,
+    anon_ft,
+    anon_ft_idx,
+    anon_ft_base,
+    func_idx,
+    global_idx,
+    table_idx,
+    data_idx,
   }
 }
 
