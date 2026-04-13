@@ -423,6 +423,14 @@ fn check_args(ctx: InferCtx, args: Vector<Expr>, param_tys: Vector<MonoType>, di
 type InstOut = .{ params: Vector<MonoType>, ret: MonoType, ctx: InferCtx }
 
 fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
+  // Fast path: non-generic functions need no substitution — avoid allocating
+  // var_map and copying params (the common case: almost all compiler functions
+  // are non-generic).
+  if sig.type_params.len() == 0 {
+    inst_ret := case sig.ret { .Some(r) => r, .None => MonoType.Void }
+    return .{ params: sig.params, ret: inst_ret, ctx }
+  }
+
   var_map: Dict<String, MonoType> = Dict.new()
   cur_ctx := ctx
   for tp in sig.type_params {
@@ -467,9 +475,7 @@ fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
 
 fn synth(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {
   r := ctx.synth_inner(expr, diags)
-  new_ctx := set_type_map(r.ctx, expr.id, r.ty)
-  new_ctx.expr_spans[expr.id] = expr.span.start
-  .{ ty: r.ty, ctx: new_ctx, diags: r.diags }
+  .{ ty: r.ty, ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, r.ty), diags: r.diags }
 }
 
 fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<Diagnostic>) SynthOut {

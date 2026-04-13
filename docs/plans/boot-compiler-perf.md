@@ -32,37 +32,37 @@ total            ~14 000ms
 This was the original investigation baseline. Several items below have since
 been fixed, so use the current snapshot for prioritization.
 
-## Current snapshot (after uniqueness dual pre-check, 2026-04-13)
+## Current snapshot (after instantiate fast path, 2026-04-13)
 
 ```
-compile_modules   3815ms
-optimize          2097ms  (uniqueness=1629ms, dead_let=226ms, copy_prop=190ms)
-emit_wasm_binary   800ms
-link               677ms
-emit_module        598ms
-prepare_backend    361ms
-verify             183ms
-plan_wasm_types    155ms
-lower_anf           56ms
-core_link           71ms
-monomorphize        25ms
+compile_modules   3615ms
+optimize           534ms  (uniqueness=85ms, dead_let=225ms, copy_prop=190ms)
+emit_module        638ms
+link               651ms
+emit_wasm_binary   802ms
+prepare_backend    369ms
+verify             186ms
+plan_wasm_types    157ms
+lower_anf           55ms
+core_link           74ms
+monomorphize        26ms
 closure_convert     12ms
 ```
 
 Changes since previous snapshot:
-- Fused collect_tainted + live_after_by_binding into single backward pass
-- Added taint-based second pre-check: skip rewrite_expr when all COW bases are
-  tainted (common for functions operating on dict/vector parameters)
-- uniqueness: 2963ms → 1629ms (~44% reduction)
-- optimize total: 3414ms → 2097ms
+- Skipped merge_mono_maps in with_metadata_from when next_local unchanged: uniqueness
+  1629ms → 85ms (~95% reduction); only loop-rewrite functions pay the merge cost
+- Added instantiate() fast path for non-generic functions (the common case in all
+  large modules): skips empty var_map allocation and params vector copy
+  compile_modules: 3815ms → 3615ms (~5% reduction)
 
 Current priority order:
 
-1. `compile_modules` (3815ms) — type-checker dominates large modules
-2. `optimize` (2097ms, still dominated by `uniqueness` 1629ms)
-3. the codegen tail: `emit_wasm_binary`, `link`, `emit_module` (~2075ms combined)
+1. `compile_modules` (3615ms) — type-checker dominates large modules
+2. the codegen tail: `emit_wasm_binary`, `link`, `emit_module` (~2091ms combined)
+3. `optimize` (534ms) — no longer a top bottleneck
 
-`verify` and `plan_wasm_types` are no longer top-tier bottlenecks.
+`verify`, `plan_wasm_types`, and `optimize` are no longer top-tier bottlenecks.
 
 ---
 
@@ -143,13 +143,30 @@ checker.tw (411ms), emit.tw (518ms), lower_core.tw (329ms), parser.tw (308ms).
 The `deps` column for top-level files like pipeline.tw is just recursively
 accumulated cost from those modules, not new work.
 
-### Investigation
+All four large modules have ZERO generic (parameterized) functions. This means
+every `instantiate()` call in the type checker was allocating an empty
+`var_map: Dict<String, MonoType>` and copying all params through `subst_vars`
+with no substitutions to apply — pure waste.
 
-- Add env size logging at the start of each module's check pass (how many
-  functions and types are in scope) — large envs could explain why check is
-  slow in the big files.
-- Profile whether it's HM unification depth, Dict lookup count, or sheer
-  expression count driving the check cost in those four modules.
+Fix: added fast path in `instantiate()` for `sig.type_params.len() == 0`:
+return `sig.params` directly and unwrap `sig.ret`, skipping the Dict alloc and
+`collect p in params { subst_vars(p, {}) }` traversal.
+Result: compile_modules 3815ms → 3615ms (~200ms, ~5% reduction).
+
+The checker's check time is still O(N) in total expressions with a moderate
+constant factor from InferCtx struct allocations and growing type_map/expr_spans
+dicts. No O(n²) pattern was found — the bottleneck is proportional work.
+
+### Next investigation targets for compile_modules
+
+- `check` in checker.tw (411ms), emit.tw (519ms), lower_core.tw (302ms),
+  parser.tw (340ms) still dominate. The checker threads InferCtx (12 fields)
+  functionally through every expression, creating struct copies on each update.
+  Cell-wrapping the write-only accumulators (type_map, expr_spans, method_calls)
+  would eliminate ~2 InferCtx allocations per expression — potentially a 20-40%
+  reduction in check time.
+- `lower_core.tw` and `parser.tw` also have non-trivial `lower` times (49ms,
+  54ms) — might be worth looking at once check time is further reduced.
 
 ---
 
@@ -205,15 +222,17 @@ Recent wins:
   parameters that are always tainted, so rewrite_expr was wasting time finding
   no rewrites.
 
-Current state: uniqueness=1629ms. Next likely targets:
+Current state: uniqueness=85ms. No longer a priority.
 
-- Profile which functions still dominate uniqueness (presumably functions that
-  DO produce rewrites — loop accumulators, record builders). Are these few
-  large functions or many small ones?
-- Consider whether rewrite_expr can be made cheaper for functions that do
-  produce rewrites (reducing RwState allocation churn per Let binding)
-- dead_let+copy_prop now each take ~200ms and may become primary targets once
-  uniqueness is further reduced
+Additional win (after uniqueness reduction):
+- Skip merge_mono_maps in with_metadata_from when next_local is unchanged:
+  loop rewrites are the only path that adds new monos entries, and they always
+  advance next_local by 3. When next_local is equal on both sides the two maps
+  are identical so the O(|monos|) merge can be skipped.
+  uniqueness: 1629ms → 85ms (~95% reduction)
+
+dead_let+copy_prop at ~200ms each are now secondary targets, but optimize
+(534ms total) is no longer a top priority.
 
 ---
 
