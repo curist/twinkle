@@ -708,11 +708,11 @@ fn test_rt_arr_concat_iterates() Result<Void, String> {
   f := try find_func(m.funcs, "concat").ok_or("missing concat func")
   try assert.int_eq(f.params.len(), 2)
   try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
-    case i { .Call(sym) => sym == "get", _ => false }
-  }), "concat should call get")
+    case i { .Call(sym) => sym == "builder_from", _ => false }
+  }), "concat should call builder_from")
   try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
-    case i { .Call(sym) => sym == "push", _ => false }
-  }), "concat should call push")
+    case i { .Call(sym) => sym == "builder_extend", _ => false }
+  }), "concat should call builder_extend")
   .Ok({})
 }
 
@@ -724,8 +724,8 @@ fn test_rt_arr_slice_iterates() Result<Void, String> {
     case i { .Call(sym) => sym == "get", _ => false }
   }), "slice should call get")
   try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
-    case i { .Call(sym) => sym == "push", _ => false }
-  }), "slice should call push")
+    case i { .Call(sym) => sym == "builder_push", _ => false }
+  }), "slice should call builder_push")
   .Ok({})
 }
 
