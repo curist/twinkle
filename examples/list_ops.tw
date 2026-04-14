@@ -41,7 +41,7 @@ fn add(a: Int, b: Int) Int {
 }
 
 fn vector_to_string(xs: Vector<Int>) String {
-  if len(xs) == 0 {
+  if xs.len() == 0 {
     return "[]"
   }
 
