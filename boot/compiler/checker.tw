@@ -228,8 +228,8 @@ fn contains_meta(ty: MonoType) Bool {
 }
 
 fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnostic>) UnifyOut {
-  za := zonk(a, ctx.subst)
-  zb := zonk(b, ctx.subst)
+  za := expand_alias(zonk(a, ctx.subst), ctx.env, 0)
+  zb := expand_alias(zonk(b, ctx.subst), ctx.env, 0)
 
   // Never unifies with anything
   case za { .Never => { return .{ ctx, diags } }, _ => {} }
@@ -1286,7 +1286,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
     },
     .Array(elems) => {
       // Push expected element type into array check
-      case zonk(expected, ctx.subst) {
+      case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
         .Vector(elem_ty) => {
           cur_ctx := ctx
           cur_diags := diags
@@ -1301,7 +1301,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
       }
     },
     .Collect(ce) => {
-      case zonk(expected, ctx.subst) {
+      case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
         .Vector(elem_ty) => {
           r := check_collect(ce, elem_ty, expr.span, ctx, diags)
           return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
@@ -1373,7 +1373,7 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
 
 fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   // Push expected param types into unannotated closure params
-  zonked := zonk(expected, ctx.subst)
+  zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
   case zonked {
     .Function(exp_params, exp_ret) => {
       cur_ctx := push_scope(ctx)

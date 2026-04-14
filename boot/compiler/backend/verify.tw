@@ -14,7 +14,7 @@
 use compiler.backend.prepared_ir.{PreparedMatchArm, PreparedFieldAtom}
 use compiler.core_ir.{LocalId, FieldId, VariantId}
 use compiler.anf.{OpKind}
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{MonoType, ResolvedEnv, ResolvedTypeDef, lookup_type_def}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
@@ -497,6 +497,58 @@ fn verify_op(
   }
 }
 
+// Expand type aliases in a MonoType up to depth 10.
+// Needed so that function-alias types (e.g. `type Adder = fn(Int) Int`)
+// are treated as Function monos in the verifier.
+fn expand_mono_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
+  if depth > 10 { return ty }
+  case ty {
+    .Named(tid, args) => {
+      case lookup_type_def(env, tid) {
+        .Some(def) => {
+          case def {
+            .Alias(_, type_params, target) => {
+              var_map: Dict<String, MonoType> = Dict.new()
+              for i in range(type_params.len()) {
+                if i < args.len() { var_map[type_params[i]] = args[i] }
+              }
+              expanded := subst_mono_vars(target, var_map)
+              expand_mono_alias(expanded, env, depth + 1)
+            },
+            _ => ty,
+          }
+        },
+        .None => ty,
+      }
+    },
+    _ => ty,
+  }
+}
+
+fn subst_mono_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      case var_map[name] {
+        .Some(replacement) => replacement,
+        .None => ty,
+      }
+    },
+    .Vector(inner) => .Vector(subst_mono_vars(inner, var_map)),
+    .Dict(k, v) => .Dict(subst_mono_vars(k, var_map), subst_mono_vars(v, var_map)),
+    .Function(params, ret) => {
+      inst_params := collect p in params { subst_mono_vars(p, var_map) }
+      .Function(inst_params, subst_mono_vars(ret, var_map))
+    },
+    .Optional(inner) => .Optional(subst_mono_vars(inner, var_map)),
+    .Result(ok, err) => .Result(subst_mono_vars(ok, var_map), subst_mono_vars(err, var_map)),
+    .Named(tid, type_args) => {
+      inst_args := collect a in type_args { subst_mono_vars(a, var_map) }
+      MonoType.Named(tid, inst_args)
+    },
+    _ => ty,
+  }
+}
+
 fn verify_call_shape(
   pf: PreparedFunc,
   callee: PreparedAtom,
@@ -509,7 +561,7 @@ fn verify_call_shape(
   case callee {
     .ASlot(sid) => {
       info := try slot_info(pf, sid, "call callee")
-      case info.mono {
+      case expand_mono_alias(info.mono, env, 0) {
         .Function(params, _) => {
           if args.len() != params.len() {
             return fail_slot(

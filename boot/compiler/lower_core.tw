@@ -1174,8 +1174,10 @@ fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoT
 
   // 2. Save/restore current_fn_return_type
   saved_return_type := ctx.current_fn_return_type
+  // Expand type aliases so Named alias types are treated as Function types
+  expanded_ty := expand_alias_for_iter(ty, ctx.env, 0)
   // Determine lambda return type from the closure's type
-  lambda_ret_ty := case ty {
+  lambda_ret_ty := case expanded_ty {
     .Function(_, ret) => ret,
     _ => .Void,
   }
@@ -1194,7 +1196,7 @@ fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: MonoT
     param_locals = param_locals.append(lo.local)
   }
   // Refine param types from the function type
-  case ty {
+  case expanded_ty {
     .Function(param_tys, _) => {
       i := 0
       for i < lambda_params.len() and i < param_tys.len() {
