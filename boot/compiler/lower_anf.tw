@@ -28,7 +28,7 @@ type FreshResult = .{ local: LocalId, state: LowerState }
 
 fn fresh(state: LowerState) FreshResult {
   id := state.next_temp
-  FreshResult.{ local: LocalId.{ id: id }, state: LowerState.{ next_temp: id + 1, op_result_mono: state.op_result_mono } }
+  .{ local: .{ id }, state: .{ next_temp: id + 1, op_result_mono: state.op_result_mono } }
 }
 
 // ── Let accumulator ─────────────────────────────────────────────────
@@ -55,10 +55,10 @@ fn push_accum(
   op: AnfOp,
   ty: MonoType,
 ) PushResult {
-  new_accum := accum.append(LetBinding.{ local: local, op: op })
+  new_accum := accum.append(.{ local: local, op: op })
   new_mono := state.op_result_mono
   new_mono[local.id] = ty
-  PushResult.{ accum: new_accum, state: LowerState.{ next_temp: state.next_temp, op_result_mono: new_mono } }
+  .{ accum: new_accum, state: .{ next_temp: state.next_temp, op_result_mono: new_mono } }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -237,9 +237,8 @@ type ExprAccumResult = .{ expr: AnfExpr, state: LowerState, accum: Vector<LetBin
 type AtomAccumResult = .{ atom: Atom, state: LowerState, accum: Vector<LetBinding> }
 
 fn lower_expr_top(expr: CoreExpr, state: LowerState) ExprResult {
-  accum: Vector<LetBinding> = []
-  r := lower_expr(expr, state, accum)
-  ExprResult.{ expr: build_lets(r.accum, r.expr), state: r.state }
+  r := lower_expr(expr, state, [])
+  .{ expr: build_lets(r.accum, r.expr), state: r.state }
 }
 
 // ── lower_expr ──────────────────────────────────────────────────────
@@ -247,14 +246,14 @@ fn lower_expr_top(expr: CoreExpr, state: LowerState) ExprResult {
 fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) ExprAccumResult {
   case expr.kind {
     // ── Atoms ──
-    .LitInt(n) => ExprAccumResult.{ expr: .Atom(.ALitInt(n)), state: state, accum: accum },
-    .LitFloat(v) => ExprAccumResult.{ expr: .Atom(.ALitFloat(v)), state: state, accum: accum },
-    .LitBool(b) => ExprAccumResult.{ expr: .Atom(.ALitBool(b)), state: state, accum: accum },
-    .LitStr(s) => ExprAccumResult.{ expr: .Atom(.ALitStr(s)), state: state, accum: accum },
-    .LitVoid => ExprAccumResult.{ expr: .Atom(.ALitVoid), state: state, accum: accum },
-    .Local(id) => ExprAccumResult.{ expr: .Atom(.ALocal(id)), state: state, accum: accum },
-    .GlobalLocal(id) => ExprAccumResult.{ expr: .Atom(.ALocal(id)), state: state, accum: accum },
-    .GlobalFunc(id) => ExprAccumResult.{ expr: .Atom(.AGlobalFunc(id)), state: state, accum: accum },
+    .LitInt(n) => .{ expr: .Atom(.ALitInt(n)), state, accum },
+    .LitFloat(v) => .{ expr: .Atom(.ALitFloat(v)), state, accum },
+    .LitBool(b) => .{ expr: .Atom(.ALitBool(b)), state, accum },
+    .LitStr(s) => .{ expr: .Atom(.ALitStr(s)), state, accum },
+    .LitVoid => .{ expr: .Atom(.ALitVoid), state, accum },
+    .Local(id) => .{ expr: .Atom(.ALocal(id)), state, accum },
+    .GlobalLocal(id) => .{ expr: .Atom(.ALocal(id)), state, accum },
+    .GlobalFunc(id) => .{ expr: .Atom(.AGlobalFunc(id)), state, accum },
 
     // ── Non-atomic ops ──
     .MakeClosure(func_id, free_vars) => {
@@ -262,7 +261,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .BinOp(op, left, right) => {
@@ -273,7 +272,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .UnOp(op, inner) => {
@@ -283,7 +282,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Call(callee, args) => {
@@ -301,7 +300,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Record(type_id, fields) => {
@@ -318,7 +317,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .RecordGet(target, field) => {
@@ -328,7 +327,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .RecordUpdate(base, field, value) => {
@@ -339,7 +338,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(va.accum, st, tmp, .ARecordUpdate(ba.atom, field, va.atom, false, tid), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Variant(type_id, variant, args) => {
@@ -356,7 +355,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .ArrayLit(elements) => {
@@ -373,7 +372,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Index(base, index) => {
@@ -384,7 +383,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     // ── Defer ──
@@ -394,7 +393,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
-      ExprAccumResult.{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
     },
 
     // ── Assign ──
@@ -407,14 +406,13 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       // can determine the mono type of module globals.
       st.op_result_mono[local.id] = value.ty
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
-      ExprAccumResult.{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
     },
 
     // ── Let ──
     .Let(orig_local, value, body) => {
       // Lower value in isolated accumulator
-      value_accum: Vector<LetBinding> = []
-      vr := lower_expr(value, state, value_accum)
+      vr := lower_expr(value, state, [])
       case vr.expr {
         .Atom(atom) => {
           // Value reduced to atom — extend outer accum, push AInit
@@ -428,7 +426,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         },
         _ => {
           // Terminal (Return/Break/Continue) — body is unreachable
-          ExprAccumResult.{
+          .{
             expr: build_lets(vr.accum, vr.expr),
             state: vr.state,
             accum: accum,
@@ -446,7 +444,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(ca.accum, st, tmp, .AIf(ca.atom, then_r.expr, else_r.expr), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Match(scrutinee, arms) => {
@@ -462,16 +460,15 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tmp := r.local
       st := r.state
       pa := push_accum(sa.accum, st, tmp, .AMatch(sa.atom, anf_arms), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     .Loop(body) => {
       body_r := lower_expr_top(body, state)
       r := fresh(body_r.state)
       tmp := r.local
-      st := r.state
-      pa := push_accum(accum, st, tmp, .ALoop(body_r.expr), expr.ty)
-      ExprAccumResult.{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
+      pa := push_accum(accum, r.state, tmp, .ALoop(body_r.expr), expr.ty)
+      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
 
     // ── Terminals ──
@@ -479,21 +476,21 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       case val {
         .Some(v) => {
           va := atomize(v, state, accum)
-          ExprAccumResult.{ expr: .Break(.Some(va.atom)), state: va.state, accum: va.accum }
+          .{ expr: .Break(.Some(va.atom)), state: va.state, accum: va.accum }
         },
-        .None => ExprAccumResult.{ expr: .Break(.None), state: state, accum: accum },
+        .None => .{ expr: .Break(.None), state, accum },
       }
     },
 
-    .Continue => ExprAccumResult.{ expr: .Continue, state: state, accum: accum },
+    .Continue => .{ expr: .Continue, state, accum },
 
     .Return(val) => {
       case val {
         .Some(v) => {
           va := atomize(v, state, accum)
-          ExprAccumResult.{ expr: .Return(.Some(va.atom)), state: va.state, accum: va.accum }
+          .{ expr: .Return(.Some(va.atom)), state: va.state, accum: va.accum }
         },
-        .None => ExprAccumResult.{ expr: .Return(.None), state: state, accum: accum },
+        .None => .{ expr: .Return(.None), state, accum },
       }
     },
   }
@@ -504,14 +501,14 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
 fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAccumResult {
   case expr.kind {
     // Already atoms
-    .LitInt(n) => AtomAccumResult.{ atom: .ALitInt(n), state: state, accum: accum },
-    .LitFloat(v) => AtomAccumResult.{ atom: .ALitFloat(v), state: state, accum: accum },
-    .LitBool(b) => AtomAccumResult.{ atom: .ALitBool(b), state: state, accum: accum },
-    .LitStr(s) => AtomAccumResult.{ atom: .ALitStr(s), state: state, accum: accum },
-    .LitVoid => AtomAccumResult.{ atom: .ALitVoid, state: state, accum: accum },
-    .Local(id) => AtomAccumResult.{ atom: .ALocal(id), state: state, accum: accum },
-    .GlobalLocal(id) => AtomAccumResult.{ atom: .ALocal(id), state: state, accum: accum },
-    .GlobalFunc(id) => AtomAccumResult.{ atom: .AGlobalFunc(id), state: state, accum: accum },
+    .LitInt(n) => .{ atom: .ALitInt(n), state, accum },
+    .LitFloat(v) => .{ atom: .ALitFloat(v), state, accum },
+    .LitBool(b) => .{ atom: .ALitBool(b), state, accum },
+    .LitStr(s) => .{ atom: .ALitStr(s), state, accum },
+    .LitVoid => .{ atom: .ALitVoid, state, accum },
+    .Local(id) => .{ atom: .ALocal(id), state, accum },
+    .GlobalLocal(id) => .{ atom: .ALocal(id), state, accum },
+    .GlobalFunc(id) => .{ atom: .AGlobalFunc(id), state, accum },
 
     // Structural forms: lower independently, flatten into accum
     .If(_, _, _) => atomize_structural(expr, state, accum),
@@ -530,7 +527,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .BinOp(op, left, right) => {
       kind := op_kind_from(left.ty)
@@ -540,7 +537,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .UnOp(op, inner) => {
       kind := op_kind_from(inner.ty)
@@ -549,7 +546,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .Call(callee, args) => {
       ca := atomize(callee, state, accum)
@@ -566,7 +563,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .Record(type_id, fields) => {
       cur_state := state
@@ -582,7 +579,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .RecordGet(target, field) => {
       tid := type_id_from(target.ty)
@@ -591,7 +588,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .RecordUpdate(base, field, value) => {
       tid := type_id_from(base.ty)
@@ -601,7 +598,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(va.accum, st, tmp, .ARecordUpdate(ba.atom, field, va.atom, false, tid), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .Variant(type_id, variant, args) => {
       cur_state := state
@@ -617,7 +614,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .ArrayLit(elements) => {
       cur_state := state
@@ -633,7 +630,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .Index(base, index) => {
       bty := index_kind_from(base.ty)
@@ -643,7 +640,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
-      AtomAccumResult.{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
+      .{ atom: .ALocal(tmp), state: pa.state, accum: pa.accum }
     },
     .Assign(local, value) => {
       va := atomize(value, state, accum)
@@ -652,7 +649,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       st := r.state
       st.op_result_mono[local.id] = value.ty
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
-      AtomAccumResult.{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
+      .{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
     },
     .Defer(inner) => {
       inner_r := lower_expr_top(inner, state)
@@ -660,7 +657,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
-      AtomAccumResult.{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
+      .{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
     },
   }
 }
@@ -675,7 +672,7 @@ fn atomize_structural(expr: CoreExpr, state: LowerState, accum: Vector<LetBindin
   // Splice: replace the tail Atom with a binding to tmp, then flatten
   spliced := splice_atom_bind(anf_r.expr, tmp)
   flat := flatten_into_accum(spliced, accum, tmp, st, expr.ty)
-  AtomAccumResult.{ atom: .ALocal(tmp), state: flat.state, accum: flat.accum }
+  .{ atom: .ALocal(tmp), state: flat.state, accum: flat.accum }
 }
 
 type FlatResult = .{ state: LowerState, accum: Vector<LetBinding> }
@@ -697,12 +694,12 @@ fn flatten_into_accum(
 ) FlatResult {
   case anf {
     .Let(local, op, body) => {
-      new_accum := accum.append(LetBinding.{ local: local, op: op })
+      new_accum := accum.append(.{ local: local, op: op })
       flatten_into_accum(body, new_accum, result_local, state, result_ty)
     },
     .Atom(atom) => {
       pa := push_accum(accum, state, result_local, .AInit(atom), result_ty)
-      FlatResult.{ state: pa.state, accum: pa.accum }
+      .{ state: pa.state, accum: pa.accum }
     },
     // Terminal (Return/Break/Continue) in structural sub-expression.
     // The type checker prevents this via Never-typed expressions;

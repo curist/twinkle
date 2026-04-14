@@ -505,35 +505,34 @@ fn lower_anon_record(ctx: LowerCtx, entries: Vector<ast.RecordEntry>, ty: MonoTy
 
 fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span) ExprOut {
   fields: Vector<FieldInit> = []
-  cur_ctx := ctx
   for entry in entries {
-    fid_idx := find_field_index_in_type(cur_ctx.env, ty, entry.name)
-    fid := FieldId.{ id: fid_idx }
+    fid_idx := find_field_index_in_type(ctx.env, ty, entry.name)
+    field := FieldId.{ id: fid_idx }
     case entry.value {
       .Some(val_expr) => {
-        r := cur_ctx.lower_expr(val_expr)
-        fields = fields.append(FieldInit.{ field: fid, value: r.expr })
-        cur_ctx = r.ctx
+        r := ctx.lower_expr(val_expr)
+        fields = fields.append(.{ field, value: r.expr })
+        ctx = r.ctx
       },
       .None => {
         // Field punning: `name` means `name: name`
-        case cur_ctx.lookup_local(entry.name) {
+        case ctx.lookup_local(entry.name) {
           .Some(local_id) => {
-            val_ty := find_field_type_in_type(cur_ctx.env, ty, entry.name)
+            val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
-            fields = fields.append(FieldInit.{ field: fid, value: val })
+            fields = fields.append(.{ field, value: val })
           },
           .None => {
-            cur_ctx = cur_ctx.emit_error(entry.span, "undefined variable: ${entry.name}")
-            fields = fields.append(FieldInit.{ field: fid, value: void_expr(entry.span) })
+            ctx = ctx.emit_error(entry.span, "undefined variable: ${entry.name}")
+            fields = fields.append(.{ field, value: void_expr(entry.span) })
           },
         }
       },
     }
   }
   .{
+    ctx,
     expr: .{ kind: .Record(tid, fields), ty, span: s },
-    ctx: cur_ctx,
   }
 }
 

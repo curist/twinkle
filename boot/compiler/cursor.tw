@@ -1,4 +1,5 @@
 use lib.source.span
+use lib.source.span.{Span}
 use .tokens.{Token, TokenKind}
 
 pub type Cursor = .{
@@ -25,7 +26,7 @@ pub fn text(c: Cursor) String {
   if c.pos < 0 or c.pos >= c.tokens.len() { "" } else { c.tokens[c.pos].text }
 }
 
-pub fn span(c: Cursor) span.Span {
+pub fn span(c: Cursor) Span {
   if c.pos < 0 or c.pos >= c.tokens.len() { span.new(0, 0, 0) } else { c.tokens[c.pos].span }
 }
 
@@ -53,7 +54,7 @@ pub fn is_eof(c: Cursor) Bool {
   c.pos >= c.tokens.len() or c.kind() == .Eof
 }
 
-pub fn span_from(c: Cursor, from_pos: Int) span.Span {
+pub fn span_from(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }
@@ -64,7 +65,7 @@ pub fn span_from(c: Cursor, from_pos: Int) span.Span {
   c.tokens[from_pos].span.merge(c.tokens[end_pos].span)
 }
 
-pub fn span_through(c: Cursor, from_pos: Int) span.Span {
+pub fn span_through(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }

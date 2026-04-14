@@ -16,6 +16,7 @@ use compiler.core_ir.{
   CompiledModule, ExternalRef,
 }
 use compiler.resolver.{MonoType, ResolvedEnv}
+use lib.source.span.{Span}
 
 // ── Public API ──────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ pub fn link(
     // Remap and collect functions
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
-      all_functions = all_functions.append(FunctionDef.{
+      all_functions = all_functions.append(.{
         func_id: remapped_id,
         name: f.name,
         params: f.params,
@@ -525,8 +526,6 @@ fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>) Vector<CoreExpr> 
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-use lib.source.span.{Span}
-
 fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
   for name in func_table.keys() {
     case func_table[name] {
@@ -542,5 +541,5 @@ fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
 }
 
 fn dummy_span() Span {
-  Span.{ file_id: 0, start: 0, end: 0 }
+  .{ file_id: 0, start: 0, end: 0 }
 }

@@ -43,6 +43,15 @@ fn is_byte(c: Int, literal: String) Bool {
   c == literal[0].to_int()
 }
 
+// c in [start, end]
+fn in_byte_range(c: Int, start: String, end: String) Bool {
+  c >= start[0].to_int() and c <= end[0].to_int()
+}
+
+fn byte_value(s: String) Int {
+  s[0].to_int()
+}
+
 fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
   kind.make(source.slice(start, end), span.new(file_id, start, end), preceded_by_newline)
 }
@@ -122,9 +131,9 @@ fn unescape_string(raw: String) String {
 }
 
 fn hex_digit_value(ch: Int) Int {
-  if ch >= 48 and ch <= 57 { ch - 48 }       // '0'-'9'
-  else if ch >= 65 and ch <= 70 { ch - 55 }   // 'A'-'F'
-  else if ch >= 97 and ch <= 102 { ch - 87 }  // 'a'-'f'
+  if in_byte_range(ch, "0", "9") { ch - byte_value("0") }
+  else if in_byte_range(ch, "A", "F") { ch - byte_value("A") + 10 }
+  else if in_byte_range(ch, "a", "f") { ch - byte_value("a") + 10 }
   else { -1 }
 }
 

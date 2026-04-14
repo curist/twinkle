@@ -2,7 +2,7 @@
 // See docs/plans/boot-builtin-registry.md for design.
 
 use compiler.core_ir.{FuncId}
-use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
+use compiler.codegen.wasm_ir.{ValType, AbiContract}
 
 pub type BuiltinKind = {
   Runtime(RuntimeInfo),
@@ -36,8 +36,8 @@ fn empty_abi() AbiContract {
   AbiContract.{ param_types: [], result_types: [] }
 }
 
-fn ref_null(name: String) ValType { ValType.Ref(true, HeapType.Named(name)) }
-fn ref_nn(name: String) ValType { ValType.Ref(false, HeapType.Named(name)) }
+fn ref_null(name: String) ValType { .Ref(true, .Named(name)) }
+fn ref_nn(name: String) ValType { .Ref(false, .Named(name)) }
 fn str_n() ValType { ref_null("rt_types__String") }
 fn str_() ValType { ref_nn("rt_types__String") }
 fn arr_n() ValType { ref_null("rt_types__Array") }
@@ -63,77 +63,77 @@ fn builtin_abi(name: String) AbiContract {
     "error" => abi([str_n()], []),
     "eprint" => abi([str_n()], []),
     "eprintln" => abi([str_n()], []),
-    "int_to_string" => abi([ValType.I64], [str_()]),
-    "float_to_string" => abi([ValType.F64], [str_()]),
-    "bool_to_string" => abi([ValType.I32], [str_()]),
-    "string_len" => abi([str_n()], [ValType.I32]),
+    "int_to_string" => abi([.I64], [str_()]),
+    "float_to_string" => abi([.F64], [str_()]),
+    "bool_to_string" => abi([.I32], [str_()]),
+    "string_len" => abi([str_n()], [.I32]),
     "string_concat" => abi([str_n(), str_n()], [str_()]),
-    "string_substring" => abi([str_n(), ValType.I32, ValType.I32], [str_()]),
-    "vector_len" => abi([pvec_n()], [ValType.I32]),
-    "vector_set_unsafe" => abi([pvec_n(), ValType.I32, ValType.Anyref], [pvec_()]),
+    "string_substring" => abi([str_n(), .I32, .I32], [str_()]),
+    "vector_len" => abi([pvec_n()], [.I32]),
+    "vector_set_unsafe" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
     "vector_concat" => abi([pvec_n(), pvec_n()], [pvec_()]),
-    "vector_slice" => abi([pvec_n(), ValType.I32, ValType.I32], [pvec_()]),
+    "vector_slice" => abi([pvec_n(), .I32, .I32], [pvec_()]),
     "vector_builder_new" => abi([], [arr_()]),
-    "vector_builder_push" => abi([arr_n(), ValType.Anyref], []),
+    "vector_builder_push" => abi([arr_n(), .Anyref], []),
     "vector_builder_freeze" => abi([arr_n()], [pvec_()]),
     "vector_builder_from" => abi([pvec_n()], [arr_()]),
     "dict_new" => abi([], [dict_()]),
-    "dict_set" => abi([dict_n(), ValType.Anyref, ValType.Anyref], [dict_()]),
-    "dict_set_in_place" => abi([dict_n(), ValType.Anyref, ValType.Anyref], [dict_()]),
+    "dict_set" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
+    "dict_set_in_place" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
     "dict_keys" => abi([dict_n()], [pvec_()]),
-    "dict_get" => abi([dict_n(), ValType.Anyref], [variant_()]),
-    "dict_len" => abi([dict_n()], [ValType.I32]),
-    "dict_has" => abi([dict_n(), ValType.Anyref], [ValType.I32]),
-    "dict_remove" => abi([dict_n(), ValType.Anyref], [dict_()]),
-    "dict_remove_in_place" => abi([dict_n(), ValType.Anyref], [dict_()]),
+    "dict_get" => abi([dict_n(), .Anyref], [variant_()]),
+    "dict_len" => abi([dict_n()], [.I32]),
+    "dict_has" => abi([dict_n(), .Anyref], [.I32]),
+    "dict_remove" => abi([dict_n(), .Anyref], [dict_()]),
+    "dict_remove_in_place" => abi([dict_n(), .Anyref], [dict_()]),
     "host_read_file" => abi([str_n()], [variant_null()]),
     "host_write_file" => abi([str_n(), str_n()], []),
     "host_write_bytes" => abi([str_n(), arr_n()], []),
     "host_mkdirp" => abi([str_n()], []),
     "host_list_dir" => abi([str_n()], [arr_()]),
     "host_env" => abi([str_n()], [arr_()]),
-    "host_exists" => abi([str_n()], [ValType.I32]),
+    "host_exists" => abi([str_n()], [.I32]),
     "host_args" => abi([], [arr_()]),
     "host_cwd" => abi([], [str_()]),
-    "host_exit" => abi([ValType.I64], []),
-    "host_now" => abi([], [ValType.F64]),
+    "host_exit" => abi([.I64], []),
+    "host_now" => abi([], [.F64]),
 
     // Intrinsics that still cross the anyref boundary after M4.
-    "vector_append" => abi([pvec_n(), ValType.Anyref], [pvec_()]),
-    "vector_get" => abi([pvec_n(), ValType.I32], [ValType.Anyref]),
-    "vector_set" => abi([pvec_n(), ValType.I32, ValType.Anyref], [variant_()]),
-    "vector_set_in_place" => abi([pvec_n(), ValType.I32, ValType.Anyref], [pvec_()]),
-    "vector_make" => abi([ValType.I32, ValType.Anyref], [pvec_()]),
-    "dict_get_unsafe" => abi([dict_n(), ValType.Anyref], [ValType.Anyref]),
-    "cell_new" => abi([ValType.Anyref], [cell_n()]),
-    "cell_get" => abi([cell_n()], [ValType.Anyref]),
-    "cell_set" => abi([cell_n(), ValType.Anyref], []),
+    "vector_append" => abi([pvec_n(), .Anyref], [pvec_()]),
+    "vector_get" => abi([pvec_n(), .I32], [.Anyref]),
+    "vector_set" => abi([pvec_n(), .I32, .Anyref], [variant_()]),
+    "vector_set_in_place" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
+    "vector_make" => abi([.I32, .Anyref], [pvec_()]),
+    "dict_get_unsafe" => abi([dict_n(), .Anyref], [.Anyref]),
+    "cell_new" => abi([.Anyref], [cell_n()]),
+    "cell_get" => abi([cell_n()], [.Anyref]),
+    "cell_set" => abi([cell_n(), .Anyref], []),
     "cell_update" => abi([cell_n(), closure_n()], []),
     // String intrinsics
     "string_to_string" => abi([str_n()], [str_()]),
-    "string_get" => abi([str_n(), ValType.I64], [ValType.Anyref]),
-    "string_slice" => abi([str_n(), ValType.I64, ValType.I64], [str_()]),
-    "char_code_at" => abi([str_n(), ValType.I64], [ValType.I64]),
-    "from_char_code" => abi([ValType.I64], [ValType.Anyref]),
-    "from_code_point" => abi([ValType.I64], [ValType.Anyref]),
+    "string_get" => abi([str_n(), .I64], [.Anyref]),
+    "string_slice" => abi([str_n(), .I64, .I64], [str_()]),
+    "char_code_at" => abi([str_n(), .I64], [.I64]),
+    "from_char_code" => abi([.I64], [.Anyref]),
+    "from_code_point" => abi([.I64], [.Anyref]),
     "string_utf8_bytes" => abi([str_n()], [pvec_()]),
-    "string_from_utf8" => abi([pvec_n()], [ValType.Anyref]),
+    "string_from_utf8" => abi([pvec_n()], [.Anyref]),
     // Byte intrinsics
-    "byte_to_int" => abi([ValType.I32], [ValType.I64]),
-    "byte_from_int" => abi([ValType.I64], [ValType.Anyref]),
-    "byte_to_string" => abi([ValType.I32], [str_()]),
+    "byte_to_int" => abi([.I32], [.I64]),
+    "byte_from_int" => abi([.I64], [.Anyref]),
+    "byte_to_string" => abi([.I32], [str_()]),
     // Float intrinsics
-    "float_bits" => abi([ValType.F64], [ValType.I64]),
+    "float_bits" => abi([.F64], [.I64]),
     // Range intrinsics
-    "range" => abi([ValType.I64], [ValType.Anyref]),
-    "range_from" => abi([ValType.I64, ValType.I64], [ValType.Anyref]),
-    "range_step" => abi([ValType.I64, ValType.I64, ValType.I64], [ValType.Anyref]),
+    "range" => abi([.I64], [.Anyref]),
+    "range_from" => abi([.I64, .I64], [.Anyref]),
+    "range_step" => abi([.I64, .I64, .I64], [.Anyref]),
     // Iterator intrinsics
-    "iterator_next" => abi([ValType.Anyref], [ValType.Anyref]),
-    "iterator_unfold" => abi([ValType.Anyref, closure_n()], [ValType.Anyref]),
+    "iterator_next" => abi([.Anyref], [.Anyref]),
+    "iterator_unfold" => abi([.Anyref, closure_n()], [.Anyref]),
     // Numeric parsing
-    "int_from_string" => abi([str_n()], [ValType.Anyref]),
-    "float_from_string" => abi([str_n()], [ValType.Anyref]),
+    "int_from_string" => abi([str_n()], [.Anyref]),
+    "float_from_string" => abi([str_n()], [.Anyref]),
     _ => empty_abi(),
   }
 }
@@ -148,7 +148,7 @@ pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String,
     name: name,
     canonical_name: .None,
     func_id: fid,
-    kind: .Runtime(RuntimeInfo.{ wasm_module: wasm_module, wasm_name: wasm_name }),
+    kind: .Runtime(.{ wasm_module: wasm_module, wasm_name: wasm_name }),
     abi: builtin_abi,
   }
   by_name := reg.by_name

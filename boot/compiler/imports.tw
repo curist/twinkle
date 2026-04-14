@@ -61,7 +61,7 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
         }
         alias := module_alias(decl)
         canonical_paths = canonical_paths.append(dep_path)
-        deps = deps.append(PlannedDep.{
+        deps = deps.append(.{
           canonical_path: dep_path,
           alias,
           kind: .Import,
@@ -89,7 +89,7 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
 
       stem := path.stem(canonical_prelude)
       canonical_paths = canonical_paths.append(canonical_prelude)
-      deps = deps.append(PlannedDep.{
+      deps = deps.append(.{
         canonical_path: canonical_prelude,
         alias: "__prelude_${stem}",
         kind: .Prelude,
