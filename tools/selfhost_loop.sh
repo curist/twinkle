@@ -44,9 +44,6 @@ step "Self-hosted build via $BOOT_WASM -> $STAGE2_WASM"
 node tools/run_wasm_node.mjs "$BOOT_WASM" -- build "$ENTRY" -o "$STAGE2_WASM"
 printf 'Stage2 WASM: %s\n' "$STAGE2_WASM"
 
-step "Run stage2 WASM via Node -- --help"
-node tools/run_wasm_node.mjs "$STAGE2_WASM" -- --help
-
 step "Run stage2 WASM via Node -- build $ENTRY -> $STAGE3_WASM"
 node tools/run_wasm_node.mjs "$STAGE2_WASM" -- build "$ENTRY" -o "$STAGE3_WASM"
 printf 'Stage3 WASM: %s\n' "$STAGE3_WASM"
