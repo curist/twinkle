@@ -47,7 +47,7 @@ fn free_atom(atom: Atom, st: FreeState) FreeState {
   case atom {
     .ALocal(id) => {
       if !set_has(st.declared, id.id) {
-        FreeState.{ declared: st.declared, free: set_add(st.free, id.id) }
+        .{ declared: st.declared, free: set_add(st.free, id.id) }
       } else {
         st
       }
@@ -63,12 +63,12 @@ fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, B
       new_declared := set_add(st.declared, local.id)
       collect_free_expr(body, new_declared, st.free)
     },
-    .Atom(atom) => free_atom(atom, FreeState.{ declared: declared, free: free }),
-    .Return(.Some(atom)) => free_atom(atom, FreeState.{ declared: declared, free: free }),
-    .Break(.Some(atom)) => free_atom(atom, FreeState.{ declared: declared, free: free }),
-    .Return(.None) => FreeState.{ declared: declared, free: free },
-    .Break(.None) => FreeState.{ declared: declared, free: free },
-    .Continue => FreeState.{ declared: declared, free: free },
+    .Atom(atom) => free_atom(atom, .{ declared: declared, free: free }),
+    .Return(.Some(atom)) => free_atom(atom, .{ declared: declared, free: free }),
+    .Break(.Some(atom)) => free_atom(atom, .{ declared: declared, free: free }),
+    .Return(.None) => .{ declared: declared, free: free },
+    .Break(.None) => .{ declared: declared, free: free },
+    .Continue => .{ declared: declared, free: free },
   }
 }
 
@@ -84,24 +84,24 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       st = free_atom(cond, st)
       then_st := collect_free_expr(then_e, st.declared, st.free)
       else_st := collect_free_expr(else_e, st.declared, then_st.free)
-      FreeState.{ declared: st.declared, free: else_st.free }
+      .{ declared: st.declared, free: else_st.free }
     },
     .AMatch(scrutinee, arms) => {
       st = free_atom(scrutinee, st)
       for arm in arms {
         arm_declared := collect_pattern_bindings(arm.pattern, st.declared)
         arm_st := collect_free_expr(arm.body, arm_declared, st.free)
-        st = FreeState.{ declared: st.declared, free: arm_st.free }
+        st = .{ declared: st.declared, free: arm_st.free }
       }
       st
     },
     .ALoop(body) => {
       body_st := collect_free_expr(body, st.declared, st.free)
-      FreeState.{ declared: st.declared, free: body_st.free }
+      .{ declared: st.declared, free: body_st.free }
     },
     .ADefer(body) => {
       body_st := collect_free_expr(body, st.declared, st.free)
-      FreeState.{ declared: st.declared, free: body_st.free }
+      .{ declared: st.declared, free: body_st.free }
     },
     .ABinOp(_, left, right, _) => {
       st = free_atom(left, st)
@@ -111,7 +111,7 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
     .AMakeClosure(_, free_vars) => {
       for v in free_vars {
         if !set_has(st.declared, v.id) {
-          st = FreeState.{ declared: st.declared, free: set_add(st.free, v.id) }
+          st = .{ declared: st.declared, free: set_add(st.free, v.id) }
         }
       }
       st
@@ -140,7 +140,7 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
     .AInit(value) => free_atom(value, st),
     .AAssign(local, value) => {
       if !set_has(st.declared, local.id) {
-        st = FreeState.{ declared: st.declared, free: set_add(st.free, local.id) }
+        st = .{ declared: st.declared, free: set_add(st.free, local.id) }
       }
       free_atom(value, st)
     },
