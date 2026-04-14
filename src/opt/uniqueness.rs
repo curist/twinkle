@@ -2196,6 +2196,28 @@ fn rewrite_expr(
         }
     }
 
+    // ARecordGet uniqueness propagation (Gap 1 — interproc-uniqueness.md):
+    // When extracting a field from a unique/refreshed struct that dies immediately
+    // after the extraction, the extracted value is the sole reference to that field.
+    // Mark it Shallow-unique: eligible for record shell reuse (can_reuse_in_place)
+    // but NOT for deep collection in-place mutation (source_fresh is intentionally
+    // not set, so dict_set_in_place / vector_set_in_place remain conservatively gated).
+    if let AnfOp::ARecordGet {
+        target: Atom::ALocal(base),
+        ..
+    } = op.as_ref()
+    {
+        let base = *base;
+        if (unique.contains(&base) || refreshed.contains(&base))
+            && !live_after(body).contains(&base)
+        {
+            unique.insert(bind_local);
+            if tainted.contains(&bind_local) {
+                refreshed.insert(bind_local);
+            }
+        }
+    }
+
     // Check for COW rewrite / uniqueness-propagation opportunity
     if let AnfOp::ACall {
         callee: Atom::AGlobalFunc(func_id),

@@ -97,26 +97,62 @@ Handling edge cases:
   arg) → unknown call sites → parameter stays tainted
 - **Multiple modules**: this analysis is per-module (after monomorphization)
 
-## Implementation Order
+## Implementation Status
 
-Both the stage0 Rust optimizer (`src/opt/uniqueness.rs`) and the boot compiler
-optimizer (`boot/compiler/opt/uniqueness.tw` + `boot/compiler/opt/analysis.tw`)
-need both changes, but stage0 is what matters for current boot-compiler perf
-since boot/main.tw is compiled by stage0.
+### Gap 1 — DONE (2026-04-15)
 
-1. **Gap 1 in stage0**: add `ARecordGet` case in the forward pass — if base is
-   unique/refreshed and dead after, mark extracted value as Shallow unique
+Implemented in both optimizers:
+- **stage0** (`src/opt/uniqueness.rs`): `ARecordGet` case in `rewrite_expr` — if
+  base is unique/refreshed and dead after, extracted value is marked unique
+  (+ refreshed if tainted). Source_fresh intentionally NOT set, so dict/vector
+  in-place ops remain gated.
+- **boot compiler** (`boot/compiler/opt/uniqueness.tw`): matching `ARecordGet` case
+  in `rewrite_expr`, using `local_has_shell_ownership` + `live_after_by_binding`.
 
-2. **Gap 2 in stage0**: add a pre-pass collecting consume evidence across all
-   functions; thread "consumed params" set into per-function uniqueness init
+Measured impact: REC_UPDATE_IN_PLACE 23 → 36 on boot/tests/main.tw (boot compiler).
+Small direct improvement; main value is as a prerequisite for Gap 2.
 
-3. **Measure**: rebuild boot/main.tw, check `struct.new UserRecord_105` count in
-   WAT drops from ~15 definitions firing millions of times to near zero
+### Gap 2 — NOT YET LANDED
 
-4. **Mirror to boot compiler**: same changes in the boot optimizer (affects
-   stage3+ self-hosted compilations)
+Several implementation attempts ran into soundness issues:
 
-## Expected Impact
+**Attempt 1** — seed consumed params as `unique + refreshed`:
+- The `refreshed` flag bypasses the taint gate for ALL ops including dict/vector
+  in-place. This caused incorrect DICT_SET_IN_PLACE on potentially-aliased dict
+  fields extracted from "consumed" params, leading to `duplicate type definition`
+  errors during boot compiler self-compilation.
+
+**Attempt 2** — seed as `unique` only + `consumed_params` OR-check in ARecordUpdate:
+- Removing the taint check from the pre-pass detects more consuming call sites, but
+  seeding into `unique` (even without `refreshed`) still lets Gap 1 propagation mark
+  extracted fields as unique → enables deep collection mutation through extracted
+  fields. Same soundness failure.
+
+**Core challenge**: the correct condition from the plan is "x is in `unique` or
+`refreshed` at the call point". Checking this requires running the forward pass
+first, which is circular. Approximations (no taint check, escape taint only) either
+over-approximate (soundness bug) or under-approximate (no improvement vs today's
+taint check).
+
+**Remaining approach**: the OR-check in ARecordUpdate is correct; the issue is in
+what gets seeded and how. The key is to NOT seed consumed params into `unique` at
+all (to avoid Gap 1 side effects), and instead check `consumed_params.contains(base)`
+purely in the ARecordUpdate block — without relying on the `unique` set for those
+params. But then the pre-pass taint check must also be resolved correctly.
+
+Next steps:
+1. Limit pre-pass consume detection to call sites where the argument is NOT in the
+   "escape taint" (taint from: params, closures, containers, direct let-aliases —
+   but NOT from opaque-call passing). This would detect `r.ctx` (freshly extracted
+   from dying struct) without detecting `cur_ctx` (stored in return ARecord at end
+   of function).
+2. Or: extend `refine_tainted_for_reassigned_locals` to also handle the
+   `let r = ACall(f, [d, ...]); assign(d = r)` pattern (not just COW ops),
+   which would un-taint `cur_ctx` when it's consumed before its terminal escape.
+
+## Next Steps
+
+## Expected Impact (Gap 2, when landed)
 
 Concrete hot functions in checker.tw:
 - `set_type_map_span`: 1 `struct.new` (11 `struct.get`) per expression → `struct.set`

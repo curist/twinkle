@@ -355,6 +355,27 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) ExprRewrite {
         _ => {},
       }
 
+      // ARecordGet uniqueness propagation (Gap 1 — interproc-uniqueness.md):
+      // When extracting a field from an owned struct that dies immediately after
+      // the extraction, the extracted value is the sole reference to that field.
+      // Mark it Shallow-owned: eligible for record shell reuse (can_reuse_in_place)
+      // but NOT for deep collection in-place mutation.
+      case op {
+        .ARecordGet(.ALocal(source), _, _) => {
+          if local_has_shell_ownership(st, source) {
+            empty_live: Dict<Int, Bool> = Dict.new()
+            live_after_body := case st.live_after_by_binding[local.id] {
+              .Some(live) => live,
+              .None => empty_live,
+            }
+            if !set_has(live_after_body, source.id) {
+              st = with_local_ownership(st, local, .Shallow)
+            }
+          }
+        },
+        _ => {},
+      }
+
       update := rewrite_reusable_update(op, body, local, st)
       op_r := rewrite_op(update.op, update.st)
       body_r := rewrite_expr(body, op_r.st)
