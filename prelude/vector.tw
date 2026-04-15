@@ -102,30 +102,39 @@ pub fn join(xs: Vector<String>, sep: String) String {
   }
 }
 
-fn is_lt(o: Order) Bool {
-  case o {
-    .Lt => true,
-    _ => false,
+fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
+  out := a.slice(0, 0)
+  i := 0
+  j := 0
+  for i < a.len() and j < b.len() {
+    case cmp(a[i], b[j]) {
+      .Gt => {
+        out = out.append(b[j])
+        j = j + 1
+      },
+      _ => {
+        out = out.append(a[i])
+        i = i + 1
+      },
+    }
   }
+  for i < a.len() {
+    out = out.append(a[i])
+    i = i + 1
+  }
+  for j < b.len() {
+    out = out.append(b[j])
+    j = j + 1
+  }
+  out
 }
 
 /// Return a new vector sorted by comparator cmp.
 pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
-  out := xs.slice(0, 0)
-  for x in xs {
-    inserted := false
-    next := out.slice(0, 0)
-    for y in out {
-      if !inserted and is_lt(cmp(x, y)) {
-        next = next.append(x)
-        inserted = true
-      }
-      next = next.append(y)
-    }
-    if !inserted {
-      next = next.append(x)
-    }
-    out = next
-  }
-  out
+  n := xs.len()
+  if n <= 1 { return xs }
+  mid := n / 2
+  left := sort_by(xs.slice(0, mid), cmp)
+  right := sort_by(xs.slice(mid, n), cmp)
+  merge_sorted(left, right, cmp)
 }

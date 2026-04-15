@@ -9,6 +9,8 @@ use compiler.codegen.wasm_ir.{
   GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
 }
 use compiler.codegen.linker.{LinkedModule}
+use @std.date
+use @std.proc
 
 // ── Byte buffer primitives ─────────────────────────────────────────────
 
@@ -204,6 +206,34 @@ fn ft_sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
   p := collect vt in params { val_type_key(vt) }
   r := collect vt in results { val_type_key(vt) }
   "P(${p.join(",")})R(${r.join(",")})"
+}
+
+fn heap_type_eq(a: HeapType, b: HeapType) Bool {
+  case a {
+    .Any    => case b { .Any => true, _ => false },
+    .Eq     => case b { .Eq => true, _ => false },
+    .I31    => case b { .I31 => true, _ => false },
+    .Func   => case b { .Func => true, _ => false },
+    .None_  => case b { .None_ => true, _ => false },
+    .Extern => case b { .Extern => true, _ => false },
+    .Named(n1) => case b { .Named(n2) => n1 == n2, _ => false },
+  }
+}
+
+fn val_type_eq(a: ValType, b: ValType) Bool {
+  case a {
+    .I8      => case b { .I8 => true, _ => false },
+    .I32     => case b { .I32 => true, _ => false },
+    .I64     => case b { .I64 => true, _ => false },
+    .F64     => case b { .F64 => true, _ => false },
+    .Anyref  => case b { .Anyref => true, _ => false },
+    .I31ref  => case b { .I31ref => true, _ => false },
+    .Funcref => case b { .Funcref => true, _ => false },
+    .Ref(n1, ht1) => case b {
+      .Ref(n2, ht2) => n1 == n2 and heap_type_eq(ht1, ht2),
+      _ => false,
+    },
+  }
 }
 
 fn register_anon_ft(
@@ -604,67 +634,66 @@ fn encode_val_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byt
 }
 
 // Storage type: packed i8 or a regular valtype.
-fn encode_storage_type(vt: ValType, ctx: WasmCtx) Vector<Byte> {
+fn encode_storage_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byte> {
   case vt {
-    .I8 => emit_u8([], 0x78),
-    _   => encode_val_type(vt, ctx),
+    .I8 => emit_u8(buf, 0x78),
+    _   => encode_val_type_into(buf, vt, ctx),
   }
 }
 
-fn encode_field_type(f: FieldDef, ctx: WasmCtx) Vector<Byte> {
-  emit_u8(encode_storage_type(f.ty, ctx), if f.mutable { 0x01 } else { 0x00 })
+fn encode_field_type_into(buf: Vector<Byte>, f: FieldDef, ctx: WasmCtx) Vector<Byte> {
+  emit_u8(encode_storage_type_into(buf, f.ty, ctx), if f.mutable { 0x01 } else { 0x00 })
 }
 
-fn encode_func_comptype(params: Vector<ValType>, results: Vector<ValType>, ctx: WasmCtx) Vector<Byte> {
-  buf := emit_u8([], 0x60)
+fn encode_func_comptype_into(buf: Vector<Byte>, params: Vector<ValType>, results: Vector<ValType>, ctx: WasmCtx) Vector<Byte> {
+  buf = emit_u8(buf, 0x60)
   buf = emit_u32_leb(buf, params.len())
-  for p in params { buf = emit_bytes(buf, encode_val_type(p, ctx)) }
+  for p in params { buf = encode_val_type_into(buf, p, ctx) }
   buf = emit_u32_leb(buf, results.len())
-  for r in results { buf = emit_bytes(buf, encode_val_type(r, ctx)) }
+  for r in results { buf = encode_val_type_into(buf, r, ctx) }
   buf
 }
 
-fn encode_comptype(td: TypeDef, ctx: WasmCtx) Vector<Byte> {
+fn encode_comptype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte> {
   case td {
     .Struct(_, fields, _, _) => {
-      buf := emit_u8([], 0x5F)
+      buf = emit_u8(buf, 0x5F)
       buf = emit_u32_leb(buf, fields.len())
-      for f in fields { buf = emit_bytes(buf, encode_field_type(f, ctx)) }
+      for f in fields { buf = encode_field_type_into(buf, f, ctx) }
       buf
     },
-    .Array(_, field) => emit_bytes(emit_u8([], 0x5E), encode_field_type(field, ctx)),
-    .FuncType(_, params, results) => encode_func_comptype(params, results, ctx),
+    .Array(_, field) => encode_field_type_into(emit_u8(buf, 0x5E), field, ctx),
+    .FuncType(_, params, results) => encode_func_comptype_into(buf, params, results, ctx),
   }
 }
 
-// Encode one subtype entry (used both standalone and inside rec groups).
+// Encode one subtype entry into buf (used both standalone and inside rec groups).
 // Shorthand (just comptype) is used for final types with no supertypes.
-fn encode_subtype(td: TypeDef, ctx: WasmCtx) Vector<Byte> {
-  comptype := encode_comptype(td, ctx)
+fn encode_subtype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte> {
   case td {
     .Struct(_, _, super_type, is_final) => {
       case super_type {
         .None => {
           if is_final {
-            comptype  // shorthand: final struct, no supers
+            encode_comptype_into(buf, td, ctx)  // shorthand: final struct, no supers
           } else {
-            buf := emit_u8([], 0x50)
+            buf = emit_u8(buf, 0x50)
             buf = emit_u32_leb(buf, 0)
-            emit_bytes(buf, comptype)
+            encode_comptype_into(buf, td, ctx)
           }
         },
         .Some(parent) => {
           tag := if is_final { 0x4F } else { 0x50 }
-          buf := emit_u8([], tag)
+          buf = emit_u8(buf, tag)
           buf = emit_u32_leb(buf, 1)
           buf = emit_u32_leb(buf, type_idx_of(ctx, parent))
-          emit_bytes(buf, comptype)
+          encode_comptype_into(buf, td, ctx)
         },
       }
     },
     // Arrays and FuncTypes have no supertype flag in the IR — treat as final.
-    .Array(_, _)          => comptype,
-    .FuncType(_, _, _)    => comptype,
+    .Array(_, _)       => encode_comptype_into(buf, td, ctx),
+    .FuncType(_, _, _) => encode_comptype_into(buf, td, ctx),
   }
 }
 
@@ -685,18 +714,18 @@ fn encode_type_section_payload(
     if needs_rec {
       group_bytes: Vector<Byte> = []
       for member in scc {
-        group_bytes = emit_bytes(group_bytes, encode_subtype(find_type_def(types, member), ctx))
+        group_bytes = encode_subtype_into(group_bytes, find_type_def(types, member), ctx)
       }
       payload = emit_u8(payload, 0x4E)
       payload = emit_u32_leb(payload, scc.len())
       payload = emit_bytes(payload, group_bytes)
     } else {
-      payload = emit_bytes(payload, encode_subtype(first_td, ctx))
+      payload = encode_subtype_into(payload, first_td, ctx)
     }
   }
 
   for ft in anon_ft {
-    payload = emit_bytes(payload, encode_func_comptype(ft.params, ft.results, ctx))
+    payload = encode_func_comptype_into(payload, ft.params, ft.results, ctx)
   }
 
   payload
@@ -726,7 +755,7 @@ fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<
 fn encode_table_section_payload(tables: Vector<TableDef>, ctx: WasmCtx) Vector<Byte> {
   payload := emit_u32_leb([], tables.len())
   for tbl in tables {
-    payload = emit_bytes(payload, encode_val_type(tbl.elem_type, ctx))
+    payload = encode_val_type_into(payload, tbl.elem_type, ctx)
     case tbl.max {
       .None => {
         payload = emit_u8(payload, 0x00)
@@ -808,8 +837,7 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
   }
 }
 
-fn encode_elem_section_payload(elems: Vector<ElemDef>, funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
-  ref_func_syms := collect_ref_func_syms(funcs, elems)
+fn encode_elem_section_payload_with_refs(elems: Vector<ElemDef>, ref_func_syms: Vector<String>, ctx: WasmCtx) Vector<Byte> {
   extra_decl_count := if ref_func_syms.len() > 0 { 1 } else { 0 }
   payload := emit_u32_leb([], elems.len() + extra_decl_count)
 
@@ -849,7 +877,7 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
       groups = groups.append(.{ count: 1, ty: vt })
     } else {
       last := groups[n - 1]
-      if val_type_key(last.ty) == val_type_key(vt) {
+      if val_type_eq(last.ty, vt) {
         updated := case groups.set(n - 1, .{ count: last.count + 1, ty: vt }) {
           .Some(v) => v,
           .None => error("compress_locals: set out of bounds"),
@@ -1178,8 +1206,15 @@ fn emit_wasm_parts(
   data: Vector<DataSegment>,
   start: String?,
 ) Vector<Byte> {
+  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+
+  t0 := date.now()
   ordered_sccs := compute_type_order(types)
+  t_scc := date.now()
+  if timed { eprintln("[time:wasm] type_order=${Float.to_string(t_scc - t0)}ms") }
   ctx := build_ctx(ordered_sccs, imports, funcs, globals, tables, data)
+  t1 := date.now()
+  if timed { eprintln("[time:wasm] build_ctx=${Float.to_string(t1 - t_scc)}ms") }
 
   // Module header: magic + version
   buf: Vector<Byte> = [
@@ -1195,6 +1230,8 @@ fn emit_wasm_parts(
     buf = emit_bytes(buf, encode_section(1,
       encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx)))
   }
+  t2 := date.now()
+  if timed { eprintln("[time:wasm] type_section=${Float.to_string(t2 - t1)}ms") }
 
   // 2. Import section (id=2)
   if imports.len() > 0 {
@@ -1232,9 +1269,12 @@ fn emit_wasm_parts(
   }
 
   // 9. Element section (id=9)
-  if elems.len() > 0 or collect_ref_func_syms(funcs, elems).len() > 0 {
-    buf = emit_bytes(buf, encode_section(9, encode_elem_section_payload(elems, funcs, ctx)))
+  ref_syms := collect_ref_func_syms(funcs, elems)
+  if elems.len() > 0 or ref_syms.len() > 0 {
+    buf = emit_bytes(buf, encode_section(9, encode_elem_section_payload_with_refs(elems, ref_syms, ctx)))
   }
+  t3 := date.now()
+  if timed { eprintln("[time:wasm] small_sections=${Float.to_string(t3 - t2)}ms") }
 
   // 12. Data count section (id=12) — required before code when data segments exist
   if data.len() > 0 {
@@ -1245,6 +1285,8 @@ fn emit_wasm_parts(
   if funcs.len() > 0 {
     buf = emit_bytes(buf, encode_section(10, encode_code_section_payload(funcs, ctx)))
   }
+  t4 := date.now()
+  if timed { eprintln("[time:wasm] code_section=${Float.to_string(t4 - t3)}ms") }
 
   // 11. Data section (id=11)
   if data.len() > 0 {

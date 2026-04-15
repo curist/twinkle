@@ -71,6 +71,91 @@ Current priority order:
 
 ---
 
+## Current snapshot (2026-04-15, after type-encoding cleanup)
+
+```
+compile_modules   3465ms
+optimize           487ms  (uniqueness=77ms, dead_let=207ms, copy_prop=174ms)
+emit_module        583ms
+link               628ms
+emit_wasm_binary   401ms
+prepare_backend    329ms
+verify             169ms
+plan_wasm_types    143ms
+lower_anf           50ms
+core_link           64ms
+monomorphize        22ms
+closure_convert     11ms
+```
+
+Changes since previous snapshot:
+- `sort_by` in prelude/vector.tw replaced with merge sort (was insertion sort, O(n²))
+- wasm.tw: added `_into` accumulator variants for type section encoding
+  (`encode_storage_type_into`, `encode_field_type_into`, `encode_func_comptype_into`,
+  `encode_comptype_into`, `encode_subtype_into`); all type section callers updated
+- wasm.tw: `compress_locals` now uses structural `val_type_eq` instead of string keys
+- wasm.tw: `collect_ref_func_syms` called once in `emit_wasm_parts`, result passed into
+  `encode_elem_section_payload_with_refs` (eliminates second full instruction traversal)
+- Sub-timing added to `emit_wasm_binary` for section breakdown
+
+Net effect on `emit_wasm_binary`: 453ms → 401ms (~11% reduction). The type-section
+cleanup paths were cold; most remaining time is in `ctx_build` and `code_section`.
+
+### emit_wasm_binary sub-timing breakdown
+
+```
+type_order (Tarjan SCC, ~408 types)   13ms
+build_ctx                              80ms   ← second target
+type_section                            6ms
+small_sections (import/func/table/
+  global/export/start/elem)            24ms
+code_section (1354 functions)         274ms   ← primary target
+```
+
+### Root cause: Dict is an O(n) unsorted association list
+
+`rt.dict` is implemented as a linear-scan association list (see `src/runtime/dict.rs`
+comment: "v0 uses linear scan; replace with sorted list or HAMT later").
+
+Every `dict_set`, `dict_get`, `dict_has` scans all entries calling `core_eq` per entry.
+
+This makes `WasmCtx` lookups expensive:
+- `func_idx`: 1404 entries (50 imports + 1354 funcs). Every `Call`/`ReturnCall`/`RefFunc`
+  instruction calls `func_idx_of` → O(702) comparisons on average.
+- `type_idx`: 408 entries. Every `StructNew`/`StructGet`/`ArrayNew`/`CallRef`/etc.
+  calls `type_idx_of` → O(204) comparisons on average.
+- `build_ctx` building `func_idx`: 1404 `dict_set` calls → O(1404²/2) total = ~986K
+  element comparisons.
+
+With ~100K named-operand instructions in the code section, total dict-scan work is
+O(100K × 702) = 70M comparisons for func lookups alone. This dominates code_section.
+
+### Fix: replace func_idx and type_idx with sorted vectors + binary search
+
+Build once: collect (name, idx) pairs → sort by name → O(n log n) build cost.
+Lookup: binary search → O(log n) per lookup.
+
+For `func_idx` (1404 entries): O(log 1404) = ~11 comparisons per lookup vs O(702) now.
+For `type_idx` (408 entries): O(log 408) = ~9 comparisons per lookup vs O(204) now.
+
+Expected improvement:
+- `build_ctx`: 80ms → ~5ms (build cost now dominated by sort, not O(n²) inserts)
+- `code_section`: 274ms → ~100ms (dict-scan portion removed; PVec append cost remains)
+- `emit_wasm_binary` total: 401ms → ~150ms (rough estimate)
+
+Implementation plan (in `boot/compiler/codegen/wasm.tw`):
+1. Add `SortedEntry = .{ key: String, idx: Int }` type
+2. Add `sorted_build(entries)` (calls `sort_by(String.compare)`)
+3. Add `sorted_get(sorted, key)` (binary search returning `Int?`)
+4. Replace `func_idx: Dict<String, Int>` and `type_idx: Dict<String, Int>` in
+   `WasmCtx` with `func_sorted: Vector<SortedEntry>` and `type_sorted: Vector<SortedEntry>`
+5. Update `build_ctx` to collect entries and sort instead of building dicts
+6. Update `func_idx_of` and `type_idx_of` to call `sorted_get`
+7. `global_idx`, `table_idx`, `data_idx` remain as dicts (small, not hot)
+8. `anon_ft_idx` remains as dict (small, used only during build_ctx, not per-instruction)
+
+---
+
 ## Findings (post fine-grained instrumentation)
 
 ```
