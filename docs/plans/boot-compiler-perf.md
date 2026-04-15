@@ -32,7 +32,7 @@ total            ~14 000ms
 This was the original investigation baseline. Several items below have since
 been fixed, so use the current snapshot for prioritization.
 
-## Current snapshot (after wasm.tw accumulator refactor, 2026-04-13)
+## Snapshot (after wasm.tw accumulator refactor, 2026-04-13)
 
 ```
 compile_modules   3558ms
@@ -71,7 +71,7 @@ Current priority order:
 
 ---
 
-## Current snapshot (2026-04-15, after type-encoding cleanup)
+## Snapshot (2026-04-15, after type-encoding cleanup)
 
 ```
 compile_modules   3465ms
@@ -114,45 +114,67 @@ code_section (1354 functions)         274ms   ← primary target
 
 ### Root cause: Dict is an O(n) unsorted association list
 
-`rt.dict` is implemented as a linear-scan association list (see `src/runtime/dict.rs`
-comment: "v0 uses linear scan; replace with sorted list or HAMT later").
+`rt.dict` was implemented as a linear-scan association list. Every `dict_set`,
+`dict_get`, `dict_has` scanned all entries calling `core_eq` per entry. This
+dominated every hot path in the compiler: type-env lookups in the checker,
+symbol tables in the resolver, `WasmCtx` lookups during codegen and linking.
 
-Every `dict_set`, `dict_get`, `dict_has` scans all entries calling `core_eq` per entry.
+**Fix (2026-04-15): replaced with persistent HAMT + insertion-order PVec.**
+See commit "Replace O(n) assoc-list Dict with persistent HAMT + insertion-order PVec".
 
-This makes `WasmCtx` lookups expensive:
-- `func_idx`: 1404 entries (50 imports + 1354 funcs). Every `Call`/`ReturnCall`/`RefFunc`
-  instruction calls `func_idx_of` → O(702) comparisons on average.
-- `type_idx`: 408 entries. Every `StructNew`/`StructGet`/`ArrayNew`/`CallRef`/etc.
-  calls `type_idx_of` → O(204) comparisons on average.
-- `build_ctx` building `func_idx`: 1404 `dict_set` calls → O(1404²/2) total = ~986K
-  element comparisons.
+---
 
-With ~100K named-operand instructions in the code section, total dict-scan work is
-O(100K × 702) = 70M comparisons for func lookups alone. This dominates code_section.
+## Current snapshot (2026-04-15, after HAMT Dict)
 
-### Fix: replace func_idx and type_idx with sorted vectors + binary search
+```
+compile_modules    442ms   (was 3465ms — 87% reduction)
+optimize           150ms   (was 487ms  — 69% reduction)
+emit_module        528ms
+prepare_backend    221ms   (was 329ms  — 33% reduction)
+emit_wasm_binary   200ms   (was 401ms  — 50% reduction)
+  type_order         6ms
+  build_ctx          6ms
+  type_section       3ms
+  small_sections    13ms
+  code_section      170ms
+link                54ms   (was 628ms  — 91% reduction)
+verify              98ms   (was 169ms  — 42% reduction)
+plan_wasm_types     57ms   (was 143ms  — 60% reduction)
+lower_anf           31ms
+core_link           27ms
+monomorphize        21ms
+closure_convert     10ms
+─────────────────────────
+total             ~1840ms  (was ~7600ms — 76% reduction)
+```
 
-Build once: collect (name, idx) pairs → sort by name → O(n log n) build cost.
-Lookup: binary search → O(log n) per lookup.
+Wall-clock comparison (boot/main.tw, 84 modules):
+- stage0 Rust:  1.19s
+- stage1 Wasm:  1.98s  (~1.66× — within 2× of native)
 
-For `func_idx` (1404 entries): O(log 1404) = ~11 comparisons per lookup vs O(702) now.
-For `type_idx` (408 entries): O(log 408) = ~9 comparisons per lookup vs O(204) now.
+The HAMT replaced the bottleneck in essentially every phase simultaneously:
+checker env lookups, resolver symbol tables, wasm ctx func/type index lookups,
+link symbol resolution. The compound effect drove a 76% overall reduction.
 
-Expected improvement:
-- `build_ctx`: 80ms → ~5ms (build cost now dominated by sort, not O(n²) inserts)
-- `code_section`: 274ms → ~100ms (dict-scan portion removed; PVec append cost remains)
-- `emit_wasm_binary` total: 401ms → ~150ms (rough estimate)
+### Remaining hot spots
 
-Implementation plan (in `boot/compiler/codegen/wasm.tw`):
-1. Add `SortedEntry = .{ key: String, idx: Int }` type
-2. Add `sorted_build(entries)` (calls `sort_by(String.compare)`)
-3. Add `sorted_get(sorted, key)` (binary search returning `Int?`)
-4. Replace `func_idx: Dict<String, Int>` and `type_idx: Dict<String, Int>` in
-   `WasmCtx` with `func_sorted: Vector<SortedEntry>` and `type_sorted: Vector<SortedEntry>`
-5. Update `build_ctx` to collect entries and sort instead of building dicts
-6. Update `func_idx_of` and `type_idx_of` to call `sorted_get`
-7. `global_idx`, `table_idx`, `data_idx` remain as dicts (small, not hot)
-8. `anon_ft_idx` remains as dict (small, used only during build_ctx, not per-instruction)
+`emit_module` (528ms) and `code_section` (170ms) are the new top targets.
+`compile_modules` (442ms) is healthy — the large modules (checker.tw at 47ms,
+lower_core.tw at 41ms, emit.tw at 31ms) are now proportional to their size.
+
+`optimize` (150ms) breakdown: dead_let=43ms, copy_prop=37ms, uniqueness=43ms.
+No longer a priority.
+
+### Potential further improvements
+
+**RRB-Trees for PVec** — current PVec concat is O(m·log n); RRB-Trees
+(Bagwell & Rompf 2011) allow O(log n) concat/slice via relaxed internal nodes
+with a size table. Would mainly benefit emit.tw's instruction-vector building.
+
+**CHAMP for HAMT** — Steindorfer 2015 improvement: two bitmaps per node
+(data vs sub-trie) to inline key-value pairs directly in the node array,
+eliminating the separate HamtEntry struct allocation per entry. Fewer
+allocations, better iteration locality. Scala 2.13's HashMap uses CHAMP.
 
 ---
 
