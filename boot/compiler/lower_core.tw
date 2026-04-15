@@ -2022,10 +2022,36 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
 
   body_or_idx := case setup.idx_user_local {
     .Some(user_idx) => {
-      CoreExpr.{
-        kind: .Let(user_idx, .{ kind: .Local(setup.idx_local), ty: int_ty, span: s }, action_then_inc),
-        ty: void_ty,
-        span: s,
+      case setup.dict_keys_local {
+        .Some(_) => {
+          // Dict iteration: user_idx = dict_get_unsafe(dict, key)
+          val_ty := case setup.iter_core.ty {
+            .Dict(_, v) => v,
+            _ => int_ty,
+          }
+          dict_local_expr := CoreExpr.{ kind: .Local(setup.arr_local), ty: setup.iter_core.ty, span: s }
+          key_local_expr := CoreExpr.{ kind: .Local(setup.elem_local), ty: setup.elem_ty, span: s }
+          get_unsafe_call := CoreExpr.{
+            kind: .Call(
+              .{ kind: .GlobalFunc(ctx.builtins.id("dict_get_unsafe")), ty: void_ty, span: s },
+              [dict_local_expr, key_local_expr],
+            ),
+            ty: val_ty,
+            span: s,
+          }
+          CoreExpr.{
+            kind: .Let(user_idx, get_unsafe_call, action_then_inc),
+            ty: void_ty,
+            span: s,
+          }
+        },
+        .None => {
+          CoreExpr.{
+            kind: .Let(user_idx, .{ kind: .Local(setup.idx_local), ty: int_ty, span: s }, action_then_inc),
+            ty: void_ty,
+            span: s,
+          }
+        },
       }
     },
     .None => action_then_inc,

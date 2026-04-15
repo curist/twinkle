@@ -16,17 +16,59 @@ pub fn module() WasmModule {
       // (type $String (array (mut i8)))
       .Array("String", .{ name: .None, mutable: true, ty: .I8 }),
 
-      // (type $DictEntry (struct (field $key anyref) (field $val anyref)))
-      .Struct("DictEntry", [
+      // -- Persistent vector trie types --
+      // VecChildren/VecInternal/PVec must come before PDict (which has a ref $PVec field)
+      // to avoid forward type references that V8's validator rejects.
+
+      // (type $VecChildren (array (mut (ref null eq))))
+      .Array("VecChildren", .{
+        name: .None, mutable: true,
+        ty: .Ref(true, .Eq),
+      }),
+
+      // (type $VecInternal (struct (field $children (ref $VecChildren))))
+      .Struct("VecInternal", [
+        .{ name: .Some("children"), mutable: false,
+          ty: .Ref(false, .Named("VecChildren")) },
+      ], .None, true),
+
+      // (type $PVec (struct (field $len i32) (field $shift i32)
+      //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
+      .Struct("PVec", [
+        .{ name: .Some("len"), mutable: false, ty: .I32 },
+        .{ name: .Some("shift"), mutable: false, ty: .I32 },
+        .{ name: .Some("root"), mutable: false,
+          ty: .Ref(true, .Named("VecInternal")) },
+        .{ name: .Some("tail"), mutable: false,
+          ty: .Ref(false, .Named("Array")) },
+      ], .None, true),
+
+      // (type $HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+      .Struct("HamtEntry", [
+        .{ name: .Some("hash"), mutable: false, ty: .I32 },
         .{ name: .Some("key"), mutable: false, ty: .Anyref },
         .{ name: .Some("val"), mutable: false, ty: .Anyref },
       ], .None, true),
 
-      // (type $Dict (array (mut (ref null $DictEntry))))
-      .Array("Dict", .{
-        name: .None, mutable: true,
-        ty: .Ref(true, .Named("DictEntry")),
-      }),
+      // (type $HamtNode (struct (field $bitmap i32) (field $entries (ref $Array))))
+      .Struct("HamtNode", [
+        .{ name: .Some("bitmap"), mutable: false, ty: .I32 },
+        .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
+      ], .None, true),
+
+      // (type $HamtCollision (struct (field $hash i32) (field $entries (ref $Array))))
+      .Struct("HamtCollision", [
+        .{ name: .Some("hash"), mutable: false, ty: .I32 },
+        .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
+      ], .None, true),
+
+      // (type $PDict (struct (field $size i32) (field $root (ref null $HamtNode)) (field $order (ref $PVec))))
+      // PVec is defined above to avoid a forward reference.
+      .Struct("PDict", [
+        .{ name: .Some("size"), mutable: false, ty: .I32 },
+        .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("HamtNode")) },
+        .{ name: .Some("order"), mutable: false, ty: .Ref(false, .Named("PVec")) },
+      ], .None, true),
 
       // (type $ClosureEnv (array anyref))
       .Array("ClosureEnv", .{ name: .None, mutable: false, ty: .Anyref }),
@@ -58,31 +100,6 @@ pub fn module() WasmModule {
       // (type $BoxedFloat (struct (field $v f64)))
       .Struct("BoxedFloat", [
         .{ name: .Some("v"), mutable: false, ty: .F64 },
-      ], .None, true),
-
-      // -- Persistent vector trie types --
-
-      // (type $VecChildren (array (mut (ref null eq))))
-      .Array("VecChildren", .{
-        name: .None, mutable: true,
-        ty: .Ref(true, .Eq),
-      }),
-
-      // (type $VecInternal (struct (field $children (ref $VecChildren))))
-      .Struct("VecInternal", [
-        .{ name: .Some("children"), mutable: false,
-          ty: .Ref(false, .Named("VecChildren")) },
-      ], .None, true),
-
-      // (type $PVec (struct (field $len i32) (field $shift i32)
-      //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
-      .Struct("PVec", [
-        .{ name: .Some("len"), mutable: false, ty: .I32 },
-        .{ name: .Some("shift"), mutable: false, ty: .I32 },
-        .{ name: .Some("root"), mutable: false,
-          ty: .Ref(true, .Named("VecInternal")) },
-        .{ name: .Some("tail"), mutable: false,
-          ty: .Ref(false, .Named("Array")) },
       ], .None, true),
 
       // (type $IterState (sub (struct (field $seed anyref) (field $step anyref))))

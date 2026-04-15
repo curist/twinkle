@@ -44,8 +44,8 @@ fn arr_n() ValType { ref_null("rt_types__Array") }
 fn arr_() ValType { ref_nn("rt_types__Array") }
 fn pvec_n() ValType { ref_null("rt_types__PVec") }
 fn pvec_() ValType { ref_nn("rt_types__PVec") }
-fn dict_n() ValType { ref_null("rt_types__Dict") }
-fn dict_() ValType { ref_nn("rt_types__Dict") }
+fn dict_n() ValType { ref_null("rt_types__PDict") }
+fn dict_() ValType { ref_nn("rt_types__PDict") }
 fn variant_() ValType { ref_nn("rt_types__Variant") }
 fn variant_null() ValType { ref_null("rt_types__Variant") }
 fn closure_n() ValType { ref_null("rt_types__Closure") }

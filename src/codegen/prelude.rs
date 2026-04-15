@@ -4,7 +4,7 @@ use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_VARIANT, ref_array_null, ref_dict, ref_dict_null, ref_pvec, ref_pvec_null, ref_string,
+    T_VARIANT, ref_array_null, ref_pdict, ref_pdict_null, ref_pvec, ref_pvec_null, ref_string,
     ref_string_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
@@ -175,15 +175,15 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.dict",
             "set",
             "rt_dict__set",
-            vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
-            vec![ref_dict()],
+            vec![ref_pdict_null(), ValType::Anyref, ValType::Anyref],
+            vec![ref_pdict()],
         )),
         id if id == prelude_ids::DICT_KEYS => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",
             "keys",
             "rt_dict__keys",
-            vec![ref_dict_null()],
+            vec![ref_pdict_null()],
             vec![ref_pvec()],
         )),
         id if id == prelude_ids::DICT_GET => Some(PreludeEntry::runtime(
@@ -191,7 +191,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.dict",
             "get_option",
             "rt_dict__get_option",
-            vec![ref_dict_null(), ValType::Anyref],
+            vec![ref_pdict_null(), ValType::Anyref],
             vec![ValType::Ref {
                 nullable: false,
                 heap: HeapType::Named(T_VARIANT.to_string()),
@@ -203,14 +203,14 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "make",
             "rt_dict__make",
             vec![],
-            vec![ref_dict()],
+            vec![ref_pdict()],
         )),
         id if id == prelude_ids::DICT_LEN => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",
             "len",
             "rt_dict__len",
-            vec![ref_dict_null()],
+            vec![ref_pdict_null()],
             vec![ValType::I32],
         )),
         id if id == prelude_ids::DICT_HAS => Some(PreludeEntry::runtime(
@@ -218,7 +218,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.dict",
             "has",
             "rt_dict__has",
-            vec![ref_dict_null(), ValType::Anyref],
+            vec![ref_pdict_null(), ValType::Anyref],
             vec![ValType::I32],
         )),
         id if id == prelude_ids::DICT_REMOVE => Some(PreludeEntry::runtime(
@@ -226,24 +226,24 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt.dict",
             "remove",
             "rt_dict__remove",
-            vec![ref_dict_null(), ValType::Anyref],
-            vec![ref_dict()],
+            vec![ref_pdict_null(), ValType::Anyref],
+            vec![ref_pdict()],
         )),
         id if id == prelude_ids::DICT_SET_IN_PLACE => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",
             "set_in_place",
             "rt_dict__set_in_place",
-            vec![ref_dict_null(), ValType::Anyref, ValType::Anyref],
-            vec![ref_dict()],
+            vec![ref_pdict_null(), ValType::Anyref, ValType::Anyref],
+            vec![ref_pdict()],
         )),
         id if id == prelude_ids::DICT_REMOVE_IN_PLACE => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",
             "remove_in_place",
             "rt_dict__remove_in_place",
-            vec![ref_dict_null(), ValType::Anyref],
-            vec![ref_dict()],
+            vec![ref_pdict_null(), ValType::Anyref],
+            vec![ref_pdict()],
         )),
         id if id == prelude_ids::VECTOR_BUILDER_NEW => Some(PreludeEntry::runtime(
             twinkle_name,

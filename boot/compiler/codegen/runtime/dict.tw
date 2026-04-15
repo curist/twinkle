@@ -1,26 +1,60 @@
-// rt.dict — persistent (COW) dictionary as unsorted association list.
+// rt.dict — persistent HAMT dictionary with insertion-order tracking.
 //
 // Mirrors stage0 src/runtime/dict.rs.
 // Key comparison uses rt.core.eq (structural equality).
+// Key types: Int (BoxedInt or I31/Byte), String.
 
 use compiler.codegen.wasm_ir.{ ValType, FuncDef, ExportDef, WasmModule }
 
-fn dict_null() ValType { .Ref(true, .Named("rt_types__Dict")) }
-fn dict_ref() ValType { .Ref(false, .Named("rt_types__Dict")) }
+// ── ValType helpers ──────────────────────────────────────────────────────────
+
+fn pdict_null() ValType { .Ref(true, .Named("rt_types__PDict")) }
+fn pdict_ref() ValType { .Ref(false, .Named("rt_types__PDict")) }
+fn hamt_node_null() ValType { .Ref(true, .Named("rt_types__HamtNode")) }
+fn hamt_node_ref() ValType { .Ref(false, .Named("rt_types__HamtNode")) }
+fn hamt_entry_null() ValType { .Ref(true, .Named("rt_types__HamtEntry")) }
+fn hamt_entry_ref() ValType { .Ref(false, .Named("rt_types__HamtEntry")) }
+fn hamt_collision_null() ValType { .Ref(true, .Named("rt_types__HamtCollision")) }
+fn hamt_collision_ref() ValType { .Ref(false, .Named("rt_types__HamtCollision")) }
 fn arr_null() ValType { .Ref(true, .Named("rt_types__Array")) }
 fn arr_ref() ValType { .Ref(false, .Named("rt_types__Array")) }
 fn pvec_ref() ValType { .Ref(false, .Named("rt_types__PVec")) }
-fn entry_null() ValType { .Ref(true, .Named("rt_types__DictEntry")) }
-fn entry_ref() ValType { .Ref(false, .Named("rt_types__DictEntry")) }
+fn pvec_null() ValType { .Ref(true, .Named("rt_types__PVec")) }
 fn variant_ref() ValType { .Ref(false, .Named("rt_types__Variant")) }
+fn string_null() ValType { .Ref(true, .Named("rt_types__String")) }
+fn boxed_int_null() ValType { .Ref(true, .Named("rt_types__BoxedInt")) }
+fn vec_internal_null() ValType { .Ref(true, .Named("rt_types__VecInternal")) }
 
-fn t_dict() String { "rt_types__Dict" }
-fn t_entry() String { "rt_types__DictEntry" }
+fn t_pdict() String { "rt_types__PDict" }
+fn t_hamt_node() String { "rt_types__HamtNode" }
+fn t_hamt_entry() String { "rt_types__HamtEntry" }
+fn t_hamt_collision() String { "rt_types__HamtCollision" }
 fn t_array() String { "rt_types__Array" }
+fn t_pvec() String { "rt_types__PVec" }
 fn t_variant() String { "rt_types__Variant" }
+fn t_string() String { "rt_types__String" }
+fn t_boxed_int() String { "rt_types__BoxedInt" }
+fn t_vec_internal() String { "rt_types__VecInternal" }
+
+// Field indices
+fn he_hash() Int { 0 }
+fn he_key() Int { 1 }
+fn he_val() Int { 2 }
+fn hn_bitmap() Int { 0 }
+fn hn_entries() Int { 1 }
+fn hc_hash() Int { 0 }
+fn hc_entries() Int { 1 }
+fn pd_size() Int { 0 }
+fn pd_root() Int { 1 }
+fn pd_order() Int { 2 }
 
 pub fn module() WasmModule {
   funcs := [
+    popcount_fn(), arr_insert_at_fn(), arr_replace_at_fn(), arr_remove_at_fn(),
+    hash_i64_fn(), hash_string_fn(), hash_key_fn(),
+    collision_get_fn(), collision_set_fn(),
+    node_get_fn(), node_set_fn(), node_remove_fn(),
+    order_remove_key_fn(),
     make_fn(), len_fn(), keys_fn(), has_fn(), get_fn(), get_option_fn(),
     set_fn(), remove_fn(), set_in_place_fn(), remove_in_place_fn(),
   ]
@@ -31,14 +65,14 @@ pub fn module() WasmModule {
     namespace: "rt.dict",
     types: [],
     imports: [
-      .{
-        module: "rt.core", name: "eq", as_sym: "core_eq",
-        params: [.Anyref, .Anyref], results: [.I32],
-      },
-      .{
-        module: "rt.arr", name: "from_array", as_sym: "rt_arr_from_array",
-        params: [arr_ref()], results: [pvec_ref()],
-      },
+      .{ module: "rt.core", name: "eq", as_sym: "core_eq",
+         params: [.Anyref, .Anyref], results: [.I32] },
+      .{ module: "rt.arr", name: "push", as_sym: "arr_push",
+         params: [pvec_ref(), .Anyref], results: [pvec_ref()] },
+      .{ module: "rt.arr", name: "len", as_sym: "arr_len",
+         params: [pvec_null()], results: [.I32] },
+      .{ module: "rt.arr", name: "get", as_sym: "arr_get",
+         params: [pvec_null(), .I32], results: [.Anyref] },
     ],
     funcs: funcs,
     globals: [],
@@ -50,100 +84,174 @@ pub fn module() WasmModule {
   }
 }
 
-// make() -> Dict — empty dict
-fn make_fn() FuncDef {
-  FuncDef.{ name: "make", params: [], results: [dict_ref()], locals: [], body: [
-    .ArrayNewFixed(t_dict(), 0),
-  ] }
-}
-
-// len(dict: Dict?) -> i32
-fn len_fn() FuncDef {
-  FuncDef.{ name: "len", params: [dict_null()], results: [.I32], locals: [], body: [
-    .LocalGet(0), .RefAsNonNull, .ArrayLen,
-  ] }
-}
-
-// keys(dict: Dict?) -> PVec
-// Build a flat Array of keys, then convert to PVec via from_array.
-fn keys_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  ta := t_array()
-  // Locals: p1=n, p2=i, p3=flat_arr, p4=entry
-  FuncDef.{ name: "keys", params: [dict_null()], results: [pvec_ref()],
-    locals: [.I32, .I32, arr_null(), entry_null()],
+// ── popcount(v: i32) -> i32 ──────────────────────────────────────────────────
+fn popcount_fn() FuncDef {
+  FuncDef.{ name: "popcount", params: [.I32], results: [.I32],
+    locals: [.I32],
     body: [
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(1),
-      .RefNull(.None_), .LocalGet(1), .ArrayNew(ta), .LocalSet(3),
-      .I32Const(0), .LocalSet(2),
+      .I32Const(0), .LocalSet(1),
       .Block("exit", .None, [
         .Loop("loop", .None, [
-          .LocalGet(2), .LocalGet(1), .I32GeS, .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(2),
-          .ArrayGet(td), .LocalSet(4),
-          .LocalGet(3), .RefAsNonNull, .LocalGet(2),
-          .LocalGet(4), .RefAsNonNull, .StructGet(te, 0),
-          .ArraySet(ta),
-          .LocalGet(2), .I32Const(1), .I32Add, .LocalSet(2),
+          .LocalGet(0), .I32Eqz, .BrIf("exit"),
+          .LocalGet(0), .LocalGet(0), .I32Const(1), .I32Sub, .I32And, .LocalSet(0),
+          .LocalGet(1), .I32Const(1), .I32Add, .LocalSet(1),
           .Br("loop"),
         ]),
       ]),
-      // Convert flat Array → PVec
-      .LocalGet(3), .RefAsNonNull,
-      .Call("rt_arr_from_array"),
+      .LocalGet(1),
     ],
   }
 }
 
-// has(dict: Dict?, key: anyref) -> i32
-fn has_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p2=n, p3=i, p4=entry
-  FuncDef.{ name: "has", params: [dict_null(), .Anyref], results: [.I32],
-    locals: [.I32, .I32, entry_null()],
+// ── arr_insert_at(arr, idx, val) -> Array ────────────────────────────────────
+fn arr_insert_at_fn() FuncDef {
+  // p0=arr, p1=idx, p2=val; L3=n, L4=new_arr, L5=tail_len
+  FuncDef.{ name: "arr_insert_at", params: [arr_ref(), .I32, .Anyref], results: [arr_ref()],
+    locals: [.I32, arr_null(), .I32],
     body: [
+      .LocalGet(0), .ArrayLen, .LocalSet(3),
+      .RefNull(.Any), .LocalGet(3), .I32Const(1), .I32Add, .ArrayNew(t_array()), .LocalSet(4),
+      .LocalGet(1), .I32Const(0), .I32GtS,
+      .If(.None, [
+        .LocalGet(4), .RefAsNonNull, .I32Const(0),
+        .LocalGet(0), .I32Const(0), .LocalGet(1),
+        .ArrayCopy(t_array(), t_array()),
+      ], []),
+      .LocalGet(4), .RefAsNonNull, .LocalGet(1), .LocalGet(2), .ArraySet(t_array()),
+      .LocalGet(3), .LocalGet(1), .I32Sub, .LocalSet(5),
+      .LocalGet(5), .I32Const(0), .I32GtS,
+      .If(.None, [
+        .LocalGet(4), .RefAsNonNull,
+        .LocalGet(1), .I32Const(1), .I32Add,
+        .LocalGet(0), .LocalGet(1), .LocalGet(5),
+        .ArrayCopy(t_array(), t_array()),
+      ], []),
+      .LocalGet(4), .RefAsNonNull,
+    ],
+  }
+}
+
+// ── arr_replace_at(arr, idx, val) -> Array ───────────────────────────────────
+fn arr_replace_at_fn() FuncDef {
+  // p0=arr, p1=idx, p2=val; L3=n, L4=new_arr
+  FuncDef.{ name: "arr_replace_at", params: [arr_ref(), .I32, .Anyref], results: [arr_ref()],
+    locals: [.I32, arr_null()],
+    body: [
+      .LocalGet(0), .ArrayLen, .LocalSet(3),
+      .RefNull(.Any), .LocalGet(3), .ArrayNew(t_array()), .LocalSet(4),
+      .LocalGet(4), .RefAsNonNull, .I32Const(0),
+      .LocalGet(0), .I32Const(0), .LocalGet(3),
+      .ArrayCopy(t_array(), t_array()),
+      .LocalGet(4), .RefAsNonNull, .LocalGet(1), .LocalGet(2), .ArraySet(t_array()),
+      .LocalGet(4), .RefAsNonNull,
+    ],
+  }
+}
+
+// ── arr_remove_at(arr, idx) -> Array ─────────────────────────────────────────
+fn arr_remove_at_fn() FuncDef {
+  // p0=arr, p1=idx; L2=n, L3=new_arr, L4=tail_len
+  FuncDef.{ name: "arr_remove_at", params: [arr_ref(), .I32], results: [arr_ref()],
+    locals: [.I32, arr_null(), .I32],
+    body: [
+      .LocalGet(0), .ArrayLen, .LocalSet(2),
+      .RefNull(.Any), .LocalGet(2), .I32Const(1), .I32Sub, .ArrayNew(t_array()), .LocalSet(3),
+      .LocalGet(1), .I32Const(0), .I32GtS,
+      .If(.None, [
+        .LocalGet(3), .RefAsNonNull, .I32Const(0),
+        .LocalGet(0), .I32Const(0), .LocalGet(1),
+        .ArrayCopy(t_array(), t_array()),
+      ], []),
+      .LocalGet(2), .LocalGet(1), .I32Sub, .I32Const(1), .I32Sub, .LocalSet(4),
+      .LocalGet(4), .I32Const(0), .I32GtS,
+      .If(.None, [
+        .LocalGet(3), .RefAsNonNull, .LocalGet(1),
+        .LocalGet(0), .LocalGet(1), .I32Const(1), .I32Add, .LocalGet(4),
+        .ArrayCopy(t_array(), t_array()),
+      ], []),
+      .LocalGet(3), .RefAsNonNull,
+    ],
+  }
+}
+
+// ── hash_i64(v: i64) -> i32 ──────────────────────────────────────────────────
+fn hash_i64_fn() FuncDef {
+  FuncDef.{ name: "hash_i64", params: [.I64], results: [.I32],
+    locals: [.I32],
+    body: [
+      .LocalGet(0), .I32WrapI64,
+      .LocalGet(0), .I64Const(32), .I64ShrS, .I32WrapI64,
+      .I32Xor, .LocalSet(1),
+      .LocalGet(1), .I32Const(-1640531527), .I32Mul,
+    ],
+  }
+}
+
+// ── hash_string(s: ref null $String) -> i32 ──────────────────────────────────
+fn hash_string_fn() FuncDef {
+  // p0=s; L1=hash, L2=n, L3=i
+  FuncDef.{ name: "hash_string", params: [string_null()], results: [.I32],
+    locals: [.I32, .I32, .I32],
+    body: [
+      .I32Const(-2128831035), .LocalSet(1),
       .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
       .I32Const(0), .LocalSet(3),
       .Block("exit", .None, [
-        .Loop("scan", .None, [
+        .Loop("loop", .None, [
           .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(4),
-          .LocalGet(4), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None, [.I32Const(1), .Return], []),
+          .LocalGet(0), .RefAsNonNull, .LocalGet(3), .ArrayGetU(t_string()),
+          .LocalGet(1), .I32Xor,
+          .I32Const(16777619), .I32Mul, .LocalSet(1),
           .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("scan"),
+          .Br("loop"),
         ]),
       ]),
-      .I32Const(0),
+      .LocalGet(1),
     ],
   }
 }
 
-// get(dict: Dict?, key: anyref) -> anyref — null if absent
-fn get_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p2=n, p3=i, p4=entry
-  FuncDef.{ name: "get", params: [dict_null(), .Anyref], results: [.Anyref],
-    locals: [.I32, .I32, entry_null()],
+// ── hash_key(key: anyref) -> i32 ─────────────────────────────────────────────
+fn hash_key_fn() FuncDef {
+  FuncDef.{ name: "hash_key", params: [.Anyref], results: [.I32],
+    locals: [],
     body: [
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      .I32Const(0), .LocalSet(3),
+      .LocalGet(0), .RefTest(false, .I31),
+      .If(.None, [
+        .LocalGet(0), .RefCast(false, .I31), .I31GetU,
+        .I64ExtendI32U, .Call("hash_i64"), .Return,
+      ], []),
+      .LocalGet(0), .RefTest(false, .Named(t_boxed_int())),
+      .If(.None, [
+        .LocalGet(0), .RefCast(false, .Named(t_boxed_int())),
+        .StructGet(t_boxed_int(), 0), .Call("hash_i64"), .Return,
+      ], []),
+      .LocalGet(0), .RefCast(true, .Named(t_string())),
+      .Call("hash_string"),
+    ],
+  }
+}
+
+// ── collision_get(c, key) -> anyref ──────────────────────────────────────────
+fn collision_get_fn() FuncDef {
+  // p0=c, p1=key; L2=entries, L3=n, L4=i, L5=entry
+  FuncDef.{ name: "collision_get", params: [hamt_collision_null(), .Anyref], results: [.Anyref],
+    locals: [arr_null(), .I32, .I32, hamt_entry_null()],
+    body: [
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_entries()), .LocalSet(2),
+      .LocalGet(2), .RefAsNonNull, .ArrayLen, .LocalSet(3),
+      .I32Const(0), .LocalSet(4),
       .Block("exit", .None, [
         .Loop("scan", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(4),
-          .LocalGet(4), .RefAsNonNull, .StructGet(te, 0),
+          .LocalGet(4), .LocalGet(3), .I32GeS, .BrIf("exit"),
+          .LocalGet(2), .RefAsNonNull, .LocalGet(4), .ArrayGet(t_array()),
+          .RefCast(false, .Named(t_hamt_entry())), .LocalSet(5),
+          .LocalGet(5), .StructGet(t_hamt_entry(), he_key()),
           .LocalGet(1), .Call("core_eq"),
           .If(.None, [
-            .LocalGet(4), .RefAsNonNull, .StructGet(te, 1), .Return,
+            .LocalGet(5), .StructGet(t_hamt_entry(), he_val()), .Return,
           ], []),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
+          .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
           .Br("scan"),
         ]),
       ]),
@@ -152,284 +260,475 @@ fn get_fn() FuncDef {
   }
 }
 
-// get_option(dict: Dict?, key: anyref) -> Variant (Option)
-fn get_option_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  ta := t_array()
-  tv := t_variant()
-  // Locals: p2=n, p3=i, p4=entry
-  FuncDef.{ name: "get_option", params: [dict_null(), .Anyref], results: [variant_ref()],
-    locals: [.I32, .I32, entry_null()],
+// ── collision_set(c, hash, key, val) -> HamtCollision ────────────────────────
+fn collision_set_fn() FuncDef {
+  // p0=c, p1=hash, p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
+  FuncDef.{ name: "collision_set",
+    params: [hamt_collision_null(), .I32, .Anyref, .Anyref],
+    results: [hamt_collision_ref()],
+    locals: [arr_null(), .I32, .I32, hamt_entry_null(), arr_null()],
     body: [
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      .I32Const(0), .LocalSet(3),
-      .Block("exit", .None, [
-        .Loop("scan", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(4),
-          .LocalGet(4), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None, [
-            // Some(value) = Variant(0, 1, [value])
-            .I32Const(0), .I32Const(1),
-            .LocalGet(4), .RefAsNonNull, .StructGet(te, 1),
-            .ArrayNewFixed(ta, 1),
-            .StructNew(tv), .Return,
-          ], []),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("scan"),
-        ]),
-      ]),
-      // None = Variant(0, 0, null_array)
-      .I32Const(0), .I32Const(0),
-      .RefNull(.Named(t_array())),
-      .StructNew(tv),
-    ],
-  }
-}
-
-// set(dict: Dict?, key: anyref, val: anyref) -> Dict — COW insert/update
-fn set_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p3=n, p4=i, p5=found, p6=result, p7=new_entry, p8=entry, p9=result_len
-  FuncDef.{ name: "set", params: [dict_null(), .Anyref, .Anyref], results: [dict_ref()],
-    locals: [.I32, .I32, .I32, dict_null(), entry_ref(), entry_null(), .I32],
-    body: [
-      // n = len(dict)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(3),
-      // new_entry = DictEntry { key, val }
-      .LocalGet(1), .LocalGet(2), .StructNew(te), .LocalSet(7),
-      // Scan for existing key
-      .I32Const(0), .LocalSet(4),
-      .I32Const(0), .LocalSet(5),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_entries()), .LocalSet(4),
+      .LocalGet(4), .RefAsNonNull, .ArrayLen, .LocalSet(5),
+      .I32Const(0), .LocalSet(6),
       .Block("found_exit", .None, [
         .Loop("scan", .None, [
-          .LocalGet(4), .LocalGet(3), .I32GeS, .BrIf("found_exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(4),
-          .ArrayGet(td), .LocalSet(8),
-          .LocalGet(8), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
+          .LocalGet(6), .LocalGet(5), .I32GeS, .BrIf("found_exit"),
+          .LocalGet(4), .RefAsNonNull, .LocalGet(6), .ArrayGet(t_array()),
+          .RefCast(false, .Named(t_hamt_entry())), .LocalSet(7),
+          .LocalGet(7), .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(2), .Call("core_eq"),
           .If(.None, [
-            .I32Const(1), .LocalSet(5), .Br("found_exit"),
+            .LocalGet(1), .LocalGet(2), .LocalGet(3),
+            .StructNew(t_hamt_entry()), .LocalSet(7),
+            .LocalGet(4), .RefAsNonNull, .LocalGet(6), .LocalGet(7),
+            .Call("arr_replace_at"), .LocalSet(8),
+            .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
+            .LocalGet(8), .RefAsNonNull, .StructNew(t_hamt_collision()), .Return,
           ], []),
-          .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
+          .LocalGet(6), .I32Const(1), .I32Add, .LocalSet(6),
           .Br("scan"),
         ]),
       ]),
-      // result_len = found ? n : n+1
+      // Not found: append
+      .LocalGet(1), .LocalGet(2), .LocalGet(3), .StructNew(t_hamt_entry()), .LocalSet(7),
+      .LocalGet(4), .RefAsNonNull, .LocalGet(5), .LocalGet(7),
+      .Call("arr_insert_at"), .LocalSet(8),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
+      .LocalGet(8), .RefAsNonNull, .StructNew(t_hamt_collision()),
+    ],
+  }
+}
+
+// ── node_get(node, hash, depth, key) -> anyref ───────────────────────────────
+fn node_get_fn() FuncDef {
+  // p0=node, p1=hash, p2=depth, p3=key
+  // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot
+  FuncDef.{ name: "node_get",
+    params: [hamt_node_null(), .I32, .I32, .Anyref], results: [.Anyref],
+    locals: [.I32, .I32, .I32, .I32, .Anyref],
+    body: [
+      .LocalGet(0), .RefIsNull,
+      .If(.None, [.RefNull(.Any), .Return], []),
+      .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul, .I32ShrU,
+      .I32Const(31), .I32And, .LocalSet(4),
+      .I32Const(1), .LocalGet(4), .I32Shl, .LocalSet(5),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(6),
+      .LocalGet(6), .LocalGet(5), .I32And, .I32Eqz,
+      .If(.None, [.RefNull(.Any), .Return], []),
+      .LocalGet(6), .LocalGet(5), .I32Const(1), .I32Sub,
+      .I32And, .Call("popcount"), .LocalSet(7),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+      .LocalGet(7), .ArrayGet(t_array()), .LocalSet(8),
+      // HamtEntry?
+      .LocalGet(8), .RefTest(false, .Named(t_hamt_entry())),
+      .If(.None, [
+        .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())),
+        .StructGet(t_hamt_entry(), he_hash()),
+        .LocalGet(1), .I32Eq,
+        .If(.None, [
+          .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())),
+          .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(3), .Call("core_eq"),
+          .If(.None, [
+            .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())),
+            .StructGet(t_hamt_entry(), he_val()), .Return,
+          ], []),
+        ], []),
+        .RefNull(.Any), .Return,
+      ], []),
+      // HamtNode?
+      .LocalGet(8), .RefTest(false, .Named(t_hamt_node())),
+      .If(.None, [
+        .LocalGet(8), .RefCast(true, .Named(t_hamt_node())),
+        .LocalGet(1), .LocalGet(2), .I32Const(1), .I32Add,
+        .LocalGet(3), .Call("node_get"), .Return,
+      ], []),
+      // HamtCollision
+      .LocalGet(8), .RefCast(true, .Named(t_hamt_collision())),
+      .LocalGet(3), .Call("collision_get"),
+    ],
+  }
+}
+
+// ── node_set(node, hash, depth, key, val) -> HamtNode ────────────────────────
+fn node_set_fn() FuncDef {
+  // p0=node, p1=hash, p2=depth, p3=key, p4=val
+  // L5=new_entry, L6=shift, L7=fragment, L8=bit, L9=bitmap, L10=idx
+  // L11=slot, L12=new_entries, L13=old_entry, L14=tmp_node, L15=collision, L16=new_collision
+  FuncDef.{ name: "node_set",
+    params: [hamt_node_null(), .I32, .I32, .Anyref, .Anyref],
+    results: [hamt_node_ref()],
+    locals: [
+      hamt_entry_null(), .I32, .I32, .I32, .I32, .I32,
+      .Anyref, arr_null(), hamt_entry_null(),
+      hamt_node_null(), hamt_collision_null(), hamt_collision_null(),
+    ],
+    body: [
+      .LocalGet(1), .LocalGet(3), .LocalGet(4),
+      .StructNew(t_hamt_entry()), .LocalSet(5),
+
+      // null node: single-entry node
+      .LocalGet(0), .RefIsNull,
+      .If(.None, [
+        .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul, .I32ShrU,
+        .I32Const(31), .I32And, .LocalSet(7),
+        .I32Const(1), .LocalGet(7), .I32Shl, .LocalSet(8),
+        .LocalGet(8),
+        .LocalGet(5), .ArrayNewFixed(t_array(), 1),
+        .StructNew(t_hamt_node()), .Return,
+      ], []),
+
+      .LocalGet(2), .I32Const(5), .I32Mul, .LocalSet(6),
+      .LocalGet(1), .LocalGet(6), .I32ShrU, .I32Const(31), .I32And, .LocalSet(7),
+      .I32Const(1), .LocalGet(7), .I32Shl, .LocalSet(8),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(9),
+      .LocalGet(9), .LocalGet(8), .I32Const(1), .I32Sub,
+      .I32And, .Call("popcount"), .LocalSet(10),
+
+      // no slot: insert
+      .LocalGet(9), .LocalGet(8), .I32And, .I32Eqz,
+      .If(.None, [
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+        .LocalGet(10), .LocalGet(5), .Call("arr_insert_at"), .LocalSet(12),
+        .LocalGet(9), .LocalGet(8), .I32Or,
+        .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+      ], []),
+
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+      .LocalGet(10), .ArrayGet(t_array()), .LocalSet(11),
+
+      // HamtEntry slot
+      .LocalGet(11), .RefTest(false, .Named(t_hamt_entry())),
+      .If(.None, [
+        .LocalGet(11), .RefCast(false, .Named(t_hamt_entry())), .LocalSet(13),
+        .LocalGet(13), .StructGet(t_hamt_entry(), he_hash()),
+        .LocalGet(1), .I32Eq,
+        .If(.None, [
+          .LocalGet(13), .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(3), .Call("core_eq"),
+          .If(.None, [
+            // same key: update
+            .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+            .LocalGet(10), .LocalGet(5), .Call("arr_replace_at"), .LocalSet(12),
+            .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+          ], [
+            // same hash, diff key: collision
+            .LocalGet(13), .LocalGet(5), .ArrayNewFixed(t_array(), 2), .LocalSet(12),
+            .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
+            .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+            .LocalGet(10), .LocalGet(15),
+            .Call("arr_replace_at"), .LocalSet(12),
+            .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+          ]),
+        ], [
+          // different hash: sub-node
+          .RefNull(.Named(t_hamt_node())),
+          .LocalGet(13), .StructGet(t_hamt_entry(), he_hash()),
+          .LocalGet(2), .I32Const(1), .I32Add,
+          .LocalGet(13), .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(13), .StructGet(t_hamt_entry(), he_val()),
+          .Call("node_set"), .LocalSet(14),
+          .LocalGet(14),
+          .LocalGet(1), .LocalGet(2), .I32Const(1), .I32Add,
+          .LocalGet(3), .LocalGet(4), .Call("node_set"), .LocalSet(14),
+          .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+          .LocalGet(10), .LocalGet(14),
+          .Call("arr_replace_at"), .LocalSet(12),
+          .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+        ]),
+      ], []),
+
+      // HamtNode slot: recurse
+      .LocalGet(11), .RefTest(false, .Named(t_hamt_node())),
+      .If(.None, [
+        .LocalGet(11), .RefCast(true, .Named(t_hamt_node())),
+        .LocalGet(1), .LocalGet(2), .I32Const(1), .I32Add,
+        .LocalGet(3), .LocalGet(4), .Call("node_set"), .LocalSet(14),
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+        .LocalGet(10), .LocalGet(14),
+        .Call("arr_replace_at"), .LocalSet(12),
+        .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+      ], []),
+
+      // HamtCollision slot
+      .LocalGet(11), .RefCast(true, .Named(t_hamt_collision())), .LocalSet(15),
+      .LocalGet(15), .LocalGet(1), .LocalGet(3), .LocalGet(4),
+      .Call("collision_set"), .LocalSet(16),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+      .LocalGet(10), .LocalGet(16),
+      .Call("arr_replace_at"), .LocalSet(12),
+      .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()),
+    ],
+  }
+}
+
+// ── node_remove(node, hash, depth, key) -> HamtNode? ─────────────────────────
+fn node_remove_fn() FuncDef {
+  // p0=node, p1=hash, p2=depth, p3=key
+  // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries, L10=n_entries
+  // L11=old_entry, L12=new_entries, L13=sub, L14=new_sub
+  // L15=collision, L16=c_entries, L17=c_n, L18=found_j, L19=j, L20=ce, L21=new_c
+  FuncDef.{ name: "node_remove",
+    params: [hamt_node_null(), .I32, .I32, .Anyref],
+    results: [hamt_node_null()],
+    locals: [
+      .I32, .I32, .I32, .I32, .Anyref,
+      arr_null(), .I32,
+      hamt_entry_null(), arr_null(),
+      hamt_node_null(), hamt_node_null(),
+      hamt_collision_null(), arr_null(), .I32,
+      .I32, .I32, hamt_entry_null(), hamt_collision_null(),
+    ],
+    body: [
+      .LocalGet(0), .RefIsNull,
+      .If(.None, [.RefNull(.Named(t_hamt_node())), .Return], []),
+      .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul,
+      .I32ShrU, .I32Const(31), .I32And, .LocalSet(4),
+      .I32Const(1), .LocalGet(4), .I32Shl, .LocalSet(5),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(6),
+      .LocalGet(6), .LocalGet(5), .I32And, .I32Eqz,
+      .If(.None, [.LocalGet(0), .Return], []),
+      .LocalGet(6), .LocalGet(5), .I32Const(1), .I32Sub,
+      .I32And, .Call("popcount"), .LocalSet(7),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()), .LocalSet(9),
+      .LocalGet(9), .RefAsNonNull, .ArrayLen, .LocalSet(10),
+      .LocalGet(9), .RefAsNonNull, .LocalGet(7), .ArrayGet(t_array()), .LocalSet(8),
+
+      // HamtEntry
+      .LocalGet(8), .RefTest(false, .Named(t_hamt_entry())),
+      .If(.None, [
+        .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())), .LocalSet(11),
+        .LocalGet(11), .StructGet(t_hamt_entry(), he_hash()),
+        .LocalGet(1), .I32Eq,
+        .If(.None, [
+          .LocalGet(11), .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(3), .Call("core_eq"),
+          .If(.None, [
+            .LocalGet(10), .I32Const(1), .I32Eq,
+            .If(.None, [.RefNull(.Named(t_hamt_node())), .Return], []),
+            .LocalGet(9), .RefAsNonNull, .LocalGet(7), .Call("arr_remove_at"), .LocalSet(12),
+            .LocalGet(6), .LocalGet(5), .I32Sub,
+            .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+          ], [.LocalGet(0), .Return]),
+        ], [.LocalGet(0), .Return]),
+      ], []),
+
+      // HamtNode: recurse
+      .LocalGet(8), .RefTest(false, .Named(t_hamt_node())),
+      .If(.None, [
+        .LocalGet(8), .RefCast(true, .Named(t_hamt_node())), .LocalSet(13),
+        .LocalGet(13), .LocalGet(1), .LocalGet(2), .I32Const(1), .I32Add,
+        .LocalGet(3), .Call("node_remove"), .LocalSet(14),
+        .LocalGet(14), .RefIsNull,
+        .If(.None, [
+          .LocalGet(10), .I32Const(1), .I32Eq,
+          .If(.None, [.RefNull(.Named(t_hamt_node())), .Return], []),
+          .LocalGet(9), .RefAsNonNull, .LocalGet(7), .Call("arr_remove_at"), .LocalSet(12),
+          .LocalGet(6), .LocalGet(5), .I32Sub,
+          .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+        ], []),
+        .LocalGet(9), .RefAsNonNull, .LocalGet(7), .LocalGet(14),
+        .Call("arr_replace_at"), .LocalSet(12),
+        .LocalGet(6), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+      ], []),
+
+      // HamtCollision
+      .LocalGet(8), .RefCast(true, .Named(t_hamt_collision())), .LocalSet(15),
+      .LocalGet(15), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_entries()), .LocalSet(16),
+      .LocalGet(16), .RefAsNonNull, .ArrayLen, .LocalSet(17),
+      .I32Const(-1), .LocalSet(18),
+      .I32Const(0), .LocalSet(19),
+      .Block("find_exit", .None, [
+        .Loop("find", .None, [
+          .LocalGet(19), .LocalGet(17), .I32GeS, .BrIf("find_exit"),
+          .LocalGet(16), .RefAsNonNull, .LocalGet(19), .ArrayGet(t_array()),
+          .RefCast(false, .Named(t_hamt_entry())), .LocalSet(20),
+          .LocalGet(20), .StructGet(t_hamt_entry(), he_key()),
+          .LocalGet(3), .Call("core_eq"),
+          .If(.None, [.LocalGet(19), .LocalSet(18), .Br("find_exit")], []),
+          .LocalGet(19), .I32Const(1), .I32Add, .LocalSet(19),
+          .Br("find"),
+        ]),
+      ]),
+      .LocalGet(18), .I32Const(1), .I32Add, .I32Eqz,
+      .If(.None, [.LocalGet(0), .Return], []),
+      .LocalGet(16), .RefAsNonNull, .LocalGet(18), .Call("arr_remove_at"), .LocalSet(12),
+      .LocalGet(12), .RefAsNonNull, .ArrayLen, .I32Const(1), .I32Eq,
+      .If(.None, [
+        .LocalGet(12), .RefAsNonNull, .I32Const(0), .ArrayGet(t_array()), .LocalSet(8),
+        .LocalGet(9), .RefAsNonNull, .LocalGet(7), .LocalGet(8),
+        .Call("arr_replace_at"), .LocalSet(12),
+        .LocalGet(6), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+      ], []),
+      .LocalGet(15), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
+      .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(21),
+      .LocalGet(9), .RefAsNonNull, .LocalGet(7), .LocalGet(21),
+      .Call("arr_replace_at"), .LocalSet(12),
+      .LocalGet(6), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()),
+    ],
+  }
+}
+
+// ── order_remove_key(order, key) -> PVec ─────────────────────────────────────
+fn order_remove_key_fn() FuncDef {
+  // p0=order, p1=key; L2=n, L3=i, L4=result, L5=k
+  FuncDef.{ name: "order_remove_key",
+    params: [pvec_ref(), .Anyref], results: [pvec_ref()],
+    locals: [.I32, .I32, pvec_null(), .Anyref],
+    body: [
+      .LocalGet(0), .Call("arr_len"), .LocalSet(2),
+      .I32Const(0), .I32Const(0),
+      .RefNull(.Named(t_vec_internal())),
+      .ArrayNewFixed(t_array(), 0),
+      .StructNew(t_pvec()), .LocalSet(4),
+      .I32Const(0), .LocalSet(3),
+      .Block("exit", .None, [
+        .Loop("loop", .None, [
+          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("exit"),
+          .LocalGet(0), .LocalGet(3), .Call("arr_get"), .LocalSet(5),
+          .LocalGet(5), .LocalGet(1), .Call("core_eq"), .I32Eqz,
+          .If(.None, [
+            .LocalGet(4), .RefAsNonNull, .LocalGet(5), .Call("arr_push"), .LocalSet(4),
+          ], []),
+          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
+          .Br("loop"),
+        ]),
+      ]),
+      .LocalGet(4), .RefAsNonNull,
+    ],
+  }
+}
+
+// ── make() -> PDict ──────────────────────────────────────────────────────────
+fn make_fn() FuncDef {
+  FuncDef.{ name: "make", params: [], results: [pdict_ref()], locals: [], body: [
+    .I32Const(0),
+    .RefNull(.Named(t_hamt_node())),
+    .I32Const(0), .I32Const(0),
+    .RefNull(.Named(t_vec_internal())),
+    .ArrayNewFixed(t_array(), 0),
+    .StructNew(t_pvec()),
+    .StructNew(t_pdict()),
+  ] }
+}
+
+// ── len(dict: PDict?) -> i32 ─────────────────────────────────────────────────
+fn len_fn() FuncDef {
+  FuncDef.{ name: "len", params: [pdict_null()], results: [.I32], locals: [], body: [
+    .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_size()),
+  ] }
+}
+
+// ── keys(dict: PDict?) -> PVec ───────────────────────────────────────────────
+fn keys_fn() FuncDef {
+  FuncDef.{ name: "keys", params: [pdict_null()], results: [pvec_ref()], locals: [], body: [
+    .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_order()),
+  ] }
+}
+
+// ── has(dict: PDict?, key: anyref) -> i32 ────────────────────────────────────
+fn has_fn() FuncDef {
+  FuncDef.{ name: "has", params: [pdict_null(), .Anyref], results: [.I32], locals: [], body: [
+    .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()),
+    .LocalGet(1), .Call("hash_key"),
+    .I32Const(0),
+    .LocalGet(1),
+    .Call("node_get"),
+    .RefIsNull, .I32Eqz,
+  ] }
+}
+
+// ── get(dict: PDict?, key: anyref) -> anyref ─────────────────────────────────
+fn get_fn() FuncDef {
+  FuncDef.{ name: "get", params: [pdict_null(), .Anyref], results: [.Anyref], locals: [], body: [
+    .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()),
+    .LocalGet(1), .Call("hash_key"),
+    .I32Const(0),
+    .LocalGet(1),
+    .Call("node_get"),
+  ] }
+}
+
+// ── get_option(dict: PDict?, key: anyref) -> Variant ─────────────────────────
+fn get_option_fn() FuncDef {
+  // L2=val
+  FuncDef.{ name: "get_option", params: [pdict_null(), .Anyref], results: [variant_ref()],
+    locals: [.Anyref],
+    body: [
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()),
+      .LocalGet(1), .Call("hash_key"), .I32Const(0), .LocalGet(1),
+      .Call("node_get"), .LocalSet(2),
+      .LocalGet(2), .RefIsNull,
+      .If(.Some(variant_ref()),
+        [.I32Const(0), .I32Const(0), .RefNull(.Named(t_array())), .StructNew(t_variant())],
+        [.I32Const(0), .I32Const(1), .LocalGet(2), .ArrayNewFixed(t_array(), 1), .StructNew(t_variant())],
+      ),
+    ],
+  }
+}
+
+// ── set(dict: PDict?, key, val) -> PDict ─────────────────────────────────────
+fn set_fn() FuncDef {
+  // p0=dict, p1=key, p2=val; L3=hash, L4=old_root, L5=new_root, L6=was_present, L7=new_order
+  FuncDef.{ name: "set", params: [pdict_null(), .Anyref, .Anyref], results: [pdict_ref()],
+    locals: [.I32, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
+    body: [
+      .LocalGet(1), .Call("hash_key"), .LocalSet(3),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()), .LocalSet(4),
+      .LocalGet(4), .LocalGet(3), .I32Const(0), .LocalGet(1),
+      .Call("node_get"), .RefIsNull, .I32Eqz, .LocalSet(6),
+      .LocalGet(4), .LocalGet(3), .I32Const(0), .LocalGet(1), .LocalGet(2),
+      .Call("node_set"), .LocalSet(5),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_order()), .LocalSet(7),
+      .LocalGet(6), .I32Eqz,
+      .If(.None, [
+        .LocalGet(7), .RefAsNonNull, .LocalGet(1), .Call("arr_push"), .LocalSet(7),
+      ], []),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_size()),
+      .LocalGet(6), .I32Eqz, .I32Add,
       .LocalGet(5),
-      .If(.Some(.I32),
-        [.LocalGet(3)],
-        [.LocalGet(3), .I32Const(1), .I32Add],
-      ),
-      .LocalSet(9),
-      // result = array.new $Dict (null, result_len)
-      .RefNull(.Named(t_entry())),
-      .LocalGet(9), .ArrayNew(td), .LocalSet(6),
-      // Copy entries, replacing matched key
-      .I32Const(0), .LocalSet(4),
-      .Block("copy_exit", .None, [
-        .Loop("copy", .None, [
-          .LocalGet(4), .LocalGet(3), .I32GeS, .BrIf("copy_exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(4),
-          .ArrayGet(td), .LocalSet(8),
-          .LocalGet(8), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None,
-            [
-              .LocalGet(6), .RefAsNonNull, .LocalGet(4),
-              .LocalGet(7), .ArraySet(td),
-            ],
-            [
-              .LocalGet(6), .RefAsNonNull, .LocalGet(4),
-              .LocalGet(8), .ArraySet(td),
-            ],
-          ),
-          .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
-          .Br("copy"),
-        ]),
-      ]),
-      // If not found: append at position n
-      .LocalGet(5), .I32Eqz,
-      .If(.None, [
-        .LocalGet(6), .RefAsNonNull, .LocalGet(3),
-        .LocalGet(7), .ArraySet(td),
-      ], []),
-      .LocalGet(6), .RefAsNonNull,
+      .LocalGet(7), .RefAsNonNull,
+      .StructNew(t_pdict()),
     ],
   }
 }
 
-// remove(dict: Dict?, key: anyref) -> Dict — two-pass COW
+// ── remove(dict: PDict?, key) -> PDict ───────────────────────────────────────
 fn remove_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p2=n, p3=i, p4=j, p5=result, p6=entry, p7=found, p8=result_len
-  FuncDef.{ name: "remove", params: [dict_null(), .Anyref], results: [dict_ref()],
-    locals: [.I32, .I32, .I32, dict_null(), entry_null(), .I32, .I32],
+  // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_present, L6=new_order
+  FuncDef.{ name: "remove", params: [pdict_null(), .Anyref], results: [pdict_ref()],
+    locals: [.I32, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
     body: [
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      // Pass 1: scan for key
-      .I32Const(0), .LocalSet(3),
-      .I32Const(0), .LocalSet(7),
-      .Block("scan_exit", .None, [
-        .Loop("scan", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("scan_exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(6),
-          .LocalGet(6), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None, [
-            .I32Const(1), .LocalSet(7), .Br("scan_exit"),
-          ], []),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("scan"),
-        ]),
-      ]),
-      // result_len = found ? n-1 : n
-      .LocalGet(7),
-      .If(.Some(.I32),
-        [.LocalGet(2), .I32Const(1), .I32Sub],
-        [.LocalGet(2)],
-      ),
-      .LocalSet(8),
-      // result = array.new $Dict (null, result_len)
-      .RefNull(.Named(t_entry())),
-      .LocalGet(8), .ArrayNew(td), .LocalSet(5),
-      // Pass 2: copy non-matching entries
-      .I32Const(0), .LocalSet(3),
-      .I32Const(0), .LocalSet(4),
-      .Block("copy_exit", .None, [
-        .Loop("copy", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("copy_exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(6),
-          .LocalGet(6), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None,
-            [], // skip matching entry
-            [
-              .LocalGet(5), .RefAsNonNull, .LocalGet(4),
-              .LocalGet(6), .ArraySet(td),
-              .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
-            ],
-          ),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("copy"),
-        ]),
-      ]),
-      .LocalGet(5), .RefAsNonNull,
+      .LocalGet(1), .Call("hash_key"), .LocalSet(2),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()), .LocalSet(3),
+      .LocalGet(3), .LocalGet(2), .I32Const(0), .LocalGet(1),
+      .Call("node_get"), .RefIsNull, .I32Eqz, .LocalSet(5),
+      .LocalGet(3), .LocalGet(2), .I32Const(0), .LocalGet(1),
+      .Call("node_remove"), .LocalSet(4),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_order()), .LocalSet(6),
+      .LocalGet(5),
+      .If(.None, [
+        .LocalGet(6), .RefAsNonNull, .LocalGet(1),
+        .Call("order_remove_key"), .LocalSet(6),
+      ], []),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_size()),
+      .LocalGet(5), .I32Sub,
+      .LocalGet(4),
+      .LocalGet(6), .RefAsNonNull,
+      .StructNew(t_pdict()),
     ],
   }
 }
 
-// set_in_place(dict: Dict?, key: anyref, val: anyref) -> Dict
-// If key exists, update slot in place. If absent, allocate+copy append.
 fn set_in_place_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p3=n, p4=i, p5=entry, p6=result, p7=new_entry
-  FuncDef.{ name: "set_in_place", params: [dict_null(), .Anyref, .Anyref], results: [dict_ref()],
-    locals: [.I32, .I32, entry_null(), dict_null(), entry_ref()],
-    body: [
-      // n = len(dict)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(3),
-      // new_entry = DictEntry { key, val }
-      .LocalGet(1), .LocalGet(2), .StructNew(te), .LocalSet(7),
-      // Scan for existing key
-      .I32Const(0), .LocalSet(4),
-      .Block("not_found", .None, [
-        .Loop("scan", .None, [
-          .LocalGet(4), .LocalGet(3), .I32GeS, .BrIf("not_found"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(4),
-          .ArrayGet(td), .LocalSet(5),
-          .LocalGet(5), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None, [
-            // In-place: dict[i] = new_entry; return dict
-            .LocalGet(0), .RefAsNonNull, .LocalGet(4),
-            .LocalGet(7), .ArraySet(td),
-            .LocalGet(0), .RefAsNonNull, .Return,
-          ], []),
-          .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
-          .Br("scan"),
-        ]),
-      ]),
-      // Missing key: allocate n+1 and append
-      .RefNull(.Named(t_entry())),
-      .LocalGet(3), .I32Const(1), .I32Add,
-      .ArrayNew(td), .LocalSet(6),
-      // result[0..n] <- dict[0..n]
-      .LocalGet(6), .RefAsNonNull, .I32Const(0),
-      .LocalGet(0), .RefAsNonNull, .I32Const(0), .LocalGet(3),
-      .ArrayCopy(td, td),
-      // result[n] = new_entry
-      .LocalGet(6), .RefAsNonNull, .LocalGet(3),
-      .LocalGet(7), .ArraySet(td),
-      .LocalGet(6), .RefAsNonNull,
-    ],
-  }
+  FuncDef.{ name: "set_in_place",
+    params: [pdict_null(), .Anyref, .Anyref], results: [pdict_ref()],
+    locals: [], body: [.LocalGet(0), .LocalGet(1), .LocalGet(2), .Call("set")] }
 }
 
-// remove_in_place(dict: Dict?, key: anyref) -> Dict
-// If absent, return original. If present, allocate n-1 and copy prefix/suffix.
 fn remove_in_place_fn() FuncDef {
-  td := t_dict()
-  te := t_entry()
-  // Locals: p2=n, p3=i, p4=found_idx, p5=entry, p6=result, p7=tail_len
-  FuncDef.{ name: "remove_in_place", params: [dict_null(), .Anyref], results: [dict_ref()],
-    locals: [.I32, .I32, .I32, entry_null(), dict_null(), .I32],
-    body: [
-      // n = len(dict)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      // found_idx = -1
-      .I32Const(0), .LocalSet(3),
-      .I32Const(-1), .LocalSet(4),
-      // Scan for key
-      .Block("scan_exit", .None, [
-        .Loop("scan", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("scan_exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-          .ArrayGet(td), .LocalSet(5),
-          .LocalGet(5), .RefAsNonNull, .StructGet(te, 0),
-          .LocalGet(1), .Call("core_eq"),
-          .If(.None, [
-            .LocalGet(3), .LocalSet(4), .Br("scan_exit"),
-          ], []),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("scan"),
-        ]),
-      ]),
-      // If not found (found_idx == -1), return original dict
-      .LocalGet(4), .I32Const(1), .I32Add, .I32Eqz,
-      .If(.None, [.LocalGet(0), .RefAsNonNull, .Return], []),
-      // result = new dict of length n-1
-      .RefNull(.Named(t_entry())),
-      .LocalGet(2), .I32Const(1), .I32Sub,
-      .ArrayNew(td), .LocalSet(6),
-      // Copy prefix [0..found_idx) when found_idx > 0
-      .LocalGet(4), .I32Const(0), .I32GtS,
-      .If(.None, [
-        .LocalGet(6), .RefAsNonNull, .I32Const(0),
-        .LocalGet(0), .RefAsNonNull, .I32Const(0), .LocalGet(4),
-        .ArrayCopy(td, td),
-      ], []),
-      // tail_len = n - found_idx - 1
-      .LocalGet(2), .LocalGet(4), .I32Sub, .I32Const(1), .I32Sub,
-      .LocalSet(7),
-      // Copy suffix [found_idx+1..n) into result[found_idx..]
-      .LocalGet(7), .I32Const(0), .I32GtS,
-      .If(.None, [
-        .LocalGet(6), .RefAsNonNull, .LocalGet(4),
-        .LocalGet(0), .RefAsNonNull,
-        .LocalGet(4), .I32Const(1), .I32Add,
-        .LocalGet(7),
-        .ArrayCopy(td, td),
-      ], []),
-      .LocalGet(6), .RefAsNonNull,
-    ],
-  }
+  FuncDef.{ name: "remove_in_place",
+    params: [pdict_null(), .Anyref], results: [pdict_ref()],
+    locals: [], body: [.LocalGet(0), .LocalGet(1), .Call("remove")] }
 }

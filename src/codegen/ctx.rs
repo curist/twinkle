@@ -11,7 +11,7 @@ use crate::ir::anf::analysis::{
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
 use crate::runtime::types::{
-    T_ARRAY, T_CLOSURE, T_DICT, T_ITER_STATE, T_PVEC, T_STRING, T_VARIANT,
+    T_ARRAY, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_VARIANT,
 };
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
@@ -2493,7 +2493,7 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
         MonoType::String => ref_named(true, T_STRING),
         MonoType::Void | MonoType::Never => ValType::I32,
         MonoType::Vector(_) => ref_named(true, T_PVEC),
-        MonoType::Dict(_, _) => ref_named(true, T_DICT),
+        MonoType::Dict(_, _) => ref_named(true, T_PDICT),
         MonoType::Function { .. } => ref_named(true, T_CLOSURE),
         MonoType::Var(_) | MonoType::MetaVar(_) => ValType::Anyref,
         MonoType::Named { type_id, .. } => mono_named_to_valtype(*type_id, type_env),

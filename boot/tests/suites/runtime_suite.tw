@@ -65,7 +65,7 @@ fn test_rt_types_namespace() Result<Void, String> {
 
 fn test_rt_types_count() Result<Void, String> {
   m := rt_types.module()
-  try assert.int_eq(type_count(m), 14)
+  try assert.int_eq(type_count(m), 16)
   .Ok({})
 }
 
@@ -107,15 +107,16 @@ fn test_rt_types_string() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_types_dict_entry() Result<Void, String> {
+fn test_rt_types_pdict() Result<Void, String> {
   m := rt_types.module()
-  case find_type(m.types, "DictEntry") {
+  case find_type(m.types, "PDict") {
     .Some(.Struct(_, fields, _, _)) => {
-      try assert.int_eq(fields.len(), 2)
-      try assert.ok(case fields[0].name { .Some(n) => n == "key", .None => false }, "field 0 should be key")
-      try assert.ok(case fields[1].name { .Some(n) => n == "val", .None => false }, "field 1 should be val")
+      try assert.int_eq(fields.len(), 3)
+      try assert.ok(case fields[0].name { .Some(n) => n == "size", .None => false }, "field 0 should be size")
+      try assert.ok(case fields[1].name { .Some(n) => n == "root", .None => false }, "field 1 should be root")
+      try assert.ok(case fields[2].name { .Some(n) => n == "order", .None => false }, "field 2 should be order")
     },
-    _ => { return assert.fail("missing DictEntry type") },
+    _ => { return assert.fail("missing PDict type") },
   }
   .Ok({})
 }
@@ -803,7 +804,7 @@ fn test_rt_dict_namespace() Result<Void, String> {
 
 fn test_rt_dict_func_count() Result<Void, String> {
   m := rt_dict.module()
-  try assert.int_eq(m.funcs.len(), 10)
+  try assert.int_eq(m.funcs.len(), 23)
   .Ok({})
 }
 
@@ -837,12 +838,12 @@ fn test_rt_dict_make_empty() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "make").ok_or("missing make func")
   try assert.int_eq(f.params.len(), 0)
-  // Should use ArrayNewFixed(_, 0) for empty dict
+  // Should create PDict via StructNew
   found := false
   for instr in f.body {
-    case instr { .ArrayNewFixed(_, 0) => { found = true }, _ => {} }
+    case instr { .StructNew(name) => { if name == "rt_types__PDict" { found = true } }, _ => {} }
   }
-  try assert.ok(found, "make should create empty dict with ArrayNewFixed 0")
+  try assert.ok(found, "make should create PDict with StructNew")
   .Ok({})
 }
 
@@ -850,11 +851,12 @@ fn test_rt_dict_len() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "len").ok_or("missing len func")
   try assert.int_eq(f.params.len(), 1)
+  // len reads PDict.size field via StructGet
   found := false
   for instr in f.body {
-    case instr { .ArrayLen => { found = true }, _ => {} }
+    case instr { .StructGet(name, _) => { if name == "rt_types__PDict" { found = true } }, _ => {} }
   }
-  try assert.ok(found, "len should use array.len")
+  try assert.ok(found, "len should read PDict.size via StructGet")
   .Ok({})
 }
 
@@ -862,16 +864,14 @@ fn test_rt_dict_keys_loop() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "keys").ok_or("missing keys func")
   try assert.int_eq(f.params.len(), 1)
-  // Should have a loop extracting keys
-  found_loop := false
+  // keys() returns pdict.order directly via StructGet (O(1), no loop needed)
+  found := false
   for instr in f.body {
-    case instr { .Block(_, _, body) => {
-      for inner in body {
-        case inner { .Loop(_, _, _) => { found_loop = true }, _ => {} }
-      }
+    case instr { .StructGet(name, _) => {
+      if name == "rt_types__PDict" { found = true }
     }, _ => {} }
   }
-  try assert.ok(found_loop, "keys should have extraction loop")
+  try assert.ok(found, "keys should return pdict.order via StructGet")
   .Ok({})
 }
 
@@ -879,19 +879,12 @@ fn test_rt_dict_has_calls_core_eq() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "has").ok_or("missing has func")
   try assert.int_eq(f.params.len(), 2)
+  // has delegates to node_get which uses core_eq
   found := false
   for instr in f.body {
-    case instr { .Block(_, _, body) => {
-      for b in body {
-        case b { .Loop(_, _, loop_body) => {
-          for li in loop_body {
-            case li { .Call(sym) => { if sym == "core_eq" { found = true } }, _ => {} }
-          }
-        }, _ => {} }
-      }
-    }, _ => {} }
+    case instr { .Call(sym) => { if sym == "node_get" { found = true } }, _ => {} }
   }
-  try assert.ok(found, "has should call core_eq in scan loop")
+  try assert.ok(found, "has should call node_get")
   .Ok({})
 }
 
@@ -899,12 +892,12 @@ fn test_rt_dict_get_returns_null_on_miss() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "get").ok_or("missing get func")
   try assert.int_eq(f.params.len(), 2)
-  // Should end with RefNull(Any) for miss case
+  // get() delegates to node_get which returns null on miss
   found := false
   for instr in f.body {
-    case instr { .RefNull(.Any) => { found = true }, _ => {} }
+    case instr { .Call(sym) => { if sym == "node_get" { found = true } }, _ => {} }
   }
-  try assert.ok(found, "get should return ref.null any on miss")
+  try assert.ok(found, "get should call node_get (which returns null on miss)")
   .Ok({})
 }
 
@@ -912,12 +905,19 @@ fn test_rt_dict_get_option_returns_variant() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "get_option").ok_or("missing get_option func")
   try assert.int_eq(f.params.len(), 2)
-  // Should create Variant structs (StructNew for Variant type)
+  // Variant structs are created inside the if-else branches
   found_variant := false
   for instr in f.body {
-    case instr { .StructNew(name) => {
-      if name == "rt_types__Variant" { found_variant = true }
-    }, _ => {} }
+    case instr {
+      .If(_, then_b, _) => {
+        for inner in then_b {
+          case inner { .StructNew(name) => {
+            if name == "rt_types__Variant" { found_variant = true }
+          }, _ => {} }
+        }
+      },
+      _ => {}
+    }
   }
   try assert.ok(found_variant, "get_option should create Variant structs")
   .Ok({})
@@ -927,18 +927,18 @@ fn test_rt_dict_set_cow() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "set").ok_or("missing set func")
   try assert.int_eq(f.params.len(), 3)
-  // Should create DictEntry and allocate new Dict
-  found_entry := false
-  found_dict_new := false
+  // Should create new PDict via StructNew and call node_set
+  found_pdict := false
+  found_node_set := false
   for instr in f.body {
     case instr {
-      .StructNew(name) => { if name == "rt_types__DictEntry" { found_entry = true } },
-      .ArrayNew(name) => { if name == "rt_types__Dict" { found_dict_new = true } },
+      .StructNew(name) => { if name == "rt_types__PDict" { found_pdict = true } },
+      .Call(name) => { if name == "node_set" { found_node_set = true } },
       _ => {},
     }
   }
-  try assert.ok(found_entry, "set should create new DictEntry")
-  try assert.ok(found_dict_new, "set should allocate new Dict array")
+  try assert.ok(found_pdict, "set should create new PDict")
+  try assert.ok(found_node_set, "set should call node_set")
   .Ok({})
 }
 
@@ -946,12 +946,18 @@ fn test_rt_dict_remove_two_pass() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "remove").ok_or("missing remove func")
   try assert.int_eq(f.params.len(), 2)
-  // Should have two Block/Loop pairs (scan and copy)
-  block_count := 0
+  // Should call node_remove and create new PDict
+  found_node_remove := false
+  found_pdict := false
   for instr in f.body {
-    case instr { .Block(_, _, _) => { block_count = block_count + 1 }, _ => {} }
+    case instr {
+      .Call(name) => { if name == "node_remove" { found_node_remove = true } },
+      .StructNew(name) => { if name == "rt_types__PDict" { found_pdict = true } },
+      _ => {},
+    }
   }
-  try assert.ok(block_count >= 2, "remove should have scan and copy loops (2+ blocks)")
+  try assert.ok(found_node_remove, "remove should call node_remove")
+  try assert.ok(found_pdict, "remove should create new PDict")
   .Ok({})
 }
 
@@ -959,18 +965,15 @@ fn test_rt_dict_set_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "set_in_place").ok_or("missing set_in_place func")
   try assert.int_eq(f.params.len(), 3)
-  // Should have ArraySet for in-place update and ArrayCopy for fallback append
-  found_arr_set := false
-  found_arr_copy := false
+  // v1: aliases persistent set
+  found_set_call := false
   for instr in f.body {
     case instr {
-      .ArraySet(name) => { if name == "rt_types__Dict" { found_arr_set = true } },
-      .ArrayCopy(a, _) => { if a == "rt_types__Dict" { found_arr_copy = true } },
+      .Call(name) => { if name == "set" { found_set_call = true } },
       _ => {},
     }
   }
-  try assert.ok(found_arr_set, "set_in_place should use array.set for in-place path")
-  try assert.ok(found_arr_copy, "set_in_place should use array.copy for append fallback")
+  try assert.ok(found_set_call, "set_in_place should delegate to set in v1")
   .Ok({})
 }
 
@@ -978,25 +981,15 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "remove_in_place").ok_or("missing remove_in_place func")
   try assert.int_eq(f.params.len(), 2)
-  // Should return early if not found, and do prefix/suffix copies if found
-  found_return := false
-  copy_count := 0
+  // v1: aliases persistent remove
+  found_remove_call := false
   for instr in f.body {
     case instr {
-      .If(_, then_body, _) => {
-        for t in then_body {
-          case t { .Return => { found_return = true }, _ => {} }
-        }
-      },
-      .If(_, _, else_body) => {
-        for e in else_body {
-          case e { .ArrayCopy(_, _) => { copy_count = copy_count + 1 }, _ => {} }
-        }
-      },
+      .Call(name) => { if name == "remove" { found_remove_call = true } },
       _ => {},
     }
   }
-  try assert.ok(found_return, "remove_in_place should early-return if not found")
+  try assert.ok(found_remove_call, "remove_in_place should delegate to remove in v1")
   .Ok({})
 }
 
@@ -1016,11 +1009,11 @@ pub fn suite() runner.Suite {
   runner.suite("runtime modules (M10)")
     // rt.types
     .test("rt.types: namespace", test_rt_types_namespace)
-    .test("rt.types: 11 type definitions", test_rt_types_count)
+    .test("rt.types: 16 type definitions", test_rt_types_count)
     .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
     .test("rt.types: Array is mutable anyref array", test_rt_types_array)
     .test("rt.types: String is mutable i8 array", test_rt_types_string)
-    .test("rt.types: DictEntry has key/val fields", test_rt_types_dict_entry)
+    .test("rt.types: PDict has size/root/order fields", test_rt_types_pdict)
     .test("rt.types: Closure is non-final", test_rt_types_closure_non_final)
     .test("rt.types: Variant has 3 fields", test_rt_types_variant)
     .test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int)
@@ -1081,7 +1074,7 @@ pub fn suite() runner.Suite {
     .test("rt.dict: imports rt.core.eq", test_rt_dict_imports_core_eq)
     .test("rt.dict: make creates empty dict", test_rt_dict_make_empty)
     .test("rt.dict: len uses array.len", test_rt_dict_len)
-    .test("rt.dict: keys has extraction loop", test_rt_dict_keys_loop)
+    .test("rt.dict: keys returns pdict.order via StructGet", test_rt_dict_keys_loop)
     .test("rt.dict: has calls core_eq in scan", test_rt_dict_has_calls_core_eq)
     .test("rt.dict: get returns null on miss", test_rt_dict_get_returns_null_on_miss)
     .test("rt.dict: get_option returns Variant", test_rt_dict_get_option_returns_variant)

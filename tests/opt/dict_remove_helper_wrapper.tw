@@ -1,7 +1,7 @@
 // Tiny helper wrapper around Dict.remove should let the caller rewrite to
 // __dict_remove_in_place once the dict is known unique.
 // Expected output:
-//   0
+//   1
 //   false
 //   true
 

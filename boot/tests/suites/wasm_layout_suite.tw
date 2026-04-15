@@ -316,7 +316,7 @@ fn test_val_type_of_dict() Result<Void, String> {
   case vt {
     .Ref(nullable, ht) => {
       try assert.bool_eq(nullable, true)
-      case ht { .Named(s) => assert.str_eq(s, "rt_types__Dict"), _ => assert.fail("expected Named rt_types__Dict") }
+      case ht { .Named(s) => assert.str_eq(s, "rt_types__PDict"), _ => assert.fail("expected Named rt_types__PDict") }
     },
     _ => assert.fail("expected Ref"),
   }

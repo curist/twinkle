@@ -364,7 +364,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Sum(s) => .Ref(true, .Named(s.sym)),
     .Closure(c) => .Ref(true, .Named(c.closure_sym)),
     .Vector_(_) => .Ref(true, .Named("rt_types__PVec")),
-    .Dict_(_, _) => .Ref(true, .Named("rt_types__Dict")),
+    .Dict_(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Iterator_(it) => .Ref(true, .Named(it.state_sym)),
     .Cell_(inner) => .Ref(true, .Named("$Cell_${cell_layout_key(inner)}")),
   }
@@ -418,7 +418,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
     },
     .Vector(_) => .Ref(true, .Named("rt_types__PVec")),
-    .Dict(_, _) => .Ref(true, .Named("rt_types__Dict")),
+    .Dict(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Function(params, ret) => {
       key := mono_to_key(.Function(params, ret))
       .Ref(true, .Named("$closure_${key}"))

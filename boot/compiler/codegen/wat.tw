@@ -640,6 +640,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .I32GeU => ["${pad}i32.ge_u"],
     .I32And => ["${pad}i32.and"],
     .I32Or => ["${pad}i32.or"],
+    .I32Xor => ["${pad}i32.xor"],
     .I32Shl => ["${pad}i32.shl"],
     .I32ShrU => ["${pad}i32.shr_u"],
 

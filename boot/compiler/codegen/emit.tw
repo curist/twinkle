@@ -1179,7 +1179,7 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "vector_set"          => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx),
     "vector_make"         => emit_intrinsic_vector_make(args, result_idx, ctx),
     "vector_set_in_place" => emit_intrinsic_vector_set_in_place(args, result_idx, ctx),
-    "dict_get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, ctx),
+    "dict_get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx),
     "string_get"          => emit_intrinsic_string_get(args, result_idx, result_mono, ctx),
     "string_slice"        => emit_intrinsic_string_slice(args, result_idx, ctx),
     "char_code_at"        => emit_intrinsic_char_code_at(args, result_idx, ctx),
@@ -1339,10 +1339,12 @@ fn emit_intrinsic_vector_set_in_place(args: Vector<PreparedAtom>, result_idx: In
 
 // ── dict_get_unsafe ────────────────────────────────────────────────────
 
-fn emit_intrinsic_dict_get_unsafe(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx) Vector<Instr> {
+fn emit_intrinsic_dict_get_unsafe(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   emit_atom(args[0], ctx)  // dict
     .concat(emit_erased_container_ingress(args[1], ctx))  // key (erased)
-    .concat([.Call("rt_dict__get"), .LocalSet(result_idx)])
+    .concat([.Call("rt_dict__get")])
+    .concat(emit_erased_container_egress(result_mono, ctx.env))  // unbox anyref → typed
+    .append(.LocalSet(result_idx))
 }
 
 // ── string_get: s.get(i) → Option<Byte> ───────────────────────────────
@@ -2538,7 +2540,7 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv) Vector<Instr> {
     .Sum(s) => [.RefCast(false, .Named(s.sym))],
     .Closure(c) => [.RefCast(false, .Named(c.closure_sym))],
     .Vector_(_) => [.RefCast(false, .Named("rt_types__PVec"))],
-    .Dict_(_, _) => [.RefCast(false, .Named("rt_types__Dict"))],
+    .Dict_(_, _) => [.RefCast(false, .Named("rt_types__PDict"))],
     .Iterator_(it) => [.RefCast(false, .Named(it.state_sym))],
     .Cell_(inner) => {
       key := case inner {

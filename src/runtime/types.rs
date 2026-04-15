@@ -5,8 +5,10 @@ use crate::wasm::ir::*;
 /// correctly qualified and do not need linker rewriting.
 pub const T_ARRAY: &str = "rt_types__Array";
 pub const T_STRING: &str = "rt_types__String";
-pub const T_DICT_ENTRY: &str = "rt_types__DictEntry";
-pub const T_DICT: &str = "rt_types__Dict";
+pub const T_HAMT_ENTRY: &str = "rt_types__HamtEntry";
+pub const T_HAMT_NODE: &str = "rt_types__HamtNode";
+pub const T_HAMT_COLLISION: &str = "rt_types__HamtCollision";
+pub const T_PDICT: &str = "rt_types__PDict";
 pub const T_CLOSURE_ENV: &str = "rt_types__ClosureEnv";
 pub const T_CLOSURE_FUNC: &str = "rt_types__ClosureFunc";
 pub const T_CLOSURE: &str = "rt_types__Closure";
@@ -49,18 +51,18 @@ pub fn ref_string_null() -> ValType {
         heap: HeapType::Named(T_STRING.into()),
     }
 }
-/// Ref-to-Dict (non-null)
-pub fn ref_dict() -> ValType {
+/// Ref-to-PDict (non-null)
+pub fn ref_pdict() -> ValType {
     ValType::Ref {
         nullable: false,
-        heap: HeapType::Named(T_DICT.into()),
+        heap: HeapType::Named(T_PDICT.into()),
     }
 }
-/// Ref-to-Dict (nullable)
-pub fn ref_dict_null() -> ValType {
+/// Ref-to-PDict (nullable)
+pub fn ref_pdict_null() -> ValType {
     ValType::Ref {
         nullable: true,
-        heap: HeapType::Named(T_DICT.into()),
+        heap: HeapType::Named(T_PDICT.into()),
     }
 }
 
@@ -151,28 +153,125 @@ pub fn make() -> ModuleIR {
         },
     });
 
-    // (type $DictEntry (struct (field $key anyref) (field $val anyref)))
-    m.types.push(TypeDef::Struct {
-        name: "DictEntry".into(),
-        supertype: None,
-        non_final: false,
-        fields: vec![
-            FieldDef::named("key", ValType::Anyref),
-            FieldDef::named("val", ValType::Anyref),
-        ],
-    });
+    // -- Persistent vector trie types --
+    //
+    // Layout: VecChildren stores eqref (either VecInternal or Array directly).
+    // No VecNode base or VecLeaf wrapper — leaf arrays live directly in VecChildren.
+    // PVec.tail is a bare Array ref.
+    // VecChildren/VecInternal/PVec must come before PDict (which has a ref $PVec field)
+    // to avoid forward type references that V8's validator rejects.
 
-    // (type $Dict (array (mut (ref null $DictEntry))))
+    // (type $VecChildren (array (mut (ref null eq))))
     m.types.push(TypeDef::Array {
-        name: "Dict".into(),
+        name: "VecChildren".into(),
         elem: FieldDef {
             name: None,
             mutable: true,
             ty: ValType::Ref {
                 nullable: true,
-                heap: HeapType::Named("DictEntry".into()),
+                heap: HeapType::Eq,
             },
         },
+    });
+
+    // (type $VecInternal (struct (field $children (ref $VecChildren))))
+    m.types.push(TypeDef::Struct {
+        name: "VecInternal".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![FieldDef {
+            name: Some("children".into()),
+            mutable: false,
+            ty: ref_vec_children(),
+        }],
+    });
+
+    // (type $PVec (struct (field $len i32) (field $shift i32)
+    //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
+    m.types.push(TypeDef::Struct {
+        name: "PVec".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef::named("len", ValType::I32),
+            FieldDef::named("shift", ValType::I32),
+            FieldDef {
+                name: Some("root".into()),
+                mutable: false,
+                ty: ref_vec_internal_null(),
+            },
+            FieldDef {
+                name: Some("tail".into()),
+                mutable: false,
+                ty: ref_array(),
+            },
+        ],
+    });
+
+    // (type $HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+    m.types.push(TypeDef::Struct {
+        name: "HamtEntry".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef::named("hash", ValType::I32),
+            FieldDef::named("key", ValType::Anyref),
+            FieldDef::named("val", ValType::Anyref),
+        ],
+    });
+
+    // (type $HamtNode (struct (field $bitmap i32) (field $entries (ref $Array))))
+    m.types.push(TypeDef::Struct {
+        name: "HamtNode".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef::named("bitmap", ValType::I32),
+            FieldDef {
+                name: Some("entries".into()),
+                mutable: false,
+                ty: ref_array(),
+            },
+        ],
+    });
+
+    // (type $HamtCollision (struct (field $hash i32) (field $entries (ref $Array))))
+    m.types.push(TypeDef::Struct {
+        name: "HamtCollision".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef::named("hash", ValType::I32),
+            FieldDef {
+                name: Some("entries".into()),
+                mutable: false,
+                ty: ref_array(),
+            },
+        ],
+    });
+
+    // (type $PDict (struct (field $size i32) (field $root (ref null $HamtNode)) (field $order (ref $PVec))))
+    // PVec must be defined before PDict — placed above.
+    m.types.push(TypeDef::Struct {
+        name: "PDict".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef::named("size", ValType::I32),
+            FieldDef {
+                name: Some("root".into()),
+                mutable: false,
+                ty: ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named("HamtNode".into()),
+                },
+            },
+            FieldDef {
+                name: Some("order".into()),
+                mutable: false,
+                ty: ref_pvec(),
+            },
+        ],
     });
 
     // (type $ClosureEnv (array anyref))
@@ -252,59 +351,6 @@ pub fn make() -> ModuleIR {
         supertype: None,
         non_final: false,
         fields: vec![FieldDef::named("v", ValType::F64)],
-    });
-
-    // -- Persistent vector trie types --
-    //
-    // Layout: VecChildren stores eqref (either VecInternal or Array directly).
-    // No VecNode base or VecLeaf wrapper — leaf arrays live directly in VecChildren.
-    // PVec.tail is a bare Array ref.
-
-    // (type $VecChildren (array (mut (ref null eq))))
-    m.types.push(TypeDef::Array {
-        name: "VecChildren".into(),
-        elem: FieldDef {
-            name: None,
-            mutable: true,
-            ty: ValType::Ref {
-                nullable: true,
-                heap: HeapType::Eq,
-            },
-        },
-    });
-
-    // (type $VecInternal (struct (field $children (ref $VecChildren))))
-    m.types.push(TypeDef::Struct {
-        name: "VecInternal".into(),
-        supertype: None,
-        non_final: false,
-        fields: vec![FieldDef {
-            name: Some("children".into()),
-            mutable: false,
-            ty: ref_vec_children(),
-        }],
-    });
-
-    // (type $PVec (struct (field $len i32) (field $shift i32)
-    //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
-    m.types.push(TypeDef::Struct {
-        name: "PVec".into(),
-        supertype: None,
-        non_final: false,
-        fields: vec![
-            FieldDef::named("len", ValType::I32),
-            FieldDef::named("shift", ValType::I32),
-            FieldDef {
-                name: Some("root".into()),
-                mutable: false,
-                ty: ref_vec_internal_null(),
-            },
-            FieldDef {
-                name: Some("tail".into()),
-                mutable: false,
-                ty: ref_array(),
-            },
-        ],
     });
 
     // (type $IterState (sub (struct (field $seed anyref) (field $step anyref))))

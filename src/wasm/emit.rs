@@ -390,6 +390,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I32RemS => format!("{pad}i32.rem_s"),
         Instr::I32And => format!("{pad}i32.and"),
         Instr::I32Or => format!("{pad}i32.or"),
+        Instr::I32Xor => format!("{pad}i32.xor"),
         Instr::I32Shl => format!("{pad}i32.shl"),
         Instr::I32ShrU => format!("{pad}i32.shr_u"),
         Instr::I32ShrS => format!("{pad}i32.shr_s"),

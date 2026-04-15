@@ -117,6 +117,7 @@ pub enum Instr {
     I32RemS,
     I32And,
     I32Or,
+    I32Xor,
     I32Shl,
     I32ShrU,
     I32ShrS,

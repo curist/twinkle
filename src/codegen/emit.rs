@@ -22,7 +22,7 @@ use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_PVEC, T_STRING, T_VARIANT, ref_array, ref_array_null, ref_dict_null, ref_iter_state_null,
+    T_PVEC, T_STRING, T_VARIANT, ref_array, ref_array_null, ref_iter_state_null, ref_pdict_null,
     ref_pvec, ref_pvec_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
@@ -4062,7 +4062,7 @@ fn emit_index_op(
             // Dict indexing returns Option<V>, so use get_option which returns a
             // proper Variant (Option.None/Some) instead of raw anyref.
             ensure_rt_dict_get_option_import(ctx);
-            instrs.extend(emit_atom(base, Some(&ref_dict_null()), ctx));
+            instrs.extend(emit_atom(base, Some(&ref_pdict_null()), ctx));
             instrs.extend(emit_atom(index, Some(&ValType::Anyref), ctx));
             instrs.push(Instr::Call("rt_dict__get_option".to_string()));
             instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
@@ -4505,7 +4505,7 @@ fn emit_dict_get_unsafe_intrinsic(
         panic!("dict_get_unsafe expects 2 args, got {}", args.len());
     }
     ensure_rt_dict_get_import(ctx);
-    let mut instrs = emit_atom(&args[0], Some(&ref_dict_null()), ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_pdict_null()), ctx);
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
     instrs.push(Instr::Call("rt_dict__get".to_string()));
     instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
@@ -7260,7 +7260,7 @@ fn ensure_rt_dict_get_import(ctx: &mut EmitCtx<'_>) {
         module: "rt.dict".to_string(),
         name: "get".to_string(),
         as_sym: "rt_dict__get".to_string(),
-        params: vec![ref_dict_null(), ValType::Anyref],
+        params: vec![ref_pdict_null(), ValType::Anyref],
         results: vec![ValType::Anyref],
     });
 }
@@ -7270,7 +7270,7 @@ fn ensure_rt_dict_get_option_import(ctx: &mut EmitCtx<'_>) {
         module: "rt.dict".to_string(),
         name: "get_option".to_string(),
         as_sym: "rt_dict__get_option".to_string(),
-        params: vec![ref_dict_null(), ValType::Anyref],
+        params: vec![ref_pdict_null(), ValType::Anyref],
         results: vec![ref_variant()],
     });
 }
@@ -9475,7 +9475,7 @@ mod tests {
         let user_funcs = HashMap::new();
         let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
         ctx.local_map.insert(LocalId(1), (0, ValType::Anyref));
-        ctx.local_map.insert(LocalId(2), (1, ref_dict_null()));
+        ctx.local_map.insert(LocalId(2), (1, ref_pdict_null()));
 
         let instrs = emit_let_binding(
             LocalId(1),

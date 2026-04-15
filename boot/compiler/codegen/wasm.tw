@@ -999,6 +999,7 @@ fn encode_instr(buf: Vector<Byte>, instr: Instr, label_stack: Vector<String>, ct
     .I32GeU  => emit_u8(buf, 0x4F),
     .I32And  => emit_u8(buf, 0x71),
     .I32Or   => emit_u8(buf, 0x72),
+    .I32Xor  => emit_u8(buf, 0x73),
     .I32Shl  => emit_u8(buf, 0x74),
     .I32ShrU => emit_u8(buf, 0x76),
 
