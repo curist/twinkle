@@ -336,13 +336,6 @@ fn dict_int_unwrap(d: Dict<String, Int>, key: String, ctx_msg: String) Int {
   }
 }
 
-fn find_type_def(types: Vector<TypeDef>, name: String) TypeDef {
-  for td in types {
-    if type_def_name(td) == name { return td }
-  }
-  error("wasm: find_type_def: missing type '${name}'")
-}
-
 fn type_def_has_self_edge(td: TypeDef) Bool {
   name := type_def_name(td)
   for dep in type_def_deps(td) {
@@ -353,8 +346,8 @@ fn type_def_has_self_edge(td: TypeDef) Bool {
 
 fn tarjan_visit(
   name: String,
-  types: Vector<TypeDef>,
-  type_names: Vector<String>,
+  types_by_name: Dict<String, TypeDef>,
+  type_name_set: Dict<String, Bool>,
   next_index: Int,
   indices: Dict<String, Int>,
   lowlinks: Dict<String, Int>,
@@ -375,11 +368,14 @@ fn tarjan_visit(
   cur_stack = cur_stack.append(name)
   cur_on_stack[name] = true
 
-  td := find_type_def(types, name)
+  td := case types_by_name[name] {
+    .Some(t) => t,
+    .None => error("wasm: tarjan_visit: missing type '${name}'"),
+  }
   for dep in type_def_deps(td) {
-    if !contains_str(type_names, dep) { continue }
+    if !type_name_set.has(dep) { continue }
     if !cur_indices.has(dep) {
-      result := tarjan_visit(dep, types, type_names, cur_next, cur_indices, cur_lowlinks, cur_on_stack, cur_stack, cur_components)
+      result := tarjan_visit(dep, types_by_name, type_name_set, cur_next, cur_indices, cur_lowlinks, cur_on_stack, cur_stack, cur_components)
       cur_next = result.next_index
       cur_indices = result.indices
       cur_lowlinks = result.lowlinks
@@ -425,18 +421,17 @@ fn tarjan_visit(
   }
 }
 
-fn find_type_component(name: String, components: Vector<Vector<String>>) Vector<String> {
-  for comp in components {
-    if contains_str(comp, name) { return comp }
-  }
-  error("wasm: find_type_component: missing component for '${name}'")
-}
-
 // Returns SCC groups in topological order (dependencies before dependents).
 // Each group is a Vector<String> of type names.
 fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
   if types.len() == 0 { return [] }
   names := collect td in types { type_def_name(td) }
+
+  // Build O(1) lookup structures upfront.
+  types_by_name: Dict<String, TypeDef> = Dict.new()
+  for td in types { types_by_name[type_def_name(td)] = td }
+  type_name_set: Dict<String, Bool> = Dict.new()
+  for name in names { type_name_set[name] = true }
 
   next_index := 0
   indices: Dict<String, Int> = Dict.new()
@@ -447,7 +442,7 @@ fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
 
   for name in names {
     if !indices.has(name) {
-      result := tarjan_visit(name, types, names, next_index, indices, lowlinks, on_stack, stack, components)
+      result := tarjan_visit(name, types_by_name, type_name_set, next_index, indices, lowlinks, on_stack, stack, components)
       next_index = result.next_index
       indices    = result.indices
       lowlinks   = result.lowlinks
@@ -455,6 +450,13 @@ fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
       stack      = result.stack
       components = result.components
     }
+  }
+
+  // Build name→comp-id map for O(1) cross-SCC dep lookup.
+  name_to_comp_id: Dict<String, String> = Dict.new()
+  for comp in components {
+    cid := comp.join("|")
+    for member in comp { name_to_comp_id[member] = cid }
   }
 
   // Topologically order SCCs (dependencies before dependents).
@@ -466,11 +468,16 @@ fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
     comp_members[cid] = comp
     deps: Vector<String> = []
     for member in comp {
-      td := find_type_def(types, member)
+      td := case types_by_name[member] {
+        .Some(t) => t,
+        .None => error("wasm: compute_type_order: missing type '${member}'"),
+      }
       for dep in type_def_deps(td) {
-        if contains_str(names, dep) {
-          dep_comp := find_type_component(dep, components)
-          dep_cid := dep_comp.join("|")
+        if type_name_set.has(dep) {
+          dep_cid := case name_to_comp_id[dep] {
+            .Some(c) => c,
+            .None => error("wasm: compute_type_order: missing comp for '${dep}'"),
+          }
           if dep_cid != cid {
             deps = append_unique_wasm(deps, [dep_cid])
           }
@@ -705,16 +712,26 @@ fn encode_type_section_payload(
   anon_ft: Vector<FuncSigPair>,
   ctx: WasmCtx,
 ) Vector<Byte> {
+  types_by_name: Dict<String, TypeDef> = Dict.new()
+  for td in types { types_by_name[type_def_name(td)] = td }
+
   entry_count := ordered_sccs.len() + anon_ft.len()
   payload := emit_u32_leb([], entry_count)
 
   for scc in ordered_sccs {
-    first_td := find_type_def(types, scc[0])
+    first_td := case types_by_name[scc[0]] {
+      .Some(t) => t,
+      .None => error("wasm: encode_type_section_payload: missing type '${scc[0]}'"),
+    }
     needs_rec := scc.len() > 1 or type_def_has_self_edge(first_td)
     if needs_rec {
       group_bytes: Vector<Byte> = []
       for member in scc {
-        group_bytes = encode_subtype_into(group_bytes, find_type_def(types, member), ctx)
+        td := case types_by_name[member] {
+          .Some(t) => t,
+          .None => error("wasm: encode_type_section_payload: missing type '${member}'"),
+        }
+        group_bytes = encode_subtype_into(group_bytes, td, ctx)
       }
       payload = emit_u8(payload, 0x4E)
       payload = emit_u32_leb(payload, scc.len())
