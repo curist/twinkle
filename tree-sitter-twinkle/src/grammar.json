@@ -3119,8 +3119,13 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "ALIAS",
+          "content": {
+            "type": "PATTERN",
+            "value": "[A-Z][a-zA-Z0-9_]*"
+          },
+          "named": true,
+          "value": "identifier"
         },
         {
           "type": "REPEAT",
@@ -3172,10 +3177,6 @@
     }
   ],
   "conflicts": [
-    [
-      "_primary_expression",
-      "type_name"
-    ],
     [
       "variant_expression"
     ],

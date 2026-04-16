@@ -675,7 +675,10 @@ module.exports = grammar({
       optional(','),
     ),
 
-    type_name: $ => sep1($.identifier, '.'),
+    type_name: $ => seq(
+      alias(/[A-Z][a-zA-Z0-9_]*/, $.identifier),
+      repeat(seq('.', $.identifier)),
+    ),
 
     // ===== Lexical Rules =====
 
@@ -704,7 +707,6 @@ module.exports = grammar({
 
   conflicts: $ => [
     // Expected conflicts for ambiguous syntax
-    [$._primary_expression, $.type_name],
     [$.variant_expression],
     [$.type_name],
     [$.type],
