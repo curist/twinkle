@@ -165,11 +165,50 @@ lower_core.tw at 41ms, emit.tw at 31ms) are now proportional to their size.
 `optimize` (150ms) breakdown: dead_let=43ms, copy_prop=37ms, uniqueness=43ms.
 No longer a priority.
 
+---
+
+## Snapshot (2026-04-16, emit.tw accumulator refactor)
+
+```
+compile_modules    493ms
+optimize           178ms
+prepare_backend    205ms
+emit_module        283ms   (was 528ms — 46% reduction)
+verify             103ms
+emit_wasm_binary   211ms
+  code_section     169ms
+plan_wasm_types     58ms
+link                62ms
+lower_anf           33ms
+core_link           28ms
+monomorphize        22ms
+closure_convert     11ms
+─────────────────────────
+total             ~1690ms
+```
+
+Changes since previous snapshot:
+- `sanitize_name` in emit.tw: replaced O(n²) `"${out}${b}"` string concat loop
+  with `collect` + `join("")`
+- `emit_let`: replaced tail-recursive Let-chain with iterative loop, eliminating
+  O(N²·log N) `small.concat(large_tail)` pattern (each level appended small op
+  result onto growing buf instead of concating large tail onto small op result)
+- Full accumulator refactor of all `emit_*` functions in emit.tw: added
+  `buf: Vector<Instr>` parameter; functions push directly into buf via `.append()`
+  instead of returning small intermediate vectors and concating them. Eliminates
+  O(m·log n) per-concat and reduces GC pressure from ephemeral vector allocations.
+  `emit_module`: 528ms → 283ms (~46% reduction)
+
+### Remaining hot spots
+
+`compile_modules` (493ms) is now the dominant cost, followed by `emit_wasm_binary`
+(211ms, mostly `code_section` at 169ms). `emit_module` is no longer a top target.
+
 ### Potential further improvements
 
 **RRB-Trees for PVec** — current PVec concat is O(m·log n); RRB-Trees
 (Bagwell & Rompf 2011) allow O(log n) concat/slice via relaxed internal nodes
-with a size table. Would mainly benefit emit.tw's instruction-vector building.
+with a size table. Would benefit sub-body instruction-vector building in codegen.
 
 **CHAMP for HAMT** — Steindorfer 2015 improvement: two bitmaps per node
 (data vs sub-trie) to inline key-value pairs directly in the node array,
