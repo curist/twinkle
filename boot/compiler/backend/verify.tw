@@ -69,8 +69,8 @@ pub fn verify_prepared_module(
 
   if timed {
     n := prepared.funcs.len()
-    eprintln("[time:verify] funcs=${Int.to_string(n)}  total_slots=${Int.to_string(total_slots)}  total_slot_entries=${Int.to_string(total_slot_entries)}")
-    eprintln("[time:verify] slot_checks=${Float.to_string(t_slots)}ms  expr_walk=${Float.to_string(t_expr)}ms")
+    eprintln("[time:verify] funcs=${n}  total_slots=${total_slots}  total_slot_entries=${total_slot_entries}")
+    eprintln("[time:verify] slot_checks=${t_slots}ms  expr_walk=${t_expr}ms")
   }
 
   .Ok({})

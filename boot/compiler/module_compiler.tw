@@ -96,7 +96,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   t_modules_end := date.now()
   if timed {
     n := state.compiled_modules.len()
-    eprintln("[time] compile_modules (${Int.to_string(n)} modules): ${Float.to_string(t_modules_end - t_modules_start)}ms")
+    eprintln("[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms")
   }
 
   if state.compiled_modules.len() == 0 {
