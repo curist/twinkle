@@ -807,6 +807,13 @@ fn infer_atom_val_type(
   }
 }
 
+fn is_closure_abi_val_type(vt: ValType) Bool {
+  case vt {
+    .Ref(_, .Named(name)) => name == "rt_types__Closure",
+    _ => false,
+  }
+}
+
 fn can_emit_coerce_stack(from: ValType, to: ValType) Bool {
   if val_type_eq(from, to) { return true }
   case to {
@@ -839,6 +846,15 @@ fn verify_atom_coercible_to_val_type(
   env: ResolvedEnv,
   context: String,
 ) Result<Void, String> {
+  case atom {
+    .AGlobalFunc(_) => {
+      if is_closure_abi_val_type(expected_vt) {
+        return .Ok({})
+      }
+    },
+    _ => {},
+  }
+
   actual_vt := case infer_atom_val_type(pf, atom, module_globals, env) {
     .Some(vt) => vt,
     .None => {return .Ok({})},

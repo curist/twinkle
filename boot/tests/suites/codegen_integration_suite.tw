@@ -318,6 +318,26 @@ fn test_closure_call_uses_typed_funcref() Result<Void, String> {
   .Ok({})
 }
 
+fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nit := Iterator.unfold(0, step)\nprintln(int_to_string(it.take(2).to_vector().len()))\n",
+    "iterator unfold named step",
+  )
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  .Ok({})
+}
+
+fn test_cell_update_wraps_named_function_as_closure() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn inc(x: Int) Int { x + 1 }\nc := Cell.new(1)\nc.update(inc)\nprintln(int_to_string(c.get()))\n",
+    "cell update named function",
+  )
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.get $rt_types__Closure 0")
+  .Ok({})
+}
+
 // ── Match emission coverage ──────────────────────────────────────────
 // Ports focused match-emission cases from the former emit_pattern_suite,
 // now exercising the consolidated emit.tw path end-to-end.
@@ -573,6 +593,8 @@ pub fn suite() runner.Suite {
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
     .test("typed closure struct is subtype of base", test_closure_struct_is_subtype_of_base)
     .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
+    .test("iterator unfold wraps named step as closure", test_iterator_unfold_wraps_named_step_as_closure)
+    .test("cell update wraps named function as closure", test_cell_update_wraps_named_function_as_closure)
     // Match emission coverage (ports emit_pattern_suite cases)
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)

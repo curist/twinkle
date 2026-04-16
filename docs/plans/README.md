@@ -58,6 +58,7 @@ from stage0, bootstrapping sequence)
 | [boot-uniqueness-deep-ownership.md](boot-uniqueness-deep-ownership.md) | Separate fresh wrapper values from deep ownership so boot uniqueness only performs in-place collection rewrites when reachable mutable state is truly unaliased |
 | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) | Investigate and fix the stage2 trap triggered by semantically equivalent nested variant-pattern matches in boot codegen helpers |
 | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
+| [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | Make builtin / prelude functions behave like proper first-class closure values in the boot backend planning, verification, and emission pipeline |
 | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
 | [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |

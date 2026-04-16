@@ -1002,6 +1002,30 @@ fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Instr> {
   buf
 }
 
+fn is_closure_abi_val_type(vt: ValType) Bool {
+  case vt {
+    .Ref(_, .Named(name)) => name == "rt_types__Closure",
+    _ => false,
+  }
+}
+
+fn emit_global_func_as_closure_arg(a: PreparedAtom, param_vt: ValType?, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr>? {
+  case a {
+    .AGlobalFunc(fid) => {
+      case param_vt {
+        .Some(vt) => {
+          if is_closure_abi_val_type(vt) {
+            return .Some(emit_make_closure(fid, [], ctx, buf))
+          }
+          .None
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
 fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: String, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   param_vt: ValType? = case abi {
     .Some(ab) => {
@@ -1020,7 +1044,10 @@ fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: 
     return emit_checked_i32_narrow(a, ctx, buf)
   }
 
-  out := emit_atom(a, ctx, buf)
+  out := case emit_global_func_as_closure_arg(a, param_vt, ctx, buf) {
+    .Some(wrapped) => wrapped,
+    .None => emit_atom(a, ctx, buf),
+  }
 
   // Builder regions keep transient Array builders in erased anyref slots even
   // though the surrounding Twinkle surface type is Vector<T>. For the builder
@@ -1612,13 +1639,20 @@ fn emit_intrinsic_cell_update(args: Vector<PreparedAtom>, result_idx: Int, ctx: 
   sym := cell_struct_sym(inner_mono, ctx.env)
   // For simplicity, use the universal closure path
   buf2 := emit_atom(args[0], ctx, buf)  // cell ref for struct.set target
-  buf3 := emit_atom(args[1], ctx, buf2)  // closure
+  closure_arg_vt: ValType? = .Some(ValType.Ref(true, HeapType.Named("rt_types__Closure")))
+  buf3 := case emit_global_func_as_closure_arg(args[1], closure_arg_vt, ctx, buf2) {
+    .Some(wrapped) => wrapped,
+    .None => emit_atom(args[1], ctx, buf2),
+  }
   buf4 := buf3.append(.StructGet("rt_types__Closure", 1))  // env (field 1)
   buf5 := emit_atom(args[0], ctx, buf4)
   buf6 := buf5.append(.StructGet(sym, 0))  // current cell value
   buf7 := if sym != "$Cell_anyref" { emit_box_to_anyref(inner_mono, ctx.env, buf6) } else { buf6 }
   buf8 := buf7.append(.ArrayNewFixed("rt_types__Array", 1))  // args array
-  buf9 := emit_atom(args[1], ctx, buf8)  // closure
+  buf9 := case emit_global_func_as_closure_arg(args[1], closure_arg_vt, ctx, buf8) {
+    .Some(wrapped) => wrapped,
+    .None => emit_atom(args[1], ctx, buf8),
+  }
   buf10 := buf9.append(.StructGet("rt_types__Closure", 0)).append(.CallRef("rt_types__ClosureFunc"))
   buf11 := if sym != "$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, buf10) } else { buf10 }
   buf11.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))  // return void
@@ -1665,7 +1699,11 @@ fn emit_intrinsic_iterator_unfold(args: Vector<PreparedAtom>, result_idx: Int, r
     _ => error("iterator_unfold: unexpected layout"),
   }
   buf2 := emit_erased_container_ingress(args[0], ctx, buf)  // seed (erased anyref state field)
-  buf3 := emit_atom(args[1], ctx, buf2)  // step closure
+  closure_arg_vt: ValType? = .Some(ValType.Ref(true, HeapType.Named("rt_types__Closure")))
+  buf3 := case emit_global_func_as_closure_arg(args[1], closure_arg_vt, ctx, buf2) {
+    .Some(wrapped) => wrapped,
+    .None => emit_atom(args[1], ctx, buf2),
+  }
   buf3.append(.StructNew(sym)).append(.LocalSet(result_idx))
 }
 

@@ -541,7 +541,20 @@ fn collect_higher_order_global_func_sigs_op(
   case op {
     .ACall(.AGlobalFunc(callee_fid), args) => {
       case bi.entry(builtins, callee_fid) {
-        .Some(_) => reg,
+        .Some(entry) => {
+          cur := reg
+          for arg,i in args {
+            case arg {
+              .AGlobalFunc(arg_fid) => {
+                if builtin_param_expects_function(entry, i) {
+                  cur = register_func_sig_by_id(cur, arg_fid, funcs_by_id)
+                }
+              },
+              _ => {},
+            }
+          }
+          cur
+        },
         .None => {
           case funcs_by_id[callee_fid.id] {
             .None => reg,
@@ -577,6 +590,14 @@ fn collect_higher_order_global_func_sigs_op(
     .ALoop(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins),
     .ADefer(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins),
     _ => reg,
+  }
+}
+
+fn builtin_param_expects_function(entry: BuiltinEntry, index: Int) Bool {
+  if index >= entry.abi.param_types.len() { return false }
+  case entry.abi.param_types[index] {
+    .Ref(_, .Named(name)) => name == "rt_types__Closure",
+    _ => false,
   }
 }
 
