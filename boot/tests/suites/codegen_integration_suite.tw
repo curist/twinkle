@@ -285,21 +285,18 @@ fn test_large_vector_literal_uses_runtime_push() Result<Void, String> {
 
 fn test_closure_first_class_function_arg() Result<Void, String> {
   // Passing a named function as an argument should wrap it as a closure.
-  // This goes through the typed closure path (emit_make_closure with concrete_func_sigs).
+  // The correctness path uses the universal closure ABI.
   wat := try assert_codegen_src_compiles(
     "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(double, 5)))\n",
     "first-class function arg",
   )
-  // Typed closure struct: 3 fields (universal funcref, env, typed funcref)
-  try assert.str_contains(wat, "$closure_fn_i64_i64")
-  try assert.str_contains(wat, "struct.new $user__$closure_fn_i64_i64")
-  // Should have typed trampoline
-  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
 fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
-  // Typed closure struct should declare as subtype of rt_types__Closure.
+  // The universal closure type stays a subtype of the base closure ABI.
   wat := try assert_codegen_src_compiles(
     "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(inc, 5)))\n",
     "closure subtype",
@@ -308,13 +305,13 @@ fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
   .Ok({})
 }
 
-fn test_closure_call_uses_typed_funcref() Result<Void, String> {
-  // Closure call should access typed funcref (field 2) and call_ref.
+fn test_closure_call_uses_universal_funcref() Result<Void, String> {
+  // Closure call should use the universal funcref path.
   wat := try assert_codegen_src_compiles(
     "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(neg, 5)))\n",
-    "closure typed call",
+    "closure universal call",
   )
-  try assert.str_contains(wat, "call_ref $user__$ft_fn_i64_i64")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -343,8 +340,7 @@ fn test_builtin_first_class_function_arg_uses_builtin_trampolines() Result<Void,
     "fn apply(f: fn(Int) String, x: Int) String { f(x) }\nprintln(apply(Int.to_string, 5))\n",
     "builtin first-class function arg",
   )
-  try assert.str_contains(wat, "$typed_tramp_")
-  try assert.str_contains(wat, "struct.new $user__$closure_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   try assert.str_contains(wat, "call $rt_str__from_i64")
   .Ok({})
 }
@@ -354,7 +350,7 @@ fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline(
     "fn apply(f: fn(Byte) String, x: Byte) String { f(x) }\ncase Byte.from_int(42) {\n  .Some(b) => println(apply(Byte.to_string, b)),\n  .None => println(\"none\"),\n}\n",
     "wrapper-backed builtin first-class function arg",
   )
-  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   try assert.str_contains(wat, "i64.extend_i32_u")
   try assert.str_contains(wat, "call $rt_str__from_i64")
   .Ok({})
@@ -365,8 +361,8 @@ fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() R
     "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(int_to_string(c.get()))\n",
     "cell update builtin first-class function arg",
   )
-  try assert.str_contains(wat, "$typed_tramp_")
-  try assert.str_contains(wat, "call_ref $user__$ft_fn_i64_i64")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   try assert.str_contains(wat, "struct.set $user__$Cell_i64 0")
   .Ok({})
 }
@@ -376,7 +372,7 @@ fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline
     "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(int_to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold builtin first-class function arg",
   )
-  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   try assert.str_contains(wat, "struct.new $rt_types__IterState")
   .Ok({})
 }
@@ -390,7 +386,7 @@ fn test_builtin_stored_in_local_then_called() Result<Void, String> {
     "builtin stored in local then called",
   )
   try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $user__$closure_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -402,7 +398,7 @@ fn test_builtin_returned_from_function_then_called() Result<Void, String> {
     "builtin returned from function then called",
   )
   try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "call $rt_str__from_i64")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -414,7 +410,27 @@ fn test_builtin_stored_in_record_field_then_called() Result<Void, String> {
     "builtin stored in record field then called",
   )
   try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $user__")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  .Ok({})
+}
+
+fn test_user_function_stored_in_record_field_then_called() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(int_to_string(w.f(21)))\n",
+    "user function stored in record field then called",
+  )
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  .Ok({})
+}
+
+fn test_user_function_returned_from_function_then_called() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(int_to_string(f(21)))\n",
+    "user function returned from function then called",
+  )
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -671,8 +687,8 @@ pub fn suite() runner.Suite {
     .test("large vector literals build through rt.arr.push", test_large_vector_literal_uses_runtime_push)
     .test("dict index materializes typed Option without generic Variant helper", test_dict_index_materializes_typed_option)
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
-    .test("typed closure struct is subtype of base", test_closure_struct_is_subtype_of_base)
-    .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
+    .test("closure type is subtype of base", test_closure_struct_is_subtype_of_base)
+    .test("closure call uses universal funcref via call_ref", test_closure_call_uses_universal_funcref)
     .test("iterator unfold wraps named step as closure", test_iterator_unfold_wraps_named_step_as_closure)
     .test("cell update wraps named function as closure", test_cell_update_wraps_named_function_as_closure)
     .test("builtin first-class function arg uses builtin trampolines", test_builtin_first_class_function_arg_uses_builtin_trampolines)
@@ -682,6 +698,8 @@ pub fn suite() runner.Suite {
     .test("builtin function stored in local then called indirectly", test_builtin_stored_in_local_then_called)
     .test("builtin function returned from function then called indirectly", test_builtin_returned_from_function_then_called)
     .test("builtin function stored in record field then called indirectly", test_builtin_stored_in_record_field_then_called)
+    .test("user function stored in record field then called indirectly", test_user_function_stored_in_record_field_then_called)
+    .test("user function returned from function then called indirectly", test_user_function_returned_from_function_then_called)
     // Match emission coverage (ports emit_pattern_suite cases)
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)

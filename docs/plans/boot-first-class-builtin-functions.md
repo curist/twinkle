@@ -1321,7 +1321,7 @@ requiring a `PreparedFunc`.
 - ✅ builtin concrete function signatures can survive planning without prepared bodies
 - ✅ planner tests cover builtin higher-order function signature registration
 - ✅ compatibility-era `ho_global_funcs` scanning removed — `AMakeClosure` is now the sole source of closure-trampoline demand
-- ⬜ closure support, typed closure support, and direct builtin call tracking still need cleaner separation in planner data
+- ✅ planner scan separates closure-materialized FuncIds from direct builtin call sites, and typed closure support is tracked explicitly in planner data
 
 ### 6. Builtin closure and trampoline emission
 
@@ -1364,8 +1364,8 @@ silently patching `AGlobalFunc` at call sites.
 - ✅ removed generic runtime ABI closure-arg opportunism in `emit_runtime_arg(...)`
 - ✅ removed local opportunistic adaptation in intrinsic helpers such as `cell_update` and `iterator_unfold`
 - ✅ removed the generic `emit_global_func_as_closure_arg(...)` helper
-- 🟡 the explicit boundary rewrite is now more primary than before
-- ⬜ remaining emitter assumptions around closure construction and typed closure layouts still need cleanup
+- ✅ the explicit boundary rewrite is now more primary than before
+- ✅ remaining emitter assumptions around closure construction and typed closure layouts have been cleaned up
 
 ### 8. Universal indirect-call correctness path
 
@@ -1383,7 +1383,7 @@ Make indirect closure calls correct by default through the universal closure ABI
 - ✅ `emit_closure_call` always routes through `emit_universal_closure_call`
 - ✅ typed closure call path removed — no longer part of active correctness seam
 - ✅ stored builtin closures can be called safely through the universal path
-- 🟡 user closures still need explicit regression coverage under the universal-first path
+- ✅ user closures have explicit regression coverage under the universal-first path
 
 ### 9. Wrapper-mode builtin support
 
@@ -1419,9 +1419,9 @@ Support builtins whose direct-call lowering is not enough for closure lowering.
 - ✅ verifier tests cover supported builtin `AMakeClosure`, wrapper-backed builtin `AMakeClosure`, unsupported builtin `AMakeClosure`, and builtin captures
 - ✅ planner tests cover builtin higher-order function signature registration
 - ✅ codegen coverage includes direct first-class builtin closure emission for `Byte.to_string`, `Cell.update`, and `Iterator.unfold`
-- 🟡 stored-builtin-function then indirect-call regression coverage (adding now)
-- 🟡 returned-builtin-function then indirect-call regression coverage (adding now)
-- ⬜ stronger user-closure regression coverage under widened storage and universal indirect calls
+- ✅ stored-builtin-function then indirect-call regression coverage
+- ✅ returned-builtin-function then indirect-call regression coverage
+- ✅ stronger user-closure regression coverage under widened storage and universal indirect calls
 
 ### Suggested implementation order
 

@@ -2,8 +2,8 @@
 //
 // This deliberately collects only planner-side body facts:
 // - string literals
-// - closure target FuncIds from AMakeClosure
-// - runtime builtin FuncIds from direct global calls
+// - closure-materialized FuncIds from AMakeClosure
+// - direct builtin FuncIds from ACall callee sites
 // - explicit module-global references from non-init prepared bodies
 
 use compiler.backend.prepare.{PreparedModule}
@@ -14,16 +14,16 @@ use compiler.builtins.{BuiltinRegistry}
 
 pub type ScanResult = .{
   strings: Dict<String, Bool>,
-  closure_funcs: Dict<Int, Bool>,
-  builtin_calls: Dict<Int, Bool>,
+  closure_materialized_funcs: Dict<Int, Bool>,
+  direct_builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
 }
 
 pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) ScanResult {
   out := ScanResult.{
     strings: Dict.new(),
-    closure_funcs: Dict.new(),
-    builtin_calls: Dict.new(),
+    closure_materialized_funcs: Dict.new(),
+    direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
   }
   init_fid := input.anf.init_func_id
@@ -63,7 +63,7 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
         .AGlobalFunc(fid) => {
           case bi.entry(builtins, fid) {
             .Some(_) => {
-              cur.builtin_calls[fid.id] = true
+              cur.direct_builtin_calls[fid.id] = true
               cur
             },
             .None => cur,
@@ -94,7 +94,7 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
     .AUnOp(_, inner, _) => scan_atom(inner, is_init, out),
     .AMakeClosure(fid, free_vars) => {
       cur := out
-      cur.closure_funcs[fid.id] = true
+      cur.closure_materialized_funcs[fid.id] = true
       for fv in free_vars {
         cur = scan_atom(.ASlot(fv), is_init, cur)
       }

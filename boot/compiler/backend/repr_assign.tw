@@ -213,9 +213,8 @@ fn wasm_type_of_repr(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValType {
     .I32 => .I32,
     .TypedRef(m) => val_type_of_mono(m, env),
     .TypedSum(m) => val_type_of_mono(m, env),
-    // ClosureRef carries a typed closure struct ref, not plain anyref.
-    // val_type_of_mono resolves Function(params, ret) → Ref(true, Named("$closure_..."))
-    // and also handles Named aliases to function types through their alias chain.
+    // Function values remain heap refs; the correctness path uses the base
+    // closure ABI, while future specialization can still refine this later.
     .ClosureRef => val_type_of_mono(mono, env),
     .ErasedSum => .Anyref,
     .OpaqueAnyref => .Anyref,

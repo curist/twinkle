@@ -382,10 +382,15 @@ fn record_field_mono(record_mono: MonoType, field_idx: Int, env: ResolvedEnv) Mo
   case record_mono {
     .Named(tid, args) => {
       case lookup_type_def(env, tid) {
-        .Some(.Alias(type_name, type_params, target)) => record_field_mono(subst_type_params(target, type_params, args), field_idx, env),
-        .Some(.Record(_, type_params, fields)) => {
-          field_ty := fields[field_idx].ty
-          subst_type_params(field_ty, type_params, args)
+        .Some(def) => {
+          case def {
+            .Alias(_, type_params, target) => record_field_mono(subst_type_params(target, type_params, args), field_idx, env),
+            .Record(_, type_params, fields) => {
+              field_ty := fields[field_idx].ty
+              subst_type_params(field_ty, type_params, args)
+            },
+            .Sum(_, _, _) => .Void,
+          }
         },
         _ => .Void,
       }
@@ -414,10 +419,15 @@ fn variant_payload_mono(sum_mono: MonoType, vid: Int, field_idx: Int, env: Resol
     },
     .Named(tid, args) => {
       case lookup_type_def(env, tid) {
-        .Some(.Alias(_, type_params, target)) => variant_payload_mono(subst_type_params(target, type_params, args), vid, field_idx, env),
-        .Some(.Sum(_, type_params, variants)) => {
-          field_ty := variants[vid].fields[field_idx]
-          subst_type_params(field_ty, type_params, args)
+        .Some(def) => {
+          case def {
+            .Alias(_, type_params, target) => variant_payload_mono(subst_type_params(target, type_params, args), vid, field_idx, env),
+            .Sum(_, type_params, variants) => {
+              field_ty := variants[vid].fields[field_idx]
+              subst_type_params(field_ty, type_params, args)
+            },
+            .Record(_, _, _) => .Void,
+          }
         },
         _ => .Void,
       }

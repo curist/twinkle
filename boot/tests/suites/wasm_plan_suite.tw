@@ -556,6 +556,45 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
   }
 }
 
+pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Void, String> {
+  builtins := simple_builtins()
+  env := base_env.builtin_env()
+
+  map_mono: Dict<Int, MonoType> = Dict.new()
+  map_mono[10] = MonoType.Vector(.String)
+  map := mk_func_def(200, "map",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Vector(.Int) },
+      Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
+    ],
+    MonoType.Vector(.String),
+    .Atom(.ALocal(mk_local(10))),
+    map_mono,
+  )
+
+  caller_mono: Dict<Int, MonoType> = Dict.new()
+  caller_mono[11] = MonoType.Vector(.String)
+  caller_mono[12] = MonoType.String
+  caller_mono[13] = MonoType.Void
+  caller := mk_func_def(100, "caller", [], MonoType.Vector(.String),
+    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))]),
+      .Let(mk_local(12), .ACall(.AGlobalFunc(bi.id(builtins, "int_to_string")), [.ALitInt(7)]),
+        .Let(mk_local(13), .ACall(.AGlobalFunc(bi.id(builtins, "println")), [.ALocal(mk_local(12))]),
+          .Atom(.ALocal(mk_local(11)))))),
+    caller_mono,
+  )
+
+  reg := plan(mk_module([caller, map]), env, builtins)
+  int_to_string := bi.id(builtins, "int_to_string").id
+  println_id := bi.id(builtins, "println").id
+
+  try assert.ok(case reg.closure_materialized_funcs[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string closure materialization")
+  try assert.ok(case reg.typed_closure_funcs[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string typed closure support")
+  try assert.ok(case reg.direct_builtin_calls[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string direct builtin call tracking")
+  try assert.ok(case reg.direct_builtin_calls[println_id] { .Some(true) => true, _ => false }, "expected println direct builtin call tracking")
+  .Ok({})
+}
+
 // ── plan_wasm_types: collects runtime imports ───────────────────────
 
 pub fn test_plan_runtime_imports() Result<Void, String> {
@@ -631,6 +670,9 @@ pub fn test_registry_empty() Result<Void, String> {
     in_progress: Dict.new(),
     type_index: Dict.new(),
     concrete_func_sigs: Dict.new(),
+    closure_materialized_funcs: Dict.new(),
+    typed_closure_funcs: Dict.new(),
+    direct_builtin_calls: Dict.new(),
     capture_layouts: Dict.new(),
     module_globals: Dict.new(),
     module_globals_order: [],
@@ -782,6 +824,7 @@ pub fn suite() runner.Suite {
     .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
     .test("plan bare higher-order global function arg registers concrete func sig", test_plan_higher_order_global_function_arg_registers_func_sig)
     .test("plan builtin higher-order global function arg registers concrete func sig", test_plan_builtin_higher_order_global_function_arg_registers_func_sig)
+    .test("plan callable separation tracks closure and direct calls", test_plan_callable_separation_tracks_closure_and_direct_calls)
     .test("plan runtime imports", test_plan_runtime_imports)
     .test("plan optional type", test_plan_optional_type)
     .test("plan higher-order global func does not synthesize capture layout", test_plan_higher_order_global_func_does_not_synthesize_capture_layout)

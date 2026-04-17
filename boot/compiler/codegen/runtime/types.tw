@@ -76,7 +76,8 @@ pub fn module() WasmModule {
       // (type $ClosureFunc (func (param anyref anyref) (result anyref)))
       .FuncType("ClosureFunc", [.Anyref, .Anyref], [.Anyref]),
 
-      // (type $Closure (sub (struct ...))) — non-final for typed closure subtypes
+      // (type $Closure (sub (struct ...))) — kept non-final so future typed
+      // specialization can layer on without changing the universal ABI.
       .Struct("Closure", [
         .{ name: .Some("func_ref"), mutable: false,
           ty: .Ref(true, .Named("ClosureFunc")) },

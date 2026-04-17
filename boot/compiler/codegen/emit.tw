@@ -2181,8 +2181,8 @@ fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Inst
 
 fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // Build env array from captured variables.
-  // We keep the env instructions separate so both universal and typed closure
-  // construction can share them.
+  // Keep the env instructions separate so closure materialization stays
+  // centralized in one place.
   env_buf: Vector<Instr> = []
   for fv in free_vars {
     entry := lookup_slot(ctx, fv)
@@ -2351,31 +2351,6 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wra
   }
 }
 
-fn emit_builtin_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wrapper_kind: callable_targets.WrapperKind?, ctx: EmitCtx) FuncDef {
-  case wrapper_kind {
-    .Some(.CellUpdate) => emit_builtin_cell_update_typed_trampoline(entry, sig, ctx),
-    .Some(.IteratorUnfold) => emit_builtin_iterator_unfold_typed_trampoline(entry, sig, ctx),
-    _ => {
-      typed_tramp_sym := "$typed_tramp_${entry.func_id.id}"
-      param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]
-      for mono in sig.param_types {
-        param_vts = param_vts.append(val_type_of_mono(mono, ctx.env))
-      }
-      result_vts: Vector<ValType> = case sig.return_type {
-        .Void => [],
-        .Never => [],
-        _ => [val_type_of_mono(sig.return_type, ctx.env)],
-      }
-      body: Vector<Instr> = []
-      for _,i in sig.param_types {
-        body = body.append(.LocalGet(i + 1))
-      }
-      body = emit_builtin_trampoline_target(entry, wrapper_kind, body)
-      FuncDef.{ name: typed_tramp_sym, params: param_vts, results: result_vts, locals: [], body: body }
-    },
-  }
-}
-
 fn emit_builtin_cell_update_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   tramp_sym := "$tramp_${entry.func_id.id}"
   cell_mono := sig.param_types[0]
@@ -2419,34 +2394,6 @@ fn emit_builtin_cell_update_universal_trampoline(entry: BuiltinEntry, sig: FuncS
   }
 }
 
-fn emit_builtin_cell_update_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
-  typed_tramp_sym := "$typed_tramp_${entry.func_id.id}"
-  cell_mono := sig.param_types[0]
-  closure_mono := sig.param_types[1]
-  inner_mono := cell_inner_mono(cell_mono)
-  sym := cell_struct_sym(inner_mono, ctx.env)
-  closure_key := mono_to_key(closure_mono)
-  closure_sym := "$closure_${closure_key}"
-  typed_ft_sym := "$ft_${closure_key}"
-
-  param_vts: Vector<ValType> = [
-    .Ref(true, HeapType.Named("rt_types__ClosureEnv")),
-    val_type_of_mono(cell_mono, ctx.env),
-    val_type_of_mono(closure_mono, ctx.env),
-  ]
-
-  body: Vector<Instr> = []
-  body = body.append(.LocalGet(1))
-  body = body.append(.LocalGet(2)).append(.StructGet(closure_sym, 1))
-  body = body.append(.LocalGet(1)).append(.StructGet(sym, 0))
-  body = if sym == "$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, body) } else { body }
-  body = body.append(.LocalGet(2)).append(.StructGet(closure_sym, 2)).append(.CallRef(typed_ft_sym))
-  body = if sym == "$Cell_anyref" { emit_box_to_anyref(inner_mono, ctx.env, body) } else { body }
-  body = body.append(.StructSet(sym, 0))
-
-  FuncDef.{ name: typed_tramp_sym, params: param_vts, results: [], locals: [], body: body }
-}
-
 fn emit_builtin_iterator_unfold_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   tramp_sym := "$tramp_${entry.func_id.id}"
   seed_mono := sig.param_types[0]
@@ -2468,26 +2415,6 @@ fn emit_builtin_iterator_unfold_universal_trampoline(entry: BuiltinEntry, sig: F
     .append(.StructNew("rt_types__IterState"))
 
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body: body }
-}
-
-fn emit_builtin_iterator_unfold_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
-  typed_tramp_sym := "$typed_tramp_${entry.func_id.id}"
-  seed_mono := sig.param_types[0]
-  step_mono := sig.param_types[1]
-  result_vts: Vector<ValType> = case sig.return_type {
-    .Void => [],
-    .Never => [],
-    _ => [val_type_of_mono(sig.return_type, ctx.env)],
-  }
-  param_vts: Vector<ValType> = [
-    .Ref(true, HeapType.Named("rt_types__ClosureEnv")),
-    val_type_of_mono(seed_mono, ctx.env),
-    val_type_of_mono(step_mono, ctx.env),
-  ]
-  body := emit_box_to_anyref(seed_mono, ctx.env, [.LocalGet(1)])
-    .append(.LocalGet(2))
-    .append(.StructNew("rt_types__IterState"))
-  FuncDef.{ name: typed_tramp_sym, params: param_vts, results: result_vts, locals: [], body: body }
 }
 
 fn emit_builtin_trampoline_target(entry: BuiltinEntry, wrapper_kind: callable_targets.WrapperKind?, body: Vector<Instr>) Vector<Instr> {
@@ -2553,48 +2480,6 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
     params: [.Anyref, .Anyref],
     results: [.Anyref],
     locals: locals,
-    body: body,
-  }
-}
-
-fn emit_typed_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
-  // Typed trampoline: (env: anyref, p1: T1, p2: T2, ...) → R
-  typed_tramp_sym := "$typed_tramp_${func.func_id.id}"
-  func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
-
-  param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]
-  for sid in func.params {
-    param_vts = param_vts.append(slot_info(func, sid).wasm_type)
-  }
-
-  result_vts: Vector<ValType> = case func.return_mono {
-    .Void => [],
-    .Never => [],
-    _ => [val_type_of_mono(func.return_mono, ctx.env)],
-  }
-
-  body: Vector<Instr> = []
-
-  for sid,i in func.captures {
-    cap := slot_info(func, sid)
-    body = body.append(.LocalGet(0))
-    body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
-    body = body.append(.I32Const(i))
-    body = body.append(.ArrayGet("rt_types__ClosureEnv"))
-    body = emit_unbox_from_anyref(cap.mono, ctx.env, body)
-  }
-
-  for _,i in func.params {
-    body = body.append(.LocalGet(i + 1))
-  }
-
-  body = body.append(.Call(func_sym))
-
-  FuncDef.{
-    name: typed_tramp_sym,
-    params: param_vts,
-    results: result_vts,
-    locals: [],
     body: body,
   }
 }
