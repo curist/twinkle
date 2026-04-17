@@ -2196,7 +2196,7 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: 
   }
 
   if ctx.prepared_funcs.has(fid.id) {
-    return emit_materialized_closure(fid, env_buf, true, ctx, buf)
+    return emit_materialized_closure(fid, env_buf, ctx, buf)
   }
 
   case callable_targets.callable_target(fid, ctx.prepared_funcs, ctx.builtins, ctx.env) {
@@ -2204,7 +2204,7 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: 
       if !info.closure_materializable {
         error("emit_make_closure: builtin ${fid.id} is not closure-materializable")
       }
-      emit_materialized_closure(fid, env_buf, info.typed_closure_support, ctx, buf)
+      emit_materialized_closure(fid, env_buf, ctx, buf)
     },
     .None => error("emit_make_closure: unknown callable target F${fid.id}"),
   }
@@ -2213,27 +2213,11 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: 
 fn emit_materialized_closure(
   fid: FuncId,
   env_buf: Vector<Instr>,
-  supports_typed_closure: Bool,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
   tramp_sym := "$tramp_${fid.id}"
-  typed_tramp_sym := "$typed_tramp_${fid.id}"
-
-  case ctx.registry.concrete_func_sigs[fid.id] {
-    .Some(sig) => {
-      if supports_typed_closure {
-        closure_key := mono_to_key(.Function(sig.param_types, sig.return_type))
-        closure_sym := "$closure_${closure_key}"
-        return buf.append(.RefFunc(tramp_sym))
-          .concat(env_buf)
-          .append(.RefFunc(typed_tramp_sym))
-          .append(.StructNew(closure_sym))
-      }
-      emit_universal_closure_value(tramp_sym, env_buf, buf)
-    },
-    .None => emit_universal_closure_value(tramp_sym, env_buf, buf),
-  }
+  emit_universal_closure_value(tramp_sym, env_buf, buf)
 }
 
 fn emit_universal_closure_value(tramp_sym: String, env_buf: Vector<Instr>, buf: Vector<Instr>) Vector<Instr> {
@@ -2244,38 +2228,7 @@ fn emit_universal_closure_value(tramp_sym: String, env_buf: Vector<Instr>, buf: 
 
 fn emit_closure_call(callee: PreparedAtom, lid: SlotId, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   entry := lookup_slot(ctx, lid)
-
-  // Check if we have a typed closure signature
-  callee_mono := require_closure_atom(callee, ctx, "emit_closure_call")
-  case callee_mono {
-    .Function(param_types, ret_type) => {
-      closure_key := mono_to_key(callee_mono)
-      closure_sym := "$closure_${closure_key}"
-      typed_ft_sym := "$ft_${closure_key}"
-
-      // Get env (field 1)
-      out := buf.append(.LocalGet(entry.index)).append(.StructGet(closure_sym, 1))
-      // Push concrete args
-      for a in args {
-        out = emit_atom(a, ctx, out)
-      }
-      // Get typed funcref (field 2)
-      out = out.append(.LocalGet(entry.index)).append(.StructGet(closure_sym, 2))
-      // call_ref with typed func type
-      out = out.append(.CallRef(typed_ft_sym))
-      case result_mono {
-        .Void => {
-          out.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
-        },
-        .Never => out,
-        _ => out.append(.LocalSet(result_idx)),
-      }
-    },
-    _ => {
-      // Universal closure path
-      emit_universal_closure_call(entry, args, result_idx, result_mono, ctx, buf)
-    },
-  }
+  emit_universal_closure_call(entry, args, result_idx, result_mono, ctx, buf)
 }
 
 fn emit_universal_closure_call(entry: LocalEntry, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
@@ -2322,12 +2275,7 @@ fn emit_universal_closure_call(entry: LocalEntry, args: Vector<PreparedAtom>, re
 fn emit_trampolines_for_func(func: PreparedFunc, ctx: EmitCtx) Vector<FuncDef> {
   // Only generate trampolines for functions that are used as closures.
   case ctx.registry.concrete_func_sigs[func.func_id.id] {
-    .Some(sig) => {
-      tramps: Vector<FuncDef> = []
-      tramps = tramps.append(emit_universal_trampoline(func, sig, ctx))
-      tramps = tramps.append(emit_typed_trampoline(func, sig, ctx))
-      tramps
-    },
+    .Some(sig) => [emit_universal_trampoline(func, sig, ctx)],
     .None => {
       if func.captures.len() > 0 {
         sig := FuncSigEntry.{
@@ -2361,9 +2309,6 @@ fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       .None => { continue },
     }
     out = out.append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
-    if target.typed_closure_support {
-      out = out.append(emit_builtin_typed_trampoline(entry, sig, target.wrapper_kind, ctx))
-    }
   }
   out
 }
@@ -2712,7 +2657,7 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) 
     .Scalar(.WAnyref) => buf,  // already anyref
     .Record(r) => buf.append(.RefCast(false, .Named(r.sym))),
     .Sum(s) => buf.append(.RefCast(false, .Named(s.sym))),
-    .Closure(c) => buf.append(.RefCast(false, .Named(c.closure_sym))),
+    .Closure(_) => buf.append(.RefCast(false, .Named("rt_types__Closure"))),
     .Vector_(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
     .Dict_(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),
     .Iterator_(it) => buf.append(.RefCast(false, .Named(it.state_sym))),

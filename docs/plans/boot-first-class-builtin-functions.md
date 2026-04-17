@@ -1250,14 +1250,10 @@ Match stage0 more closely:
 
 **Status**
 
-- 🟡 the stage0-guided hybrid direction is now the intended target
-- ⬜ verifier, planner, and emitter still need to distinguish clearly between:
-  - base-closure interoperability
-  - typed closure specialization
-  - universal fallback calling
-- ⬜ builtin closure support still needs to be integrated without forcing a
-  universal-only representation everywhere
-- ⬜ current typed closure assumptions are still part of the active correctness seam
+- ✅ `val_type_of_mono(Function(...))` returns `rt_types__Closure` (base type) — propagates to slots, fields, payloads, repr_assign, verify
+- ✅ all `Function(...)` valued locals, params, fields, and payloads now use `rt_types__Closure` as their Wasm type
+- ✅ typed closure struct creation (`$closure_${key}`) and typed trampolines removed from emission — universal path is the correctness baseline
+- ✅ builtin and user closures are interoperable through the base closure ABI
 
 ### 3. Explicit closure-boundary rewrite
 
@@ -1385,10 +1381,11 @@ Make indirect closure calls correct by default through the universal closure ABI
 
 **Status**
 
-- ⬜ universal indirect-call lowering is not yet the default correctness path
-- ⬜ typed closure calling is still part of the active correctness path
-- ⬜ stored builtin closures still need the universal path to become the clear baseline
-- ⬜ user closures still need explicit regression coverage under that universal-first path
+- ✅ universal indirect-call lowering is now the default correctness path
+- ✅ `emit_closure_call` always routes through `emit_universal_closure_call`
+- ✅ typed closure call path removed — no longer part of active correctness seam
+- ✅ stored builtin closures can be called safely through the universal path
+- 🟡 user closures still need explicit regression coverage under the universal-first path
 
 ### 9. Wrapper-mode builtin support
 

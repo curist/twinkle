@@ -419,10 +419,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     },
     .Vector(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict(_, _) => .Ref(true, .Named("rt_types__PDict")),
-    .Function(params, ret) => {
-      key := mono_to_key(.Function(params, ret))
-      .Ref(true, .Named("$closure_${key}"))
-    },
+    .Function(_, _) => .Ref(true, .Named("rt_types__Closure")),
     .Optional(inner) => .Ref(true, .Named("$Option_${mono_to_key(.Optional(inner))}")),
     .Result(ok, err) => .Ref(true, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
     .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
