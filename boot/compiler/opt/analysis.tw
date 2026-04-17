@@ -1,7 +1,7 @@
 // Shared optimizer-oriented ANF analysis helpers.
 
 use compiler.core_ir.{LocalId, FuncId, CorePattern}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm}
 use compiler.anf_analysis.{set_has, collect_pattern_bindings}
 use compiler.opt.liveness.{live_after, live_in_op_with_live_out}
 use compiler.opt.semantics.{OptimizerSemantics, call_info}
@@ -391,6 +391,117 @@ fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
       target.id == base.id and v.id == result.id
     },
     _ => false,
+  }
+}
+
+// ── Interprocedural consume analysis (Gap 2, interproc-uniqueness.md) ────────
+//
+// For each function in the module, determine which param indices are
+// structurally consumed (consume-reassigned) at ALL non-self-recursive call
+// sites: `let r = f(ctx, ...); assign(ctx = r)`.
+//
+// Returns: func_id.id → set of consumed param LocalId.id values.
+// Only params consumed at every external call site are included.
+
+type ConsumeSiteScan = .{
+  non_consuming: Dict<Int, Dict<Int, Bool>>,
+  has_external_call: Dict<Int, Bool>,
+}
+
+pub fn collect_consumed_params(module: AnfModule) Dict<Int, Dict<Int, Bool>> {
+  non_consuming: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  has_external_call: Dict<Int, Bool> = Dict.new()
+
+  for func in module.functions {
+    r := scan_consume_sites_expr(func.body, func.func_id, non_consuming, has_external_call)
+    non_consuming = r.non_consuming
+    has_external_call = r.has_external_call
+  }
+
+  result: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  for func in module.functions {
+    if !set_has(has_external_call, func.func_id.id) { continue }
+    nc: Dict<Int, Bool> = case non_consuming[func.func_id.id] {
+      .Some(nc) => nc,
+      .None => Dict.new(),
+    }
+    consumed: Dict<Int, Bool> = Dict.new()
+    idx := 0
+    for p in func.params {
+      if !set_has(nc, idx) {
+        consumed[p.local.id] = true
+      }
+      idx = idx + 1
+    }
+    if consumed.len() > 0 {
+      result[func.func_id.id] = consumed
+    }
+  }
+  result
+}
+
+fn scan_consume_sites_expr(
+  expr: AnfExpr,
+  caller_id: FuncId,
+  non_consuming: Dict<Int, Dict<Int, Bool>>,
+  has_external_call: Dict<Int, Bool>,
+) ConsumeSiteScan {
+  case expr {
+    .Let(bind_local, op, body) => {
+      case op {
+        .ACall(.AGlobalFunc(callee_id), args) => {
+          if callee_id.id != caller_id.id {
+            has_external_call[callee_id.id] = true
+            idx := 0
+            for arg in args {
+              consuming := case arg {
+                .ALocal(x) => is_consume_reassign(body, x, bind_local),
+                _ => false,
+              }
+              if !consuming {
+                nc: Dict<Int, Bool> = case non_consuming[callee_id.id] {
+                  .Some(nc) => nc,
+                  .None => Dict.new(),
+                }
+                nc[idx] = true
+                non_consuming[callee_id.id] = nc
+              }
+              idx = idx + 1
+            }
+          }
+        },
+        _ => {},
+      }
+      r := scan_consume_sites_op(op, caller_id, non_consuming, has_external_call)
+      non_consuming = r.non_consuming
+      has_external_call = r.has_external_call
+      scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call)
+    },
+    _ => ConsumeSiteScan.{ non_consuming, has_external_call },
+  }
+}
+
+fn scan_consume_sites_op(
+  op: AnfOp,
+  caller_id: FuncId,
+  non_consuming: Dict<Int, Dict<Int, Bool>>,
+  has_external_call: Dict<Int, Bool>,
+) ConsumeSiteScan {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      r1 := scan_consume_sites_expr(then_e, caller_id, non_consuming, has_external_call)
+      scan_consume_sites_expr(else_e, caller_id, r1.non_consuming, r1.has_external_call)
+    },
+    .AMatch(_, arms) => {
+      r := ConsumeSiteScan.{ non_consuming, has_external_call }
+      for arm in arms {
+        r = scan_consume_sites_expr(arm.body, caller_id, r.non_consuming, r.has_external_call)
+      }
+      r
+    },
+    .ALoop(body) => scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call),
+    .ADefer(body) => scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call),
+    _ => ConsumeSiteScan.{ non_consuming, has_external_call },
   }
 }
 

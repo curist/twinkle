@@ -135,3 +135,4 @@ Related historical context outside this folder:
 | [boot-codegen-followup.md](boot-codegen-followup.md) | Boot codegen follow-up — ABI metadata consolidation, match-emitter unification, structural M11 validation, typed-ref boundary fix |
 | [boot-multi-module-cleanup.md](boot-multi-module-cleanup.md) | Follow-up cleanup after landing boot multi-module compilation steps 1–3; selective-import parity, canonical path caching, helper dedup, and snapshot/diagnostic polish |
 | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) | Boot-side signature source of truth via `prelude/signatures/*.tw` plus `builtins.tw` canonical mapping |
+| [interproc-uniqueness.md](interproc-uniqueness.md) | Interprocedural consume-at-call-site analysis — Gap 1 (ARecordGet dying struct propagation) and Gap 2 (consumed-param shell reuse) both landed in boot compiler; ~11% compile_modules improvement |

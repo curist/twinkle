@@ -254,7 +254,7 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   }
 }
 
-fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: RwState) UpdateRewrite {
+fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: RwState, consumed_params: Dict<Int, Bool>) UpdateRewrite {
   new_op := op
   empty_live: Dict<Int, Bool> = Dict.new()
   live_after_body := case st.live_after_by_binding[bind_local.id] {
@@ -265,8 +265,14 @@ fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: Rw
     .Some(site) => {
       case site.kind {
         .RecordUpdate => {
-          if local_has_shell_ownership(st, site.base_local)
-            and base_reusable_after_binding_with_live(body, site.base_local, bind_local, live_after_body) {
+          // Allow in-place when base has shell ownership OR is an
+          // interprocedurally-consumed param (Gap 2, interproc-uniqueness.md).
+          // consumed_params is a separate gate: we do NOT add these to the
+          // ownership set to prevent Gap 1 propagation to collection fields.
+          can_reuse := (local_has_shell_ownership(st, site.base_local)
+              or set_has(consumed_params, site.base_local.id))
+            and base_reusable_after_binding_with_live(body, site.base_local, bind_local, live_after_body)
+          if can_reuse {
             case new_op {
               .ARecordUpdate(base, fld, value, _, type_id) => {
                 new_op = AnfOp.ARecordUpdate(base, fld, value, true, type_id)
@@ -299,7 +305,7 @@ fn rewrite_reusable_update(op: AnfOp, body: AnfExpr, bind_local: LocalId, st: Rw
   UpdateRewrite.{ op: new_op, st: st }
 }
 
-fn rewrite_expr(expr: AnfExpr, st: RwState) ExprRewrite {
+fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) ExprRewrite {
   case expr {
     .Let(local, op, body) => {
       // Phase 3: Loop region rewrite
@@ -317,7 +323,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) ExprRewrite {
                 next_local: rewritten.next_local,
                 monos: merge_mono_maps(st.monos, rewritten.mono_updates),
               }
-              return rewrite_expr(rewritten.expr, st)
+              return rewrite_expr(rewritten.expr, st, consumed_params)
             },
             .None => {},
           }
@@ -376,28 +382,28 @@ fn rewrite_expr(expr: AnfExpr, st: RwState) ExprRewrite {
         _ => {},
       }
 
-      update := rewrite_reusable_update(op, body, local, st)
-      op_r := rewrite_op(update.op, update.st)
-      body_r := rewrite_expr(body, op_r.st)
+      update := rewrite_reusable_update(op, body, local, st, consumed_params)
+      op_r := rewrite_op(update.op, update.st, consumed_params)
+      body_r := rewrite_expr(body, op_r.st, consumed_params)
       ExprRewrite.{ expr: AnfExpr.Let(local, op_r.op, body_r.expr), st: body_r.st }
     },
     _ => ExprRewrite.{ expr: expr, st: st },
   }
 }
 
-fn rewrite_op(op: AnfOp, st: RwState) OpRewrite {
+fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrite {
   case op {
     .AIf(cond, then_e, else_e) => {
       // Conservative: separate ownership sets for each branch, don't propagate out
-      then_r := rewrite_expr(then_e, st)
-      else_r := rewrite_expr(else_e, st)
+      then_r := rewrite_expr(then_e, st, consumed_params)
+      else_r := rewrite_expr(else_e, st, consumed_params)
       merged := st.with_metadata_from(then_r.st).with_metadata_from(else_r.st)
       .{ op: .AIf(cond, then_r.expr, else_r.expr), st: merged }
     },
     .AMatch(scrutinee, arms) => {
       acc := st
       new_arms := collect arm in arms {
-        arm_r := rewrite_expr(arm.body, st)
+        arm_r := rewrite_expr(arm.body, st, consumed_params)
         acc = acc.with_metadata_from(arm_r.st)
         AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr }
       }
@@ -414,11 +420,11 @@ fn rewrite_op(op: AnfOp, st: RwState) OpRewrite {
         next_local: st.next_local,
         monos: st.monos,
       }
-      body_r := rewrite_expr(body, empty_st)
+      body_r := rewrite_expr(body, empty_st, consumed_params)
       OpRewrite.{ op: .ALoop(body_r.expr), st: st.with_metadata_from(body_r.st) }
     },
     .ADefer(body) => {
-      body_r := rewrite_expr(body, st)
+      body_r := rewrite_expr(body, st, consumed_params)
       .{ op: .ADefer(body_r.expr), st: st.with_metadata_from(body_r.st) }
     },
     _ => .{ op, st },
@@ -487,9 +493,16 @@ fn has_rewritable_cow_op_in_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, semant
 }
 
 pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
+  empty_consumed: Dict<Int, Bool> = Dict.new()
+  uniqueness_rewrite_with_semantics_and_consumed(func, config, empty_consumed)
+}
+
+pub fn uniqueness_rewrite_with_semantics_and_consumed(func: AnfFunctionDef, config: OptimizerSemantics, consumed_params: Dict<Int, Bool>) AnfFunctionDef {
   if !has_cow_op_in_expr(func.body, config) { return func }
   tl := collect_tainted_and_live(func, config)
-  if !has_rewritable_cow_op_in_expr(func.body, tl.tainted, config) { return func }
+  // When consumed_params is non-empty we may rewrite tainted-but-consumed param
+  // bases, so skip the "no untainted rewritable base" early exit in that case.
+  if consumed_params.len() == 0 and !has_rewritable_cow_op_in_expr(func.body, tl.tainted, config) { return func }
   st: RwState = RwState.{
     tainted: tl.tainted,
     ownership: Dict.new(),
@@ -499,7 +512,7 @@ pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: Optimizer
     next_local: next_local_id(func),
     monos: func.op_result_mono,
   }
-  result := rewrite_expr(func.body, st)
+  result := rewrite_expr(func.body, st, consumed_params)
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,

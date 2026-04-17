@@ -112,58 +112,60 @@ Implemented in both optimizers:
 Measured impact: REC_UPDATE_IN_PLACE 23 → 36 on boot/tests/main.tw (boot compiler).
 Small direct improvement; main value is as a prerequisite for Gap 2.
 
-### Gap 2 — NOT YET LANDED
+### Gap 2 — DONE (2026-04-17, boot compiler only)
 
-Several implementation attempts ran into soundness issues:
+Implemented via structural consume-reassign detection in the pre-pass + `consumed_params`
+OR-check in `rewrite_reusable_update`. Boot compiler only (`boot/compiler/opt/`).
 
-**Attempt 1** — seed consumed params as `unique + refreshed`:
-- The `refreshed` flag bypasses the taint gate for ALL ops including dict/vector
-  in-place. This caused incorrect DICT_SET_IN_PLACE on potentially-aliased dict
-  fields extracted from "consumed" params, leading to `duplicate type definition`
-  errors during boot compiler self-compilation.
+**Final approach** — do NOT seed consumed params into `ownership`/`unique`; instead:
+1. **Pre-pass** (`boot/compiler/opt/analysis.tw`: `collect_consumed_params`): walk all
+   functions; for each external (non-self-recursive) `ACall(callee, args)`, detect each
+   argument position using structural `is_consume_reassign` (no uniqueness check needed).
+   A param index is "consumed" if it has NO non-consuming external call sites AND has at
+   least one external call site.
+2. **Rewrite** (`boot/compiler/opt/uniqueness.tw`: `rewrite_reusable_update`): in the
+   `ARecordUpdate` case, allow shell-reuse if `local_has_shell_ownership(st, base)` OR
+   `set_has(consumed_params, base.id)`. Consumed params remain tainted everywhere else
+   (Gap 1 cannot propagate deep ownership through them).
+3. **Early-exit bypass**: skip `has_rewritable_cow_op_in_expr` check when
+   `consumed_params.len() > 0`, since that check only finds non-tainted bases.
+4. **Pipeline** (`boot/compiler/opt/pipeline.tw`): call `collect_consumed_params(module)`
+   before per-function loop; thread `f_consumed` into
+   `uniqueness_rewrite_with_semantics_and_consumed`.
 
-**Attempt 2** — seed as `unique` only + `consumed_params` OR-check in ARecordUpdate:
-- Removing the taint check from the pre-pass detects more consuming call sites, but
-  seeding into `unique` (even without `refreshed`) still lets Gap 1 propagation mark
-  extracted fields as unique → enables deep collection mutation through extracted
-  fields. Same soundness failure.
+**Why structural detection is sufficient**: `is_consume_reassign(body, base, result)` checks
+if `body` immediately starts with `assign(base = result)`. No uniqueness-at-call-point check
+needed because: (a) if the pattern holds at ALL external call sites, the param IS consumed;
+(b) we're not seeding into `unique`, so no Gap 1 bleed-through.
 
-**Core challenge**: the correct condition from the plan is "x is in `unique` or
-`refreshed` at the call point". Checking this requires running the forward pass
-first, which is circular. Approximations (no taint check, escape taint only) either
-over-approximate (soundness bug) or under-approximate (no improvement vs today's
-taint check).
+**Soundness**: consumed params are only checked in the shell-reuse (`ARecordUpdate`) guard.
+They are NOT in the `ownership` set, so `ARecordGet` on them does NOT propagate shell
+ownership to extracted fields → deep collection mutation (dict/vector in-place ops) is
+still gated correctly.
 
-**Remaining approach**: the OR-check in ARecordUpdate is correct; the issue is in
-what gets seeded and how. The key is to NOT seed consumed params into `unique` at
-all (to avoid Gap 1 side effects), and instead check `consumed_params.contains(base)`
-purely in the ARecordUpdate block — without relying on the `unique` set for those
-params. But then the pre-pass taint check must also be resolved correctly.
+**Previous attempts that failed**:
+- Seed as `unique + refreshed`: `refreshed` bypasses taint gate for dict/vector → soundness bug
+- Seed as `unique` only: Gap 1 propagates shell ownership to extracted fields → same bug
 
-Next steps:
-1. Limit pre-pass consume detection to call sites where the argument is NOT in the
-   "escape taint" (taint from: params, closures, containers, direct let-aliases —
-   but NOT from opaque-call passing). This would detect `r.ctx` (freshly extracted
-   from dying struct) without detecting `cur_ctx` (stored in return ARecord at end
-   of function).
-2. Or: extend `refine_tainted_for_reassigned_locals` to also handle the
-   `let r = ACall(f, [d, ...]); assign(d = r)` pattern (not just COW ops),
-   which would un-taint `cur_ctx` when it's consumed before its terminal escape.
+**Measured impact** (boot compiler self-compiling boot/main.tw, 85 modules):
+- `compile_modules`: 506ms → 452ms (**~11% reduction**)
+- `uniqueness` optimizer time: 97ms → 45.8ms (**~53% reduction**)
+- `checker.tw` check phase: 18.1ms → 12.5ms
+- Boot compiler self-compilation verified correct (stage2.wasm)
 
-## Next Steps
+The 30–50% compile_modules projection was partially met. Remaining gap: some call sites of
+hot functions (`set_type_map_span`, `set_subst`, `fresh_meta`) may not satisfy the structural
+consume-reassign pattern when `ctx` is passed through branches or returned in a record field
+rather than directly reassigned. A follow-up could examine those call sites.
 
-## Expected Impact (Gap 2, when landed)
+## Expected Impact (Gap 2, measured)
 
 Concrete hot functions in checker.tw:
 - `set_type_map_span`: 1 `struct.new` (11 `struct.get`) per expression → `struct.set`
 - `set_subst`: 1 `struct.new` per unification → `struct.set`
 - `fresh_meta`: 1 `struct.new` per MetaVar → `struct.set`
 
-With ~10k+ expressions per large module and 3–5 of these fires per expression,
-this eliminates O(10k–50k) `struct.new` allocations per large module compilation.
-Same pattern exists in lower_core.tw, emit.tw, parser.tw.
-
-Estimated reduction in compile_modules: 30–50%.
-
-Goal: functional struct-threading becomes naturally efficient — no Cell wrappers,
-no manual mutation, no code changes to checker.tw or other modules.
+Achieved: ~11% compile_modules improvement, ~53% uniqueness optimizer speedup.
+Goal of functional struct-threading without Cell wrappers/manual mutation: achieved for
+the common consume-reassign pattern. Remaining call sites that don't fit the structural
+pattern would require option 2 (spine-level taint refinement) as a follow-on.

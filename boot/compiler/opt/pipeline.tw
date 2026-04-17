@@ -10,7 +10,8 @@ use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimizer_semantics, cow_config_from_semantics, optimizer_semantics_from_cow_config}
-use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics}
+use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed}
+use compiler.opt.analysis.{collect_consumed_params}
 use compiler.opt.defer_elim.{eliminate_defers}
 use @std.date
 use @std.proc
@@ -132,6 +133,9 @@ pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) An
 fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) AnfModule {
   timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
   pinned := compute_pinned(module)
+  // Interprocedural consume analysis: compute before per-function rewrites.
+  // Determines which params are consumed at all non-self-recursive call sites.
+  all_consumed_params := collect_consumed_params(module)
 
   t_dead_let: Float = 0.0
   t_copy_prop: Float = 0.0
@@ -191,8 +195,12 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
     }
 
     ta2 := date.now()
+    f_consumed: Dict<Int, Bool> = case all_consumed_params[f.func_id.id] {
+      .Some(params) => params,
+      .None => Dict.new(),
+    }
     optimized = case semantics {
-      .Some(config) => uniqueness_rewrite_with_semantics(optimized, config),
+      .Some(config) => uniqueness_rewrite_with_semantics_and_consumed(optimized, config, f_consumed),
       .None => case cow_config {
         .Some(config) => uniqueness_rewrite(optimized, config),
         .None => optimized,
