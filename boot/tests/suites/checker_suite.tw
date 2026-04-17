@@ -1499,6 +1499,11 @@ pub fn suite() runner.Suite {
       try assert.str_contains(msgs[0], "type mismatch")
       .Ok({})
     })
+    .test("G8 inline closure does not leak return context", fn() {
+      src := "pub type E = { Err(String), Ok(Int) }\nfn ignore(f: fn(Int) Bool, x: Int) Int? { .Some(1) }\nfn f() E {\n  c := case ignore(fn(n: Int) Bool { n == 1 }, 1) {\n    .Some(v) => v,\n    .None => { return .Err(\"x\") },\n  }\n  .Ok(c)\n}"
+      r := try check_ok(src)
+      .Ok({})
+    })
     .test("G8 closure param annotation mismatch", fn() {
       src := "fn f() { g: fn(Int) Int = fn(x: String) Int { 1 } }"
       msgs := try check_errs(src)

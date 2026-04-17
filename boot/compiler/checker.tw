@@ -1331,6 +1331,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<Diagn
 fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
+  prev_ret := cur_ctx.current_ret
 
   // Resolve param types (annotated or fresh meta)
   param_tys: Vector<MonoType> = []
@@ -1362,11 +1363,13 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
       cur_ctx.current_ret = .Some(ann.ty)
       body_r := check_block(body, ann.ty, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
+      cur_ctx.current_ret = prev_ret
       .{ ty: .Function(param_tys, ann.ty), ctx: cur_ctx, diags: body_r.diags }
     },
     .None => {
       body_r := synth_block(body, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
+      cur_ctx.current_ret = prev_ret
       .{ ty: .Function(param_tys, body_r.ty), ctx: cur_ctx, diags: body_r.diags }
     },
   }
@@ -1379,6 +1382,7 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
     .Function(exp_params, exp_ret) => {
       cur_ctx := push_scope(ctx)
       cur_diags := diags
+      prev_ret := cur_ctx.current_ret
       cur_ctx.current_ret = .Some(exp_ret)
 
       param_tys: Vector<MonoType> = []
@@ -1413,7 +1417,9 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
 
       // Check body against expected return
       body_r := check_block(body, exp_ret, cur_ctx, cur_diags)
-      .{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
+      out_ctx := pop_scope(body_r.ctx)
+      out_ctx.current_ret = prev_ret
+      .{ ctx: out_ctx, diags: body_r.diags }
     },
     _ => {
       // Fallback: synth then unify

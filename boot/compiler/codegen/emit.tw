@@ -2322,6 +2322,7 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wra
   case wrapper_kind {
     .Some(.CellUpdate) => emit_builtin_cell_update_universal_trampoline(entry, sig, ctx),
     .Some(.IteratorUnfold) => emit_builtin_iterator_unfold_universal_trampoline(entry, sig, ctx),
+    .Some(.HostWriteBytes) => emit_builtin_host_write_bytes_universal_trampoline(entry, sig, ctx),
     _ => {
       tramp_sym := "$tramp_${entry.func_id.id}"
       body: Vector<Instr> = []
@@ -2413,6 +2414,31 @@ fn emit_builtin_iterator_unfold_universal_trampoline(entry: BuiltinEntry, sig: F
     .append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(step_mono, ctx.env, body)
     .append(.StructNew("rt_types__IterState"))
+
+  FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body: body }
+}
+
+fn emit_builtin_host_write_bytes_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+  tramp_sym := "$tramp_${entry.func_id.id}"
+  path_mono := sig.param_types[0]
+  bytes_mono := sig.param_types[1]
+  body: Vector<Instr> = []
+
+  body = body.append(.LocalGet(1))
+    .append(.RefCast(true, .Named("rt_types__Array")))
+    .append(.I32Const(0))
+    .append(.ArrayGet("rt_types__Array"))
+  body = emit_unbox_from_anyref(path_mono, ctx.env, body)
+
+  body = body.append(.LocalGet(1))
+    .append(.RefCast(true, .Named("rt_types__Array")))
+    .append(.I32Const(1))
+    .append(.ArrayGet("rt_types__Array"))
+  body = emit_unbox_from_anyref(bytes_mono, ctx.env, body)
+    .append(.Call("rt_arr__to_array"))
+
+  body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), body)
+  body = body.append(.I32Const(0)).append(.RefI31)
 
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body: body }
 }

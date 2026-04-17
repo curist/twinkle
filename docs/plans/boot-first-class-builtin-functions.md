@@ -1345,7 +1345,8 @@ user body or user-only symbol lookup.
 - ✅ `Iterator.unfold` now has explicit wrapper-backed closure trampoline support
 - 🟡 builtin support is still intentionally narrow
 - ✅ wrapper dispatch now uses `target.wrapper_kind` field — no more `builtin_wrapper_policy(name)` name-check re-derivation
-- ⬜ additional wrapper trampolines are still needed for other harder builtin targets such as host shimmed helpers
+- ✅ host-shimmed builtin families now have explicit wrapper-mode support for the supported host closure paths (`host_write_bytes`, `host_args`, `host_list_dir`, `host_env`, `host_read_file`)
+- ⬜ additional wrapper trampolines are still needed for the remaining harder builtin targets and bespoke families
 
 ### 7. Emitter-side opportunistic wrapping cleanup
 
@@ -1403,7 +1404,7 @@ Support builtins whose direct-call lowering is not enough for closure lowering.
 - ✅ wrapper trampolines implemented for `byte_to_string`, `cell_update`, and `iterator_unfold`
 - ✅ wrapper contracts exist as explicit `WrapperKind` enum in `CallableTargetInfo`
 - ✅ `WrapperKind`, `typed_closure_support`, and `DirectCallPolicy` are now fully separate fields
-- ⬜ host shimmed helpers and other bespoke builtin families still need explicit wrapper-mode support
+- 🟡 host shimmed helpers and other bespoke builtin families still need explicit wrapper-mode expansion beyond the currently supported host closure paths
 
 ### 10. Tests and regression coverage
 

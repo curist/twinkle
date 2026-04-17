@@ -435,4 +435,22 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
     verify_err_with_env(prepared, env, builtins, "must not capture locals")
   })
+
+  .test("host_write_bytes builtin AMakeClosure is accepted", fn() {
+    env := base_env.add_internal_host_builtins(base_env.builtin_env())
+    builtins := empty_builtins()
+    host_write_bytes := builtins.id("host_write_bytes")
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(host_write_bytes, []), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(
+      1,
+      "f",
+      [],
+      .Function([.String, .Vector(.Byte)], .Void),
+      body,
+      mk_mono_map([10], [MonoType.Function([.String, .Vector(.Byte)], .Void)]),
+    )
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_ok_with_env(prepared, env, builtins)
+  })
+
 }

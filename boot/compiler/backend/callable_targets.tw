@@ -10,6 +10,7 @@ pub type WrapperKind = {
   ByteToString,
   CellUpdate,
   IteratorUnfold,
+  HostWriteBytes,
 }
 
 // How a callable's direct calls are lowered
@@ -78,7 +79,19 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
   }
   sig := case resolver.lookup_registered_function(env, entry.name) {
     .Some(s) => s,
-    .None => { return .None },
+    .None => case entry.canonical_name {
+      .Some(canonical) => case resolver.lookup_registered_function(env, canonical) {
+        .Some(s) => s,
+        .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
+          .Some(s) => s,
+          .None => { return .None },
+        },
+      },
+      .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
+        .Some(s) => s,
+        .None => { return .None },
+      },
+    },
   }
   ret := case sig.ret {
     .Some(r) => r,
@@ -110,6 +123,7 @@ pub fn builtin_wrapper_kind(name: String) WrapperKind? {
   if name == "byte_to_string" { return .Some(.ByteToString) }
   if name == "cell_update" { return .Some(.CellUpdate) }
   if name == "iterator_unfold" { return .Some(.IteratorUnfold) }
+  if name == "host_write_bytes" { return .Some(.HostWriteBytes) }
   .None
 }
 
