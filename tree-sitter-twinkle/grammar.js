@@ -445,7 +445,7 @@ module.exports = grammar({
     ),
 
     for_in_condition: $ => seq(
-      field('binding', $.identifier),
+      field('binding', choice($.identifier, $.wildcard_pattern)),
       optional(seq(',', field('index', $.identifier))),
       'in',
       field('iterable', $._expression),
@@ -455,7 +455,7 @@ module.exports = grammar({
 
     collect_expression: $ => seq(
       'collect',
-      field('binding', $.identifier),
+      field('binding', choice($.identifier, $.wildcard_pattern)),
       'in',
       field('iterable', $._expression),
       field('body', $.block),

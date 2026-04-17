@@ -548,6 +548,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "wildcard_pattern",
+            "named": true
           }
         ]
       },
@@ -816,6 +820,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "wildcard_pattern",
             "named": true
           }
         ]
