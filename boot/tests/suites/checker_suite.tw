@@ -480,6 +480,17 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    .test("try inside annotated closure passed as an argument", fn() {
+      src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Result<Void, String>) Result<Void, String> { f() }\nrun(fn() Result<Void, String> { x := try inner()\n .Ok(x) })"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("try inside non-Result closure errors", fn() {
+      src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Void) Void { f() }\nrun(fn() { x := try inner()\n x })"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "try on Result requires function to return Result")
+      .Ok({})
+    })
     .test("try on non-option", fn() {
       src := "fn f(x: Int) Int { try x }"
       msgs := try check_errs(src)

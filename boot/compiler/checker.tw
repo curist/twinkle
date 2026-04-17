@@ -1359,6 +1359,7 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
       ann := resolve_annotation(rte, cur_ctx, cur_diags)
       cur_ctx = ann.ctx
       cur_diags = ann.diags
+      cur_ctx.current_ret = .Some(ann.ty)
       body_r := check_block(body, ann.ty, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
       .{ ty: .Function(param_tys, ann.ty), ctx: cur_ctx, diags: body_r.diags }
@@ -1378,6 +1379,7 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
     .Function(exp_params, exp_ret) => {
       cur_ctx := push_scope(ctx)
       cur_diags := diags
+      cur_ctx.current_ret = .Some(exp_ret)
 
       param_tys: Vector<MonoType> = []
       for i in range(params.len()) {
