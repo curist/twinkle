@@ -1226,9 +1226,9 @@ One backend-owned way to answer:
 - 🟡 verifier uses shared callable metadata
 - 🟡 planner uses shared callable metadata
 - 🟡 boundary insertion uses shared callable metadata
-- 🟡 emitter uses shared callable metadata in more paths now, including explicit wrapper-policy dispatch for builtin closure trampolines
-- 🟡 closure materialization policy and wrapper policy are now explicit backend data
-- ⬜ wrapper lowering kind, typed-closure support policy, and direct-call policy are still not modeled as fully separate backend facts yet
+- ✅ emitter uses shared callable metadata: wrapper_kind drives trampoline dispatch, no more name-based re-derivation
+- ✅ closure materialization policy and wrapper policy are explicit backend data
+- ✅ wrapper lowering kind (`WrapperKind`), typed-closure support policy (`typed_closure_support`), and direct-call policy (`DirectCallPolicy`) are now fully separate fields in `CallableTargetInfo`
 
 ### 2. Correctness representation: hybrid base-closure interoperability with typed specialization
 
@@ -1281,7 +1281,7 @@ emit-time guessing.
 - ✅ rewrites function-valued record fields
 - ✅ rewrites function-valued record updates
 - ✅ rewrites function-valued variant payloads
-- 🟡 semantic mono lookup for record and variant boundaries exists, but still uses conservative fallback in some cases
+- 🟡 semantic mono lookup for record and variant boundaries exists, with `Option` / `Result` payload monos now preserved instead of being forced through a named-type fallback, but conservative fallback still remains in some cases
 - 🟡 emitter-side adaptation has been reduced so the rewrite is more primary than before
 - ⬜ conservative storage fallback should eventually shrink once semantic lookup is tighter
 
@@ -1303,8 +1303,8 @@ explicitly.
 - ✅ unsupported builtin closure targets are rejected explicitly
 - ✅ builtin closure captures are rejected explicitly
 - ✅ callable metadata is used for builtin `AGlobalFunc` semantic mono inference
-- 🟡 verifier is moving onto the shared callable-target model, but not every callable decision has been centralized yet
-- ⬜ remaining prepared-user-function proxy checks should be removed where they still survive
+- ✅ verifier uses `target.closure_materializable` directly (no more `is_closure_materializable_policy` indirection)
+- 🟡 not every callable decision has been centralized yet — remaining prepared-user-function proxy checks still survive
 
 ### 5. Planner support for builtin higher-order/global functions
 
@@ -1350,7 +1350,7 @@ user body or user-only symbol lookup.
 - ✅ `Cell.update` now has explicit wrapper-backed closure trampoline support
 - ✅ `Iterator.unfold` now has explicit wrapper-backed closure trampoline support
 - 🟡 builtin support is still intentionally narrow
-- 🟡 wrapper-needed builtin families are now dispatched through explicit wrapper policy data rather than only builtin-name checks in emitter hot paths
+- ✅ wrapper dispatch now uses `target.wrapper_kind` field — no more `builtin_wrapper_policy(name)` name-check re-derivation
 - ⬜ additional wrapper trampolines are still needed for other harder builtin targets such as host shimmed helpers
 
 ### 7. Emitter-side opportunistic wrapping cleanup
@@ -1405,9 +1405,9 @@ Support builtins whose direct-call lowering is not enough for closure lowering.
 **Status**
 
 - ✅ some builtins are already classified as wrapper-needed or not yet generic-closure-safe
-- 🟡 wrapper trampolines are now implemented for `byte_to_string`, `cell_update`, and `iterator_unfold`
-- 🟡 wrapper contracts now exist as explicit backend closure-policy data
-- ⬜ wrapper lowering kind, typed-closure support policy, and direct-call policy still need to be split more cleanly to match the intended stage0-style organization
+- ✅ wrapper trampolines implemented for `byte_to_string`, `cell_update`, and `iterator_unfold`
+- ✅ wrapper contracts exist as explicit `WrapperKind` enum in `CallableTargetInfo`
+- ✅ `WrapperKind`, `typed_closure_support`, and `DirectCallPolicy` are now fully separate fields
 - ⬜ host shimmed helpers and other bespoke builtin families still need explicit wrapper-mode support
 
 ### 10. Tests and regression coverage
@@ -1423,10 +1423,10 @@ Support builtins whose direct-call lowering is not enough for closure lowering.
 - ✅ boundary insertion tests cover call arguments, return, init, assign, array literals, record fields, record updates, and variant payloads
 - ✅ verifier tests cover supported builtin `AMakeClosure`, wrapper-backed builtin `AMakeClosure`, unsupported builtin `AMakeClosure`, and builtin captures
 - ✅ planner tests cover builtin higher-order function signature registration
-- 🟡 plan-level regressions are improving, and codegen coverage now includes direct first-class builtin closure emission including `Byte.to_string`, `Cell.update`, and `Iterator.unfold`
-- ⬜ add stored-builtin-function then indirect-call regression coverage
-- ⬜ add returned-builtin-function then indirect-call regression coverage
-- ⬜ add stronger user-closure regression coverage under widened storage and universal indirect calls
+- ✅ codegen coverage includes direct first-class builtin closure emission for `Byte.to_string`, `Cell.update`, and `Iterator.unfold`
+- 🟡 stored-builtin-function then indirect-call regression coverage (adding now)
+- 🟡 returned-builtin-function then indirect-call regression coverage (adding now)
+- ⬜ stronger user-closure regression coverage under widened storage and universal indirect calls
 
 ### Suggested implementation order
 

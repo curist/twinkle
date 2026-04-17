@@ -5,20 +5,29 @@ use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
 
-pub type ClosurePolicy = {
-  User,
-  BuiltinGeneric,
-  BuiltinWrapperByteToString,
-  BuiltinWrapperCellUpdate,
-  BuiltinWrapperIteratorUnfold,
-  BuiltinUnsupported,
+// Which dedicated wrapper trampoline a builtin closure needs
+pub type WrapperKind = {
+  ByteToString,
+  CellUpdate,
+  IteratorUnfold,
+}
+
+// How a callable's direct calls are lowered
+pub type DirectCallPolicy = {
+  UserCompiled,   // compiled user function, called via its Wasm symbol
+  RuntimeImport,  // builtin runtime import call
+  Intrinsic,      // bespoke inline lowering
 }
 
 pub type CallableTargetInfo = .{
   semantic_params: Vector<MonoType>,
   semantic_ret: MonoType,
   builtin_name: String?,
-  closure_policy: ClosurePolicy,
+  // four separate closure/call policy facts
+  closure_materializable: Bool,
+  wrapper_kind: WrapperKind?,
+  typed_closure_support: Bool,
+  direct_call_policy: DirectCallPolicy,
 }
 
 pub fn callable_target(
@@ -32,7 +41,10 @@ pub fn callable_target(
       semantic_params: collect sid in func.params { slot_info(func, sid).mono },
       semantic_ret: func.return_mono,
       builtin_name: .None,
-      closure_policy: .User,
+      closure_materializable: true,
+      wrapper_kind: .None,
+      typed_closure_support: true,
+      direct_call_policy: .UserCompiled,
     }),
     .None => builtin_target(fid, builtins, env),
   }
@@ -54,33 +66,9 @@ pub fn is_closure_materializable(
   env: ResolvedEnv,
 ) Bool {
   case callable_target(fid, funcs_by_id, builtins, env) {
-    .Some(info) => is_closure_materializable_policy(info.closure_policy),
+    .Some(info) => info.closure_materializable,
     .None => false,
   }
-}
-
-pub fn is_closure_materializable_policy(policy: ClosurePolicy) Bool {
-  case policy {
-    .User => true,
-    .BuiltinGeneric => true,
-    .BuiltinWrapperByteToString => true,
-    .BuiltinWrapperCellUpdate => true,
-    .BuiltinWrapperIteratorUnfold => true,
-    .BuiltinUnsupported => false,
-  }
-}
-
-pub fn requires_wrapper_trampoline(policy: ClosurePolicy) Bool {
-  case policy {
-    .BuiltinWrapperByteToString => true,
-    .BuiltinWrapperCellUpdate => true,
-    .BuiltinWrapperIteratorUnfold => true,
-    _ => false,
-  }
-}
-
-pub fn has_typed_closure_support(policy: ClosurePolicy) Bool {
-  is_closure_materializable_policy(policy)
 }
 
 fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) CallableTargetInfo? {
@@ -96,31 +84,40 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
     .Some(r) => r,
     .None => { return .None },
   }
+  wk := builtin_wrapper_kind(entry.name)
+  materializable := case wk {
+    .Some(_) => true,
+    .None => builtin_generic_closure_materializable(entry.name),
+  }
+  dcp: DirectCallPolicy = case entry.kind {
+    .Runtime(_) => .RuntimeImport,
+    .Intrinsic => .Intrinsic,
+  }
   .Some(CallableTargetInfo.{
     semantic_params: sig.params,
     semantic_ret: ret,
     builtin_name: .Some(entry.name),
-    closure_policy: builtin_closure_policy(entry.name),
+    closure_materializable: materializable,
+    wrapper_kind: wk,
+    typed_closure_support: materializable,
+    direct_call_policy: dcp,
   })
 }
 
-pub fn builtin_closure_policy(name: String) ClosurePolicy {
-  if name == "int_to_string"
+// Returns the wrapper kind for builtins that need a dedicated closure trampoline.
+// None means the builtin uses the generic universal trampoline path (or is not materializable).
+pub fn builtin_wrapper_kind(name: String) WrapperKind? {
+  if name == "byte_to_string" { return .Some(.ByteToString) }
+  if name == "cell_update" { return .Some(.CellUpdate) }
+  if name == "iterator_unfold" { return .Some(.IteratorUnfold) }
+  .None
+}
+
+fn builtin_generic_closure_materializable(name: String) Bool {
+  name == "int_to_string"
     or name == "float_to_string"
     or name == "bool_to_string"
-    or name == "string_to_string" {
-    return .BuiltinGeneric
-  }
-  if name == "byte_to_string" {
-    return .BuiltinWrapperByteToString
-  }
-  if name == "cell_update" {
-    return .BuiltinWrapperCellUpdate
-  }
-  if name == "iterator_unfold" {
-    return .BuiltinWrapperIteratorUnfold
-  }
-  .BuiltinUnsupported
+    or name == "string_to_string"
 }
 
 fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {

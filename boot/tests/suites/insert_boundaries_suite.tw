@@ -747,4 +747,14 @@ pub fn suite() runner.Suite {
       try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
+
+    .test("option variant payload keeps optional mono instead of falling back to named tid", fn() {
+      body: AnfExpr = .Let(lid(10), .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.ALocal(lid(0))]), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Optional(MonoType.String)])
+      func := mk_func_def(1, "wrap_some", [mk_param(0, .String)], MonoType.Optional(MonoType.String), body, mono)
+      result := insert_boundaries(mk_module([func]), empty_registry(), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 0)
+      try assert.int_eq(count_wraps_expr(result.functions[0].body), 0)
+      .Ok({})
+    })
 }

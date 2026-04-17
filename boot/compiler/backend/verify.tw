@@ -381,7 +381,7 @@ fn verify_op(
       }
       case target.builtin_name {
         .Some(name) => {
-          if !callable_targets.is_closure_materializable_policy(target.closure_policy) {
+          if !target.closure_materializable {
             return fail_slot(pf, result_info, "AMakeClosure target ${name} (F${fid.id}) is not closure-materializable yet")
           }
           if free_vars.len() != 0 {

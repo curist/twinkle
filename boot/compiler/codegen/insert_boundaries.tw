@@ -291,12 +291,7 @@ fn rewrite_record(result_local: LocalId, tid: TypeId, fields: Vector<FieldAtom>,
   closure_lets: Vector<ClosureLet> = []
   for field in fields {
     expected := record_field_mono_for_tid(tid, result_mono, field.field.id, ctx.env)
-    mat := materialize_global_func_for_expected_mono(field.value, expected, cur_ctx)
-    mat = case mat {
-      .Some(_) => mat,
-      .None => materialize_global_func_atom(field.value, cur_ctx),
-    }
-    case mat {
+    case materialize_global_func_prefer_expected(field.value, expected, cur_ctx) {
       .Some(pair) => {
         cur_ctx = pair.ctx
         new_fields = new_fields.append(FieldAtom.{ field: field.field, value: .ALocal(pair.temp) })
@@ -316,12 +311,7 @@ fn rewrite_record(result_local: LocalId, tid: TypeId, fields: Vector<FieldAtom>,
 fn rewrite_record_update(result_local: LocalId, base: Atom, fid: FieldId, value: Atom, is_mut: Bool, tid: TypeId, body: AnfExpr, ctx: BCtx) RewriteResult {
   base_mono := case atom_mono(base, ctx) { .Some(m) => m, .None => .Named(tid, []) }
   expected := record_field_mono_for_tid(tid, base_mono, fid.id, ctx.env)
-  mat := materialize_global_func_for_expected_mono(value, expected, ctx)
-  mat = case mat {
-    .Some(_) => mat,
-    .None => materialize_global_func_atom(value, ctx),
-  }
-  case mat {
+  case materialize_global_func_prefer_expected(value, expected, ctx) {
     .Some(pair) => {
       body_r := rewrite_expr(body, pair.ctx)
       RewriteResult.{ expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), .Let(result_local, .ARecordUpdate(base, fid, .ALocal(pair.temp), is_mut, tid), body_r.expr)), ctx: body_r.ctx }
@@ -340,12 +330,7 @@ fn rewrite_variant(result_local: LocalId, tid: TypeId, vid: VariantId, args: Vec
   closure_lets: Vector<ClosureLet> = []
   for arg,i in args {
     expected := variant_payload_mono_for_tid(tid, result_mono, vid.id, i, ctx.env)
-    mat := materialize_global_func_for_expected_mono(arg, expected, cur_ctx)
-    mat = case mat {
-      .Some(_) => mat,
-      .None => materialize_global_func_atom(arg, cur_ctx),
-    }
-    case mat {
+    case materialize_global_func_prefer_expected(arg, expected, cur_ctx) {
       .Some(pair) => {
         cur_ctx = pair.ctx
         new_args = new_args.append(.ALocal(pair.temp))
@@ -412,6 +397,8 @@ fn record_field_mono(record_mono: MonoType, field_idx: Int, env: ResolvedEnv) Mo
 fn variant_payload_mono_for_tid(tid: TypeId, sum_mono: MonoType, vid: Int, field_idx: Int, env: ResolvedEnv) MonoType {
   resolved := case sum_mono {
     .Named(_, _) => sum_mono,
+    .Optional(_) => sum_mono,
+    .Result(_, _) => sum_mono,
     _ => .Named(tid, []),
   }
   variant_payload_mono(resolved, vid, field_idx, env)
@@ -499,6 +486,13 @@ fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType
       }
     },
     _ => .None,
+  }
+}
+
+fn materialize_global_func_prefer_expected(atom: Atom, expected_mono: MonoType, ctx: BCtx) MaterializeResult? {
+  case materialize_global_func_for_expected_mono(atom, expected_mono, ctx) {
+    .Some(pair) => .Some(pair),
+    .None => materialize_global_func_atom(atom, ctx),
   }
 }
 

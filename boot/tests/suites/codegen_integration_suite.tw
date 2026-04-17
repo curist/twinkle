@@ -3,7 +3,7 @@ use tests.assert
 use tests.helpers.codegen_harness
 use compiler.codegen.linker.{link, LinkedModule}
 use compiler.codegen.wat.{emit_wat}
-use compiler.codegen.wasm_ir.{TypeDef, FuncDef, ExportDef, ValType, HeapType}
+use compiler.codegen.wasm_ir.{TypeDef, FuncDef, ExportDef, ValType, HeapType, Instr}
 use compiler.codegen.codegen.{runtime_modules, codegen}
 use compiler.codegen.runtime.types as rt_types
 
@@ -381,6 +381,43 @@ fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline
   .Ok({})
 }
 
+fn test_builtin_stored_in_local_then_called() Result<Void, String> {
+  // A builtin function value stored in a local and called through that local.
+  // Tests that insert_boundaries inserts AMakeClosure at the AInit boundary
+  // and that the indirect call emits correctly.
+  wat := try assert_codegen_src_compiles(
+    "f: fn(Int) String = Int.to_string\nprintln(f(42))\n",
+    "builtin stored in local then called",
+  )
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
+  .Ok({})
+}
+
+fn test_builtin_returned_from_function_then_called() Result<Void, String> {
+  // A builtin function value returned from a function and called through the result.
+  // Tests that insert_boundaries inserts AMakeClosure at the return boundary.
+  wat := try assert_codegen_src_compiles(
+    "fn get_converter() fn(Int) String { Int.to_string }\nf := get_converter()\nprintln(f(42))\n",
+    "builtin returned from function then called",
+  )
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "call $rt_str__from_i64")
+  .Ok({})
+}
+
+fn test_builtin_stored_in_record_field_then_called() Result<Void, String> {
+  // A builtin function value stored in a record field, then extracted and called.
+  // Tests closure boundaries at record construction sites.
+  wat := try assert_codegen_src_compiles(
+    "type Wrapper = .{ f: fn(Int) String }\nw := Wrapper.{ f: Int.to_string }\nprintln(w.f(42))\n",
+    "builtin stored in record field then called",
+  )
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $user__")
+  .Ok({})
+}
+
 // ── Match emission coverage ──────────────────────────────────────────
 // Ports focused match-emission cases from the former emit_pattern_suite,
 // now exercising the consolidated emit.tw path end-to-end.
@@ -642,6 +679,9 @@ pub fn suite() runner.Suite {
     .test("wrapper-backed builtin first-class function arg uses wrapper trampoline", test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline)
     .test("cell update builtin first-class function arg uses wrapper trampoline", test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline)
     .test("iterator unfold builtin first-class function arg uses wrapper trampoline", test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline)
+    .test("builtin function stored in local then called indirectly", test_builtin_stored_in_local_then_called)
+    .test("builtin function returned from function then called indirectly", test_builtin_returned_from_function_then_called)
+    .test("builtin function stored in record field then called indirectly", test_builtin_stored_in_record_field_then_called)
     // Match emission coverage (ports emit_pattern_suite cases)
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)

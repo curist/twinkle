@@ -2201,13 +2201,10 @@ fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: 
 
   case callable_targets.callable_target(fid, ctx.prepared_funcs, ctx.builtins, ctx.env) {
     .Some(info) => {
-      if callable_targets.requires_wrapper_trampoline(info.closure_policy) and !builtin_has_emittable_wrapper_closure(info) {
-        error("emit_make_closure: builtin ${fid.id} requires an explicit wrapper trampoline")
-      }
-      if !callable_targets.is_closure_materializable_policy(info.closure_policy) {
+      if !info.closure_materializable {
         error("emit_make_closure: builtin ${fid.id} is not closure-materializable")
       }
-      emit_materialized_closure(fid, env_buf, builtin_supports_typed_closure(info), ctx, buf)
+      emit_materialized_closure(fid, env_buf, info.typed_closure_support, ctx, buf)
     },
     .None => error("emit_make_closure: unknown callable target F${fid.id}"),
   }
@@ -2354,10 +2351,7 @@ fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       .Some(info) => info,
       .None => { continue },
     }
-    if !callable_targets.is_closure_materializable_policy(target.closure_policy) { continue }
-    if callable_targets.requires_wrapper_trampoline(target.closure_policy) and !builtin_has_emittable_wrapper_closure(target) {
-      continue
-    }
+    if !target.closure_materializable { continue }
     entry := case bi.entry(ctx.builtins, func_id) {
       .Some(e) => e,
       .None => { continue },
@@ -2366,37 +2360,23 @@ fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       .Some(s) => s,
       .None => { continue },
     }
-    out = out.append(emit_builtin_universal_trampoline(entry, sig, ctx))
-    if builtin_supports_typed_closure(target) {
-      out = out.append(emit_builtin_typed_trampoline(entry, sig, ctx))
+    out = out.append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
+    if target.typed_closure_support {
+      out = out.append(emit_builtin_typed_trampoline(entry, sig, target.wrapper_kind, ctx))
     }
   }
   out
 }
 
-fn builtin_has_emittable_wrapper_closure(info: callable_targets.CallableTargetInfo) Bool {
-  case info.closure_policy {
-    .BuiltinWrapperByteToString => true,
-    .BuiltinWrapperCellUpdate => true,
-    .BuiltinWrapperIteratorUnfold => true,
-    _ => false,
-  }
-}
-
-fn builtin_supports_typed_closure(info: callable_targets.CallableTargetInfo) Bool {
-  if !callable_targets.has_typed_closure_support(info.closure_policy) { return false }
-  if !callable_targets.requires_wrapper_trampoline(info.closure_policy) { return true }
-  builtin_has_emittable_wrapper_closure(info)
-}
 
 fn builtin_import_sym(info: RuntimeInfo) String {
   "${info.wasm_module}__${info.wasm_name}"
 }
 
-fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
-  case builtin_wrapper_policy(entry.name) {
-    .BuiltinWrapperCellUpdate => emit_builtin_cell_update_universal_trampoline(entry, sig, ctx),
-    .BuiltinWrapperIteratorUnfold => emit_builtin_iterator_unfold_universal_trampoline(entry, sig, ctx),
+fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wrapper_kind: callable_targets.WrapperKind?, ctx: EmitCtx) FuncDef {
+  case wrapper_kind {
+    .Some(.CellUpdate) => emit_builtin_cell_update_universal_trampoline(entry, sig, ctx),
+    .Some(.IteratorUnfold) => emit_builtin_iterator_unfold_universal_trampoline(entry, sig, ctx),
     _ => {
       tramp_sym := "$tramp_${entry.func_id.id}"
       body: Vector<Instr> = []
@@ -2407,7 +2387,7 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx
           .append(.ArrayGet("rt_types__Array"))
         body = emit_unbox_from_anyref(mono, ctx.env, body)
       }
-      body = emit_builtin_trampoline_target(entry, body)
+      body = emit_builtin_trampoline_target(entry, wrapper_kind, body)
       case sig.return_type {
         .Void => {
           body = body.append(.I32Const(0)).append(.RefI31)
@@ -2426,10 +2406,10 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx
   }
 }
 
-fn emit_builtin_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
-  case builtin_wrapper_policy(entry.name) {
-    .BuiltinWrapperCellUpdate => emit_builtin_cell_update_typed_trampoline(entry, sig, ctx),
-    .BuiltinWrapperIteratorUnfold => emit_builtin_iterator_unfold_typed_trampoline(entry, sig, ctx),
+fn emit_builtin_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wrapper_kind: callable_targets.WrapperKind?, ctx: EmitCtx) FuncDef {
+  case wrapper_kind {
+    .Some(.CellUpdate) => emit_builtin_cell_update_typed_trampoline(entry, sig, ctx),
+    .Some(.IteratorUnfold) => emit_builtin_iterator_unfold_typed_trampoline(entry, sig, ctx),
     _ => {
       typed_tramp_sym := "$typed_tramp_${entry.func_id.id}"
       param_vts: Vector<ValType> = [.Ref(true, HeapType.Named("rt_types__ClosureEnv"))]
@@ -2445,7 +2425,7 @@ fn emit_builtin_typed_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, ctx: Em
       for _,i in sig.param_types {
         body = body.append(.LocalGet(i + 1))
       }
-      body = emit_builtin_trampoline_target(entry, body)
+      body = emit_builtin_trampoline_target(entry, wrapper_kind, body)
       FuncDef.{ name: typed_tramp_sym, params: param_vts, results: result_vts, locals: [], body: body }
     },
   }
@@ -2565,15 +2545,11 @@ fn emit_builtin_iterator_unfold_typed_trampoline(entry: BuiltinEntry, sig: FuncS
   FuncDef.{ name: typed_tramp_sym, params: param_vts, results: result_vts, locals: [], body: body }
 }
 
-fn builtin_wrapper_policy(name: String) callable_targets.ClosurePolicy {
-  callable_targets.builtin_closure_policy(name)
-}
-
-fn emit_builtin_trampoline_target(entry: BuiltinEntry, body: Vector<Instr>) Vector<Instr> {
+fn emit_builtin_trampoline_target(entry: BuiltinEntry, wrapper_kind: callable_targets.WrapperKind?, body: Vector<Instr>) Vector<Instr> {
   case entry.kind {
     .Runtime(info) => body.append(.Call(builtin_import_sym(info))),
-    .Intrinsic => case builtin_wrapper_policy(entry.name) {
-      .BuiltinWrapperByteToString => body.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")),
+    .Intrinsic => case wrapper_kind {
+      .Some(.ByteToString) => body.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")),
       _ => case entry.name {
         "string_to_string" => body,
         _ => error("emit_builtin_trampoline_target: unsupported builtin trampoline target ${entry.name}"),
