@@ -204,6 +204,67 @@ Changes since previous snapshot:
 `compile_modules` (493ms) is now the dominant cost, followed by `emit_wasm_binary`
 (211ms, mostly `code_section` at 169ms). `emit_module` is no longer a top target.
 
+---
+
+## Snapshot (2026-04-17)
+
+```
+compile_modules    442ms
+optimize           190ms
+prepare_backend    210ms
+emit_module        273ms
+verify             115ms
+emit_wasm_binary   212ms
+plan_wasm_types     38ms
+link                53ms
+lower_anf           31ms
+core_link           26ms
+monomorphize        23ms
+closure_convert     11ms
+─────────────────────────
+total             ~1624ms
+```
+
+Changes since previous snapshot:
+- No targeted changes; numbers reflect noise-level variation from run to run.
+  `compile_modules` improved ~10% (493→442ms), `plan_wasm_types` -34% (58→38ms).
+
+---
+
+## Snapshot (2026-04-18, emit_module helper collection fixes)
+
+```
+compile_modules    442ms
+optimize           194ms
+prepare_backend    211ms
+emit_module        216ms   (was 273ms — 21% reduction)
+verify             116ms
+emit_wasm_binary   198ms
+plan_wasm_types     39ms
+link                54ms
+lower_anf           31ms
+core_link           26ms
+monomorphize        22ms
+closure_convert     11ms
+─────────────────────────
+total             ~1560ms
+```
+
+Changes since previous snapshot:
+- `collect_sum_variant_helpers`: added `is_sum: Dict<String, Bool>` cache — avoids
+  calling `is_sum_mono` (which calls `layout_of` → O(|env.types|) linear scan in
+  `find_type_entry`) more than once per unique MonoType. ~67k slot-level calls
+  reduced to ~N_unique_types calls.
+- `collect_iterator_next_helpers_expr`: converted recursive Let-chain traversal to
+  iterative loop, eliminating O(N_let_bindings) recursive calls per function.
+  (Same pattern as the `emit_let` iterative refactor.)
+  `emit_module`: 273ms → 216ms (~21% reduction).
+
+### Remaining hot spots
+
+`compile_modules` (442ms) and `prepare_backend` (211ms) are the top two targets.
+`emit_wasm_binary` (198ms) and `verify` (116ms) follow.
+
 ### Potential further improvements
 
 **RRB-Trees for PVec** — current PVec concat is O(m·log n); RRB-Trees
