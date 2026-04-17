@@ -13,12 +13,6 @@ const PD_SIZE: u32 = 0;
 const PD_ROOT: u32 = 1;
 const PD_ORDER: u32 = 2;
 
-fn ref_hamt_entry() -> ValType {
-    ValType::Ref {
-        nullable: false,
-        heap: HeapType::Named(T_HAMT_ENTRY.into()),
-    }
-}
 fn ref_hamt_entry_null() -> ValType {
     ValType::Ref {
         nullable: true,
@@ -53,12 +47,6 @@ fn ref_string_local() -> ValType {
     ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_STRING.into()),
-    }
-}
-fn ref_boxed_int_null() -> ValType {
-    ValType::Ref {
-        nullable: true,
-        heap: HeapType::Named(T_BOXED_INT.into()),
     }
 }
 fn ref_variant() -> ValType {
