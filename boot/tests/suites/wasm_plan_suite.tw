@@ -19,6 +19,7 @@ use compiler.codegen.wasm_plan_types.{
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.backend.prepare.{prepare_backend, PreparedModule}
 use compiler.backend.closure_convert.{convert_closures}
+use compiler.base_env
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -518,6 +519,43 @@ pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Vo
   }
 }
 
+pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() Result<Void, String> {
+  builtins := simple_builtins()
+  env := base_env.builtin_env()
+
+  map_mono: Dict<Int, MonoType> = Dict.new()
+  map_mono[10] = MonoType.Vector(.String)
+  map := mk_func_def(200, "map",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Vector(.Int) },
+      Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
+    ],
+    MonoType.Vector(.String),
+    .Atom(.ALocal(mk_local(10))),
+    map_mono,
+  )
+
+  caller_mono: Dict<Int, MonoType> = Dict.new()
+  caller_mono[11] = MonoType.Vector(.String)
+  caller := mk_func_def(100, "caller", [], MonoType.Vector(.String),
+    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))]),
+      .Atom(.ALocal(mk_local(11)))),
+    caller_mono,
+  )
+
+  reg := plan(mk_module([caller, map]), env, builtins)
+
+  case reg.concrete_func_sigs[bi.id(builtins, "int_to_string").id] {
+    .Some(sig) => {
+      try assert.int_eq(sig.param_types.len(), 1)
+      try assert.ok(case sig.param_types[0] { .Int => true, _ => false }, "expected builtin higher-order param type Int")
+      try assert.ok(case sig.return_type { .String => true, _ => false }, "expected builtin higher-order return type String")
+      .Ok({})
+    },
+    .None => assert.fail("missing concrete_func_sigs entry for builtin higher-order global arg"),
+  }
+}
+
 // ── plan_wasm_types: collects runtime imports ───────────────────────
 
 pub fn test_plan_runtime_imports() Result<Void, String> {
@@ -743,6 +781,7 @@ pub fn suite() runner.Suite {
     .test("plan closure capture types", test_plan_capture_types)
     .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
     .test("plan bare higher-order global function arg registers concrete func sig", test_plan_higher_order_global_function_arg_registers_func_sig)
+    .test("plan builtin higher-order global function arg registers concrete func sig", test_plan_builtin_higher_order_global_function_arg_registers_func_sig)
     .test("plan runtime imports", test_plan_runtime_imports)
     .test("plan optional type", test_plan_optional_type)
     .test("plan higher-order global func does not synthesize capture layout", test_plan_higher_order_global_func_does_not_synthesize_capture_layout)

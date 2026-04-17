@@ -1,7 +1,7 @@
 use tests.runner
 use tests.assert
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry, ResolvedTypeDef, ResolvedField, ResolvedVariant}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinKind, RuntimeInfo, make_builtin_registry}
@@ -90,6 +90,22 @@ fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
   AbiContract.{ param_types: params, result_types: results }
 }
 
+fn env_with_record_and_sum() ResolvedEnv {
+  rec := TypeEntry.{
+    id: TypeId.{ id: 10 },
+    arity: 0,
+    def: .Some(ResolvedTypeDef.Record("Holder", [], [ResolvedField.{ name: "f", ty: MonoType.Function([.Int], .Int) }])),
+    span: .{ file_id: 0, start: 0, end: 0 },
+  }
+  sum := TypeEntry.{
+    id: TypeId.{ id: 11 },
+    arity: 0,
+    def: .Some(ResolvedTypeDef.Sum("Box", [], [ResolvedVariant.{ name: "Wrap", fields: [MonoType.Function([.Int], .Int)] }])),
+    span: .{ file_id: 0, start: 0, end: 0 },
+  }
+  resolver.empty_env().add_type(rec, "Holder").add_type(sum, "Box")
+}
+
 // ── ANF traversal helpers ───────────────────────────────────────────
 
 fn count_wraps_expr(expr: AnfExpr) Int {
@@ -110,6 +126,28 @@ fn count_wraps_op(op: AnfOp) Int {
     },
     .ALoop(inner) => count_wraps_expr(inner),
     .ADefer(inner) => count_wraps_expr(inner),
+    _ => 0,
+  }
+}
+
+fn count_make_closures_expr(expr: AnfExpr) Int {
+  case expr {
+    .Let(_, op, body) => count_make_closures_op(op) + count_make_closures_expr(body),
+    _ => 0,
+  }
+}
+
+fn count_make_closures_op(op: AnfOp) Int {
+  case op {
+    .AMakeClosure(_, _) => 1,
+    .AIf(_, then_e, else_e) => count_make_closures_expr(then_e) + count_make_closures_expr(else_e),
+    .AMatch(_, arms) => {
+      s := 0
+      for arm in arms { s = s + count_make_closures_expr(arm.body) }
+      s
+    },
+    .ALoop(inner) => count_make_closures_expr(inner),
+    .ADefer(inner) => count_make_closures_expr(inner),
     _ => 0,
   }
 }
@@ -622,5 +660,91 @@ pub fn suite() runner.Suite {
         .Bool => .Ok({}),
         _ => .Err("expected wrap type Bool"),
       }
+    })
+
+    .test("materializes global func arg at user function-typed param", fn() {
+      body: AnfExpr = .Let(lid(10),
+        .ACall(.AGlobalFunc(fid(2)), [.AGlobalFunc(fid(3)), .ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Int])
+      caller := mk_func_def(1, "caller", [mk_param(0, .Int)], .Int, body, mono)
+      apply := mk_func_def(2, "apply", [mk_param(1, .Function([.Int], .Int)), mk_param(2, .Int)], .Int, .Atom(.ALocal(lid(2))), Dict.new())
+      adder := mk_func_def(3, "adder", [mk_param(3, .Int)], .Int, .Atom(.ALocal(lid(3))), Dict.new())
+      result := insert_boundaries(mk_module([caller, apply, adder]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func at return function boundary", fn() {
+      body: AnfExpr = .Return(.Some(.AGlobalFunc(fid(2))))
+      mono: Dict<Int, MonoType> = Dict.new()
+      ret_fn := mk_func_def(1, "make", [], .Function([.Int], .Int), body, mono)
+      target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      result := insert_boundaries(mk_module([ret_fn, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func at function-typed init boundary", fn() {
+      body: AnfExpr = .Let(lid(10), .AInit(.AGlobalFunc(fid(2))), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Function([.Int], .Int)])
+      holder := mk_func_def(1, "holder", [], .Function([.Int], .Int), body, mono)
+      target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func at function-typed assign boundary", fn() {
+      body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .AGlobalFunc(fid(2))), .Atom(.ALocal(lid(0))))
+      mono := mk_mono_map([11], [MonoType.Void])
+      holder := mk_func_def(1, "holder", [mk_param(0, .Function([.Int], .Int))], .Function([.Int], .Int), body, mono)
+      target := mk_func_def(2, "target", [mk_param(1, .Int)], .Int, .Atom(.ALocal(lid(1))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func in function-valued array literal", fn() {
+      body: AnfExpr = .Let(lid(10), .AArrayLit([.AGlobalFunc(fid(2))]), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Vector(MonoType.Function([.Int], .Int))])
+      holder := mk_func_def(1, "holder", [], .Vector(MonoType.Function([.Int], .Int)), body, mono)
+      target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int), MonoType.Vector(MonoType.Function([.Int], .Int))]), empty_builtins(), empty_env())
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func in function-valued record field", fn() {
+      env := env_with_record_and_sum()
+      body: AnfExpr = .Let(lid(10), .ARecord(TypeId.{ id: 10 }, [FieldAtom.{ field: FieldId.{ id: 0 }, value: .AGlobalFunc(fid(2)) }]), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 10 }, [])])
+      holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 10 }, []), body, mono)
+      target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func in function-valued record update", fn() {
+      env := env_with_record_and_sum()
+      body: AnfExpr = .Let(lid(10), .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .AGlobalFunc(fid(2)), false, TypeId.{ id: 10 }), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 10 }, [])])
+      holder := mk_func_def(1, "holder", [mk_param(0, MonoType.Named(TypeId.{ id: 10 }, []))], MonoType.Named(TypeId.{ id: 10 }, []), body, mono)
+      target := mk_func_def(2, "target", [mk_param(1, .Int)], .Int, .Atom(.ALocal(lid(1))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
+    })
+
+    .test("materializes global func in function-valued variant payload", fn() {
+      env := env_with_record_and_sum()
+      body: AnfExpr = .Let(lid(10), .AVariant(TypeId.{ id: 11 }, VariantId.{ id: 0 }, [.AGlobalFunc(fid(2))]), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 11 }, [])])
+      holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 11 }, []), body, mono)
+      target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
+      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      .Ok({})
     })
 }

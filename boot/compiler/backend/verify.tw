@@ -24,6 +24,7 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.repr_assign.{repr_of_mono}
+use compiler.backend.callable_targets as callable_targets
 use @std.date
 use @std.proc
 
@@ -314,7 +315,7 @@ fn verify_expr(
       verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body)
     },
     .Atom(atom) => verify_atom_mapped(pf, atom, "atom", module_globals),
-    .Return(atom) => verify_return_expr(pf, atom, funcs_by_id, module_globals),
+    .Return(atom) => verify_return_expr(pf, atom, funcs_by_id, module_globals, env, builtins),
     .Break(atom) => verify_break_expr(pf, atom),
     .Continue => .Ok({}),
   }
@@ -366,11 +367,11 @@ fn verify_op(
       verify_opkind_atom(pf, atom, kind, "unary operand", module_globals, env)
     },
     .AMakeClosure(fid, free_vars) => {
-      case funcs_by_id[fid.id] {
+      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
+        .Some(info) => info,
         .None => {
-          return fail_slot(pf, result_info, "AMakeClosure targets unknown function F${fid.id}")
+          return fail_slot(pf, result_info, "AMakeClosure targets unknown callable F${fid.id}")
         },
-        .Some(_) => {},
       }
       case result_info.repr {
         .ClosureRef => {},
@@ -378,42 +379,55 @@ fn verify_op(
           return fail_slot(pf, result_info, "AMakeClosure result must have ClosureRef repr, got ${repr_name(result_info.repr)}")
         },
       }
-      case closure_captures[fid.id] {
-        .None => {
+      case target.builtin_name {
+        .Some(name) => {
+          if !callable_targets.is_closure_materializable_policy(target.closure_policy) {
+            return fail_slot(pf, result_info, "AMakeClosure target ${name} (F${fid.id}) is not closure-materializable yet")
+          }
           if free_vars.len() != 0 {
-            return fail_slot(pf, result_info, "AMakeClosure for F${fid.id} has free vars but no closure metadata")
+            return fail_slot(pf, result_info, "builtin AMakeClosure target ${name} (F${fid.id}) must not capture locals")
           }
+          .Ok({})
         },
-        .Some(caps) => {
-          if free_vars.len() != caps.len() {
-            return fail_slot(
-              pf,
-              result_info,
-              "AMakeClosure for F${fid.id} passes ${free_vars.len()} captures, expected ${caps.len()}",
-            )
+        .None => {
+          case closure_captures[fid.id] {
+            .None => {
+              if free_vars.len() != 0 {
+                return fail_slot(pf, result_info, "AMakeClosure for F${fid.id} has free vars but no closure metadata")
+              }
+            },
+            .Some(caps) => {
+              if free_vars.len() != caps.len() {
+                return fail_slot(
+                  pf,
+                  result_info,
+                  "AMakeClosure for F${fid.id} passes ${free_vars.len()} captures, expected ${caps.len()}",
+                )
+              }
+              for fv,i in free_vars {
+                info := try slot_info(pf, fv, "closure capture")
+                cap := caps[i]
+                if info.source_local.id != cap.local_id.id {
+                  return fail_slot(
+                    pf,
+                    result_info,
+                    "AMakeClosure capture ${i} uses L${info.source_local.id}, expected L${cap.local_id.id}",
+                  )
+                }
+                if !mono_eq(info.mono, cap.ty) {
+                  return fail_slot(
+                    pf,
+                    result_info,
+                    "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
+                  )
+                }
+                try reject_dead_use(pf, info, "closure capture")
+              }
+            },
           }
-          for fv,i in free_vars {
-            info := try slot_info(pf, fv, "closure capture")
-            cap := caps[i]
-            if info.source_local.id != cap.local_id.id {
-              return fail_slot(
-                pf,
-                result_info,
-                "AMakeClosure capture ${i} uses L${info.source_local.id}, expected L${cap.local_id.id}",
-              )
-            }
-            if !mono_eq(info.mono, cap.ty) {
-              return fail_slot(
-                pf,
-                result_info,
-                "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
-              )
-            }
-            try reject_dead_use(pf, info, "closure capture")
-          }
+          .Ok({})
         },
       }
-      .Ok({})
     },
     .ARecord(_, fields) => {
       for field in fields { try verify_atom_use(pf, field.value, "record field", module_globals) }
@@ -452,10 +466,10 @@ fn verify_op(
     },
     .AInit(atom) => {
       case result_info.role {
-        .DeadPlaceholder => verify_dead_placeholder_value(pf, result_info, atom, funcs_by_id, module_globals, "init value"),
+        .DeadPlaceholder => verify_dead_placeholder_value(pf, result_info, atom, funcs_by_id, module_globals, env, builtins, "init value"),
         _ => {
           try verify_atom_use(pf, atom, "init value", module_globals)
-          verify_value_for_slot(pf, result_info, atom, funcs_by_id, module_globals, "init value")
+          verify_value_for_slot(pf, result_info, atom, funcs_by_id, module_globals, env, builtins, "init value")
         },
       }
     },
@@ -463,7 +477,7 @@ fn verify_op(
       target_info := try slot_info(pf, target, "assign target")
       try reject_dead_use(pf, target_info, "assign target")
       try verify_atom_use(pf, atom, "assign value", module_globals)
-      verify_value_for_slot(pf, target_info, atom, funcs_by_id, module_globals, "assign value")
+      verify_value_for_slot(pf, target_info, atom, funcs_by_id, module_globals, env, builtins, "assign value")
     },
     .ADefer(body) => verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body),
     .AWrapAnyref(atom, _) => {
@@ -571,7 +585,7 @@ fn verify_call_shape(
             )
           }
           for arg,i in args {
-            try verify_call_arg_type(pf, arg, params[i], funcs_by_id, module_globals, "closure call arg ${i}")
+            try verify_call_arg_type(pf, arg, params[i], funcs_by_id, module_globals, env, builtins, "closure call arg ${i}")
             expected_repr := repr_of_mono(params[i], env)
             try verify_call_arg_repr(pf, arg, expected_repr, module_globals, env, "closure call arg ${i}")
           }
@@ -591,7 +605,7 @@ fn verify_call_shape(
           }
           for arg,i in args {
             expected_info := try slot_info(target, target.params[i], "direct call param")
-            try verify_call_arg_type(pf, arg, expected_info.mono, funcs_by_id, module_globals, "direct call arg ${i} to ${target.name}")
+            try verify_call_arg_type(pf, arg, expected_info.mono, funcs_by_id, module_globals, env, builtins, "direct call arg ${i} to ${target.name}")
             try verify_call_arg_repr(pf, arg, expected_info.repr, module_globals, env, "direct call arg ${i} to ${target.name}")
           }
           .Ok({})
@@ -649,6 +663,8 @@ fn verify_return_expr(
   atom: PreparedAtom?,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
   case pf.return_mono {
     .Void => {
@@ -667,7 +683,7 @@ fn verify_return_expr(
       case atom {
         .Some(a) => {
           try verify_atom_use(pf, a, "return", module_globals)
-          try verify_return_value_type(pf, a, funcs_by_id, module_globals)
+          try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
           .Ok({})
         },
         .None => fail_func(pf, "non-void function must return a value"),
@@ -688,8 +704,10 @@ fn verify_return_value_type(
   atom: PreparedAtom,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(actual) => {
       if mono_eq(actual, pf.return_mono) {
         .Ok({})
@@ -710,9 +728,11 @@ fn verify_call_arg_type(
   expected: MonoType,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
   context: String,
 ) Result<Void, String> {
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(actual) => {
       if mono_eq(actual, expected) {
         .Ok({})
@@ -764,14 +784,16 @@ fn infer_atom_mono(
   atom: PreparedAtom,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) MonoType? {
   case atom {
     .ASlot(sid) => case pf.slots[sid.id] {
       .Some(info) => .Some(info.mono),
       .None => .None,
     },
-    .AGlobalFunc(fid) => case funcs_by_id[fid.id] {
-      .Some(target) => .Some(.Function(func_param_monos(target), target.return_mono)),
+    .AGlobalFunc(fid) => case callable_targets.semantic_sig(fid, funcs_by_id, builtins, env) {
+      .Some(target) => .Some(.Function(target.semantic_params, target.semantic_ret)),
       .None => .None,
     },
     .ALitInt(_) => .Some(.Int),
@@ -862,9 +884,12 @@ fn verify_atom_coercible_to_val_type(
   if can_emit_coerce_stack(actual_vt, expected_vt) {
     return .Ok({})
   }
-  actual_mono := case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
-    .Some(mono) => mono_name(mono),
-    .None => "unknown",
+  actual_mono := case atom {
+    .AGlobalFunc(_) => "function",
+    _ => case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }) {
+      .Some(mono) => mono_name(mono),
+      .None => "unknown",
+    },
   }
   fail_func(
     pf,
@@ -1080,10 +1105,11 @@ fn infer_match_scrutinee_mono(
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
   env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) MonoType? {
   case infer_atom_repr(pf, atom, module_globals, env) {
     .Some(.TypedSum(sum_mono)) => .Some(sum_mono),
-    _ => infer_atom_mono(pf, atom, funcs_by_id, module_globals),
+    _ => infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins),
   }
 }
 
@@ -1093,8 +1119,9 @@ fn verify_match_scrutinee_mono(
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
   env: ResolvedEnv,
+  builtins: BuiltinRegistry,
 ) Result<Void, String> {
-  case infer_match_scrutinee_mono(pf, atom, funcs_by_id, module_globals, env) {
+  case infer_match_scrutinee_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(mono) => {
       if is_matchable_sum_mono(mono, env) {
         .Ok({})
@@ -1146,13 +1173,15 @@ fn verify_dead_placeholder_value(
   atom: PreparedAtom,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
   context: String,
 ) Result<Void, String> {
   case atom {
     .ALitVoid => { return .Ok({}) },
     _ => {},
   }
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(actual) => {
       if mono_eq(actual, .Never) {
         .Ok({})
@@ -1174,13 +1203,15 @@ fn verify_value_for_slot(
   atom: PreparedAtom,
   funcs_by_id: Dict<Int, PreparedFunc>,
   module_globals: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
   context: String,
 ) Result<Void, String> {
   case atom {
     .ALitVoid => { return .Ok({}) },
     _ => {},
   }
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals) {
+  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(actual) => {
       if mono_eq(actual, target.mono) {
         .Ok({})

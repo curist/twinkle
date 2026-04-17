@@ -338,6 +338,49 @@ fn test_cell_update_wraps_named_function_as_closure() Result<Void, String> {
   .Ok({})
 }
 
+fn test_builtin_first_class_function_arg_uses_builtin_trampolines() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn apply(f: fn(Int) String, x: Int) String { f(x) }\nprintln(apply(Int.to_string, 5))\n",
+    "builtin first-class function arg",
+  )
+  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
+  try assert.str_contains(wat, "call $rt_str__from_i64")
+  .Ok({})
+}
+
+fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn apply(f: fn(Byte) String, x: Byte) String { f(x) }\ncase Byte.from_int(42) {\n  .Some(b) => println(apply(Byte.to_string, b)),\n  .None => println(\"none\"),\n}\n",
+    "wrapper-backed builtin first-class function arg",
+  )
+  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "i64.extend_i32_u")
+  try assert.str_contains(wat, "call $rt_str__from_i64")
+  .Ok({})
+}
+
+fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(int_to_string(c.get()))\n",
+    "cell update builtin first-class function arg",
+  )
+  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "call_ref $user__$ft_fn_i64_i64")
+  try assert.str_contains(wat, "struct.set $user__$Cell_i64 0")
+  .Ok({})
+}
+
+fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(int_to_string(it.take(2).to_vector().len()))\n",
+    "iterator unfold builtin first-class function arg",
+  )
+  try assert.str_contains(wat, "$typed_tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__IterState")
+  .Ok({})
+}
+
 // ── Match emission coverage ──────────────────────────────────────────
 // Ports focused match-emission cases from the former emit_pattern_suite,
 // now exercising the consolidated emit.tw path end-to-end.
@@ -595,6 +638,10 @@ pub fn suite() runner.Suite {
     .test("closure call uses typed funcref via call_ref", test_closure_call_uses_typed_funcref)
     .test("iterator unfold wraps named step as closure", test_iterator_unfold_wraps_named_step_as_closure)
     .test("cell update wraps named function as closure", test_cell_update_wraps_named_function_as_closure)
+    .test("builtin first-class function arg uses builtin trampolines", test_builtin_first_class_function_arg_uses_builtin_trampolines)
+    .test("wrapper-backed builtin first-class function arg uses wrapper trampoline", test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline)
+    .test("cell update builtin first-class function arg uses wrapper trampoline", test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline)
+    .test("iterator unfold builtin first-class function arg uses wrapper trampoline", test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline)
     // Match emission coverage (ports emit_pattern_suite cases)
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)

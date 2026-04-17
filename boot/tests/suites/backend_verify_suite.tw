@@ -12,6 +12,7 @@ use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
 use compiler.backend.prepare.{prepare_backend, PreparedModule}
 use compiler.backend.verify.{verify_prepared_module}
+use compiler.base_env
 
 fn lid(n: Int) LocalId { LocalId.{ id: n } }
 fn fid(n: Int) FuncId { FuncId.{ id: n } }
@@ -101,6 +102,17 @@ fn rewrite_func(
 
 fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
   assert.err_contains(verify_prepared_module(prepared, empty_env(), empty_builtins()), expected)
+}
+
+fn verify_err_with_env(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry, expected: String) Result<Void, String> {
+  assert.err_contains(verify_prepared_module(prepared, env, builtins), expected)
+}
+
+fn verify_ok_with_env(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) Result<Void, String> {
+  case verify_prepared_module(prepared, env, builtins) {
+    .Ok(_) => .Ok({}),
+    .Err(msg) => .Err("expected verify ok, got: ${msg}"),
+  }
 }
 
 fn slots_without(pf: PreparedFunc, skip_sid: Int) Dict<Int, SlotInfo> {
@@ -358,5 +370,66 @@ pub fn suite() runner.Suite {
     broken := rewrite_func(pf, slots_with_wasm_type(pf, 0, .Anyref))
 
     verify_err(replace_func(prepared, broken), "wasm_type Anyref does not match repr I64 / mono Int")
+  })
+
+  .test("supported builtin AMakeClosure is accepted", fn() {
+    env := base_env.builtin_env()
+    builtins := empty_builtins()
+    int_to_string := builtins.id("int_to_string")
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(1, "f", [], .Function([.Int], .String), body, mk_mono_map([10], [MonoType.Function([.Int], .String)]))
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_ok_with_env(prepared, env, builtins)
+  })
+
+  .test("wrapper-backed builtin AMakeClosure is accepted", fn() {
+    env := base_env.builtin_env()
+    builtins := empty_builtins()
+    byte_to_string := builtins.id("byte_to_string")
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(1, "f", [], .Function([.Byte], .String), body, mk_mono_map([10], [MonoType.Function([.Byte], .String)]))
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_ok_with_env(prepared, env, builtins)
+  })
+
+  .test("wrapper-backed cell_update AMakeClosure is accepted", fn() {
+    env := base_env.builtin_env()
+    builtins := empty_builtins()
+    cell_update := builtins.id("cell_update")
+    cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
+    updater_ty := MonoType.Function([.Int], .Int)
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(1, "f", [], .Function([cell_int, updater_ty], .Void), body, mk_mono_map([10], [MonoType.Function([cell_int, updater_ty], .Void)]))
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_ok_with_env(prepared, env, builtins)
+  })
+
+  .test("wrapper-backed iterator_unfold AMakeClosure is accepted", fn() {
+    env := base_env.builtin_env()
+    builtins := empty_builtins()
+    iterator_unfold := builtins.id("iterator_unfold")
+    step_ty := MonoType.Function([.Int], .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]))
+    iter_ty := MonoType.Named(TypeId.{ id: 17 }, [MonoType.Int])
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(iterator_unfold, []), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(1, "f", [], .Function([.Int, step_ty], iter_ty), body, mk_mono_map([10], [MonoType.Function([.Int, step_ty], iter_ty)]))
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_ok_with_env(prepared, env, builtins)
+  })
+
+  .test("builtin AMakeClosure with captures is rejected explicitly", fn() {
+    env := base_env.builtin_env()
+    builtins := empty_builtins()
+    int_to_string := builtins.id("int_to_string")
+    body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, [lid(0)]), .Atom(.ALocal(lid(10))))
+    func := mk_func_def(
+      1,
+      "f",
+      [mk_param(0, .Int)],
+      .Function([.Int], .String),
+      body,
+      mk_mono_map([10], [MonoType.Function([.Int], .String)]),
+    )
+    prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+    verify_err_with_env(prepared, env, builtins, "must not capture locals")
   })
 }

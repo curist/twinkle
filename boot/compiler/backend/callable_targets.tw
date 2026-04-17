@@ -1,0 +1,131 @@
+use compiler.core_ir.{FuncId}
+use compiler.resolver as resolver
+use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.builtins as bi
+use compiler.builtins.{BuiltinRegistry}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
+
+pub type ClosurePolicy = {
+  User,
+  BuiltinGeneric,
+  BuiltinWrapperByteToString,
+  BuiltinWrapperCellUpdate,
+  BuiltinWrapperIteratorUnfold,
+  BuiltinUnsupported,
+}
+
+pub type CallableTargetInfo = .{
+  semantic_params: Vector<MonoType>,
+  semantic_ret: MonoType,
+  builtin_name: String?,
+  closure_policy: ClosurePolicy,
+}
+
+pub fn callable_target(
+  fid: FuncId,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  builtins: BuiltinRegistry,
+  env: ResolvedEnv,
+) CallableTargetInfo? {
+  case funcs_by_id[fid.id] {
+    .Some(func) => .Some(CallableTargetInfo.{
+      semantic_params: collect sid in func.params { slot_info(func, sid).mono },
+      semantic_ret: func.return_mono,
+      builtin_name: .None,
+      closure_policy: .User,
+    }),
+    .None => builtin_target(fid, builtins, env),
+  }
+}
+
+pub fn semantic_sig(
+  fid: FuncId,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  builtins: BuiltinRegistry,
+  env: ResolvedEnv,
+) CallableTargetInfo? {
+  callable_target(fid, funcs_by_id, builtins, env)
+}
+
+pub fn is_closure_materializable(
+  fid: FuncId,
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  builtins: BuiltinRegistry,
+  env: ResolvedEnv,
+) Bool {
+  case callable_target(fid, funcs_by_id, builtins, env) {
+    .Some(info) => is_closure_materializable_policy(info.closure_policy),
+    .None => false,
+  }
+}
+
+pub fn is_closure_materializable_policy(policy: ClosurePolicy) Bool {
+  case policy {
+    .User => true,
+    .BuiltinGeneric => true,
+    .BuiltinWrapperByteToString => true,
+    .BuiltinWrapperCellUpdate => true,
+    .BuiltinWrapperIteratorUnfold => true,
+    .BuiltinUnsupported => false,
+  }
+}
+
+pub fn requires_wrapper_trampoline(policy: ClosurePolicy) Bool {
+  case policy {
+    .BuiltinWrapperByteToString => true,
+    .BuiltinWrapperCellUpdate => true,
+    .BuiltinWrapperIteratorUnfold => true,
+    _ => false,
+  }
+}
+
+pub fn has_typed_closure_support(policy: ClosurePolicy) Bool {
+  is_closure_materializable_policy(policy)
+}
+
+fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) CallableTargetInfo? {
+  entry := case bi.entry(builtins, fid) {
+    .Some(e) => e,
+    .None => { return .None },
+  }
+  sig := case resolver.lookup_registered_function(env, entry.name) {
+    .Some(s) => s,
+    .None => { return .None },
+  }
+  ret := case sig.ret {
+    .Some(r) => r,
+    .None => { return .None },
+  }
+  .Some(CallableTargetInfo.{
+    semantic_params: sig.params,
+    semantic_ret: ret,
+    builtin_name: .Some(entry.name),
+    closure_policy: builtin_closure_policy(entry.name),
+  })
+}
+
+pub fn builtin_closure_policy(name: String) ClosurePolicy {
+  if name == "int_to_string"
+    or name == "float_to_string"
+    or name == "bool_to_string"
+    or name == "string_to_string" {
+    return .BuiltinGeneric
+  }
+  if name == "byte_to_string" {
+    return .BuiltinWrapperByteToString
+  }
+  if name == "cell_update" {
+    return .BuiltinWrapperCellUpdate
+  }
+  if name == "iterator_unfold" {
+    return .BuiltinWrapperIteratorUnfold
+  }
+  .BuiltinUnsupported
+}
+
+fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
+  case func.slots[sid.id] {
+    .Some(info) => info,
+    .None => error("callable_targets.slot_info: missing slot S${sid.id} in ${func.name}"),
+  }
+}
