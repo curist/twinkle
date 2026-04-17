@@ -7,16 +7,14 @@
 // - explicit module-global references from non-init prepared bodies
 
 use compiler.backend.prepare.{PreparedModule}
-use compiler.backend.prepared_ir.{PreparedExpr, PreparedOp, PreparedAtom, PreparedPattern, PreparedFunc, SlotId}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedOp, PreparedAtom, PreparedPattern, PreparedFunc}
 use compiler.core_ir.{FuncId}
-use compiler.resolver.{MonoType}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry, BuiltinEntry}
+use compiler.builtins.{BuiltinRegistry}
 
 pub type ScanResult = .{
   strings: Dict<String, Bool>,
   closure_funcs: Dict<Int, Bool>,
-  ho_global_funcs: Dict<Int, Bool>,
   builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
 }
@@ -25,7 +23,6 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
   out := ScanResult.{
     strings: Dict.new(),
     closure_funcs: Dict.new(),
-    ho_global_funcs: Dict.new(),
     builtin_calls: Dict.new(),
     module_globals: Dict.new(),
   }
@@ -35,16 +32,16 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
       .Some(fid) => fid.id == func.func_id.id,
       .None => false,
     }
-    out = scan_expr(func.body, builtins, input.funcs, func.func_id.id, is_init, out)
+    out = scan_expr(func.body, builtins, is_init, out)
   }
   out
 }
 
-fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc>, current_fid: Int, is_init: Bool, out: ScanResult) ScanResult {
+fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
   case expr {
     .Let(_, op, body) => {
-      cur := scan_op(op, builtins, funcs, current_fid, is_init, out)
-      scan_expr(body, builtins, funcs, current_fid, is_init, cur)
+      cur := scan_op(op, builtins, is_init, out)
+      scan_expr(body, builtins, is_init, cur)
     },
     .Atom(atom) => scan_atom(atom, is_init, out),
     .Return(.Some(atom)) => scan_atom(atom, is_init, out),
@@ -55,7 +52,7 @@ fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, funcs: Vector<Prepar
   }
 }
 
-fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc>, current_fid: Int, is_init: Bool, out: ScanResult) ScanResult {
+fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
   case op {
     .ACall(callee, args) => {
       cur := scan_atom(callee, is_init, out)
@@ -65,21 +62,11 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc
       case callee {
         .AGlobalFunc(fid) => {
           case bi.entry(builtins, fid) {
-            .Some(entry) => {
+            .Some(_) => {
               cur.builtin_calls[fid.id] = true
-              for arg,i in args {
-                case arg {
-                  .AGlobalFunc(arg_fid) => {
-                    if builtin_param_expects_function(entry, i) {
-                      cur.ho_global_funcs[arg_fid.id] = true
-                    }
-                  },
-                  _ => {},
-                }
-              }
               cur
             },
-            .None => scan_higher_order_user_call(fid, args, funcs, is_init, cur),
+            .None => cur,
           }
         },
         _ => cur,
@@ -87,19 +74,19 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, funcs: Vector<PreparedFunc
     },
     .AIf(cond, then_e, else_e) => {
       cur := scan_atom(cond, is_init, out)
-      cur = scan_expr(then_e, builtins, funcs, current_fid, is_init, cur)
-      scan_expr(else_e, builtins, funcs, current_fid, is_init, cur)
+      cur = scan_expr(then_e, builtins, is_init, cur)
+      scan_expr(else_e, builtins, is_init, cur)
     },
     .AMatch(scrutinee, arms) => {
       cur := scan_atom(scrutinee, is_init, out)
       for arm in arms {
         cur = scan_pattern(arm.pattern, cur)
-        cur = scan_expr(arm.body, builtins, funcs, current_fid, is_init, cur)
+        cur = scan_expr(arm.body, builtins, is_init, cur)
       }
       cur
     },
-    .ALoop(body) => scan_expr(body, builtins, funcs, current_fid, is_init, out),
-    .ADefer(body) => scan_expr(body, builtins, funcs, current_fid, is_init, out),
+    .ALoop(body) => scan_expr(body, builtins, is_init, out),
+    .ADefer(body) => scan_expr(body, builtins, is_init, out),
     .ABinOp(_, left, right, _) => {
       cur := scan_atom(left, is_init, out)
       scan_atom(right, is_init, cur)
@@ -160,58 +147,6 @@ fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
       cur
     },
     _ => out,
-  }
-}
-
-fn builtin_param_expects_function(entry: BuiltinEntry, index: Int) Bool {
-  if index >= entry.abi.param_types.len() { return false }
-  case entry.abi.param_types[index] {
-    .Ref(_, .Named(name)) => name == "rt_types__Closure",
-    _ => false,
-  }
-}
-
-fn scan_higher_order_user_call(fid: FuncId, args: Vector<PreparedAtom>, funcs: Vector<PreparedFunc>, is_init: Bool, out: ScanResult) ScanResult {
-  case find_func_def(funcs, fid) {
-    .Some(func) => {
-      cur := out
-      for arg,i in args {
-        case arg {
-          .AGlobalFunc(arg_fid) => {
-            if param_expects_function(func, i) {
-              cur.ho_global_funcs[arg_fid.id] = true
-            }
-          },
-          _ => {},
-        }
-        cur = scan_atom(arg, is_init, cur)
-      }
-      cur
-    },
-    .None => out,
-  }
-}
-
-fn find_func_def(funcs: Vector<PreparedFunc>, fid: FuncId) PreparedFunc? {
-  for func in funcs {
-    if func.func_id.id == fid.id { return .Some(func) }
-  }
-  .None
-}
-
-fn param_expects_function(func: PreparedFunc, index: Int) Bool {
-  if index >= func.params.len() { return false }
-  sid := func.params[index]
-  case slot_mono(func, sid) {
-    .Some(.Function(_, _)) => true,
-    _ => false,
-  }
-}
-
-fn slot_mono(func: PreparedFunc, sid: SlotId) MonoType? {
-  case func.slots[sid.id] {
-    .Some(info) => .Some(info.mono),
-    .None => .None,
   }
 }
 

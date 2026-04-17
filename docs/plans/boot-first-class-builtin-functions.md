@@ -1223,9 +1223,9 @@ One backend-owned way to answer:
 - ✅ builtin semantic signatures are resolved from the environment
 - ✅ closure-materializable policy exists
 - ✅ wrapper-needed policy exists
-- 🟡 verifier uses shared callable metadata
-- 🟡 planner uses shared callable metadata
-- 🟡 boundary insertion uses shared callable metadata
+- ✅ verifier uses `callable_target` for all call-shape and closure-support decisions — `funcs_by_id` proxy removed from `verify_call_shape`
+- ✅ planner uses shared callable metadata — `ho_global_funcs` compat scan removed, `AMakeClosure` is the sole trampoline source
+- ✅ boundary insertion uses semantic mono exclusively — conservative ABI fallback (`materialize_global_func_atom`) removed
 - ✅ emitter uses shared callable metadata: wrapper_kind drives trampoline dispatch, no more name-based re-derivation
 - ✅ closure materialization policy and wrapper policy are explicit backend data
 - ✅ wrapper lowering kind (`WrapperKind`), typed-closure support policy (`typed_closure_support`), and direct-call policy (`DirectCallPolicy`) are now fully separate fields in `CallableTargetInfo`
@@ -1277,9 +1277,8 @@ emit-time guessing.
 - ✅ rewrites function-valued record fields
 - ✅ rewrites function-valued record updates
 - ✅ rewrites function-valued variant payloads
-- 🟡 semantic mono lookup for record and variant boundaries exists, with `Option` / `Result` payload monos now preserved instead of being forced through a named-type fallback, but conservative fallback still remains in some cases
+- ✅ semantic mono lookup for record and variant boundaries is complete — `Option`/`Result` payload monos preserved, conservative ABI fallback removed
 - 🟡 emitter-side adaptation has been reduced so the rewrite is more primary than before
-- ⬜ conservative storage fallback should eventually shrink once semantic lookup is tighter
 
 ### 4. Verifier ownership of builtin closure materialization
 
@@ -1300,7 +1299,7 @@ explicitly.
 - ✅ builtin closure captures are rejected explicitly
 - ✅ callable metadata is used for builtin `AGlobalFunc` semantic mono inference
 - ✅ verifier uses `target.closure_materializable` directly (no more `is_closure_materializable_policy` indirection)
-- 🟡 not every callable decision has been centralized yet — remaining prepared-user-function proxy checks still survive
+- ✅ all call-shape and closure-support decisions route through `callable_target` — no remaining `funcs_by_id` proxy checks
 
 ### 5. Planner support for builtin higher-order/global functions
 
@@ -1321,9 +1320,8 @@ requiring a `PreparedFunc`.
 - ✅ builtin higher-order/global function signatures can be registered in planner data
 - ✅ builtin concrete function signatures can survive planning without prepared bodies
 - ✅ planner tests cover builtin higher-order function signature registration
-- 🟡 planner still carries compatibility-era higher-order scanning logic
-- 🟡 explicit `AMakeClosure` is not yet the sole source of closure-trampoline demand
-- ⬜ closure support, typed closure support, and direct builtin call tracking still need cleaner separation
+- ✅ compatibility-era `ho_global_funcs` scanning removed — `AMakeClosure` is now the sole source of closure-trampoline demand
+- ⬜ closure support, typed closure support, and direct builtin call tracking still need cleaner separation in planner data
 
 ### 6. Builtin closure and trampoline emission
 

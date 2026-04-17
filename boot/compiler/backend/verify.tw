@@ -595,22 +595,28 @@ fn verify_call_shape(
       }
     },
     .AGlobalFunc(fid) => {
-      case funcs_by_id[fid.id] {
+      case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
         .Some(target) => {
-          if args.len() != target.params.len() {
-            return fail_func(
-              pf,
-              "direct call to ${target.name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.params.len()}",
-            )
+          case target.builtin_name {
+            .Some(_) => verify_builtin_call_shape(pf, fid.id, args, module_globals, funcs_by_id, env, builtins),
+            .None => {
+              func_name := case funcs_by_id[fid.id] { .Some(f) => f.name, .None => "F${fid.id}" }
+              if args.len() != target.semantic_params.len() {
+                return fail_func(
+                  pf,
+                  "direct call to ${func_name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.semantic_params.len()}",
+                )
+              }
+              for arg,i in args {
+                param_mono := target.semantic_params[i]
+                try verify_call_arg_type(pf, arg, param_mono, funcs_by_id, module_globals, env, builtins, "direct call arg ${i} to ${func_name}")
+                try verify_call_arg_repr(pf, arg, repr_of_mono(param_mono, env), module_globals, env, "direct call arg ${i} to ${func_name}")
+              }
+              .Ok({})
+            },
           }
-          for arg,i in args {
-            expected_info := try slot_info(target, target.params[i], "direct call param")
-            try verify_call_arg_type(pf, arg, expected_info.mono, funcs_by_id, module_globals, env, builtins, "direct call arg ${i} to ${target.name}")
-            try verify_call_arg_repr(pf, arg, expected_info.repr, module_globals, env, "direct call arg ${i} to ${target.name}")
-          }
-          .Ok({})
         },
-        .None => verify_builtin_call_shape(pf, fid.id, args, module_globals, funcs_by_id, env, builtins),
+        .None => .Ok({}),
       }
     },
     _ => .Ok({}),

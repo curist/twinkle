@@ -451,23 +451,6 @@ fn array_elem_mono(mono: MonoType) MonoType? {
   }
 }
 
-fn materialize_global_func_atom(atom: Atom, ctx: BCtx) MaterializeResult? {
-  case atom {
-    .AGlobalFunc(fid) => {
-      pair := alloc_local(ctx)
-      tmp := pair.local
-      new_ctx := pair.ctx
-      tmp_mono := case atom_mono(atom, ctx) {
-        .Some(m) => m,
-        .None => .Void,
-      }
-      new_ctx.local_types[tmp.id] = tmp_mono
-      .Some(MaterializeResult.{ temp: tmp, fid: fid, ctx: new_ctx })
-    },
-    _ => .None,
-  }
-}
-
 fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType, ctx: BCtx) MaterializeResult? {
   case atom {
     .AGlobalFunc(fid) => {
@@ -490,10 +473,7 @@ fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType
 }
 
 fn materialize_global_func_prefer_expected(atom: Atom, expected_mono: MonoType, ctx: BCtx) MaterializeResult? {
-  case materialize_global_func_for_expected_mono(atom, expected_mono, ctx) {
-    .Some(pair) => .Some(pair),
-    .None => materialize_global_func_atom(atom, ctx),
-  }
+  materialize_global_func_for_expected_mono(atom, expected_mono, ctx)
 }
 
 fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult {

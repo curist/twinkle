@@ -9,7 +9,7 @@ use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo, PreparedExpr, PreparedOp}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
 use compiler.backend.callable_targets as callable_targets
@@ -87,10 +87,6 @@ pub fn plan_wasm_types_impl(
   for fid in scan.closure_funcs.keys() {
     reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, env)
   }
-  for fid in scan.ho_global_funcs.keys() {
-    reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, env)
-  }
-  reg = register_higher_order_global_func_sigs(reg, funcs_by_id, builtins, env)
 
   for fid in scan.builtin_calls.keys() {
     case bi.entry(builtins, FuncId.{ id: fid }) {
@@ -508,122 +504,6 @@ fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
   case func.slots[sid.id] {
     .Some(info) => info,
     .None => error("slot_info: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})"),
-  }
-}
-
-fn register_higher_order_global_func_sigs(
-  reg: WasmTypeRegistry,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  builtins: BuiltinRegistry,
-  env: ResolvedEnv,
-) WasmTypeRegistry {
-  cur := reg
-  for fid in funcs_by_id.keys() {
-    case funcs_by_id[fid] {
-      .Some(func) => {
-        cur = collect_higher_order_global_func_sigs(cur, func.body, funcs_by_id, builtins, env)
-      },
-      .None => {},
-    }
-  }
-  cur
-}
-
-fn collect_higher_order_global_func_sigs(
-  reg: WasmTypeRegistry,
-  expr: PreparedExpr,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  builtins: BuiltinRegistry,
-  env: ResolvedEnv,
-) WasmTypeRegistry {
-  case expr {
-    .Let(_, op, body) => {
-      reg = collect_higher_order_global_func_sigs_op(reg, op, funcs_by_id, builtins, env)
-      collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins, env)
-    },
-    _ => reg,
-  }
-}
-
-fn collect_higher_order_global_func_sigs_op(
-  reg: WasmTypeRegistry,
-  op: PreparedOp,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  builtins: BuiltinRegistry,
-  env: ResolvedEnv,
-) WasmTypeRegistry {
-  case op {
-    .ACall(.AGlobalFunc(callee_fid), args) => {
-      case bi.entry(builtins, callee_fid) {
-        .Some(entry) => {
-          cur := reg
-          for arg,i in args {
-            case arg {
-              .AGlobalFunc(arg_fid) => {
-                if builtin_param_expects_function(entry, i) {
-                  cur = register_func_sig_by_id(cur, arg_fid, funcs_by_id, builtins, env)
-                }
-              },
-              _ => {},
-            }
-          }
-          cur
-        },
-        .None => {
-          case funcs_by_id[callee_fid.id] {
-            .None => reg,
-            .Some(callee) => {
-              cur := reg
-              for arg,i in args {
-                case arg {
-                  .AGlobalFunc(arg_fid) => {
-                    if prepared_param_expects_function(callee, i) {
-                      cur = register_func_sig_by_id(cur, arg_fid, funcs_by_id, builtins, env)
-                    }
-                  },
-                  _ => {},
-                }
-              }
-              cur
-            },
-          }
-        },
-      }
-    },
-    .AIf(_, then_e, else_e) => {
-      reg = collect_higher_order_global_func_sigs(reg, then_e, funcs_by_id, builtins, env)
-      collect_higher_order_global_func_sigs(reg, else_e, funcs_by_id, builtins, env)
-    },
-    .AMatch(_, arms) => {
-      cur := reg
-      for arm in arms {
-        cur = collect_higher_order_global_func_sigs(cur, arm.body, funcs_by_id, builtins, env)
-      }
-      cur
-    },
-    .ALoop(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins, env),
-    .ADefer(body) => collect_higher_order_global_func_sigs(reg, body, funcs_by_id, builtins, env),
-    _ => reg,
-  }
-}
-
-fn builtin_param_expects_function(entry: BuiltinEntry, index: Int) Bool {
-  if index >= entry.abi.param_types.len() { return false }
-  case entry.abi.param_types[index] {
-    .Ref(_, .Named(name)) => name == "rt_types__Closure",
-    _ => false,
-  }
-}
-
-fn prepared_param_expects_function(func: PreparedFunc, index: Int) Bool {
-  if index >= func.params.len() { return false }
-  sid := func.params[index]
-  case func.slots[sid.id] {
-    .Some(info) => case info.mono {
-      .Function(_, _) => true,
-      _ => false,
-    },
-    .None => false,
   }
 }
 
