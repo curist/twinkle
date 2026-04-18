@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
@@ -13,42 +9,29 @@ Twinkle is a statically typed programming language targeting WebAssembly GC. It 
 
 ## Development Commands
 
-### Build
+### Primary compiler workflow
 ```bash
-cargo build
+tools/twk_boot.mjs build boot/main.tw -o /tmp/boot.wasm
+tools/twk_boot.mjs ir boot/main.tw --opt
+tools/twk_boot.mjs run boot/tests/main.tw
 ```
 
-### Run
+### Bootstrap the boot compiler
 ```bash
-cargo run
+cargo run --release -- build boot/main.tw -o target/boot-main.wasm
 ```
 
 ### Test
 ```bash
 cargo test
+tools/twk_boot.mjs run boot/tests/main.tw
 ```
 
-### Boot Compiler Tests
-```bash
-cargo run --release -- run boot/tests/main.tw
-```
-
-### Preferred boot compiler self-host loop
-When iterating on the boot compiler, prefer the compiled Node.js runner path over
-`cargo run --release -- run ...` for self-hosting commands because it is much
-faster in this repository.
-
-Typical workflow:
-```bash
-cargo run --release -- build boot/main.tw -o target/boot-main.wasm
-node tools/run_wasm_node.mjs target/boot-main.wasm -- build boot/main.tw
-```
-
-Use the same runner for other boot compiler commands, for example:
-```bash
-node tools/run_wasm_node.mjs target/boot-main.wasm -- ir boot/main.tw --opt
-node tools/run_wasm_node.mjs target/boot-main.wasm -- run boot/tests/main.tw
-```
+### Implementation focus
+- Treat the boot compiler in `boot/` as the primary implementation.
+- Put new compiler features, optimizations, and CLI behavior in the boot compiler.
+- Update Rust stage0 in `src/` when required to bootstrap `boot/main.tw` or to keep it as a correctness reference.
+- Prefer the boot compiler path over the Rust interpreter for day-to-day compiler work.
 
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
