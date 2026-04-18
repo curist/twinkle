@@ -17,7 +17,7 @@ local, understandable, and cheap.
 
 This plan consolidates the earlier:
 
-- [`deferred-persistence.md`](./deferred-persistence.md)
+- [archive/deferred-persistence.md](archive/deferred-persistence.md)
 - the previous static uniqueness next/follow-up notes
 
 ## Current Status

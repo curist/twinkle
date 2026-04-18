@@ -41,6 +41,8 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [self-hosting.md](self-hosting.md) | Stage 10 design document for the self-hosted compiler pipeline and bootstrap architecture |
+| [self-hosting-status.md](self-hosting-status.md) | Fixed-point self-hosting status tracker and post-milestone follow-up index |
 | [boot-multi-module.md](boot-multi-module.md) | Phase E multi-module compilation — import scanning, env merging, recursive loading, linker integration; complete with fixed-point self-host loop |
 | [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md) | Close self-hosted/runtime representation mismatches (sum match/pattern lowering, erased boundaries, alias-backed layouts) — unblocked by fixed-point self-hosting |
 | [boot-backend-physical-typing.md](boot-backend-physical-typing.md) | Centralize actual-vs-expected Wasm type adaptation at erased backend boundaries — canonical coercion helper, boundary shims, verifier edge checks |
@@ -51,6 +53,8 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | First-class builtin / prelude function values in the boot backend; archived after the closure-materialization pipeline and regression coverage landed |
+| [deferred-persistence.md](deferred-persistence.md) | Earlier consolidated uniqueness/persistence strategy doc now superseded by the active static-uniqueness and persistent-container plans |
 | [boot-function-identity-canonicalization.md](boot-function-identity-canonicalization.md) | Canonical imported function identity across resolver, lowering, module compilation, and core linking so alias spelling no longer affects cross-module linkage |
 | [boot-module-type-identity.md](boot-module-type-identity.md) | Canonical imported nominal type identity across full/selective/transitive boot module boundaries; behavioral closure complete, deeper hidden-import cleanup deferred to the follow-on binding-model plan |
 | [boot-no-hidden-imports.md](boot-no-hidden-imports.md) | Remove hidden selective-import namespaces by splitting canonical import storage from visible bindings, completing support-type closure, and moving method lookup to receiver identity |

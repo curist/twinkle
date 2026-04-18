@@ -338,7 +338,7 @@ This plan is successful when all of the following are true:
 
 ## Related Docs
 
-* [self-hosting.md](self-hosting.md)
+* [archive/self-hosting.md](archive/self-hosting.md)
 * [boot-codegen.md](boot-codegen.md)
 * [persistent-vector.md](persistent-vector.md)
 * [persistent-dict.md](persistent-dict.md)

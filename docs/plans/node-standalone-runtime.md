@@ -76,7 +76,7 @@ rather than treating committed opaque binaries as the primary source of truth.
 
 This plan depends directly on:
 
-- [`boot-wasm-binary-serializer.md`](boot-wasm-binary-serializer.md)
+- [archive/boot-wasm-binary-serializer.md](archive/boot-wasm-binary-serializer.md)
 
 It is also informed by:
 

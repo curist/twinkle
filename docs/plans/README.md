@@ -31,15 +31,17 @@ To keep this directory actionable:
 
 Historical/completed indexes are in [archive/README.md](archive/README.md).
 
-### Self-Hosted Compiler
+### Boot Compiler
 
-Overall plan: [self-hosting.md](self-hosting.md) (design principles, lessons
-from stage0, bootstrapping sequence)
+Self-hosting is complete. Historical design and status docs live in
+[archive/README.md](archive/README.md).
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
-| Tracking | Status snapshots and phase progress | Done | [self-hosting-status.md](self-hosting-status.md) |
+| Boot checker inference | Tighten contextual call inference, closure reconciliation, and ambiguity reporting | In Progress | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) |
+| Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
+| Nested variant lowering | Investigate the remaining nested variant-pattern lowering hazard | In Progress | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) |
 
 ### Later — Tooling & Ecosystem
 
@@ -53,20 +55,16 @@ from stage0, bootstrapping sequence)
 | Plan | Description |
 |------|-------------|
 | [persistent-dict.md](persistent-dict.md) | Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
+| [persistent-vector.md](persistent-vector.md) | Replace the current flat copy-on-write vector backing with a persistent vector runtime and specialized container families |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) | Keep uniqueness-generated locals and rewritten ANF structure synchronized through the boot backend pipeline |
 | [boot-uniqueness-deep-ownership.md](boot-uniqueness-deep-ownership.md) | Separate fresh wrapper values from deep ownership so boot uniqueness only performs in-place collection rewrites when reachable mutable state is truly unaliased |
-| [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) | Investigate and fix the stage2 trap triggered by semantically equivalent nested variant-pattern matches in boot codegen helpers |
-| [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) | Normalize contextual call inference, closure annotation reconciliation, record validation, and ambiguity reporting in the boot checker |
-| [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | Make builtin / prelude functions behave like proper first-class closure values in the boot backend planning, verification, and emission pipeline |
-| [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) | Add a Twinkle-implemented serializer from boot Wasm IR to final `.wasm` bytes |
+| [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
-| [deferred-persistence.md](deferred-persistence.md) | Consolidated strategy for uniqueness-based in-place mutation under immutable value semantics |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |
 
-### Historical / deferred strategy docs
+### Archived reference docs
 
-Broader vector/library-boundary explorations and early runtime-comparison work
-have been moved to [archive/README.md](archive/README.md). They may still be
-useful background, but they are not part of the current active execution set.
+Completed plans, superseded strategy docs, and self-hosting milestone records
+live in [archive/README.md](archive/README.md).

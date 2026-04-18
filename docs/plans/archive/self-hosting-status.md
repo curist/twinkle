@@ -42,7 +42,7 @@ longer-term architecture.
 | Checker inference consistency | In Progress | [boot-checker-inference-consistency.md](boot-checker-inference-consistency.md) |
 | Nested variant pattern lowering | In Progress | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) |
 | anyref elimination | Planned | [backend-anyref-elimination.md](backend-anyref-elimination.md) |
-| Boot Wasm serializer | Planned | [archive/boot-wasm-binary-serializer.md](archive/boot-wasm-binary-serializer.md) |
+| Boot Wasm serializer | Planned | [boot-wasm-binary-serializer.md](boot-wasm-binary-serializer.md) |
 | Historical completed milestones | Done | See [archive/README.md](archive/README.md) for earlier milestone plans and archived self-hosting blocker plans |
 
 ---
