@@ -3,6 +3,13 @@ pub fn args() Vector<String> {
   __host_args()
 }
 
+/// Run a compiled Wasm module with the provided argv vector.
+///
+/// `argv[0]` should be the logical program path presented to the guest.
+pub fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>) Int {
+  __host_run_wasm(bytes, argv)
+}
+
 /// Return the environment variable value when present.
 pub fn env(name: String) String? {
   values := __host_env(name)

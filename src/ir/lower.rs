@@ -135,6 +135,7 @@ pub mod prelude {
     pub const HOST_CWD: FuncId = FuncId(1011); // () -> String
     pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
     pub const HOST_NOW: FuncId = FuncId(1030); // () -> Float (milliseconds since time origin)
+    pub const HOST_RUN_WASM: FuncId = FuncId(1031); // (bytes: Vector<Byte>, argv: Vector<String>) -> Int
 
     // User functions start here
     pub const USER_FUNC_START: u32 = 41;

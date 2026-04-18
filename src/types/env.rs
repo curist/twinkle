@@ -985,6 +985,16 @@ impl ValueEnv {
                 ret: Box::new(MonoType::Float),
             },
         );
+        env.builtins.insert(
+            "__host_run_wasm".to_string(),
+            MonoType::Function {
+                params: vec![
+                    MonoType::Vector(Box::new(MonoType::Byte)),
+                    MonoType::Vector(Box::new(MonoType::String)),
+                ],
+                ret: Box::new(MonoType::Int),
+            },
+        );
 
         // Note: len() is intentionally NOT pre-registered as a builtin here.
         // It will be handled specially in check.rs::synth_call() to support both

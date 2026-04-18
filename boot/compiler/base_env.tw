@@ -255,4 +255,5 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
     .add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String)))
     .add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)))
     .add_function(builtin_sig("__host_now", [], [], [], .Some(.Float)))
+    .add_function(builtin_sig("__host_run_wasm", [], ["bytes", "argv"], [.Vector(.Byte), .Vector(.String)], .Some(.Int)))
 }

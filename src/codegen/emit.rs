@@ -2273,7 +2273,7 @@ fn emit_tail_call(
 }
 
 fn emit_tail_runtime_prelude_call(
-    _func_id: FuncId,
+    func_id: FuncId,
     entry: &crate::codegen::prelude::PreludeEntry,
     args: &[Atom],
     return_ty: Option<&ValType>,
@@ -2293,11 +2293,52 @@ fn emit_tail_runtime_prelude_call(
         );
     }
 
+    let entry_has_host_vector_arg = |index: usize| {
+        is_host_vector_arg(func_id, index)
+            || (entry.twinkle_name == "__host_run_wasm" && (index == 0 || index == 1))
+    };
+    let entry_has_any_host_vector_args =
+        has_host_vector_args(func_id) || entry.twinkle_name == "__host_run_wasm";
+
     let mut instrs = Vec::new();
-    for (arg, param_ty) in args.iter().zip(entry.runtime_params.iter()) {
-        instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+    for (i, (arg, param_ty)) in args.iter().zip(entry.runtime_params.iter()).enumerate() {
+        if entry_has_host_vector_arg(i) {
+            instrs.extend(emit_atom(arg, Some(&ref_pvec_null()), ctx));
+            ensure_rt_arr_to_array_import(ctx);
+            instrs.push(Instr::Call("rt_arr__to_array".to_string()));
+        } else {
+            instrs.extend(emit_atom(arg, Some(param_ty), ctx));
+        }
     }
-    ctx.add_runtime_import(entry);
+    if entry_has_any_host_vector_args {
+        let sym = entry.runtime_sym.as_ref().cloned().unwrap_or_else(|| {
+            panic!(
+                "runtime prelude entry missing symbol: {}",
+                entry.twinkle_name
+            )
+        });
+        let host_params: Vec<ValType> = entry
+            .runtime_params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                if entry_has_host_vector_arg(i) {
+                    ref_array_null()
+                } else {
+                    ty.clone()
+                }
+            })
+            .collect();
+        ctx.add_import(ImportDef {
+            module: entry.runtime_module.unwrap().to_string(),
+            name: entry.runtime_name.unwrap().to_string(),
+            as_sym: sym,
+            params: host_params,
+            results: entry.runtime_results.clone(),
+        });
+    } else {
+        ctx.add_runtime_import(entry);
+    }
     let sym = entry.runtime_sym.as_ref().cloned().unwrap_or_else(|| {
         panic!(
             "runtime prelude entry missing symbol: {}",
@@ -6954,9 +6995,16 @@ fn emit_runtime_prelude_call(
         );
     }
 
+    let entry_has_host_vector_arg = |index: usize| {
+        is_host_vector_arg(func_id, index)
+            || (entry.twinkle_name == "__host_run_wasm" && (index == 0 || index == 1))
+    };
+    let entry_has_any_host_vector_args =
+        has_host_vector_args(func_id) || entry.twinkle_name == "__host_run_wasm";
+
     let mut instrs = Vec::new();
     for (i, (arg, param_ty)) in args.iter().zip(entry.runtime_params.iter()).enumerate() {
-        if is_host_vector_arg(func_id, i) {
+        if entry_has_host_vector_arg(i) {
             // Host boundary: emit as PVec, then convert PVec → flat Array
             instrs.extend(emit_atom(arg, Some(&ref_pvec_null()), ctx));
             ensure_rt_arr_to_array_import(ctx);
@@ -6972,7 +7020,7 @@ fn emit_runtime_prelude_call(
         )
     });
 
-    if is_host_vector_returning(func_id) || has_host_vector_args(func_id) {
+    if is_host_vector_returning(func_id) || entry_has_any_host_vector_args {
         // For host vector boundary functions, add the import with the
         // actual host-side types ($Array), not the language-side types ($PVec).
         let host_params: Vec<ValType> = entry
@@ -6980,7 +7028,7 @@ fn emit_runtime_prelude_call(
             .iter()
             .enumerate()
             .map(|(i, ty)| {
-                if is_host_vector_arg(func_id, i) {
+                if entry_has_host_vector_arg(i) {
                     ref_array_null()
                 } else {
                     ty.clone()
@@ -7050,13 +7098,14 @@ fn is_host_read_file(func_id: FuncId) -> bool {
 /// PVec → flat Array conversion before the host call.
 fn is_host_vector_arg(func_id: FuncId, index: usize) -> bool {
     use crate::ir::lower::prelude as ids;
-    func_id == ids::HOST_WRITE_BYTES && index == 1
+    (func_id == ids::HOST_WRITE_BYTES && index == 1)
+        || (func_id == ids::HOST_RUN_WASM && (index == 0 || index == 1))
 }
 
 /// Whether any arg of `func_id` needs PVec → Array conversion.
 fn has_host_vector_args(func_id: FuncId) -> bool {
     use crate::ir::lower::prelude as ids;
-    func_id == ids::HOST_WRITE_BYTES
+    func_id == ids::HOST_WRITE_BYTES || func_id == ids::HOST_RUN_WASM
 }
 
 fn ensure_rt_arr_from_array_import(ctx: &mut EmitCtx<'_>) {

@@ -928,8 +928,9 @@ fn is_host_vector_returning(name: String) Bool {
 fn is_host_read_file(name: String) Bool {
   name == "host_read_file"
 }
-fn is_host_vector_arg(name: String) Bool {
-  name == "host_write_bytes"
+fn is_host_vector_arg(name: String, index: Int) Bool {
+  (name == "host_write_bytes" and index == 1)
+  or (name == "host_run_wasm" and (index == 0 or index == 1))
 }
 
 fn is_vector_builder_array_arg(name: String, index: Int) Bool {
@@ -955,7 +956,7 @@ fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vec
 
 // ABI shim: host_write_bytes expects a flat Array, not a PVec.
 fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<Instr> {
-  if is_host_vector_arg(entry_name) and index == 1 {
+  if is_host_vector_arg(entry_name, index) {
     return buf.append(.Call("rt_arr__to_array"))
   }
   buf
@@ -1011,7 +1012,7 @@ fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: 
   // but the raw host ABI takes a flat Array. The explicit shim performs the
   // PVec -> Array conversion, so the generic ABI coercion must not run first or
   // it will insert an invalid PVec-as-Array ref.cast before rt_arr__to_array.
-  if is_host_vector_arg(entry_name) and index == 1 {
+  if is_host_vector_arg(entry_name, index) {
     return emit_host_arg_shim(entry_name, index, out)
   }
 

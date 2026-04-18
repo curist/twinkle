@@ -35,7 +35,7 @@ fn ir_cmd() Command {
 }
 
 fn run_cmd() Command {
-  file_command("run", "Run program (placeholder)")
+  file_command("run", "Run program")
     .add_short_flag("interpreter", "i", "Run with interpreter backend")
 }
 
@@ -120,9 +120,14 @@ fn not_implemented(cmd: String, detail: String) {
 }
 
 fn exit_usage_error(msg: String) {
-  eprintln(msg)
-  eprintln("")
-  eprintln(usage_hint())
+  hint := usage_hint()
+  if msg == hint {
+    eprintln(hint)
+  } else {
+    eprintln(msg)
+    eprintln("")
+    eprintln(hint)
+  }
   proc.exit(2)
 }
 
@@ -352,10 +357,8 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
         "check" => try file_detail(parsed, fn(file) { "Would type-check '${file}'." }),
         "ir" => try file_detail(parsed, fn(file) { "Would print IR for '${file}'." }),
         "run" => {
-          interp := app.has_flag(parsed, "interpreter")
-          mode := if interp { "interpreter" } else { "wasm" }
           try file_detail(parsed, fn(file) {
-            "Would run '${file}' via ${mode} backend."
+            "Would run '${file}' via WASM backend."
           })
         },
         "build" => {
@@ -377,12 +380,46 @@ fn run_command(parsed: ParseResult) {
     .Some("check") => run_check_command(parsed),
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
+    .Some("run") => {
+      file := case get_positional(parsed, 0, "file") {
+        .Ok(path) => path,
+        .Err(msg) => { exit_usage_error(msg) },
+      }
+      run_command_impl(parsed, file)
+    },
     _ => {
       case build_command_plan(parsed) {
         .Ok(plan) => not_implemented(plan.cmd, plan.detail),
         .Err(msg) => exit_usage_error(msg),
       }
     },
+  }
+}
+
+fn run_command_impl(parsed: ParseResult, file: String) {
+  if app.has_flag(parsed, "interpreter") {
+    eprintln("error: boot run does not support --interpreter yet")
+    proc.exit(1)
+  }
+
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  wasm_bytes := pipeline.emit_wasm(artifacts)
+  user_args := if parsed.positional.len() > 1 {
+    parsed.positional.slice(1, parsed.positional.len())
+  } else {
+    []
+  }
+  argv := [file].concat(user_args)
+  exit_code := proc.run_wasm(wasm_bytes, argv)
+  if exit_code != 0 {
+    proc.exit(exit_code)
   }
 }
 
