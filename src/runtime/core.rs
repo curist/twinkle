@@ -5,7 +5,6 @@ use crate::wasm::ir::*;
 pub fn make() -> ModuleIR {
     let mut m = ModuleIR::new("rt.core");
 
-    // Host I/O imports
     m.imports.push(ImportDef {
         module: "host".into(),
         name: "print".into(),
@@ -41,14 +40,47 @@ pub fn make() -> ModuleIR {
         params: vec![ref_string_null()],
         results: vec![],
     });
-
-    // Import rt.str.eq for structural string comparison in eq()
     m.imports.push(ImportDef {
         module: "rt.str".into(),
         name: "eq".into(),
-        as_sym: F_STR_EQ.into(),
+        as_sym: "rt_str__eq".into(),
         params: vec![ref_string(), ref_string()],
         results: vec![ValType::I32],
+    });
+    m.imports.push(ImportDef {
+        module: "rt.arr".into(),
+        name: "len".into(),
+        as_sym: "rt_arr__len".into(),
+        params: vec![ref_pvec_null()],
+        results: vec![ValType::I32],
+    });
+    m.imports.push(ImportDef {
+        module: "rt.arr".into(),
+        name: "get".into(),
+        as_sym: "rt_arr__get".into(),
+        params: vec![ref_pvec_null(), ValType::I32],
+        results: vec![ValType::Anyref],
+    });
+    m.imports.push(ImportDef {
+        module: "rt.dict".into(),
+        name: "len".into(),
+        as_sym: "rt_dict__len".into(),
+        params: vec![ref_pdict_null()],
+        results: vec![ValType::I32],
+    });
+    m.imports.push(ImportDef {
+        module: "rt.dict".into(),
+        name: "get".into(),
+        as_sym: "rt_dict__get".into(),
+        params: vec![ref_pdict_null(), ValType::Anyref],
+        results: vec![ValType::Anyref],
+    });
+    m.imports.push(ImportDef {
+        module: "rt.dict".into(),
+        name: "keys".into(),
+        as_sym: "rt_dict__keys".into(),
+        params: vec![ref_pdict_null()],
+        results: vec![ref_pvec()],
     });
 
     m.funcs.push(print_fn());
@@ -56,6 +88,10 @@ pub fn make() -> ModuleIR {
     m.funcs.push(eprint_fn());
     m.funcs.push(eprintln_fn());
     m.funcs.push(trap_fn());
+    m.funcs.push(eq_array_fn());
+    m.funcs.push(eq_vec_fn());
+    m.funcs.push(eq_dict_fn());
+    m.funcs.push(eq_variant_fn());
     m.funcs.push(eq_fn());
 
     for f in &m.funcs {
@@ -68,7 +104,6 @@ pub fn make() -> ModuleIR {
     m
 }
 
-/// `print(s: String)`
 fn print_fn() -> FuncDef {
     FuncDef {
         name: "print".into(),
@@ -79,7 +114,6 @@ fn print_fn() -> FuncDef {
     }
 }
 
-/// `println(s: String)`
 fn println_fn() -> FuncDef {
     FuncDef {
         name: "println".into(),
@@ -90,7 +124,6 @@ fn println_fn() -> FuncDef {
     }
 }
 
-/// `eprint(s: String)`
 fn eprint_fn() -> FuncDef {
     FuncDef {
         name: "eprint".into(),
@@ -101,7 +134,6 @@ fn eprint_fn() -> FuncDef {
     }
 }
 
-/// `eprintln(s: String)`
 fn eprintln_fn() -> FuncDef {
     FuncDef {
         name: "eprintln".into(),
@@ -112,7 +144,6 @@ fn eprintln_fn() -> FuncDef {
     }
 }
 
-/// `trap(msg: String)` — calls host error and then unreachable
 fn trap_fn() -> FuncDef {
     FuncDef {
         name: "trap".into(),
@@ -127,49 +158,346 @@ fn trap_fn() -> FuncDef {
     }
 }
 
-/// `eq(a: anyref, b: anyref) -> i32`
-///
-/// Structural equality: same pointer → equal; $BoxedInt → compare i64;
-/// $String → byte-level comparison via rt_str__eq;
-/// otherwise falls back to ref.eq (identity).
-///
-/// Uses `ref.test` (not `ref.cast`) for type checks to avoid trapping on
-/// type mismatch.
+fn eq_array_fn() -> FuncDef {
+    FuncDef {
+        name: "eq_array".into(),
+        params: vec![ref_array_null(), ref_array_null()],
+        results: vec![ValType::I32],
+        locals: vec![ValType::I32, ValType::I32],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefIsNull,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(1),
+                    Instr::RefIsNull,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![Instr::I32Const(1), Instr::Return],
+                        else_body: vec![],
+                    },
+                    Instr::I32Const(0),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(1),
+            Instr::RefIsNull,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalGet(2),
+            Instr::I32Ne,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::Block {
+                label: "exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "loop".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("exit".into()),
+                        Instr::LocalGet(0),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_ARRAY.into()),
+                        Instr::LocalGet(1),
+                        Instr::RefAsNonNull,
+                        Instr::LocalGet(3),
+                        Instr::ArrayGet(T_ARRAY.into()),
+                        Instr::Call("eq".into()),
+                        Instr::I32Eqz,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(0), Instr::Return],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("loop".into()),
+                    ],
+                }],
+            },
+            Instr::I32Const(1),
+        ],
+    }
+}
+
+fn eq_vec_fn() -> FuncDef {
+    FuncDef {
+        name: "eq_vec".into(),
+        params: vec![ref_pvec(), ref_pvec()],
+        results: vec![ValType::I32],
+        locals: vec![ValType::I32, ValType::I32],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::Call("rt_arr__len".into()),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::Call("rt_arr__len".into()),
+            Instr::LocalGet(2),
+            Instr::I32Ne,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::I32Const(0),
+            Instr::LocalSet(3),
+            Instr::Block {
+                label: "exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "loop".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("exit".into()),
+                        Instr::LocalGet(0),
+                        Instr::LocalGet(3),
+                        Instr::Call("rt_arr__get".into()),
+                        Instr::LocalGet(1),
+                        Instr::LocalGet(3),
+                        Instr::Call("rt_arr__get".into()),
+                        Instr::Call("eq".into()),
+                        Instr::I32Eqz,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(0), Instr::Return],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(3),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(3),
+                        Instr::Br("loop".into()),
+                    ],
+                }],
+            },
+            Instr::I32Const(1),
+        ],
+    }
+}
+
+fn eq_dict_fn() -> FuncDef {
+    FuncDef {
+        name: "eq_dict".into(),
+        params: vec![ref_pdict(), ref_pdict()],
+        results: vec![ValType::I32],
+        locals: vec![
+            ValType::I32,
+            ref_pvec(),
+            ValType::I32,
+            ValType::Anyref,
+            ValType::Anyref,
+            ValType::Anyref,
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::Call("rt_dict__len".into()),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::Call("rt_dict__len".into()),
+            Instr::LocalGet(2),
+            Instr::I32Ne,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::Call("rt_dict__keys".into()),
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
+            Instr::Block {
+                label: "exit".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "loop".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("exit".into()),
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(4),
+                        Instr::Call("rt_arr__get".into()),
+                        Instr::LocalSet(5),
+                        Instr::LocalGet(0),
+                        Instr::LocalGet(5),
+                        Instr::Call("rt_dict__get".into()),
+                        Instr::LocalSet(6),
+                        Instr::LocalGet(1),
+                        Instr::LocalGet(5),
+                        Instr::Call("rt_dict__get".into()),
+                        Instr::LocalSet(7),
+                        Instr::LocalGet(7),
+                        Instr::RefIsNull,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(0), Instr::Return],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(6),
+                        Instr::LocalGet(7),
+                        Instr::Call("eq".into()),
+                        Instr::I32Eqz,
+                        Instr::If {
+                            result: None,
+                            then_body: vec![Instr::I32Const(0), Instr::Return],
+                            else_body: vec![],
+                        },
+                        Instr::LocalGet(4),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(4),
+                        Instr::Br("loop".into()),
+                    ],
+                }],
+            },
+            Instr::I32Const(1),
+        ],
+    }
+}
+
+fn eq_variant_fn() -> FuncDef {
+    FuncDef {
+        name: "eq_variant".into(),
+        params: vec![
+            ValType::Ref {
+                nullable: false,
+                heap: HeapType::Named(T_VARIANT.into()),
+            },
+            ValType::Ref {
+                nullable: false,
+                heap: HeapType::Named(T_VARIANT.into()),
+            },
+        ],
+        results: vec![ValType::I32],
+        locals: vec![ref_array_null(), ref_array_null()],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::StructGet(T_VARIANT.into(), 0),
+            Instr::LocalGet(1),
+            Instr::StructGet(T_VARIANT.into(), 0),
+            Instr::I32Ne,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::StructGet(T_VARIANT.into(), 1),
+            Instr::LocalGet(1),
+            Instr::StructGet(T_VARIANT.into(), 1),
+            Instr::I32Ne,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::I32Const(0), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::StructGet(T_VARIANT.into(), 2),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::StructGet(T_VARIANT.into(), 2),
+            Instr::LocalSet(3),
+            Instr::LocalGet(2),
+            Instr::LocalGet(3),
+            Instr::Call("eq_array".into()),
+        ],
+    }
+}
+
 fn eq_fn() -> FuncDef {
-    let cast_to_eqref = Instr::RefCast {
-        nullable: true,
-        heap: HeapType::Eq,
-    };
-    let test_boxed_int = Instr::RefTest {
-        nullable: false,
-        heap: HeapType::Named(T_BOXED_INT.into()),
-    };
-    let test_string = Instr::RefTest {
-        nullable: false,
-        heap: HeapType::Named(T_STRING.into()),
-    };
     FuncDef {
         name: "eq".into(),
         params: vec![ValType::Anyref, ValType::Anyref],
         results: vec![ValType::I32],
         locals: vec![],
         body: vec![
-            // Fast path: same pointer (cast to eqref for ref.eq)
             Instr::LocalGet(0),
-            cast_to_eqref.clone(),
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Eq,
+            },
             Instr::LocalGet(1),
-            cast_to_eqref.clone(),
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Eq,
+            },
             Instr::RefEq,
             Instr::If {
                 result: None,
                 then_body: vec![Instr::I32Const(1), Instr::Return],
                 else_body: vec![],
             },
-            // Check if both are $BoxedInt using ref.test
             Instr::LocalGet(0),
-            test_boxed_int.clone(),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::I31,
+            },
             Instr::LocalGet(1),
-            test_boxed_int,
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::I31,
+            },
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::I31,
+                    },
+                    Instr::I31GetU,
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::I31,
+                    },
+                    Instr::I31GetU,
+                    Instr::I32Eq,
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_BOXED_INT.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_BOXED_INT.into()),
+            },
             Instr::I32And,
             Instr::If {
                 result: None,
@@ -191,11 +519,47 @@ fn eq_fn() -> FuncDef {
                 ],
                 else_body: vec![],
             },
-            // Check if both are $String using ref.test
             Instr::LocalGet(0),
-            test_string.clone(),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_BOXED_FLOAT.into()),
+            },
             Instr::LocalGet(1),
-            test_string,
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_BOXED_FLOAT.into()),
+            },
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_FLOAT.into()),
+                    },
+                    Instr::StructGet(T_BOXED_FLOAT.into(), 0),
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_BOXED_FLOAT.into()),
+                    },
+                    Instr::StructGet(T_BOXED_FLOAT.into(), 0),
+                    Instr::F64Eq,
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_STRING.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_STRING.into()),
+            },
             Instr::I32And,
             Instr::If {
                 result: None,
@@ -210,16 +574,108 @@ fn eq_fn() -> FuncDef {
                         nullable: false,
                         heap: HeapType::Named(T_STRING.into()),
                     },
-                    Instr::Call(F_STR_EQ.into()),
+                    Instr::Call("rt_str__eq".into()),
                     Instr::Return,
                 ],
                 else_body: vec![],
             },
-            // Fallback: identity (ref.eq)
             Instr::LocalGet(0),
-            cast_to_eqref.clone(),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_PVEC.into()),
+            },
             Instr::LocalGet(1),
-            cast_to_eqref,
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_PVEC.into()),
+            },
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_PVEC.into()),
+                    },
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_PVEC.into()),
+                    },
+                    Instr::Call("eq_vec".into()),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_PDICT.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_PDICT.into()),
+            },
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_PDICT.into()),
+                    },
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_PDICT.into()),
+                    },
+                    Instr::Call("eq_dict".into()),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_VARIANT.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::RefTest {
+                nullable: false,
+                heap: HeapType::Named(T_VARIANT.into()),
+            },
+            Instr::I32And,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(0),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_VARIANT.into()),
+                    },
+                    Instr::LocalGet(1),
+                    Instr::RefCast {
+                        nullable: false,
+                        heap: HeapType::Named(T_VARIANT.into()),
+                    },
+                    Instr::Call("eq_variant".into()),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Eq,
+            },
+            Instr::LocalGet(1),
+            Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Eq,
+            },
             Instr::RefEq,
         ],
     }

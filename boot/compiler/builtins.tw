@@ -63,6 +63,7 @@ fn builtin_abi(name: String) AbiContract {
     "error" => abi([str_n()], []),
     "eprint" => abi([str_n()], []),
     "eprintln" => abi([str_n()], []),
+    "core_eq" => abi([.Anyref, .Anyref], [.I32]),
     "int_to_string" => abi([.I64], [str_()]),
     "float_to_string" => abi([.F64], [str_()]),
     "bool_to_string" => abi([.I32], [str_()]),
@@ -255,6 +256,7 @@ pub fn make_builtin_registry() BuiltinRegistry {
     .runtime("error",   "rt.core", "trap")
     .runtime("eprint",  "rt.core", "eprint")
     .runtime("eprintln","rt.core", "eprintln")
+    .runtime("core_eq", "rt.core", "eq")
     // ── to_string family ──
     .runtime("int_to_string",    "rt.str", "from_i64")
     .runtime("float_to_string",  "rt.str", "from_f64")

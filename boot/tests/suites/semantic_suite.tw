@@ -33,6 +33,8 @@ fn find_first_gt(xs: Vector<Int>, threshold: Int) String {
   "not found"
 }
 
+type Point = .{ x: Int, y: Int }
+
 pub fn suite() runner.Suite {
   runner.suite("semantic cases")
     .test("closure capture by value", fn() {
@@ -82,6 +84,40 @@ pub fn suite() runner.Suite {
       nums: Vector<Int> = [1, 3, 5, 7, 9]
       try assert.str_eq(find_first_gt(nums, 6), "found: 7")
       try assert.str_eq(find_first_gt(nums, 10), "not found")
+      .Ok({})
+    })
+    .test("vector equality is structural", fn() {
+      a: Vector<Int> = [1, 2, 3]
+      b: Vector<Int> = [1, 2, 3]
+      c: Vector<Int> = [1, 2]
+      d: Vector<Int> = [1, 2, 4]
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      try assert.is_false(a == d)
+      .Ok({})
+    })
+    .test("dict equality is structural and order-insensitive", fn() {
+      a: Dict<String, Vector<Int>> = Dict.new()
+      a["left"] = [1, 2]
+      a["right"] = [3]
+
+      b: Dict<String, Vector<Int>> = Dict.new()
+      b["right"] = [3]
+      b["left"] = [1, 2]
+
+      c: Dict<String, Vector<Int>> = Dict.new()
+      c["left"] = [1, 2]
+      c["right"] = [4]
+
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("record equality stays by reference", fn() {
+      a := Point.{ x: 1, y: 2 }
+      b := Point.{ x: 1, y: 2 }
+      try assert.is_false(a == b)
+      try assert.is_true(a == a)
       .Ok({})
     })
 }

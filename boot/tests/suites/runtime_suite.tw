@@ -279,7 +279,7 @@ fn test_rt_core_namespace() Result<Void, String> {
 
 fn test_rt_core_func_count() Result<Void, String> {
   m := rt_core.module()
-  try assert.int_eq(m.funcs.len(), 6)
+  try assert.int_eq(m.funcs.len(), 10)
   .Ok({})
 }
 
@@ -323,18 +323,33 @@ fn test_rt_core_host_imports() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_core_str_eq_import() Result<Void, String> {
+fn test_rt_core_eq_imports() Result<Void, String> {
   m := rt_core.module()
-  found := false
+  found_str := false
+  found_arr_len := false
+  found_arr_get := false
+  found_dict_len := false
+  found_dict_get := false
+  found_dict_keys := false
   for imp in m.imports {
     if imp.module == "rt.str" and imp.name == "eq" {
-      found = true
+      found_str = true
       try assert.str_eq(imp.as_sym, "rt_str__eq")
       try assert.int_eq(imp.params.len(), 2)
       try assert.int_eq(imp.results.len(), 1)
     }
+    if imp.module == "rt.arr" and imp.name == "len" { found_arr_len = true }
+    if imp.module == "rt.arr" and imp.name == "get" { found_arr_get = true }
+    if imp.module == "rt.dict" and imp.name == "len" { found_dict_len = true }
+    if imp.module == "rt.dict" and imp.name == "get" { found_dict_get = true }
+    if imp.module == "rt.dict" and imp.name == "keys" { found_dict_keys = true }
   }
-  try assert.ok(found, "should import rt.str.eq")
+  try assert.ok(found_str, "should import rt.str.eq")
+  try assert.ok(found_arr_len, "should import rt.arr.len")
+  try assert.ok(found_arr_get, "should import rt.arr.get")
+  try assert.ok(found_dict_len, "should import rt.dict.len")
+  try assert.ok(found_dict_get, "should import rt.dict.get")
+  try assert.ok(found_dict_keys, "should import rt.dict.keys")
   .Ok({})
 }
 
@@ -383,17 +398,27 @@ fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
   f := try find_func(m.funcs, "eq").ok_or("missing eq func")
   try assert.int_eq(f.params.len(), 2)
   try assert.int_eq(f.results.len(), 1)
-  // Should contain RefTest for BoxedInt
-  found_ref_test := false
+  found_boxed_int := false
+  found_pvec := false
+  found_pdict := false
+  found_variant := false
   found_ref_eq := false
   for instr in f.body {
     case instr {
-      .RefTest(_, .Named(n)) => { if n == "rt_types__BoxedInt" { found_ref_test = true } },
+      .RefTest(_, .Named(n)) => {
+        if n == "rt_types__BoxedInt" { found_boxed_int = true }
+        if n == "rt_types__PVec" { found_pvec = true }
+        if n == "rt_types__PDict" { found_pdict = true }
+        if n == "rt_types__Variant" { found_variant = true }
+      },
       .RefEq => { found_ref_eq = true },
       _ => {},
     }
   }
-  try assert.ok(found_ref_test, "eq should use ref.test for BoxedInt")
+  try assert.ok(found_boxed_int, "eq should use ref.test for BoxedInt")
+  try assert.ok(found_pvec, "eq should use ref.test for PVec")
+  try assert.ok(found_pdict, "eq should use ref.test for PDict")
+  try assert.ok(found_variant, "eq should use ref.test for Variant")
   try assert.ok(found_ref_eq, "eq should use ref.eq for identity check")
   .Ok({})
 }
@@ -1025,10 +1050,10 @@ pub fn suite() runner.Suite {
     .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
     // rt.core
     .test("rt.core: namespace", test_rt_core_namespace)
-    .test("rt.core: 6 functions", test_rt_core_func_count)
+    .test("rt.core: 10 functions", test_rt_core_func_count)
     .test("rt.core: exports all funcs", test_rt_core_exports_all_funcs)
     .test("rt.core: 5 host imports", test_rt_core_host_imports)
-    .test("rt.core: imports rt.str.eq", test_rt_core_str_eq_import)
+    .test("rt.core: imports equality helpers", test_rt_core_eq_imports)
     .test("rt.core: print delegates to host", test_rt_core_print_delegates)
     .test("rt.core: trap ends with unreachable", test_rt_core_trap_unreachable)
     .test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test)

@@ -3,17 +3,35 @@
 // Mirrors stage0 src/runtime/core.rs.
 
 use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
-  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+  ValType, HeapType, Instr, FuncDef, ImportDef, ExportDef, WasmModule,
 }
 
-// Cross-module qualified names (already linked form)
 fn str_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__String")) }
 fn str_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__String")) }
+fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
+fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+fn pvec_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PVec")) }
+fn pdict_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PDict")) }
+fn variant_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Variant")) }
+
+fn t_array() String { "rt_types__Array" }
+fn t_string() String { "rt_types__String" }
+fn t_pvec() String { "rt_types__PVec" }
+fn t_pdict() String { "rt_types__PDict" }
+fn t_variant() String { "rt_types__Variant" }
+fn t_boxed_int() String { "rt_types__BoxedInt" }
+fn t_boxed_float() String { "rt_types__BoxedFloat" }
+
+fn pv_len() Int { 0 }
+fn pd_size() Int { 0 }
+fn v_type_id() Int { 0 }
+fn v_variant_id() Int { 1 }
+fn v_payload() Int { 2 }
 
 pub fn module() WasmModule {
   funcs := [
-    print_fn(), println_fn(), eprint_fn(), eprintln_fn(), trap_fn(), eq_fn(),
+    print_fn(), println_fn(), eprint_fn(), eprintln_fn(), trap_fn(),
+    eq_array_fn(), eq_vec_fn(), eq_dict_fn(), eq_variant_fn(), eq_fn(),
   ]
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
@@ -27,8 +45,12 @@ pub fn module() WasmModule {
       ImportDef.{ module: "host", name: "error", as_sym: "host_error", params: [str_null()], results: [] },
       ImportDef.{ module: "host", name: "eprint", as_sym: "host_eprint", params: [str_null()], results: [] },
       ImportDef.{ module: "host", name: "eprintln", as_sym: "host_eprintln", params: [str_null()], results: [] },
-      // Import rt.str.eq for structural string comparison
       ImportDef.{ module: "rt.str", name: "eq", as_sym: "rt_str__eq", params: [str_ref(), str_ref()], results: [.I32] },
+      ImportDef.{ module: "rt.arr", name: "len", as_sym: "rt_arr__len", params: [ValType.Ref(true, HeapType.Named("rt_types__PVec"))], results: [.I32] },
+      ImportDef.{ module: "rt.arr", name: "get", as_sym: "rt_arr__get", params: [ValType.Ref(true, HeapType.Named("rt_types__PVec")), .I32], results: [.Anyref] },
+      ImportDef.{ module: "rt.dict", name: "len", as_sym: "rt_dict__len", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict"))], results: [.I32] },
+      ImportDef.{ module: "rt.dict", name: "get", as_sym: "rt_dict__get", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict")), .Anyref], results: [.Anyref] },
+      ImportDef.{ module: "rt.dict", name: "keys", as_sym: "rt_dict__keys", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict"))], results: [pvec_ref()] },
     ],
     funcs: funcs,
     globals: [],
@@ -70,9 +92,129 @@ fn trap_fn() FuncDef {
   ] }
 }
 
+// eq_array(a: ref null Array, b: ref null Array) -> i32
+fn eq_array_fn() FuncDef {
+  FuncDef.{
+    name: "eq_array",
+    params: [arr_null(), arr_null()],
+    results: [.I32],
+    locals: [.I32, .I32],
+    body: [
+      Instr.LocalGet(0), Instr.RefIsNull,
+      Instr.If(.None, [
+        Instr.LocalGet(1), Instr.RefIsNull,
+        Instr.If(.None, [Instr.I32Const(1), Instr.Return], []),
+        Instr.I32Const(0), Instr.Return,
+      ], []),
+      Instr.LocalGet(1), Instr.RefIsNull,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.LocalGet(0), Instr.RefAsNonNull, Instr.ArrayLen, Instr.LocalSet(2),
+      Instr.LocalGet(1), Instr.RefAsNonNull, Instr.ArrayLen,
+      Instr.LocalGet(2), Instr.I32Ne,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.Block("exit", .None, [Instr.Loop("loop", .None, [
+        Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+        Instr.LocalGet(0), Instr.RefAsNonNull, Instr.LocalGet(3), Instr.ArrayGet(t_array()),
+        Instr.LocalGet(1), Instr.RefAsNonNull, Instr.LocalGet(3), Instr.ArrayGet(t_array()),
+        Instr.Call("eq"), Instr.I32Eqz,
+        Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+        Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+        Instr.Br("loop"),
+      ])]),
+      Instr.I32Const(1),
+    ],
+  }
+}
+
+// eq_vec(a: ref PVec, b: ref PVec) -> i32
+fn eq_vec_fn() FuncDef {
+  FuncDef.{
+    name: "eq_vec",
+    params: [pvec_ref(), pvec_ref()],
+    results: [.I32],
+    locals: [.I32, .I32],
+    body: [
+      Instr.LocalGet(0), Instr.Call("rt_arr__len"), Instr.LocalSet(2),
+      Instr.LocalGet(1), Instr.Call("rt_arr__len"),
+      Instr.LocalGet(2), Instr.I32Ne,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.I32Const(0), Instr.LocalSet(3),
+      Instr.Block("exit", .None, [Instr.Loop("loop", .None, [
+        Instr.LocalGet(3), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+        Instr.LocalGet(0), Instr.LocalGet(3), Instr.Call("rt_arr__get"),
+        Instr.LocalGet(1), Instr.LocalGet(3), Instr.Call("rt_arr__get"),
+        Instr.Call("eq"), Instr.I32Eqz,
+        Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+        Instr.LocalGet(3), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(3),
+        Instr.Br("loop"),
+      ])]),
+      Instr.I32Const(1),
+    ],
+  }
+}
+
+// eq_dict(a: ref PDict, b: ref PDict) -> i32
+fn eq_dict_fn() FuncDef {
+  FuncDef.{
+    name: "eq_dict",
+    params: [pdict_ref(), pdict_ref()],
+    results: [.I32],
+    locals: [.I32, pvec_ref(), .I32, .Anyref, .Anyref, .Anyref],
+    body: [
+      Instr.LocalGet(0), Instr.Call("rt_dict__len"), Instr.LocalSet(2),
+      Instr.LocalGet(1), Instr.Call("rt_dict__len"),
+      Instr.LocalGet(2), Instr.I32Ne,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.LocalGet(0), Instr.Call("rt_dict__keys"), Instr.LocalSet(3),
+      Instr.I32Const(0), Instr.LocalSet(4),
+      Instr.Block("exit", .None, [Instr.Loop("loop", .None, [
+        Instr.LocalGet(4), Instr.LocalGet(2), Instr.I32GeS, Instr.BrIf("exit"),
+        Instr.LocalGet(3), Instr.LocalGet(4), Instr.Call("rt_arr__get"), Instr.LocalSet(5),
+        Instr.LocalGet(0), Instr.LocalGet(5), Instr.Call("rt_dict__get"), Instr.LocalSet(6),
+        Instr.LocalGet(1), Instr.LocalGet(5), Instr.Call("rt_dict__get"), Instr.LocalSet(7),
+        Instr.LocalGet(7), Instr.RefIsNull,
+        Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+        Instr.LocalGet(6), Instr.LocalGet(7), Instr.Call("eq"), Instr.I32Eqz,
+        Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+        Instr.LocalGet(4), Instr.I32Const(1), Instr.I32Add, Instr.LocalSet(4),
+        Instr.Br("loop"),
+      ])]),
+      Instr.I32Const(1),
+    ],
+  }
+}
+
+// eq_variant(a: ref Variant, b: ref Variant) -> i32
+fn eq_variant_fn() FuncDef {
+  FuncDef.{
+    name: "eq_variant",
+    params: [variant_ref(), variant_ref()],
+    results: [.I32],
+    locals: [arr_null(), arr_null()],
+    body: [
+      Instr.LocalGet(0), Instr.StructGet(t_variant(), v_type_id()),
+      Instr.LocalGet(1), Instr.StructGet(t_variant(), v_type_id()),
+      Instr.I32Ne,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.LocalGet(0), Instr.StructGet(t_variant(), v_variant_id()),
+      Instr.LocalGet(1), Instr.StructGet(t_variant(), v_variant_id()),
+      Instr.I32Ne,
+      Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+
+      Instr.LocalGet(0), Instr.StructGet(t_variant(), v_payload()), Instr.LocalSet(2),
+      Instr.LocalGet(1), Instr.StructGet(t_variant(), v_payload()), Instr.LocalSet(3),
+      Instr.LocalGet(2), Instr.LocalGet(3), Instr.Call("eq_array"),
+    ],
+  }
+}
+
 fn eq_fn() FuncDef {
-  bi := "rt_types__BoxedInt"
-  st := "rt_types__String"
   FuncDef.{
     name: "eq",
     params: [.Anyref, .Anyref],
@@ -85,24 +227,74 @@ fn eq_fn() FuncDef {
       Instr.RefEq,
       Instr.If(.None, [Instr.I32Const(1), Instr.Return], []),
 
-      // Path 1: both BoxedInt → compare i64 fields
-      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(bi)),
-      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(bi)),
+      // Path 1: both i31 → compare raw payloads
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.I31),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.I31),
       Instr.I32And,
       Instr.If(.None, [
-        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(bi)), Instr.StructGet(bi, 0),
-        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(bi)), Instr.StructGet(bi, 0),
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.I31), Instr.I31GetU,
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.I31), Instr.I31GetU,
+        Instr.I32Eq, Instr.Return,
+      ], []),
+
+      // Path 2: both BoxedInt → compare i64 fields
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_boxed_int())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_boxed_int())),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_boxed_int())), Instr.StructGet(t_boxed_int(), 0),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_boxed_int())), Instr.StructGet(t_boxed_int(), 0),
         Instr.I64Eq, Instr.Return,
       ], []),
 
-      // Path 2: both String → call rt.str.eq
-      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(st)),
-      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(st)),
+      // Path 3: both BoxedFloat → compare f64 fields
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_boxed_float())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_boxed_float())),
       Instr.I32And,
       Instr.If(.None, [
-        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(st)),
-        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(st)),
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_boxed_float())), Instr.StructGet(t_boxed_float(), 0),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_boxed_float())), Instr.StructGet(t_boxed_float(), 0),
+        Instr.F64Eq, Instr.Return,
+      ], []),
+
+      // Path 4: both String → byte-wise comparison
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_string())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_string())),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_string())),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_string())),
         Instr.Call("rt_str__eq"), Instr.Return,
+      ], []),
+
+      // Path 5: both PVec → structural element-wise equality
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_pvec())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_pvec())),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_pvec())),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_pvec())),
+        Instr.Call("eq_vec"), Instr.Return,
+      ], []),
+
+      // Path 6: both PDict → structural key/value equality
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_pdict())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_pdict())),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_pdict())),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_pdict())),
+        Instr.Call("eq_dict"), Instr.Return,
+      ], []),
+
+      // Path 7: both Variant → structural tag/payload equality
+      Instr.LocalGet(0), Instr.RefTest(false, HeapType.Named(t_variant())),
+      Instr.LocalGet(1), Instr.RefTest(false, HeapType.Named(t_variant())),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, HeapType.Named(t_variant())),
+        Instr.LocalGet(1), Instr.RefCast(false, HeapType.Named(t_variant())),
+        Instr.Call("eq_variant"), Instr.Return,
       ], []),
 
       // Fallback: identity

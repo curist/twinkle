@@ -1043,6 +1043,30 @@ fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: CoreExpr
 
 // ── Binary, unary, if ───────────────────────────────────────────────
 
+fn uses_runtime_eq(ty: MonoType) Bool {
+  case ty {
+    .Int => false,
+    .Byte => false,
+    .Float => false,
+    .Bool => false,
+    .String => false,
+    _ => true,
+  }
+}
+
+fn lower_runtime_eq_call(ctx: LowerCtx, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExpr {
+  call_expr := CoreExpr.{
+    kind: .Call(global_func_expr(ctx.builtins.id("core_eq"), s), [left, right]),
+    ty: MonoType.Bool,
+    span: s,
+  }
+  case ast_op {
+    .Eq => call_expr,
+    .Ne => CoreExpr.{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
+    _ => error("lower_runtime_eq_call: expected Eq/Ne"),
+  }
+}
+
 fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoType, s: Span) ExprOut {
   // Short-circuit: a && b => If(a, b, false)
   case ast_op {
@@ -1120,6 +1144,9 @@ fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoT
           .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
         },
         .None => {
+          if (ast_op == .Eq or ast_op == .Ne) and uses_runtime_eq(lr.expr.ty) {
+            return .{ expr: lower_runtime_eq_call(rr.ctx, ast_op, lr.expr, rr.expr, s), ctx: rr.ctx }
+          }
           .{
             expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
             ctx: rr.ctx,
