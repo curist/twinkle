@@ -63,6 +63,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Reconcile defer semantics across docs, interpreter, ANF defer-elim, and tests |
+| [builtin-surface-binding-cleanup.md](builtin-surface-binding-cleanup.md) | Make boot builtin visibility explicit so canonical public names and internal helpers are separated by construction |
 
 ### Archived reference docs
 

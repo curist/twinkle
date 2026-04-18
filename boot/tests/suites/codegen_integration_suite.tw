@@ -116,7 +116,7 @@ fn test_phase4_record_field_access() Result<Void, String> {
 
 fn test_cell_record_field_uses_declared_typed_cell_symbol() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "type Inner = .{ value: Int }\ntype Outer = .{ slot: Cell<Inner> }\no := Outer.{ slot: Cell.new(Inner.{ value: 1 }) }\nprintln(int_to_string(Cell.get(o.slot).value))\n",
+    "type Inner = .{ value: Int }\ntype Outer = .{ slot: Cell<Inner> }\no := Outer.{ slot: Cell.new(Inner.{ value: 1 }) }\nprintln(Int.to_string(Cell.get(o.slot).value))\n",
     "cell record field typed symbol",
   )
   try assert.str_contains(wat, "(type $user__$Cell_anyref (sub (struct (field $value (mut anyref)))))")
@@ -287,7 +287,7 @@ fn test_closure_first_class_function_arg() Result<Void, String> {
   // Passing a named function as an argument should wrap it as a closure.
   // The correctness path uses the universal closure ABI.
   wat := try assert_codegen_src_compiles(
-    "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(double, 5)))\n",
+    "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(double, 5)))\n",
     "first-class function arg",
   )
   try assert.str_contains(wat, "struct.new $rt_types__Closure")
@@ -298,7 +298,7 @@ fn test_closure_first_class_function_arg() Result<Void, String> {
 fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
   // The universal closure type stays a subtype of the base closure ABI.
   wat := try assert_codegen_src_compiles(
-    "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(inc, 5)))\n",
+    "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(inc, 5)))\n",
     "closure subtype",
   )
   try assert.str_contains(wat, "sub $rt_types__Closure")
@@ -308,7 +308,7 @@ fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
 fn test_closure_call_uses_universal_funcref() Result<Void, String> {
   // Closure call should use the universal funcref path.
   wat := try assert_codegen_src_compiles(
-    "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(int_to_string(apply(neg, 5)))\n",
+    "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(neg, 5)))\n",
     "closure universal call",
   )
   try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
@@ -317,7 +317,7 @@ fn test_closure_call_uses_universal_funcref() Result<Void, String> {
 
 fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nit := Iterator.unfold(0, step)\nprintln(int_to_string(it.take(2).to_vector().len()))\n",
+    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nit := Iterator.unfold(0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold named step",
   )
   try assert.str_contains(wat, "$tramp_")
@@ -327,7 +327,7 @@ fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
 
 fn test_cell_update_wraps_named_function_as_closure() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn inc(x: Int) Int { x + 1 }\nc := Cell.new(1)\nc.update(inc)\nprintln(int_to_string(c.get()))\n",
+    "fn inc(x: Int) Int { x + 1 }\nc := Cell.new(1)\nc.update(inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update named function",
   )
   try assert.str_contains(wat, "$tramp_")
@@ -370,7 +370,7 @@ fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampolin
 
 fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(int_to_string(c.get()))\n",
+    "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update builtin first-class function arg",
   )
   try assert.str_contains(wat, "struct.new $rt_types__Closure")
@@ -381,7 +381,7 @@ fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() R
 
 fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(int_to_string(it.take(2).to_vector().len()))\n",
+    "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold builtin first-class function arg",
   )
   try assert.str_contains(wat, "struct.new $rt_types__Closure")
@@ -428,7 +428,7 @@ fn test_builtin_stored_in_record_field_then_called() Result<Void, String> {
 
 fn test_user_function_stored_in_record_field_then_called() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(int_to_string(w.f(21)))\n",
+    "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(Int.to_string(w.f(21)))\n",
     "user function stored in record field then called",
   )
   try assert.str_contains(wat, "struct.new $rt_types__Closure")
@@ -438,7 +438,7 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
 
 fn test_user_function_returned_from_function_then_called() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
-    "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(int_to_string(f(21)))\n",
+    "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
   )
   try assert.str_contains(wat, "struct.new $rt_types__Closure")
@@ -453,7 +453,7 @@ fn test_user_function_returned_from_function_then_called() Result<Void, String> 
 fn test_match_wildcard_and_var_binding() Result<Void, String> {
   // Wildcard and var-binding patterns in a case expression
   wat := try assert_codegen_src_compiles(
-    "fn id(x: Int) Int { case x { y => y } }\nprintln(int_to_string(id(42)))\n",
+    "fn id(x: Int) Int { case x { y => y } }\nprintln(Int.to_string(id(42)))\n",
     "match wildcard/var",
   )
   // Var binding emits local.set for the bound variable
@@ -484,7 +484,7 @@ fn test_match_literal_int() Result<Void, String> {
 fn test_match_result_ok_err() Result<Void, String> {
   // Result<Int, String> dispatch: Ok/Err variant matching
   wat := try assert_codegen_src_compiles(
-    "fn unwrap_or(r: Result<Int, String>, d: Int) Int {\n  case r {\n    .Ok(v) => v,\n    .Err(_) => d,\n  }\n}\nres: Result<Int, String> = .Ok(42)\nprintln(int_to_string(unwrap_or(res, 0)))\n",
+    "fn unwrap_or(r: Result<Int, String>, d: Int) Int {\n  case r {\n    .Ok(v) => v,\n    .Err(_) => d,\n  }\n}\nres: Result<Int, String> = .Ok(42)\nprintln(Int.to_string(unwrap_or(res, 0)))\n",
     "match result ok/err",
   )
   // Variant dispatch reads the tag field
@@ -495,7 +495,7 @@ fn test_match_result_ok_err() Result<Void, String> {
 fn test_match_wildcard_catch_all() Result<Void, String> {
   // Wildcard as catch-all arm after specific variant
   wat := try assert_codegen_src_compiles(
-    "fn is_some(opt: Int?) Bool {\n  case opt {\n    .Some(_) => true,\n    _ => false,\n  }\n}\nprintln(bool_to_string(is_some(.Some(1))))\n",
+    "fn is_some(opt: Int?) Bool {\n  case opt {\n    .Some(_) => true,\n    _ => false,\n  }\n}\nprintln(Bool.to_string(is_some(.Some(1))))\n",
     "match wildcard catch-all",
   )
   try assert.str_contains(wat, "struct.get")
@@ -506,7 +506,7 @@ fn test_match_all_diverging_arms() Result<Void, String> {
   // Every arm calls error() — both arms diverge, so emit_arm_chain must
   // produce an if with no result type and append an outer unreachable.
   wat := try assert_codegen_src_compiles(
-    "fn crash(opt: Int?) Int {\n  case opt {\n    .Some(_) => error(\"some\"),\n    .None => error(\"none\"),\n  }\n}\nprintln(int_to_string(crash(.Some(1))))\n",
+    "fn crash(opt: Int?) Int {\n  case opt {\n    .Some(_) => error(\"some\"),\n    .None => error(\"none\"),\n  }\n}\nprintln(Int.to_string(crash(.Some(1))))\n",
     "match all-diverging arms",
   )
   // Both arms trap; the if block should have no result type
@@ -517,7 +517,7 @@ fn test_match_all_diverging_arms() Result<Void, String> {
 fn test_match_named_sum_multi_variant() Result<Void, String> {
   // Named sum type with variants of different arities
   wat := try assert_codegen_src_compiles(
-    "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float {\n  case s {\n    .Circle(r) => 3.14 * r * r,\n    .Rect(w, h) => w * h,\n  }\n}\nprintln(float_to_string(area(.Circle(1.0))))\n",
+    "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float {\n  case s {\n    .Circle(r) => 3.14 * r * r,\n    .Rect(w, h) => w * h,\n  }\n}\nprintln(Float.to_string(area(.Circle(1.0))))\n",
     "match named sum multi-variant",
   )
   // Tag check and payload extraction
@@ -605,7 +605,7 @@ fn test_structural_linked_module_has_runtime_types() Result<Void, String> {
 
 fn test_structural_user_func_present() Result<Void, String> {
   // A program with top-level code should produce at least one user-namespace function.
-  linked := try codegen_harness.codegen_linked("println(int_to_string(42))")
+  linked := try codegen_harness.codegen_linked("println(Int.to_string(42))")
   found := false
   for f in linked.funcs {
     if f.name.starts_with("user__") {
@@ -629,7 +629,7 @@ fn test_structural_host_imports_are_host_only() Result<Void, String> {
 fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
   // A program using Option<Int> should produce a typed sum struct type.
   linked := try codegen_harness.codegen_linked(
-    "x: Int? = .Some(42)\ncase x { .Some(n) => println(int_to_string(n)), .None => println(\"none\") }"
+    "x: Int? = .Some(42)\ncase x { .Some(n) => println(Int.to_string(n)), .None => println(\"none\") }"
   )
   found_option := false
   for t in linked.types {
@@ -648,7 +648,7 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
 
 fn test_dict_index_materializes_typed_option() Result<Void, String> {
   linked := try codegen_harness.codegen_linked(
-    "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(int_to_string(d[\"x\"].unwrap_or(0)))"
+    "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(Int.to_string(d[\"x\"].unwrap_or(0)))"
   )
 
   found_get := false

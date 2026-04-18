@@ -2,4 +2,4 @@
 use .math_lib
 
 result := math_lib.add(10, 20)
-println(int_to_string(result))
+println(Int.to_string(result))

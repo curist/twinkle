@@ -7,7 +7,7 @@
 use tests.runner
 use tests.assert
 use compiler.base_env.{builtin_env}
-use compiler.resolver.{lookup_function, lookup_function_origin, lookup_method, MonoType, FunctionSig, ty_to_string}
+use compiler.resolver.{lookup_function, lookup_registered_function, lookup_function_origin, lookup_method, MonoType, FunctionSig, ty_to_string}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,13 @@ fn require_sig(name: String) Result<FunctionSig, String> {
   case lookup_function(builtin_env(), name) {
     .Some(sig) => .Ok(sig),
     .None => .Err("builtin_env() missing function: ${name}"),
+  }
+}
+
+fn require_registered_sig(name: String) Result<FunctionSig, String> {
+  case lookup_registered_function(builtin_env(), name) {
+    .Some(sig) => .Ok(sig),
+    .None => .Err("builtin_env() missing registered function: ${name}"),
   }
 }
 
@@ -32,20 +39,20 @@ pub fn suite() runner.Suite {
 
     // String builtins
     .test("builtin_env has string_len", fn() {
-      sig := try require_sig("string_len")
+      sig := try require_registered_sig("string_len")
       try assert.int_eq(sig.params.len(), 1)
       try assert.int_eq(sig.type_params.len(), 0)
       .Ok({})
     })
 
     .test("builtin_env has string_concat with two params", fn() {
-      sig := try require_sig("string_concat")
+      sig := try require_registered_sig("string_concat")
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })
 
     .test("builtin_env has string_get returning Option<Byte>", fn() {
-      sig := try require_sig("string_get")
+      sig := try require_registered_sig("string_get")
       try assert.int_eq(sig.params.len(), 2)
       inner := try sig.ret.ok_or("expected Some")
       case inner {
@@ -56,7 +63,7 @@ pub fn suite() runner.Suite {
 
     // Vector builtins
     .test("builtin_env has vector_append with type param T", fn() {
-      sig := try require_sig("vector_append")
+      sig := try require_registered_sig("vector_append")
       try assert.int_eq(sig.type_params.len(), 1)
       try assert.str_eq(sig.type_params[0], "T")
       try assert.int_eq(sig.params.len(), 2)
@@ -64,7 +71,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("builtin_env has vector_get returning Option<T>", fn() {
-      sig := try require_sig("vector_get")
+      sig := try require_registered_sig("vector_get")
       try assert.int_eq(sig.type_params.len(), 1)
       inner := try sig.ret.ok_or("expected Some")
       case inner {
@@ -74,7 +81,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("builtin_env has vector_map", fn() {
-      sig := try require_sig("vector_map")
+      sig := try require_registered_sig("vector_map")
       try assert.int_eq(sig.type_params.len(), 2)
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
@@ -82,13 +89,13 @@ pub fn suite() runner.Suite {
 
     // Dict builtins
     .test("builtin_env has dict_new with two type params", fn() {
-      sig := try require_sig("dict_new")
+      sig := try require_registered_sig("dict_new")
       try assert.int_eq(sig.type_params.len(), 2)
       .Ok({})
     })
 
     .test("builtin_env has dict_set", fn() {
-      _ := try require_sig("dict_set")
+      _ := try require_registered_sig("dict_set")
       .Ok({})
     })
 
@@ -114,20 +121,20 @@ pub fn suite() runner.Suite {
 
     // Cell builtins
     .test("builtin_env has cell_new", fn() {
-      sig := try require_sig("cell_new")
+      sig := try require_registered_sig("cell_new")
       try assert.int_eq(sig.type_params.len(), 1)
       .Ok({})
     })
 
     .test("builtin_env has cell_set", fn() {
-      sig := try require_sig("cell_set")
+      sig := try require_registered_sig("cell_set")
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })
 
     // Iterator builtins
     .test("builtin_env has iterator_unfold", fn() {
-      sig := try require_sig("iterator_unfold")
+      sig := try require_registered_sig("iterator_unfold")
       try assert.int_eq(sig.type_params.len(), 2)
       .Ok({})
     })
@@ -144,21 +151,21 @@ pub fn suite() runner.Suite {
     })
 
     .test("builtin_env has iterator_map", fn() {
-      sig := try require_sig("iterator_map")
+      sig := try require_registered_sig("iterator_map")
       try assert.int_eq(sig.type_params.len(), 2)
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })
 
     .test("builtin_env has option_map", fn() {
-      sig := try require_sig("option_map")
+      sig := try require_registered_sig("option_map")
       try assert.int_eq(sig.type_params.len(), 2)
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })
 
     .test("builtin_env has result_map", fn() {
-      sig := try require_sig("result_map")
+      sig := try require_registered_sig("result_map")
       try assert.int_eq(sig.type_params.len(), 3)
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
@@ -166,13 +173,13 @@ pub fn suite() runner.Suite {
 
     // Byte builtins
     .test("builtin_env has byte_to_int", fn() {
-      sig := try require_sig("byte_to_int")
+      sig := try require_registered_sig("byte_to_int")
       try assert.int_eq(sig.params.len(), 1)
       .Ok({})
     })
 
     .test("builtin_env has byte_from_int returning Option<Byte>", fn() {
-      sig := try require_sig("byte_from_int")
+      sig := try require_registered_sig("byte_from_int")
       inner := try sig.ret.ok_or("expected Some")
       case inner {
         .Optional(.Byte) => .Ok({}),
@@ -182,12 +189,23 @@ pub fn suite() runner.Suite {
 
     // Conversion builtins
     .test("builtin_env has int_to_string", fn() {
-      _ := try require_sig("int_to_string")
+      _ := try require_registered_sig("int_to_string")
       .Ok({})
     })
 
     .test("builtin_env has float_to_string", fn() {
-      _ := try require_sig("float_to_string")
+      _ := try require_registered_sig("float_to_string")
+      .Ok({})
+    })
+
+    .test("builtin_env hides internal implementation names from free namespace", fn() {
+      try assert.is_none(lookup_function(builtin_env(), "bool_to_string"))
+      try assert.is_none(lookup_function(builtin_env(), "int_to_string"))
+      try assert.is_none(lookup_function(builtin_env(), "string_len"))
+      try assert.is_none(lookup_function(builtin_env(), "dict_new"))
+      try assert.is_none(lookup_function(builtin_env(), "string_substring"))
+      try assert.is_none(lookup_function(builtin_env(), "vector_builder_new"))
+      try assert.is_none(lookup_function(builtin_env(), "host_read_file"))
       .Ok({})
     })
 

@@ -1138,6 +1138,20 @@ pub fn suite() runner.Suite {
       try assert.is_true(found)
       .Ok({})
     })
+    .test("P2 internal builtin method target is not a free function", fn() {
+      msgs := try check_errs_builtins("fn f() String { bool_to_string(true) }")
+      found := false
+      for m in msgs {
+        if m.contains("undefined variable") or m.contains("bool_to_string") { found = true }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
+    .test("P2 canonical builtin method remains callable", fn() {
+      _ := try check_ok_builtins("fn f() String { Bool.to_string(true) }")
+      _ := try check_ok_builtins("fn f(b: Bool) String { b.to_string() }")
+      .Ok({})
+    })
     .test("P2 method value reference synthesizes function value", fn() {
       src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn apply(g: fn() Int) Int { g() }\nfn f(p: Point) Int { apply(p.len) }"
       r := try check_ok(src)

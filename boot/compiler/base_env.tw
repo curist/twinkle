@@ -162,6 +162,44 @@ fn set_prelude_function_origins(
   cur
 }
 
+fn hide_bound_method_targets(env: ResolvedEnv) ResolvedEnv {
+  cur := env
+  for type_name in env.methods.keys() {
+    case env.methods[type_name] {
+      .Some(entries) => {
+        for entry in entries {
+          cur = cur.remove_function_binding(entry.function_name)
+        }
+      },
+      .None => {},
+    }
+  }
+  cur
+}
+
+fn hide_internal_free_targets(env: ResolvedEnv) ResolvedEnv {
+  cur := env
+  for name in [
+    "string_substring",
+    "vector_builder_new",
+    "vector_builder_push",
+    "vector_builder_freeze",
+    "vector_builder_from",
+    "host_read_file",
+    "host_write_file",
+    "host_mkdirp",
+    "host_list_dir",
+    "host_exists",
+    "host_args",
+    "host_env",
+    "host_cwd",
+    "host_exit",
+  ] {
+    cur = cur.remove_function_binding(name)
+  }
+  cur
+}
+
 pub fn builtin_env() ResolvedEnv {
   // Locate the signatures directory relative to the project root.
   // find_project_root(".") returns "." when no twinkle.toml is found in or
@@ -239,7 +277,14 @@ pub fn builtin_env() ResolvedEnv {
   env = register_methods_from_groups(env, groups)
   env = register_methods_from_groups(env, prelude_groups)
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
-  env.register_builtin_methods()
+  env = env.register_builtin_methods()
+
+  // Keep internal implementation names out of the free function namespace.
+  // They remain registered targets for method resolution, canonical imports,
+  // and builtin lookup, but user code must go through the surface API rather
+  // than compiler-facing helper names.
+  env = hide_bound_method_targets(env)
+  hide_internal_free_targets(env)
 }
 
 pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
