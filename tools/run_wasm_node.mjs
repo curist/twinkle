@@ -21,21 +21,25 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Bridge module
 // ---------------------------------------------------------------------------
-// Provides encode/decode helpers for Twinkle's GC types.  Uses the same
-// structural types as the compiled module — Wasm GC structural subtyping
-// makes references interchangeable across module boundaries.
-//
-// The bridge wasm is emitted from Twinkle source in:
-//   boot/compiler/codegen/bridge.tw
-// Regenerate with:
-//   cargo run --release -- run boot/tests/gen_bridge_wasm.tw
 
 const BRIDGE_WASM_PATH = resolve(__dirname, "bridge.wasm");
+const RESULT_TYPE_ID = 1; // matches src/types/ty.rs RESULT_TYPE_ID
+const RESULT_OK = 0;
+const RESULT_ERR = 1;
+
+class HostExit extends Error {
+  constructor(code) {
+    super(`host.exit(${code})`);
+    this.name = "HostExit";
+    this.code = code;
+  }
+}
 
 function loadBridgeWasm() {
   try {
@@ -47,9 +51,6 @@ function loadBridgeWasm() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// String encode / decode
-// ---------------------------------------------------------------------------
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
@@ -67,16 +68,6 @@ function encodeString(b, str) {
   for (let i = 0; i < bytes.length; i++) b.string_set(ref, i, bytes[i]);
   return ref;
 }
-
-// ---------------------------------------------------------------------------
-// Runtime value constructors
-// ---------------------------------------------------------------------------
-// Twinkle's Result<T,E> is encoded as a Variant with type_id for Result,
-// variant_id 0 = Ok, 1 = Err, payload = single-element Array wrapping the value.
-
-const RESULT_TYPE_ID = 1; // matches src/types/ty.rs RESULT_TYPE_ID
-const RESULT_OK = 0;
-const RESULT_ERR = 1;
 
 function makeResultOk(b, value) {
   const payload = b.array_new(1);
@@ -98,7 +89,6 @@ function makeStringArray(b, strings) {
   return arr;
 }
 
-// Encode bytes as an Array of i31-boxed values (matches Twinkle's byte representation)
 function makeByteArray(b, bytes) {
   const arr = b.array_new(bytes.length);
   for (let i = 0; i < bytes.length; i++) {
@@ -107,80 +97,116 @@ function makeByteArray(b, bytes) {
   return arr;
 }
 
-// ---------------------------------------------------------------------------
-// Host imports
-// ---------------------------------------------------------------------------
-function makeHostImports(b, programArgs, cwd) {
+function decodeStringArray(b, arrRef) {
+  const len = b.array_len(arrRef);
+  const out = new Array(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = decodeString(b, b.array_get(arrRef, i));
+  }
+  return out;
+}
+
+function decodeByteArray(b, arrRef) {
+  const len = b.array_len(arrRef);
+  const out = Buffer.alloc(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = b.i31_get(b.array_get(arrRef, i));
+  }
+  return out;
+}
+
+function verifyImports(module, hostImports) {
+  try {
+    for (const imp of WebAssembly.Module.imports(module)) {
+      const mod = hostImports[imp.module];
+      if (!mod || !(imp.name in mod)) {
+        throw new Error(`Unsupported host import: ${imp.module}.${imp.name}`);
+      }
+    }
+  } catch (e) {
+    if (e.message?.startsWith("Unsupported host import:")) throw e;
+    // Module.imports may fail on GC modules in some runtimes.
+  }
+}
+
+function write(stream, text) {
+  stream.write(text);
+}
+
+function makeHostImports(b, runtime) {
   return {
     host: {
       // --- I/O ---
-      print: (s) => process.stdout.write(decodeString(b, s)),
-      println: (s) => process.stdout.write(decodeString(b, s) + "\n"),
+      print: (s) => write(runtime.stdout, decodeString(b, s)),
+      println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
       error: (s) => {
         const msg = decodeString(b, s);
-        process.stderr.write(msg + "\n");
+        write(runtime.stderr, msg + "\n");
         throw new Error("host.error: " + msg);
       },
-      eprint: (s) => process.stderr.write(decodeString(b, s)),
-      eprintln: (s) => process.stderr.write(decodeString(b, s) + "\n"),
+      eprint: (s) => write(runtime.stderr, decodeString(b, s)),
+      eprintln: (s) => write(runtime.stderr, decodeString(b, s) + "\n"),
 
       // --- String conversion ---
       f64_to_string: (n) => encodeString(b, n.toString()),
 
       // --- Process ---
-      args: () => makeStringArray(b, programArgs),
+      args: () => makeStringArray(b, runtime.programArgs),
       env: (keyRef) => {
         const key = decodeString(b, keyRef);
-        const val = process.env[key];
-        // Returns Array<String>: [value] if found, [] if not
-        if (val === undefined) return makeStringArray(b, []);
-        return makeStringArray(b, [val]);
+        const val = runtime.env[key];
+        return val === undefined ? makeStringArray(b, []) : makeStringArray(b, [val]);
       },
-      cwd: () => encodeString(b, cwd),
+      cwd: () => encodeString(b, runtime.cwd),
       exit: (code) => {
-        // Use BigInt conversion for i64 values
         const c = typeof code === "bigint" ? Number(code) : code;
-        process.exit(c);
+        throw new HostExit(c);
       },
       now: () => performance.now(),
+      run_wasm: (bytesRef, argvRef) => {
+        const childBytes = decodeByteArray(b, bytesRef);
+        const childArgv = decodeStringArray(b, argvRef);
+        const [programPath, ...guestArgs] = childArgv;
+        const exitCode = runWasmBytes(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+        });
+        return BigInt(exitCode);
+      },
 
       // --- File system ---
       read_file: (pathRef) => {
-        const filePath = resolve(cwd, decodeString(b, pathRef));
+        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
         try {
           const bytes = readFileSync(filePath);
-          const byteArr = makeByteArray(b, bytes);
-          return makeResultOk(b, byteArr);
+          return makeResultOk(b, makeByteArray(b, bytes));
         } catch (e) {
           const msg = `host.read_file failed for '${filePath}': ${e.message}`;
           return makeResultErr(b, encodeString(b, msg));
         }
       },
       write_file: (pathRef, contentRef) => {
-        const filePath = resolve(cwd, decodeString(b, pathRef));
-        const content = decodeString(b, contentRef);
-        writeFileSync(filePath, content);
+        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
+        writeFileSync(filePath, decodeString(b, contentRef));
       },
       write_bytes: (pathRef, bytesRef) => {
-        const filePath = resolve(cwd, decodeString(b, pathRef));
-        const len = b.array_len(bytesRef);
-        const buf = Buffer.alloc(len);
-        for (let i = 0; i < len; i++) {
-          buf[i] = b.i31_get(b.array_get(bytesRef, i));
-        }
-        writeFileSync(filePath, buf);
+        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
+        writeFileSync(filePath, decodeByteArray(b, bytesRef));
       },
       mkdirp: (pathRef) => {
-        const dirPath = resolve(cwd, decodeString(b, pathRef));
+        const dirPath = resolve(runtime.cwd, decodeString(b, pathRef));
         mkdirSync(dirPath, { recursive: true });
       },
       list_dir: (pathRef) => {
-        const dirPath = resolve(cwd, decodeString(b, pathRef));
-        const entries = readdirSync(dirPath);
-        return makeStringArray(b, entries);
+        const dirPath = resolve(runtime.cwd, decodeString(b, pathRef));
+        return makeStringArray(b, readdirSync(dirPath));
       },
       exists: (pathRef) => {
-        const filePath = resolve(cwd, decodeString(b, pathRef));
+        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
         return existsSync(filePath) ? 1 : 0;
       },
 
@@ -190,7 +216,6 @@ function makeHostImports(b, programArgs, cwd) {
         const n = parseInt(s, 10);
         return isNaN(n) ? 0n : BigInt(n);
       },
-      // Returns (f64, i32) — multi-value: [value, success_flag]
       parse_float: (sRef) => {
         const s = decodeString(b, sRef);
         const f = parseFloat(s);
@@ -200,56 +225,94 @@ function makeHostImports(b, programArgs, cwd) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-async function main() {
-  const args = process.argv.slice(2);
-  if (args.length === 0) {
+function instantiateBridge() {
+  const bridgeModule = new WebAssembly.Module(loadBridgeWasm());
+  const bridgeInstance = new WebAssembly.Instance(bridgeModule);
+  return bridgeInstance.exports;
+}
+
+export function runWasmBytes(
+  wasmBytes,
+  {
+    programPath = "<memory>.wasm",
+    guestArgs = [],
+    cwd = process.cwd(),
+    env = process.env,
+    stdout = process.stdout,
+    stderr = process.stderr,
+  } = {},
+) {
+  const b = instantiateBridge();
+  const runtime = {
+    programArgs: [programPath, ...guestArgs],
+    cwd,
+    env,
+    stdout,
+    stderr,
+  };
+
+  const hostImports = makeHostImports(b, runtime);
+  const mainModule = new WebAssembly.Module(wasmBytes);
+  verifyImports(mainModule, hostImports);
+
+  try {
+    new WebAssembly.Instance(mainModule, hostImports);
+    return 0;
+  } catch (e) {
+    if (e instanceof HostExit) {
+      return e.code;
+    }
+    throw e;
+  }
+}
+
+export function runWasmFile(
+  wasmPath,
+  {
+    guestArgs = [],
+    cwd = process.cwd(),
+    env = process.env,
+    stdout = process.stdout,
+    stderr = process.stderr,
+  } = {},
+) {
+  return runWasmBytes(readFileSync(wasmPath), {
+    programPath: resolve(wasmPath),
+    guestArgs,
+    cwd,
+    env,
+    stdout,
+    stderr,
+  });
+}
+
+function parseCliArgs(argv) {
+  if (argv.length === 0) {
     console.error("Usage: node tools/run_wasm_node.mjs <file.wasm> [args...]");
     console.error("   or: node tools/run_wasm_node.mjs <file.wasm> -- [args...]");
     process.exit(1);
   }
 
-  const wasmPath = resolve(args[0]);
-  const sepIndex = args.indexOf("--", 1);
-  const guestArgs = sepIndex >= 0 ? args.slice(sepIndex + 1) : args.slice(1);
-
-  // Match twk run behavior: argv[0] is the program path, rest are user args.
-  // If `--` was used to separate runner args from guest args, do not forward it.
-  const programArgs = [wasmPath, ...guestArgs];
-  const cwd = process.cwd();
-
-  const wasmBytes = readFileSync(wasmPath);
-  const bridgeBytes = loadBridgeWasm();
-
-  const bridgeModule = await WebAssembly.compile(bridgeBytes);
-  const bridgeInstance = await WebAssembly.instantiate(bridgeModule);
-  const b = bridgeInstance.exports;
-
-  const hostImports = makeHostImports(b, programArgs, cwd);
-  const mainModule = await WebAssembly.compile(wasmBytes);
-
-  // Verify imports if the runtime supports it (Bun/JSC may not)
-  try {
-    for (const imp of WebAssembly.Module.imports(mainModule)) {
-      const mod = hostImports[imp.module];
-      if (!mod || !(imp.name in mod)) {
-        console.error(`Unsupported host import: ${imp.module}.${imp.name}`);
-        process.exit(1);
-      }
-    }
-  } catch {
-    // Module.imports may fail on GC modules in some runtimes
-  }
-
-  await WebAssembly.instantiate(mainModule, hostImports);
+  const wasmPath = resolve(argv[0]);
+  const sepIndex = argv.indexOf("--", 1);
+  const guestArgs = sepIndex >= 0 ? argv.slice(sepIndex + 1) : argv.slice(1);
+  return { wasmPath, guestArgs };
 }
 
-main().catch((e) => {
-  if (e.message?.startsWith("host.error:")) {
+function main() {
+  const { wasmPath, guestArgs } = parseCliArgs(process.argv.slice(2));
+  const exitCode = runWasmFile(wasmPath, { guestArgs });
+  process.exit(exitCode);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === __filename) {
+  try {
+    main();
+  } catch (e) {
+    if (e.message?.startsWith("host.error:")) {
+      process.exit(1);
+    }
+    console.error(e.message || e);
     process.exit(1);
   }
-  console.error(e.message || e);
-  process.exit(1);
-});
+}
