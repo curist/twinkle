@@ -34,6 +34,7 @@ fn find_first_gt(xs: Vector<Int>, threshold: Int) String {
 }
 
 type Point = .{ x: Int, y: Int }
+type Shape = { Dot, Pixel(Int), Pair(Vector<Int>, Option<Int>) }
 
 pub fn suite() runner.Suite {
   runner.suite("semantic cases")
@@ -113,11 +114,85 @@ pub fn suite() runner.Suite {
       try assert.is_false(a == c)
       .Ok({})
     })
+    .test("typed sums compare structurally", fn() {
+      some_42_a: Option<Int> = .Some(42)
+      some_42_b: Option<Int> = .Some(42)
+      some_7: Option<Int> = .Some(7)
+      none_int: Option<Int> = .None
+      try assert.is_true(some_42_a == some_42_b)
+      try assert.is_false(some_42_a == some_7)
+      try assert.is_false(some_42_a == none_int)
+
+      ok_a: Result<Int, String> = .Ok(5)
+      ok_b: Result<Int, String> = .Ok(5)
+      err_a: Result<Int, String> = .Err("x")
+      err_b: Result<Int, String> = .Err("x")
+      try assert.is_true(ok_a == ok_b)
+      try assert.is_true(err_a == err_b)
+      try assert.is_false(ok_a == err_a)
+
+      p1: Shape = .Pair([1, 2], .Some(3))
+      p2: Shape = .Pair([1, 2], .Some(3))
+      p3: Shape = .Pair([1, 2], .Some(4))
+      try assert.is_true(p1 == p2)
+      try assert.is_false(p1 == p3)
+      try assert.is_false(Shape.Dot == Shape.Pixel(0))
+      .Ok({})
+    })
+    .test("nested collection equality recurses through typed sums", fn() {
+      a: Vector<Option<Vector<Int>>> = [.Some([1, 2]), .None, .Some([3])]
+      b: Vector<Option<Vector<Int>>> = [.Some([1, 2]), .None, .Some([3])]
+      c: Vector<Option<Vector<Int>>> = [.Some([1, 2]), .None, .Some([4])]
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+
+      d1: Dict<String, Result<Vector<Int>, String>> = Dict.new()
+      d1["ok"] = .Ok([1, 2])
+      d1["err"] = .Err("x")
+
+      d2: Dict<String, Result<Vector<Int>, String>> = Dict.new()
+      d2["err"] = .Err("x")
+      d2["ok"] = .Ok([1, 2])
+
+      d3: Dict<String, Result<Vector<Int>, String>> = Dict.new()
+      d3["err"] = .Err("x")
+      d3["ok"] = .Ok([1, 3])
+
+      try assert.is_true(d1 == d2)
+      try assert.is_false(d1 == d3)
+      .Ok({})
+    })
     .test("record equality stays by reference", fn() {
       a := Point.{ x: 1, y: 2 }
       b := Point.{ x: 1, y: 2 }
       try assert.is_false(a == b)
       try assert.is_true(a == a)
+      .Ok({})
+    })
+    .test("recursive equality preserves record identity semantics", fn() {
+      same := Point.{ x: 1, y: 2 }
+      other := Point.{ x: 1, y: 2 }
+
+      vec_same_a: Vector<Point> = [same]
+      vec_same_b: Vector<Point> = [same]
+      vec_other: Vector<Point> = [other]
+      try assert.is_true(vec_same_a == vec_same_b)
+      try assert.is_false(vec_same_a == vec_other)
+
+      dict_same_a: Dict<String, Point> = Dict.new()
+      dict_same_b: Dict<String, Point> = Dict.new()
+      dict_other: Dict<String, Point> = Dict.new()
+      dict_same_a["p"] = same
+      dict_same_b["p"] = same
+      dict_other["p"] = other
+      try assert.is_true(dict_same_a == dict_same_b)
+      try assert.is_false(dict_same_a == dict_other)
+
+      sum_same_a: Option<Point> = .Some(same)
+      sum_same_b: Option<Point> = .Some(same)
+      sum_other: Option<Point> = .Some(other)
+      try assert.is_true(sum_same_a == sum_same_b)
+      try assert.is_false(sum_same_a == sum_other)
       .Ok({})
     })
 }

@@ -1793,6 +1793,7 @@ impl<'a> EmitCtx<'a> {
                         OpKind::Float => MonoType::Float,
                         OpKind::Bool => MonoType::Bool,
                         OpKind::String => MonoType::String,
+                        OpKind::RuntimeEq => MonoType::Bool,
                     }
                 }
                 BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -1810,6 +1811,7 @@ impl<'a> EmitCtx<'a> {
                     OpKind::Float => MonoType::Float,
                     OpKind::Bool => MonoType::Bool,
                     OpKind::String => MonoType::String,
+                    OpKind::RuntimeEq => MonoType::Bool,
                 },
                 UnOp::Not => MonoType::Bool,
                 UnOp::BitNot => MonoType::Int,
@@ -2576,6 +2578,7 @@ fn binop_result_ty(op: BinOp, operand_ty: OpKind) -> ValType {
             OpKind::Float => ValType::F64,
             OpKind::Bool => ValType::I32,
             OpKind::String => ref_named(true, T_STRING),
+            OpKind::RuntimeEq => ValType::I32,
         },
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => ValType::I32,
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => ValType::I64,
@@ -2591,6 +2594,7 @@ fn unop_result_ty(op: UnOp, operand_ty: OpKind) -> ValType {
             OpKind::Float => ValType::F64,
             OpKind::Bool => ValType::I32,
             OpKind::String => ref_named(true, T_STRING),
+            OpKind::RuntimeEq => ValType::I32,
         },
         UnOp::Not => ValType::I32,
         UnOp::BitNot => ValType::I64,

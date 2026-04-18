@@ -150,6 +150,19 @@ Deliverable:
 - short notes in this plan or a linked investigation comment describing the
   actual runtime shapes and the exact mismatch causing the nested-sum failure.
 
+Implementation note:
+
+- boot emits typed sum structs directly for `Option`, `Result`, and user sums,
+  while vectors and dicts store erased `anyref` payloads.
+- the nested-sum failure came from erased container boundaries preserving typed
+  sum refs as-is, so `rt.core.eq` only saw opaque typed sum structs rather than
+  the generic `rt_types__Variant` shape it knows how to compare structurally.
+- the current fix route is to bridge typed sums through generated
+  `sum_to_variant` / `variant_to_sum` helpers at erased anyref boundaries,
+  which lets runtime equality recurse structurally through nested sums while
+  still routing record payload comparison through the main identity-preserving
+  equality path.
+
 ### P2 — Add a dedicated typed-sum structural equality path
 
 Implement structural equality for typed sums in the runtime equality module.

@@ -38,6 +38,20 @@ fn op_kind_from(ty: &MonoType) -> OpKind {
     }
 }
 
+fn binop_kind_from(op: crate::syntax::ast::BinOp, ty: &MonoType) -> OpKind {
+    match op {
+        crate::syntax::ast::BinOp::Eq | crate::syntax::ast::BinOp::Ne => match ty {
+            MonoType::Int
+            | MonoType::Byte
+            | MonoType::Float
+            | MonoType::Bool
+            | MonoType::String => op_kind_from(ty),
+            _ => OpKind::RuntimeEq,
+        },
+        _ => op_kind_from(ty),
+    }
+}
+
 /// Derive `IndexKind` from the base expression's `MonoType`.
 fn index_kind_from(ty: &MonoType) -> IndexKind {
     match ty {
@@ -183,7 +197,7 @@ fn lower_expr(
         }
 
         CoreExprKind::BinOp { op, left, right } => {
-            let operand_ty = op_kind_from(&left.ty);
+            let operand_ty = binop_kind_from(*op, &left.ty);
             let left_atom = atomize(left, next_temp, accum, op_result_mono);
             let right_atom = atomize(right, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);
@@ -539,7 +553,7 @@ fn atomize(
             Atom::ALocal(tmp)
         }
         CoreExprKind::BinOp { op, left, right } => {
-            let operand_ty = op_kind_from(&left.ty);
+            let operand_ty = binop_kind_from(*op, &left.ty);
             let left_atom = atomize(left, next_temp, accum, op_result_mono);
             let right_atom = atomize(right, next_temp, accum, op_result_mono);
             let tmp = fresh(next_temp);

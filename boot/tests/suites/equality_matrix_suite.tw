@@ -1,0 +1,178 @@
+use tests.runner
+use tests.assert
+
+type Point = .{ x: Int, y: Int }
+type Token = { Name(String), Count(Int), Payload(Vector<Int>) }
+
+fn make_point(x: Int, y: Int) Point {
+  Point.{ x: x, y: y }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("equality matrix")
+    // vectors
+    .test("vector equality: equal flat vectors", fn() {
+      a: Vector<Int> = [1, 2, 3]
+      b: Vector<Int> = [1, 2, 3]
+      try assert.is_true(a == b)
+      .Ok({})
+    })
+    .test("vector equality: different length", fn() {
+      a: Vector<Int> = [1, 2, 3]
+      b: Vector<Int> = [1, 2]
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("vector equality: different element", fn() {
+      a: Vector<Int> = [1, 2, 3]
+      b: Vector<Int> = [1, 2, 4]
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("vector equality: nested vectors", fn() {
+      a: Vector<Vector<Int>> = [[1, 2], [3]]
+      b: Vector<Vector<Int>> = [[1, 2], [3]]
+      c: Vector<Vector<Int>> = [[1, 2], [4]]
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("vector equality: vectors containing sums", fn() {
+      some_a: Option<Int> = .Some(1)
+      some_b: Option<Int> = .Some(1)
+      some_c: Option<Int> = .Some(2)
+      none_i: Option<Int> = .None
+      a: Vector<Option<Int>> = [some_a, none_i]
+      b: Vector<Option<Int>> = [some_b, none_i]
+      c: Vector<Option<Int>> = [some_c, none_i]
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("vector equality: vectors containing records use identity", fn() {
+      shared := make_point(1, 2)
+      other := make_point(1, 2)
+      a: Vector<Point> = [shared]
+      b: Vector<Point> = [shared]
+      c: Vector<Point> = [other]
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+
+    // dicts
+    .test("dict equality: equal same order", fn() {
+      a: Dict<String, Int> = Dict.new()
+      a["left"] = 1
+      a["right"] = 2
+
+      b: Dict<String, Int> = Dict.new()
+      b["left"] = 1
+      b["right"] = 2
+
+      try assert.is_true(a == b)
+      .Ok({})
+    })
+    .test("dict equality: equal different order", fn() {
+      a: Dict<String, Int> = Dict.new()
+      a["left"] = 1
+      a["right"] = 2
+
+      b: Dict<String, Int> = Dict.new()
+      b["right"] = 2
+      b["left"] = 1
+
+      try assert.is_true(a == b)
+      .Ok({})
+    })
+    .test("dict equality: missing key", fn() {
+      a: Dict<String, Int> = Dict.new()
+      a["left"] = 1
+      a["right"] = 2
+
+      b: Dict<String, Int> = Dict.new()
+      b["left"] = 1
+
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("dict equality: different value", fn() {
+      a: Dict<String, Int> = Dict.new()
+      a["left"] = 1
+
+      b: Dict<String, Int> = Dict.new()
+      b["left"] = 2
+
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("dict equality: nested values", fn() {
+      a: Dict<String, Vector<Result<Int, String>>> = Dict.new()
+      a["x"] = [.Ok(1), .Err("bad")]
+
+      b: Dict<String, Vector<Result<Int, String>>> = Dict.new()
+      b["x"] = [.Ok(1), .Err("bad")]
+
+      c: Dict<String, Vector<Result<Int, String>>> = Dict.new()
+      c["x"] = [.Ok(2), .Err("bad")]
+
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("dict equality: record payload identity behavior", fn() {
+      shared := make_point(1, 2)
+      other := make_point(1, 2)
+
+      a: Dict<String, Point> = Dict.new()
+      a["p"] = shared
+
+      b: Dict<String, Point> = Dict.new()
+      b["p"] = shared
+
+      c: Dict<String, Point> = Dict.new()
+      c["p"] = other
+
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+
+    // sums
+    .test("sum equality: same variant same payload", fn() {
+      a: Result<Int, String> = .Ok(5)
+      b: Result<Int, String> = .Ok(5)
+      try assert.is_true(a == b)
+      .Ok({})
+    })
+    .test("sum equality: same variant different payload", fn() {
+      a: Result<Int, String> = .Ok(5)
+      b: Result<Int, String> = .Ok(6)
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("sum equality: different variants", fn() {
+      a: Result<Int, String> = .Ok(5)
+      b: Result<Int, String> = .Err("x")
+      try assert.is_false(a == b)
+      .Ok({})
+    })
+    .test("sum equality: nested collections in payloads", fn() {
+      a: Token = .Payload([1, 2, 3])
+      b: Token = .Payload([1, 2, 3])
+      c: Token = .Payload([1, 2, 4])
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("sum equality: record payloads still use identity", fn() {
+      shared := make_point(1, 2)
+      other := make_point(1, 2)
+      a: Option<Point> = .Some(shared)
+      b: Option<Point> = .Some(shared)
+      c: Option<Point> = .Some(other)
+      try assert.is_true(a == b)
+      try assert.is_false(a == c)
+      .Ok({})
+    })
+}

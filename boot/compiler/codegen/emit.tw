@@ -2535,9 +2535,11 @@ fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vect
     .Scalar(.WF64) => buf.append(.StructNew("rt_types__BoxedFloat")),
     .Scalar(.WI32) => buf.append(.RefI31),
     .Scalar(.WAnyref) => buf,  // already anyref
-    // Reference types: struct refs are subtypes of anyref (implicit upcast)
+    // Records stay identity-based even across erased boundaries.
     .Record(_) => buf,
-    .Sum(_) => buf,
+    // Typed sums erase through the generic Variant bridge so runtime equality
+    // can compare nested sums structurally inside vectors/dicts/anyref calls.
+    .Sum(_) => buf.append(.Call(sum_to_variant_helper_sym(mono))),
     .Closure(_) => buf,
     .Vector_(_) => buf,
     .Dict_(_, _) => buf,
@@ -2568,7 +2570,7 @@ fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) 
     },
     .Scalar(.WAnyref) => buf,  // already anyref
     .Record(r) => buf.append(.RefCast(false, .Named(r.sym))),
-    .Sum(s) => buf.append(.RefCast(false, .Named(s.sym))),
+    .Sum(_) => buf.append(.RefCast(true, .Named("rt_types__Variant"))).append(.Call(variant_to_sum_helper_sym(mono))),
     .Closure(_) => buf.append(.RefCast(false, .Named("rt_types__Closure"))),
     .Vector_(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
     .Dict_(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),

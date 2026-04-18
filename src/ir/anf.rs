@@ -28,6 +28,7 @@ pub enum OpKind {
     Float,
     Bool,
     String,
+    RuntimeEq,
 }
 
 /// Distinguishes array indexing from dict indexing.

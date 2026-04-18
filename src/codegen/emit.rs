@@ -3494,6 +3494,17 @@ fn emit_binop(
     operand_ty: crate::ir::anf::OpKind,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    if matches!(operand_ty, crate::ir::anf::OpKind::RuntimeEq) {
+        let mut instrs = emit_atom(left, Some(&ValType::Anyref), ctx);
+        instrs.extend(emit_atom(right, Some(&ValType::Anyref), ctx));
+        ensure_rt_core_eq_import(ctx);
+        instrs.push(Instr::Call("rt_core__eq".to_string()));
+        if matches!(op, crate::syntax::ast::BinOp::Ne) {
+            instrs.push(Instr::I32Eqz);
+        }
+        return instrs;
+    }
+
     let operand_vt = operand_valtype(operand_ty);
     let mut instrs = emit_atom(left, Some(&operand_vt), ctx);
     instrs.extend(emit_atom(right, Some(&operand_vt), ctx));
@@ -7186,6 +7197,7 @@ fn operand_valtype(kind: crate::ir::anf::OpKind) -> ValType {
         crate::ir::anf::OpKind::Float => ValType::F64,
         crate::ir::anf::OpKind::Bool => ValType::I32,
         crate::ir::anf::OpKind::String => ref_string_null(),
+        crate::ir::anf::OpKind::RuntimeEq => ValType::Anyref,
     }
 }
 
@@ -7321,6 +7333,16 @@ fn ensure_rt_dict_get_option_import(ctx: &mut EmitCtx<'_>) {
         as_sym: "rt_dict__get_option".to_string(),
         params: vec![ref_pdict_null(), ValType::Anyref],
         results: vec![ref_variant()],
+    });
+}
+
+fn ensure_rt_core_eq_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: "rt.core".to_string(),
+        name: "eq".to_string(),
+        as_sym: "rt_core__eq".to_string(),
+        params: vec![ValType::Anyref, ValType::Anyref],
+        results: vec![ValType::I32],
     });
 }
 

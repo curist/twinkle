@@ -58,6 +58,7 @@ Related historical context outside this folder:
 | [boot-function-identity-canonicalization.md](boot-function-identity-canonicalization.md) | Canonical imported function identity across resolver, lowering, module compilation, and core linking so alias spelling no longer affects cross-module linkage |
 | [boot-module-type-identity.md](boot-module-type-identity.md) | Canonical imported nominal type identity across full/selective/transitive boot module boundaries; behavioral closure complete, deeper hidden-import cleanup deferred to the follow-on binding-model plan |
 | [boot-no-hidden-imports.md](boot-no-hidden-imports.md) | Remove hidden selective-import namespaces by splitting canonical import storage from visible bindings, completing support-type closure, and moving method lookup to receiver identity |
+| [equality-followup.md](equality-followup.md) | Finish typed-sum structural equality, broaden collection-equality regression coverage, and lock down the boundary between structural collection equality and record identity |
 | [backend-pipeline-alignment.md](backend-pipeline-alignment.md) | Align backend pipeline to operate on monomorphized Core IR |
 | [optimizer-generalization.md](optimizer-generalization.md) | Generalize optimizer semantics, shared analysis, and canonical builder/transient boundaries without requiring explicit transient IR forms yet |
 | [pragmatic-persistent-vector.md](pragmatic-persistent-vector.md) | Pragmatic `PVec` implementation plan using existing `rt.arr` ABI; now landed on both stage0 and boot mirror |
