@@ -114,6 +114,26 @@ fn has_make_closure(expr: core_ir.CoreExpr) Bool {
   }
 }
 
+fn has_make_closure_capture(expr: core_ir.CoreExpr, target_local_id: Int) Bool {
+  case expr.kind {
+    .MakeClosure(_, free_vars) => {
+      for fv in free_vars {
+        if fv.id == target_local_id { return true }
+      }
+      false
+    },
+    .Let(_, val, body) => has_make_closure_capture(val, target_local_id) or has_make_closure_capture(body, target_local_id),
+    .If(_, then_e, else_e) => has_make_closure_capture(then_e, target_local_id) or has_make_closure_capture(else_e, target_local_id),
+    .Match(_, arms) => {
+      for arm in arms {
+        if has_make_closure_capture(arm.body, target_local_id) { return true }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
 fn has_match(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .Match(_, _) => true,
@@ -698,6 +718,21 @@ pub fn suite() runner.Suite {
       // f should reference x via GlobalLocal
       f_body := lr.module.functions[0].body
       try assert.ok(has_global_local(f_body), "expected GlobalLocal reference in f body")
+      .Ok({})
+    })
+    .test("module-level let shadows visible function in expression lowering", fn() Result<Void, String> {
+      src := "values := [1, 2, 3]\nfn f() Int {\n  n := 0\n  for x in values { n = n + x }\n  n\n}"
+      lr := try lower_src_with_builtin_env(src)
+      body := lr.module.functions[0].body
+      try assert.ok(has_global_local(body), "expected for-loop iterator to resolve values as GlobalLocal")
+      .Ok({})
+    })
+    .test("closure captures module global from top-level lambda", fn() Result<Void, String> {
+      src := "add5 := fn(x: Int) Int { x + 5 }\nfn f() fn(Int) Int { fn(x: Int) Int { add5(x) } }"
+      lr := try lower_src_with_builtin_env(src)
+      f_body := lr.module.functions[0].body
+      try assert.ok(has_make_closure(f_body), "expected MakeClosure in outer function")
+      try assert.ok(has_make_closure_capture(f_body, 0), "expected lambda closure to capture module global add5")
       .Ok({})
     })
     // ── M9: Monomorphization ─────────────────────────────────────────

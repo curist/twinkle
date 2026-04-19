@@ -238,14 +238,14 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
           .{ expr: .{ kind: .Local(local_id), ty, span: s }, ctx }
         },
         .None => {
-          case ctx.lookup_func(name) {
-            .Some(func_id) => {
-              .{ expr: .{ kind: .GlobalFunc(func_id), ty, span: s }, ctx }
+          case ctx.module_globals[name] {
+            .Some(gid) => {
+              .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx }
             },
             .None => {
-              case ctx.module_globals[name] {
-                .Some(gid) => {
-                  .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx }
+              case ctx.lookup_func(name) {
+                .Some(func_id) => {
+                  .{ expr: .{ kind: .GlobalFunc(func_id), ty, span: s }, ctx }
                 },
                 .None => {
                   ctx = ctx.emit_error(s, "undefined variable: ${name}")
@@ -1297,6 +1297,13 @@ type FreeVarState = .{
 fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dict<Int, Bool>, result: Vector<LocalId>) FreeVarState {
   case expr.kind {
     .Local(id) => {
+      if !bound.has(id.id) and !captured.has(id.id) {
+        captured[id.id] = true
+        result = result.append(id)
+      }
+      .{ bound, captured, result }
+    },
+    .GlobalLocal(id) => {
       if !bound.has(id.id) and !captured.has(id.id) {
         captured[id.id] = true
         result = result.append(id)
@@ -2803,6 +2810,9 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       _ => {},
     }
   }
+
+  // Ensure function-local ids do not collide with assigned module globals.
+  if ctx.next_local < ctx.next_global { ctx.next_local = ctx.next_global }
 
   // Pre-pass 2: assign FuncIds to all functions
   for item in module.items {
