@@ -14,8 +14,9 @@ export default defineConfig({
     target: 'esnext',
   },
 
-  // web-tree-sitter must not be pre-bundled; it loads its own .wasm at runtime
-  optimizeDeps: {
-    exclude: ['web-tree-sitter'],
+
+  // Allow ?raw imports from outside the playground/ root (e.g. highlights.scm)
+  server: {
+    fs: { allow: ['../..'] },
   },
 })

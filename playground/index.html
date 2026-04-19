@@ -90,7 +90,8 @@
       flex-shrink: 0;
     }
 
-    textarea {
+    /* ── CodeJar editor ── */
+    #editor {
       flex: 1;
       background: #0d1117;
       color: #c9d1d9;
@@ -99,10 +100,32 @@
       line-height: 1.6;
       border: none;
       padding: 14px;
-      resize: none;
       outline: none;
       tab-size: 2;
+      overflow: auto;
+      white-space: pre;
+      caret-color: #c9d1d9;
+      /* prevent browser from inserting <div>/<br> on Enter */
+      word-break: normal;
+      overflow-wrap: normal;
     }
+
+    /* ── Syntax highlight token colours (GitHub dark palette) ── */
+    .hl-keyword   { color: #ff7b72; }
+    .hl-type      { color: #ffa657; }
+    .hl-function  { color: #d2a8ff; }
+    .hl-string    { color: #a5d6ff; }
+    .hl-str-esc   { color: #56d364; }
+    .hl-comment   { color: #8b949e; font-style: italic; }
+    .hl-number    { color: #79c0ff; }
+    .hl-operator  { color: #ff7b72; }
+    .hl-punct     { color: #8b949e; }
+    .hl-punct-sp  { color: #e3b341; }
+    .hl-prop      { color: #79c0ff; }
+    .hl-ctor      { color: #ffa657; }
+    .hl-module    { color: #ffa657; }
+    .hl-param     { color: #ffa657; }
+    .hl-error     { text-decoration: underline wavy #ff7b72; }
 
     .divider {
       width: 5px;
@@ -159,7 +182,7 @@
 <div class="workspace">
   <div class="pane" id="editor-pane">
     <div class="pane-label">Source  ·  main.tw</div>
-    <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+    <div id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></div>
   </div>
 
   <div class="divider" id="divider"></div>

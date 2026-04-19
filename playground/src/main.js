@@ -1,3 +1,7 @@
+import { CodeJar } from 'codejar'
+import { Parser, Language } from 'web-tree-sitter'
+import highlightsScm from '../../tree-sitter-twinkle/queries/highlights.scm?raw'
+
 // ---------------------------------------------------------------------------
 // Examples
 // ---------------------------------------------------------------------------
@@ -199,20 +203,115 @@ for shift in [1, 3, 7, 13] {
 }
 
 // ---------------------------------------------------------------------------
+// Syntax highlighting
+// ---------------------------------------------------------------------------
+
+// Maps tree-sitter capture names (no @) to CSS classes defined in index.html
+const CAPTURE_CLASSES = {
+  'keyword':           'hl-keyword',
+  'keyword.function':  'hl-keyword',
+  'keyword.type':      'hl-keyword',
+  'keyword.control':   'hl-keyword',
+  'keyword.return':    'hl-keyword',
+  'keyword.modifier':  'hl-keyword',
+  'keyword.import':    'hl-keyword',
+  'keyword.operator':  'hl-keyword',
+  'keyword.exception': 'hl-keyword',
+  'operator':          'hl-operator',
+  'string':            'hl-string',
+  'string.escape':     'hl-str-esc',
+  'comment':           'hl-comment',
+  'number':            'hl-number',
+  'number.float':      'hl-number',
+  'boolean':           'hl-number',
+  'type':              'hl-type',
+  'type.builtin':      'hl-type',
+  'type.definition':   'hl-type',
+  'type.parameter':    'hl-param',
+  'function':          'hl-function',
+  'function.call':     'hl-function',
+  'function.method.call': 'hl-function',
+  'constructor':       'hl-ctor',
+  'variable.parameter': 'hl-param',
+  'property':          'hl-prop',
+  'module':            'hl-module',
+  'punctuation.bracket':   'hl-punct',
+  'punctuation.delimiter': 'hl-punct',
+  'punctuation.special':   'hl-punct-sp',
+  'error':             'hl-error',
+}
+
+// Paint capture classes onto a character array, then build an HTML string.
+// Captures are applied in document order; later captures override earlier ones
+// (tree-sitter returns child nodes after parents, so specificity works out).
+function buildHighlightedHTML(source, captures) {
+  const classes = new Array(source.length).fill(null)
+  for (const { name, node } of captures) {
+    const cls = CAPTURE_CLASSES[name]
+    if (!cls) continue
+    for (let i = node.startIndex; i < node.endIndex && i < source.length; i++) {
+      classes[i] = cls
+    }
+  }
+
+  let html = ''
+  let i = 0
+  while (i < source.length) {
+    const cls = classes[i]
+    let j = i + 1
+    while (j < source.length && classes[j] === cls) j++
+    const chunk = source.slice(i, j)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    html += cls ? `<span class="${cls}">${chunk}</span>` : chunk
+    i = j
+  }
+  return html
+}
+
+// Stateful tree-sitter handles; null until async init completes
+let tsParser = null
+let tsQuery  = null
+
+function highlight(el) {
+  if (!tsParser || !tsQuery) return
+  const src = el.textContent ?? ''
+  const tree = tsParser.parse(src)
+  el.innerHTML = buildHighlightedHTML(src, tsQuery.captures(tree.rootNode))
+}
+
+async function initTreeSitter() {
+  await Parser.init({ locateFile: () => './tree-sitter.wasm' })
+  const lang = await Language.load('./tree-sitter-twinkle.wasm')
+  tsParser = new Parser()
+  tsParser.setLanguage(lang)
+  tsQuery = lang.query(highlightsScm)
+  // Re-highlight the content that's already in the editor
+  jar.updateCode(jar.toString())
+}
+
+// ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-const editor   = document.getElementById('editor')
+const editorEl = document.getElementById('editor')
 const output   = document.getElementById('output')
 const runBtn   = document.getElementById('run-btn')
 const status   = document.getElementById('status')
 const examples = document.getElementById('examples')
 const divider  = document.getElementById('divider')
 
-editor.value = EXAMPLES.fizzbuzz_enum
+// CodeJar replaces the div with a contenteditable code editor.
+// It calls highlight() after every change; Tab inserts two spaces.
+const jar = CodeJar(editorEl, highlight, { tab: '  ' })
+jar.updateCode(EXAMPLES.fizzbuzz_enum)
+
+// Kick off tree-sitter load in the background; editor works without it
+initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
 
 examples.addEventListener('change', () => {
   const code = EXAMPLES[examples.value]
-  if (code) { editor.value = code; examples.value = '' }
+  if (code) { jar.updateCode(code); examples.value = '' }
 })
 
 function appendOutput(cls, text) {
@@ -223,20 +322,12 @@ function appendOutput(cls, text) {
   output.scrollTop = output.scrollHeight
 }
 
-// Tab key → insert two spaces
-editor.addEventListener('keydown', (e) => {
-  if (e.key === 'Tab') {
-    e.preventDefault()
-    const start = editor.selectionStart
-    const end   = editor.selectionEnd
-    editor.value = editor.value.slice(0, start) + '  ' + editor.value.slice(end)
-    editor.selectionStart = editor.selectionEnd = start + 2
-  }
-})
-
 // Ctrl/Cmd+Enter → run
-editor.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run()
+editorEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault()
+    run()
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -265,8 +356,6 @@ document.addEventListener('mouseup', () => {
 // ---------------------------------------------------------------------------
 // Worker
 // ---------------------------------------------------------------------------
-// worker.js lives in public/ — browsers resolve Worker URLs relative to the
-// document (not the script), so './worker.js' works regardless of sub-path.
 const worker = new Worker('./worker.js')
 
 worker.onmessage = (e) => {
@@ -313,7 +402,7 @@ function run() {
   output.innerHTML = ''
   setRunning(true)
   status.textContent = 'Starting…'
-  worker.postMessage({ type: 'run', code: editor.value })
+  worker.postMessage({ type: 'run', code: jar.toString() })
 }
 
 runBtn.addEventListener('click', run)
