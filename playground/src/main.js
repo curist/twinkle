@@ -321,7 +321,7 @@ initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
 
 examples.addEventListener('change', () => {
   const code = EXAMPLES[examples.value]
-  if (code) { jar.updateCode(code); examples.value = '' }
+  if (code) jar.updateCode(code)
 })
 
 function appendOutput(cls, text) {
