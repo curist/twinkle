@@ -45,7 +45,12 @@ fn is_prime(n: Int) Bool {
 primes := collect n in range_from(2, 80) {
   if is_prime(n) { n } else { continue }
 }
-println("Primes up to 80: \${primes}")
+print("Primes up to 80: [")
+for n, i in primes {
+  if i > 0 { print(", ") }
+  print("\${n}")
+}
+println("]")
 println("Count: \${primes.len()}")
 
 // Twin primes (pairs differing by 2)
@@ -56,7 +61,12 @@ twins := collect i in range_from(0, primes.len() - 1) {
     continue
   }
 }
-println("Twin primes: \${twins}")
+print("Twin primes: [")
+for t, i in twins {
+  if i > 0 { print(", ") }
+  print(t)
+}
+println("]")
 `,
 
   bst: `// Immutable binary search tree
@@ -166,7 +176,7 @@ for word in counts.keys() {
 }
 
 case most_common(counts) {
-  .Some(w) => println("\nmost common: '\${w}' (\${counts[w].unwrap_or(0)}×)"),
+  .Some(w) => println("\\nmost common: '\${w}' (\${counts[w].unwrap_or(0)}×)"),
   .None    => {},
 }
 `,
