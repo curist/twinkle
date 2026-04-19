@@ -1,0 +1,19 @@
+{
+  "name": "twinkle-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/copy-assets.mjs && vite build",
+    "preview": "vite preview",
+    "copy-assets": "node scripts/copy-assets.mjs"
+  },
+  "dependencies": {
+    "codejar": "^4.2.0",
+    "web-tree-sitter": "^0.25.3"
+  },
+  "devDependencies": {
+    "vite": "^6.3.2",
+    "vite-plugin-wasm": "^3.3.0"
+  }
+}

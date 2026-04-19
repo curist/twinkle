@@ -1,0 +1,319 @@
+// ---------------------------------------------------------------------------
+// Examples
+// ---------------------------------------------------------------------------
+const EXAMPLES = {
+  hello: `println("Hello, World!")
+`,
+
+  fizzbuzz_enum: `// Enums + pattern matching
+type FB = { Fizz, Buzz, FizzBuzz, Num(Int) }
+
+fn classify(i: Int) FB {
+  if i % 15 == 0 { .FizzBuzz }
+  else if i % 3 == 0 { .Fizz }
+  else if i % 5 == 0 { .Buzz }
+  else { .Num(i) }
+}
+
+for i in range_from(1, 21) {
+  case classify(i) {
+    .Fizz    => println("Fizz"),
+    .Buzz    => println("Buzz"),
+    .FizzBuzz => println("FizzBuzz"),
+    .Num(x)  => println("\${x}"),
+  }
+}
+`,
+
+  primes: `// Primes via trial division + collect/continue
+fn is_prime(n: Int) Bool {
+  if n < 2 { return false }
+  if n == 2 { return true }
+  if n % 2 == 0 { return false }
+  i := 3
+  for i * i <= n {
+    if n % i == 0 { return false }
+    i = i + 2
+  }
+  true
+}
+
+primes := collect n in range_from(2, 80) {
+  if is_prime(n) { n } else { continue }
+}
+println("Primes up to 80: \${primes}")
+println("Count: \${primes.len()}")
+
+// Twin primes (pairs differing by 2)
+twins := collect i in range_from(0, primes.len() - 1) {
+  if primes[i + 1] - primes[i] == 2 {
+    "(\${primes[i]}, \${primes[i + 1]})"
+  } else {
+    continue
+  }
+}
+println("Twin primes: \${twins}")
+`,
+
+  bst: `// Immutable binary search tree
+type BST = { Empty, Node(Int, BST, BST) }
+
+fn insert(t: BST, n: Int) BST {
+  case t {
+    .Empty => .Node(n, .Empty, .Empty),
+    .Node(v, left, right) => {
+      if n < v { .Node(v, insert(left, n), right) }
+      else if n > v { .Node(v, left, insert(right, n)) }
+      else { t }
+    },
+  }
+}
+
+fn inorder(t: BST) Vector<Int> {
+  case t {
+    .Empty => [],
+    .Node(v, left, right) =>
+      inorder(left).append(v).concat(inorder(right)),
+  }
+}
+
+fn contains(t: BST, n: Int) Bool {
+  case t {
+    .Empty => false,
+    .Node(v, left, right) => {
+      if n == v { true }
+      else if n < v { contains(left, n) }
+      else { contains(right, n) }
+    },
+  }
+}
+
+tree: BST = .Empty
+for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] { tree = insert(tree, v) }
+
+sorted := inorder(tree)
+print("Sorted: [")
+for v, i in sorted {
+  if i > 0 { print(", ") }
+  print("\${v}")
+}
+println("]")
+println("Has 4?  \${contains(tree, 4)}")
+println("Has 10? \${contains(tree, 10)}")
+`,
+
+  closures: `// First-class functions and closures
+fn make_adder(n: Int) fn(Int) Int {
+  fn(x) { x + n }
+}
+
+fn make_multiplier(n: Int) fn(Int) Int {
+  fn(x) { x * n }
+}
+
+add10  := make_adder(10)
+triple := make_multiplier(3)
+
+println("add10(7)         = \${add10(7)}")
+println("triple(7)        = \${triple(7)}")
+println("add10(triple(7)) = \${add10(triple(7))}")
+println("triple(add10(7)) = \${triple(add10(7))}")
+
+// Closures capture their environment
+adders := collect n in range_from(1, 6) { make_adder(n) }
+print("add 1..5 to 100: ")
+for add in adders { print("\${add(100)} ") }
+println("")
+`,
+
+  word_count: `// Word frequency with Dict
+fn count_words(words: Vector<String>) Dict<String, Int> {
+  counts: Dict<String, Int> = Dict.new()
+  for word in words {
+    case counts[word] {
+      .Some(n) => counts[word] = n + 1,
+      .None    => counts[word] = 1,
+    }
+  }
+  counts
+}
+
+fn most_common(counts: Dict<String, Int>) String? {
+  keys := counts.keys()
+  if keys.len() == 0 { return .None }
+  best := keys[0]
+  best_n := counts[best].unwrap_or(0)
+  for word in keys {
+    n := counts[word].unwrap_or(0)
+    if n > best_n {
+      best = word
+      best_n = n
+    }
+  }
+  .Some(best)
+}
+
+words := ["the", "quick", "brown", "fox", "jumps",
+          "over", "the", "lazy", "dog", "the", "fox"]
+
+counts := count_words(words)
+for word in counts.keys() {
+  println("\${word}: \${counts[word].unwrap_or(0)}")
+}
+
+case most_common(counts) {
+  .Some(w) => println("\nmost common: '\${w}' (\${counts[w].unwrap_or(0)}×)"),
+  .None    => {},
+}
+`,
+
+  caesar: `// Caesar cipher — string ↔ byte manipulation
+fn shift_char(b: Byte, shift: Int) Byte {
+  n := b.to_int()
+  if n >= 65 and n <= 90 {
+    Byte.from_int((n - 65 + shift) % 26 + 65).unwrap_or(b)
+  } else if n >= 97 and n <= 122 {
+    Byte.from_int((n - 97 + shift) % 26 + 97).unwrap_or(b)
+  } else {
+    b
+  }
+}
+
+fn caesar(text: String, shift: Int) String {
+  rotated := text.utf8_bytes().map(fn(b) { shift_char(b, shift) })
+  String.from_utf8(rotated).unwrap_or(text)
+}
+
+message := "The Quick Brown Fox Jumps Over The Lazy Dog"
+encoded := caesar(message, 13)
+decoded := caesar(encoded, 13)
+
+println("Original: \${message}")
+println("ROT-13:   \${encoded}")
+println("Decoded:  \${decoded}")
+
+for shift in [1, 3, 7, 13] {
+  println("shift \${shift}: \${caesar("Hello", shift)}")
+}
+`,
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+const editor   = document.getElementById('editor')
+const output   = document.getElementById('output')
+const runBtn   = document.getElementById('run-btn')
+const status   = document.getElementById('status')
+const examples = document.getElementById('examples')
+const divider  = document.getElementById('divider')
+
+editor.value = EXAMPLES.fizzbuzz_enum
+
+examples.addEventListener('change', () => {
+  const code = EXAMPLES[examples.value]
+  if (code) { editor.value = code; examples.value = '' }
+})
+
+function appendOutput(cls, text) {
+  const span = document.createElement('span')
+  span.className = cls
+  span.textContent = text
+  output.appendChild(span)
+  output.scrollTop = output.scrollHeight
+}
+
+// Tab key → insert two spaces
+editor.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault()
+    const start = editor.selectionStart
+    const end   = editor.selectionEnd
+    editor.value = editor.value.slice(0, start) + '  ' + editor.value.slice(end)
+    editor.selectionStart = editor.selectionEnd = start + 2
+  }
+})
+
+// Ctrl/Cmd+Enter → run
+editor.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run()
+})
+
+// ---------------------------------------------------------------------------
+// Divider drag
+// ---------------------------------------------------------------------------
+let dragging = false
+divider.addEventListener('mousedown', (e) => {
+  dragging = true
+  divider.classList.add('dragging')
+  e.preventDefault()
+})
+document.addEventListener('mousemove', (e) => {
+  if (!dragging) return
+  const workspace = document.querySelector('.workspace')
+  const rect = workspace.getBoundingClientRect()
+  const ratio = (e.clientX - rect.left) / rect.width
+  const pct = Math.min(Math.max(ratio * 100, 20), 80)
+  document.getElementById('editor-pane').style.flex = 'none'
+  document.getElementById('editor-pane').style.width = pct + '%'
+  document.getElementById('output-pane').style.flex = '1'
+})
+document.addEventListener('mouseup', () => {
+  if (dragging) { dragging = false; divider.classList.remove('dragging') }
+})
+
+// ---------------------------------------------------------------------------
+// Worker
+// ---------------------------------------------------------------------------
+// worker.js lives in public/ — browsers resolve Worker URLs relative to the
+// document (not the script), so './worker.js' works regardless of sub-path.
+const worker = new Worker('./worker.js')
+
+worker.onmessage = (e) => {
+  const { type, text, exitCode, message } = e.data
+  switch (type) {
+    case 'status':
+      status.textContent = text
+      break
+    case 'stdout':
+      appendOutput('out-stdout', text)
+      break
+    case 'stderr':
+      appendOutput('out-stderr', text)
+      break
+    case 'done':
+      setRunning(false)
+      if (exitCode === 0) {
+        status.textContent = 'Done (exit 0)'
+      } else {
+        appendOutput('out-meta', `\n[exit code ${exitCode}]`)
+        status.textContent = `Done (exit ${exitCode})`
+      }
+      break
+    case 'error':
+      setRunning(false)
+      appendOutput('out-error', `\nInternal error: ${message}`)
+      status.textContent = 'Error'
+      break
+  }
+}
+
+worker.onerror = (e) => {
+  setRunning(false)
+  appendOutput('out-error', `\nWorker error: ${e.message}`)
+  status.textContent = 'Error'
+}
+
+function setRunning(running) {
+  runBtn.disabled = running
+  runBtn.textContent = running ? '⏳ Running…' : '▶ Run'
+}
+
+function run() {
+  output.innerHTML = ''
+  setRunning(true)
+  status.textContent = 'Starting…'
+  worker.postMessage({ type: 'run', code: editor.value })
+}
+
+runBtn.addEventListener('click', run)

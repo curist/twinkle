@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twinkle Playground</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      min-height: 60px;
+    }
+    .logo { font-size: 1.1rem; font-weight: 700; color: #58a6ff; letter-spacing: -0.5px; }
+    .logo span { color: #f78166; }
+
+    select {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    select:focus { outline: 2px solid #388bfd; outline-offset: 2px; }
+
+    #run-btn {
+      background: #238636;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 5px 18px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #run-btn:hover:not(:disabled) { background: #2ea043; }
+    #run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #status {
+      margin-left: auto;
+      font-size: 0.78rem;
+      color: #8b949e;
+      min-width: 140px;
+      text-align: right;
+    }
+
+    /* ── Main area ── */
+    .workspace {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .pane {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .pane-label {
+      padding: 4px 14px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6e7681;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
+    }
+
+    textarea {
+      flex: 1;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      border: none;
+      padding: 14px;
+      resize: none;
+      outline: none;
+      tab-size: 2;
+    }
+
+    .divider {
+      width: 5px;
+      background: #21262d;
+      cursor: col-resize;
+      flex-shrink: 0;
+      transition: background 0.1s;
+    }
+    .divider:hover, .divider.dragging { background: #388bfd; }
+
+    #output-pane {
+      flex: 1;
+    }
+
+    #output {
+      flex: 1;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      background: #0d1117;
+      padding: 14px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #output:empty::before {
+      content: "Output will appear here…";
+      color: #484f58;
+    }
+    .out-stdout { color: #c9d1d9; }
+    .out-stderr { color: #f78166; }
+    .out-meta   { color: #8b949e; font-style: italic; }
+    .out-error  { color: #ff7b72; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">twinkle<span>✦</span></div>
+  <select id="examples">
+    <option value="">— examples —</option>
+    <option value="hello">Hello World</option>
+    <option value="fizzbuzz_enum">FizzBuzz (enum)</option>
+    <option value="primes">Primes</option>
+    <option value="bst">Binary Search Tree</option>
+    <option value="closures">Closures</option>
+    <option value="word_count">Word Count</option>
+    <option value="caesar">Caesar Cipher</option>
+  </select>
+  <button id="run-btn">▶ Run</button>
+  <span id="status">Ready</span>
+</header>
+
+<div class="workspace">
+  <div class="pane" id="editor-pane">
+    <div class="pane-label">Source  ·  main.tw</div>
+    <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+  </div>
+
+  <div class="divider" id="divider"></div>
+
+  <div class="pane" id="output-pane">
+    <div class="pane-label">Output</div>
+    <div id="output"></div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
