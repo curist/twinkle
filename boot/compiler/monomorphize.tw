@@ -144,7 +144,7 @@ fn apply_subst(ty: MonoType, subst: Dict<String, MonoType>) MonoType {
   }
 }
 
-// Collect type parameter names in order from params + return type.
+// Collect type parameter names in order from params + body expression types + return type.
 fn collect_type_params(func: FunctionDef) Vector<String> {
   seen: Dict<String, Bool> = Dict.new()
   result: Vector<String> = []
@@ -153,6 +153,9 @@ fn collect_type_params(func: FunctionDef) Vector<String> {
     seen = r.seen
     result = r.result
   }
+  r_body := collect_vars_in_expr_types(func.body, seen, result)
+  seen = r_body.seen
+  result = r_body.result
   r2 := collect_vars_in_order(func.return_ty, seen, result)
   r2.result
 }
@@ -190,6 +193,79 @@ fn collect_vars_in_order(ty: MonoType, seen: Dict<String, Bool>, result: Vector<
       collect_vars_in_order(err, st.seen, st.result)
     },
     _ => VarCollectState.{ seen, result },
+  }
+}
+
+fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: Vector<String>) VarCollectState {
+  st := collect_vars_in_order(expr.ty, seen, result)
+  case expr.kind {
+    .Let(_, value, body) => {
+      st = collect_vars_in_expr_types(value, st.seen, st.result)
+      collect_vars_in_expr_types(body, st.seen, st.result)
+    },
+    .Assign(_, value) => collect_vars_in_expr_types(value, st.seen, st.result),
+    .BinOp(_, lhs, rhs) => {
+      st = collect_vars_in_expr_types(lhs, st.seen, st.result)
+      collect_vars_in_expr_types(rhs, st.seen, st.result)
+    },
+    .UnOp(_, inner) => collect_vars_in_expr_types(inner, st.seen, st.result),
+    .Call(callee, args) => {
+      st = collect_vars_in_expr_types(callee, st.seen, st.result)
+      for arg in args {
+        st = collect_vars_in_expr_types(arg, st.seen, st.result)
+      }
+      st
+    },
+    .If(cond, then_e, else_e) => {
+      st = collect_vars_in_expr_types(cond, st.seen, st.result)
+      st = collect_vars_in_expr_types(then_e, st.seen, st.result)
+      collect_vars_in_expr_types(else_e, st.seen, st.result)
+    },
+    .Match(scrut, arms) => {
+      st = collect_vars_in_expr_types(scrut, st.seen, st.result)
+      for arm in arms {
+        st = collect_vars_in_expr_types(arm.body, st.seen, st.result)
+      }
+      st
+    },
+    .Loop(body) => collect_vars_in_expr_types(body, st.seen, st.result),
+    .Break(val) => case val {
+      .Some(v) => collect_vars_in_expr_types(v, st.seen, st.result),
+      .None => st,
+    },
+    .Return(val) => case val {
+      .Some(v) => collect_vars_in_expr_types(v, st.seen, st.result),
+      .None => st,
+    },
+    .Defer(inner) => collect_vars_in_expr_types(inner, st.seen, st.result),
+    .Record(_, fields) => {
+      for field in fields {
+        st = collect_vars_in_expr_types(field.value, st.seen, st.result)
+      }
+      st
+    },
+    .RecordGet(target, _) => collect_vars_in_expr_types(target, st.seen, st.result),
+    .RecordUpdate(base, _, value) => {
+      st = collect_vars_in_expr_types(base, st.seen, st.result)
+      collect_vars_in_expr_types(value, st.seen, st.result)
+    },
+    .Variant(_, _, args) => {
+      for arg in args {
+        st = collect_vars_in_expr_types(arg, st.seen, st.result)
+      }
+      st
+    },
+    .ArrayLit(elems) => {
+      for elem in elems {
+        st = collect_vars_in_expr_types(elem, st.seen, st.result)
+      }
+      st
+    },
+    .Index(base, idx) => {
+      st = collect_vars_in_expr_types(base, st.seen, st.result)
+      collect_vars_in_expr_types(idx, st.seen, st.result)
+    },
+    _ => st,
   }
 }
 
@@ -266,7 +342,132 @@ fn subst_covers(type_params: Vector<String>, subst: Dict<String, MonoType>) Bool
   true
 }
 
-fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue) InstQueue {
+fn generic_func_type(func: FunctionDef) MonoType {
+  param_tys: Vector<MonoType> = []
+  for p in func.params {
+    param_tys = param_tys.append(p.ty)
+  }
+  MonoType.Function(param_tys, func.return_ty)
+}
+
+fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case expr.kind {
+    .Local(id) => {
+      if !out.has(id.id) {
+        out[id.id] = expr.ty
+      }
+      out
+    },
+    .GlobalLocal(id) => {
+      if !out.has(id.id) {
+        out[id.id] = expr.ty
+      }
+      out
+    },
+    .Let(local, value, body) => {
+      out = collect_local_types(value, out)
+      out[local.id] = value.ty
+      collect_local_types(body, out)
+    },
+    .Assign(local, value) => {
+      if !out.has(local.id) {
+        out[local.id] = value.ty
+      }
+      collect_local_types(value, out)
+    },
+    .BinOp(_, lhs, rhs) => {
+      out = collect_local_types(lhs, out)
+      collect_local_types(rhs, out)
+    },
+    .UnOp(_, inner) => collect_local_types(inner, out),
+    .Call(callee, args) => {
+      out = collect_local_types(callee, out)
+      for arg in args {
+        out = collect_local_types(arg, out)
+      }
+      out
+    },
+    .If(cond, then_e, else_e) => {
+      out = collect_local_types(cond, out)
+      out = collect_local_types(then_e, out)
+      collect_local_types(else_e, out)
+    },
+    .Match(scrut, arms) => {
+      out = collect_local_types(scrut, out)
+      for arm in arms {
+        out = collect_local_types(arm.body, out)
+      }
+      out
+    },
+    .Loop(body) => collect_local_types(body, out),
+    .Break(val) => case val {
+      .Some(v) => collect_local_types(v, out),
+      .None => out,
+    },
+    .Return(val) => case val {
+      .Some(v) => collect_local_types(v, out),
+      .None => out,
+    },
+    .Defer(inner) => collect_local_types(inner, out),
+    .Record(_, fields) => {
+      for field in fields {
+        out = collect_local_types(field.value, out)
+      }
+      out
+    },
+    .RecordGet(target, _) => collect_local_types(target, out),
+    .RecordUpdate(base, _, value) => {
+      out = collect_local_types(base, out)
+      collect_local_types(value, out)
+    },
+    .Variant(_, _, args) => {
+      for arg in args {
+        out = collect_local_types(arg, out)
+      }
+      out
+    },
+    .ArrayLit(elems) => {
+      for elem in elems {
+        out = collect_local_types(elem, out)
+      }
+      out
+    },
+    .Index(base, idx) => {
+      out = collect_local_types(base, out)
+      collect_local_types(idx, out)
+    },
+    _ => out,
+  }
+}
+
+fn capture_subst_from_free_vars(target: FunctionDef, free_vars: Vector<LocalId>, local_types: Dict<Int, MonoType>, subst: Dict<String, MonoType>) Dict<String, MonoType> {
+  refs := collect_local_types(target.body, Dict.new())
+  out := subst
+  for fv in free_vars {
+    case local_types[fv.id] {
+      .Some(concrete_ty) => {
+        case refs[fv.id] {
+          .Some(pattern_ty) => {
+            out = match_type_against(pattern_ty, concrete_ty, out)
+          },
+          .None => {},
+        }
+      },
+      .None => {},
+    }
+  }
+  out
+}
+
+fn collect_instantiations_func(func: FunctionDef, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue) InstQueue {
+  local_types: Dict<Int, MonoType> = Dict.new()
+  for p in func.params {
+    local_types[p.local.id] = p.ty
+  }
+  collect_instantiations(func.body, generic_ids, func_map, queue, local_types)
+}
+
+fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue, local_types: Dict<Int, MonoType>) InstQueue {
   case expr.kind {
     .Call(callee, args) => {
       case callee.kind {
@@ -289,12 +490,12 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
             }
           }
           args.fold(queue, fn(q, arg) {
-            collect_instantiations(arg, generic_ids, func_map, q)
+            collect_instantiations(arg, generic_ids, func_map, q, local_types)
           })
         },
         _ => {
-          args.fold(collect_instantiations(callee, generic_ids, func_map, queue), fn(q, arg) {
-            collect_instantiations(arg, generic_ids, func_map, q)
+          args.fold(collect_instantiations(callee, generic_ids, func_map, queue, local_types), fn(q, arg) {
+            collect_instantiations(arg, generic_ids, func_map, q, local_types)
           })
         },
       }
@@ -305,11 +506,7 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
           .Some(gf) => {
             // Non-call position: match against expr.ty.
             // Only specialize fully-solved first-class references.
-            param_tys: Vector<MonoType> = []
-            for p in gf.params {
-              param_tys = param_tys.append(p.ty)
-            }
-            generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
+            generic_fn_ty := generic_func_type(gf)
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
             if subst_covers(type_params, subst) {
@@ -321,58 +518,76 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
       }
       queue
     },
-    .Let(_, value, body) => {
-      queue = collect_instantiations(value, generic_ids, func_map, queue)
-      collect_instantiations(body, generic_ids, func_map, queue)
+    .MakeClosure(fid, free_vars) => {
+      if generic_ids.has(fid.id) {
+        case func_map[fid.id] {
+          .Some(gf) => {
+            type_params := collect_type_params(gf)
+            subst := match_type_against(generic_func_type(gf), expr.ty, Dict.new())
+            subst = capture_subst_from_free_vars(gf, free_vars, local_types, subst)
+            if subst_covers(type_params, subst) {
+              queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+            }
+          },
+          .None => {},
+        }
+      }
+      queue
     },
-    .Assign(_, value) => collect_instantiations(value, generic_ids, func_map, queue),
+    .Let(local, value, body) => {
+      queue = collect_instantiations(value, generic_ids, func_map, queue, local_types)
+      next_local_types := local_types
+      next_local_types[local.id] = value.ty
+      collect_instantiations(body, generic_ids, func_map, queue, next_local_types)
+    },
+    .Assign(_, value) => collect_instantiations(value, generic_ids, func_map, queue, local_types),
     .BinOp(_, lhs, rhs) => {
-      queue = collect_instantiations(lhs, generic_ids, func_map, queue)
-      collect_instantiations(rhs, generic_ids, func_map, queue)
+      queue = collect_instantiations(lhs, generic_ids, func_map, queue, local_types)
+      collect_instantiations(rhs, generic_ids, func_map, queue, local_types)
     },
-    .UnOp(_, inner) => collect_instantiations(inner, generic_ids, func_map, queue),
+    .UnOp(_, inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types),
     .If(cond, then_e, else_e) => {
-      queue = collect_instantiations(cond, generic_ids, func_map, queue)
-      queue = collect_instantiations(then_e, generic_ids, func_map, queue)
-      collect_instantiations(else_e, generic_ids, func_map, queue)
+      queue = collect_instantiations(cond, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(then_e, generic_ids, func_map, queue, local_types)
+      collect_instantiations(else_e, generic_ids, func_map, queue, local_types)
     },
     .Match(scrut, arms) => {
-      arms.fold(collect_instantiations(scrut, generic_ids, func_map, queue), fn(q, arm) {
-        collect_instantiations(arm.body, generic_ids, func_map, q)
+      arms.fold(collect_instantiations(scrut, generic_ids, func_map, queue, local_types), fn(q, arm) {
+        collect_instantiations(arm.body, generic_ids, func_map, q, local_types)
       })
     },
-    .Loop(body) => collect_instantiations(body, generic_ids, func_map, queue),
+    .Loop(body) => collect_instantiations(body, generic_ids, func_map, queue, local_types),
     .Break(val) => {
       case val {
-        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue),
+        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types),
         .None => queue,
       }
     },
     .Return(val) => {
       case val {
-        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue),
+        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types),
         .None => queue,
       }
     },
     .Record(_, fields) => {
-      fields.fold(queue, fn(q, fi) { collect_instantiations(fi.value, generic_ids, func_map, q) })
+      fields.fold(queue, fn(q, fi) { collect_instantiations(fi.value, generic_ids, func_map, q, local_types) })
     },
-    .RecordGet(target, _) => collect_instantiations(target, generic_ids, func_map, queue),
+    .RecordGet(target, _) => collect_instantiations(target, generic_ids, func_map, queue, local_types),
     .RecordUpdate(base, _, value) => {
-      queue = collect_instantiations(base, generic_ids, func_map, queue)
-      collect_instantiations(value, generic_ids, func_map, queue)
+      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types)
+      collect_instantiations(value, generic_ids, func_map, queue, local_types)
     },
     .Variant(_, _, args) => {
-      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q) })
+      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q, local_types) })
     },
     .ArrayLit(elems) => {
-      elems.fold(queue, fn(q, e) { collect_instantiations(e, generic_ids, func_map, q) })
+      elems.fold(queue, fn(q, e) { collect_instantiations(e, generic_ids, func_map, q, local_types) })
     },
     .Index(base, idx) => {
-      queue = collect_instantiations(base, generic_ids, func_map, queue)
-      collect_instantiations(idx, generic_ids, func_map, queue)
+      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types)
+      collect_instantiations(idx, generic_ids, func_map, queue, local_types)
     },
-    .Defer(inner) => collect_instantiations(inner, generic_ids, func_map, queue),
+    .Defer(inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types),
     _ => queue,
   }
 }
@@ -465,17 +680,25 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
 
 // ── Call rewriting ───────────────────────────────────────────────
 
-fn rewrite_calls(expr: CoreExpr, spec_map: Dict<String, FuncId>, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>) CoreExpr {
-  kind := rewrite_calls_kind(expr, spec_map, generic_ids, func_map)
+fn rewrite_calls_func(func: FunctionDef, spec_map: Dict<String, FuncId>, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>) CoreExpr {
+  local_types: Dict<Int, MonoType> = Dict.new()
+  for p in func.params {
+    local_types[p.local.id] = p.ty
+  }
+  rewrite_calls(func.body, spec_map, generic_ids, func_map, local_types)
+}
+
+fn rewrite_calls(expr: CoreExpr, spec_map: Dict<String, FuncId>, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, local_types: Dict<Int, MonoType>) CoreExpr {
+  kind := rewrite_calls_kind(expr, spec_map, generic_ids, func_map, local_types)
   CoreExpr.{ kind, ty: expr.ty, span: expr.span }
 }
 
-fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>) CoreExprKind {
+fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, local_types: Dict<Int, MonoType>) CoreExprKind {
   case parent.kind {
     .Call(callee, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map))
+        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map, local_types))
       }
       case callee.kind {
         .GlobalFunc(fid) => {
@@ -490,7 +713,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
                   i = i + 1
                 }
                 if !subst_covers(type_params, subst) {
-                  return .Call(rewrite_calls(callee, spec_map, generic_ids, func_map), new_args)
+                  return .Call(rewrite_calls(callee, spec_map, generic_ids, func_map, local_types), new_args)
                 }
                 type_args: Vector<MonoType> = []
                 for tp in type_params {
@@ -510,20 +733,16 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
               .None => {},
             }
           }
-          .Call(rewrite_calls(callee, spec_map, generic_ids, func_map), new_args)
+          .Call(rewrite_calls(callee, spec_map, generic_ids, func_map, local_types), new_args)
         },
-        _ => .Call(rewrite_calls(callee, spec_map, generic_ids, func_map), new_args),
+        _ => .Call(rewrite_calls(callee, spec_map, generic_ids, func_map, local_types), new_args),
       }
     },
     .GlobalFunc(fid) => {
       if generic_ids.has(fid.id) {
         case func_map[fid.id] {
           .Some(gf) => {
-            param_tys: Vector<MonoType> = []
-            for p in gf.params {
-              param_tys = param_tys.append(p.ty)
-            }
-            generic_fn_ty := MonoType.Function(param_tys, gf.return_ty)
+            generic_fn_ty := generic_func_type(gf)
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, parent.ty, Dict.new())
             if !subst_covers(type_params, subst) {
@@ -547,65 +766,95 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
       }
       parent.kind
     },
+    .MakeClosure(fid, free_vars) => {
+      if generic_ids.has(fid.id) {
+        case func_map[fid.id] {
+          .Some(gf) => {
+            type_params := collect_type_params(gf)
+            subst := match_type_against(generic_func_type(gf), parent.ty, Dict.new())
+            subst = capture_subst_from_free_vars(gf, free_vars, local_types, subst)
+            if subst_covers(type_params, subst) {
+              type_args: Vector<MonoType> = []
+              for tp in type_params {
+                case subst[tp] {
+                  .Some(t) => { type_args = type_args.append(t) },
+                  .None => {},
+                }
+              }
+              key := spec_key(fid, type_args)
+              case spec_map[key] {
+                .Some(new_fid) => { return .MakeClosure(new_fid, free_vars) },
+                .None => {},
+              }
+            }
+          },
+          .None => {},
+        }
+      }
+      parent.kind
+    },
     .Let(local, value, body) => {
-      .Let(local, rewrite_calls(value, spec_map, generic_ids, func_map), rewrite_calls(body, spec_map, generic_ids, func_map))
+      new_value := rewrite_calls(value, spec_map, generic_ids, func_map, local_types)
+      next_local_types := local_types
+      next_local_types[local.id] = value.ty
+      .Let(local, new_value, rewrite_calls(body, spec_map, generic_ids, func_map, next_local_types))
     },
-    .Assign(local, value) => .Assign(local, rewrite_calls(value, spec_map, generic_ids, func_map)),
+    .Assign(local, value) => .Assign(local, rewrite_calls(value, spec_map, generic_ids, func_map, local_types)),
     .BinOp(op, lhs, rhs) => {
-      .BinOp(op, rewrite_calls(lhs, spec_map, generic_ids, func_map), rewrite_calls(rhs, spec_map, generic_ids, func_map))
+      .BinOp(op, rewrite_calls(lhs, spec_map, generic_ids, func_map, local_types), rewrite_calls(rhs, spec_map, generic_ids, func_map, local_types))
     },
-    .UnOp(op, inner) => .UnOp(op, rewrite_calls(inner, spec_map, generic_ids, func_map)),
+    .UnOp(op, inner) => .UnOp(op, rewrite_calls(inner, spec_map, generic_ids, func_map, local_types)),
     .If(cond, then_e, else_e) => {
-      .If(rewrite_calls(cond, spec_map, generic_ids, func_map), rewrite_calls(then_e, spec_map, generic_ids, func_map), rewrite_calls(else_e, spec_map, generic_ids, func_map))
+      .If(rewrite_calls(cond, spec_map, generic_ids, func_map, local_types), rewrite_calls(then_e, spec_map, generic_ids, func_map, local_types), rewrite_calls(else_e, spec_map, generic_ids, func_map, local_types))
     },
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
       for arm in arms {
-        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: rewrite_calls(arm.body, spec_map, generic_ids, func_map) })
+        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: rewrite_calls(arm.body, spec_map, generic_ids, func_map, local_types) })
       }
-      .Match(rewrite_calls(scrut, spec_map, generic_ids, func_map), new_arms)
+      .Match(rewrite_calls(scrut, spec_map, generic_ids, func_map, local_types), new_arms)
     },
-    .Loop(body) => .Loop(rewrite_calls(body, spec_map, generic_ids, func_map)),
+    .Loop(body) => .Loop(rewrite_calls(body, spec_map, generic_ids, func_map, local_types)),
     .Break(val) => {
       case val {
-        .Some(v) => .Break(.Some(rewrite_calls(v, spec_map, generic_ids, func_map))),
+        .Some(v) => .Break(.Some(rewrite_calls(v, spec_map, generic_ids, func_map, local_types))),
         .None => parent.kind,
       }
     },
     .Return(val) => {
       case val {
-        .Some(v) => .Return(.Some(rewrite_calls(v, spec_map, generic_ids, func_map))),
+        .Some(v) => .Return(.Some(rewrite_calls(v, spec_map, generic_ids, func_map, local_types))),
         .None => parent.kind,
       }
     },
-    .Defer(inner) => .Defer(rewrite_calls(inner, spec_map, generic_ids, func_map)),
+    .Defer(inner) => .Defer(rewrite_calls(inner, spec_map, generic_ids, func_map, local_types)),
     .Record(tid, fields) => {
       new_fields: Vector<FieldInit> = []
       for fi in fields {
-        new_fields = new_fields.append(FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, generic_ids, func_map) })
+        new_fields = new_fields.append(FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, generic_ids, func_map, local_types) })
       }
       .Record(tid, new_fields)
     },
-    .RecordGet(target, fid) => .RecordGet(rewrite_calls(target, spec_map, generic_ids, func_map), fid),
+    .RecordGet(target, fid) => .RecordGet(rewrite_calls(target, spec_map, generic_ids, func_map, local_types), fid),
     .RecordUpdate(base, fid, value) => {
-      .RecordUpdate(rewrite_calls(base, spec_map, generic_ids, func_map), fid, rewrite_calls(value, spec_map, generic_ids, func_map))
+      .RecordUpdate(rewrite_calls(base, spec_map, generic_ids, func_map, local_types), fid, rewrite_calls(value, spec_map, generic_ids, func_map, local_types))
     },
     .Variant(tid, vid, args) => {
       new_args: Vector<CoreExpr> = []
       for a in args {
-        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map))
+        new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map, local_types))
       }
       .Variant(tid, vid, new_args)
     },
     .ArrayLit(elems) => {
       new_elems: Vector<CoreExpr> = []
       for e in elems {
-        new_elems = new_elems.append(rewrite_calls(e, spec_map, generic_ids, func_map))
+        new_elems = new_elems.append(rewrite_calls(e, spec_map, generic_ids, func_map, local_types))
       }
       .ArrayLit(new_elems)
     },
     .Index(base, idx) => {
-      .Index(rewrite_calls(base, spec_map, generic_ids, func_map), rewrite_calls(idx, spec_map, generic_ids, func_map))
+      .Index(rewrite_calls(base, spec_map, generic_ids, func_map, local_types), rewrite_calls(idx, spec_map, generic_ids, func_map, local_types))
     },
     _ => parent.kind,
   }
@@ -632,7 +881,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   queue := InstQueue.{ items: [] }
   for func in module.functions {
     if !generic_ids.has(func.func_id.id) {
-      queue = collect_instantiations(func.body, generic_ids, func_map, queue)
+      queue = collect_instantiations_func(func, generic_ids, func_map, queue)
     }
   }
 
@@ -703,7 +952,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         }
 
         // Collect transitive instantiations from the specialized body
-        queue = collect_instantiations(specialized.body, generic_ids, func_map, queue)
+        queue = collect_instantiations_func(specialized, generic_ids, func_map, queue)
         new_functions = new_functions.append(specialized)
       },
       .None => {},
@@ -714,7 +963,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   rewritten: Vector<FunctionDef> = []
   for func in module.functions {
     if !generic_ids.has(func.func_id.id) {
-      new_body := rewrite_calls(func.body, spec_map, generic_ids, func_map)
+      new_body := rewrite_calls_func(func, spec_map, generic_ids, func_map)
       rewritten = rewritten.append(FunctionDef.{
         func_id: func.func_id,
         name: func.name,
@@ -727,7 +976,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
 
   // Rewrite specialized functions too
   for func in new_functions {
-    new_body := rewrite_calls(func.body, spec_map, generic_ids, func_map)
+    new_body := rewrite_calls_func(func, spec_map, generic_ids, func_map)
     rewritten = rewritten.append(FunctionDef.{
       func_id: func.func_id,
       name: func.name,

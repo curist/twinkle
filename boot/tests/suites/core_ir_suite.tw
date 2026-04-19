@@ -134,6 +134,60 @@ fn has_make_closure_capture(expr: core_ir.CoreExpr, target_local_id: Int) Bool {
   }
 }
 
+fn make_closure_targets(expr: core_ir.CoreExpr, out: Vector<Int>) Vector<Int> {
+  case expr.kind {
+    .MakeClosure(fid, _) => out.append(fid.id),
+    .Let(_, val, body) => make_closure_targets(body, make_closure_targets(val, out)),
+    .If(_, then_e, else_e) => make_closure_targets(else_e, make_closure_targets(then_e, out)),
+    .Match(_, arms) => {
+      cur := out
+      for arm in arms {
+        cur = make_closure_targets(arm.body, cur)
+      }
+      cur
+    },
+    .Loop(body) => make_closure_targets(body, out),
+    .Assign(_, val) => make_closure_targets(val, out),
+    .Record(_, fields) => {
+      cur := out
+      for field in fields {
+        cur = make_closure_targets(field.value, cur)
+      }
+      cur
+    },
+    .RecordGet(target, _) => make_closure_targets(target, out),
+    .RecordUpdate(base, _, value) => make_closure_targets(value, make_closure_targets(base, out)),
+    .Variant(_, _, args) => {
+      cur := out
+      for arg in args {
+        cur = make_closure_targets(arg, cur)
+      }
+      cur
+    },
+    .ArrayLit(elems) => {
+      cur := out
+      for elem in elems {
+        cur = make_closure_targets(elem, cur)
+      }
+      cur
+    },
+    .Index(base, idx) => make_closure_targets(idx, make_closure_targets(base, out)),
+    .Call(callee, args) => {
+      cur := make_closure_targets(callee, out)
+      for arg in args {
+        cur = make_closure_targets(arg, cur)
+      }
+      cur
+    },
+    .UnOp(_, inner) => make_closure_targets(inner, out),
+    .BinOp(_, lhs, rhs) => make_closure_targets(rhs, make_closure_targets(lhs, out)),
+    .Break(.Some(v)) => make_closure_targets(v, out),
+    .Return(.Some(v)) => make_closure_targets(v, out),
+    .Defer(inner) => make_closure_targets(inner, out),
+    _ => out,
+  }
+}
+
 fn has_match(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .Match(_, _) => true,
@@ -752,6 +806,32 @@ pub fn suite() runner.Suite {
       }
       try assert.ok(!has_generic, "generic id should be dropped")
       try assert.ok(has_specialized, "specialized id should exist")
+      .Ok({})
+    })
+    .test("monomorphize generic closure-returning function rewrites make_closure target", fn() Result<Void, String> {
+      src := "fn compose<A, B, C>(f: fn(B) C, g: fn(A) B) fn(A) C { fn(x) { f(g(x)) } }\ndouble := fn(x: Int) Int { x * 2 }\nadd1 := fn(x: Int) Int { x + 1 }\nf := compose(add1, double)"
+      lr := try lower_src(src)
+      result := monomorphize.monomorphize(lr.module)
+      defined: Dict<Int, Bool> = Dict.new()
+      compose_body: core_ir.CoreExpr? = .None
+      has_generic_compose := false
+      for func in result.functions {
+        defined[func.func_id.id] = true
+        if func.name == "compose" { has_generic_compose = true }
+        if func.name.starts_with("compose__") {
+          compose_body = .Some(func.body)
+        }
+      }
+      try assert.ok(!has_generic_compose, "generic compose should be dropped")
+      body := case compose_body {
+        .Some(b) => b,
+        .None => { return .Err("expected specialized compose function") },
+      }
+      targets := make_closure_targets(body, [])
+      try assert.ok(targets.len() > 0, "expected specialized compose body to contain MakeClosure")
+      for tid in targets {
+        try assert.ok(defined.has(tid), "expected make_closure target F${tid} to exist after monomorphization")
+      }
       .Ok({})
     })
     // ── M10: Integration / end-to-end ────────────────────────────────
