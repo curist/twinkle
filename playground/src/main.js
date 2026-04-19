@@ -42,15 +42,19 @@ fn is_prime(n: Int) Bool {
   true
 }
 
+fn ints_to_string(v: Vector<Int>) String {
+  s := "["
+  for n, i in v {
+    if i > 0 { s = s + ", " }
+    s = s + "\${n}"
+  }
+  s + "]"
+}
+
 primes := collect n in range_from(2, 80) {
   if is_prime(n) { n } else { continue }
 }
-print("Primes up to 80: [")
-for n, i in primes {
-  if i > 0 { print(", ") }
-  print("\${n}")
-}
-println("]")
+println("Primes up to 80: \${ints_to_string(primes)}")
 println("Count: \${primes.len()}")
 
 // Twin primes (pairs differing by 2)
@@ -314,7 +318,7 @@ const divider  = document.getElementById('divider')
 // CodeJar replaces the div with a contenteditable code editor.
 // It calls highlight() after every change; Tab inserts two spaces.
 const jar = CodeJar(editorEl, highlight, { tab: '  ' })
-jar.updateCode(EXAMPLES.fizzbuzz_enum)
+jar.updateCode(EXAMPLES[examples.value])
 
 // Kick off tree-sitter load in the background; editor works without it
 initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
