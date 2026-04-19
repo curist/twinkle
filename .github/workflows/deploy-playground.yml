@@ -1,0 +1,87 @@
+name: Deploy Playground
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Allow one concurrent deployment; cancel in-flight runs on new push
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build twk binary
+        run: cargo build --release
+
+      - name: Build bridge.wasm
+        run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
+
+      - name: Build boot-main.wasm
+        run: cargo run --release -- build boot/main.tw -o target/boot-main.wasm
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node (for tree-sitter CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install tree-sitter CLI
+        run: npm install -g tree-sitter-cli
+
+      - name: Build tree-sitter-twinkle.wasm
+        working-directory: tree-sitter-twinkle
+        run: tree-sitter build --wasm
+
+      - name: Install playground dependencies
+        working-directory: playground
+        run: bun install --frozen-lockfile
+
+      - name: Copy assets
+        working-directory: playground
+        run: bun run copy-assets
+
+      - name: Build playground
+        working-directory: playground
+        run: bun run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playground/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
