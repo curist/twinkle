@@ -1799,13 +1799,19 @@ fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>,
 
 fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   n := items.len()
+  elem_mono := case result_mono {
+    .Vector(inner) => inner,
+    _ => error("emit_array_literal: expected Vector result, got ${mono_to_key(result_mono)}"),
+  }
+  elem_vt := val_type_of_mono(elem_mono, ctx.env)
 
   // Small literals fit entirely in the tail.
   if n <= 32 {
     out := buf.append(.I32Const(n)).append(.I32Const(0)).append(.RefNull(.Named("rt_types__VecInternal")))
     for item in items {
       out = emit_atom(item, ctx, out)
-      out = emit_box_to_anyref(atom_mono(item, ctx), ctx.env, out)
+      out = emit_coerce_stack(atom_val_type(item, ctx), elem_vt, atom_mono(item, ctx), ctx, out)
+      out = emit_box_to_anyref(elem_mono, ctx.env, out)
     }
     return out.append(.ArrayNewFixed("rt_types__Array", n)).append(.StructNew("rt_types__PVec"))
   }
@@ -1819,7 +1825,8 @@ fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ctx: E
     .append(.StructNew("rt_types__PVec"))
   for item in items {
     out = emit_atom(item, ctx, out)
-    out = emit_box_to_anyref(atom_mono(item, ctx), ctx.env, out)
+    out = emit_coerce_stack(atom_val_type(item, ctx), elem_vt, atom_mono(item, ctx), ctx, out)
+    out = emit_box_to_anyref(elem_mono, ctx.env, out)
     out = out.append(.Call("rt_arr__push"))
   }
   out
@@ -1858,35 +1865,47 @@ fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, resul
       }
     },
     .Dict => {
-      // Dict indexing returns Option<V>. Materialize the concrete typed Option
-      // around rt_dict__get's null-on-miss ABI instead of routing through the
-      // generic rt_dict__get_option Variant helper.
-      sum_layout := get_sum_layout(result_ty, ctx.env)
-      value_mono := case result_ty {
-        .Optional(inner) => inner,
-        _ => error("emit_index_op: dict index expected Optional result, got ${mono_to_key(result_ty)}"),
+      // Dict indexing semantically returns Option<V>.
+      //
+      // When the prepared destination slot is erased (Anyref), preserve the
+      // erased-sum ABI expected by boundary insertion and emit the runtime
+      // helper directly. When the destination slot is typed, materialize the
+      // concrete Option<V> struct around rt_dict__get's null-on-miss ABI.
+      case result_vt {
+        .Some(.Anyref) => {
+          out := emit_atom(base, ctx, buf)
+          out = emit_erased_container_ingress(index, ctx, out)
+          out.append(.Call("rt_dict__get_option"))
+        },
+        _ => {
+          sum_layout := get_sum_layout(result_ty, ctx.env)
+          value_mono := case result_ty {
+            .Optional(inner) => inner,
+            _ => error("emit_index_op: dict index expected Optional result, got ${mono_to_key(result_ty)}"),
+          }
+
+          // Nested sub-bodies must use fresh []
+          none_instrs: Vector<Instr> = [.I32Const(0)]
+          some_variant := sum_layout.variants[1]
+          if some_variant.payload_types.len() > 0 {
+            none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
+          }
+          none_instrs = none_instrs.append(.StructNew(sum_layout.sym))
+
+          some_instrs: Vector<Instr> = [.I32Const(1)]
+          some_instrs = some_instrs.concat(emit_atom(base, ctx, []))
+          some_instrs = some_instrs.concat(emit_erased_container_ingress(index, ctx, []))
+          some_instrs = some_instrs.append(.Call("rt_dict__get"))
+          some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
+          some_instrs = some_instrs.append(.StructNew(sum_layout.sym))
+
+          out := emit_atom(base, ctx, buf)
+          out = emit_erased_container_ingress(index, ctx, out)
+          out.append(.Call("rt_dict__get"))
+            .append(.RefIsNull)
+            .append(.If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs))
+        },
       }
-
-      // Nested sub-bodies must use fresh []
-      none_instrs: Vector<Instr> = [.I32Const(0)]
-      some_variant := sum_layout.variants[1]
-      if some_variant.payload_types.len() > 0 {
-        none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
-      }
-      none_instrs = none_instrs.append(.StructNew(sum_layout.sym))
-
-      some_instrs: Vector<Instr> = [.I32Const(1)]
-      some_instrs = some_instrs.concat(emit_atom(base, ctx, []))
-      some_instrs = some_instrs.concat(emit_erased_container_ingress(index, ctx, []))
-      some_instrs = some_instrs.append(.Call("rt_dict__get"))
-      some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
-      some_instrs = some_instrs.append(.StructNew(sum_layout.sym))
-
-      out := emit_atom(base, ctx, buf)
-      out = emit_erased_container_ingress(index, ctx, out)
-      out.append(.Call("rt_dict__get"))
-        .append(.RefIsNull)
-        .append(.If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs))
     },
     .Str => {
       // String indexing: bounds check + array.get_u → byte (i32)

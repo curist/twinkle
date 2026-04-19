@@ -37,8 +37,13 @@ fn test_env() resolver.ResolvedEnv {
     builtin_sig("error", ["msg"], [resolver.MonoType.String], .Some(resolver.MonoType.Never)),
     builtin_sig("println", ["s"], [resolver.MonoType.String], .Some(resolver.MonoType.Void)),
     builtin_sig("int_to_string", ["n"], [resolver.MonoType.Int], .Some(resolver.MonoType.String)),
+    builtin_sig("bool_to_string", ["b"], [resolver.MonoType.Bool], .Some(resolver.MonoType.String)),
   ]
-  env := resolver.empty_env().with_functions(fns)
+  env := resolver.empty_env().with_registered_functions(fns)
+  env = env.bind_function("range", "range")
+  env = env.bind_function("range_from", "range_from")
+  env = env.bind_function("error", "error")
+  env = env.bind_function("println", "println")
   // Register Iterator type so checker can look it up by name for iteration checks
   iter_entry := resolver.TypeEntry.{
     id: resolver.TypeId.{ id: 0 },

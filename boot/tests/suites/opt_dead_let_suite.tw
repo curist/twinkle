@@ -69,6 +69,19 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
   .Ok({})
 }
 
+fn test_count_uses_excluding_free_vars_nested_control_flow() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(10)),
+    .Let(lid(9), .ALoop(
+      .Let(lid(2), .AIf(.ALitBool(false),
+        .Break(.None),
+        .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), .Continue)
+      ), .Atom(.ALitVoid))
+    ), .Atom(.ALitVoid)))
+  uses := count_uses_excluding_free_vars(expr)
+  try assert.int_eq(uses_for(uses, 1), 0)
+  .Ok({})
+}
+
 fn test_count_uses_closure_free_var_inside_match_arm() Result<Void, String> {
   expr: AnfExpr = .Let(lid(4), .AMatch(.ALocal(lid(0)), [
     AnfMatchArm.{
@@ -355,6 +368,28 @@ fn test_copy_prop_keeps_closure_only_use() Result<Void, String> {
   .Ok({})
 }
 
+fn test_copy_prop_keeps_local_alias_used_by_closure() Result<Void, String> {
+  // Let(2, AInit(ALocal(1)), Let(0, AMakeClosure(99, [2]), Atom(ALocal(0))))
+  // Closure free_vars name closure-body locals, so forwarding 2 -> 1 here would
+  // desynchronize the closure body from its capture list.
+  expr: AnfExpr = .Let(lid(2), .AInit(.ALocal(lid(1))),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]), .Atom(.ALocal(lid(0)))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
+fn test_copy_prop_keeps_local_alias_used_by_closure_in_if() Result<Void, String> {
+  expr: AnfExpr = .Let(lid(2), .AInit(.ALocal(lid(1))),
+    .Let(lid(9), .AIf(.ALitBool(false),
+      .Atom(.ALitVoid),
+      .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]), .Atom(.ALocal(lid(0))))
+    ), .Atom(.ALocal(lid(9)))))
+  result := copy_propagate(expr)
+  try assert.is_false(result.changed)
+  .Ok({})
+}
+
 fn test_copy_prop_keeps_assigned() Result<Void, String> {
   // Let(1, AInit(ALitInt(42)), Let(0, AAssign(1, ALitInt(99)), Atom(ALocal(1))))
   // local 1 is assigned → must NOT be propagated
@@ -456,6 +491,7 @@ pub fn suite() runner.Suite {
   s = s.test("uses: assign target not counted", test_count_uses_assign_target_not_counted)
   s = s.test("uses: closure free vars", test_count_uses_closure_free_vars)
   s = s.test("uses: excluding free vars", test_count_uses_excluding_free_vars)
+  s = s.test("uses: excluding free vars in nested control flow", test_count_uses_excluding_free_vars_nested_control_flow)
   s = s.test("uses: closure free var inside match arm", test_count_uses_closure_free_var_inside_match_arm)
   s = s.test("uses: multiple refs", test_count_uses_multiple_refs)
   // is_pure
@@ -497,6 +533,8 @@ pub fn suite() runner.Suite {
   s = s.test("copy_prop: keeps local when assigned", test_copy_prop_keeps_local_when_assigned)
   s = s.test("copy_prop: inlines multi-use literal", test_copy_prop_inlines_multi_use_literal)
   s = s.test("copy_prop: keeps closure-only use", test_copy_prop_keeps_closure_only_use)
+  s = s.test("copy_prop: keeps local alias used by closure", test_copy_prop_keeps_local_alias_used_by_closure)
+  s = s.test("copy_prop: keeps local alias used by closure in if", test_copy_prop_keeps_local_alias_used_by_closure_in_if)
   s = s.test("copy_prop: keeps assigned", test_copy_prop_keeps_assigned)
   s
 }

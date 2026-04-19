@@ -143,6 +143,29 @@ fn verify_prepared_func_slots(
   verify_capture_alignment(pf, closure_captures)
 }
 
+fn canonical_capture_source_local(
+  pf: PreparedFunc,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+  info: SlotInfo,
+) LocalId {
+  case info.role {
+    .CaptureParam => {
+      case closure_captures[pf.func_id.id] {
+        .Some(caps) => {
+          for cap in caps {
+            if cap.param_local.id == info.source_local.id {
+              return cap.local_id
+            }
+          }
+          info.source_local
+        },
+        .None => info.source_local,
+      }
+    },
+    _ => info.source_local,
+  }
+}
+
 fn verify_prepared_func_expr(
   pf: PreparedFunc,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
@@ -407,11 +430,12 @@ fn verify_op(
               for fv,i in free_vars {
                 info := try slot_info(pf, fv, "closure capture")
                 cap := caps[i]
-                if info.source_local.id != cap.local_id.id {
+                source_local := canonical_capture_source_local(pf, closure_captures, info)
+                if source_local.id != cap.local_id.id {
                   return fail_slot(
                     pf,
                     result_info,
-                    "AMakeClosure capture ${i} uses L${info.source_local.id}, expected L${cap.local_id.id}",
+                    "AMakeClosure capture ${i} uses L${source_local.id}, expected L${cap.local_id.id}",
                   )
                 }
                 if !mono_eq(info.mono, cap.ty) {

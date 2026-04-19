@@ -1865,6 +1865,17 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
 }
 
+fn dotted_name_expr(expr: Expr) String? {
+  case expr.kind {
+    .Ident(name) => .Some(name),
+    .Field(base, field_name) => {
+      prefix := try dotted_name_expr(base)
+      .Some("${prefix}.${field_name}")
+    },
+    _ => .None,
+  }
+}
+
 fn parse_postfix(c: Cursor, base: Expr) ExprParse {
   diagnostics_out: Vector<Diagnostic> = []
   expr := base
@@ -1909,9 +1920,9 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
       if c.at(1).kind() == .LBrace {
         parsed_record := parse_record_literal(c, c.pos, c.at(1))
         diagnostics_out = diagnostics_out.concat(parsed_record.diagnostics)
-        // If base expr is an Ident (type name), produce NamedRecord
-        case expr.kind {
-          .Ident(name) => {
+        // If base expr is a dotted type path, produce NamedRecord.
+        case dotted_name_expr(expr) {
+          .Some(name) => {
             case parsed_record.value.kind {
               .Record(entries) => {
                 expr = Expr.{ id: c.alloc_expr_id(), kind: .NamedRecord(name, entries), span: expr.span.merge(parsed_record.value.span) }
@@ -1919,7 +1930,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
               _ => { expr = parsed_record.value },
             }
           },
-          _ => { expr = parsed_record.value },
+          .None => { expr = parsed_record.value },
         }
         c = parsed_record.cursor
         continue

@@ -162,40 +162,19 @@ fn set_prelude_function_origins(
   cur
 }
 
-fn hide_bound_method_targets(env: ResolvedEnv) ResolvedEnv {
-  cur := env
-  for type_name in env.methods.keys() {
-    case env.methods[type_name] {
-      .Some(entries) => {
-        for entry in entries {
-          cur = cur.remove_function_binding(entry.function_name)
-        }
-      },
-      .None => {},
-    }
-  }
-  cur
-}
-
-fn hide_internal_free_targets(env: ResolvedEnv) ResolvedEnv {
+fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
   cur := env
   for name in [
-    "string_substring",
-    "vector_builder_new",
-    "vector_builder_push",
-    "vector_builder_freeze",
-    "vector_builder_from",
-    "host_read_file",
-    "host_write_file",
-    "host_mkdirp",
-    "host_list_dir",
-    "host_exists",
-    "host_args",
-    "host_env",
-    "host_cwd",
-    "host_exit",
+    "print",
+    "println",
+    "error",
+    "eprint",
+    "eprintln",
+    "range",
+    "range_from",
+    "range_step",
   ] {
-    cur = cur.remove_function_binding(name)
+    cur = cur.bind_function(name, name)
   }
   cur
 }
@@ -265,7 +244,9 @@ pub fn builtin_env() ResolvedEnv {
 
   env := resolver.empty_env()
     .with_types(builtin_named_types, builtin_named_type_names)
-    .with_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
+    .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
+
+  env = bind_public_free_builtins(env)
 
   // Actual prelude module functions should carry canonical imported origins in
   // the builtin environment so internal/prelude modules can link through the
@@ -279,12 +260,7 @@ pub fn builtin_env() ResolvedEnv {
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
   env = env.register_builtin_methods()
 
-  // Keep internal implementation names out of the free function namespace.
-  // They remain registered targets for method resolution, canonical imports,
-  // and builtin lookup, but user code must go through the surface API rather
-  // than compiler-facing helper names.
-  env = hide_bound_method_targets(env)
-  hide_internal_free_targets(env)
+  env
 }
 
 pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {

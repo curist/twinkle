@@ -6,7 +6,7 @@
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
-use compiler.opt.use_count.{count_uses_excluding_free_vars}
+use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars}
 
 pub type PropResult = .{ expr: AnfExpr, changed: Bool }
 
@@ -62,7 +62,10 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
     .ABinOp(binop, left, right, kind) => .ABinOp(binop, sa(left), sa(right), kind),
     .AUnOp(unop, inner, kind) => .AUnOp(unop, sa(inner), kind),
     .AMakeClosure(func_id, free_vars) => {
-      // free_vars are Vector<LocalId>, not Vector<Atom> — cannot substitute
+      // free_vars are closure-body local ids, not ordinary atom positions.
+      // Rewriting them here would also require rewriting the hoisted closure
+      // body to keep capture metadata aligned, so copy propagation must leave
+      // them untouched.
       AnfOp.AMakeClosure(func_id, free_vars)
     },
     .ARecord(type_id, fields) => {
@@ -109,10 +112,17 @@ pub fn copy_propagate(expr: AnfExpr) PropResult {
 
 pub fn copy_propagate_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) PropResult {
   uses := count_uses_excluding_free_vars(expr)
+  all_uses := count_uses(expr)
+  free_var_uses: Dict<Int, Bool> = Dict.new()
+  for k in all_uses.keys() {
+    if all_uses[k].unwrap_or(0) != uses[k].unwrap_or(0) {
+      free_var_uses[k] = true
+    }
+  }
   assigned := collect_assigned_locals(expr)
   // Merge pinned into assigned so pinned locals are never propagated
   for k in pinned.keys() { assigned[k] = true }
-  copy_prop_inner(expr, uses, assigned)
+  copy_prop_inner(expr, uses, free_var_uses, assigned)
 }
 
 // Check if an atom can be propagated into N use sites.
@@ -133,27 +143,32 @@ fn can_propagate(lit: Atom, use_count: Int, target_assigned: Bool, assigned: Dic
   }
 }
 
-fn copy_prop_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) PropResult {
+fn copy_prop_inner(
+  expr: AnfExpr,
+  uses: Dict<Int, Int>,
+  free_var_uses: Dict<Int, Bool>,
+  assigned: Dict<Int, Bool>,
+) PropResult {
   case expr {
     .Let(local, op, body) => {
       case op {
         .AInit(lit) => {
           use_count := uses[local.id].unwrap_or(0)
-          if can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
+          if !set_has(free_var_uses, local.id) and can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
             new_body := subst_atom(body, local, lit)
             return PropResult.{ expr: new_body, changed: true }
           }
           // Fall through to recursive case
-          op_result := copy_prop_op(op, uses, assigned)
-          body_result := copy_prop_inner(body, uses, assigned)
+          op_result := copy_prop_op(op, uses, free_var_uses, assigned)
+          body_result := copy_prop_inner(body, uses, free_var_uses, assigned)
           PropResult.{
             expr: .Let(local, op_result.op, body_result.expr),
             changed: op_result.changed or body_result.changed,
           }
         },
         _ => {
-          op_result := copy_prop_op(op, uses, assigned)
-          body_result := copy_prop_inner(body, uses, assigned)
+          op_result := copy_prop_op(op, uses, free_var_uses, assigned)
+          body_result := copy_prop_inner(body, uses, free_var_uses, assigned)
           PropResult.{
             expr: .Let(local, op_result.op, body_result.expr),
             changed: op_result.changed or body_result.changed,
@@ -167,11 +182,16 @@ fn copy_prop_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool
 
 type OpPropResult = .{ op: AnfOp, changed: Bool }
 
-fn copy_prop_op(op: AnfOp, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) OpPropResult {
+fn copy_prop_op(
+  op: AnfOp,
+  uses: Dict<Int, Int>,
+  free_var_uses: Dict<Int, Bool>,
+  assigned: Dict<Int, Bool>,
+) OpPropResult {
   case op {
     .AIf(cond, then_e, else_e) => {
-      then_r := copy_prop_inner(then_e, uses, assigned)
-      else_r := copy_prop_inner(else_e, uses, assigned)
+      then_r := copy_prop_inner(then_e, uses, free_var_uses, assigned)
+      else_r := copy_prop_inner(else_e, uses, free_var_uses, assigned)
       OpPropResult.{
         op: .AIf(cond, then_r.expr, else_r.expr),
         changed: then_r.changed or else_r.changed,
@@ -180,18 +200,18 @@ fn copy_prop_op(op: AnfOp, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>) OpPr
     .AMatch(scrutinee, arms) => {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
-        r := copy_prop_inner(arm.body, uses, assigned)
+        r := copy_prop_inner(arm.body, uses, free_var_uses, assigned)
         if r.changed { changed = true }
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpPropResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
     },
     .ALoop(body) => {
-      r := copy_prop_inner(body, uses, assigned)
+      r := copy_prop_inner(body, uses, free_var_uses, assigned)
       OpPropResult.{ op: .ALoop(r.expr), changed: r.changed }
     },
     .ADefer(inner) => {
-      r := copy_prop_inner(inner, uses, assigned)
+      r := copy_prop_inner(inner, uses, free_var_uses, assigned)
       OpPropResult.{ op: .ADefer(r.expr), changed: r.changed }
     },
     _ => OpPropResult.{ op: op, changed: false },

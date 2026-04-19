@@ -307,7 +307,7 @@ pub fn extend_types_from(
   env
 }
 
-pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) ResolvedEnv {
+fn with_functions_impl(env: ResolvedEnv, functions: Vector<FunctionSig>, bind_all_when_empty: Bool) ResolvedEnv {
   // Rebuild func index from scratch
   idx: Dict<String, Int> = Dict.new()
   for i in range(functions.len()) {
@@ -325,7 +325,7 @@ pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) Resolved
       .None => {},
     }
   }
-  if env.function_bindings.len() == 0 {
+  if bind_all_when_empty and env.function_bindings.len() == 0 {
     for sig in functions {
       bindings[sig.name] = sig.name
     }
@@ -348,6 +348,14 @@ pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) Resolved
   env.function_origins = origins
   env.func_index = idx
   env
+}
+
+pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) ResolvedEnv {
+  with_functions_impl(env, functions, true)
+}
+
+pub fn with_registered_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) ResolvedEnv {
+  with_functions_impl(env, functions, false)
 }
 
 pub fn with_methods(env: ResolvedEnv, methods: Dict<String, Vector<MethodEntry>>) ResolvedEnv {

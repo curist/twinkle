@@ -30,8 +30,10 @@ pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   next_local := max_local_id_module(anf) + 1
   state := ConversionState.{ captures: Dict.new(), next_local: next_local }
 
-  for func in anf.functions {
-    state = scan_expr(func.body, func, env, state)
+  i := anf.functions.len() - 1
+  for _ in range(anf.functions.len()) {
+    state = scan_expr(anf.functions[i].body, anf.functions[i], env, state)
+    i = i - 1
   }
 
   .{
@@ -96,7 +98,7 @@ fn record_captures(
     params = params.append(CaptureParam.{
       local_id: fv,
       param_local: LocalId.{ id: next_local },
-      ty: resolve_capture_type(enclosing, fv, env),
+      ty: resolve_capture_type_with_captures(enclosing, fv, env, state.captures),
     })
     next_local = next_local + 1
   }
@@ -511,6 +513,29 @@ fn resolve_capture_type_from_maps(
 fn resolve_capture_type(func: AnfFunctionDef, local: LocalId, env: ResolvedEnv) MonoType {
   pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
   resolve_capture_type_from_maps(func, local, pattern_monos)
+}
+
+fn resolve_capture_type_with_captures(
+  func: AnfFunctionDef,
+  local: LocalId,
+  env: ResolvedEnv,
+  captures: Dict<Int, Vector<CaptureParam>>,
+) MonoType {
+  ty := resolve_capture_type(func, local, env)
+  if ty != .Void {
+    return ty
+  }
+  case captures[func.func_id.id] {
+    .Some(existing) => {
+      for cap in existing {
+        if cap.local_id.id == local.id {
+          return cap.ty
+        }
+      }
+      .Void
+    },
+    .None => .Void,
+  }
 }
 
 fn mono_eq(a: MonoType, b: MonoType) Bool {

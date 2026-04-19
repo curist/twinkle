@@ -536,10 +536,21 @@ fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEnt
   }
 }
 
+fn extract_type_name_expr(expr: Expr) String? {
+  case expr.kind {
+    .Ident(name) => .Some(name),
+    .Field(base, field_name) => {
+      prefix := try extract_type_name_expr(base)
+      .Some("${prefix}.${field_name}")
+    },
+    _ => .None,
+  }
+}
+
 fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: String, ty: MonoType, s: Span) ExprOut {
   // TypeName.Variant (zero-arg variant construction)
-  case base_expr.kind {
-    .Ident(name) => {
+  case extract_type_name_expr(base_expr) {
+    .Some(name) => {
       case ctx.env.lookup_type(name) {
         .Some(entry) => {
           vid_idx := find_variant_index(ctx.env, entry.id, field_name)
@@ -568,7 +579,7 @@ fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: Stri
         .None => {},
       }
     },
-    _ => {},
+    .None => {},
   }
   br := ctx.lower_expr(base_expr)
   base_ty := br.ctx.expr_type(base_expr)
@@ -786,8 +797,8 @@ fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType
   // TypeName.Variant(args) — qualified variant construction
   case callee_expr.kind {
     .Field(base, field_name) => {
-      case base.kind {
-        .Ident(name) => {
+      case extract_type_name_expr(base) {
+        .Some(name) => {
           case ctx.env.lookup_type(name) {
             .Some(entry) => {
               vid_idx := find_variant_index(ctx.env, entry.id, field_name)
@@ -808,7 +819,7 @@ fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType
             .None => {},
           }
         },
-        _ => {},
+        .None => {},
       }
     },
     _ => {},

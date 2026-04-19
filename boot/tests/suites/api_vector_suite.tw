@@ -50,6 +50,13 @@ pub fn suite() runner.Suite {
       try assert.str_eq(xs[2], "c")
       .Ok({})
     })
+    .test("byte literal vector narrows annotated elements", fn() {
+      xs: Vector<Byte> = [65, 66, 67]
+      try assert.int_eq(xs[0].to_int(), 65)
+      try assert.int_eq(xs[1].to_int(), 66)
+      try assert.int_eq(xs[2].to_int(), 67)
+      .Ok({})
+    })
     .test("push returns new vector, original unchanged", fn() {
       xs: Vector<Int> = [1, 2]
       ys := xs.append(3)
@@ -185,6 +192,15 @@ pub fn suite() runner.Suite {
         indices.update(fn(s) { "${s}${i}" })
       }
       try assert.str_eq(indices.get(), "012")
+      .Ok({})
+    })
+    .test("for loop iterates byte literal vector", fn() {
+      xs: Vector<Byte> = [65, 66, 67]
+      seen := Cell.new("")
+      for b in xs {
+        seen.update(fn(s) { "${s}${b.to_int()} " })
+      }
+      try assert.str_eq(seen.get(), "65 66 67 ")
       .Ok({})
     })
     .test("make creates vector with fill value", fn() {

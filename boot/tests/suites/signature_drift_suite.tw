@@ -2,7 +2,8 @@
 //
 // These tests ensure that:
 //   - every function defined in prelude/signatures/*.tw appears in builtin_env()
-//     under its boot-internal name
+//     as either a public free binding or a registered internal callable target,
+//     depending on its surface visibility class
 //   - every canonical name derivable from the signature files is registered in
 //     make_builtin_registry().by_canonical (drift fails fast when a new sig is
 //     added to prelude/signatures/ but the registry is not updated)
@@ -18,7 +19,7 @@ use tests.assert
 use compiler.signatures.{load_signatures, to_internal_name, SignatureGroup}
 use compiler.base_env.{builtin_env, builtin_type_env}
 use compiler.builtins.{make_builtin_registry}
-use compiler.resolver.{lookup_function, lookup_method}
+use compiler.resolver.{lookup_function, lookup_method, lookup_registered_function}
 use compiler.parser
 use compiler.checker
 use lib.module.loader
@@ -68,16 +69,28 @@ pub fn suite() runner.Suite {
 
     // ── drift: sig files → builtin_env ───────────────────────────────────────
 
-    .test("every signature-file function appears in builtin_env by internal name", fn() {
+    .test("every signature-file function appears in builtin_env by surface binding or registered target", fn() {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       env := builtin_env()
       missing: Vector<String> = []
       for group in groups {
         for sig in group.sigs {
           internal := to_internal_name(group.receiver, sig.name)
-          case lookup_function(env, internal) {
-            .None => { missing = missing.append(internal) },
-            .Some(_) => {},
+          found := case group.receiver {
+            .None => case lookup_function(env, internal) {
+              .Some(_) => true,
+              .None => false,
+            },
+            .Some(recv) => case lookup_registered_function(env, internal) {
+              .Some(_) => case lookup_method(env, recv, sig.name) {
+                .Some(target) => target == internal,
+                .None => false,
+              },
+              .None => false,
+            },
+          }
+          if !found {
+            missing = missing.append(internal)
           }
         }
       }

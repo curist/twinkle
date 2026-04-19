@@ -961,43 +961,50 @@ fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result
   }
 }
 
-// Try to resolve an expression as a type name, returning a named type plus fresh meta args.
-fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
+fn extract_type_name_expr(expr: Expr) String? {
   case expr.kind {
-    .Ident(name) => {
-      case ctx.env.lookup_type(name) {
-        .Some(entry) => {
-          // Build fresh meta type args for generic types
-          cur_ctx := ctx
-          type_args: Vector<MonoType> = []
-          case entry.def {
-            .Some(def) => {
-              case def {
-                .Sum(_, type_params, _) => {
-                  for _ in type_params {
-                    m := fresh_meta(cur_ctx)
-                    cur_ctx = m.ctx
-                    type_args = type_args.append(m.ty)
-                  }
-                },
-                .Record(_, type_params, _) => {
-                  for _ in type_params {
-                    m := fresh_meta(cur_ctx)
-                    cur_ctx = m.ctx
-                    type_args = type_args.append(m.ty)
-                  }
-                },
-                _ => {},
-              }
-            },
-            .None => {},
-          }
-          .Some(.{ tid: entry.id, type_args, ctx: cur_ctx })
-        },
-        .None => .None,
-      }
+    .Ident(name) => .Some(name),
+    .Field(base, field) => {
+      prefix := try extract_type_name_expr(base)
+      .Some("${prefix}.${field}")
     },
     _ => .None,
+  }
+}
+
+// Try to resolve an expression as a type name, returning a named type plus fresh meta args.
+fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
+  type_name := try extract_type_name_expr(expr)
+  case ctx.env.lookup_type(type_name) {
+    .Some(entry) => {
+      // Build fresh meta type args for generic types
+      cur_ctx := ctx
+      type_args: Vector<MonoType> = []
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Sum(_, type_params, _) => {
+              for _ in type_params {
+                m := fresh_meta(cur_ctx)
+                cur_ctx = m.ctx
+                type_args = type_args.append(m.ty)
+              }
+            },
+            .Record(_, type_params, _) => {
+              for _ in type_params {
+                m := fresh_meta(cur_ctx)
+                cur_ctx = m.ctx
+                type_args = type_args.append(m.ty)
+              }
+            },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+      .Some(.{ tid: entry.id, type_args, ctx: cur_ctx })
+    },
+    .None => .None,
   }
 }
 
@@ -1415,8 +1422,24 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
         }
       }
 
-      // Check body against expected return
-      body_r := check_block(body, exp_ret, cur_ctx, cur_diags)
+      // If the closure has an explicit return annotation, it must agree with
+      // the expected return type so generic call-site type variables can be
+      // solved from the annotation itself.
+      body_expected := case ret_ty_expr {
+        .Some(rte) => {
+          ann := resolve_annotation(rte, cur_ctx, cur_diags)
+          cur_ctx = ann.ctx
+          cur_diags = ann.diags
+          u := cur_ctx.unify(ann.ty, exp_ret, rte.span, cur_diags)
+          cur_ctx = u.ctx
+          cur_diags = u.diags
+          ann.ty
+        },
+        .None => exp_ret,
+      }
+
+      // Check body against the resolved return type.
+      body_r := check_block(body, body_expected, cur_ctx, cur_diags)
       out_ctx := pop_scope(body_r.ctx)
       out_ctx.current_ret = prev_ret
       .{ ctx: out_ctx, diags: body_r.diags }
