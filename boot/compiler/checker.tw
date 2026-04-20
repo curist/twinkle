@@ -2153,10 +2153,6 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
-  // String + String → String
-  if (case op { .Add => true, _ => false }) and (case left_z { .String => true, _ => false }) and (case right_z { .String => true, _ => false }) {
-    return .{ ty: MonoType.String, ctx: cur_ctx, diags: cur_diags }
-  }
   // MetaVar × concrete: solve meta, then determine result
   case left_z {
     .MetaVar(_) => {
