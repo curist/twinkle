@@ -284,7 +284,13 @@ function buildHighlightedHTML(source, captures) {
 let tsParser = null
 let tsQuery  = null
 
+function updateLineNumbers() {
+  const count = (editorEl.textContent ?? '').split('\n').length
+  lineNumbers.textContent = Array.from({ length: count }, (_, i) => i + 1).join('\n')
+}
+
 function highlight(el) {
+  updateLineNumbers()
   if (!tsParser || !tsQuery) return
   const src = el.textContent ?? ''
   const tree = tsParser.parse(src)
@@ -304,8 +310,9 @@ async function initTreeSitter() {
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-const editorEl = document.getElementById('editor')
-const output   = document.getElementById('output')
+const editorEl     = document.getElementById('editor')
+const lineNumbers  = document.getElementById('line-numbers')
+const output       = document.getElementById('output')
 const runBtn   = document.getElementById('run-btn')
 const status   = document.getElementById('status')
 const examples = document.getElementById('examples')
@@ -315,6 +322,9 @@ const divider  = document.getElementById('divider')
 // It calls highlight() after every change; Tab inserts two spaces.
 const jar = CodeJar(editorEl, highlight, { tab: '  ' })
 jar.updateCode(EXAMPLES[examples.value])
+
+// Sync line number scroll with editor
+editorEl.addEventListener('scroll', () => { lineNumbers.scrollTop = editorEl.scrollTop })
 
 // Kick off tree-sitter load in the background; editor works without it
 initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))

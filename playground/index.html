@@ -91,6 +91,25 @@
     }
 
     /* ── CodeJar editor ── */
+    #editor-area {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    #line-numbers {
+      padding: 14px 10px 14px 14px;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: #484f58;
+      text-align: right;
+      background: #0d1117;
+      border-right: 1px solid #21262d;
+      user-select: none;
+      overflow: hidden;
+      flex-shrink: 0;
+      white-space: pre;
+    }
     #editor {
       flex: 1;
       background: #0d1117;
@@ -181,7 +200,10 @@
 <div class="workspace">
   <div class="pane" id="editor-pane">
     <div class="pane-label">Source  ·  main.tw</div>
-    <div id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></div>
+    <div id="editor-area">
+      <div id="line-numbers"></div>
+      <div id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></div>
+    </div>
   </div>
 
   <div class="divider" id="divider"></div>

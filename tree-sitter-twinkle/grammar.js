@@ -676,7 +676,7 @@ module.exports = grammar({
     ),
 
     type_name: $ => seq(
-      alias(/[A-Z][a-zA-Z0-9_]*/, $.identifier),
+      $.identifier,
       repeat(seq('.', $.identifier)),
     ),
 
@@ -710,6 +710,8 @@ module.exports = grammar({
     [$.variant_expression],
     [$.type_name],
     [$.type],
+    // identifier '.' is ambiguous between field_access and type_name
+    [$._primary_expression, $.type_name],
     // Binary precedence edge cases
     [$.shift_expression, $.additive_expression],
     // Postfix vs unary (e.g. -x.y, -f(), -a[0])

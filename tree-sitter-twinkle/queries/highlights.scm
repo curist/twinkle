@@ -76,11 +76,13 @@
 (primitive_type) @type.builtin
 
 (type_name
-  (identifier) @type)
+  (identifier) @type
+  (#match? @type "^[A-Z]"))
 
 (generic_type
   name: (type_name
-    (identifier) @type))
+    (identifier) @type
+    (#match? @type "^[A-Z]")))
 
 ; Type declarations
 (type_declaration
