@@ -43,12 +43,8 @@ fn is_prime(n: Int) Bool {
 }
 
 fn ints_to_string(v: Vector<Int>) String {
-  s := "["
-  for n, i in v {
-    if i > 0 { s = s + ", " }
-    s = s + "\${n}"
-  }
-  s + "]"
+  parts := collect n in v { "\${n}" }
+  "[\${parts.join(", ")}]"
 }
 
 primes := collect n in range_from(2, 80) {
