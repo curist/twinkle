@@ -30,7 +30,7 @@ use compiler.resolver.{MonoType}
 pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
   next := Cell.new(next_local_id(func))
   snap_types: Cell<Dict<Int, MonoType>> = Cell.new(Dict.new())
-  body := elim(func.body, [], [], false, false, next, func.op_result_mono, snap_types)
+  body := elim(func.body, [], [], .None, false, next, func.op_result_mono, snap_types)
   // Merge snapshot local types into op_result_mono
   new_mono := func.op_result_mono
   st := snap_types.get()
@@ -55,11 +55,13 @@ pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
 // Recursively rewrite expr, threading the active defer lists.
 //
 // fn_defers / loop_defers — in declaration order (reversed on insertion).
-// in_sub_expr — true inside AIf/AMatch branches (value position);
-//   terminal Atom does NOT fire defers.
-// in_loop — true inside a loop body; terminal Atom fires only loop_defers.
+// branch_start — .Some(n) inside AIf/AMatch branches; n is the loop_defers
+//   length when the branch was entered, so loop_defers.slice(n, ...) are the
+//   defers registered inside this branch (block-scoped). Terminal Atom fires
+//   only those. .None outside any branch.
+// in_loop — true inside a loop body; non-branch terminal Atom fires only loop_defers.
 fn elim(expr: AnfExpr, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
-        in_sub_expr: Bool, in_loop: Bool, next: Cell<Int>,
+        branch_start: Option<Int>, in_loop: Bool, next: Cell<Int>,
         type_map: Dict<Int, MonoType>, snap_types: Cell<Dict<Int, MonoType>>) AnfExpr {
   case expr {
     .Let(local, op, body) => {
@@ -76,22 +78,22 @@ fn elim(expr: AnfExpr, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
           // Add to loop_defers (fn_defers is set by the loop handler)
           new_loop := loop_defers.append(deferred)
 
-          rewritten_tail := elim(body, fn_defers, new_loop, in_sub_expr, in_loop, next, type_map, snap_types)
+          rewritten_tail := elim(body, fn_defers, new_loop, branch_start, in_loop, next, type_map, snap_types)
           prepend_snapshots(captures.snapshots, rewritten_tail)
         },
 
         // ── ALoop: reset loop_defers; fold old into fn_defers ─
         .ALoop(loop_body) => {
           inner_fn := fn_defers.concat(loop_defers)
-          new_loop_body := elim(loop_body, inner_fn, [], false, true, next, type_map, snap_types)
-          new_body := elim(body, fn_defers, loop_defers, in_sub_expr, in_loop, next, type_map, snap_types)
+          new_loop_body := elim(loop_body, inner_fn, [], .None, true, next, type_map, snap_types)
+          new_body := elim(body, fn_defers, loop_defers, branch_start, in_loop, next, type_map, snap_types)
           .Let(local, .ALoop(new_loop_body), new_body)
         },
 
         // ── General Let: recurse into op sub-expressions and body
         _ => {
           new_op := elim_op(op, fn_defers, loop_defers, in_loop, next, type_map, snap_types)
-          new_body := elim(body, fn_defers, loop_defers, in_sub_expr, in_loop, next, type_map, snap_types)
+          new_body := elim(body, fn_defers, loop_defers, branch_start, in_loop, next, type_map, snap_types)
           .Let(local, new_op, new_body)
         },
       }
@@ -111,13 +113,20 @@ fn elim(expr: AnfExpr, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
 
     // ── Terminal Atom ──────────────────────────────────────────
     .Atom(a) => {
-      if in_sub_expr {
-        .Atom(a)
-      } else if in_loop {
-        prepend_defers(loop_defers, .Atom(a))
-      } else {
-        all := fn_defers.concat(loop_defers)
-        prepend_defers(all, .Atom(a))
+      case branch_start {
+        .Some(n) => {
+          // Block-scoped: fire only defers registered since entering this branch.
+          branch_local := loop_defers.slice(n, loop_defers.len())
+          prepend_defers(branch_local, .Atom(a))
+        },
+        .None => {
+          if in_loop {
+            prepend_defers(loop_defers, .Atom(a))
+          } else {
+            all := fn_defers.concat(loop_defers)
+            prepend_defers(all, .Atom(a))
+          }
+        },
       }
     },
   }
@@ -129,17 +138,21 @@ fn elim_op(op: AnfOp, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
            in_loop: Bool, next: Cell<Int>,
            type_map: Dict<Int, MonoType>, snap_types: Cell<Dict<Int, MonoType>>) AnfOp {
   case op {
-    // Branches produce values — pass in_sub_expr=true
-    .AIf(cond, then_e, else_e) =>
+    // Branches are block-scoped: pass branch_start=Some(loop_defers.len()) so
+    // terminal Atom fires only defers registered inside this branch.
+    .AIf(cond, then_e, else_e) => {
+      bs: Option<Int> = .Some(loop_defers.len())
       .AIf(cond,
-           elim(then_e, fn_defers, loop_defers, true, in_loop, next, type_map, snap_types),
-           elim(else_e, fn_defers, loop_defers, true, in_loop, next, type_map, snap_types)),
+           elim(then_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
+           elim(else_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types))
+    },
 
     .AMatch(scrutinee, arms) => {
+      bs: Option<Int> = .Some(loop_defers.len())
       new_arms := collect arm in arms {
         AnfMatchArm.{
           pattern: arm.pattern,
-          body: elim(arm.body, fn_defers, loop_defers, true, in_loop, next, type_map, snap_types),
+          body: elim(arm.body, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
         }
       }
       .AMatch(scrutinee, new_arms)
@@ -148,7 +161,7 @@ fn elim_op(op: AnfOp, fn_defers: Vector<AnfExpr>, loop_defers: Vector<AnfExpr>,
     // ALoop inside an op (not a Let): same reset logic
     .ALoop(body) => {
       inner_fn := fn_defers.concat(loop_defers)
-      .ALoop(elim(body, inner_fn, [], false, true, next, type_map, snap_types))
+      .ALoop(elim(body, inner_fn, [], .None, true, next, type_map, snap_types))
     },
 
     // ADefer in op position — invalid ANF

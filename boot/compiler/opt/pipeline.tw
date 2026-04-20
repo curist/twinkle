@@ -62,6 +62,9 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
 // ── optimize_func ───────────────────────────────────────────────────
 
 fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics?) AnfFunctionDef {
+  // eliminate_defers first: branch_simplify would otherwise hoist ADefer nodes
+  // out of constant-condition branches, breaking block-scoped defer semantics.
+  func = eliminate_defers(func)
   expr := func.body
   round := 0
 
@@ -147,6 +150,13 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
   funcs_at_cap: Int = 0
 
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
+    // eliminate_defers first: branch_simplify would otherwise hoist ADefer nodes
+    // out of constant-condition branches, breaking block-scoped defer semantics.
+    ta0 := date.now()
+    f = eliminate_defers(f)
+    tb0 := date.now()
+    t_defer = t_defer + (tb0 - ta0)
+
     expr := f.body
     round := 0
 
@@ -209,10 +219,7 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
     tb2 := date.now()
     t_uniqueness = t_uniqueness + (tb2 - ta2)
 
-    result := eliminate_defers(optimized)
-    tc2 := date.now()
-    t_defer = t_defer + (tc2 - tb2)
-    result
+    optimized
   }
 
   if timed {

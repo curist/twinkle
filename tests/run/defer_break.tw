@@ -1,0 +1,17 @@
+// defer in a loop fires when break exits the iteration (block-scoped).
+// fn-level defer fires at function exit, after the loop.
+// Expected output:
+//   loop done
+//   after loop
+//   fn done
+
+fn test() Void {
+    defer println("fn done")
+    for _ in range(3) {
+        defer println("loop done")
+        break
+    }
+    println("after loop")
+}
+
+test()

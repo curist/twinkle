@@ -1,0 +1,20 @@
+// defer fires on continue before advancing to the next iteration.
+// Expected output:
+//   before 0
+//   cleanup 0
+//   before 1
+//   after 1
+//   cleanup 1
+//   before 2
+//   cleanup 2
+
+fn test() Void {
+    for i in range(3) {
+        defer println("cleanup ${i}")
+        println("before ${i}")
+        if i % 2 == 0 { continue }
+        println("after ${i}")
+    }
+}
+
+test()

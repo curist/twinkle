@@ -53,16 +53,24 @@ ans: not sure if this is really an issue.
 
 Twinkle relies on **Wasm GC**, which is great for memory but terrible for resources like file descriptors, database connections, or network sockets. GC only cares about *memory pressure*, not whether you have 10,000 open file handles.
 
-**The Weaknesses:**
+**Status:** `defer` is implemented with block-scoped, LIFO semantics (see
+`docs/design/defer.md`). It eliminates the manual cleanup problem for the
+common case. The remaining open question is linear/unique types for guaranteed
+single-use of resources.
 
-* **No Destructors/Finalizers:** Since Wasm GC doesn't currently support reliable finalizers, you can’t have a `File` object that automatically closes itself when it’s garbage collected.
-* **Lack of Control Flow for Cleanup:** The current spec doesn't mention `try...finally`, `defer` (Zig/Go), or `with` (Python) blocks.
+**Remaining Weaknesses:**
+
+* **No Destructors/Finalizers:** Since Wasm GC doesn’t currently support reliable finalizers, you can’t have a `File` object that automatically closes itself when it’s garbage collected.
 * *The Risk:* In a purely immutable language, you might write `file = file.write(data)`. If that operation fails and returns an error, did the original handle get closed? Who owns the "closing" logic in a rebinding-heavy flow?
 
+**Resolved:**
 
-**Needed Thoughts:**
+* **`defer` is implemented:** block-scoped, LIFO, fires on normal exit, `return`,
+  `break`, and `continue`. Traps do not drain defers (matches Wasm trap semantics).
+  See `docs/design/defer.md` for full semantics and implementation notes.
 
-* **The `defer` Keyword:** Twinkle would benefit from a `defer` statement. Because Twinkle functions are hard boundaries, `defer` is a very pragmatic way to ensure `socket.close()` happens regardless of which "rebound" version of the socket you are currently using.
+**Still Needed:**
+
 * **Linear/Unique Types (Advanced):** Some modern languages (like Austral or even Mojo) use "Linear Types" to ensure a resource *must* be consumed (closed) exactly once. This might be too complex for Twinkle’s "simple" goal, but without it, you are back to manual `handle.close()` calls, which developers *will* forget.
 
 ---

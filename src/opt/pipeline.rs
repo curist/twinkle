@@ -63,13 +63,14 @@ pub fn optimize_func(
     pinned: &HashSet<LocalId>,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) -> AnfFunctionDef {
-    let mut func = run_peephole_passes(func, pinned);
-    uniqueness_rewrite(&mut func, wrappers);
-    #[cfg(debug_assertions)]
-    verify_function_after_pass(&func, "uniqueness_rewrite");
-    func = eliminate_defers(func);
+    // eliminate_defers must run before peephole passes: branch_simplify would
+    // otherwise hoist ADefer nodes out of constant-condition branches into the
+    // enclosing function scope, breaking block-scoped defer semantics.
+    let mut func = eliminate_defers(func);
     #[cfg(debug_assertions)]
     verify_function_after_pass(&func, "eliminate_defers");
+    func = run_peephole_passes(func, pinned);
+    uniqueness_rewrite(&mut func, wrappers);
     func
 }
 
@@ -77,8 +78,21 @@ pub fn optimize_func(
 pub fn optimize_module(module: AnfModule) -> AnfModule {
     let module_globals = collect_module_globals(&module);
 
-    let peepholed = module
+    // eliminate_defers first: branch_simplify (in peephole) would otherwise
+    // hoist ADefer nodes out of constant-condition branches, breaking block-scoped
+    // defer semantics.
+    let defer_eliminated = module
         .functions
+        .into_iter()
+        .map(|func| {
+            let func = eliminate_defers(func);
+            #[cfg(debug_assertions)]
+            verify_function_after_pass(&func, "eliminate_defers");
+            func
+        })
+        .collect::<Vec<_>>();
+
+    let peepholed = defer_eliminated
         .into_iter()
         .map(|func| {
             if func.name == "__init__" {
@@ -106,9 +120,6 @@ pub fn optimize_module(module: AnfModule) -> AnfModule {
             uniqueness_rewrite(&mut func, &summaries);
             #[cfg(debug_assertions)]
             verify_function_after_pass(&func, "uniqueness_rewrite");
-            func = eliminate_defers(func);
-            #[cfg(debug_assertions)]
-            verify_function_after_pass(&func, "eliminate_defers");
             let _ = pinned;
             func
         })

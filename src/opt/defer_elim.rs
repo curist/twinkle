@@ -28,7 +28,7 @@ use crate::ir::core::{CorePattern, LocalId};
 
 pub fn eliminate_defers(func: AnfFunctionDef) -> AnfFunctionDef {
     let mut next_local = next_local_id(&func);
-    let body = elim(func.body, &[], &[], false, false, &mut next_local);
+    let body = elim(func.body, &[], &[], None, false, &mut next_local);
     AnfFunctionDef { body, ..func }
 }
 
@@ -36,17 +36,19 @@ pub fn eliminate_defers(func: AnfFunctionDef) -> AnfFunctionDef {
 ///
 /// `fn_defers` — declared order (will be reversed on insertion).
 /// `loop_defers` — declared order (will be reversed on insertion).
-/// `in_sub_expr` — true when processing a branch/arm VALUE (AIf/AMatch sub-expression).
-///   When true, terminal `Atom` nodes are NOT treated as scope exits and do NOT fire
-///   defers — they are just value-producing positions, not function/loop exit points.
-///   `Return`/`Break`/`Continue` always fire defers regardless of this flag.
-/// `in_loop` — true when inside a loop body. Controls whether terminal `Atom`
-///   fires only loop_defers (loop iteration end) or all defers (function exit).
+/// `branch_start` — `Some(n)` when inside an AIf/AMatch branch.  `n` is the
+///   length of `loop_defers` when the branch was entered, so `loop_defers[n..]`
+///   are the defers registered inside this branch (block-scoped).  Terminal `Atom`
+///   nodes fire only those branch-local defers.  `None` outside any branch.
+///   `Return`/`Break`/`Continue` always fire all active defers regardless.
+/// `in_loop` — true when inside a loop body. Controls whether a non-branch
+///   terminal `Atom` fires only loop_defers (loop iteration end) or all defers
+///   (function exit).
 fn elim(
     expr: AnfExpr,
     fn_defers: &[AnfExpr],
     loop_defers: &[AnfExpr],
-    in_sub_expr: bool,
+    branch_start: Option<usize>,
     in_loop: bool,
     next_local: &mut u32,
 ) -> AnfExpr {
@@ -86,7 +88,7 @@ fn elim(
                 *body,
                 fn_defers,
                 &new_loop,
-                in_sub_expr,
+                branch_start,
                 in_loop,
                 next_local,
             );
@@ -102,8 +104,8 @@ fn elim(
             // loop_defers resets to empty.
             let mut inner_fn = fn_defers.to_vec();
             inner_fn.extend_from_slice(loop_defers);
-            // Loop body is a tail position for the iteration (not a sub-expr).
-            let new_loop_body = elim(*loop_body, &inner_fn, &[], false, true, next_local);
+            // Loop body is a tail position for the iteration (not a branch).
+            let new_loop_body = elim(*loop_body, &inner_fn, &[], None, true, next_local);
             let new_op = AnfOp::ALoop {
                 body: Box::new(new_loop_body),
             };
@@ -112,7 +114,7 @@ fn elim(
                 *body,
                 fn_defers,
                 loop_defers,
-                in_sub_expr,
+                branch_start,
                 in_loop,
                 next_local,
             );
@@ -130,7 +132,7 @@ fn elim(
                 *body,
                 fn_defers,
                 loop_defers,
-                in_sub_expr,
+                branch_start,
                 in_loop,
                 next_local,
             );
@@ -164,18 +166,22 @@ fn elim(
         }
 
         // ── Terminal Atom ──────────────────────────────────────────────────────
-        // In sub-expression position (AIf/AMatch branch value): just a value,
-        // not a scope exit — do NOT fire defers.
+        // Inside a branch (branch_start = Some(n)): block-scoped — fire only
+        // defers registered inside this branch (loop_defers[n..]).
         // In loop body tail: fire loop_defers only (iteration end, like continue).
         // In function body tail: fire all defers (function exit).
-        AnfExpr::Atom(a) => {
-            if in_sub_expr {
-                AnfExpr::Atom(a)
-            } else if in_loop {
-                // End of loop iteration — only loop-body-local defers
+        AnfExpr::Atom(a) => match branch_start {
+            Some(n) => {
+                // Block-scoped: fire only defers registered since entering this branch.
+                let branch_local: Vec<AnfExpr> = loop_defers[n..].to_vec();
+                prepend_defers(branch_local, AnfExpr::Atom(a))
+            }
+            None if in_loop => {
+                // End of loop iteration — only loop-body-local defers.
                 prepend_defers(loop_defers.iter().cloned().collect(), AnfExpr::Atom(a))
-            } else {
-                // Function exit — all defers
+            }
+            None => {
+                // Function exit — all defers.
                 let all: Vec<AnfExpr> = fn_defers
                     .iter()
                     .chain(loop_defers.iter())
@@ -183,7 +189,7 @@ fn elim(
                     .collect();
                 prepend_defers(all, AnfExpr::Atom(a))
             }
-        }
+        },
     }
 }
 
@@ -196,48 +202,54 @@ fn elim_op(
     next_local: &mut u32,
 ) -> AnfOp {
     match op {
-        // Branches produce VALUES, not scope exits — pass in_sub_expr=true so
-        // terminal Atom nodes inside branches don't fire defers prematurely.
+        // Branches are block-scoped: pass branch_start=Some(loop_defers.len()) so
+        // terminal Atom nodes fire only the defers registered inside this branch.
         AnfOp::AIf {
             cond,
             then_branch,
             else_branch,
-        } => AnfOp::AIf {
-            cond,
-            then_branch: Box::new(elim(
-                *then_branch,
-                fn_defers,
-                loop_defers,
-                true,
-                in_loop,
-                next_local,
-            )),
-            else_branch: Box::new(elim(
-                *else_branch,
-                fn_defers,
-                loop_defers,
-                true,
-                in_loop,
-                next_local,
-            )),
-        },
-        AnfOp::AMatch { scrutinee, arms } => AnfOp::AMatch {
-            scrutinee,
-            arms: arms
-                .into_iter()
-                .map(|AnfMatchArm { pattern, body }| AnfMatchArm {
-                    pattern,
-                    body: elim(body, fn_defers, loop_defers, true, in_loop, next_local),
-                })
-                .collect(),
-        },
+        } => {
+            let bs = Some(loop_defers.len());
+            AnfOp::AIf {
+                cond,
+                then_branch: Box::new(elim(
+                    *then_branch,
+                    fn_defers,
+                    loop_defers,
+                    bs,
+                    in_loop,
+                    next_local,
+                )),
+                else_branch: Box::new(elim(
+                    *else_branch,
+                    fn_defers,
+                    loop_defers,
+                    bs,
+                    in_loop,
+                    next_local,
+                )),
+            }
+        }
+        AnfOp::AMatch { scrutinee, arms } => {
+            let bs = Some(loop_defers.len());
+            AnfOp::AMatch {
+                scrutinee,
+                arms: arms
+                    .into_iter()
+                    .map(|AnfMatchArm { pattern, body }| AnfMatchArm {
+                        pattern,
+                        body: elim(body, fn_defers, loop_defers, bs, in_loop, next_local),
+                    })
+                    .collect(),
+            }
+        }
         // ALoop inside an op (not a Let): same reset logic as the Let arm.
-        // Loop body is a tail position (not a sub-expr value).
+        // Loop body is a tail position (not a branch value).
         AnfOp::ALoop { body } => {
             let mut inner_fn = fn_defers.to_vec();
             inner_fn.extend_from_slice(loop_defers);
             AnfOp::ALoop {
-                body: Box::new(elim(*body, &inner_fn, &[], false, true, next_local)),
+                body: Box::new(elim(*body, &inner_fn, &[], None, true, next_local)),
             }
         }
         // ADefer in op position means it was never inside a Let — invalid ANF.

@@ -53,6 +53,7 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [defer-implementation-drift.md](defer-implementation-drift.md) | Block-scoped defer semantics — aligned docs, interpreter, ANF defer-elim pass, pipeline ordering, and tests across Rust and boot compilers |
 | [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | First-class builtin / prelude function values in the boot backend; archived after the closure-materialization pipeline and regression coverage landed |
 | [deferred-persistence.md](deferred-persistence.md) | Earlier consolidated uniqueness/persistence strategy doc now superseded by the active static-uniqueness and persistent-container plans |
 | [boot-function-identity-canonicalization.md](boot-function-identity-canonicalization.md) | Canonical imported function identity across resolver, lowering, module compilation, and core linking so alias spelling no longer affects cross-module linkage |

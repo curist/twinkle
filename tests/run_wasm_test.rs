@@ -127,6 +127,21 @@ fn run_wasm_cell_update() {
 }
 
 #[test]
+fn run_wasm_defer_if() {
+    check("tests/run/defer_if.tw");
+}
+
+#[test]
+fn run_wasm_defer_break() {
+    check("tests/run/defer_break.tw");
+}
+
+#[test]
+fn run_wasm_defer_continue() {
+    check("tests/run/defer_continue.tw");
+}
+
+#[test]
 fn run_wasm_defer_capture() {
     check("tests/run/defer_capture.tw");
 }

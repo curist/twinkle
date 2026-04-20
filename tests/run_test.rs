@@ -468,6 +468,16 @@ fn defer_if() {
 }
 
 #[test]
+fn defer_break() {
+    check("tests/run/defer_break.tw");
+}
+
+#[test]
+fn defer_continue() {
+    check("tests/run/defer_continue.tw");
+}
+
+#[test]
 fn string_ordering() {
     check("tests/run/string_ordering.tw");
 }

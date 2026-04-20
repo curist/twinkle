@@ -317,10 +317,29 @@ impl<W: Write> Interpreter<W> {
                 else_branch,
             } => {
                 let cond_val = self.eval(cond, frame)?;
-                match cond_val {
-                    Value::Bool(true) => self.eval(then_branch, frame),
-                    Value::Bool(false) => self.eval(else_branch, frame),
+                let branch = match cond_val {
+                    Value::Bool(true) => then_branch,
+                    Value::Bool(false) => else_branch,
                     _ => panic!("type error: if condition is not bool"),
+                };
+                // Block-scoped defer: push a scope, run the branch, drain on exit.
+                self.defer_stack.push(Vec::new());
+                let result = self.eval(branch, frame);
+                let scope = self.defer_stack.pop().unwrap_or_default();
+                match result {
+                    Err(Signal::Trap(_)) => result,
+                    Ok(v) => {
+                        for (d, mut cap) in scope.into_iter().rev() {
+                            let _ = self.eval(&d, &mut cap);
+                        }
+                        Ok(v)
+                    }
+                    Err(sig) => {
+                        for (d, mut cap) in scope.into_iter().rev() {
+                            let _ = self.eval(&d, &mut cap);
+                        }
+                        Err(sig)
+                    }
                 }
             }
 
@@ -331,7 +350,25 @@ impl<W: Write> Interpreter<W> {
                     if match_pattern(&arm.pattern, &scrut_val, &mut arm_frame) {
                         // Apply bindings from match to outer frame
                         *frame = arm_frame.clone();
-                        return self.eval(&arm.body.clone(), frame);
+                        // Block-scoped defer: push a scope, run the arm, drain on exit.
+                        self.defer_stack.push(Vec::new());
+                        let result = self.eval(&arm.body.clone(), frame);
+                        let scope = self.defer_stack.pop().unwrap_or_default();
+                        return match result {
+                            Err(Signal::Trap(_)) => result,
+                            Ok(v) => {
+                                for (d, mut cap) in scope.into_iter().rev() {
+                                    let _ = self.eval(&d, &mut cap);
+                                }
+                                Ok(v)
+                            }
+                            Err(sig) => {
+                                for (d, mut cap) in scope.into_iter().rev() {
+                                    let _ = self.eval(&d, &mut cap);
+                                }
+                                Err(sig)
+                            }
+                        };
                     }
                 }
                 panic!("non-exhaustive match — no arm matched {:?}", scrut_val)
