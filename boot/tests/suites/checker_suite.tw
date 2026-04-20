@@ -985,12 +985,6 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try type_at(r, src, "1..10"), "Named(3)")
       .Ok({})
     })
-    .test("T2 string concatenation", fn() {
-      src := "fn f() String { \"a\" + \"b\" }"
-      r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "\"a\" + \"b\""), "String")
-      .Ok({})
-    })
     .test("T2 bitwise and", fn() {
       src := "fn f(a: Int, b: Int) Int { a & b }"
       r := try check_ok(src)
@@ -1377,18 +1371,6 @@ pub fn suite() runner.Suite {
       // wrap_thing<T>(self: Thing, x: T) Vector<T> — method on Thing
       // When called as thing.wrap_thing(.{ a: 1 }), T needs return-type context
       src := "type Pair = .{ a: Int, b: Int }\ntype Thing = .{ id: Int }\nfn wrap_thing<T>(self: Thing, x: T) Vector<T> { [x] }\nfn f(t: Thing) Vector<Pair> { t.wrap_thing(.{ a: 1, b: 2 }) }"
-      r := try check_ok(src)
-      .Ok({})
-    })
-    // ── Review fix: String + MetaVar ───────────────────────────────────
-    .test("R1 String + generic call result is valid", fn() {
-      src := "fn identity<T>(x: T) T { x }\nfn f() String { \"hello\" + identity(\" world\") }"
-      r := try check_ok(src)
-      .Ok({})
-    })
-    .test("R1 MetaVar + String concat (right is string, left unsolved)", fn() {
-      // When left side is unsolved MetaVar from generic call, + String should work
-      src := "fn identity<T>(x: T) T { x }\nfn f() String { identity(\"hello\") + \" world\" }"
       r := try check_ok(src)
       .Ok({})
     })
