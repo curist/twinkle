@@ -399,10 +399,18 @@ fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<Str
   .None
 }
 
+// Best-effort, silent constraint step: attempt to solve MetaVars introduced by
+// instantiation by unifying the instantiated return type with the expected
+// return type from context.  Any mismatch diagnostics from this unification are
+// intentionally discarded — the real error will be reported later by the
+// outer call-site or type-check pass.  This matches the stage0 policy.
 fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?, s: Span, diags: Vector<Diagnostic>) CheckOut {
   case call_expected {
     .Some(expected_ret) => {
       pre_u := ctx.unify(inst_ret, expected_ret, s, diags)
+      // Keep the updated substitution (MetaVars may now be solved) but drop
+      // pre_u.diags — mismatch errors here are noise; the real error surfaces
+      // later.
       .{ ctx: pre_u.ctx, diags }
     },
     .None => .{ ctx, diags },
@@ -418,6 +426,37 @@ fn check_args(ctx: InferCtx, args: Vector<Expr>, param_tys: Vector<MonoType>, di
     cur_diags = ar.diags
   }
   .{ ctx: cur_ctx, diags: cur_diags }
+}
+
+// Shared post-instantiation pipeline: arity check → check args → record callee
+// type and optional method metadata.  Callers are responsible for instantiation
+// and pre_unify_return before calling this.
+fn check_instantiated_call(
+  ctx: InferCtx,
+  diags: Vector<Diagnostic>,
+  params: Vector<MonoType>,
+  ret: MonoType,
+  args: Vector<Expr>,
+  error_span: Span,
+  callee_id: Int,
+  callee_span_start: Int,
+  method_meta: MethodCallInfo?,
+) SynthOut {
+  if args.len() != params.len() {
+    return .{
+      ty: ret,
+      ctx: set_type_map_span(ctx, callee_id, callee_span_start, MonoType.Function(params, ret)),
+      diags: diags.append(diag.error(error_span, "expected ${params.len()} arguments, got ${args.len()}")),
+    }
+  }
+  ar := check_args(ctx, args, params, diags)
+  callee_ty := MonoType.Function(params, ret)
+  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
+  case method_meta {
+    .Some(meta) => { final_ctx.method_calls[callee_id] = meta },
+    .None => {},
+  }
+  .{ ty: ret, ctx: final_ctx, diags: ar.diags }
 }
 
 type InstOut = .{ params: Vector<MonoType>, ret: MonoType, ctx: InferCtx }
@@ -591,8 +630,11 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
                   diags: diags.append(diag.error(s, ".${method_name} expects ${info.field_types.len()} arguments, got ${args.len()}")),
                 }
               }
-              cur_ctx := resolved.ctx
-              cur_diags := diags
+              // Pre-unify the result type with the call-site expected type so
+              // MetaVars in the type args get solved before we check arguments.
+              pu := pre_unify_return(resolved.ctx, named_ty, call_expected, s, diags)
+              cur_ctx := pu.ctx
+              cur_diags := pu.diags
               for i in range(args.len()) {
                 ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
                 cur_ctx = ar.ctx
@@ -613,7 +655,7 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
       method_call := try_synth_method_call(base, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
       case method_call {
         .Some(r) => r,
-        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
+        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
       }
     },
     .Ident(name) => {
@@ -622,30 +664,16 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
           inst := instantiate(sig, clean_ctx)
           // Pre-unify return type to solve MetaVars before checking arguments
           pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
-          cur_ctx := pu.ctx
-          cur_diags := pu.diags
-
-          // Check arg count
-          if args.len() != inst.params.len() {
-            return .{
-              ty: inst.ret,
-              ctx: set_type_map_span(cur_ctx, callee.id, callee.span.start, MonoType.Function(inst.params, inst.ret)),
-              diags: cur_diags.append(diag.error(s, "expected ${inst.params.len()} arguments, got ${args.len()}")),
-            }
-          }
-
-          ar := check_args(cur_ctx, args, inst.params, cur_diags)
-          cur_ctx = set_type_map_span(ar.ctx, callee.id, callee.span.start, MonoType.Function(inst.params, inst.ret))
-          .{ ty: inst.ret, ctx: cur_ctx, diags: ar.diags }
+          check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, s, callee.id, callee.span.start, .None)
         },
-        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
+        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
       }
     },
-    _ => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags),
+    _ => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
   }
 }
 
-fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
+fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut {
   // Synth the callee
   callee_r := ctx.synth(callee, diags)
   cur_ctx := callee_r.ctx
@@ -656,6 +684,11 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
   case callee_ty {
     .Function(param_tys, ret_ty) => {
       if param_tys.len() == args.len() {
+        // Pre-unify return type with the call-site expected type so MetaVars in
+        // the callee's return get solved before checking arguments.
+        pu := pre_unify_return(cur_ctx, ret_ty, call_expected, s, cur_diags)
+        cur_ctx = pu.ctx
+        cur_diags = pu.diags
         for i in range(args.len()) {
           cr := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
           cur_ctx = cr.ctx
@@ -814,22 +847,8 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
-  cur_ctx := pu.ctx
-  cur_diags := pu.diags
-
-  if args.len() != inst.params.len() {
-    return .Some(.{
-      ty: inst.ret,
-      ctx: set_type_map_span(cur_ctx, callee_id, callee_span_start, MonoType.Function(inst.params, inst.ret)),
-      diags: cur_diags.append(diag.error(callee_span, "expected ${inst.params.len()} arguments, got ${args.len()}")),
-    })
-  }
-
-  ar := check_args(cur_ctx, args, inst.params, cur_diags)
-  callee_ty := MonoType.Function(inst.params, inst.ret)
-  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
-  final_ctx.method_calls[callee_id] = .{ func_name: fn_name, has_receiver: false }
-  .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
+  meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false }
+  .Some(check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta)))
 }
 
 fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
@@ -865,29 +884,14 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
   }
 
   recv_u := cur_ctx.unify(base_ty, inst.params[0], base.span, cur_diags)
-  cur_ctx = recv_u.ctx
-  cur_diags = recv_u.diags
 
   expected_args := inst.params.slice(1, inst.params.len())
-  if args.len() != expected_args.len() {
-    callee_ty := MonoType.Function(expected_args, inst.ret)
-    err := diag.error(callee_span, "expected ${expected_args.len()} arguments, got ${args.len()}")
-    return .Some(.{
-      ty: inst.ret,
-      ctx: set_type_map_span(cur_ctx, callee_id, callee_span_start, callee_ty),
-      diags: cur_diags.append(err),
-    })
-  }
-
-  ar := check_args(cur_ctx, args, expected_args, cur_diags)
-  callee_ty := MonoType.Function(expected_args, inst.ret)
-  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
-  resolved_fn := case resolve_method_func_name(base_ty, method_name, final_ctx.env) {
+  resolved_fn := case resolve_method_func_name(base_ty, method_name, recv_u.ctx.env) {
     .Some(name) => name,
     .None => method_name,  // fallback to surface name
   }
-  final_ctx.method_calls[callee_id] = .{ func_name: resolved_fn, has_receiver: true }
-  .Some(.{ ty: inst.ret, ctx: final_ctx, diags: ar.diags })
+  meta := MethodCallInfo.{ func_name: resolved_fn, has_receiver: true }
+  .Some(check_instantiated_call(recv_u.ctx, recv_u.diags, expected_args, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta)))
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
@@ -1140,6 +1144,15 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
         .Record(_, type_params, fields) => {
           cur_ctx := ctx
           cur_diags := diags
+          // Detect duplicate fields before checking values
+          seen_fields: Dict<String, Bool> = Dict.new()
+          for entry in entries {
+            if seen_fields.has(entry.name) {
+              cur_diags = cur_diags.append(diag.error(entry.span, "duplicate field '${entry.name}'"))
+            } else {
+              seen_fields[entry.name] = true
+            }
+          }
           // Check each provided field
           for entry in entries {
             case find_record_field_type(fields, type_params, type_args, entry.name) {
@@ -2823,22 +2836,32 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     }
   }
 
-  // Zonk all type_map entries and detect unsolved MetaVars
+  // Zonk all type_map entries and detect unsolved MetaVars.
+  // Deduplicate by span_start so one root ambiguity emits at most one diagnostic.
   final_map: Dict<Int, MonoType> = Dict.new()
+  reported_spans: Dict<Int, Bool> = Dict.new()
   for key in ctx.type_map.keys() {
     case ctx.type_map[key] {
       .Some(ty) => {
         zonked := zonk(ty, ctx.subst)
         final_map[key] = zonked
         if contains_meta(zonked) {
-          span_start := case ctx.expr_spans[key] {
-            .Some(s) => s,
-            .None => 0,
+          // Only report for entries with a known source position.  Entries
+          // written via set_type_map (no span) are internal type-name nodes;
+          // they rarely stay ambiguous and must not share bucket 0 with real
+          // offset-0 expressions.
+          case ctx.expr_spans[key] {
+            .Some(span_start) => {
+              if !reported_spans.has(span_start) {
+                reported_spans[span_start] = true
+                cur_diags = cur_diags.append(diag.error(
+                  .{ file_id: 0, start: span_start, end: span_start },
+                  "cannot infer type for this expression",
+                ))
+              }
+            },
+            .None => {},
           }
-          cur_diags = cur_diags.append(diag.error(
-            Span.{ file_id: 0, start: span_start, end: span_start },
-            "cannot infer type for this expression",
-          ))
         }
       },
       .None => {},
