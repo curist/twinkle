@@ -99,15 +99,6 @@ pub fn assign_slots(
   pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
   pattern_locals := collect_pattern_local_set(func.body, Dict.new())
   all_lids := collect_all_let_locals(func.body)
-  for lid in func.op_result_mono.keys() {
-    present := false
-    for existing in all_lids {
-      if existing == lid { present = true }
-    }
-    if !present {
-      all_lids = all_lids.append(lid)
-    }
-  }
 
   for lid in all_lids {
     if local_to_slot.has(lid) { continue }  // already a capture or param slot
