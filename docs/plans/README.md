@@ -59,9 +59,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) | Keep uniqueness-generated locals and rewritten ANF structure synchronized through the boot backend pipeline |
 | [boot-uniqueness-deep-ownership.md](boot-uniqueness-deep-ownership.md) | Separate fresh wrapper values from deep ownership so boot uniqueness only performs in-place collection rewrites when reachable mutable state is truly unaliased |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
-| [node-standalone-runtime.md](node-standalone-runtime.md) | Build a standalone Node.js Twinkle compiler/runtime entry without requiring Rust `twk` |
 | [range-literal-syntax.md](range-literal-syntax.md) | Support `m..n` as expression-level range literal (desugars to `range_from`) |
-| [builtin-surface-binding-cleanup.md](builtin-surface-binding-cleanup.md) | Make boot builtin visibility explicit so canonical public names and internal helpers are separated by construction |
 
 ### Archived reference docs
 

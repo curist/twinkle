@@ -53,6 +53,8 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [node-standalone-runtime.md](node-standalone-runtime.md) | Standalone Node.js Twinkle compiler/runtime entry (`twk_boot.mjs` + `run_wasm_node.mjs`) without requiring Rust `twk` |
+| [builtin-surface-binding-cleanup.md](builtin-surface-binding-cleanup.md) | Make boot builtin visibility explicit — canonical public names and internal helpers separated by construction via `with_registered_functions` + `bind_public_free_builtins` |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Block-scoped defer semantics — aligned docs, interpreter, ANF defer-elim pass, pipeline ordering, and tests across Rust and boot compilers |
 | [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | First-class builtin / prelude function values in the boot backend; archived after the closure-materialization pipeline and regression coverage landed |
 | [deferred-persistence.md](deferred-persistence.md) | Earlier consolidated uniqueness/persistence strategy doc now superseded by the active static-uniqueness and persistent-container plans |
