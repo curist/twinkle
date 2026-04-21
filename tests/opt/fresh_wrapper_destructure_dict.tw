@@ -1,0 +1,37 @@
+// Fresh-wrapper destructuring: helper returns .{ ctx, func_id } and the caller
+// immediately unpacks r.ctx into a tainted local before a compound dict update.
+// The optimizer should treat the extracted ctx as unique/refreshed, letting the
+// subsequent ctx.table[k] = ... fire field-borrow and rewrite to DICT_SET_IN_PLACE.
+
+type Ctx = .{
+  next_func: Int,
+  table: Dict<String, Int>,
+}
+
+type AllocOut = .{
+  ctx: Ctx,
+  func_id: Int,
+}
+
+fn make_ctx() Ctx {
+  Ctx.{ next_func: 0, table: Dict.new() }
+}
+
+fn alloc_func_id(ctx: Ctx) AllocOut {
+  func_id := ctx.next_func
+  ctx.next_func = ctx.next_func + 1
+  AllocOut.{ ctx, func_id }
+}
+
+fn register(ctx: Ctx, k: String, v: Int) Ctx {
+  r := alloc_func_id(ctx)
+  ctx = r.ctx
+  ctx.table[k] = r.func_id + v
+  ctx
+}
+
+out := register(make_ctx(), "answer", 42)
+case out.table["answer"] {
+  .Some(v) => println(v.to_string()),
+  .None => println("missing"),
+}

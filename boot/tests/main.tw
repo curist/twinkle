@@ -98,21 +98,21 @@ suites = suites.append(wasm_plan_suite.suite())
 suites = suites.append(backend_prepare_suite.suite())
 suites = suites.append(backend_repr_suite.suite())
 suites = suites.append(backend_verify_suite.suite())
-suites = suites.concat([
-  insert_boundaries_suite.suite(),
-  slot_assign_suite.suite(),
-  wat_suite.suite(),
-  linker_suite.suite(),
-  runtime_suite.suite(),
-  module_loader_suite.suite(),
-  dependency_graph_suite.suite(),
-  query_keys_suite.suite(),
-  imports_suite.suite(),
-  multi_module_suite.suite(),
-  base_env_guardrail_suite.suite(),
-  signature_loader_suite.suite(),
-  builtins_canonical_suite.suite(),
-  signature_drift_suite.suite(),
-])
+// Keep extending the suite list one item at a time. This avoids backend cast
+// hazards around large cross-module Suite vector literals/concat chains.
+suites = suites.append(insert_boundaries_suite.suite())
+suites = suites.append(slot_assign_suite.suite())
+suites = suites.append(wat_suite.suite())
+suites = suites.append(linker_suite.suite())
+suites = suites.append(runtime_suite.suite())
+suites = suites.append(module_loader_suite.suite())
+suites = suites.append(dependency_graph_suite.suite())
+suites = suites.append(query_keys_suite.suite())
+suites = suites.append(imports_suite.suite())
+suites = suites.append(multi_module_suite.suite())
+suites = suites.append(base_env_guardrail_suite.suite())
+suites = suites.append(signature_loader_suite.suite())
+suites = suites.append(builtins_canonical_suite.suite())
+suites = suites.append(signature_drift_suite.suite())
 
 runner.run_all(suites)

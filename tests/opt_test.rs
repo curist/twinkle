@@ -2250,3 +2250,65 @@ fn opt_vector_append_nonempty_init_loop_runtime_semantics() {
         &["6", "15"],
     );
 }
+
+// ── Fresh-wrapper destructuring tests ───────────────────────────────────────
+
+/// Fresh wrapper helper returning .{ ctx, func_id } should let the caller move
+/// r.ctx into a unique/refreshed local and then rewrite the compound dict
+/// update on ctx.table in place.
+#[test]
+fn opt_fresh_wrapper_destructure_dict_rewritten_in_place() {
+    let module = compile_opt("tests/opt/fresh_wrapper_destructure_dict.tw");
+    assert!(
+        has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected DICT_SET_IN_PLACE after fresh-wrapper destructuring"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET),
+        "Expected no remaining DICT_SET after fresh-wrapper destructuring"
+    );
+}
+
+/// Re-reading the same field from the fresh wrapper keeps an alias path alive,
+/// so the first extraction must not gain deep uniqueness.
+#[test]
+fn opt_fresh_wrapper_destructure_reread_same_field_not_rewritten() {
+    let module = compile_opt("tests/opt/fresh_wrapper_destructure_reread_not_rewritten.tw");
+    assert!(
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain when the wrapper field is re-read"
+    );
+    assert!(
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE when the wrapper field is re-read"
+    );
+}
+
+#[test]
+fn opt_fresh_wrapper_destructure_runtime_semantics() {
+    assert_runtime_output("tests/opt/fresh_wrapper_destructure_dict.tw", &["42"]);
+}
+
+// ── Field-borrow optimization tests ──────────────────────────────────────────
+
+/// Field-borrow: struct with dict fields, multiple compound updates.
+/// After the first update (COW), ctx becomes unique via ARecordUpdate + AAssign.
+/// The second and third updates should fire field-borrow, producing DICT_SET_IN_PLACE.
+#[test]
+fn opt_field_borrow_dict_second_and_third_updates_in_place() {
+    let module = compile_opt("tests/opt/field_borrow_dict.tw");
+    let in_place = count_calls_to(&module, DICT_SET_IN_PLACE);
+    let cow = count_calls_to(&module, DICT_SET);
+    assert!(
+        in_place >= 2,
+        "Expected at least 2 DICT_SET_IN_PLACE (field-borrow on cache + extra), got {}; DICT_SET={}",
+        in_place,
+        cow
+    );
+}
+
+/// Field-borrow runtime: value inserted in each dict field must be observable.
+#[test]
+fn opt_field_borrow_dict_runtime_semantics() {
+    assert_runtime_output("tests/opt/field_borrow_dict.tw", &["42"]);
+}

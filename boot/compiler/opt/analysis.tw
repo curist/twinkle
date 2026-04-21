@@ -44,6 +44,34 @@ fn merge_by_binding(a: Dict<Int, Dict<Int, Bool>>, b: Dict<Int, Dict<Int, Bool>>
   a
 }
 
+fn taint_atom_local(a: Atom, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
+  case a {
+    .ALocal(x) => {
+      tainted[x.id] = true
+      tainted
+    },
+    _ => tainted,
+  }
+}
+
+fn taint_atoms(args: Vector<Atom>, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
+  for a in args {
+    tainted = taint_atom_local(a, tainted)
+  }
+  tainted
+}
+
+fn taint_non_base_args(args: Vector<Atom>, base_arg: Int, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
+  idx := 0
+  for a in args {
+    if idx != base_arg {
+      tainted = taint_atom_local(a, tainted)
+    }
+    idx = idx + 1
+  }
+  tainted
+}
+
 pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict<Int, Bool> {
   tainted: Dict<Int, Bool> = Dict.new()
   // Function params come from outside the function and are never unique.
@@ -167,63 +195,38 @@ fn scan_tainted_op(op: AnfOp, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool
       for v in free_vars { tainted[v.id] = true }
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
-    .AArrayLit(elems) => {
-      for a in elems {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      TaintOpScan.{ tainted, by_binding: Dict.new() }
-    },
+    .AArrayLit(elems) => TaintOpScan.{ tainted: taint_atoms(elems, tainted), by_binding: Dict.new() },
     .ARecord(_, fields) => {
       for f in fields {
-        case f.value { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
+        tainted = taint_atom_local(f.value, tainted)
       }
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
-    .AVariant(_, _, args) => {
-      for a in args {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      TaintOpScan.{ tainted, by_binding: Dict.new() }
-    },
+    .AVariant(_, _, args) => TaintOpScan.{ tainted: taint_atoms(args, tainted), by_binding: Dict.new() },
     .ACall(.AGlobalFunc(func_id), args) => {
       case call_info(semantics, func_id) {
         .Some(info) => {
           case info.cow_base_arg {
             .Some(base_arg) => {
-              idx := 0
-              for a in args {
-                if idx != base_arg {
-                  case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-                }
-                idx = idx + 1
-              }
+              tainted = taint_non_base_args(args, base_arg, tainted)
             },
             .None => {
               case info.effect {
                 .ReadOnly => {},
                 _ => {
-                  for a in args {
-                    case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-                  }
+                  tainted = taint_atoms(args, tainted)
                 },
               }
             },
           }
         },
         .None => {
-          for a in args {
-            case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-          }
+          tainted = taint_atoms(args, tainted)
         },
       }
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
-    .ACall(_, args) => {
-      for a in args {
-        case a { .ALocal(x) => { tainted[x.id] = true }, _ => {} }
-      }
-      TaintOpScan.{ tainted, by_binding: Dict.new() }
-    },
+    .ACall(_, args) => TaintOpScan.{ tainted: taint_atoms(args, tainted), by_binding: Dict.new() },
     .AIf(_, then_e, else_e) => {
       then_r := scan_tainted_expr(then_e, tainted, live_out, semantics)
       else_r := scan_tainted_expr(else_e, then_r.tainted, live_out, semantics)

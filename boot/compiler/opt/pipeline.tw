@@ -10,7 +10,7 @@ use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimizer_semantics, cow_config_from_semantics, optimizer_semantics_from_cow_config}
-use compiler.opt.uniqueness.{uniqueness_rewrite, uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed}
+use compiler.opt.uniqueness.{collect_fresh_record_helpers, uniqueness_rewrite, uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed, uniqueness_rewrite_with_semantics_and_consumed_and_fresh}
 use compiler.opt.analysis.{collect_consumed_params}
 use compiler.opt.defer_elim.{eliminate_defers}
 use @std.date
@@ -139,6 +139,7 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
   // Interprocedural consume analysis: compute before per-function rewrites.
   // Determines which params are consumed at all non-self-recursive call sites.
   all_consumed_params := collect_consumed_params(module)
+  fresh_helper_ids := collect_fresh_record_helpers(module)
 
   t_dead_let: Float = 0.0
   t_copy_prop: Float = 0.0
@@ -210,7 +211,7 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
       .None => Dict.new(),
     }
     optimized = case semantics {
-      .Some(config) => uniqueness_rewrite_with_semantics_and_consumed(optimized, config, f_consumed),
+      .Some(config) => uniqueness_rewrite_with_semantics_and_consumed_and_fresh(optimized, config, f_consumed, fresh_helper_ids),
       .None => case cow_config {
         .Some(config) => uniqueness_rewrite(optimized, config),
         .None => optimized,

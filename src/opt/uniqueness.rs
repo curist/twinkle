@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
-use crate::ir::core::{CorePattern, FuncId, LocalId};
+use crate::ir::core::{CorePattern, FieldId, FuncId, LocalId};
 use crate::ir::lower::prelude;
 use crate::opt::liveness::live_after;
 
@@ -176,9 +176,10 @@ fn alloc_local(next_local: &mut u32) -> LocalId {
 
 #[derive(Debug, Clone)]
 pub struct TinyWrapperSummary {
-    pub wrapped_func: FuncId,
-    pub base_arg: usize,
+    pub wrapped_func: Option<FuncId>,
+    pub base_arg: Option<usize>,
     pub arg_map: Vec<usize>,
+    pub returns_fresh_record: bool,
 }
 
 pub fn collect_tiny_wrapper_summaries(module: &AnfModule) -> HashMap<FuncId, TinyWrapperSummary> {
@@ -191,7 +192,42 @@ pub fn collect_tiny_wrapper_summaries(module: &AnfModule) -> HashMap<FuncId, Tin
     summaries
 }
 
-fn summarize_tiny_wrapper(func: &AnfFunctionDef) -> Option<TinyWrapperSummary> {
+fn tail_returns_local(mut expr: &AnfExpr, mut current: LocalId) -> bool {
+    loop {
+        match expr {
+            AnfExpr::Let { local, op, body } => match op.as_ref() {
+                AnfOp::AInit {
+                    value: Atom::ALocal(source),
+                } if *source == current => {
+                    current = *local;
+                    expr = body;
+                }
+                _ => return false,
+            },
+            AnfExpr::Atom(Atom::ALocal(ret)) | AnfExpr::Return(Some(Atom::ALocal(ret))) => {
+                return *ret == current;
+            }
+            _ => return false,
+        }
+    }
+}
+
+fn tail_is_fresh_record(mut expr: &AnfExpr) -> bool {
+    loop {
+        match expr {
+            AnfExpr::Let { local, op, body } => {
+                if matches!(op.as_ref(), AnfOp::ARecord { .. }) && tail_returns_local(body, *local)
+                {
+                    return true;
+                }
+                expr = body;
+            }
+            _ => return false,
+        }
+    }
+}
+
+fn summarize_cow_wrapper(func: &AnfFunctionDef) -> Option<(FuncId, usize, Vec<usize>)> {
     let mut param_aliases = HashMap::new();
     for (i, param) in func.params.iter().enumerate() {
         param_aliases.insert(*param, i);
@@ -252,11 +288,7 @@ fn summarize_tiny_wrapper(func: &AnfFunctionDef) -> Option<TinyWrapperSummary> {
                         | AnfExpr::Return(Some(Atom::ALocal(ret)))
                             if *ret == result_local =>
                         {
-                            return Some(TinyWrapperSummary {
-                                wrapped_func: *wrapped_func,
-                                base_arg: info.base_arg,
-                                arg_map,
-                            });
+                            return Some((*wrapped_func, info.base_arg, arg_map));
                         }
                         _ => return None,
                     }
@@ -264,6 +296,28 @@ fn summarize_tiny_wrapper(func: &AnfFunctionDef) -> Option<TinyWrapperSummary> {
             }
             _ => return None,
         }
+    }
+}
+
+fn summarize_tiny_wrapper(func: &AnfFunctionDef) -> Option<TinyWrapperSummary> {
+    let returns_fresh_record = tail_is_fresh_record(&func.body);
+    let cow_wrapper = summarize_cow_wrapper(func);
+    match (cow_wrapper, returns_fresh_record) {
+        (Some((wrapped_func, base_arg, arg_map)), returns_fresh_record) => {
+            Some(TinyWrapperSummary {
+                wrapped_func: Some(wrapped_func),
+                base_arg: Some(base_arg),
+                arg_map,
+                returns_fresh_record,
+            })
+        }
+        (None, true) => Some(TinyWrapperSummary {
+            wrapped_func: None,
+            base_arg: None,
+            arg_map: Vec::new(),
+            returns_fresh_record: true,
+        }),
+        (None, false) => None,
     }
 }
 
@@ -276,7 +330,8 @@ fn resolve_cow_call<'a>(
         return Some((info, func_id, args.iter().collect()));
     }
     let summary = wrappers.get(&func_id)?;
-    let info = op_semantics(summary.wrapped_func).and_then(|s| s.as_cow_info())?;
+    let wrapped_func = summary.wrapped_func?;
+    let info = op_semantics(wrapped_func).and_then(|s| s.as_cow_info())?;
     if args.len() != summary.arg_map.len() {
         return None;
     }
@@ -285,7 +340,7 @@ fn resolve_cow_call<'a>(
         .iter()
         .map(|param_index| args.get(*param_index))
         .collect::<Option<Vec<_>>>()?;
-    Some((info, summary.wrapped_func, resolved_args))
+    Some((info, wrapped_func, resolved_args))
 }
 
 /// Returns true when `base` is safe for a direct in-place COW swap.
@@ -798,6 +853,127 @@ fn is_consume_reassign(body: &AnfExpr, base: LocalId, result: LocalId) -> bool {
 
 fn atom_is_local(atom: &Atom, local: LocalId) -> bool {
     matches!(atom, Atom::ALocal(id) if *id == local)
+}
+
+/// Returns true when `base` is a fresh record whose remaining uses are limited
+/// to non-escaping `ARecordGet`s on fields other than `moved_field`.
+///
+/// This supports narrow fresh-wrapper destructuring such as:
+///   r := alloc_local(ctx)
+///   ctx = r.ctx
+///   ... r.local ...
+///
+/// The extracted field may be treated as deeply unique because the wrapper is
+/// fresh, never escapes, and the moved field is never read again.
+fn can_move_fresh_record_field(base: LocalId, moved_field: FieldId, expr: &AnfExpr) -> bool {
+    let mut cursor = expr;
+    loop {
+        match cursor {
+            AnfExpr::Let { op, body, .. } => {
+                if op_has_local_in_nested_scope(op, base) {
+                    return false;
+                }
+                match op.as_ref() {
+                    AnfOp::ARecordGet {
+                        target: Atom::ALocal(source),
+                        field,
+                        ..
+                    } if *source == base => {
+                        if *field == moved_field {
+                            return false;
+                        }
+                    }
+                    _ if op_uses_local_non_recursive(op, base) => return false,
+                    _ => {}
+                }
+                cursor = body;
+            }
+            AnfExpr::Atom(atom) => return !atom_is_local(atom, base),
+            AnfExpr::Return(Some(atom)) | AnfExpr::Break(Some(atom)) => {
+                return !atom_is_local(atom, base);
+            }
+            AnfExpr::Return(None) | AnfExpr::Break(None) | AnfExpr::Continue => return true,
+        }
+    }
+}
+
+/// Returns true when `field_local` is the base of a COW op whose result is
+/// immediately re-stored into a struct via ARecordUpdate, and `field_local` is
+/// dead after the COW op.  In that pattern the field has no other live
+/// references at the COW site, so it may be treated as unique.
+fn is_field_borrow_and_update(
+    field_local: LocalId,
+    body: &AnfExpr,
+    wrappers: &HashMap<FuncId, TinyWrapperSummary>,
+) -> bool {
+    // Allow transparent lets between the field extraction and the eventual COW
+    // op, as long as they do not use or capture the extracted field.
+    let mut cursor = body;
+    loop {
+        let AnfExpr::Let {
+            local: new_field,
+            op: cow_op,
+            body: rest,
+        } = cursor
+        else {
+            return false;
+        };
+        if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = cow_op.as_ref()
+        {
+            if let Some((info, _wrapped, resolved_args)) =
+                resolve_cow_call(*func_id, args, wrappers)
+            {
+                // Must have an in-place variant (dict/vector set, not VECTOR_APPEND)
+                if info.in_place_id.is_some()
+                    && resolved_args
+                        .get(info.base_arg)
+                        .map_or(false, |a| atom_is_local(a, field_local))
+                {
+                    // field_local must be dead after this COW op
+                    if live_after(rest).contains(&field_local) {
+                        return false;
+                    }
+                    // The updated field value may flow through transparent lets
+                    // before the final ARecordUpdate, but must not be used in
+                    // any other way.
+                    let mut tail = rest.as_ref();
+                    loop {
+                        match tail {
+                            AnfExpr::Let { op: update_op, .. }
+                                if matches!(
+                                    update_op.as_ref(),
+                                    AnfOp::ARecordUpdate {
+                                        value: Atom::ALocal(v),
+                                        ..
+                                    } if *v == *new_field
+                                ) =>
+                            {
+                                return true;
+                            }
+                            AnfExpr::Let { op, body: next, .. } => {
+                                if op_has_local_in_nested_scope(op, *new_field)
+                                    || op_uses_local_non_recursive(op, *new_field)
+                                {
+                                    return false;
+                                }
+                                tail = next;
+                            }
+                            _ => return false,
+                        }
+                    }
+                }
+            }
+        }
+        if op_has_local_in_nested_scope(cow_op, field_local)
+            || op_uses_local_non_recursive(cow_op, field_local)
+        {
+            return false;
+        }
+        cursor = rest;
+    }
 }
 
 fn op_uses_local_non_recursive(op: &AnfOp, local: LocalId) -> bool {
@@ -2030,7 +2206,16 @@ fn rewrite_expr(
     }
 
     // Track fresh producers → Unique + source_fresh.
-    if is_fresh_producer(op) {
+    let returns_fresh_record = matches!(
+        op.as_ref(),
+        AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            ..
+        } if wrappers
+            .get(func_id)
+            .map_or(false, |summary| summary.returns_fresh_record)
+    );
+    if is_fresh_producer(op) || returns_fresh_record {
         unique.insert(bind_local);
         if tainted.contains(&bind_local) {
             builder_safe.insert(bind_local);
@@ -2204,6 +2389,7 @@ fn rewrite_expr(
     // not set, so dict_set_in_place / vector_set_in_place remain conservatively gated).
     if let AnfOp::ARecordGet {
         target: Atom::ALocal(base),
+        field,
         ..
     } = op.as_ref()
     {
@@ -2215,6 +2401,24 @@ fn rewrite_expr(
             if tainted.contains(&bind_local) {
                 refreshed.insert(bind_local);
             }
+        } else if source_fresh.contains(&base) && can_move_fresh_record_field(base, *field, body) {
+            // Fresh-wrapper destructuring: the base is a fresh record and its
+            // remaining uses are limited to disjoint non-escaping field reads.
+            // Transfer deep uniqueness to the extracted field, then consume the
+            // base's source_fresh marker so only one field gets this treatment.
+            unique.insert(bind_local);
+            source_fresh.remove(&base);
+            if tainted.contains(&bind_local) {
+                refreshed.insert(bind_local);
+            }
+        } else if base_can_rewrite(base, tainted, unique, refreshed, None)
+            && is_field_borrow_and_update(bind_local, body, wrappers)
+        {
+            // Field-borrow pattern: the struct is unique (no aliases), and the
+            // extracted field is immediately consumed by a COW op then stored
+            // back via ARecordUpdate.  Treat the extracted field as unique so
+            // the COW op can use its in-place variant.
+            unique.insert(bind_local);
         }
     }
 
@@ -2449,7 +2653,11 @@ fn rewrite_op(
             // continuation is only reachable via the other branch. Use that
             // branch's state directly instead of intersecting — intersection
             // would conservatively destroy state that can't be affected.
-            if expr_always_terminates(then_branch) {
+            // If both branches terminate, the continuation is unreachable;
+            // leave the state unchanged.
+            if expr_always_terminates(then_branch) && expr_always_terminates(else_branch) {
+                // Both branches terminate; continuation is dead code.
+            } else if expr_always_terminates(then_branch) {
                 *unique = else_unique;
                 *known_empty = else_empty;
                 *refreshed = else_refreshed;
@@ -2497,6 +2705,13 @@ fn rewrite_op(
                     next_local,
                     wrappers,
                 );
+                // Arms that always terminate (return/break/continue) can never
+                // reach the post-match continuation, so their final state is
+                // irrelevant for the continuation. Exclude them from the
+                // intersection, preserving facts from the reachable arms.
+                if expr_always_terminates(&arm.body) {
+                    continue;
+                }
                 if let Some(m) = merged_unique.as_mut() {
                     intersect_in_place(m, &arm_unique);
                 } else {

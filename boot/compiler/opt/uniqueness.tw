@@ -6,11 +6,12 @@
 // Phase 2 — Forward rewrite: track ownership, rewrite COW ops to in-place
 // Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
 
-use compiler.core_ir.{LocalId, FuncId}
+use compiler.core_ir.{LocalId, FuncId, FieldId}
 use compiler.resolver.{MonoType}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{set_has}
 use compiler.opt.analysis.{base_reusable_after_binding_with_live, collect_tainted_and_live, next_local_id}
+use compiler.opt.liveness.{live_after}
 use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, optimizer_semantics_from_cow_config, reusable_update_site, call_info}
 
@@ -103,8 +104,11 @@ type RwState = .{
   tainted: Dict<Int, Bool>,
   ownership: Dict<Int, Ownership>,
   known_empty: Dict<Int, Bool>,
+  refreshed: Dict<Int, Bool>,
+  fresh_records: Dict<Int, Bool>,
   live_after_by_binding: Dict<Int, Dict<Int, Bool>>,
   config: OptimizerSemantics,
+  fresh_helper_ids: Dict<Int, Bool>,
   next_local: Int,
   monos: Dict<Int, MonoType>,
 }
@@ -118,7 +122,7 @@ type UpdateRewrite = .{
 }
 
 fn ownership_of(st: RwState, local: LocalId) Ownership? {
-  if set_has(st.tainted, local.id) { return .None }
+  if set_has(st.tainted, local.id) and !set_has(st.refreshed, local.id) { return .None }
   st.ownership[local.id]
 }
 
@@ -161,8 +165,11 @@ fn with_metadata_from(st: RwState, other: RwState) RwState {
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: st.known_empty,
+    refreshed: st.refreshed,
+    fresh_records: st.fresh_records,
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: next,
     monos: monos,
   }
@@ -175,8 +182,11 @@ fn with_local_ownership(st: RwState, local: LocalId, ownership: Ownership) RwSta
     tainted: st.tainted,
     ownership: owned,
     known_empty: st.known_empty,
+    refreshed: st.refreshed,
+    fresh_records: st.fresh_records,
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: st.next_local,
     monos: st.monos,
   }
@@ -187,8 +197,11 @@ fn with_known_empty_local(st: RwState, local: LocalId) RwState {
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: st.known_empty.set(local.id, true),
+    refreshed: st.refreshed,
+    fresh_records: st.fresh_records,
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: st.next_local,
     monos: st.monos,
   }
@@ -199,8 +212,26 @@ fn without_local_ownership(st: RwState, local: LocalId) RwState {
     tainted: st.tainted,
     ownership: st.ownership.remove(local.id),
     known_empty: st.known_empty.remove(local.id),
+    refreshed: st.refreshed.remove(local.id),
+    fresh_records: st.fresh_records.remove(local.id),
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
+    next_local: st.next_local,
+    monos: st.monos,
+  }
+}
+
+fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
+  RwState.{
+    tainted: st.tainted,
+    ownership: st.ownership,
+    known_empty: st.known_empty,
+    refreshed: st.refreshed,
+    fresh_records: st.fresh_records.set(local.id, true),
+    live_after_by_binding: st.live_after_by_binding,
+    config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: st.next_local,
     monos: st.monos,
   }
@@ -214,16 +245,28 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
     },
   }
 
+  source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)
   owned := st.ownership
   owned = owned.remove(source.id)
   owned[target.id] = moved
+  refreshed := st.refreshed.remove(source.id)
+  if set_has(st.tainted, target.id) {
+    refreshed[target.id] = true
+  }
+  fresh_records := st.fresh_records.remove(source.id)
+  if source_was_fresh_record {
+    fresh_records[target.id] = true
+  }
   st = RwState.{
     tainted: st.tainted,
     ownership: owned,
     known_empty: st.known_empty,
+    refreshed: refreshed,
+    fresh_records: fresh_records,
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: st.next_local,
     monos: st.monos,
   }
@@ -232,8 +275,11 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
       tainted: st.tainted,
       ownership: st.ownership,
       known_empty: st.known_empty.remove(source.id).set(target.id, true),
+      refreshed: st.refreshed,
+      fresh_records: st.fresh_records,
       live_after_by_binding: st.live_after_by_binding,
       config: st.config,
+      fresh_helper_ids: st.fresh_helper_ids,
       next_local: st.next_local,
       monos: st.monos,
     }
@@ -243,14 +289,268 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   st = with_local_ownership(st, local, .Deep)
+  refreshed := st.refreshed
+  if set_has(st.tainted, local.id) {
+    refreshed[local.id] = true
+  }
   RwState.{
     tainted: st.tainted,
     ownership: st.ownership,
     known_empty: st.known_empty.remove(local.id),
+    refreshed: refreshed,
+    fresh_records: st.fresh_records.remove(local.id),
     live_after_by_binding: st.live_after_by_binding,
     config: st.config,
+    fresh_helper_ids: st.fresh_helper_ids,
     next_local: st.next_local,
     monos: st.monos,
+  }
+}
+
+fn tail_returns_local(expr: AnfExpr, current: LocalId) Bool {
+  case expr {
+    .Let(local, .AInit(.ALocal(source)), body) => {
+      if source.id == current.id { tail_returns_local(body, local) } else { false }
+    },
+    .Atom(.ALocal(ret)) => ret.id == current.id,
+    .Return(.Some(.ALocal(ret))) => ret.id == current.id,
+    _ => false,
+  }
+}
+
+fn tail_is_fresh_record(expr: AnfExpr) Bool {
+  case expr {
+    .Let(local, .ARecord(_, _), body) => {
+      if tail_returns_local(body, local) { true } else { tail_is_fresh_record(body) }
+    },
+    .Let(_, _, body) => tail_is_fresh_record(body),
+    _ => false,
+  }
+}
+
+pub fn collect_fresh_record_helpers(module: AnfModule) Dict<Int, Bool> {
+  fresh: Dict<Int, Bool> = Dict.new()
+  for func in module.functions {
+    if tail_is_fresh_record(func.body) {
+      fresh[func.func_id.id] = true
+    }
+  }
+  fresh
+}
+
+fn expr_always_terminates(expr: AnfExpr) Bool {
+  case expr {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    .Let(_, op, body) => {
+      case op {
+        .AIf(_, then_e, else_e) => {
+          if expr_always_terminates(then_e) and expr_always_terminates(else_e) {
+            true
+          } else {
+            expr_always_terminates(body)
+          }
+        },
+        .AMatch(_, arms) => {
+          if arms.len() > 0 {
+            all_terminate := true
+            for arm in arms {
+              if !expr_always_terminates(arm.body) { all_terminate = false }
+            }
+            if all_terminate { true } else { expr_always_terminates(body) }
+          } else {
+            expr_always_terminates(body)
+          }
+        },
+        _ => expr_always_terminates(body),
+      }
+    },
+    _ => false,
+  }
+}
+
+fn intersect_bool_sets(dst: Dict<Int, Bool>, other: Dict<Int, Bool>) Dict<Int, Bool> {
+  keys := dst.keys()
+  for k in keys {
+    if !set_has(other, k) {
+      dst = dst.remove(k)
+    }
+  }
+  dst
+}
+
+fn intersect_ownership(dst: Dict<Int, Ownership>, other: Dict<Int, Ownership>) Dict<Int, Ownership> {
+  keys := dst.keys()
+  for k in keys {
+    case dst[k] {
+      .Some(lhs) => {
+        case other[k] {
+          .Some(rhs) => {
+            if lhs != rhs {
+              dst = dst.remove(k)
+            }
+          },
+          .None => { dst = dst.remove(k) },
+        }
+      },
+      .None => {},
+    }
+  }
+  dst
+}
+
+fn atom_is_local(a: Atom, local: LocalId) Bool {
+  case a {
+    .ALocal(id) => id.id == local.id,
+    _ => false,
+  }
+}
+
+fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
+  case op {
+    .ACall(callee, args) => {
+      if atom_is_local(callee, local) { return true }
+      for a in args {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .ABinOp(_, left, right, _) => atom_is_local(left, local) or atom_is_local(right, local),
+    .AUnOp(_, inner, _) => atom_is_local(inner, local),
+    .AMakeClosure(_, free_vars) => {
+      for v in free_vars {
+        if v.id == local.id { return true }
+      }
+      false
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        if atom_is_local(f.value, local) { return true }
+      }
+      false
+    },
+    .ARecordGet(target, _, _) => atom_is_local(target, local),
+    .ARecordUpdate(base, _, value, _, _) => atom_is_local(base, local) or atom_is_local(value, local),
+    .AVariant(_, _, args) => {
+      for a in args {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .AArrayLit(elems) => {
+      for a in elems {
+        if atom_is_local(a, local) { return true }
+      }
+      false
+    },
+    .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
+    .AInit(value) => atom_is_local(value, local),
+    .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
+    .AIf(cond, _, _) => atom_is_local(cond, local),
+    .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
+    .ALoop(_) => false,
+    .ADefer(_) => false,
+    .AWrapAnyref(a, _) => atom_is_local(a, local),
+    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
+  }
+}
+
+fn expr_uses_local(expr: AnfExpr, local: LocalId) Bool {
+  case expr {
+    .Let(_, op, body) => {
+      if op_uses_local_non_recursive(op, local) { return true }
+      if op_has_local_in_nested_scope(op, local) { return true }
+      expr_uses_local(body, local)
+    },
+    .Atom(atom) => atom_is_local(atom, local),
+    .Return(.Some(atom)) => atom_is_local(atom, local),
+    .Break(.Some(atom)) => atom_is_local(atom, local),
+    _ => false,
+  }
+}
+
+fn op_has_local_in_nested_scope(op: AnfOp, local: LocalId) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => expr_uses_local(then_e, local) or expr_uses_local(else_e, local),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if expr_uses_local(arm.body, local) { return true }
+      }
+      false
+    },
+    .ALoop(body) => expr_uses_local(body, local),
+    .ADefer(body) => expr_uses_local(body, local),
+    _ => false,
+  }
+}
+
+fn can_move_fresh_record_field(base: LocalId, moved_field: FieldId, expr: AnfExpr) Bool {
+  case expr {
+    .Let(_, op, body) => {
+      if op_has_local_in_nested_scope(op, base) { return false }
+      case op {
+        .ARecordGet(.ALocal(source), field, _) => {
+          if source.id == base.id and field.id == moved_field.id { return false }
+        },
+        _ => {
+          if op_uses_local_non_recursive(op, base) { return false }
+        },
+      }
+      can_move_fresh_record_field(base, moved_field, body)
+    },
+    .Atom(atom) => !atom_is_local(atom, base),
+    .Return(.Some(atom)) => !atom_is_local(atom, base),
+    .Break(.Some(atom)) => !atom_is_local(atom, base),
+    _ => true,
+  }
+}
+
+fn record_update_stores_value(expr: AnfExpr, value_local: LocalId) Bool {
+  case expr {
+    .Let(_, .ARecordUpdate(_, _, .ALocal(v), _, _), _) => v.id == value_local.id,
+    .Let(_, op, body) => {
+      if op_has_local_in_nested_scope(op, value_local) or op_uses_local_non_recursive(op, value_local) {
+        false
+      } else {
+        record_update_stores_value(body, value_local)
+      }
+    },
+    _ => false,
+  }
+}
+
+fn is_field_borrow_and_update(field_local: LocalId, body: AnfExpr, semantics: OptimizerSemantics) Bool {
+  case body {
+    .Let(new_field, .ACall(.AGlobalFunc(func_id), args), rest) => {
+      case call_info(semantics, func_id) {
+        .Some(info) => {
+          case info.cow_base_arg {
+            .Some(base_arg) => {
+              if info.in_place_equivalent != .None and base_arg < args.len() {
+                if atom_is_local(args[base_arg], field_local) and !set_has(live_after(rest), field_local.id) {
+                  record_update_stores_value(rest, new_field)
+                } else {
+                  false
+                }
+              } else {
+                false
+              }
+            },
+            .None => false,
+          }
+        },
+        .None => false,
+      }
+    },
+    .Let(_, op, body2) => {
+      if op_has_local_in_nested_scope(op, field_local) or op_uses_local_non_recursive(op, field_local) {
+        false
+      } else {
+        is_field_borrow_and_update(field_local, body2, semantics)
+      }
+    },
+    _ => false,
   }
 }
 
@@ -318,8 +618,11 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
                 tainted: st.tainted,
                 ownership: st.ownership,
                 known_empty: st.known_empty,
+                refreshed: st.refreshed,
+                fresh_records: st.fresh_records,
                 live_after_by_binding: st.live_after_by_binding,
                 config: st.config,
+                fresh_helper_ids: st.fresh_helper_ids,
                 next_local: rewritten.next_local,
                 monos: merge_mono_maps(st.monos, rewritten.mono_updates),
               }
@@ -336,6 +639,15 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
           st = with_local_ownership(st, local, ownership)
         },
         .None => {},
+      }
+      case op {
+        .ACall(.AGlobalFunc(func_id), _) => {
+          if set_has(st.fresh_helper_ids, func_id.id) {
+            st = with_local_ownership(st, local, .Shallow)
+            st = with_fresh_record_local(st, local)
+          }
+        },
+        _ => {},
       }
       if is_empty_array_lit(op) {
         st = with_known_empty_local(st, local)
@@ -367,16 +679,30 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // Mark it Shallow-owned: eligible for record shell reuse (can_reuse_in_place)
       // but NOT for deep collection in-place mutation.
       case op {
-        .ARecordGet(.ALocal(source), _, _) => {
-          if local_has_shell_ownership(st, source) {
-            empty_live: Dict<Int, Bool> = Dict.new()
-            live_after_body := case st.live_after_by_binding[local.id] {
-              .Some(live) => live,
-              .None => empty_live,
+        .ARecordGet(.ALocal(source), field_id, _) => {
+          empty_live: Dict<Int, Bool> = Dict.new()
+          live_after_body := case st.live_after_by_binding[local.id] {
+            .Some(live) => live,
+            .None => empty_live,
+          }
+          if local_has_shell_ownership(st, source) and !set_has(live_after_body, source.id) {
+            st = with_local_ownership(st, local, .Shallow)
+          } else if set_has(st.fresh_records, source.id) and can_move_fresh_record_field(source, field_id, body) {
+            st = with_local_ownership(st, local, .Deep)
+            st = RwState.{
+              tainted: st.tainted,
+              ownership: st.ownership,
+              known_empty: st.known_empty,
+              refreshed: st.refreshed,
+              fresh_records: st.fresh_records.remove(source.id),
+              live_after_by_binding: st.live_after_by_binding,
+              config: st.config,
+              fresh_helper_ids: st.fresh_helper_ids,
+              next_local: st.next_local,
+              monos: st.monos,
             }
-            if !set_has(live_after_body, source.id) {
-              st = with_local_ownership(st, local, .Shallow)
-            }
+          } else if local_has_shell_ownership(st, source) and is_field_borrow_and_update(local, body, st.config) {
+            st = with_local_ownership(st, local, .Deep)
           }
         },
         _ => {},
@@ -394,16 +720,16 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
 fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrite {
   case op {
     .AIf(cond, then_e, else_e) => {
-      // Conservative: separate ownership sets for each branch, don't propagate out
       then_r := rewrite_expr(then_e, st, consumed_params)
-      else_r := rewrite_expr(else_e, st, consumed_params)
-      merged := st.with_metadata_from(then_r.st).with_metadata_from(else_r.st)
+      else_seed := st.with_metadata_from(then_r.st)
+      else_r := rewrite_expr(else_e, else_seed, consumed_params)
+      merged := else_seed.with_metadata_from(else_r.st)
       .{ op: .AIf(cond, then_r.expr, else_r.expr), st: merged }
     },
     .AMatch(scrutinee, arms) => {
       acc := st
       new_arms := collect arm in arms {
-        arm_r := rewrite_expr(arm.body, st, consumed_params)
+        arm_r := rewrite_expr(arm.body, acc, consumed_params)
         acc = acc.with_metadata_from(arm_r.st)
         AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr }
       }
@@ -415,8 +741,11 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
         tainted: st.tainted,
         ownership: Dict.new(),
         known_empty: Dict.new(),
+        refreshed: Dict.new(),
+        fresh_records: Dict.new(),
         live_after_by_binding: st.live_after_by_binding,
         config: st.config,
+        fresh_helper_ids: st.fresh_helper_ids,
         next_local: st.next_local,
         monos: st.monos,
       }
@@ -434,23 +763,12 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
 // ── Phase 3: Loop region rewrite ───────────────────────────────────
 
 fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: RwState) LoopRewrite? {
-  // Find candidates: deeply owned, non-tainted locals
-  candidates: Vector<Int> = collect k in st.ownership.keys() {
-    local := LocalId.{ id: k }
-    if local_is_deep_owned(st, local) { k } else { continue }
-  }
-
-  for base_id in candidates {
-    base := LocalId.{ id: base_id }
-    base_mono := case st.monos[base_id] {
-      .Some(mono) => mono,
-      .None => .Void,
-    }
-    case rewrite_loop_region(bind_local, loop_body, cont, base, base_mono, st.next_local, set_has(st.known_empty, base_id), st.config.builder) {
-      .Some(result) => { return .Some(result) },
-      .None => {},
-    }
-  }
+  // Temporarily keep boot loop-builder rewriting off. The current boot backend
+  // still miscompiles some rewritten builder regions in self-hosted runs (for
+  // example checker diagnostic accumulation), even though the Rust stage0 path
+  // is fine. Keep point rewrites and field-borrow/fresh-wrapper improvements,
+  // but avoid emitting new builder regions from the boot optimizer until the
+  // backend-side sync issue is fixed.
   .None
 }
 
@@ -494,21 +812,30 @@ fn has_rewritable_cow_op_in_expr(expr: AnfExpr, tainted: Dict<Int, Bool>, semant
 
 pub fn uniqueness_rewrite_with_semantics(func: AnfFunctionDef, config: OptimizerSemantics) AnfFunctionDef {
   empty_consumed: Dict<Int, Bool> = Dict.new()
-  uniqueness_rewrite_with_semantics_and_consumed(func, config, empty_consumed)
+  empty_fresh_helpers: Dict<Int, Bool> = Dict.new()
+  uniqueness_rewrite_with_semantics_and_consumed_and_fresh(func, config, empty_consumed, empty_fresh_helpers)
 }
 
 pub fn uniqueness_rewrite_with_semantics_and_consumed(func: AnfFunctionDef, config: OptimizerSemantics, consumed_params: Dict<Int, Bool>) AnfFunctionDef {
+  empty_fresh_helpers: Dict<Int, Bool> = Dict.new()
+  uniqueness_rewrite_with_semantics_and_consumed_and_fresh(func, config, consumed_params, empty_fresh_helpers)
+}
+
+pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(func: AnfFunctionDef, config: OptimizerSemantics, consumed_params: Dict<Int, Bool>, fresh_helper_ids: Dict<Int, Bool>) AnfFunctionDef {
   if !has_cow_op_in_expr(func.body, config) { return func }
   tl := collect_tainted_and_live(func, config)
-  // When consumed_params is non-empty we may rewrite tainted-but-consumed param
-  // bases, so skip the "no untainted rewritable base" early exit in that case.
-  if consumed_params.len() == 0 and !has_rewritable_cow_op_in_expr(func.body, tl.tainted, config) { return func }
+  // Keep running the full pass whenever the function contains a candidate COW
+  // op. Branch-sensitive refreshed/fresh-wrapper facts may make a base
+  // rewriteable even when the initial pre-check sees only tainted params.
   st: RwState = RwState.{
     tainted: tl.tainted,
     ownership: Dict.new(),
     known_empty: Dict.new(),
+    refreshed: Dict.new(),
+    fresh_records: Dict.new(),
     live_after_by_binding: tl.by_binding,
     config: config,
+    fresh_helper_ids: fresh_helper_ids,
     next_local: next_local_id(func),
     monos: func.op_result_mono,
   }

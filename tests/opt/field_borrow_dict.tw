@@ -1,0 +1,30 @@
+// Field-borrow test: struct with a dict field, multiple compound updates.
+// After the first update (COW), ctx becomes unique. The second and third
+// updates should fire field-borrow, turning their DICT_SET into DICT_SET_IN_PLACE.
+
+type Ctx = .{
+  table: Dict<String, Int>,
+  cache: Dict<String, Int>,
+  extra: Dict<String, Int>,
+}
+
+fn make_ctx() Ctx {
+  Ctx.{ table: Dict.new(), cache: Dict.new(), extra: Dict.new() }
+}
+
+// fresh_ctx returns a fresh ctx from an opaque call; its result is not unique.
+fn multi_update(base: Ctx, k1: String, k2: String, k3: String, v: Int) Ctx {
+  // Simulate: r := some_operation(base); ctx = r
+  // (We use a record reconstruction to simulate getting a new ctx)
+  ctx := make_ctx()
+  ctx.table[k1] = v      // first compound: ctx not unique → COW, then ctx becomes unique
+  ctx.cache[k2] = v      // second: ctx unique → field-borrow should fire → DICT_SET_IN_PLACE
+  ctx.extra[k3] = v      // third: ctx unique → field-borrow should fire → DICT_SET_IN_PLACE
+  ctx
+}
+
+r := multi_update(make_ctx(), "a", "b", "c", 42)
+case r.table["a"] {
+  .Some(v) => println(v.to_string()),
+  .None => println("missing"),
+}

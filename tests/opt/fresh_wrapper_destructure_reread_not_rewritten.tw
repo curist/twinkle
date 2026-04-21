@@ -1,0 +1,37 @@
+// Negative case for fresh-wrapper destructuring: rereading the same field from
+// the fresh wrapper keeps an alias path to that field alive, so the optimizer
+// must not treat the first extraction as deeply unique.
+
+type Ctx = .{
+  next_func: Int,
+  table: Dict<String, Int>,
+}
+
+type AllocOut = .{
+  ctx: Ctx,
+  func_id: Int,
+}
+
+fn make_ctx() Ctx {
+  Ctx.{ next_func: 0, table: Dict.new() }
+}
+
+fn alloc_func_id(ctx: Ctx) AllocOut {
+  func_id := ctx.next_func
+  ctx.next_func = ctx.next_func + 1
+  AllocOut.{ ctx, func_id }
+}
+
+fn register(ctx: Ctx, k: String, v: Int) Ctx {
+  r := alloc_func_id(ctx)
+  ctx = r.ctx
+  again := r.ctx
+  ctx.table[k] = again.next_func + v
+  ctx
+}
+
+out := register(make_ctx(), "answer", 42)
+case out.table["answer"] {
+  .Some(v) => println(v.to_string()),
+  .None => println("missing"),
+}

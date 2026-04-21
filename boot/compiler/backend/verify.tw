@@ -1585,12 +1585,22 @@ fn mono_name(mono: MonoType) String {
     .Void => "Void",
     .Anyref_ => "Anyref_",
     .Var(name) => "Var(${name})",
-    .Named(tid, _) => "Named(T${tid.id})",
-    .Vector(_) => "Vector",
-    .Dict(_, _) => "Dict",
-    .Function(_, _) => "Function",
-    .Optional(_) => "Optional",
-    .Result(_, _) => "Result",
+    .Named(tid, args) => {
+      if args.len() == 0 {
+        "Named(T${tid.id})"
+      } else {
+        rendered := collect arg in args { mono_name(arg) }
+        "Named(T${tid.id}<${rendered.join(", ")}>)"
+      }
+    },
+    .Vector(inner) => "Vector<${mono_name(inner)}>",
+    .Dict(key, value) => "Dict<${mono_name(key)}, ${mono_name(value)}>",
+    .Function(params, ret) => {
+      rendered := collect param in params { mono_name(param) }
+      "Function(${rendered.join(", ")}) -> ${mono_name(ret)}"
+    },
+    .Optional(inner) => "Optional<${mono_name(inner)}>",
+    .Result(ok, err) => "Result<${mono_name(ok)}, ${mono_name(err)}>",
     .MetaVar(id) => "MetaVar(${id})",
     .Never => "Never",
     .ErrorType => "ErrorType",

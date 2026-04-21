@@ -364,6 +364,33 @@ fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<Mon
   }
 }
 
+fn with_type_defs_and_index(reg: WasmTypeRegistry, type_defs: Vector<TypeDef>, type_index: Dict<String, Int>) WasmTypeRegistry {
+  .{
+    type_defs: type_defs,
+    layout_cache: reg.layout_cache,
+    in_progress: reg.in_progress,
+    type_index: type_index,
+    concrete_func_sigs: reg.concrete_func_sigs,
+    closure_materialized_funcs: reg.closure_materialized_funcs,
+    typed_closure_funcs: reg.typed_closure_funcs,
+    direct_builtin_calls: reg.direct_builtin_calls,
+    capture_layouts: reg.capture_layouts,
+    module_globals: reg.module_globals,
+    module_globals_order: reg.module_globals_order,
+    string_pool: reg.string_pool,
+    string_pool_order: reg.string_pool_order,
+    string_pool_next_offset: reg.string_pool_next_offset,
+    runtime_imports: reg.runtime_imports,
+  }
+}
+
+fn append_type_def(reg: WasmTypeRegistry, sym: String, td: TypeDef) WasmTypeRegistry {
+  new_defs := reg.type_defs.append(td)
+  new_index := reg.type_index
+  new_index[sym] = reg.type_defs.len()
+  with_type_defs_and_index(reg, new_defs, new_index)
+}
+
 fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeRegistry {
   case layout {
     .Record(rec) => {
@@ -374,9 +401,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
             FieldDef.{ name: .Some(f.name), mutable: true, ty: f.val_type }
           }
           td: TypeDef = .Struct(rec.sym, fields, .None, false)
-          reg.type_index[rec.sym] = reg.type_defs.len()
-          reg.type_defs = reg.type_defs.append(td)
-          reg
+          append_type_def(reg, rec.sym, td)
         },
       }
     },
@@ -392,9 +417,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
             }
           }
           td := TypeDef.Struct(sum.sym, fields, .None, false)
-          reg.type_index[sum.sym] = reg.type_defs.len()
-          reg.type_defs = reg.type_defs.append(td)
-          reg
+          append_type_def(reg, sum.sym, td)
         },
       }
     },
@@ -409,9 +432,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
             .{ name: .Some("typed_func"), mutable: false, ty: .Ref(true, .Named(c.typed_func_type_sym)) },
           ]
           td: TypeDef = .Struct(c.closure_sym, fields, .Some("rt_types__Closure"), true)
-          reg.type_index[c.closure_sym] = reg.type_defs.len()
-          reg.type_defs = reg.type_defs.append(td)
-          reg
+          append_type_def(reg, c.closure_sym, td)
         },
       }
     },
@@ -426,9 +447,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
           td: TypeDef = .Struct(sym, [
             .{ name: .Some("value"), mutable: true, ty: val_type_of(inner) },
           ], .None, false)
-          reg.type_index[sym] = reg.type_defs.len()
-          reg.type_defs = reg.type_defs.append(td)
-          reg
+          append_type_def(reg, sym, td)
         },
       }
     },
@@ -449,9 +468,7 @@ fn register_closure_func_type(reg: WasmTypeRegistry, layout: WasmClosureLayout) 
       params: Vector<ValType> = [.Ref(true, HeapType.Named(layout.env_sym))]
       params = params.concat(layout.param_types)
       td := TypeDef.FuncType(layout.typed_func_type_sym, params, results)
-      reg.type_index[layout.typed_func_type_sym] = reg.type_defs.len()
-      reg.type_defs = reg.type_defs.append(td)
-      reg
+      append_type_def(reg, layout.typed_func_type_sym, td)
     },
   }
 }
