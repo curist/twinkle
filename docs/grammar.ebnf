@@ -141,7 +141,7 @@ Expr =
 
 AssignExpr =
       LValue AssignOp Expr
-    | LogicalOrExpr ;
+    | RangeExpr ;
 
 AssignOp =
       "=" ;
@@ -156,6 +156,15 @@ LValue =
 (* Implementation note:
    - LValue is a restricted form of PostfixExpr; avoids left-recursion via Expr.
    - Examples: `x`, `obj.field`, `arr[i]`. *)
+
+RangeExpr =
+      LogicalOrExpr ".." LogicalOrExpr
+    | LogicalOrExpr ;
+(* Implementation note:
+   - `m..n` is syntactic sugar for `range_from(m, n)`, producing a `Range` value.
+   - Both operands must be `Int`; result type is `Range`.
+   - Half-open: includes `m`, excludes `n` (consistent with `range`/`range_from`).
+   - `..` has lower precedence than all other binary operators including `=`. *)
 
 LogicalOrExpr =
     LogicalAndExpr { "or" LogicalAndExpr } ;

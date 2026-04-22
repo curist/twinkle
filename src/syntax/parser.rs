@@ -1960,6 +1960,8 @@ fn infix_binding_power(op: TokenKind) -> Option<(u8, u8)> {
     Some(match op {
         // Assignment (right-associative)
         Eq | ColonEq => (2, 1),
+        // Range (lower precedence than assignment)
+        DotDot => (1, 3),
         // Logical OR
         Or => (3, 4),
         // Logical AND
@@ -2049,6 +2051,7 @@ fn token_to_binop(kind: TokenKind) -> BinOp {
         And => BinOp::And,
         Or => BinOp::Or,
         Eq => BinOp::Assign,
+        DotDot => BinOp::Range,
         _ => unreachable!("token_to_binop called with non-binary-op token"),
     }
 }
@@ -2531,5 +2534,64 @@ foo
             result.is_err(),
             "Expected parse error for empty import list"
         );
+    }
+
+    #[test]
+    fn test_parse_range_expr() {
+        // Simple `m..n` → Binary { op: Range, left: m, right: n }
+        let expr = parse_expr("1..10").unwrap();
+        match expr.kind {
+            ExprKind::Binary {
+                op: BinOp::Range,
+                left,
+                right,
+            } => {
+                assert!(matches!(left.kind, ExprKind::Literal(Literal::Int(1))));
+                assert!(matches!(right.kind, ExprKind::Literal(Literal::Int(10))));
+            }
+            _ => panic!("Expected range expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_range_lower_than_arithmetic() {
+        // `1 + 2..3 + 4` → (1+2)..(3+4): arithmetic binds tighter than range
+        let expr = parse_expr("1 + 2..3 + 4").unwrap();
+        match expr.kind {
+            ExprKind::Binary {
+                op: BinOp::Range,
+                left,
+                right,
+            } => {
+                assert!(matches!(left.kind, ExprKind::Binary { op: BinOp::Add, .. }));
+                assert!(matches!(
+                    right.kind,
+                    ExprKind::Binary { op: BinOp::Add, .. }
+                ));
+            }
+            _ => panic!("Expected range expression with arithmetic operands"),
+        }
+    }
+
+    #[test]
+    fn test_parse_range_in_assign_rhs() {
+        // `a = m..n` → assign(a, range(m, n)): range is consumed inside the assign RHS
+        let expr = parse_expr("a = 1..10").unwrap();
+        match expr.kind {
+            ExprKind::Binary {
+                op: BinOp::Assign,
+                right,
+                ..
+            } => {
+                assert!(matches!(
+                    right.kind,
+                    ExprKind::Binary {
+                        op: BinOp::Range,
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected assignment with range on the right"),
+        }
     }
 }

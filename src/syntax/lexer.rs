@@ -140,7 +140,13 @@ impl Lexer {
             '[' => self.lex_single(TokenKind::LBracket),
             ']' => self.lex_single(TokenKind::RBracket),
             ',' => self.lex_single(TokenKind::Comma),
-            '.' => self.lex_single(TokenKind::Dot),
+            '.' => self.lex_char_or_double(
+                TokenKind::Dot,
+                '.',
+                TokenKind::DotDot,
+                '\0',
+                TokenKind::Error,
+            ),
             '?' => self.lex_single(TokenKind::Question),
             ';' => self.lex_single(TokenKind::Semi),
             '@' => self.lex_single(TokenKind::At),
@@ -818,5 +824,38 @@ b := "${passed} passed""#;
         // 0xG should lex as 0x (error) — G is not a hex digit
         let result = Lexer::lex("0xG", FileId(0));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lex_dotdot() {
+        // `..` emits a single DotDot token
+        let tokens = lex_simple("..");
+        assert_eq!(tokens[0].kind, TokenKind::DotDot);
+        assert_eq!(tokens[0].text, "..");
+
+        // `1..10` → IntLit DotDot IntLit
+        let tokens = lex_simple("1..10");
+        assert_eq!(tokens[0].kind, TokenKind::IntLit);
+        assert_eq!(tokens[1].kind, TokenKind::DotDot);
+        assert_eq!(tokens[2].kind, TokenKind::IntLit);
+
+        // `a..b` → Ident DotDot Ident (no float confusion)
+        let tokens = lex_simple("a..b");
+        assert_eq!(tokens[0].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].kind, TokenKind::DotDot);
+        assert_eq!(tokens[2].kind, TokenKind::Ident);
+
+        // `1.5..10` → FloatLit DotDot IntLit (float then range, not confused)
+        let tokens = lex_simple("1.5..10");
+        assert_eq!(tokens[0].kind, TokenKind::FloatLit);
+        assert_eq!(tokens[0].text, "1.5");
+        assert_eq!(tokens[1].kind, TokenKind::DotDot);
+        assert_eq!(tokens[2].kind, TokenKind::IntLit);
+
+        // `.` alone still emits Dot
+        let tokens = lex_simple("a.b");
+        assert_eq!(tokens[0].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].kind, TokenKind::Dot);
+        assert_eq!(tokens[2].kind, TokenKind::Ident);
     }
 }

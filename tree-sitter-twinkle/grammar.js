@@ -190,6 +190,15 @@ module.exports = grammar({
         field('operator', '='),
         field('right', $._expression),
       )),
+      $.range_expression,
+    ),
+
+    range_expression: $ => choice(
+      prec.left('range', seq(
+        field('start', $.logical_or_expression),
+        '..',
+        field('end', $.logical_or_expression),
+      )),
       $.logical_or_expression,
     ),
 
@@ -690,6 +699,7 @@ module.exports = grammar({
   precedences: $ => [
     [
       'assign',
+      'range',
       'or',
       'and',
       'bitwise_or',

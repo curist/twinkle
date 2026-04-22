@@ -1,6 +1,6 @@
 # Range Literal Syntax (`m..n`)
 
-**Status:** Planned
+**Status:** Implemented
 **Priority:** Low (ergonomic improvement)
 
 ---

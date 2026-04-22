@@ -266,6 +266,9 @@ pub enum BinOp {
 
     // Assignment
     Assign,
+
+    // Range
+    Range,
 }
 
 /// Unary operators

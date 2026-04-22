@@ -1804,6 +1804,7 @@ impl<'a> EmitCtx<'a> {
                 }
                 BinOp::And | BinOp::Or => MonoType::Bool,
                 BinOp::Assign => MonoType::Void,
+                BinOp::Range => unreachable!("Range desugared to range_from call by lowerer"),
             }),
             AnfOp::AUnOp { op, operand_ty, .. } => Some(match op {
                 UnOp::Neg => match operand_ty {
@@ -2584,6 +2585,7 @@ fn binop_result_ty(op: BinOp, operand_ty: OpKind) -> ValType {
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => ValType::I64,
         BinOp::And | BinOp::Or => ValType::I32,
         BinOp::Assign => ValType::I32,
+        BinOp::Range => unreachable!("Range desugared to range_from call by lowerer"),
     }
 }
 
@@ -3042,7 +3044,7 @@ mod tests {
     use crate::codegen::prelude::build_prelude_map;
     use crate::ir::lower::prelude as prelude_ids;
     use crate::ir::{FieldId, VariantId};
-    use crate::runtime::types::{ref_array_null, ref_pvec_null};
+    use crate::runtime::types::ref_pvec_null;
     use crate::types::ty::{CELL_TYPE_ID, RESULT_TYPE_ID, Variant};
 
     #[test]

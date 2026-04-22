@@ -2121,6 +2121,25 @@ impl Lowerer {
                     });
                 }
 
+                // Desugar range literal: m..n → range_from(m, n)
+                if matches!(op, BinOp::Range) {
+                    let l = self.lower_expr(left)?;
+                    let r = self.lower_expr(right)?;
+                    let range_ty = MonoType::named(RANGE_TYPE_ID);
+                    let func_expr = CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(prelude::RANGE_FROM),
+                        ty: MonoType::Function {
+                            params: vec![MonoType::Int, MonoType::Int],
+                            ret: Box::new(range_ty.clone()),
+                        },
+                        span,
+                    };
+                    return Some(CoreExprKind::Call {
+                        callee: Box::new(func_expr),
+                        args: vec![l, r],
+                    });
+                }
+
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
                 if let Some(rewritten) =

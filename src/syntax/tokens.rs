@@ -75,6 +75,7 @@ pub enum TokenKind {
     Comma,      // ,
     Colon,      // :
     Dot,        // .
+    DotDot,     // ..
     Question,   // ?
     Semi,       // ;
     FatArrow,   // =>
@@ -214,6 +215,7 @@ impl TokenKind {
             TokenKind::Comma => ",",
             TokenKind::Colon => ":",
             TokenKind::Dot => ".",
+            TokenKind::DotDot => "..",
             TokenKind::Question => "?",
             TokenKind::Semi => ";",
             TokenKind::FatArrow => "=>",

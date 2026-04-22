@@ -1112,6 +1112,13 @@ impl TypeChecker {
 
             // Assignment / rebinding operators
             BinOp::Assign => self.synth_assign(left, right, span),
+
+            // Range literal: m..n → Range (both sides must be Int)
+            BinOp::Range => {
+                self.check_expr(left, &MonoType::Int)?;
+                self.check_expr(right, &MonoType::Int)?;
+                Ok(MonoType::named(RANGE_TYPE_ID))
+            }
         }
     }
 
@@ -3552,5 +3559,49 @@ fn expr_as_dotted_name(expr: &Expr) -> Option<String> {
             expr_as_dotted_name(base).map(|prefix| format!("{}.{}", prefix, field))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syntax::parse_source;
+
+    fn typecheck(source: &str) -> Result<TypedModule, Vec<TypeError>> {
+        let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
+        TypeChecker::check_module(&ast, TypeEnv::new(), ValueEnv::new(), HashSet::new())
+    }
+
+    #[test]
+    fn test_range_expr_produces_range_type() {
+        // `0..10` should typecheck and produce a Range value
+        let result = typecheck("x := 0..10");
+        assert!(
+            result.is_ok(),
+            "expected 0..10 to typecheck, got: {result:?}"
+        );
+        let module = result.unwrap();
+        let ty = module.value_env.lookup("x").expect("expected binding 'x'");
+        assert!(
+            matches!(ty, MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID),
+            "expected x to have Range type, got: {ty:?}"
+        );
+    }
+
+    #[test]
+    fn test_range_expr_rejects_non_int_operand() {
+        // `"a"..10` should fail: String is not Int
+        let result = typecheck(r#"x := "a"..10"#);
+        assert!(
+            result.is_err(),
+            "expected type error for String operand in range"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TypeError::TypeMismatch { .. })),
+            "expected TypeMismatch error, got: {errors:?}"
+        );
     }
 }
