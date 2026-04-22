@@ -574,19 +574,19 @@ fn build_ctx(
 
   // Global indices.
   global_idx: Dict<String, Int> = Dict.new()
-  for i in range(globals.len()) {
+  for i in 0..globals.len() {
     global_idx[globals[i].name] = i
   }
 
   // Table indices.
   table_idx: Dict<String, Int> = Dict.new()
-  for i in range(tables.len()) {
+  for i in 0..tables.len() {
     table_idx[tables[i].name] = i
   }
 
   // Data segment indices.
   data_idx: Dict<String, Int> = Dict.new()
-  for i in range(data.len()) {
+  for i in 0..data.len() {
     data_idx[data[i].name] = i
   }
 

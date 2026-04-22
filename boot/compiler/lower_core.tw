@@ -128,7 +128,7 @@ fn pop_scope(ctx: LowerCtx) LowerCtx {
 
 fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
   i := ctx.locals.len() - 1
-  for _ in range(ctx.locals.len()) {
+  for _ in 0..ctx.locals.len() {
     case ctx.locals[i][name] {
       .Some(id) => { return .Some(id) },
       .None => {},
@@ -292,7 +292,7 @@ fn find_field_index_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) 
         .Some(def) => {
           case def {
             .Record(_, _, fields) => {
-              for i in range(fields.len()) {
+              for i in 0..fields.len() {
                 if fields[i].name == field_name {
                   return i
                 }
@@ -351,7 +351,7 @@ fn find_variant_index(env: ResolvedEnv, tid: TypeId, variant_name: String) Int {
     .Some(def) => {
       case def {
         .Sum(_, _, variants) => {
-          for i in range(variants.len()) {
+          for i in 0..variants.len() {
             if variants[i].name == variant_name {
               return i
             }
@@ -413,7 +413,7 @@ fn type_id_from_mono(ty: MonoType) TypeId? {
 
 fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
   m: Dict<String, MonoType> = Dict.new()
-  for i in range(type_params.len()) {
+  for i in 0..type_params.len() {
     if i < type_args.len() { m[type_params[i]] = type_args[i] }
   }
   m
@@ -672,7 +672,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
       field_tys := variant_field_types(scrut_ty, name, ctx.env)
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
-      for i in range(sub_pats.len()) {
+      for i in 0..sub_pats.len() {
         sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
         pr := cur_ctx.lower_pattern(sub_pats[i], sub_ty)
         lowered_pats = lowered_pats.append(pr.pattern)
@@ -699,7 +699,7 @@ fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) PatternOut
       field_tys := variant_field_types(scrut_ty, name, ctx.env)
       lowered_pats: Vector<CorePattern> = []
       cur_ctx := ctx
-      for i in range(sub_pats.len()) {
+      for i in 0..sub_pats.len() {
         sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
         pr := cur_ctx.lower_pattern(sub_pats[i], sub_ty)
         lowered_pats = lowered_pats.append(pr.pattern)
@@ -968,7 +968,7 @@ fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
       case def {
         .Sum(_, _, variants) => {
           ids: Vector<Int> = []
-          for i in range(variants.len()) {
+          for i in 0..variants.len() {
             if variants[i].fields.len() != 0 {
               return .None
             }
@@ -2923,7 +2923,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     // Build init body: chain stmts with Let
     init_body := void_expr(Span.{ file_id: 0, start: 0, end: 0 })
     i := init_stmts.len() - 1
-    for _ in range(init_stmts.len()) {
+    for _ in 0..init_stmts.len() {
       ao := ctx.alloc_anon_local()
       ctx = ao.ctx
       init_body = .{

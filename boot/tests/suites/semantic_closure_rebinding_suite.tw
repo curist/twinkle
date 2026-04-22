@@ -56,7 +56,7 @@ pub fn suite() runner.Suite {
     })
     // §7.7.5 — loop iteration captures per-iteration value
     .test("loop closures capture per-iteration value", fn() {
-      fns := collect i in range(4) { fn() Int { i } }
+      fns := collect i in 0..4 { fn() Int { i } }
       try assert.int_eq(fns[0](), 0)
       try assert.int_eq(fns[1](), 1)
       try assert.int_eq(fns[2](), 2)

@@ -1604,7 +1604,7 @@ fn emit_intrinsic_cell_update(args: Vector<PreparedAtom>, result_idx: Int, ctx: 
 // ── Range intrinsics ───────────────────────────────────────────────────
 
 fn emit_intrinsic_range(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  // range(end) → Range struct (start=0, end=end, step=1)
+  // 0..end → Range struct (start=0, end=end, step=1)
   layout := layout_of(result_mono, ctx.env)
   sym := case layout { .Record(r) => r.sym, _ => error("range: expected Record layout") }
   buf2 := buf.append(.I64Const(0))  // start
@@ -1613,7 +1613,7 @@ fn emit_intrinsic_range(args: Vector<PreparedAtom>, result_idx: Int, result_mono
 }
 
 fn emit_intrinsic_range_from(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  // range_from(start, end) → Range struct
+  // start..end → Range struct
   layout := layout_of(result_mono, ctx.env)
   sym := case layout { .Record(r) => r.sym, _ => error("range_from: expected Record layout") }
   buf2 := emit_atom(args[0], ctx, buf)  // start
@@ -2761,7 +2761,7 @@ fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
   else_body: Vector<Instr> = [.Unreachable]
   for variant in sum_layout.variants.reverse() {
     then_body: Vector<Instr> = [.I32Const(0), .I32Const(variant.variant_id.id)]
-    for i in range(variant.payload_types.len()) {
+    for i in 0..variant.payload_types.len() {
       field_mono := variant_field_mono(sum_mono, variant.variant_id, i, env)
       then_body = then_body.concat([
         .LocalGet(0),
@@ -2805,7 +2805,7 @@ fn emit_variant_to_sum_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
     then_body: Vector<Instr> = [.I32Const(variant.variant_id.id)]
     for sum_variant in sum_layout.variants {
       if sum_variant.variant_id.id == variant.variant_id.id {
-        for i in range(sum_variant.payload_types.len()) {
+        for i in 0..sum_variant.payload_types.len() {
           field_mono := variant_field_mono(sum_mono, sum_variant.variant_id, i, env)
           then_body = then_body.concat([
             .LocalGet(2),

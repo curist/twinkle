@@ -131,7 +131,7 @@ fn layout_hint_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
 }
 
 fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
-  for i in range(env.types.len()) {
+  for i in 0..env.types.len() {
     if env.types[i].id.id == tid.id {
       return env.types[i]
     }

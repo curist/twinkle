@@ -323,7 +323,7 @@ fn capture_local_types(
     return state
   }
 
-  for i in range_from(local_type_start, env.types.len()) {
+  for i in local_type_start..env.types.len() {
     entry := env.types[i]
     name := env.type_names[i]
     state.shared_types = state.shared_types.append(entry)

@@ -31,7 +31,7 @@ pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   state := ConversionState.{ captures: Dict.new(), next_local: next_local }
 
   i := anf.functions.len() - 1
-  for _ in range(anf.functions.len()) {
+  for _ in 0..anf.functions.len() {
     state = scan_expr(anf.functions[i].body, anf.functions[i], env, state)
     i = i - 1
   }

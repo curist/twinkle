@@ -547,7 +547,7 @@ fn expand_mono_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
           case def {
             .Alias(_, type_params, target) => {
               var_map: Dict<String, MonoType> = Dict.new()
-              for i in range(type_params.len()) {
+              for i in 0..type_params.len() {
                 if i < args.len() { var_map[type_params[i]] = args[i] }
               }
               expanded := subst_mono_vars(target, var_map)

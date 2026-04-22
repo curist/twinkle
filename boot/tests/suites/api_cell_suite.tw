@@ -48,7 +48,7 @@ pub fn suite() runner.Suite {
     })
     .test("cell in loop as accumulator", fn() {
       sum := Cell.new(0)
-      for i in range(5) {
+      for i in 0..5 {
         sum.update(fn(n) { n + i })
       }
       try assert.int_eq(sum.get(), 10)

@@ -240,7 +240,7 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
   // Build body: Let(_, Call(init1), Let(_, Call(init2), ... Call(initN)))
   body := make_call(init_ids[init_ids.len() - 1], s)
   i := init_ids.len() - 2
-  for _ in range(init_ids.len() - 1) {
+  for _ in 0..init_ids.len() - 1 {
     body = CoreExpr.{
       kind: .Let(
         LocalId.{ id: 9999900 + i },

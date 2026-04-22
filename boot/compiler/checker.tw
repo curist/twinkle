@@ -306,7 +306,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnos
           if ta.id == tb.id and aa.len() == ab.len() {
             cur_ctx := ctx
             cur_diags := diags
-            for i in range(aa.len()) {
+            for i in 0..aa.len() {
               r := cur_ctx.unify(aa[i], ab[i], s, cur_diags)
               cur_ctx = r.ctx
               cur_diags = r.diags
@@ -323,7 +323,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnos
           if pa.len() == pb.len() {
             cur_ctx := ctx
             cur_diags := diags
-            for i in range(pa.len()) {
+            for i in 0..pa.len() {
               r := cur_ctx.unify(pa[i], pb[i], s, cur_diags)
               cur_ctx = r.ctx
               cur_diags = r.diags
@@ -383,7 +383,7 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
 
 fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
   m: Dict<String, MonoType> = Dict.new()
-  for i in range(type_params.len()) {
+  for i in 0..type_params.len() {
     if i < type_args.len() { m[type_params[i]] = type_args[i] }
   }
   m
@@ -420,7 +420,7 @@ fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?,
 fn check_args(ctx: InferCtx, args: Vector<Expr>, param_tys: Vector<MonoType>, diags: Vector<Diagnostic>) CheckOut {
   cur_ctx := ctx
   cur_diags := diags
-  for i in range(args.len()) {
+  for i in 0..args.len() {
     ar := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
     cur_ctx = ar.ctx
     cur_diags = ar.diags
@@ -635,7 +635,7 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
               pu := pre_unify_return(resolved.ctx, named_ty, call_expected, s, diags)
               cur_ctx := pu.ctx
               cur_diags := pu.diags
-              for i in range(args.len()) {
+              for i in 0..args.len() {
                 ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
                 cur_ctx = ar.ctx
                 cur_diags = ar.diags
@@ -689,7 +689,7 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
         pu := pre_unify_return(cur_ctx, ret_ty, call_expected, s, cur_diags)
         cur_ctx = pu.ctx
         cur_diags = pu.diags
-        for i in range(args.len()) {
+        for i in 0..args.len() {
           cr := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
           cur_ctx = cr.ctx
           cur_diags = cr.diags
@@ -1205,7 +1205,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
       }
       cur_ctx := ctx
       cur_diags := diags
-      for i in range(args.len()) {
+      for i in 0..args.len() {
         ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
         cur_ctx = ar.ctx
         cur_diags = ar.diags
@@ -1245,7 +1245,7 @@ fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<Diagno
   first := ctx.synth(elems[0], diags)
   cur_ctx := first.ctx
   cur_diags := first.diags
-  for i in range_from(1, elems.len()) {
+  for i in 1..elems.len() {
     r := cur_ctx.synth(elems[i], cur_diags)
     u := r.ctx.unify(r.ty, first.ty, elems[i].span, r.diags)
     cur_ctx = u.ctx
@@ -1406,7 +1406,7 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
       cur_ctx.current_ret = .Some(exp_ret)
 
       param_tys: Vector<MonoType> = []
-      for i in range(params.len()) {
+      for i in 0..params.len() {
         p := params[i]
         case p.ty {
           .Some(ty_expr) => {
@@ -1726,7 +1726,7 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
       }
       cur_ctx := ctx
       cur_diags := diags
-      for i in range(sub_pats.len()) {
+      for i in 0..sub_pats.len() {
         pr := check_pattern(sub_pats[i], info.field_types[i], cur_ctx, cur_diags)
         cur_ctx = pr.ctx
         cur_diags = pr.diags
@@ -2734,7 +2734,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<Diagnostic>) 
       fn_ctx := push_scope(ctx)
 
       // Bind parameters
-      for i in range(sig.params.len()) {
+      for i in 0..sig.params.len() {
         fn_ctx = bind_local(fn_ctx, sig.param_names[i], sig.params[i])
       }
 

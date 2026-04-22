@@ -13,7 +13,7 @@ use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.wat.{emit_wat, emit_wat_unlinked_for_test}
 
 fn pad(indent: Int) String {
-  collect _ in range(indent) { " " }.join("")
+  collect _ in 0..indent { " " }.join("")
 }
 
 fn line(lines: Vector<String>, indent: Int, text: String) Vector<String> {

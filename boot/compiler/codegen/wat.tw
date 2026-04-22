@@ -21,7 +21,7 @@ fn sym(s: String) String {
 }
 
 fn make_pad(indent: Int) String {
-  collect _ in range(indent) { " " }.join("")
+  collect _ in 0..indent { " " }.join("")
 }
 
 fn join_lines(lines: Vector<String>) String {
@@ -77,7 +77,7 @@ fn emit_wat_parts(
   }
 
   ft_registry := build_functype_registry(imports, funcs)
-  for i in range(ft_registry.entries.len()) {
+  for i in 0..ft_registry.entries.len() {
     entry := ft_registry.entries[i]
     lines = lines.append(emit_functype_def(i, entry.params, entry.results))
   }

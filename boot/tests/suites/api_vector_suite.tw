@@ -93,7 +93,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("collect produces vector", fn() {
-      squares := collect i in range(5) { i * i }
+      squares := collect i in 0..5 { i * i }
       try assert.int_eq(squares.len(), 5)
       try assert.int_eq(squares[0], 0)
       try assert.int_eq(squares[4], 16)
@@ -268,7 +268,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("collect matches append loop across trie boundaries", fn() {
-      via_collect := collect i in range(1050) { i * 3 }
+      via_collect := collect i in 0..1050 { i * 3 }
       via_append := build_scaled_seq(1050, 3)
       try assert_vec_int_eq(via_collect, via_append)
       .Ok({})

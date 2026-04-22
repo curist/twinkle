@@ -39,7 +39,7 @@ pub type LinkError = {
 fn ns_prefix(ns: String) String {
   // "rt.arr" → "rt_arr"
   out := ""
-  for i in range(ns.len()) {
+  for i in 0..ns.len() {
     ch := ns.slice(i, i + 1)
     if ch == "." {
       out = "${out}_"
