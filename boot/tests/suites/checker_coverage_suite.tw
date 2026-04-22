@@ -119,4 +119,20 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
+    .test("range literal produces Range type", fn() {
+      // Range is TypeId(3), so mono_to_string renders it as "Named(3)"
+      src := "fn f() { x := 0..10\nx }"
+      r := try check_ok(src)
+      ty := try type_at(r, src, "0..10")
+      assert.str_eq(ty, "Named(3)")
+    })
+    .test("range literal rejects non-Int operand", fn() {
+      src := "fn f() { \"a\"..10 }"
+      errs := try check_errs(src)
+      has_mismatch := false
+      for msg in errs {
+        if msg.len() > 0 { has_mismatch = true }
+      }
+      assert.is_true(has_mismatch)
+    })
 }

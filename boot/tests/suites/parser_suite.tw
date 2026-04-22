@@ -546,6 +546,34 @@ pub fn suite() runner.Suite {
         _ => assert.fail("expected Range"),
       }
     })
+    .test("expr: range precedence (arithmetic binds tighter)", fn() {
+      // 1 + 2..3 + 4 should parse as (1 + 2)..(3 + 4)
+      expr := try parse_body_tail("fn f() { 1 + 2..3 + 4 }")
+      case expr.kind {
+        .Binary(op, lhs, rhs) => {
+          try assert.is_true(op == .Range)
+          try assert_expr_kind(lhs, "Binary")
+          assert_expr_kind(rhs, "Binary")
+        },
+        _ => assert.fail("expected Binary Range at top"),
+      }
+    })
+    .test("expr: range in assign rhs", fn() {
+      // a = m..n should parse as a = (m..n), not (a = m)..n
+      // In the boot parser, `a = expr` is parsed as LetStmt with is_rebind=true.
+      // The RHS value should be the Range expression.
+      stmt := try parse_body_stmt("fn f() { a = 1..10 }", 0)
+      case stmt {
+        .Let(s) => {
+          try assert.is_true(s.is_rebind)
+          case s.value.kind {
+            .Binary(rop, _, _) => assert.is_true(rop == .Range),
+            _ => assert.fail("expected Range as value of rebind"),
+          }
+        },
+        _ => assert.fail("expected Let (rebind) stmt"),
+      }
+    })
     .test("expr: operator precedence (mul before add)", fn() {
       // a + b * c should parse as a + (b * c)
       expr := try parse_body_tail("fn f() Int { a + b * c }")

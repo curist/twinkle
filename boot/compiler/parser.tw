@@ -1156,7 +1156,7 @@ fn parse_type(c: Cursor) ItemParse {
 fn infix_binding(kind: TokenKind) InfixInfo? {
   case kind {
     .Eq => .Some(.{ left: 1, right: 1, op: .Assign }),
-    .DotDot => .Some(.{ left: 2, right: 3, op: .Range }),
+    .DotDot => .Some(.{ left: 1, right: 3, op: .Range }),
     .Or => .Some(.{ left: 4, right: 5, op: .LogicalOr }),
     .PipePipe => .Some(.{ left: 4, right: 5, op: .LogicalOr }),
     .And => .Some(.{ left: 6, right: 7, op: .LogicalAnd }),
