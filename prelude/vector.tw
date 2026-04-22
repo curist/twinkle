@@ -102,11 +102,6 @@ pub fn join(xs: Vector<String>, sep: String) String {
   }
 }
 
-/// Convert a vector to a string using f to stringify each element.
-pub fn to_string<T>(xs: Vector<T>, f: fn(T) String) String {
-  "[${xs.map(f).join(", ")}]"
-}
-
 fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   out := a.slice(0, 0)
   i := 0
