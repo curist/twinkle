@@ -145,3 +145,4 @@ Related historical context outside this folder:
 | [boot-multi-module-cleanup.md](boot-multi-module-cleanup.md) | Follow-up cleanup after landing boot multi-module compilation steps 1–3; selective-import parity, canonical path caching, helper dedup, and snapshot/diagnostic polish |
 | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) | Boot-side signature source of truth via `prelude/signatures/*.tw` plus `builtins.tw` canonical mapping |
 | [interproc-uniqueness.md](interproc-uniqueness.md) | Interprocedural consume-at-call-site analysis — Gap 1 (ARecordGet dying struct propagation) and Gap 2 (consumed-param shell reuse) both landed in boot compiler; ~11% compile_modules improvement |
+| [range-literal-syntax.md](range-literal-syntax.md) | `m..n` range literal syntax desugaring to `range_from` — stage0 and boot compiler, tree-sitter grammar, precedence fix |

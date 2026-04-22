@@ -172,7 +172,7 @@
       "required": false,
       "types": [
         {
-          "type": "logical_or_expression",
+          "type": "range_expression",
           "named": true
         }
       ]
@@ -1620,6 +1620,42 @@
     }
   },
   {
+    "type": "range_expression",
+    "named": true,
+    "fields": {
+      "end": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "logical_or_expression",
+            "named": true
+          }
+        ]
+      },
+      "start": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "logical_or_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "logical_or_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "record_field",
     "named": true,
     "fields": {
@@ -2340,6 +2376,10 @@
   },
   {
     "type": ".",
+    "named": false
+  },
+  {
+    "type": "..",
     "named": false
   },
   {
