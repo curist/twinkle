@@ -1,0 +1,314 @@
+// JSON value type, decoder combinators, and stringify.
+//
+// Decoder<A> is a thin record wrapper around fn(Json) Result<A, String>.
+// Because it is transparent, users can write plain functions as decoders
+// without any special wrapping — they just need to match the signature.
+
+pub type Json = {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  Str(String),
+  Array(Vector<Json>),
+  Object(Dict<String, Json>),
+}
+
+pub type Decoder<A> = .{
+  run: fn(Json) Result<A, String>,
+}
+
+fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> {
+  .{ run: f }
+}
+
+// ---------------------------------------------------------------------------
+// Primitives
+// ---------------------------------------------------------------------------
+
+pub fn raw() Decoder<Json> {
+  make(fn(json: Json) Result<Json, String> { .Ok(json) })
+}
+
+pub fn string() Decoder<String> {
+  make(fn(json: Json) Result<String, String> {
+    case json {
+      .Str(s) => .Ok(s),
+      _ => .Err("expected string"),
+    }
+  })
+}
+
+pub fn int() Decoder<Int> {
+  make(fn(json: Json) Result<Int, String> {
+    case json {
+      .Int(n) => .Ok(n),
+      _ => .Err("expected int"),
+    }
+  })
+}
+
+pub fn bool() Decoder<Bool> {
+  make(fn(json: Json) Result<Bool, String> {
+    case json {
+      .Bool(b) => .Ok(b),
+      _ => .Err("expected bool"),
+    }
+  })
+}
+
+pub fn float() Decoder<Float> {
+  make(fn(json: Json) Result<Float, String> {
+    case json {
+      .Float(f) => .Ok(f),
+      .Int(n)   => .Ok(n.to_float()),
+      _ => .Err("expected number"),
+    }
+  })
+}
+
+// Always succeed with a constant, ignoring the Json value.
+pub fn succeed<A>(value: A) Decoder<A> {
+  make(fn(_: Json) { .Ok(value) })
+}
+
+// Always fail with a message.
+pub fn fail<A>(message: String) Decoder<A> {
+  make(fn(_: Json) { .Err(message) })
+}
+
+// ---------------------------------------------------------------------------
+// Transform
+// ---------------------------------------------------------------------------
+
+pub fn map<A, B>(f: fn(A) B, da: Decoder<A>) Decoder<B> {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Ok(a)  => .Ok(f(a)),
+      .Err(e) => .Err(e),
+    }
+  })
+}
+
+pub fn map2<A, B, C>(f: fn(A, B) C, da: Decoder<A>, db: Decoder<B>) Decoder<C> {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a)  => case db.run(json) {
+        .Err(e) => .Err(e),
+        .Ok(b)  => .Ok(f(a, b)),
+      },
+    }
+  })
+}
+
+pub fn map3<A, B, C, D>(
+  f: fn(A, B, C) D,
+  da: Decoder<A>,
+  db: Decoder<B>,
+  dc: Decoder<C>,
+) Decoder<D> {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a)  => case db.run(json) {
+        .Err(e) => .Err(e),
+        .Ok(b)  => case dc.run(json) {
+          .Err(e) => .Err(e),
+          .Ok(c)  => .Ok(f(a, b, c)),
+        },
+      },
+    }
+  })
+}
+
+// Chain: decode a, then use the decoded value to pick the next decoder.
+// The second decoder still runs against the same original json.
+pub fn and_then<A, B>(f: fn(A) Decoder<B>, da: Decoder<A>) Decoder<B> {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a)  => f(a).run(json),
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Structure
+// ---------------------------------------------------------------------------
+
+// Decode a required object field.
+pub fn field<A>(key: String, da: Decoder<A>) Decoder<A> {
+  make(fn(json: Json) {
+    case json {
+      .Object(obj) => case obj[key] {
+        .Some(value) => case da.run(value) {
+          .Ok(a)  => .Ok(a),
+          .Err(e) => .Err("field '${key}': ${e}"),
+        },
+        .None => .Err("missing field '${key}'"),
+      },
+      _ => .Err("expected object for field '${key}'"),
+    }
+  })
+}
+
+// Decode an optional field: missing or null both become None.
+pub fn optional_field<A>(key: String, da: Decoder<A>) Decoder<A?> {
+  make(fn(json: Json) {
+    case json {
+      .Object(obj) => case obj[key] {
+        .None        => .Ok(.None),
+        .Some(.Null) => .Ok(.None),
+        .Some(value) => case da.run(value) {
+          .Ok(a)  => .Ok(.Some(a)),
+          .Err(e) => .Err("field '${key}': ${e}"),
+        },
+      },
+      _ => .Err("expected object"),
+    }
+  })
+}
+
+// Decode an array element by index.
+pub fn index<A>(i: Int, da: Decoder<A>) Decoder<A> {
+  make(fn(json: Json) {
+    case json {
+      .Array(arr) => {
+        if i < 0 or i >= arr.len() {
+          return .Err("index ${i} out of bounds (length ${arr.len()})")
+        }
+        case da.run(arr[i]) {
+          .Ok(a)  => .Ok(a),
+          .Err(e) => .Err("index ${i}: ${e}"),
+        }
+      },
+      _ => .Err("expected array"),
+    }
+  })
+}
+
+// Decode an optional value: null becomes None.
+pub fn nullable<A>(da: Decoder<A>) Decoder<A?> {
+  make(fn(json: Json) {
+    case json {
+      .Null => .Ok(.None),
+      _     => case da.run(json) {
+        .Ok(a)  => .Ok(.Some(a)),
+        .Err(e) => .Err(e),
+      },
+    }
+  })
+}
+
+// Decode every element of a JSON array.
+pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
+  make(fn(json: Json) {
+    case json {
+      .Array(arr) => {
+        // Map to results first; early-return on first error.
+        // TODO: simplify to a mutable accumulator once the stage0 empty-vector
+        // inference gap is fixed (see docs/plans/collection-literal-type-inference.md).
+        results := collect item in arr { da.run(item) }
+        i := 0
+        for r in results {
+          case r {
+            .Err(e) => { return .Err("index ${i}: ${e}") },
+            .Ok(_)  => {},
+          }
+          i = i + 1
+        }
+        // All succeeded — unwrap.
+        .Ok(collect r in results {
+          case r { .Ok(a) => a, .Err(_) => error("list: impossible") }
+        })
+      },
+      _ => .Err("expected array"),
+    }
+  })
+}
+
+// Try each decoder in order; return first success.
+pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
+  make(fn(json: Json) {
+    i := 0
+    for i < decoders.len() {
+      case decoders[i].run(json) {
+        .Ok(a)  => { return .Ok(a) },
+        .Err(_) => {},
+      }
+      i = i + 1
+    }
+    .Err("no decoder matched")
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------
+
+pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> {
+  da.run(json)
+}
+
+// ---------------------------------------------------------------------------
+// Encode (stringify)
+// ---------------------------------------------------------------------------
+
+pub fn stringify(json: Json) String {
+  case json {
+    .Null     => "null",
+    .Bool(b)  => if b { "true" } else { "false" },
+    .Int(n)   => n.to_string(),
+    .Float(f) => f.to_string(),
+    .Str(s)   => quote_string(s),
+    .Array(arr) => {
+      if arr.len() == 0 {
+        return "[]"
+      }
+      parts: Vector<String> = []
+      for item in arr {
+        parts = parts.append(stringify(item))
+      }
+      "[".concat(parts.join(",")).concat("]")
+    },
+    .Object(obj) => {
+      keys := obj.keys()
+      if keys.len() == 0 {
+        return "{}"
+      }
+      parts: Vector<String> = []
+      for key in keys {
+        val := case obj[key] { .Some(v) => v, .None => Json.Null }
+        entry := quote_string(key).concat(":").concat(stringify(val))
+        parts = parts.append(entry)
+      }
+      "{".concat(parts.join(",")).concat("}")
+    },
+  }
+}
+
+fn quote_string(s: String) String {
+  // Build the escaped content as bytes, then decode once at the end.
+  // Byte.to_string() returns a decimal integer, not a char, so we collect
+  // raw bytes and convert the whole buffer via String.from_utf8.
+  buf: Vector<Byte> = []
+  for b in s.utf8_bytes() {
+    n := Byte.to_int(b)
+    escape := if n == 34 { "\\\"" }       // "
+              else if n == 92 { "\\\\" }  // \
+              else if n == 10 { "\\n" }   // newline
+              else if n == 13 { "\\r" }   // carriage return
+              else if n == 9  { "\\t" }   // tab
+              else { "" }
+    if escape == "" {
+      buf = buf.append(b)
+    } else {
+      for eb in escape.utf8_bytes() {
+        buf = buf.append(eb)
+      }
+    }
+  }
+  inner := case String.from_utf8(buf) { .Some(s) => s, .None => "" }
+  "\"".concat(inner).concat("\"")
+}
