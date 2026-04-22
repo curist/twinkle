@@ -206,22 +206,16 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
   make(fn(json: Json) {
     case json {
       .Array(arr) => {
-        // Map to results first; early-return on first error.
-        // TODO: simplify to a mutable accumulator once the stage0 empty-vector
-        // inference gap is fixed (see docs/plans/collection-literal-type-inference.md).
-        results := collect item in arr { da.run(item) }
+        out := []
         i := 0
-        for r in results {
-          case r {
+        for i < arr.len() {
+          case da.run(arr[i]) {
+            .Ok(a)  => out = out.append(a),
             .Err(e) => { return .Err("index ${i}: ${e}") },
-            .Ok(_)  => {},
           }
           i = i + 1
         }
-        // All succeeded — unwrap.
-        .Ok(collect r in results {
-          case r { .Ok(a) => a, .Err(_) => error("list: impossible") }
-        })
+        .Ok(out)
       },
       _ => .Err("expected array"),
     }

@@ -1,0 +1,17 @@
+fn from_append() {
+  xs := []
+  xs = xs.append(42)
+}
+
+fn from_return() Vector<Int> {
+  xs := []
+  xs
+}
+
+fn takes_strings(v: Vector<String>) Int { v.len() }
+
+fn from_call_arg() {
+  xs := []
+  xs = xs.append("a")
+  takes_strings(xs)
+}

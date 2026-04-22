@@ -146,3 +146,4 @@ Related historical context outside this folder:
 | [boot-signature-source-of-truth.md](boot-signature-source-of-truth.md) | Boot-side signature source of truth via `prelude/signatures/*.tw` plus `builtins.tw` canonical mapping |
 | [interproc-uniqueness.md](interproc-uniqueness.md) | Interprocedural consume-at-call-site analysis — Gap 1 (ARecordGet dying struct propagation) and Gap 2 (consumed-param shell reuse) both landed in boot compiler; ~11% compile_modules improvement |
 | [range-literal-syntax.md](range-literal-syntax.md) | `m..n` range literal syntax desugaring to `range_from` — stage0 and boot compiler, tree-sitter grammar, precedence fix |
+| [collection-literal-type-inference.md](collection-literal-type-inference.md) | Stage0 deferred type inference for `Dict.new()` and empty `[]` literals — MetaVar emission with scope-exit drain; workaround removed from `boot/lib/json.tw` |

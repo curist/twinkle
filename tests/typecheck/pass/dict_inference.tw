@@ -1,0 +1,19 @@
+fn from_assignment() {
+  d := Dict.new()
+  d["a"] = 1
+  d["b"] = 2
+}
+
+fn from_return() Dict<String, Int> {
+  d := Dict.new()
+  d["x"] = 1
+  d
+}
+
+fn takes_dict(d: Dict<String, Bool>) Bool { d.has("x") }
+
+fn from_call_arg() {
+  d := Dict.new()
+  d["x"] = true
+  takes_dict(d)
+}

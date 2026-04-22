@@ -343,7 +343,7 @@ fn test_missing_method_signature_reports_type_error_not_panic() {
     let src = r#"
 fn main() Int {
     xs := [1]
-    f := xs.push
+    f := xs.append
     f(2).len()
 }
 main()

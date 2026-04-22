@@ -47,6 +47,13 @@ pub struct TypeChecker {
 
     // Internal host intrinsics are only callable from stdlib/prelude modules.
     allow_internal_host_builtins: bool,
+
+    // Deferred ambiguity checks for collection literals (Dict.new(), []) whose
+    // type args are MetaVars at binding time but may be resolved by downstream
+    // usage before scope exit.  Each entry: (variable_name, span).
+    // Managed with a "generation" index: callers save the current length,
+    // then drain from that index at scope exit.
+    pending_meta_let_bindings: Vec<(String, Span)>,
 }
 
 impl TypeChecker {
@@ -86,6 +93,7 @@ impl TypeChecker {
             meta_subst: HashMap::new(),
             call_expected_ret: None,
             allow_internal_host_builtins,
+            pending_meta_let_bindings: Vec::new(),
         };
 
         // Pass 1: Check all top-level lets and add to ValueEnv
@@ -136,6 +144,14 @@ impl TypeChecker {
                             };
                             let t = checker.zonk(&t);
                             if contains_meta(&t) {
+                                if matches!(&t, MonoType::Dict(_, _) | MonoType::Vector(_)) {
+                                    // Defer: type args may be resolved by subsequent top-level stmts
+                                    checker
+                                        .pending_meta_let_bindings
+                                        .push((name.clone(), value.span));
+                                    checker.value_env.add_value(name.clone(), t);
+                                    continue;
+                                }
                                 checker.errors.push(TypeError::AmbiguousType {
                                     name: name.clone(),
                                     span: value.span,
@@ -162,6 +178,29 @@ impl TypeChecker {
                 } else {
                     // For loops and other side-effectful statements at top-level
                     checker.check_top_level_stmt(stmt);
+                }
+            }
+        }
+
+        // Drain top-level deferred collection meta-bindings.
+        // Subsequent top-level stmts (processed above) may have resolved the MetaVars;
+        // any that remain unsolved are genuinely ambiguous.
+        {
+            let entries: Vec<_> = checker.pending_meta_let_bindings.drain(..).collect();
+            for (name, span) in entries {
+                // Top-level lets go into value_env, not local_env.
+                let ty = checker.value_env.lookup(&name);
+                if let Some(ty) = ty {
+                    let ty = checker.zonk(&ty);
+                    if contains_meta(&ty) {
+                        checker.errors.push(TypeError::AmbiguousType {
+                            name: name.clone(),
+                            span,
+                            note: "type cannot be inferred; add a type annotation".to_string(),
+                        });
+                        let recovery = checker.fresh_meta();
+                        checker.value_env.add_value(name, recovery);
+                    }
                 }
             }
         }
@@ -367,6 +406,40 @@ impl TypeChecker {
     /// Apply the current meta substitution to a type.
     fn zonk(&self, ty: &MonoType) -> MonoType {
         zonk_ty(ty, &self.meta_subst)
+    }
+
+    /// Drain deferred meta-binding ambiguity checks added since `from`.
+    ///
+    /// Called at scope exit (just before `pop_scope`) so that all statements
+    /// in the scope have had a chance to resolve the MetaVars via unification.
+    /// Any binding whose type still contains a MetaVar after zonking is reported
+    /// as ambiguous.
+    ///
+    /// Limitation: if the same name is re-bound in the same scope after the
+    /// deferred binding (e.g. `xs := []; xs := [1]`), the second binding
+    /// overwrites the name in local_env and the lookup here finds the concrete
+    /// type, silently suppressing the ambiguity error for the original binding.
+    /// This is a known edge case; duplicate lets in the same scope are already
+    /// poor style and the net result (the name has a good type) is not harmful.
+    fn drain_pending_meta_bindings(&mut self, from: usize) {
+        let entries: Vec<_> = self.pending_meta_let_bindings.drain(from..).collect();
+        for (name, span) in entries {
+            let ty = self
+                .local_env
+                .lookup(&name)
+                .cloned()
+                .or_else(|| self.value_env.lookup(&name));
+            if let Some(ty) = ty {
+                let ty = self.zonk(&ty);
+                if contains_meta(&ty) {
+                    self.errors.push(TypeError::AmbiguousType {
+                        name,
+                        span,
+                        note: "type cannot be inferred; add a type annotation".to_string(),
+                    });
+                }
+            }
+        }
     }
 
     /// Type-check a top-level statement that is not a let binding.
@@ -1381,17 +1454,12 @@ impl TypeChecker {
         span: Span,
         _callee_id: ExprId,
     ) -> Result<MonoType, ()> {
-        // Dict.new() remains compiler-special because type parameters must come
-        // from contextual annotation; naked calls are intentionally rejected.
+        // Dict.new() — emit fresh MetaVars for K and V so downstream usage can
+        // resolve the type via unification.
         if alias == "Dict" && func_name == "new" {
-            self.errors.push(TypeError::UnsupportedFeature {
-                feature: "Dict.new() without type annotation",
-                span,
-                note:
-                    "Dict.new() requires a type annotation, e.g. `m: Dict<String, Int> = Dict.new()`"
-                        .to_string(),
-            });
-            return Err(());
+            let k = self.fresh_meta();
+            let v = self.fresh_meta();
+            return Ok(MonoType::Dict(Box::new(k), Box::new(v)));
         }
         self.synth_qualified_call(alias, func_name, args, span)
     }
@@ -1762,6 +1830,7 @@ impl TypeChecker {
 
     fn synth_block(&mut self, block: &Block) -> Result<MonoType, ()> {
         self.local_env.push_scope();
+        let pending_base = self.pending_meta_let_bindings.len();
 
         let mut result_ty = MonoType::Void;
         let mut had_error = false;
@@ -1844,6 +1913,7 @@ impl TypeChecker {
             }
         }
 
+        self.drain_pending_meta_bindings(pending_base);
         self.local_env.pop_scope();
         if had_error { Err(()) } else { Ok(result_ty) }
     }
@@ -1854,6 +1924,7 @@ impl TypeChecker {
     /// if-expressions, etc.
     fn check_block(&mut self, block: &Block, expected_ty: &MonoType) -> Result<(), ()> {
         self.local_env.push_scope();
+        let pending_base = self.pending_meta_let_bindings.len();
 
         // Index of the last Expr statement (if any)
         let last_expr_idx = block.stmts.iter().rposition(|s| matches!(s, Stmt::Expr(_)));
@@ -1953,6 +2024,7 @@ impl TypeChecker {
             let _ = self.unify(&block_ty, expected_ty, block.span);
         }
 
+        self.drain_pending_meta_bindings(pending_base);
         self.local_env.pop_scope();
         if had_error { Err(()) } else { Ok(()) }
     }
@@ -1999,6 +2071,13 @@ impl TypeChecker {
                     };
                     let t = self.zonk(&t);
                     if contains_meta(&t) {
+                        if matches!(&t, MonoType::Dict(_, _) | MonoType::Vector(_)) {
+                            // Defer: downstream usage in this scope may resolve the MetaVars.
+                            self.pending_meta_let_bindings
+                                .push((name.clone(), value.span));
+                            self.local_env.bind(name.clone(), t);
+                            return;
+                        }
                         self.errors.push(TypeError::AmbiguousType {
                             name: name.clone(),
                             span: value.span,
@@ -2324,16 +2403,11 @@ impl TypeChecker {
     // Vector literals
     //
 
-    fn synth_array(&mut self, elements: &[Expr], span: Span) -> Result<MonoType, ()> {
+    fn synth_array(&mut self, elements: &[Expr], _span: Span) -> Result<MonoType, ()> {
         if elements.is_empty() {
-            // Empty vector - we can't infer the type
-            // For now, error - require type annotation
-            self.errors.push(TypeError::UnsupportedFeature {
-                feature: "empty vector literals",
-                span,
-                note: "Empty vectors require type annotations (not yet supported)".to_string(),
-            });
-            return Err(());
+            // Emit a fresh MetaVar for the element type; downstream usage resolves it.
+            let elem = self.fresh_meta();
+            return Ok(MonoType::Vector(Box::new(elem)));
         }
 
         // Infer type from first element
