@@ -36,7 +36,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
 fn find_offset(src: String, needle: String) Int? {
   if needle.len() > src.len() { return .None }
   limit := src.len() - needle.len()
-  for i in range(limit + 1) {
+  for i in 0..limit + 1 {
     if src.slice(i, i + needle.len()) == needle {
       return .Some(i)
     }

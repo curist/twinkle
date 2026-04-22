@@ -6,22 +6,22 @@ pub fn suite() runner.Suite {
     // Range basics
     .test("range produces 0 to n-1", fn() {
       sum := 0
-      for i in range(5) {
+      for i in 0..5 {
         sum = sum + i
       }
       try assert.int_eq(sum, 10)
       .Ok({})
     })
-    .test("range(0) produces empty iteration", fn() {
+    .test("0..0 produces empty iteration", fn() {
       count := 0
-      for _ in range(0) {
+      for _ in 0..0 {
         count = count + 1
       }
       try assert.int_eq(count, 0)
       .Ok({})
     })
     .test("range_from produces start to end-1", fn() {
-      vals := collect i in range_from(3, 7) { i }
+      vals := collect i in 3..7 { i }
       try assert.int_eq(vals.len(), 4)
       try assert.int_eq(vals[0], 3)
       try assert.int_eq(vals[3], 6)
@@ -37,21 +37,21 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("range with indexed for", fn() {
-      indices := collect val, idx in range_from(10, 13) { idx }
+      indices := collect val, idx in 10..13 { idx }
       try assert.int_eq(indices[0], 0)
       try assert.int_eq(indices[1], 1)
       try assert.int_eq(indices[2], 2)
       .Ok({})
     })
     .test("collect from range", fn() {
-      squares := collect i in range(5) { i * i }
+      squares := collect i in 0..5 { i * i }
       try assert.int_eq(squares.len(), 5)
       try assert.int_eq(squares[0], 0)
       try assert.int_eq(squares[4], 16)
       .Ok({})
     })
     .test("collect with continue filters", fn() {
-      evens := collect i in range(10) {
+      evens := collect i in 0..10 {
         if i % 2 == 0 { i } else { continue }
       }
       try assert.int_eq(evens.len(), 5)
@@ -60,7 +60,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("collect with break stops early", fn() {
-      vals := collect i in range(100) {
+      vals := collect i in 0..100 {
         if i >= 3 { break }
         i
       }
@@ -227,7 +227,7 @@ pub fn suite() runner.Suite {
         .filter(fn(x: Int) { x % 3 == 0 })
         .take(4)
         .to_vector()
-      via_collect := collect x in range(20) {
+      via_collect := collect x in 0..20 {
         y := x + 1
         if y % 3 == 0 and y <= 12 { y } else { continue }
       }

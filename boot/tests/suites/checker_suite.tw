@@ -165,7 +165,7 @@ fn find_offset(src: String, needle: String) Int? {
 fn find_offset_after(src: String, needle: String, start: Int) Int? {
   if needle.len() > src.len() { return .None }
   limit := src.len() - needle.len()
-  for i in range(limit + 1) {
+  for i in 0..limit + 1 {
     if i >= start and src.slice(i, i + needle.len()) == needle {
       return .Some(i)
     }
@@ -177,7 +177,7 @@ fn find_offset_nth(src: String, needle: String, n: Int) Int? {
   count := 0
   if needle.len() > src.len() { return .None }
   limit := src.len() - needle.len()
-  for i in range(limit + 1) {
+  for i in 0..limit + 1 {
     if src.slice(i, i + needle.len()) == needle {
       if count == n { return .Some(i) }
       count = count + 1
@@ -537,7 +537,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("collect with range", fn() {
-      src := "fn squares(n: Int) Vector<Int> { collect i in range(n) { i * i } }"
+      src := "fn squares(n: Int) Vector<Int> { collect i in 0..n { i * i } }"
       r := try check_ok_builtins(src)
       .Ok({})
     })
@@ -756,7 +756,7 @@ pub fn suite() runner.Suite {
     })
     // ── C2: element_type_of for Iterator and Range ──
     .test("C2 for over range produces Int", fn() {
-      src := "fn f() Int {\nx := 0\nfor i in range(10) { x = i }\nx\n}"
+      src := "fn f() Int {\nx := 0\nfor i in 0..10 { x = i }\nx\n}"
       r := try check_ok_builtins(src)
       .Ok({})
     })
@@ -786,7 +786,7 @@ pub fn suite() runner.Suite {
     })
     // ── C3: break, continue, defer, assign ──
     .test("C3 break in for loop ok", fn() {
-      src := "fn f() Void {\nfor i in range(10) { if i > 5 { break } }\n}"
+      src := "fn f() Void {\nfor i in 0..10 { if i > 5 { break } }\n}"
       r := try check_ok_builtins(src)
       .Ok({})
     })
@@ -1047,7 +1047,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("P1 private top-level rebinding in for loop is allowed", fn() {
-      src := "sum := 0\nfor i in range(10) {\n  sum = sum + i\n}"
+      src := "sum := 0\nfor i in 0..10 {\n  sum = sum + i\n}"
       r := try check_ok_builtins(src)
       .Ok({})
     })

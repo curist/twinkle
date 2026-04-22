@@ -150,7 +150,7 @@ pub fn suite() runner.Suite {
     // for with range
     .test("for over range", fn() {
       sum := 0
-      for i in range(5) {
+      for i in 0..5 {
         sum = sum + i
       }
       try assert.int_eq(sum, 10)
@@ -159,7 +159,7 @@ pub fn suite() runner.Suite {
     // for with range_from
     .test("for over range_from", fn() {
       sum := 0
-      for i in range_from(3, 6) {
+      for i in 3..6 {
         sum = sum + i
       }
       try assert.int_eq(sum, 12)
@@ -167,7 +167,7 @@ pub fn suite() runner.Suite {
     })
     // collect from range
     .test("collect from range with transform", fn() {
-      doubled := collect i in range(4) { i * 2 }
+      doubled := collect i in 0..4 { i * 2 }
       try assert.int_eq(doubled.len(), 4)
       try assert.int_eq(doubled[0], 0)
       try assert.int_eq(doubled[1], 2)
