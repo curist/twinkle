@@ -280,30 +280,50 @@ Contracts therefore serve two roles:
 
 ---
 
-## User-Defined Contracts
+## Generic Conditional Satisfaction
 
-User-defined contracts are a plausible extension of this model, but they are not
-required for the initial rollout.
+Generic user-defined types may satisfy builtin contracts through constrained
+inherent methods.
 
-A minimal first implementation may support only builtin contracts such as
-`Stringify`.
-
-Later, Twinkle may allow declarations like:
+Example:
 
 ```tw
-contract Parseable {
-  fn parse(self, input: String) Result<Self, String>
+type Box<T> = .{ value: T }
+
+fn to_string<T: Stringify>(b: Box<T>) String {
+  "Box(${b.value.to_string()})"
 }
 ```
 
-If user-defined contracts are added, they should remain subject to the same
-limits as builtin contracts:
+This implies a rule of the form:
+
+* `Box<T>` satisfies `Stringify` when its inherent `to_string` method matches
+  the `Stringify` requirement and its own bounds can be satisfied.
+
+This keeps generic user-defined wrappers and containers on equal footing with
+builtin generic types.
+
+## User-Defined Contracts
+
+User-defined contract declarations are a plausible extension of this model, but
+are not required by the core design.
+
+If Twinkle later adds them, they should remain subject to the same limits as
+builtin contracts:
 
 * satisfied through inherent methods,
 * static only,
 * no separate impl blocks,
 * no dynamic dispatch,
 * no retroactive conformance.
+
+Possible future syntax:
+
+```tw
+contract Parseable {
+  fn parse(self, input: String) Result<Self, String>
+}
+```
 
 ### Important limitation
 
@@ -443,4 +463,5 @@ Twinkle contracts are intentionally narrow:
 * no impl blocks,
 * no instance search,
 * no dynamic dispatch,
+* generic user-defined types may satisfy builtin contracts through constrained inherent methods,
 * just static constraints satisfied through inherent methods.

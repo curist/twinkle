@@ -59,6 +59,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [boot-uniqueness-mono-sync.md](boot-uniqueness-mono-sync.md) | Keep uniqueness-generated locals and rewritten ANF structure synchronized through the boot backend pipeline |
 | [boot-uniqueness-deep-ownership.md](boot-uniqueness-deep-ownership.md) | Separate fresh wrapper values from deep ownership so boot uniqueness only performs in-place collection rewrites when reachable mutable state is truly unaliased |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
+| [contracts.md](contracts.md) | Introduce builtin contracts and contract bounds, including required conditional satisfaction for user-defined generic types |
 
 ### Archived reference docs
 
