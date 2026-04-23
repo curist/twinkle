@@ -162,13 +162,65 @@ if !unsolved.is_empty() {
 
 ### Boot mirror: `boot/compiler/monomorphize.tw`
 
-Apply the analogous fix to both:
+Two locations need the same fix.
 
-- `collect_instantiations` around line 485: after the param-matching loop,
-  if `!subst_covers(type_params, subst)`, call `match_type_against` on
-  `gf.return_ty` vs `expr.ty` before testing coverage again.
-- `rewrite_calls_kind` around line 715: same pattern before the
-  `subst_covers` guard that currently causes silent fallthrough.
+**`collect_instantiations`, line 485** — current code:
+
+```twinkle
+// boot/compiler/monomorphize.tw:478-487
+type_params := collect_type_params(gf)
+subst: Dict<String, MonoType> = Dict.new()
+i := 0
+for i < gf.params.len() and i < args.len() {
+  subst = match_type_against(gf.params[i].ty, args[i].ty, subst)
+  i = i + 1
+}
+if subst_covers(type_params, subst) {
+  queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+}
+```
+
+After the param-matching loop, if coverage is still incomplete, fall back to
+matching `gf.return_ty` against `expr.ty` before testing coverage:
+
+```twinkle
+if !subst_covers(type_params, subst) {
+  subst = match_type_against(gf.return_ty, expr.ty, subst)
+}
+if subst_covers(type_params, subst) {
+  queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+}
+```
+
+**`rewrite_calls_kind`, line 715** — current code:
+
+```twinkle
+// boot/compiler/monomorphize.tw:708-717
+type_params := collect_type_params(gf)
+subst: Dict<String, MonoType> = Dict.new()
+i := 0
+for i < gf.params.len() and i < new_args.len() {
+  subst = match_type_against(gf.params[i].ty, new_args[i].ty, subst)
+  i = i + 1
+}
+if !subst_covers(type_params, subst) {
+  return .Call(rewrite_calls(callee, ...), new_args)  // ← silent miss
+}
+```
+
+Apply the same fallback before the early return:
+
+```twinkle
+if !subst_covers(type_params, subst) {
+  subst = match_type_against(gf.return_ty, parent.ty, subst)
+}
+if !subst_covers(type_params, subst) {
+  return .Call(rewrite_calls(callee, ...), new_args)
+}
+```
+
+`parent` is the `CoreExpr` argument passed to `rewrite_calls_kind`; `parent.ty`
+is the typechecker-resolved return type of the call, same as `expr.ty` above.
 
 ## Symptom Reproduction
 
