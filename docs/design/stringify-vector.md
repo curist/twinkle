@@ -1,4 +1,4 @@
-# Plan: `Stringify` Protocol for `Vector<T>`
+# Plan: `Stringify` Contract for `Vector<T>`
 
 ## Goal
 
@@ -15,7 +15,7 @@ println("${["a", "b"]}")  // [a, b]
 
 ## Background
 
-The `Stringify` protocol requires `to_string(self) -> String` on the receiver
+The `Stringify` contract requires `to_string(self) -> String` on the receiver
 type. Currently supported for primitives (`Int`, `Float`, `Bool`, `Byte`,
 `String`) and user `Named` types. `Vector<T>` is not handled — the type
 checker rejects `${vec}` even when the element type is stringifiable.
@@ -189,15 +189,14 @@ println("${pts}")                // [(1, 2), (3, 4)]
 
 ---
 
-## Relation to `inherent-protocols.md`
+## Relation to `contracts.md`
 
-This plan is the first concrete implementation of the `Stringify` protocol for
-a generic container. The type checker extension in step 2 is the protocol
-conformance check; the lowering in steps 3–4 is the protocol lowering rule.
-The capability-record function (`f: fn(T) String`) is synthesized implicitly by
-the compiler rather than written by the user, which is the key difference from
-the explicit-function API in `to_string(xs, f)`.
+This plan is a historical sketch for making `Stringify` work for a generic
+container. In the newer contracts direction, the type checker extension in step
+2 would be a contract satisfaction check, and the lowering in steps 3–4 would
+be contract-backed lowering for interpolation.
 
-No changes to the protocol model are needed. This falls naturally within the
-"Lowering Rules" section of the design doc:
-> `${x}` → `x.to_string()` + string concat
+The capability-record function (`f: fn(T) String`) discussed here reflects the
+older design exploration and is not the preferred contracts-based direction.
+
+See [contracts.md](contracts.md) for the current design vocabulary and model.

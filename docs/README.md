@@ -17,8 +17,8 @@ Language design notes, rationale, and open questions.
 - [defer.md](design/defer.md) — `defer` semantics
 - [immutability.md](design/immutability.md) — Immutability and explicit state
 - [stdlib.md](design/stdlib.md) — Standard library API design
-- [inherent-protocols.md](design/inherent-protocols.md) — Inherent protocols: compiler-recognized method contracts (`Stringify`, `Slice`, etc.)
-- [stringify-vector.md](design/stringify-vector.md) — Plan: `Stringify` protocol for `Vector<T>` (interpolation support)
+- [contracts.md](design/contracts.md) — Contracts: compiler-recognized method requirements for generic bounds and syntax hooks (`Stringify`, `Slice`, etc.)
+- [stringify-vector.md](design/stringify-vector.md) — Historical plan for `Vector<T>` stringification under the earlier `Stringify` design
 
 ## Open Questions
 

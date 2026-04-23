@@ -5,9 +5,9 @@ is expressed through ordinary functions and records of functions (capability
 records). This document explains the rationale and the patterns that replace
 traits.
 
-For compiler-recognized syntax hooks (for example string interpolation and
-range-based slicing), see [Inherent Protocols](inherent-protocols.md). Those
-protocols are method-signature contracts, not traits.
+For compiler-recognized syntax hooks and lightweight constrained generics,
+see [Contracts](contracts.md). Contracts are method-signature requirements
+satisfied through inherent methods, not traits.
 
 ---
 
@@ -106,23 +106,23 @@ for x in tree_preorder_iter(t) {
 }
 ```
 
-This is still the current model. If Twinkle later adopts an inherent
-`IntoIterator` protocol hook, it should remain a syntax-level rule (desugaring
-to an explicit method call), not trait-based generic constraint solving.
+This is still the current model. If Twinkle later adopts an `IntoIterator`
+contract hook, it should remain grounded in inherent methods rather than a
+separate trait implementation system.
 
 ---
 
 ## String Interpolation
 
 String interpolation (`"${expr}"`) is not trait-driven. It is defined by the
-inherent `Stringify` protocol contract:
+`Stringify` contract:
 
 ```tw
 to_string(self) -> String
 ```
 
-Built-ins conform via registered inherent methods. User-defined named types can
-conform by defining an inherent `to_string` method with that signature.
+Built-ins satisfy it via registered inherent methods. User-defined named types
+can satisfy it by defining an inherent `to_string` method with that signature.
 
 ```tw
 type User = .{ name: String, age: Int }
@@ -188,6 +188,6 @@ easier, but:
 * No implicit conversions or trait-like instance search will be introduced
 * All capability passing will remain explicit in function signatures and at call sites
 
-Separately, Twinkle may define additional inherent protocol hooks for language
-syntax (see [Inherent Protocols](inherent-protocols.md)). These remain distinct
-from capability-record based API polymorphism.
+Separately, Twinkle may define additional contract-backed hooks for language
+syntax (see [Contracts](contracts.md)). These remain distinct from explicit
+function-argument based API polymorphism.
