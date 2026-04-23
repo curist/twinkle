@@ -206,8 +206,15 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
   make(fn(json: Json) {
     case json {
       .Array(arr) => {
-        out := []
-        i := 0
+        if arr.len() == 0 {
+          return .Ok([])
+        }
+        // Decode the first element to bootstrap the output vector's type.
+        out := case da.run(arr[0]) {
+          .Ok(a)  => [a],
+          .Err(e) => { return .Err("index 0: ${e}") },
+        }
+        i := 1
         for i < arr.len() {
           case da.run(arr[i]) {
             .Ok(a)  => out = out.append(a),

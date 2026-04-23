@@ -1,4 +1,5 @@
 use tests.runner
+use tests.suites.lib_json_suite
 use tests.suites.assert_helpers_suite
 use tests.suites.api_option_result_suite
 use tests.suites.api_cell_suite
@@ -16,6 +17,7 @@ use tests.suites.imports_suite
 use tests.suites.multi_module_suite
 
 runner.run_all([
+  lib_json_suite.suite(),
   assert_helpers_suite.suite(),
   module_loader_suite.suite(),
   dependency_graph_suite.suite(),
