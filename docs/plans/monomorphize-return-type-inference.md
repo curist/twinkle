@@ -20,21 +20,21 @@ used in a context that expects `Result<Int, String>`, but the monomorphizer
 never seeds `A` from the return type and therefore panics.
 
 The same class of bug affects any generic function with return-only type
-parameters, e.g. `json.succeed`:
+parameters. `json.succeed` is unaffected because `A` appears in its parameter:
 
 ```twinkle
 pub fn succeed<A>(value: A) Decoder<A> { ... }
+// A appears in the parameter → subst is solved → no bug
 ```
 
-Wait — `succeed` has `A` in the parameter, so it works. The problem is
-exclusively with functions like `fail` where no argument constrains any type
-variable.
+## Affected Files
 
-## Affected File
-
-`src/ir/monomorphize.rs`
+- `src/ir/monomorphize.rs` — stage0 pass (two locations)
+- `boot/compiler/monomorphize.tw` — boot mirror (two locations, same bug)
 
 ## Root Cause
+
+### Stage0: `collect_instantiations` (line 187)
 
 `collect_instantiations` seeds the specialization queue only by matching each
 generic parameter type against the corresponding argument type:
@@ -66,19 +66,54 @@ For `fail("oops")`:
 
 The call site is skipped entirely. Later, `rewrite_calls_in_kind` reaches the
 same call and tries to solve `A` from arguments alone — still finds nothing —
-and hits the `debug_assert!` panic at line 480.
+and hits the `debug_assert!` panic at line 478.
 
 The `CoreExpr` for the Call node already carries the typechecker-resolved type
 (e.g. `Decoder<Int>` when context demands it). That information is available
 but never consulted.
 
+### Stage0: `rewrite_calls_in_kind` (line 461)
+
+This function independently reconstructs `subst` from param/arg types at
+rewrite time (lines 470-473). It has the same gap: if `subst` is missing type
+params, `type_args` is filled with `MonoType::Void` via `unwrap_or` (line
+476), and the `debug_assert!` at line 478 fires. Even after `collect_instantiations`
+is fixed and the spec is seeded, this function still panics independently if it
+cannot solve all type params from arguments alone.
+
+Both locations must be fixed — the fix to `collect_instantiations` alone is not
+sufficient.
+
+### Boot mirror: same bug in two places
+
+`boot/compiler/monomorphize.tw` has the identical structure in both functions:
+
+- `collect_instantiations` at line 485: `if subst_covers(type_params, subst)` —
+  when `subst` is empty (no param carries the type variable), `subst_covers`
+  returns false and nothing is queued.
+- `rewrite_calls_kind` at line 715: `if !subst_covers(type_params, subst)` —
+  same guard causes the rewrite to silently skip the specialization lookup and
+  fall through to an un-rewritten call.
+
+Both need the return-type fallback.
+
 ## Fix
 
-After matching parameter types, if any type parameters are still unsolved,
-also match the generic function's declared return type against the `CoreExpr`'s
-own `.ty` (which the typechecker has already resolved from context).
+### Precondition
 
-In `collect_instantiations` for the `Call` arm:
+The fix assumes `expr.ty` on the Call node is fully resolved (no lingering
+`MetaVar` or `Var`) by the time monomorphization runs. This holds for all
+well-typed programs because monomorphization runs after type checking and
+lowering. If `expr.ty` were still a type variable, `match_type_against` would
+"solve" `A` to that variable, producing a broken specialization caught later by
+the existing `debug_assert!` in the queue-processing loop (line 714).
+The assumption should be documented or asserted where the fallback is added.
+
+### Stage0: `collect_instantiations` — Call arm
+
+After matching param types, if any type parameters are still unsolved, match
+the generic function's declared return type against the call expression's
+resolved `.ty`:
 
 ```rust
 CoreExprKind::Call { callee, args } => {
@@ -92,11 +127,7 @@ CoreExprKind::Call { callee, args } => {
             }
             // New: if any type params remain unsolved, match the generic
             // return type against the call expression's resolved type.
-            let unsolved: Vec<_> = type_params
-                .iter()
-                .filter(|p| !subst.contains_key(*p))
-                .collect();
-            if !unsolved.is_empty() {
+            if type_params.iter().any(|p| !subst.contains_key(p)) {
                 match_type_against(&gf.return_ty, &expr.ty, &mut subst);
             }
             if !subst.is_empty() {
@@ -108,15 +139,36 @@ CoreExprKind::Call { callee, args } => {
 }
 ```
 
-`expr` here is the parent `CoreExpr` for the Call node, which holds `.ty` =
-the typechecker-resolved return type of the call. `match_type_against` already
-handles recursive structural matching, so this requires no new machinery.
+`expr` is the parent `CoreExpr` for the Call node. `match_type_against`
+already handles recursive structural matching — no new machinery needed.
 
-The same extension should be applied to `rewrite_calls_in_kind` at line
-469-486, which rebuilds the substitution at rewrite time. Currently it also
-only matches param types against arg types; if a type param is unsolved after
-that pass, it should likewise fall back to matching `gf.return_ty` against
-`parent.ty`.
+### Stage0: `rewrite_calls_in_kind` — Call arm (line 461)
+
+Apply the same fallback at rewrite time. After the param/arg matching loop
+(lines 470-473), before constructing `type_args`:
+
+```rust
+// After existing param-type matching loop:
+let unsolved: Vec<_> = type_params.iter()
+    .filter(|p| !subst.contains_key(*p))
+    .collect();
+if !unsolved.is_empty() {
+    match_type_against(&gf.return_ty, &parent.ty, &mut subst);
+}
+// Then proceed to build type_args as before.
+```
+
+`parent.ty` is the `.ty` of the `CoreExpr` passed into `rewrite_calls_in_kind`.
+
+### Boot mirror: `boot/compiler/monomorphize.tw`
+
+Apply the analogous fix to both:
+
+- `collect_instantiations` around line 485: after the param-matching loop,
+  if `!subst_covers(type_params, subst)`, call `match_type_against` on
+  `gf.return_ty` vs `expr.ty` before testing coverage again.
+- `rewrite_calls_kind` around line 715: same pattern before the
+  `subst_covers` guard that currently causes silent fallthrough.
 
 ## Symptom Reproduction
 
@@ -145,20 +197,15 @@ a `#[cfg(test)]` block with module-building helpers):
    the surrounding `Let` binding has a concrete type. Verify specialization
    succeeds and the correct `FuncId` is emitted.
 
-2. **Mixed params** — a function with `A` in both a parameter and the return
-   (`fn wrap<A>(val: A) Option<A>`) to confirm existing behavior is not
-   regressed.
+2. **Mixed params regression** — a function with `A` in both a parameter and
+   the return (`fn wrap<A>(val: A) Option<A>`) to confirm existing behavior is
+   not regressed.
 
 3. **Chained / nested** — `json.decode(.Null, json.fail("msg"))` pattern,
    where the outer `decode` call constrains the inner `fail` call's return
-   type indirectly.
-
-## Relation to boot Compiler
-
-The boot compiler (`boot/compiler/`) mirrors the monomorphization pass in
-`boot/compiler/monomorphize.tw`. Once the stage0 fix is validated, check
-whether the same gap exists there and apply the analogous fix to the
-self-hosted pass.
+   type indirectly. This is the hardest case: the type of the `fail` call node
+   must already be resolved on the `CoreExpr` from the typechecker for the
+   fallback to work.
 
 ## Affected Tests
 
@@ -173,7 +220,8 @@ Once the fix lands:
 
 ## Impact Scope
 
-The fix is local to `collect_instantiations` and `rewrite_calls_in_kind` in
-`src/ir/monomorphize.rs`. No changes to the type system, parser, or lowering
-are required. The typechecker already resolves the correct type and stores it
-on the `CoreExpr` node; the monomorphizer just needs to read it.
+Changes are local to two functions in `src/ir/monomorphize.rs` and their
+mirrors in `boot/compiler/monomorphize.tw`. No changes to the type system,
+parser, or lowering are required. The typechecker already resolves the correct
+type and stores it on the `CoreExpr` node; both monomorphization passes just
+need to read it.
