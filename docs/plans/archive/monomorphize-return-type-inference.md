@@ -1,5 +1,23 @@
 # Monomorphizer: Infer Type Args from Return Type
 
+> Status: Completed and archived.
+>
+> Implemented in:
+>
+> - `src/ir/monomorphize.rs`
+> - `boot/compiler/monomorphize.tw`
+> - `boot/tests/suites/core_ir_suite.tw`
+>
+> Landed behavior:
+>
+> - call-site monomorphization now falls back to the resolved call result type
+>   when arguments alone do not solve all type parameters
+> - Rust stage0 now also specializes and rewrites generic `MakeClosure` targets
+> - the boot compiler now collects monomorphization type parameters from the
+>   function signature only, not body expression annotations
+> - stage0 unit tests, boot compiler regression tests, and
+>   `boot/tests/test_api.tw` all cover the fixed behavior
+
 ## Goal
 
 Fix the stage0 monomorphizer so that generic functions whose type parameters
@@ -15,9 +33,10 @@ pub fn fail<A>(message: String) Decoder<A> {
 ```
 
 `A` does not appear in any parameter; it only appears in the return type
-`Decoder<A>`. The typechecker correctly infers `A = Int` when the result is
-used in a context that expects `Result<Int, String>`, but the monomorphizer
-never seeds `A` from the return type and therefore panics.
+`Decoder<A>`. The typechecker correctly infers `A = Int` because the
+`json.fail("oops")` call expression is resolved to `Decoder<Int>` from its
+surrounding context, but the monomorphizer never seeds `A` from the return
+type and therefore panics.
 
 The same class of bug affects any generic function with return-only type
 parameters. `json.succeed` is unaffected because `A` appears in its parameter:
@@ -130,7 +149,7 @@ CoreExprKind::Call { callee, args } => {
             if type_params.iter().any(|p| !subst.contains_key(p)) {
                 match_type_against(&gf.return_ty, &expr.ty, &mut subst);
             }
-            if !subst.is_empty() {
+            if type_params.iter().all(|p| subst.contains_key(p)) {
                 queue.push_back((*fid, subst));
             }
         }
@@ -141,6 +160,8 @@ CoreExprKind::Call { callee, args } => {
 
 `expr` is the parent `CoreExpr` for the Call node. `match_type_against`
 already handles recursive structural matching — no new machinery needed.
+The Rust pass should use a full-coverage check here rather than `!subst.is_empty()`;
+queue processing already assumes every collected type parameter is solved.
 
 ### Stage0: `rewrite_calls_in_kind` — Call arm (line 461)
 
@@ -159,6 +180,8 @@ if !unsolved.is_empty() {
 ```
 
 `parent.ty` is the `.ty` of the `CoreExpr` passed into `rewrite_calls_in_kind`.
+This is also a good place for a `debug_assert!` documenting the pass invariant
+that the call node's type is fully resolved before monomorphization.
 
 ### Boot mirror: `boot/compiler/monomorphize.tw`
 
@@ -242,22 +265,30 @@ matches `A`, and the return type `Decoder<A>` is never consulted.
 ## Test Cases to Add
 
 Alongside the fix, add unit tests in `monomorphize.rs` (the file already has
-a `#[cfg(test)]` block with module-building helpers):
+a `#[cfg(test)]` block with module-building helpers). The tests should assert
+not just that monomorphization completes, but that the rewritten call site
+actually targets the specialized `FuncId`:
 
 1. **Return-only type param, concrete context** — a generic function
    `fn const_decoder<A>(x: String) A` (type var only in return) called where
-   the surrounding `Let` binding has a concrete type. Verify specialization
-   succeeds and the correct `FuncId` is emitted.
+   the surrounding `Let` binding has a concrete type. Verify a specialization
+   is created for the expected concrete type arguments and that the rewritten
+   callee uses that specialization.
 
 2. **Mixed params regression** — a function with `A` in both a parameter and
    the return (`fn wrap<A>(val: A) Option<A>`) to confirm existing behavior is
    not regressed.
 
-3. **Chained / nested** — `json.decode(.Null, json.fail("msg"))` pattern,
+3. **Mixed solved-by-arg and solved-by-return** — a function where one type
+   parameter is solved from an argument and another appears only in the return.
+   This verifies that the return-type fallback complements argument matching
+   rather than replacing it.
+
+4. **Chained / nested** — `json.decode(.Null, json.fail("msg"))` pattern,
    where the outer `decode` call constrains the inner `fail` call's return
-   type indirectly. This is the hardest case: the type of the `fail` call node
-   must already be resolved on the `CoreExpr` from the typechecker for the
-   fallback to work.
+   type indirectly. This is the most important case: the type of the `fail`
+   call node must already be resolved on the `CoreExpr` from the typechecker
+   for the fallback to work.
 
 ## Affected Tests
 
@@ -270,10 +301,25 @@ Once the fix lands:
 - The `one_of` tests in `lib_json_suite` (which use `Vector<Decoder<String>>`)
   may also be affected and should be validated.
 
+## Implementation Notes
+
+The final implementation followed the planned call-site fallback, but also
+closed two adjacent issues discovered during validation:
+
+- Rust stage0 needed matching specialization/rewrite handling for
+  `CoreExprKind::MakeClosure`, otherwise generic hoisted lambdas could survive
+  monomorphization and later produce dangling closure trampoline references in
+  codegen.
+- The boot compiler's `collect_type_params` was narrowed to the function
+  signature. Scanning body expression annotations could introduce non-signature
+  type variables into `subst_covers`, causing solved call sites to be skipped.
+
+Both implementations now keep their call-site inference logic structurally
+aligned through shared helpers.
+
 ## Impact Scope
 
-Changes are local to two functions in `src/ir/monomorphize.rs` and their
-mirrors in `boot/compiler/monomorphize.tw`. No changes to the type system,
-parser, or lowering are required. The typechecker already resolves the correct
-type and stores it on the `CoreExpr` node; both monomorphization passes just
-need to read it.
+The landed fix touched `src/ir/monomorphize.rs` and `boot/compiler/monomorphize.tw`,
+with accompanying regression coverage in Rust unit tests, boot compiler
+`core_ir_suite`, and end-to-end API tests. No changes to the type system,
+parser, or lowering were required.

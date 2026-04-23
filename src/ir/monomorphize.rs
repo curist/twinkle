@@ -145,6 +145,40 @@ fn collect_vars_in_order(ty: &MonoType, seen: &mut HashSet<String>, out: &mut Ve
     }
 }
 
+fn has_unresolved_type_vars(ty: &MonoType) -> bool {
+    match ty {
+        MonoType::Var(_) | MonoType::MetaVar(_) => true,
+        MonoType::Vector(elem) => has_unresolved_type_vars(elem),
+        MonoType::Dict(k, v) => has_unresolved_type_vars(k) || has_unresolved_type_vars(v),
+        MonoType::Function { params, ret } => {
+            params.iter().any(has_unresolved_type_vars) || has_unresolved_type_vars(ret)
+        }
+        MonoType::Named { args, .. } => args.iter().any(has_unresolved_type_vars),
+        _ => false,
+    }
+}
+
+fn infer_call_subst(
+    gf: &FunctionDef,
+    args: &[CoreExpr],
+    call_ty: &MonoType,
+) -> (Vec<String>, HashMap<String, MonoType>) {
+    let type_params = collect_type_params(&gf.param_tys, &gf.return_ty);
+    let mut subst = HashMap::new();
+    for (param_ty, arg) in gf.param_tys.iter().zip(args.iter()) {
+        match_type_against(param_ty, &arg.ty, &mut subst);
+    }
+    if type_params.iter().any(|p| !subst.contains_key(p)) {
+        debug_assert!(
+            !has_unresolved_type_vars(call_ty),
+            "call type must be fully resolved before monomorphization: {:?}",
+            call_ty,
+        );
+        match_type_against(&gf.return_ty, call_ty, &mut subst);
+    }
+    (type_params, subst)
+}
+
 /// Canonical short string for a type, used when naming specialisations.
 fn type_key(ty: &MonoType) -> String {
     match ty {
@@ -187,11 +221,8 @@ fn collect_instantiations<'a>(
         CoreExprKind::Call { callee, args } => {
             if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
                 if let Some(gf) = generic_funcs.get(fid) {
-                    let mut subst = HashMap::new();
-                    for (param_ty, arg) in gf.param_tys.iter().zip(args.iter()) {
-                        match_type_against(param_ty, &arg.ty, &mut subst);
-                    }
-                    if !subst.is_empty() {
+                    let (type_params, subst) = infer_call_subst(gf, args, &expr.ty);
+                    if type_params.iter().all(|p| subst.contains_key(p)) {
                         queue.push_back((*fid, subst));
                     }
                 }
@@ -289,10 +320,21 @@ fn collect_instantiations<'a>(
         CoreExprKind::Defer(inner) => {
             collect_instantiations(inner, generic_funcs, queue);
         }
-        // Hoisted lambda bodies are top-level FunctionDefs in module.functions
-        // and are scanned by the seed loop, so no traversal needed here.
-        CoreExprKind::MakeClosure { .. }
-        | CoreExprKind::LitInt(_)
+        CoreExprKind::MakeClosure { func_id, .. } => {
+            if let Some(gf) = generic_funcs.get(func_id) {
+                let generic_fn_ty = MonoType::Function {
+                    params: gf.param_tys.clone(),
+                    ret: Box::new(gf.return_ty.clone()),
+                };
+                let type_params = collect_type_params(&gf.param_tys, &gf.return_ty);
+                let mut subst = HashMap::new();
+                match_type_against(&generic_fn_ty, &expr.ty, &mut subst);
+                if type_params.iter().all(|p| subst.contains_key(p)) {
+                    queue.push_back((*func_id, subst));
+                }
+            }
+        }
+        CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
         | CoreExprKind::LitBool(_)
         | CoreExprKind::LitStr(_)
@@ -466,11 +508,7 @@ fn rewrite_calls_in_kind(
 
             if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
                 if let Some(gf) = generic_funcs.get(fid) {
-                    let type_params = collect_type_params(&gf.param_tys, &gf.return_ty);
-                    let mut subst = HashMap::new();
-                    for (param_ty, arg) in gf.param_tys.iter().zip(new_args.iter()) {
-                        match_type_against(param_ty, &arg.ty, &mut subst);
-                    }
+                    let (type_params, subst) = infer_call_subst(gf, &new_args, &parent.ty);
                     let type_args: Vec<MonoType> = type_params
                         .iter()
                         .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
@@ -558,10 +596,37 @@ fn rewrite_calls_in_kind(
             op: *op,
             expr: Box::new(rewrite_calls_in_expr(expr, spec_map, generic_funcs)),
         },
-        CoreExprKind::MakeClosure { func_id, free_vars } => CoreExprKind::MakeClosure {
-            func_id: *func_id,
-            free_vars: free_vars.clone(),
-        },
+        CoreExprKind::MakeClosure { func_id, free_vars } => {
+            if let Some(gf) = generic_funcs.get(func_id) {
+                let generic_fn_ty = MonoType::Function {
+                    params: gf.param_tys.clone(),
+                    ret: Box::new(gf.return_ty.clone()),
+                };
+                let type_params = collect_type_params(&gf.param_tys, &gf.return_ty);
+                let mut subst = HashMap::new();
+                match_type_against(&generic_fn_ty, &parent.ty, &mut subst);
+                let type_args: Vec<MonoType> = type_params
+                    .iter()
+                    .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
+                    .collect();
+                debug_assert!(
+                    type_params.iter().all(|p| subst.contains_key(p)),
+                    "unsolved type params {:?} for MakeClosure ref to {:?}",
+                    type_params
+                        .iter()
+                        .filter(|p| !subst.contains_key(*p))
+                        .collect::<Vec<_>>(),
+                    func_id,
+                );
+                if let Some(&new_fid) = spec_map.get(&(*func_id, type_args)) {
+                    return CoreExprKind::MakeClosure {
+                        func_id: new_fid,
+                        free_vars: free_vars.clone(),
+                    };
+                }
+            }
+            parent.kind.clone()
+        }
         CoreExprKind::If {
             cond,
             then_branch,
@@ -1204,5 +1269,371 @@ mod tests {
         } else {
             panic!("expected Let in __init__ body");
         }
+    }
+
+    #[test]
+    fn monomorphize_generic_make_closure_is_specialized_and_rewritten() {
+        let lambda_fid = FuncId(41);
+
+        let lambda_func = make_func(
+            41,
+            "lambda",
+            vec![],
+            vec![],
+            expr(CoreExprKind::LitVoid, MonoType::Var("T".into())),
+            MonoType::Var("T".into()),
+        );
+
+        let init_func = make_func(
+            42,
+            "__init__",
+            vec![],
+            vec![],
+            expr(
+                CoreExprKind::Let {
+                    local: LocalId(0),
+                    value: Box::new(expr(
+                        CoreExprKind::MakeClosure {
+                            func_id: lambda_fid,
+                            free_vars: vec![],
+                        },
+                        MonoType::Function {
+                            params: vec![],
+                            ret: Box::new(MonoType::Int),
+                        },
+                    )),
+                    body: Box::new(expr(CoreExprKind::LitVoid, MonoType::Void)),
+                },
+                MonoType::Void,
+            ),
+            MonoType::Void,
+        );
+
+        let module = empty_module(vec![lambda_func, init_func]);
+        let result = monomorphize(module);
+
+        let specialized = result
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("lambda__"))
+            .expect("expected specialized closure function");
+        assert_eq!(specialized.return_ty, MonoType::Int);
+
+        let init = result
+            .functions
+            .iter()
+            .find(|f| f.name == "__init__")
+            .unwrap();
+        let rewritten_fid = match &init.body.kind {
+            CoreExprKind::Let { value, .. } => match &value.kind {
+                CoreExprKind::MakeClosure { func_id, .. } => *func_id,
+                _ => panic!("expected MakeClosure in let value"),
+            },
+            _ => panic!("expected let in __init__ body"),
+        };
+        assert_eq!(rewritten_fid, specialized.func_id);
+    }
+
+    #[test]
+    fn monomorphize_return_only_type_param_at_call_site() {
+        let make_fid = FuncId(41);
+
+        // make(_: String) T
+        let make_func_def = make_func(
+            41,
+            "make",
+            vec![0],
+            vec![MonoType::String],
+            expr(CoreExprKind::LitVoid, MonoType::Var("T".into())),
+            MonoType::Var("T".into()),
+        );
+
+        let init_func = make_func(
+            42,
+            "__init__",
+            vec![],
+            vec![],
+            expr(
+                CoreExprKind::Let {
+                    local: LocalId(0),
+                    value: Box::new(expr(
+                        CoreExprKind::Call {
+                            callee: Box::new(expr(
+                                CoreExprKind::GlobalFunc(make_fid),
+                                MonoType::Function {
+                                    params: vec![MonoType::String],
+                                    ret: Box::new(MonoType::Var("T".into())),
+                                },
+                            )),
+                            args: vec![expr(CoreExprKind::LitStr("oops".into()), MonoType::String)],
+                        },
+                        MonoType::Int,
+                    )),
+                    body: Box::new(expr(CoreExprKind::LitVoid, MonoType::Void)),
+                },
+                MonoType::Void,
+            ),
+            MonoType::Void,
+        );
+
+        let module = empty_module(vec![make_func_def, init_func]);
+        let result = monomorphize(module);
+
+        let specialized = result
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("make__"))
+            .expect("expected specialized make function");
+        assert_eq!(specialized.return_ty, MonoType::Int);
+
+        let init = result
+            .functions
+            .iter()
+            .find(|f| f.name == "__init__")
+            .unwrap();
+        let rewritten_fid = match &init.body.kind {
+            CoreExprKind::Let { value, .. } => match &value.kind {
+                CoreExprKind::Call { callee, .. } => match callee.kind {
+                    CoreExprKind::GlobalFunc(fid) => fid,
+                    _ => panic!("expected rewritten GlobalFunc callee"),
+                },
+                _ => panic!("expected call in let value"),
+            },
+            _ => panic!("expected let in __init__ body"),
+        };
+        assert_eq!(rewritten_fid, specialized.func_id);
+    }
+
+    #[test]
+    fn monomorphize_nested_return_only_call_uses_contextual_type() {
+        let fail_fid = FuncId(41);
+        let decode_fid = FuncId(42);
+        let decoder_ty = crate::types::ty::TypeId(100);
+
+        let fail_func = make_func(
+            41,
+            "fail",
+            vec![0],
+            vec![MonoType::String],
+            expr(
+                CoreExprKind::LitVoid,
+                MonoType::Named {
+                    type_id: decoder_ty,
+                    args: vec![MonoType::Var("T".into())],
+                },
+            ),
+            MonoType::Named {
+                type_id: decoder_ty,
+                args: vec![MonoType::Var("T".into())],
+            },
+        );
+
+        let decode_func = make_func(
+            42,
+            "decode",
+            vec![0, 1],
+            vec![
+                MonoType::Int,
+                MonoType::Named {
+                    type_id: decoder_ty,
+                    args: vec![MonoType::Var("T".into())],
+                },
+            ],
+            expr(CoreExprKind::LitVoid, MonoType::Var("T".into())),
+            MonoType::Var("T".into()),
+        );
+
+        let init_func = make_func(
+            43,
+            "__init__",
+            vec![],
+            vec![],
+            expr(
+                CoreExprKind::Let {
+                    local: LocalId(0),
+                    value: Box::new(expr(
+                        CoreExprKind::Call {
+                            callee: Box::new(expr(
+                                CoreExprKind::GlobalFunc(decode_fid),
+                                MonoType::Function {
+                                    params: vec![
+                                        MonoType::Int,
+                                        MonoType::Named {
+                                            type_id: decoder_ty,
+                                            args: vec![MonoType::Var("T".into())],
+                                        },
+                                    ],
+                                    ret: Box::new(MonoType::Var("T".into())),
+                                },
+                            )),
+                            args: vec![
+                                expr(CoreExprKind::LitInt(0), MonoType::Int),
+                                expr(
+                                    CoreExprKind::Call {
+                                        callee: Box::new(expr(
+                                            CoreExprKind::GlobalFunc(fail_fid),
+                                            MonoType::Function {
+                                                params: vec![MonoType::String],
+                                                ret: Box::new(MonoType::Named {
+                                                    type_id: decoder_ty,
+                                                    args: vec![MonoType::Var("T".into())],
+                                                }),
+                                            },
+                                        )),
+                                        args: vec![expr(
+                                            CoreExprKind::LitStr("oops".into()),
+                                            MonoType::String,
+                                        )],
+                                    },
+                                    MonoType::Named {
+                                        type_id: decoder_ty,
+                                        args: vec![MonoType::Int],
+                                    },
+                                ),
+                            ],
+                        },
+                        MonoType::Int,
+                    )),
+                    body: Box::new(expr(CoreExprKind::LitVoid, MonoType::Void)),
+                },
+                MonoType::Void,
+            ),
+            MonoType::Void,
+        );
+
+        let module = empty_module(vec![fail_func, decode_func, init_func]);
+        let result = monomorphize(module);
+
+        let fail_spec = result
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("fail__"))
+            .expect("expected specialized fail function");
+        assert_eq!(
+            fail_spec.return_ty,
+            MonoType::Named {
+                type_id: decoder_ty,
+                args: vec![MonoType::Int],
+            }
+        );
+
+        let init = result
+            .functions
+            .iter()
+            .find(|f| f.name == "__init__")
+            .unwrap();
+        let nested_fail_fid = match &init.body.kind {
+            CoreExprKind::Let { value, .. } => match &value.kind {
+                CoreExprKind::Call { args, .. } => match &args[1].kind {
+                    CoreExprKind::Call { callee, .. } => match callee.kind {
+                        CoreExprKind::GlobalFunc(fid) => fid,
+                        _ => panic!("expected rewritten nested GlobalFunc callee"),
+                    },
+                    _ => panic!("expected nested call in decode arg"),
+                },
+                _ => panic!("expected call in let value"),
+            },
+            _ => panic!("expected let in __init__ body"),
+        };
+        assert_eq!(nested_fail_fid, fail_spec.func_id);
+    }
+
+    #[test]
+    fn monomorphize_mixes_arg_and_return_inference() {
+        let build_fid = FuncId(41);
+        let pair_ty = crate::types::ty::TypeId(99);
+
+        // build(a: A, _: String) Pair<A, B>
+        let build_func = make_func(
+            41,
+            "build",
+            vec![0, 1],
+            vec![MonoType::Var("A".into()), MonoType::String],
+            expr(
+                CoreExprKind::LitVoid,
+                MonoType::Named {
+                    type_id: pair_ty,
+                    args: vec![MonoType::Var("A".into()), MonoType::Var("B".into())],
+                },
+            ),
+            MonoType::Named {
+                type_id: pair_ty,
+                args: vec![MonoType::Var("A".into()), MonoType::Var("B".into())],
+            },
+        );
+
+        let init_func = make_func(
+            42,
+            "__init__",
+            vec![],
+            vec![],
+            expr(
+                CoreExprKind::Let {
+                    local: LocalId(0),
+                    value: Box::new(expr(
+                        CoreExprKind::Call {
+                            callee: Box::new(expr(
+                                CoreExprKind::GlobalFunc(build_fid),
+                                MonoType::Function {
+                                    params: vec![MonoType::Var("A".into()), MonoType::String],
+                                    ret: Box::new(MonoType::Named {
+                                        type_id: pair_ty,
+                                        args: vec![
+                                            MonoType::Var("A".into()),
+                                            MonoType::Var("B".into()),
+                                        ],
+                                    }),
+                                },
+                            )),
+                            args: vec![
+                                expr(CoreExprKind::LitInt(7), MonoType::Int),
+                                expr(CoreExprKind::LitStr("x".into()), MonoType::String),
+                            ],
+                        },
+                        MonoType::Named {
+                            type_id: pair_ty,
+                            args: vec![MonoType::Int, MonoType::Bool],
+                        },
+                    )),
+                    body: Box::new(expr(CoreExprKind::LitVoid, MonoType::Void)),
+                },
+                MonoType::Void,
+            ),
+            MonoType::Void,
+        );
+
+        let module = empty_module(vec![build_func, init_func]);
+        let result = monomorphize(module);
+
+        let specialized = result
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("build__"))
+            .expect("expected specialized build function");
+        assert_eq!(specialized.param_tys, vec![MonoType::Int, MonoType::String]);
+        assert_eq!(
+            specialized.return_ty,
+            MonoType::Named {
+                type_id: pair_ty,
+                args: vec![MonoType::Int, MonoType::Bool],
+            }
+        );
+
+        let init = result
+            .functions
+            .iter()
+            .find(|f| f.name == "__init__")
+            .unwrap();
+        let rewritten_fid = match &init.body.kind {
+            CoreExprKind::Let { value, .. } => match &value.kind {
+                CoreExprKind::Call { callee, .. } => match callee.kind {
+                    CoreExprKind::GlobalFunc(fid) => fid,
+                    _ => panic!("expected rewritten GlobalFunc callee"),
+                },
+                _ => panic!("expected call in let value"),
+            },
+            _ => panic!("expected let in __init__ body"),
+        };
+        assert_eq!(rewritten_fid, specialized.func_id);
     }
 }
