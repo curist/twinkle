@@ -256,7 +256,9 @@ pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> {
 // Encode (stringify)
 // ---------------------------------------------------------------------------
 
-pub fn stringify(json: Json) String {
+// to_string satisfies the Stringify contract, enabling Json values in
+// string interpolation ("value=${json}") and generic stringification.
+pub fn to_string(json: Json) String {
   case json {
     .Null     => "null",
     .Bool(b)  => if b { "true" } else { "false" },
@@ -269,7 +271,7 @@ pub fn stringify(json: Json) String {
       }
       parts: Vector<String> = []
       for item in arr {
-        parts = parts.append(stringify(item))
+        parts = parts.append(to_string(item))
       }
       "[".concat(parts.join(",")).concat("]")
     },
@@ -281,12 +283,17 @@ pub fn stringify(json: Json) String {
       parts: Vector<String> = []
       for key in keys {
         val := case obj[key] { .Some(v) => v, .None => Json.Null }
-        entry := quote_string(key).concat(":").concat(stringify(val))
+        entry := quote_string(key).concat(":").concat(to_string(val))
         parts = parts.append(entry)
       }
       "{".concat(parts.join(",")).concat("}")
     },
   }
+}
+
+// stringify is a conventional alias for to_string (mirrors JSON.stringify).
+pub fn stringify(json: Json) String {
+  to_string(json)
 }
 
 fn quote_string(s: String) String {

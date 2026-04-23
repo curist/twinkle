@@ -5,6 +5,14 @@ use lib.json
 pub fn suite() runner.Suite {
   runner.suite("lib json")
 
+    // --- to_string (Stringify contract) ---
+
+    .test("to_string equals stringify", fn() {
+      j: json.Json = .Array([.Int(1), .Str("x"), .Null])
+      try assert.str_eq(json.to_string(j), json.stringify(j))
+      .Ok({})
+    })
+
     // --- stringify primitives ---
 
     .test("stringify null", fn() {
