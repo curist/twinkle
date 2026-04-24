@@ -53,10 +53,11 @@
   "~"
   "<<"
   ">>"
-  ".."
 ] @operator
 
 [ "and" "or" ] @keyword.operator
+
+(range_expression operator: _ @operator)
 
 ; Boolean literals
 (bool_literal) @boolean

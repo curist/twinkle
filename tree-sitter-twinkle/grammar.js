@@ -196,7 +196,7 @@ module.exports = grammar({
     range_expression: $ => choice(
       prec.left('range', seq(
         field('start', $.logical_or_expression),
-        '..',
+        field('operator', '..'),
         field('end', $.logical_or_expression),
       )),
       $.logical_or_expression,

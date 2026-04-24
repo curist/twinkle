@@ -1,5 +1,5 @@
 import { CodeJar } from 'codejar'
-import { Parser, Language } from 'web-tree-sitter'
+import { Parser, Language, Query } from 'web-tree-sitter'
 import highlightsScm from '../../tree-sitter-twinkle/queries/highlights.scm?raw'
 
 // ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ async function initTreeSitter() {
   const lang = await Language.load('./tree-sitter-twinkle.wasm')
   tsParser = new Parser()
   tsParser.setLanguage(lang)
-  tsQuery = lang.query(highlightsScm)
+  tsQuery = new Query(lang, highlightsScm)
   // Re-highlight the content that's already in the editor
   jar.updateCode(jar.toString())
 }

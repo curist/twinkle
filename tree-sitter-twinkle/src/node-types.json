@@ -1633,6 +1633,16 @@
           }
         ]
       },
+      "operator": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "..",
+            "named": false
+          }
+        ]
+      },
       "start": {
         "multiple": false,
         "required": false,
