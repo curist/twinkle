@@ -426,14 +426,23 @@ impl Parser {
             ));
         }
 
-        // Optional type parameters: <T, U>
+        // Optional type parameters: <T, U> or <T: Bound, U>
         let type_params = if self.peek_is(TokenKind::Lt) {
             self.expect(TokenKind::Lt)?;
             let mut params = Vec::new();
 
             while !self.peek_is(TokenKind::Gt) && !self.is_eof() {
                 let param = self.expect(TokenKind::Ident)?;
-                params.push(param.text.clone());
+                let bound = if self.peek_is(TokenKind::Colon) {
+                    self.expect(TokenKind::Colon)?;
+                    Some(self.expect(TokenKind::Ident)?.text)
+                } else {
+                    None
+                };
+                params.push(TypeParam {
+                    name: param.text.clone(),
+                    bound,
+                });
 
                 if !self.peek_is(TokenKind::Gt) {
                     self.expect(TokenKind::Comma)?;
@@ -574,14 +583,23 @@ impl Parser {
             ));
         }
 
-        // Optional type parameters: <T, U>
+        // Optional type parameters: <T, U> or <T: Bound, U>
         let type_params = if self.peek_is(TokenKind::Lt) {
             self.expect(TokenKind::Lt)?;
             let mut params = Vec::new();
 
             while !self.peek_is(TokenKind::Gt) && !self.is_eof() {
                 let param = self.expect(TokenKind::Ident)?;
-                params.push(param.text.clone());
+                let bound = if self.peek_is(TokenKind::Colon) {
+                    self.expect(TokenKind::Colon)?;
+                    Some(self.expect(TokenKind::Ident)?.text)
+                } else {
+                    None
+                };
+                params.push(TypeParam {
+                    name: param.text.clone(),
+                    bound,
+                });
 
                 if !self.peek_is(TokenKind::Gt) {
                     self.expect(TokenKind::Comma)?;

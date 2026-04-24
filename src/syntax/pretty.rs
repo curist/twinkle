@@ -37,7 +37,16 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             }
             write!(out, ": {}", decl.name).unwrap();
             if !decl.type_params.is_empty() {
-                write!(out, "<{}>", decl.type_params.join(", ")).unwrap();
+                let params = decl
+                    .type_params
+                    .iter()
+                    .map(|p| match &p.bound {
+                        Some(bound) => format!("{}: {}", p.name, bound),
+                        None => p.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(out, "<{}>", params).unwrap();
             }
             writeln!(out).unwrap();
             match &decl.definition {
@@ -84,7 +93,16 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             }
             write!(out, ": {}", decl.name).unwrap();
             if !decl.type_params.is_empty() {
-                write!(out, "<{}>", decl.type_params.join(", ")).unwrap();
+                let params = decl
+                    .type_params
+                    .iter()
+                    .map(|p| match &p.bound {
+                        Some(bound) => format!("{}: {}", p.name, bound),
+                        None => p.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(out, "<{}>", params).unwrap();
             }
             write!(out, "(").unwrap();
             for (i, param) in decl.params.iter().enumerate() {

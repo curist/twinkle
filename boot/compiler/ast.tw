@@ -39,10 +39,22 @@ pub type ImportTypeItem = .{
   span: span.Span,
 }
 
+pub type TypeParam = .{
+  name: String,
+  bounds: Vector<TypePath>,
+  span: span.Span,
+}
+
+/// Extract plain type-parameter names from a list of TypeParam.
+/// Used for migration: most existing code works with Vector<String>.
+pub fn type_param_names(params: Vector<TypeParam>) Vector<String> {
+  collect p in params { p.name }
+}
+
 pub type FunctionDecl = .{
   is_pub: Bool,
   name: String,
-  type_params: Vector<String>,
+  type_params: Vector<TypeParam>,
   params: Vector<Param>,
   return_type: TypeExpr?,
   body: Block,
@@ -52,7 +64,7 @@ pub type FunctionDecl = .{
 pub type TypeDecl = .{
   is_pub: Bool,
   name: String,
-  type_params: Vector<String>,
+  type_params: Vector<TypeParam>,
   def: TypeDef,
   span: span.Span,
 }

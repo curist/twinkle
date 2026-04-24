@@ -2,7 +2,7 @@ use tests.runner
 use tests.assert
 use lib.source.span
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry, plain_resolved_type_params}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
 use compiler.codegen.wasm_layout.{
@@ -39,7 +39,7 @@ fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, targe
   entry := TypeEntry.{
     id: TypeId.{ id: type_id },
     arity: type_params.len(),
-    def: .Some(ResolvedTypeDef.Alias(name, type_params, target)),
+    def: .Some(ResolvedTypeDef.Alias(name, plain_resolved_type_params(type_params), target)),
     span: dummy_span(),
   }
   resolver.empty_env().add_type(entry, name)

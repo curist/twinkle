@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::intrinsics::registry;
 use crate::ir::core::{CoreExpr, CoreExprKind, CoreModule, FuncId, FunctionDef, MatchArm};
-use crate::types::ty::MonoType;
+use crate::types::ty::{MonoType, method_receiver_type_id};
 
 // ─── Public helpers (also used by tests) ─────────────────────────────────────
 
@@ -208,12 +208,57 @@ fn type_key(ty: &MonoType) -> String {
     }
 }
 
+fn resolve_func_id_by_name(module: &CoreModule, name: &str) -> Option<FuncId> {
+    let mut func_table = HashMap::new();
+    registry::populate_func_table(&mut func_table, false);
+    if let Some(fid) = func_table.get(name) {
+        return Some(*fid);
+    }
+    let local_name = name.rsplit('.').next().unwrap_or(name);
+    module
+        .functions
+        .iter()
+        .find(|f| f.name == name || f.name == local_name)
+        .map(|f| f.func_id)
+}
+
+fn resolve_stringify_target(module: &CoreModule, receiver_ty: &MonoType) -> Option<FuncId> {
+    let via_methods = match receiver_ty {
+        MonoType::Named { type_id, .. } => module
+            .type_env
+            .get_method(*type_id, "to_string")
+            .and_then(|info| resolve_func_id_by_name(module, &info.func_name)),
+        _ => method_receiver_type_id(receiver_ty)
+            .and_then(|type_id| module.type_env.get_method(type_id, "to_string"))
+            .and_then(|info| resolve_func_id_by_name(module, &info.func_name)),
+    };
+    if via_methods.is_some() {
+        return via_methods;
+    }
+
+    module.functions.iter().find_map(|f| {
+        if f.name.rsplit('.').next().unwrap_or(&f.name) != "to_string" {
+            return None;
+        }
+        let recv_pattern = f.param_tys.first()?;
+        let mut subst = HashMap::new();
+        match_type_against(recv_pattern, receiver_ty, &mut subst);
+        let type_params = collect_type_params(&f.param_tys, &f.return_ty);
+        if type_params.iter().all(|p| subst.contains_key(p)) || !contains_var(recv_pattern) {
+            Some(f.func_id)
+        } else {
+            None
+        }
+    })
+}
+
 // ─── Tree traversals ──────────────────────────────────────────────────────────
 
 /// Walk `expr`, pushing `(orig_fid, subst)` onto `queue` for every direct or
 /// first-class use of a generic function.
 fn collect_instantiations<'a>(
     expr: &CoreExpr,
+    module: &CoreModule,
     generic_funcs: &HashMap<FuncId, &'a FunctionDef>,
     queue: &mut VecDeque<(FuncId, HashMap<String, MonoType>)>,
 ) {
@@ -227,14 +272,36 @@ fn collect_instantiations<'a>(
                     }
                 }
             }
-            collect_instantiations(callee, generic_funcs, queue);
+            collect_instantiations(callee, module, generic_funcs, queue);
             for arg in args {
-                collect_instantiations(arg, generic_funcs, queue);
+                collect_instantiations(arg, module, generic_funcs, queue);
             }
         }
-
+        CoreExprKind::ContractCall {
+            contract,
+            method,
+            receiver,
+            args,
+        } => {
+            if contract == "Stringify" && method == "to_string" {
+                if let Some(fid) = resolve_stringify_target(module, &receiver.ty) {
+                    if let Some(gf) = generic_funcs.get(&fid) {
+                        let mut call_args = Vec::with_capacity(1 + args.len());
+                        call_args.push((**receiver).clone());
+                        call_args.extend(args.iter().cloned());
+                        let (type_params, subst) = infer_call_subst(gf, &call_args, &expr.ty);
+                        if type_params.iter().all(|p| subst.contains_key(p)) {
+                            queue.push_back((fid, subst));
+                        }
+                    }
+                }
+            }
+            collect_instantiations(receiver, module, generic_funcs, queue);
+            for arg in args {
+                collect_instantiations(arg, module, generic_funcs, queue);
+            }
+        }
         CoreExprKind::GlobalFunc(fid) => {
-            // Non-call-position reference: concrete type is stored in expr.ty.
             if let Some(gf) = generic_funcs.get(fid) {
                 let generic_fn_ty = MonoType::Function {
                     params: gf.param_tys.clone(),
@@ -247,79 +314,63 @@ fn collect_instantiations<'a>(
                 }
             }
         }
-
-        // Recurse into sub-expressions.
         CoreExprKind::Let { value, body, .. } => {
-            collect_instantiations(value, generic_funcs, queue);
-            collect_instantiations(body, generic_funcs, queue);
+            collect_instantiations(value, module, generic_funcs, queue);
+            collect_instantiations(body, module, generic_funcs, queue);
         }
         CoreExprKind::Assign { value, .. } => {
-            collect_instantiations(value, generic_funcs, queue);
+            collect_instantiations(value, module, generic_funcs, queue)
         }
         CoreExprKind::BinOp { left, right, .. } => {
-            collect_instantiations(left, generic_funcs, queue);
-            collect_instantiations(right, generic_funcs, queue);
+            collect_instantiations(left, module, generic_funcs, queue);
+            collect_instantiations(right, module, generic_funcs, queue);
         }
         CoreExprKind::UnOp { expr, .. } => {
-            collect_instantiations(expr, generic_funcs, queue);
+            collect_instantiations(expr, module, generic_funcs, queue)
         }
         CoreExprKind::If {
             cond,
             then_branch,
             else_branch,
         } => {
-            collect_instantiations(cond, generic_funcs, queue);
-            collect_instantiations(then_branch, generic_funcs, queue);
-            collect_instantiations(else_branch, generic_funcs, queue);
+            collect_instantiations(cond, module, generic_funcs, queue);
+            collect_instantiations(then_branch, module, generic_funcs, queue);
+            collect_instantiations(else_branch, module, generic_funcs, queue);
         }
         CoreExprKind::Match { scrutinee, arms } => {
-            collect_instantiations(scrutinee, generic_funcs, queue);
+            collect_instantiations(scrutinee, module, generic_funcs, queue);
             for arm in arms {
-                collect_instantiations(&arm.body, generic_funcs, queue);
+                collect_instantiations(&arm.body, module, generic_funcs, queue);
             }
         }
-        CoreExprKind::Loop { body } => {
-            collect_instantiations(body, generic_funcs, queue);
-        }
-        CoreExprKind::Break { value } => {
+        CoreExprKind::Loop { body } => collect_instantiations(body, module, generic_funcs, queue),
+        CoreExprKind::Break { value } | CoreExprKind::Return { value } => {
             if let Some(v) = value {
-                collect_instantiations(v, generic_funcs, queue);
-            }
-        }
-        CoreExprKind::Return { value } => {
-            if let Some(v) = value {
-                collect_instantiations(v, generic_funcs, queue);
+                collect_instantiations(v, module, generic_funcs, queue);
             }
         }
         CoreExprKind::Record { fields, .. } => {
             for (_, val) in fields {
-                collect_instantiations(val, generic_funcs, queue);
+                collect_instantiations(val, module, generic_funcs, queue);
             }
         }
         CoreExprKind::RecordGet { target, .. } => {
-            collect_instantiations(target, generic_funcs, queue);
+            collect_instantiations(target, module, generic_funcs, queue)
         }
         CoreExprKind::RecordUpdate { base, value, .. } => {
-            collect_instantiations(base, generic_funcs, queue);
-            collect_instantiations(value, generic_funcs, queue);
+            collect_instantiations(base, module, generic_funcs, queue);
+            collect_instantiations(value, module, generic_funcs, queue);
         }
-        CoreExprKind::Variant { args, .. } => {
+        CoreExprKind::Variant { args, .. } | CoreExprKind::ArrayLit { elements: args } => {
             for arg in args {
-                collect_instantiations(arg, generic_funcs, queue);
-            }
-        }
-        CoreExprKind::ArrayLit { elements } => {
-            for elem in elements {
-                collect_instantiations(elem, generic_funcs, queue);
+                collect_instantiations(arg, module, generic_funcs, queue);
             }
         }
         CoreExprKind::Index { base, index } => {
-            collect_instantiations(base, generic_funcs, queue);
-            collect_instantiations(index, generic_funcs, queue);
+            collect_instantiations(base, module, generic_funcs, queue);
+            collect_instantiations(index, module, generic_funcs, queue);
         }
-        CoreExprKind::Defer(inner) => {
-            collect_instantiations(inner, generic_funcs, queue);
-        }
+        CoreExprKind::Defer(inner) => collect_instantiations(inner, module, generic_funcs, queue),
         CoreExprKind::MakeClosure { func_id, .. } => {
             if let Some(gf) = generic_funcs.get(func_id) {
                 let generic_fn_ty = MonoType::Function {
@@ -387,6 +438,17 @@ fn apply_subst_to_kind(kind: &CoreExprKind, subst: &HashMap<String, MonoType>) -
         },
         CoreExprKind::Call { callee, args } => CoreExprKind::Call {
             callee: Box::new(apply_subst_to_expr(callee, subst)),
+            args: args.iter().map(|a| apply_subst_to_expr(a, subst)).collect(),
+        },
+        CoreExprKind::ContractCall {
+            contract,
+            method,
+            receiver,
+            args,
+        } => CoreExprKind::ContractCall {
+            contract: contract.clone(),
+            method: method.clone(),
+            receiver: Box::new(apply_subst_to_expr(receiver, subst)),
             args: args.iter().map(|a| apply_subst_to_expr(a, subst)).collect(),
         },
         CoreExprKind::MakeClosure { func_id, free_vars } => CoreExprKind::MakeClosure {
@@ -471,21 +533,23 @@ type SpecMap = HashMap<(FuncId, Vec<MonoType>), FuncId>;
 
 fn rewrite_calls_in_func(
     mut func: FunctionDef,
+    module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
 ) -> FunctionDef {
-    func.body = rewrite_calls_in_expr(&func.body, spec_map, generic_funcs);
+    func.body = rewrite_calls_in_expr(&func.body, module, spec_map, generic_funcs);
     func
 }
 
 fn rewrite_calls_in_expr(
     expr: &CoreExpr,
+    module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
 ) -> CoreExpr {
     CoreExpr {
         ty: expr.ty.clone(),
-        kind: rewrite_calls_in_kind(expr, spec_map, generic_funcs),
+        kind: rewrite_calls_in_kind(expr, module, spec_map, generic_funcs),
         span: expr.span,
     }
 }
@@ -496,6 +560,7 @@ fn rewrite_calls_in_expr(
 /// the non-call-position case.
 fn rewrite_calls_in_kind(
     parent: &CoreExpr,
+    module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
 ) -> CoreExprKind {
@@ -503,7 +568,7 @@ fn rewrite_calls_in_kind(
         CoreExprKind::Call { callee, args } => {
             let new_args: Vec<CoreExpr> = args
                 .iter()
-                .map(|a| rewrite_calls_in_expr(a, spec_map, generic_funcs))
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect();
 
             if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
@@ -542,7 +607,59 @@ fn rewrite_calls_in_kind(
             }
 
             CoreExprKind::Call {
-                callee: Box::new(rewrite_calls_in_expr(callee, spec_map, generic_funcs)),
+                callee: Box::new(rewrite_calls_in_expr(
+                    callee,
+                    module,
+                    spec_map,
+                    generic_funcs,
+                )),
+                args: new_args,
+            }
+        }
+
+        CoreExprKind::ContractCall {
+            contract,
+            method,
+            receiver,
+            args,
+        } => {
+            let new_receiver = rewrite_calls_in_expr(receiver, module, spec_map, generic_funcs);
+            let new_args: Vec<CoreExpr> = args
+                .iter()
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
+                .collect();
+            if contract == "Stringify" && method == "to_string" {
+                if let Some(mut fid) = resolve_stringify_target(module, &new_receiver.ty) {
+                    let mut call_args = Vec::with_capacity(1 + new_args.len());
+                    call_args.push(new_receiver.clone());
+                    call_args.extend(new_args);
+                    if let Some(gf) = generic_funcs.get(&fid) {
+                        let (type_params, subst) = infer_call_subst(gf, &call_args, &parent.ty);
+                        let type_args: Vec<MonoType> = type_params
+                            .iter()
+                            .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
+                            .collect();
+                        if let Some(&new_fid) = spec_map.get(&(fid, type_args)) {
+                            fid = new_fid;
+                        }
+                    }
+                    return CoreExprKind::Call {
+                        callee: Box::new(CoreExpr {
+                            kind: CoreExprKind::GlobalFunc(fid),
+                            ty: MonoType::Function {
+                                params: call_args.iter().map(|a| a.ty.clone()).collect(),
+                                ret: Box::new(parent.ty.clone()),
+                            },
+                            span: parent.span,
+                        }),
+                        args: call_args,
+                    };
+                }
+            }
+            CoreExprKind::ContractCall {
+                contract: contract.clone(),
+                method: method.clone(),
+                receiver: Box::new(new_receiver),
                 args: new_args,
             }
         }
@@ -580,21 +697,36 @@ fn rewrite_calls_in_kind(
         // Leaf / structural nodes — recurse then reconstruct.
         CoreExprKind::Let { local, value, body } => CoreExprKind::Let {
             local: *local,
-            value: Box::new(rewrite_calls_in_expr(value, spec_map, generic_funcs)),
-            body: Box::new(rewrite_calls_in_expr(body, spec_map, generic_funcs)),
+            value: Box::new(rewrite_calls_in_expr(
+                value,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
+            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs)),
         },
         CoreExprKind::Assign { local, value } => CoreExprKind::Assign {
             local: *local,
-            value: Box::new(rewrite_calls_in_expr(value, spec_map, generic_funcs)),
+            value: Box::new(rewrite_calls_in_expr(
+                value,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
         },
         CoreExprKind::BinOp { op, left, right } => CoreExprKind::BinOp {
             op: *op,
-            left: Box::new(rewrite_calls_in_expr(left, spec_map, generic_funcs)),
-            right: Box::new(rewrite_calls_in_expr(right, spec_map, generic_funcs)),
+            left: Box::new(rewrite_calls_in_expr(left, module, spec_map, generic_funcs)),
+            right: Box::new(rewrite_calls_in_expr(
+                right,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
         },
         CoreExprKind::UnOp { op, expr } => CoreExprKind::UnOp {
             op: *op,
-            expr: Box::new(rewrite_calls_in_expr(expr, spec_map, generic_funcs)),
+            expr: Box::new(rewrite_calls_in_expr(expr, module, spec_map, generic_funcs)),
         },
         CoreExprKind::MakeClosure { func_id, free_vars } => {
             if let Some(gf) = generic_funcs.get(func_id) {
@@ -632,35 +764,51 @@ fn rewrite_calls_in_kind(
             then_branch,
             else_branch,
         } => CoreExprKind::If {
-            cond: Box::new(rewrite_calls_in_expr(cond, spec_map, generic_funcs)),
-            then_branch: Box::new(rewrite_calls_in_expr(then_branch, spec_map, generic_funcs)),
-            else_branch: Box::new(rewrite_calls_in_expr(else_branch, spec_map, generic_funcs)),
+            cond: Box::new(rewrite_calls_in_expr(cond, module, spec_map, generic_funcs)),
+            then_branch: Box::new(rewrite_calls_in_expr(
+                then_branch,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
+            else_branch: Box::new(rewrite_calls_in_expr(
+                else_branch,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
         },
         CoreExprKind::Match { scrutinee, arms } => CoreExprKind::Match {
-            scrutinee: Box::new(rewrite_calls_in_expr(scrutinee, spec_map, generic_funcs)),
+            scrutinee: Box::new(rewrite_calls_in_expr(
+                scrutinee,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: rewrite_calls_in_expr(&arm.body, spec_map, generic_funcs),
+                    body: rewrite_calls_in_expr(&arm.body, module, spec_map, generic_funcs),
                 })
                 .collect(),
         },
         CoreExprKind::Loop { body } => CoreExprKind::Loop {
-            body: Box::new(rewrite_calls_in_expr(body, spec_map, generic_funcs)),
+            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs)),
         },
         CoreExprKind::Break { value } => CoreExprKind::Break {
             value: value
                 .as_ref()
-                .map(|v| Box::new(rewrite_calls_in_expr(v, spec_map, generic_funcs))),
+                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs))),
         },
         CoreExprKind::Return { value } => CoreExprKind::Return {
             value: value
                 .as_ref()
-                .map(|v| Box::new(rewrite_calls_in_expr(v, spec_map, generic_funcs))),
+                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs))),
         },
         CoreExprKind::Defer(inner) => CoreExprKind::Defer(Box::new(rewrite_calls_in_expr(
             inner,
+            module,
             spec_map,
             generic_funcs,
         ))),
@@ -668,17 +816,32 @@ fn rewrite_calls_in_kind(
             type_id: *type_id,
             fields: fields
                 .iter()
-                .map(|(fid, val)| (*fid, rewrite_calls_in_expr(val, spec_map, generic_funcs)))
+                .map(|(fid, val)| {
+                    (
+                        *fid,
+                        rewrite_calls_in_expr(val, module, spec_map, generic_funcs),
+                    )
+                })
                 .collect(),
         },
         CoreExprKind::RecordGet { target, field } => CoreExprKind::RecordGet {
-            target: Box::new(rewrite_calls_in_expr(target, spec_map, generic_funcs)),
+            target: Box::new(rewrite_calls_in_expr(
+                target,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
             field: *field,
         },
         CoreExprKind::RecordUpdate { base, field, value } => CoreExprKind::RecordUpdate {
-            base: Box::new(rewrite_calls_in_expr(base, spec_map, generic_funcs)),
+            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs)),
             field: *field,
-            value: Box::new(rewrite_calls_in_expr(value, spec_map, generic_funcs)),
+            value: Box::new(rewrite_calls_in_expr(
+                value,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
         },
         CoreExprKind::Variant {
             type_id,
@@ -689,18 +852,23 @@ fn rewrite_calls_in_kind(
             variant: *variant,
             args: args
                 .iter()
-                .map(|a| rewrite_calls_in_expr(a, spec_map, generic_funcs))
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect(),
         },
         CoreExprKind::ArrayLit { elements } => CoreExprKind::ArrayLit {
             elements: elements
                 .iter()
-                .map(|e| rewrite_calls_in_expr(e, spec_map, generic_funcs))
+                .map(|e| rewrite_calls_in_expr(e, module, spec_map, generic_funcs))
                 .collect(),
         },
         CoreExprKind::Index { base, index } => CoreExprKind::Index {
-            base: Box::new(rewrite_calls_in_expr(base, spec_map, generic_funcs)),
-            index: Box::new(rewrite_calls_in_expr(index, spec_map, generic_funcs)),
+            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs)),
+            index: Box::new(rewrite_calls_in_expr(
+                index,
+                module,
+                spec_map,
+                generic_funcs,
+            )),
         },
         CoreExprKind::LitInt(_)
         | CoreExprKind::LitFloat(_)
@@ -759,7 +927,7 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
     // Seed: collect instantiations from all non-generic functions.
     for func in &module.functions {
         if !is_generic(func) {
-            collect_instantiations(&func.body, &generic_funcs, &mut queue);
+            collect_instantiations(&func.body, &module, &generic_funcs, &mut queue);
         }
     }
 
@@ -816,21 +984,22 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
         };
 
         // Collect transitive instantiations from the now-concrete body.
-        collect_instantiations(&specialised.body, &generic_funcs, &mut queue);
+        collect_instantiations(&specialised.body, &module, &generic_funcs, &mut queue);
         new_funcs.push(specialised);
     }
 
     // Rewrite all call sites; drop original generic defs.
+    let module_for_rewrite = module.clone();
     let rewritten: Vec<FunctionDef> = module
         .functions
         .into_iter()
         .filter(|f| !is_generic(f))
-        .map(|f| rewrite_calls_in_func(f, &spec_map, &generic_funcs))
+        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs))
         .collect();
 
     let rewritten_new: Vec<FunctionDef> = new_funcs
         .into_iter()
-        .map(|f| rewrite_calls_in_func(f, &spec_map, &generic_funcs))
+        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs))
         .collect();
 
     module.functions = rewritten;

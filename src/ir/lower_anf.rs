@@ -247,6 +247,14 @@ fn lower_expr(
             op_result_mono.insert(tmp, expr.ty.clone());
             AnfExpr::Atom(Atom::ALocal(tmp))
         }
+        CoreExprKind::ContractCall {
+            contract, method, ..
+        } => {
+            panic!(
+                "ANF lowering: unresolved contract call {}.{} survived monomorphization",
+                contract, method
+            );
+        }
 
         CoreExprKind::Record { type_id, fields } => {
             let type_id = *type_id;
@@ -601,6 +609,14 @@ fn atomize(
             op_result_mono.insert(tmp, expr.ty.clone());
             Atom::ALocal(tmp)
         }
+        CoreExprKind::ContractCall {
+            contract, method, ..
+        } => {
+            panic!(
+                "ANF lowering: unresolved contract call {}.{} survived monomorphization",
+                contract, method
+            );
+        }
         CoreExprKind::Record { type_id, fields } => {
             let type_id = *type_id;
             let anf_fields: Vec<_> = fields
@@ -830,6 +846,12 @@ fn max_local_id_in_expr(expr: &CoreExpr, max: &mut u32) {
         CoreExprKind::UnOp { expr, .. } => max_local_id_in_expr(expr, max),
         CoreExprKind::Call { callee, args } => {
             max_local_id_in_expr(callee, max);
+            for arg in args {
+                max_local_id_in_expr(arg, max);
+            }
+        }
+        CoreExprKind::ContractCall { receiver, args, .. } => {
+            max_local_id_in_expr(receiver, max);
             for arg in args {
                 max_local_id_in_expr(arg, max);
             }

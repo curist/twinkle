@@ -2,7 +2,7 @@ use @std.path
 use lib.module.loader
 use compiler.imports
 use compiler.resolver
-use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeEntry, TypeId, ResolvedTypeDef}
+use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeEntry, TypeId, ResolvedTypeDef, plain_resolved_type_params}
 use compiler.signatures
 
 fn builtin_sig(
@@ -12,7 +12,7 @@ fn builtin_sig(
   params: Vector<MonoType>,
   ret: MonoType?,
 ) FunctionSig {
-  .{ name, type_params, param_names, params, ret }
+  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret }
 }
 
 
@@ -57,16 +57,20 @@ fn builtin_type_entries() Vector<TypeEntry> {
   s := MonoType.Var(tp_s)
   next_type_id := Cell.new(0)
 
+  rtp_t := plain_resolved_type_params([tp_t])
+  rtp_te := plain_resolved_type_params([tp_t, tp_e])
+  rtp_ts := plain_resolved_type_params([tp_t, tp_s])
+
   types := [
-    builtin_type_entry(next_type_id, 1, .Sum("Option", [tp_t], [
+    builtin_type_entry(next_type_id, 1, .Sum("Option", rtp_t, [
       .{ name: "None", fields: [] },
       .{ name: "Some", fields: [t] },
     ])),
-    builtin_type_entry(next_type_id, 2, .Sum("Result", [tp_t, tp_e], [
+    builtin_type_entry(next_type_id, 2, .Sum("Result", rtp_te, [
       .{ name: "Ok", fields: [t] },
       .{ name: "Err", fields: [e] },
     ])),
-    builtin_type_entry(next_type_id, 1, .Record("Cell", [tp_t], [])),
+    builtin_type_entry(next_type_id, 1, .Record("Cell", rtp_t, [])),
     builtin_type_entry(next_type_id, 0, .Record("Range", [], [
       .{ name: "start", ty: .Int },
       .{ name: "end", ty: .Int },
@@ -77,12 +81,12 @@ fn builtin_type_entries() Vector<TypeEntry> {
   iterator_tid := TypeId.{ id: next_type_id.get() }
 
   types = types.concat([
-    builtin_type_entry(next_type_id, 1, .Record("Iterator", [tp_t], [])),
-    builtin_type_entry(next_type_id, 1, .Record("IterItem", [tp_t], [
+    builtin_type_entry(next_type_id, 1, .Record("Iterator", rtp_t, [])),
+    builtin_type_entry(next_type_id, 1, .Record("IterItem", rtp_t, [
       .{ name: "value", ty: t },
       .{ name: "rest", ty: .Named(iterator_tid, [t]) },
     ])),
-    builtin_type_entry(next_type_id, 2, .Sum("UnfoldStep", [tp_t, tp_s], [
+    builtin_type_entry(next_type_id, 2, .Sum("UnfoldStep", rtp_ts, [
       .{ name: "Done", fields: [] },
       .{ name: "Yield", fields: [t, s] },
     ])),

@@ -148,3 +148,4 @@ Related historical context outside this folder:
 | [range-literal-syntax.md](range-literal-syntax.md) | `m..n` range literal syntax desugaring to `range_from` — stage0 and boot compiler, tree-sitter grammar, precedence fix |
 | [collection-literal-type-inference.md](collection-literal-type-inference.md) | Stage0 deferred type inference for `Dict.new()` and empty `[]` literals — MetaVar emission with scope-exit drain; workaround removed from `boot/lib/json.tw` |
 | [monomorphize-return-type-inference.md](monomorphize-return-type-inference.md) | Return-type-driven monomorphization inference for generic calls whose type params are not solved by arguments, plus adjacent closure-target and boot type-param collection fixes discovered during validation |
+| [contracts.md](contracts.md) | Contracts MVP: builtin `Stringify`, bounded type parameters, conditional witness-based satisfaction, deferred contract-backed lowering, and prelude-backed builtin generic conformance |

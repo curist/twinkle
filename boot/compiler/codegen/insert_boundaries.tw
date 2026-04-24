@@ -4,7 +4,7 @@
 //
 // Phase D, Milestone 4.
 
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeDef, lookup_type_def}
+use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeDef, ResolvedTypeParam, lookup_type_def}
 use compiler.core_ir.{FuncId, LocalId, Param, FieldId, VariantId}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
@@ -436,11 +436,11 @@ fn variant_payload_mono(sum_mono: MonoType, vid: Int, field_idx: Int, env: Resol
   }
 }
 
-fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for p,i in type_params {
-        if p == name { return args[i] }
+        if p.name == name { return args[i] }
       }
       ty
     },

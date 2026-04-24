@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::intrinsics::registry;
 use crate::ir::core::{CoreExpr, CoreExprKind, CoreModule, FuncId, MatchArm};
 use crate::ir::lower::prelude;
+use crate::types::ty::MonoType;
 
 /// Remove unreachable functions from a linked CoreModule and renumber FuncIds.
 ///
@@ -43,6 +44,13 @@ pub fn eliminate_dead_code_with_roots(
     for &root_id in extra_roots {
         if reachable.insert(root_id) {
             queue.push_back(root_id);
+        }
+    }
+    // Preserve generic functions until monomorphization runs after linked Core IR.
+    // Otherwise they can be stripped before deferred contract-backed calls are resolved.
+    for func in &module.functions {
+        if is_generic_func(func) && reachable.insert(func.func_id) {
+            queue.push_back(func.func_id);
         }
     }
     while let Some(id) = queue.pop_front() {
@@ -114,6 +122,21 @@ pub fn eliminate_dead_code_with_roots(
 }
 
 /// Collect all FuncId references (GlobalFunc and MakeClosure) from an expression.
+fn contains_var(ty: &MonoType) -> bool {
+    match ty {
+        MonoType::Var(_) => true,
+        MonoType::Vector(e) => contains_var(e),
+        MonoType::Dict(k, v) => contains_var(k) || contains_var(v),
+        MonoType::Function { params, ret } => params.iter().any(contains_var) || contains_var(ret),
+        MonoType::Named { args, .. } => args.iter().any(contains_var),
+        _ => false,
+    }
+}
+
+fn is_generic_func(func: &crate::ir::core::FunctionDef) -> bool {
+    func.param_tys.iter().any(contains_var) || contains_var(&func.return_ty)
+}
+
 fn collect_func_refs(expr: &CoreExpr, out: &mut HashSet<FuncId>) {
     match &expr.kind {
         CoreExprKind::GlobalFunc(id) => {
@@ -138,6 +161,12 @@ fn collect_func_refs(expr: &CoreExpr, out: &mut HashSet<FuncId>) {
         }
         CoreExprKind::Call { callee, args } => {
             collect_func_refs(callee, out);
+            for arg in args {
+                collect_func_refs(arg, out);
+            }
+        }
+        CoreExprKind::ContractCall { receiver, args, .. } => {
+            collect_func_refs(receiver, out);
             for arg in args {
                 collect_func_refs(arg, out);
             }
@@ -234,6 +263,12 @@ fn remap_expr(expr: &mut CoreExpr, map: &HashMap<FuncId, FuncId>) {
         }
         CoreExprKind::Call { callee, args } => {
             remap_expr(callee, map);
+            for arg in args {
+                remap_expr(arg, map);
+            }
+        }
+        CoreExprKind::ContractCall { receiver, args, .. } => {
+            remap_expr(receiver, map);
             for arg in args {
                 remap_expr(arg, map);
             }

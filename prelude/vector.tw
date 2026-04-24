@@ -75,6 +75,11 @@ pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   out
 }
 
+pub fn to_string<T: Stringify>(xs: Vector<T>) String {
+  parts: Vector<String> = collect x in xs { x.to_string() }
+  "[${parts.join(", ")}]"
+}
+
 /// Join strings with sep.
 pub fn join(xs: Vector<String>, sep: String) String {
   n := xs.len()

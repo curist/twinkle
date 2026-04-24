@@ -68,13 +68,20 @@ impl ImportDecl {
     }
 }
 
+/// Type parameter with an optional single contract bound.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: String,
+    pub bound: Option<String>,
+}
+
 /// Type declaration
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecl {
     pub is_pub: bool,
     pub doc: Option<String>,
     pub name: String,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub definition: TypeDef,
     pub span: Span,
 }
@@ -109,7 +116,7 @@ pub struct FunctionDecl {
     pub is_pub: bool,
     pub doc: Option<String>,
     pub name: String,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Block,

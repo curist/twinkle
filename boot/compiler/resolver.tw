@@ -12,8 +12,9 @@ use .ast.{
   Module, Item, TypeDecl, FunctionDecl, Param,
   TypeDef, TypeExpr, TypeExprKind, TypePath,
   RecordField, VariantDecl,
-  ImportItem,
+  ImportItem, TypeParam, type_param_names,
 }
+use .contracts.{BuiltinContract, resolve_builtin_contract_name}
 
 // ── Resolved Types ──────────────────────────────────────────────────
 
@@ -49,15 +50,44 @@ pub type ResolvedVariant = .{
   fields: Vector<MonoType>,
 }
 
+/// A reference to a builtin contract, as resolved from source.
+/// Kept as a sum type for future extensibility (user-defined contracts).
+pub type ResolvedContractRef = {
+  Builtin(BuiltinContract),
+}
+
+/// A type parameter with its resolved bounds, ready for the checker.
+pub type ResolvedTypeParam = .{
+  name: String,
+  bounds: Vector<ResolvedContractRef>,
+}
+
+/// Extract plain type-parameter names from resolved type parameters.
+/// Used for migration: most existing code works with Vector<String>.
+pub fn resolved_type_param_names(params: Vector<ResolvedTypeParam>) Vector<String> {
+  collect p in params { p.name }
+}
+
+/// Wrap plain names as unbound ResolvedTypeParams.
+/// Used to construct FunctionSig entries for builtin/hardcoded functions.
+pub fn plain_resolved_type_params(names: Vector<String>) Vector<ResolvedTypeParam> {
+  collect n in names { .{ name: n, bounds: [] } }
+}
+
 pub type ResolvedTypeDef = {
-  Record(String, Vector<String>, Vector<ResolvedField>),
-  Sum(String, Vector<String>, Vector<ResolvedVariant>),
-  Alias(String, Vector<String>, MonoType),
+  Record(String, Vector<ResolvedTypeParam>, Vector<ResolvedField>),
+  Sum(String, Vector<ResolvedTypeParam>, Vector<ResolvedVariant>),
+  Alias(String, Vector<ResolvedTypeParam>, MonoType),
+}
+
+type ResolvedTypeParamsResult = .{
+  params: Vector<ResolvedTypeParam>,
+  diags: Vector<Diagnostic>,
 }
 
 pub type FunctionSig = .{
   name: String,
-  type_params: Vector<String>,
+  type_params: Vector<ResolvedTypeParam>,
   param_names: Vector<String>,
   params: Vector<MonoType>,
   ret: MonoType?,
@@ -1240,16 +1270,39 @@ fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagn
   }
 }
 
+fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: span.Span) ResolvedTypeParamsResult {
+  diags: Vector<Diagnostic> = []
+  resolved: Vector<ResolvedTypeParam> = []
+  for tp in ast_params {
+    bound_refs: Vector<ResolvedContractRef> = []
+    for bound_path in tp.bounds {
+      seg := bound_path.segments[0]
+      case resolve_builtin_contract_name(seg) {
+        .Some(c) => {
+          bound_refs = bound_refs.append(.Builtin(c))
+        },
+        .None => {
+          diags = diags.append(diag.error(bound_path.span, "unknown contract '${seg}'"))
+        },
+      }
+    }
+    resolved = resolved.append(.{ name: tp.name, bounds: bound_refs })
+  }
+  .{ params: resolved, diags }
+}
+
 fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
-  diags := check_dup_type_params(decl.type_params, decl.span)
-  type_params := decl.type_params
+  r := resolve_ast_type_params(decl.type_params, decl.span)
+  type_params := r.params
+  names := resolved_type_param_names(type_params)
+  diags := r.diags.concat(check_dup_type_params(names, decl.span))
 
   case decl.def {
     .Record(fields) => {
       field_names := collect f in fields { f.name }
       diags = diags.concat(check_dup_names(field_names, "field", decl.span))
       resolved_fields: Vector<ResolvedField> = collect field in fields {
-        r := env.resolve_type_expr(field.ty, type_params)
+        r := env.resolve_type_expr(field.ty, names)
         diags = diags.concat(r.diagnostics)
         ty := case r.ty {
           .Some(t) => t,
@@ -1265,7 +1318,7 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
       diags = diags.concat(check_dup_names(variant_names, "variant", decl.span))
       resolved_variants: Vector<ResolvedVariant> = collect variant in variants {
         resolved_fields := collect field_ty in variant.fields {
-          r := env.resolve_type_expr(field_ty, type_params)
+          r := env.resolve_type_expr(field_ty, names)
           diags = diags.concat(r.diagnostics)
           case r.ty {
             .Some(ty) => ty,
@@ -1278,7 +1331,7 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
       .{ env: new_env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
-      r := env.resolve_type_expr(ty_expr, type_params)
+      r := env.resolve_type_expr(ty_expr, names)
       diags = diags.concat(r.diagnostics)
       case r.ty {
         .Some(ty) => {
@@ -1310,15 +1363,17 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
 }
 
 fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
-  diags := check_dup_type_params(decl.type_params, decl.span)
-  type_params := decl.type_params
+  r := resolve_ast_type_params(decl.type_params, decl.span)
+  type_params := r.params
+  names := resolved_type_param_names(type_params)
+  diags := r.diags.concat(check_dup_type_params(names, decl.span))
 
   param_names := collect param in decl.params { param.name }
   diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
-        r := env.resolve_type_expr(ty_expr, type_params)
+        r := env.resolve_type_expr(ty_expr, names)
         diags = diags.concat(r.diagnostics)
         case r.ty {
           .Some(ty) => ty,
@@ -1334,7 +1389,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
 
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
-      r := env.resolve_type_expr(ty_expr, type_params)
+      r := env.resolve_type_expr(ty_expr, names)
       diags = diags.concat(r.diagnostics)
       r.ty
     },
@@ -1845,7 +1900,7 @@ type TypeRefs = .{
 // parameter name shadows a declared type name.
 fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
   refs: TypeRefs = .{ indices: [], seen: Dict.new() }
-  tp := decl.type_params
+  tp := type_param_names(decl.type_params)
   case decl.def {
     .Record(fields) => {
       for f in fields {

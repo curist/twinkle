@@ -170,19 +170,19 @@ impl Resolver {
             let placeholder = match &decl.definition {
                 AstTypeDef::Record { .. } => TypeDef::Record {
                     name: name.clone(),
-                    type_params: decl.type_params.clone(),
+                    type_params: decl.type_params.iter().map(|p| p.name.clone()).collect(),
                     fields: Vec::new(),
                     doc: decl.doc.clone(),
                 },
                 AstTypeDef::Sum { .. } => TypeDef::Sum {
                     name: name.clone(),
-                    type_params: decl.type_params.clone(),
+                    type_params: decl.type_params.iter().map(|p| p.name.clone()).collect(),
                     variants: Vec::new(),
                     doc: decl.doc.clone(),
                 },
                 AstTypeDef::Alias { .. } => TypeDef::Alias {
                     name: name.clone(),
-                    type_params: decl.type_params.clone(),
+                    type_params: decl.type_params.iter().map(|p| p.name.clone()).collect(),
                     target: MonoType::Void,
                     doc: decl.doc.clone(),
                 },
@@ -231,12 +231,12 @@ impl Resolver {
     }
 
     fn resolve_type_def(&mut self, decl: &TypeDecl) -> Result<TypeDef, ()> {
-        let type_params = &decl.type_params;
+        let type_params: Vec<String> = decl.type_params.iter().map(|p| p.name.clone()).collect();
         let def = match &decl.definition {
             AstTypeDef::Record { fields } => {
                 let mut resolved_fields = Vec::new();
                 for field in fields {
-                    match self.resolve_type_with_vars(&field.ty, type_params) {
+                    match self.resolve_type_with_vars(&field.ty, &type_params) {
                         Ok(ty) => {
                             resolved_fields.push(RecordField {
                                 name: field.name.clone(),
@@ -260,7 +260,7 @@ impl Resolver {
                 for variant in variants {
                     let mut resolved_fields = Vec::new();
                     for field_ty in &variant.fields {
-                        match self.resolve_type_with_vars(field_ty, type_params) {
+                        match self.resolve_type_with_vars(field_ty, &type_params) {
                             Ok(ty) => resolved_fields.push(ty),
                             Err(()) => {
                                 return Err(());
@@ -280,7 +280,7 @@ impl Resolver {
                 }
             }
             AstTypeDef::Alias { ty } => {
-                let target = self.resolve_type_with_vars(ty, type_params)?;
+                let target = self.resolve_type_with_vars(ty, &type_params)?;
                 TypeDef::Alias {
                     name: decl.name.clone(),
                     type_params: type_params.clone(),
@@ -336,7 +336,16 @@ impl Resolver {
     }
 
     fn resolve_function_sig(&mut self, decl: &FunctionDecl) -> Result<FunctionSignature, ()> {
-        let type_params = decl.type_params.clone();
+        let type_params: Vec<String> = decl.type_params.iter().map(|p| p.name.clone()).collect();
+        let type_param_bounds: HashMap<String, String> = decl
+            .type_params
+            .iter()
+            .filter_map(|p| {
+                p.bound
+                    .as_ref()
+                    .map(|bound| (p.name.clone(), bound.clone()))
+            })
+            .collect();
 
         // Resolve parameter types (type param names resolve to Var)
         let mut params = Vec::new();
@@ -364,6 +373,7 @@ impl Resolver {
         Ok(FunctionSignature {
             name: decl.name.clone(),
             type_params,
+            type_param_bounds,
             param_names: decl.params.iter().map(|param| param.name.clone()).collect(),
             params,
             ret,

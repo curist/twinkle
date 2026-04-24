@@ -77,6 +77,14 @@ pub enum CoreExprKind {
         args: Vec<CoreExpr>,
     },
 
+    // Deferred contract-backed call resolved during monomorphization.
+    ContractCall {
+        contract: String,
+        method: String,
+        receiver: Box<CoreExpr>,
+        args: Vec<CoreExpr>,
+    },
+
     // Lambda/closure — hoisted to a FunctionDef at the top level; this node
     // captures the free variables by value at the point of creation.
     MakeClosure {

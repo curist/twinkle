@@ -14,9 +14,10 @@ use .ast.{
   Expr, ExprKind, BinOp as AstBinOp, UnOp as AstUnOp,
   CollectExpr, StringPart, Param as AstParam,
 }
-use .resolver.{MonoType, ResolvedEnv, TypeId, FunctionOrigin}
+use .resolver.{MonoType, ResolvedEnv, TypeId, FunctionOrigin, ResolvedTypeParam}
 use .checker
 use .checker.{CheckResult, MethodCallInfo}
+use .contracts.{BuiltinContract}
 use .builder_family.{BuilderConfig, vector_builder_config}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
@@ -411,10 +412,10 @@ fn type_id_from_mono(ty: MonoType) TypeId? {
   }
 }
 
-fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+fn build_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<String, MonoType> {
   m: Dict<String, MonoType> = Dict.new()
   for i in 0..type_params.len() {
-    if i < type_args.len() { m[type_params[i]] = type_args[i] }
+    if i < type_args.len() { m[type_params[i].name] = type_args[i] }
   }
   m
 }
@@ -793,6 +794,21 @@ fn resolve_receiver_method_target(ctx: LowerCtx, base_ty: MonoType, method_name:
   }
 }
 
+fn lower_contract_call(ctx: LowerCtx, contract: BuiltinContract, method_name: String, receiver: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
+  rr := ctx.lower_expr(receiver)
+  lowered_args: Vector<CoreExpr> = []
+  cur_ctx := rr.ctx
+  for arg in args {
+    ar := cur_ctx.lower_expr(arg)
+    lowered_args = lowered_args.append(ar.expr)
+    cur_ctx = ar.ctx
+  }
+  .{
+    expr: .{ kind: .ContractCall(contract, method_name, rr.expr, lowered_args), ty, span: s },
+    ctx: cur_ctx,
+  }
+}
+
 fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType, s: Span) ExprOut {
   // TypeName.Variant(args) — qualified variant construction
   case callee_expr.kind {
@@ -827,6 +843,15 @@ fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: MonoType
   // Check if this is a method/module-qualified call resolved by the checker
   case ctx.method_calls[callee_expr.id] {
     .Some(info) => {
+      case info.contract {
+        .Some(contract) => {
+          case callee_expr.kind {
+            .Field(receiver, _) => { return lower_contract_call(ctx, contract, info.method_name, receiver, args, ty, s) },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
       target_name := if info.has_receiver {
         case callee_expr.kind {
           .Field(receiver, method_name) => resolve_receiver_method_target(ctx, ctx.expr_type(receiver), method_name, info.func_name),
@@ -1500,11 +1525,8 @@ fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span) ExprOut {
 // ── String interpolation lowering ─────────────────────────────────
 
 fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s: Span) ExprOut {
-  // "hello ${name}!" → string_concat(string_concat("hello ", to_string(name)), "!")
-  // Right-fold concat chain
   str_ty := MonoType.String
   cur_ctx := ctx
-  // Build all parts as string expressions
   str_parts: Vector<CoreExpr> = []
   for part in parts {
     case part {
@@ -1515,58 +1537,37 @@ fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s
         r := cur_ctx.lower_expr(expr)
         cur_ctx = r.ctx
         part_ty := cur_ctx.expr_type(expr)
-        // If already string, use directly; otherwise call to_string
         str_expr : CoreExpr = case part_ty {
           .String => r.expr,
-          .Int => {
-            .{
-              kind: .Call(
-                .{ kind: .GlobalFunc(cur_ctx.builtins.id("int_to_string")), ty: .Void, span: s },
-                [r.expr],
-              ),
-              ty: str_ty,
-              span: s,
-            }
-          },
-          .Float => {
-            .{
-              kind: .Call(
-                .{ kind: .GlobalFunc(cur_ctx.builtins.id("float_to_string")), ty: .Void, span: s },
-                [r.expr],
-              ),
-              ty: str_ty,
-              span: s,
-            }
-          },
-          .Bool => {
-            .{
-              kind: .Call(
-                .{ kind: .GlobalFunc(cur_ctx.builtins.id("bool_to_string")), ty: .Void, span: s },
-                [r.expr],
-              ),
-              ty: str_ty,
-              span: s,
-            }
-          },
-          .Byte => {
-            .{
-              kind: .Call(
-                .{ kind: .GlobalFunc(cur_ctx.builtins.id("byte_to_string")), ty: .Void, span: s },
-                [r.expr],
-              ),
-              ty: str_ty,
-              span: s,
-            }
-          },
           _ => {
-            // Fallback: call string_to_string (identity) for now
-            .{
-              kind: .Call(
-                .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")), ty: .Void, span: s },
-                [r.expr],
-              ),
-              ty: str_ty,
-              span: s,
+            case cur_ctx.method_calls[expr.id] {
+              .Some(info) => {
+                case info.contract {
+                  .Some(contract) => .{ kind: .ContractCall(contract, info.method_name, r.expr, []), ty: str_ty, span: s },
+                  .None => {
+                    fid := case cur_ctx.func_table[info.func_name] {
+                      .Some(id) => id,
+                      .None => cur_ctx.builtins.id("string_to_string"),
+                    }
+                    .{
+                      kind: .Call(
+                        .{ kind: .GlobalFunc(fid), ty: .Void, span: s },
+                        [r.expr],
+                      ),
+                      ty: str_ty,
+                      span: s,
+                    }
+                  },
+                }
+              },
+              .None => .{
+                kind: .Call(
+                  .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")), ty: .Void, span: s },
+                  [r.expr],
+                ),
+                ty: str_ty,
+                span: s,
+              },
             }
           },
         }
@@ -2950,6 +2951,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       functions,
       type_env: ctx.env,
       init_func_id,
+      func_table: ctx.func_table,
     },
     diagnostics: ctx.errors,
     func_table: ctx.func_table,

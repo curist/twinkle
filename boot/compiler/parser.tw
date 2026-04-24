@@ -12,7 +12,7 @@ use .ast.{
   Expr, ExprKind, Stmt, Block, Pattern, TypeExpr, TypePath,
   BinOp, UnOp, TypeDef, CaseArm, RecordEntry, RecordField,
   VariantDecl, StringPart, LetStmt, ForStmt, ReturnStmt, BreakStmt,
-  ContinueStmt, DeferStmt, ExprStmt, CollectExpr,
+  ContinueStmt, DeferStmt, ExprStmt, CollectExpr, TypeParam,
 }
 
 type Parse<T> = .{
@@ -28,7 +28,7 @@ type TypeParse = Parse<TypeExpr>
 type BlockParse = Parse<Block>
 type PatternParse = Parse<Pattern>
 type TypeListParse = Parse<Vector<TypeExpr>>
-type TypeParamsParse = Parse<Vector<String>>
+type TypeParamsParse = Parse<Vector<TypeParam>>
 type ImportItemsParse = Parse<Vector<ImportItem>>
 type RecordFieldsParse = Parse<Vector<RecordField>>
 type SumVariantsParse = Parse<Vector<VariantDecl>>
@@ -201,7 +201,7 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
 
 fn parse_type_params(c: Cursor) TypeParamsParse {
   diagnostics_out: Vector<Diagnostic> = []
-  params: Vector<String> = []
+  params: Vector<TypeParam> = []
 
   if c.kind() != .Lt {
     return .{ value: params, cursor: c, diagnostics: diagnostics_out }
@@ -219,8 +219,39 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
 
     if expect_ident {
       if k == .Ident {
-        params = params.append(c.text())
+        param_span := c.span()
+        param_name := c.text()
         c = c.advance()
+
+        // Optional bound: `: ContractName`
+        bounds: Vector<TypePath> = []
+        if c.kind() == .Colon {
+          c = c.advance()
+          if c.kind() == .Ident {
+            bound_span := c.span()
+            bound_name := c.text()
+            c = c.advance()
+            bounds = [.{ segments: [bound_name], span: bound_span }]
+          } else {
+            diagnostics_out = diagnostics_out.append(diagnostic.error(
+              c.span(),
+              "expected contract name after ':'",
+            ))
+          }
+          // Multiple bounds are not yet supported
+          if c.kind() == .Plus {
+            diagnostics_out = diagnostics_out.append(diagnostic.error(
+              c.span(),
+              "multiple bounds are not supported yet",
+            ))
+            c = c.advance()
+            if c.kind() == .Ident {
+              c = c.advance()
+            }
+          }
+        }
+
+        params = params.append(.{ name: param_name, bounds, span: param_span })
         expect_ident = false
       } else {
         diagnostics_out = diagnostics_out.append(diagnostic.error(

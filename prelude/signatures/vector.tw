@@ -1,3 +1,7 @@
+pub fn to_string<T: Stringify>(xs: Vector<T>) String {
+  ""
+}
+
 /// Return the number of elements.
 pub fn len<T>(xs: Vector<T>) Int {
   0

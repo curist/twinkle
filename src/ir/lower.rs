@@ -226,6 +226,7 @@ pub struct Lowerer {
     in_init_context: bool,
     /// Return type of the function currently being lowered (for `try Option` desugaring).
     current_fn_return_type: Option<MonoType>,
+    current_type_param_bounds: HashMap<String, String>,
 }
 
 const EXTERNAL_FUNC_ID_START: u32 = 1_000_000_000;
@@ -268,6 +269,7 @@ impl Lowerer {
             next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
             current_fn_return_type: None,
+            current_type_param_bounds: HashMap::new(),
         }
     }
 
@@ -293,6 +295,7 @@ impl Lowerer {
             next_external_func_id: EXTERNAL_FUNC_ID_START,
             in_init_context: false,
             current_fn_return_type: None,
+            current_type_param_bounds: HashMap::new(),
         }
     }
 
@@ -573,6 +576,17 @@ impl Lowerer {
             .value_env
             .get_function(&decl.name)
             .and_then(|sig| sig.ret.clone());
+        let saved_type_param_bounds = std::mem::replace(
+            &mut self.current_type_param_bounds,
+            decl.type_params
+                .iter()
+                .filter_map(|p| {
+                    p.bound
+                        .as_ref()
+                        .map(|bound| (p.name.clone(), bound.clone()))
+                })
+                .collect(),
+        );
 
         let body = self.lower_block(&decl.body)?;
         // When the body ends with a `return` (type Never) or is Void but the
@@ -587,6 +601,8 @@ impl Lowerer {
             _ => body.ty.clone(),
         };
         let func_id = *self.func_table.get(&decl.name)?;
+
+        self.current_type_param_bounds = saved_type_param_bounds;
 
         Some(FunctionDef {
             func_id,
@@ -2758,48 +2774,57 @@ impl Lowerer {
         }
 
         let error_count_before = self.errors.len();
-        let func_id =
-            if let Some(func_id) = self.resolve_registered_method_func_id(&base_ty, method, span) {
-                func_id
-            } else if self.errors.len() > error_count_before {
-                return None;
-            } else if let MonoType::Named { type_id, .. } = base_ty.clone() {
-                if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
-                    // Function-typed record field: `record.fn_field(args)` — call the closure stored in the field
-                    let field_ty = self
-                        .type_env
-                        .get_record_fields(type_id)
-                        .and_then(|fields| fields.get(field_idx))
-                        .map(|f| f.ty.clone())
-                        .unwrap_or(MonoType::Void);
-                    let field_expr = CoreExpr {
-                        kind: CoreExprKind::RecordGet {
-                            target: Box::new(all_args[0].clone()),
-                            field: crate::ir::core::FieldId(field_idx),
-                        },
-                        ty: field_ty,
-                        span,
-                    };
-                    return Some(CoreExprKind::Call {
-                        callee: Box::new(field_expr),
-                        args: all_args.into_iter().skip(1).collect(),
-                    });
-                }
-                self.errors.push(LowerError::InternalError {
-                    message: format!(
-                        "no inherent method '{}' for type Type#{}",
-                        method, type_id.0
-                    ),
+        let func_id = if let Some(func_id) =
+            self.resolve_registered_method_func_id(&base_ty, method, span)
+        {
+            func_id
+        } else if matches!(&base_ty, MonoType::Var(name) if method == "to_string" && self.current_type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify"))
+        {
+            return Some(CoreExprKind::ContractCall {
+                contract: "Stringify".to_string(),
+                method: method.to_string(),
+                receiver: Box::new(all_args.remove(0)),
+                args: all_args,
+            });
+        } else if self.errors.len() > error_count_before {
+            return None;
+        } else if let MonoType::Named { type_id, .. } = base_ty.clone() {
+            if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
+                // Function-typed record field: `record.fn_field(args)` — call the closure stored in the field
+                let field_ty = self
+                    .type_env
+                    .get_record_fields(type_id)
+                    .and_then(|fields| fields.get(field_idx))
+                    .map(|f| f.ty.clone())
+                    .unwrap_or(MonoType::Void);
+                let field_expr = CoreExpr {
+                    kind: CoreExprKind::RecordGet {
+                        target: Box::new(all_args[0].clone()),
+                        field: crate::ir::core::FieldId(field_idx),
+                    },
+                    ty: field_ty,
                     span,
+                };
+                return Some(CoreExprKind::Call {
+                    callee: Box::new(field_expr),
+                    args: all_args.into_iter().skip(1).collect(),
                 });
-                return None;
-            } else {
-                self.errors.push(LowerError::InternalError {
-                    message: format!("no inherent method '{}' for type {:?}", method, base_ty),
-                    span,
-                });
-                return None;
-            };
+            }
+            self.errors.push(LowerError::InternalError {
+                message: format!(
+                    "no inherent method '{}' for type Type#{}",
+                    method, type_id.0
+                ),
+                span,
+            });
+            return None;
+        } else {
+            self.errors.push(LowerError::InternalError {
+                message: format!("no inherent method '{}' for type {:?}", method, base_ty),
+                span,
+            });
+            return None;
+        };
 
         let func_ty = MonoType::Function {
             params: all_args.iter().map(|a| a.ty.clone()).collect(),
@@ -5305,6 +5330,12 @@ fn collect_local_refs_inner(
         }
         Call { callee, args } => {
             collect_local_refs_inner(callee, bound, captured, result);
+            for a in args {
+                collect_local_refs_inner(a, bound, captured, result);
+            }
+        }
+        ContractCall { receiver, args, .. } => {
+            collect_local_refs_inner(receiver, bound, captured, result);
             for a in args {
                 collect_local_refs_inner(a, bound, captured, result);
             }

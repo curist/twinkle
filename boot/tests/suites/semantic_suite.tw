@@ -35,6 +35,15 @@ fn find_first_gt(xs: Vector<Int>, threshold: Int) String {
 
 type Point = .{ x: Int, y: Int }
 type Shape = { Dot, Pixel(Int), Pair(Vector<Int>, Option<Int>) }
+type Box<T> = .{ value: T }
+
+fn to_string<T: Stringify>(b: Box<T>) String {
+  "Box(${b.value})"
+}
+
+fn show<T: Stringify>(x: T) String {
+  "${x}"
+}
 
 pub fn suite() runner.Suite {
   runner.suite("semantic cases")
@@ -112,6 +121,20 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(a == b)
       try assert.is_false(a == c)
+      .Ok({})
+    })
+    .test("generic interpolation uses Stringify witnesses", fn() {
+      try assert.str_eq(show(42), "42")
+      try assert.str_eq(show(Box.{ value: 7 }), "Box(7)")
+      .Ok({})
+    })
+    .test("vector stringify uses prelude witness", fn() {
+      ints: Vector<Int> = [1, 2, 3]
+      boxes: Vector<Box<Int>> = [Box.{ value: 1 }, Box.{ value: 2 }]
+      try assert.str_eq(ints.to_string(), "[1, 2, 3]")
+      try assert.str_eq("${ints}", "[1, 2, 3]")
+      try assert.str_eq(show(ints), "[1, 2, 3]")
+      try assert.str_eq(boxes.to_string(), "[Box(1), Box(2)]")
       .Ok({})
     })
     .test("typed sums compare structurally", fn() {

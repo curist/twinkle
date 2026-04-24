@@ -9,8 +9,10 @@ use lib.source.diagnostic as diag
 use .resolver.{
   MonoType, ResolvedEnv, FunctionSig, ResolvedTypeDef,
   TypeId, TypeEntry, ResolvedField, ResolvedVariant,
+  ResolvedTypeParam, resolved_type_param_names,
   ty_to_string,
 }
+use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape, contract_methods, contract_spec}
 use .ast.{
   Module, Item, FunctionDecl, Param,
   Block, Stmt, LetStmt, ReturnStmt, ForStmt,
@@ -29,7 +31,7 @@ pub type InferCtx = .{
   subst: Dict<Int, MonoType>,
   next_meta: Int,
   current_ret: MonoType?,
-  type_var_scope: Vector<String>,
+  type_var_scope: Vector<ResolvedTypeParam>,
   type_map: Dict<Int, MonoType>,
   expr_spans: Dict<Int, Int>,
   call_expected_ret: MonoType?,
@@ -40,6 +42,8 @@ pub type InferCtx = .{
 pub type MethodCallInfo = .{
   func_name: String,
   has_receiver: Bool,
+  contract: BuiltinContract?,
+  method_name: String,
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic> }
@@ -132,10 +136,13 @@ fn set_subst(ctx: InferCtx, id: Int, ty: MonoType) InferCtx {
 // ── Type annotation resolution ──────────────────────────────────────
 
 fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut {
-  r := ctx.env.resolve_type_expr(ty_expr, ctx.type_var_scope)
+  r := ctx.env.resolve_type_expr(ty_expr, resolved_type_param_names(ctx.type_var_scope))
   result_diags := diags.concat(r.diagnostics)
   case r.ty {
-    .Some(ty) => .{ ty, ctx, diags: result_diags },
+    .Some(ty) => {
+      bounds_r := check_type_instantiation_bounds(ty, ty_expr.span, ctx, result_diags)
+      .{ ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
+    },
     .None => {
       m := fresh_meta(ctx)
       .{ ty: m.ty, ctx: m.ctx, diags: result_diags }
@@ -381,15 +388,15 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
   }
 }
 
-fn build_var_map(type_params: Vector<String>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+fn build_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<String, MonoType> {
   m: Dict<String, MonoType> = Dict.new()
   for i in 0..type_params.len() {
-    if i < type_args.len() { m[type_params[i]] = type_args[i] }
+    if i < type_args.len() { m[type_params[i].name] = type_args[i] }
   }
   m
 }
 
-fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<String>, type_args: Vector<MonoType>, name: String) MonoType? {
+fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>, name: String) MonoType? {
   var_map := build_var_map(type_params, type_args)
   for f in fields {
     if f.name == name {
@@ -414,6 +421,289 @@ fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?,
       .{ ctx: pre_u.ctx, diags }
     },
     .None => .{ ctx, diags },
+  }
+}
+
+fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
+  case a {
+    .Stringify => case b {
+      .Stringify => true,
+    },
+  }
+}
+
+fn contract_name(contract: BuiltinContract) String {
+  contract_spec(contract).name
+}
+
+fn contract_return_type(shape: ContractReturnShape) MonoType {
+  case shape {
+    .String => .String,
+  }
+}
+
+fn contract_requirement_summary(req: ContractMethodRequirement) String {
+  ret_name := case req.ret {
+    .String => "String",
+  }
+  if req.arg_count_without_receiver == 0 {
+    return "${req.method_name}(self) -> ${ret_name}"
+  }
+  "${req.method_name}(self, ...) -> ${ret_name}"
+}
+
+fn lookup_scoped_type_param(scope: Vector<ResolvedTypeParam>, name: String) ResolvedTypeParam? {
+  for tp in scope {
+    if tp.name == name {
+      return .Some(tp)
+    }
+  }
+  .None
+}
+
+fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<ResolvedTypeParam>) Bool {
+  tp := case lookup_scoped_type_param(scope, name) {
+    .Some(found) => found,
+    .None => { return false },
+  }
+  for bound in tp.bounds {
+    case bound {
+      .Builtin(found) => {
+        if same_builtin_contract(found, contract) {
+          return true
+        }
+      },
+    }
+  }
+  false
+}
+
+fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: Vector<ResolvedTypeParam>) ContractMethodRequirement? {
+  name := case base_ty {
+    .Var(n) => n,
+    _ => { return .None },
+  }
+  tp := case lookup_scoped_type_param(scope, name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+  for bound in tp.bounds {
+    case bound {
+      .Builtin(contract) => {
+        for req in contract_methods(contract) {
+          if req.method_name == method_name {
+            return .Some(req)
+          }
+        }
+      },
+    }
+  }
+  .None
+}
+
+fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContract) Bool {
+  case contract {
+    .Stringify => case ty {
+      .Int => true,
+      .Float => true,
+      .Bool => true,
+      .Byte => true,
+      .String => true,
+      _ => false,
+    },
+  }
+}
+
+fn silent_unify(ctx: InferCtx, a: MonoType, b: MonoType) InferCtx? {
+  u := ctx.unify(a, b, .{ file_id: 0, start: 0, end: 0 }, [])
+  if u.diags.len() > 0 {
+    return .None
+  }
+  .Some(u.ctx)
+}
+
+fn prove_contract_method(ty: MonoType, contract: BuiltinContract, req: ContractMethodRequirement, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String> {
+  fn_name := case resolve_method_func_name(ty, req.method_name, ctx.env) {
+    .Some(name) => name,
+    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
+  }
+  sig := case ctx.env.lookup_registered_function(fn_name) {
+    .Some(found) => found,
+    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
+  }
+  inst := instantiate(sig, ctx)
+
+  expected_param_count := req.receiver_param_count + req.arg_count_without_receiver
+  if inst.params.len() != expected_param_count {
+    return .Err("${req.method_name} has the wrong receiver-only shape for ${contract_name(contract)}")
+  }
+  if req.receiver_param_count != 1 {
+    return .Err("unsupported contract receiver shape for ${contract_name(contract)}")
+  }
+
+  recv_ctx := case silent_unify(inst.ctx, ty, inst.params[0]) {
+    .Some(next_ctx) => next_ctx,
+    .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
+  }
+
+  ret_ty := zonk(inst.ret, recv_ctx.subst)
+  expected_ret := contract_return_type(req.ret)
+  if zonk(expected_ret, recv_ctx.subst) != ret_ty {
+    return .Err("${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(expected_ret)}")
+  }
+
+  cur_ctx := recv_ctx
+  for i in 0..sig.type_params.len() {
+    if i >= inst.type_args.len() { continue }
+    arg_ty := expand_alias(zonk(inst.type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+    tp := sig.type_params[i]
+    for bound in tp.bounds {
+      case bound {
+        .Builtin(bound_contract) => {
+          proof := prove_contract(arg_ty, bound_contract, cur_ctx, active)
+          case proof {
+            .Ok(next_ctx) => { cur_ctx = next_ctx },
+            .Err(reason) => { return .Err(reason) },
+          }
+        },
+      }
+    }
+  }
+  .Ok(cur_ctx)
+}
+
+fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String> {
+  zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+  key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
+  if active.has(key) {
+    return .Err("cyclic proof for ${ctx.env.ty_to_string_env(zonked)}: ${contract_name(contract)}")
+  }
+  active[key] = true
+
+  case zonked {
+    .Var(name) => {
+      if type_var_has_contract(name, contract, ctx.type_var_scope) {
+        return .Ok(ctx)
+      }
+    },
+    _ => {},
+  }
+
+  if builtin_contract_satisfied_by_primitive(zonked, contract) {
+    return .Ok(ctx)
+  }
+
+  cur_ctx := ctx
+  for req in contract_methods(contract) {
+    proof := prove_contract_method(zonked, contract, req, cur_ctx, active)
+    case proof {
+      .Ok(next_ctx) => { cur_ctx = next_ctx },
+      .Err(reason) => { return .Err(reason) },
+    }
+  }
+  .Ok(cur_ctx)
+}
+
+fn satisfies_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx) Result<InferCtx, String> {
+  prove_contract(ty, contract, ctx, Dict.new())
+}
+
+fn check_instantiated_bounds(sig: FunctionSig, type_args: Vector<MonoType>, error_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  cur_ctx := ctx
+  cur_diags := diags
+  for i in 0..sig.type_params.len() {
+    if i >= type_args.len() { continue }
+    tp := sig.type_params[i]
+    arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+    for bound in tp.bounds {
+      case bound {
+        .Builtin(contract) => {
+          proof := satisfies_contract(arg_ty, contract, cur_ctx)
+          case proof {
+            .Ok(next_ctx) => { cur_ctx = next_ctx },
+            .Err(reason) => {
+              msg := "type argument ${cur_ctx.env.ty_to_string_env(arg_ty)} does not satisfy ${contract_name(contract)} required by ${sig.name}<${tp.name}: ${contract_name(contract)}>"
+              cur_diags = cur_diags.append(diag.error(error_span, "${msg}: ${reason}"))
+            },
+          }
+        },
+      }
+    }
+  }
+  .{ ctx: cur_ctx, diags: cur_diags }
+}
+
+fn check_resolved_type_param_bounds(owner_name: String, params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>, error_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  cur_ctx := ctx
+  cur_diags := diags
+  for i in 0..params.len() {
+    if i >= type_args.len() { continue }
+    tp := params[i]
+    arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+    for bound in tp.bounds {
+      case bound {
+        .Builtin(contract) => {
+          proof := satisfies_contract(arg_ty, contract, cur_ctx)
+          case proof {
+            .Ok(next_ctx) => { cur_ctx = next_ctx },
+            .Err(reason) => {
+              msg := "type argument ${cur_ctx.env.ty_to_string_env(arg_ty)} does not satisfy ${contract_name(contract)} required by ${owner_name}<${tp.name}: ${contract_name(contract)}>"
+              cur_diags = cur_diags.append(diag.error(error_span, "${msg}: ${reason}"))
+            },
+          }
+        },
+      }
+    }
+  }
+  .{ ctx: cur_ctx, diags: cur_diags }
+}
+
+fn check_type_instantiation_bounds(ty: MonoType, error_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
+  zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+  case zonked {
+    .Vector(elem) => check_type_instantiation_bounds(elem, error_span, ctx, diags),
+    .Dict(k, v) => {
+      kr := check_type_instantiation_bounds(k, error_span, ctx, diags)
+      check_type_instantiation_bounds(v, error_span, kr.ctx, kr.diags)
+    },
+    .Function(params, ret) => {
+      cur_ctx := ctx
+      cur_diags := diags
+      for p in params {
+        pr := check_type_instantiation_bounds(p, error_span, cur_ctx, cur_diags)
+        cur_ctx = pr.ctx
+        cur_diags = pr.diags
+      }
+      check_type_instantiation_bounds(ret, error_span, cur_ctx, cur_diags)
+    },
+    .Optional(inner) => check_type_instantiation_bounds(inner, error_span, ctx, diags),
+    .Result(ok, err) => {
+      ok_r := check_type_instantiation_bounds(ok, error_span, ctx, diags)
+      check_type_instantiation_bounds(err, error_span, ok_r.ctx, ok_r.diags)
+    },
+    .Named(tid, type_args) => {
+      cur_ctx := ctx
+      cur_diags := diags
+      for arg in type_args {
+        ar := check_type_instantiation_bounds(arg, error_span, cur_ctx, cur_diags)
+        cur_ctx = ar.ctx
+        cur_diags = ar.diags
+      }
+      def := case cur_ctx.env.lookup_type_def(tid) {
+        .Some(found) => found,
+        .None => { return .{ ctx: cur_ctx, diags: cur_diags } },
+      }
+      case def {
+        .Record(name, type_params, _) => check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags),
+        .Sum(name, type_params, _) => check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags),
+        .Alias(name, type_params, target) => {
+          own_r := check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags)
+          expanded_target := subst_vars(target, build_var_map(type_params, type_args))
+          check_type_instantiation_bounds(expanded_target, error_span, own_r.ctx, own_r.diags)
+        },
+      }
+    },
+    _ => .{ ctx, diags },
   }
 }
 
@@ -459,7 +749,7 @@ fn check_instantiated_call(
   .{ ty: ret, ctx: final_ctx, diags: ar.diags }
 }
 
-type InstOut = .{ params: Vector<MonoType>, ret: MonoType, ctx: InferCtx }
+type InstOut = .{ params: Vector<MonoType>, ret: MonoType, type_args: Vector<MonoType>, ctx: InferCtx }
 
 fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
   // Fast path: non-generic functions need no substitution — avoid allocating
@@ -467,15 +757,17 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
   // are non-generic).
   if sig.type_params.len() == 0 {
     inst_ret := case sig.ret { .Some(r) => r, .None => MonoType.Void }
-    return .{ params: sig.params, ret: inst_ret, ctx }
+    return .{ params: sig.params, ret: inst_ret, type_args: [], ctx }
   }
 
   var_map: Dict<String, MonoType> = Dict.new()
   cur_ctx := ctx
+  inst_type_args: Vector<MonoType> = []
   for tp in sig.type_params {
     m := fresh_meta(cur_ctx)
     cur_ctx = m.ctx
-    var_map[tp] = m.ty
+    var_map[tp.name] = m.ty
+    inst_type_args = inst_type_args.append(m.ty)
   }
 
   inst_params := collect p in sig.params { subst_vars(p, var_map) }
@@ -485,7 +777,7 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
     .None => MonoType.Void,
   }
 
-  .{ params: inst_params, ret: inst_ret, ctx: cur_ctx }
+  .{ params: inst_params, ret: inst_ret, type_args: inst_type_args, ctx: cur_ctx }
 }
 
 // Expand type aliases: if ty is Named(tid, args) and the def is an Alias,
@@ -640,6 +932,9 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
                 cur_ctx = ar.ctx
                 cur_diags = ar.diags
               }
+              bounds_r := check_type_instantiation_bounds(named_ty, s, cur_ctx, cur_diags)
+              cur_ctx = bounds_r.ctx
+              cur_diags = bounds_r.diags
               callee_ty := MonoType.Function(info.field_types, named_ty)
               cur_ctx = set_type_map(cur_ctx, base.id, named_ty)
               cur_ctx = set_type_map_span(cur_ctx, callee.id, callee.span.start, callee_ty)
@@ -664,7 +959,9 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
           inst := instantiate(sig, clean_ctx)
           // Pre-unify return type to solve MetaVars before checking arguments
           pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
-          check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, s, callee.id, callee.span.start, .None)
+          call_r := check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, s, callee.id, callee.span.start, .None)
+          bounds_r := check_instantiated_bounds(sig, inst.type_args, s, call_r.ctx, call_r.diags)
+          .{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
         },
         .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
       }
@@ -847,13 +1144,27 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
-  meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false }
-  .Some(check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta)))
+  meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false, contract: .None, method_name }
+  call_r := check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta))
+  bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
+  .Some(.{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags })
 }
 
 fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   br := ctx.synth(base, diags)
   base_ty := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
+
+  contract_req := lookup_scoped_contract_method(base_ty, method_name, br.ctx.type_var_scope)
+  case contract_req {
+    .Some(req) => {
+      ret_ty := contract_return_type(req.ret)
+      pu := pre_unify_return(br.ctx, ret_ty, call_expected, callee_span, br.diags)
+      meta := MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(.Stringify), method_name }
+      return .Some(check_instantiated_call(pu.ctx, pu.diags, [], ret_ty, args, callee_span, callee_id, callee_span_start, .Some(meta)))
+    },
+    .None => {},
+  }
+
   sig := case lookup_method_sig(base_ty, method_name, br.ctx.env) {
     .Some(s) => s,
     .None => {
@@ -890,11 +1201,21 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     .Some(name) => name,
     .None => method_name,  // fallback to surface name
   }
-  meta := MethodCallInfo.{ func_name: resolved_fn, has_receiver: true }
-  .Some(check_instantiated_call(recv_u.ctx, recv_u.diags, expected_args, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta)))
+  meta := MethodCallInfo.{ func_name: resolved_fn, has_receiver: true, contract: .None, method_name }
+  call_r := check_instantiated_call(recv_u.ctx, recv_u.diags, expected_args, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta))
+  bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
+  .Some(.{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags })
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
+  scoped_req := lookup_scoped_contract_method(base_ty, method_name, ctx.type_var_scope)
+  case scoped_req {
+    .Some(req) => {
+      return .Some(.{ ty: .Function([], contract_return_type(req.ret)), ctx, diags })
+    },
+    .None => {},
+  }
+
   sig := case lookup_method_sig(base_ty, method_name, ctx.env) {
     .Some(found) => found,
     .None => { return .None },
@@ -1127,7 +1448,8 @@ fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, record_id
 
   expected := MonoType.Named(entry.id, type_args)
   cr := check_record_lit(entries, expected, s, cur_ctx, diags)
-  .{ ty: expected, ctx: set_type_map_span(cr.ctx, record_id, record_span_start, expected), diags: cr.diags }
+  bounds_r := check_type_instantiation_bounds(expected, s, cr.ctx, cr.diags)
+  .{ ty: expected, ctx: set_type_map_span(bounds_r.ctx, record_id, record_span_start, expected), diags: bounds_r.diags }
 }
 
 fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
@@ -2388,45 +2710,39 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
 fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags: Vector<Diagnostic>) CheckOut {
   zonked := expand_alias(zonk(expr_ty, ctx.subst), ctx.env, 0)
   missing_err := diag.error(expr.span, "cannot interpolate ${ctx.env.ty_to_string_env(zonked)}: missing inherent to_string() -> String")
+
   case zonked {
-    .Int => .{ ctx, diags },
-    .Float => .{ ctx, diags },
-    .Bool => .{ ctx, diags },
-    .Byte => .{ ctx, diags },
-    .String => .{ ctx, diags },
-    .Named(tid, _) => {
-      fn_name := case ctx.env.lookup_type_method(tid, "to_string") {
-        .Some(name) => name,
-        .None => { return .{ ctx, diags: diags.append(missing_err) } },
-      }
-      sig := case ctx.env.lookup_registered_function(fn_name) {
-        .Some(s) => s,
-        .None => { return .{ ctx, diags: diags.append(missing_err) } },
-      }
-      inst := instantiate(sig, ctx)
-      cur_ctx := inst.ctx
-      cur_diags := diags
-      if inst.params.len() != 1 {
-        err := diag.error(expr.span, "cannot interpolate ${cur_ctx.env.ty_to_string_env(zonked)}: to_string must be receiver-only")
-        return .{ ctx: cur_ctx, diags: cur_diags.append(err) }
-      }
+    .String => { return .{ ctx, diags } },
+    .MetaVar(_) => { return .{ ctx, diags } },
+    _ => {},
+  }
 
-      recv_u := cur_ctx.unify(zonked, inst.params[0], expr.span, cur_diags)
-      cur_ctx = recv_u.ctx
-      cur_diags = recv_u.diags
-
-      ret_ty := zonk(inst.ret, cur_ctx.subst)
-      case ret_ty {
-        .String => .{ ctx: cur_ctx, diags: cur_diags },
+  proof := satisfies_contract(zonked, .Stringify, ctx)
+  case proof {
+    .Err(reason) => .{ ctx, diags: diags.append(diag.error(expr.span, "cannot interpolate ${ctx.env.ty_to_string_env(zonked)}: to_string ${reason}")) },
+    .Ok(proof_ctx) => {
+      info := case zonked {
+        .Var(_) => MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(.Stringify), method_name: "to_string" },
         _ => {
-          err := diag.error(expr.span, "cannot interpolate ${cur_ctx.env.ty_to_string_env(zonked)}: to_string must return String")
-          .{ ctx: cur_ctx, diags: cur_diags.append(err) }
+          fn_name := case resolve_method_func_name(zonked, "to_string", proof_ctx.env) {
+            .Some(name) => name,
+            .None => {
+              case zonked {
+                .Int => "int_to_string",
+                .Float => "float_to_string",
+                .Bool => "bool_to_string",
+                .Byte => "byte_to_string",
+                .String => "string_to_string",
+                _ => "",
+              }
+            },
+          }
+          MethodCallInfo.{ func_name: fn_name, has_receiver: true, contract: .None, method_name: "to_string" }
         },
       }
+      proof_ctx.method_calls[expr.id] = info
+      .{ ctx: proof_ctx, diags }
     },
-    // MetaVar not yet solved — allow and let final zonk handle ambiguity.
-    .MetaVar(_) => .{ ctx, diags },
-    _ => .{ ctx, diags: diags.append(missing_err) },
   }
 }
 

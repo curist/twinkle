@@ -20,7 +20,7 @@
 //   Fallback: .Void (indicates a missing type; should not occur for live locals)
 
 use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, lookup_type_def}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, ResolvedTypeParam, lookup_type_def}
 use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, Atom}
 use compiler.backend.prepared_ir.{
   CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc, ReprKind,
@@ -515,11 +515,11 @@ fn resolve_named_variant_field(
   }
 }
 
-fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for p,i in type_params {
-        if p == name { return args[i] }
+        if p.name == name { return args[i] }
       }
       ty
     },

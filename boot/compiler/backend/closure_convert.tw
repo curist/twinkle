@@ -12,7 +12,7 @@
 // that path remains transitional and should be absorbed here later.
 
 use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, FieldId, VariantId, BinOp, UnOp}
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeParam, lookup_type_def}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm, Atom, FieldAtom}
 use compiler.backend.prepared_ir.{CaptureParam}
 
@@ -459,11 +459,11 @@ fn resolve_named_variant_field(
   }
 }
 
-fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for p,i in type_params {
-        if p == name { return args[i] }
+        if p.name == name { return args[i] }
       }
       ty
     },

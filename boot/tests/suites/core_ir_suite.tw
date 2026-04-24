@@ -2,6 +2,7 @@ use tests.runner
 use tests.assert
 use compiler.parser
 use compiler.resolver
+use compiler.resolver.{plain_resolved_type_params}
 use compiler.checker
 use compiler.ast
 use compiler.core_ir
@@ -388,6 +389,7 @@ pub fn suite() runner.Suite {
         functions: [],
         type_env: resolver.empty_env(),
         init_func_id: .None,
+        func_table: Dict.new(),
       }
       assert.int_eq(mod.functions.len(), 0)
     })
@@ -969,7 +971,7 @@ pub fn suite() runner.Suite {
       option_tid := resolver.TypeId.{ id: 0 }
       option_entry := resolver.TypeEntry.{
         id: option_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Sum("Option", ["T"], [
+        def: .Some(resolver.ResolvedTypeDef.Sum("Option", plain_resolved_type_params(["T"]), [
           resolver.ResolvedVariant.{ name: "None", fields: [] },
           resolver.ResolvedVariant.{ name: "Some", fields: [t] },
         ])),
@@ -980,7 +982,7 @@ pub fn suite() runner.Suite {
       iter_tid := resolver.TypeId.{ id: 62 }
       iter_entry := resolver.TypeEntry.{
         id: iter_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", plain_resolved_type_params(["T"]), [
           resolver.ResolvedVariant.{ name: "Item", fields: [t] },
         ])),
         span: s0,
@@ -990,7 +992,7 @@ pub fn suite() runner.Suite {
       iter_item_tid := resolver.TypeId.{ id: 63 }
       iter_item_entry := resolver.TypeEntry.{
         id: iter_item_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Record("IterItem", ["T"], [
+        def: .Some(resolver.ResolvedTypeDef.Record("IterItem", plain_resolved_type_params(["T"]), [
           resolver.ResolvedField.{ name: "value", ty: t },
           resolver.ResolvedField.{ name: "rest", ty: resolver.MonoType.Named(iter_tid, [t]) },
         ])),
@@ -1129,14 +1131,14 @@ pub fn suite() runner.Suite {
     .test("imported prelude aliases reuse one phantom func id", fn() Result<Void, String> {
       filter_sig := resolver.FunctionSig.{
         name: "filter",
-        type_params: ["T"],
+        type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
       }
       vector_filter_sig := resolver.FunctionSig.{
         name: "vector_filter",
-        type_params: ["T"],
+        type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
@@ -1186,6 +1188,7 @@ pub fn suite() runner.Suite {
           functions: [func],
           type_env: resolver.empty_env(),
           init_func_id: .None,
+          func_table: Dict.new(),
         },
         func_table: Dict.new(),
         external_refs: Dict.new(),
@@ -1230,6 +1233,7 @@ pub fn suite() runner.Suite {
           functions: [func],
           type_env: resolver.empty_env(),
           init_func_id: .None,
+          func_table: Dict.new(),
         },
         func_table: Dict.new(),
         external_refs: ext_refs,

@@ -31,7 +31,7 @@ pub fn link(
   builtin_count: Int,
 ) CoreModule {
   if modules.len() == 0 {
-    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None }
+    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None, func_table: Dict.new() }
   }
 
   // Step 1: Assign globally unique FuncIds to all defined functions.
@@ -154,6 +154,7 @@ pub fn link(
     functions: live_functions,
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
+    func_table: Dict.new(),
   }
 }
 
@@ -391,6 +392,10 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
       r := collect_func_refs_into(callee, refs)
       collect_func_refs_list(args, r)
     },
+    .ContractCall(_, _, receiver, args) => {
+      r := collect_func_refs_into(receiver, refs)
+      collect_func_refs_list(args, r)
+    },
     .MakeClosure(func_id, _) => refs.append(func_id.id),
 
     .If(cond, then_br, else_br) => {
@@ -471,6 +476,9 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>) CoreExpr {
 
     .Call(callee, args) => {
       .Call(remap_expr(callee, remap), remap_exprs(args, remap))
+    },
+    .ContractCall(contract, method_name, receiver, args) => {
+      .ContractCall(contract, method_name, remap_expr(receiver, remap), remap_exprs(args, remap))
     },
     .MakeClosure(func_id, captures) => {
       .MakeClosure(remap_func_id(func_id, remap), captures)

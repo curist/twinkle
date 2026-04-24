@@ -3,7 +3,7 @@
 // Every concrete MonoType maps to exactly one WasmLayout.
 // This is the single source of truth — no shadow metadata.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, ResolvedTypeParam, TypeEntry}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
 
@@ -216,7 +216,7 @@ fn layout_of_sum_def(
   tid: TypeId,
   args: Vector<MonoType>,
   name: String,
-  type_params: Vector<String>,
+  type_params: Vector<ResolvedTypeParam>,
   variants: Vector<ResolvedVariant>,
   env: ResolvedEnv,
 ) WasmLayout {
@@ -314,11 +314,11 @@ fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv)
 
 // ── Type parameter substitution ─────────────────────────────────────
 
-fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for p,i in type_params {
-        if p == name {
+        if p.name == name {
           if i < args.len() {
             return args[i]
           }

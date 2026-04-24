@@ -2,7 +2,9 @@ use tests.runner
 use tests.assert
 use compiler.parser
 use compiler.resolver
+use compiler.resolver.{plain_resolved_type_params}
 use compiler.checker
+use compiler.base_env
 use tests.suites.resolver_suite as rsuite
 use lib.source.span
 
@@ -48,7 +50,7 @@ fn test_env() resolver.ResolvedEnv {
   iter_entry := resolver.TypeEntry.{
     id: resolver.TypeId.{ id: 0 },
     arity: 1,
-    def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+    def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", plain_resolved_type_params(["T"]), [
       resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
     ])),
     span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -112,6 +114,18 @@ fn check_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<checker.Chec
 
 fn check_errs(src: String) Result<Vector<String>, String> {
   r := check_src(src)
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+  msgs: Vector<String> = []
+  for d in r.diagnostics {
+    msgs = msgs.append(d.message)
+  }
+  .Ok(msgs)
+}
+
+fn check_errs_with_env(src: String, env: resolver.ResolvedEnv) Result<Vector<String>, String> {
+  r := check_src_with_env(src, env)
   if r.diagnostics.len() == 0 {
     return .Err("expected diagnostics, got none")
   }
@@ -398,6 +412,79 @@ pub fn suite() runner.Suite {
       src := "fn pair<A, B>(a: A, b: B) A { a }\nfn main() Int { pair(1, \"hi\") }"
       r := try check_ok(src)
       try assert.str_eq(try type_at(r, src, "pair(1"), "Int")
+      .Ok({})
+    })
+    .test("bounded type parameter method lookup", fn() {
+      src := "fn show<T: Stringify>(x: T) String { x.to_string() }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "x.to_string()"), "String")
+      .Ok({})
+    })
+    .test("generic bound satisfied by primitive", fn() {
+      src := "fn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(42) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "show(42)"), "String")
+      .Ok({})
+    })
+    .test("generic bound satisfied by inherent witness", fn() {
+      src := "type User = .{ name: String }\nfn to_string(u: User) String { u.name }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(User.{ name: \"Ada\" }) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "show(User"), "String")
+      .Ok({})
+    })
+    .test("generic bound satisfaction recurses through witness bounds", fn() {
+      src := "type Box<T> = .{ value: T }\nfn to_string<T: Stringify>(b: Box<T>) String { b.value.to_string() }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Box.{ value: 42 }) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "show(Box"), "String")
+      .Ok({})
+    })
+    .test("generic bound rejects unsatisfied type argument", fn() {
+      src := "type Foo = .{}\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Foo.{}) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "does not satisfy Stringify")
+      .Ok({})
+    })
+    .test("bounded type declaration allows satisfying record construction", fn() {
+      src := "type Box<T: Stringify> = .{ value: T }\nfn main() Box<Int> { Box.{ value: 1 } }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "Box.{ value: 1 }"), "Named(0)<Int>")
+      .Ok({})
+    })
+    .test("bounded type declaration rejects record construction", fn() {
+      src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Box<Foo> { Box.{ value: Foo.{} } }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
+      .Ok({})
+    })
+    .test("bounded type declaration rejects annotation", fn() {
+      src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Void { x: Box<Foo> = error(\"boom\") }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
+      .Ok({})
+    })
+    .test("bounded sum declaration rejects named variant construction", fn() {
+      src := "type Foo = .{}\ntype Wrap<T: Stringify> = { Wrap(T) }\nfn main() Wrap<Foo> { Wrap.Wrap(Foo.{}) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "required by Wrap<T: Stringify>")
+      .Ok({})
+    })
+    .test("generic interpolation checks Stringify bound", fn() {
+      dollar := "$"
+      src := "fn show<T: Stringify>(x: T) String { \"${dollar}{x}\" }\nfn main() String { show(42) }"
+      r := try check_ok(src)
+      try assert.str_eq(try type_at(r, src, "show(42)"), "String")
+      .Ok({})
+    })
+    .test("vector stringify witness comes from bounded prelude method", fn() {
+      src := "fn main() String { xs: Vector<Int> = [1, 2]\n xs.to_string() }"
+      r := try check_ok_with_env(src, base_env.builtin_env())
+      try assert.str_eq(try type_at(r, src, "xs.to_string()"), "String")
+      .Ok({})
+    })
+    .test("vector stringify rejects unsatisfied element type", fn() {
+      src := "type Foo = .{}\nfn main() String { xs: Vector<Foo> = [Foo.{}]\n xs.to_string() }"
+      msgs := try check_errs_with_env(src, base_env.builtin_env())
+      try assert.str_contains(msgs[0], "does not satisfy Stringify")
       .Ok({})
     })
     // ── M6: If, Case, For ──
@@ -771,7 +858,7 @@ pub fn suite() runner.Suite {
       iter_entry := resolver.TypeEntry.{
         id: iter_tid,
         arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", ["T"], [
+        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", plain_resolved_type_params(["T"]), [
           resolver.ResolvedVariant.{ name: "Item", fields: [resolver.MonoType.Var("T")] },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -1227,7 +1314,7 @@ pub fn suite() runner.Suite {
       msgs := try check_errs(src)
       found := false
       for m in msgs {
-        if m.contains("to_string") and (m.contains("receiver") or m.contains("shape") or m.contains("missing")) { found = true }
+        if m.contains("to_string") and (m.contains("receiver") or m.contains("shape") or m.contains("missing") or m.contains("Stringify")) { found = true }
       }
       try assert.is_true(found)
       .Ok({})

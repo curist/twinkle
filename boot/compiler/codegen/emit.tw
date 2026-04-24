@@ -7,7 +7,7 @@
 //   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
 //   - Pattern match emission is inline (single implementation)
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, ResolvedTypeParam}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, BinOp, UnOp}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
@@ -3264,11 +3264,11 @@ fn resolve_named_variant_field(tid: TypeId, args: Vector<MonoType>, vid: Variant
   }
 }
 
-fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for p,i in type_params {
-        if p == name { return args[i] }
+        if p.name == name { return args[i] }
       }
       ty
     },

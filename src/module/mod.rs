@@ -1158,6 +1158,24 @@ fn remap_expr_func_ids(
                 );
             }
         }
+        CoreExprKind::ContractCall { receiver, args, .. } => {
+            remap_expr_func_ids(
+                receiver,
+                module_idx,
+                external_func_refs,
+                key_to_idx,
+                local_to_global,
+            );
+            for arg in args {
+                remap_expr_func_ids(
+                    arg,
+                    module_idx,
+                    external_func_refs,
+                    key_to_idx,
+                    local_to_global,
+                );
+            }
+        }
         CoreExprKind::If {
             cond,
             then_branch,
@@ -1392,6 +1410,7 @@ fn register_inherent_methods(
                             let method_sig = FunctionSignature {
                                 name: method_qname,
                                 type_params: sig.type_params.clone(),
+                                type_param_bounds: sig.type_param_bounds.clone(),
                                 param_names: sig.param_names.clone(),
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
@@ -1401,6 +1420,7 @@ fn register_inherent_methods(
                                 FunctionSignature {
                                     name: format!("{}.{}", builtin_alias, &decl.name),
                                     type_params: sig.type_params.clone(),
+                                    type_param_bounds: sig.type_param_bounds.clone(),
                                     param_names: sig.param_names.clone(),
                                     params: sig.params.clone(),
                                     ret: sig.ret.clone(),

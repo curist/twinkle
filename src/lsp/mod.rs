@@ -152,6 +152,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
         "println" => FunctionSignature {
             name: "println".to_string(),
             type_params: vec![],
+            type_param_bounds: HashMap::new(),
             param_names: vec!["text".to_string()],
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
@@ -160,6 +161,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
         "print" => FunctionSignature {
             name: "print".to_string(),
             type_params: vec![],
+            type_param_bounds: HashMap::new(),
             param_names: vec!["text".to_string()],
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
@@ -168,6 +170,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
         "eprintln" => FunctionSignature {
             name: "eprintln".to_string(),
             type_params: vec![],
+            type_param_bounds: HashMap::new(),
             param_names: vec!["text".to_string()],
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
@@ -176,6 +179,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
         "eprint" => FunctionSignature {
             name: "eprint".to_string(),
             type_params: vec![],
+            type_param_bounds: HashMap::new(),
             param_names: vec!["text".to_string()],
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
@@ -184,6 +188,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
         "error" => FunctionSignature {
             name: "error".to_string(),
             type_params: vec![],
+            type_param_bounds: HashMap::new(),
             param_names: vec!["message".to_string()],
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),

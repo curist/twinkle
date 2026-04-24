@@ -2,6 +2,7 @@ use tests.runner
 use tests.assert
 use compiler.parser
 use compiler.resolver
+use compiler.resolver.{plain_resolved_type_params}
 use compiler.ast
 use compiler.imports
 use lib.module.loader
@@ -707,7 +708,7 @@ pub fn suite() runner.Suite {
       // Pre-populate env with a "map" function (simulating prelude)
       prelude_sig := resolver.FunctionSig.{
         name: "map",
-        type_params: ["A", "B"],
+        type_params: plain_resolved_type_params(["A", "B"]),
         param_names: ["xs", "f"],
         params: [
           resolver.MonoType.Vector(resolver.MonoType.Var("A")),

@@ -1,0 +1,55 @@
+/// Compiler-owned builtin contract metadata.
+///
+/// This module defines the builtin contracts (starting with Stringify) and
+/// exposes queries for contract metadata. It intentionally does not depend on
+/// resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
+
+pub type BuiltinContract = {
+  Stringify,
+}
+
+/// The return shape of a contract method requirement.
+/// Kept separate from MonoType to avoid a dependency cycle with the resolver.
+pub type ContractReturnShape = {
+  String,
+}
+
+pub type ContractMethodRequirement = .{
+  method_name: String,
+  receiver_param_count: Int,
+  arg_count_without_receiver: Int,
+  ret: ContractReturnShape,
+}
+
+pub type ContractSpec = .{
+  name: String,
+  methods: Vector<ContractMethodRequirement>,
+}
+
+pub fn contract_spec(contract: BuiltinContract) ContractSpec {
+  case contract {
+    .Stringify => .{
+      name: "Stringify",
+      methods: [.{
+        method_name: "to_string",
+        receiver_param_count: 1,
+        arg_count_without_receiver: 0,
+        ret: .String,
+      }],
+    },
+  }
+}
+
+/// Resolve a contract name from source spelling to a BuiltinContract.
+/// Returns .None for unknown names.
+pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
+  case name {
+    "Stringify" => .Some(.Stringify),
+    _ => .None,
+  }
+}
+
+/// Return the method requirements for a given builtin contract.
+pub fn contract_methods(contract: BuiltinContract) Vector<ContractMethodRequirement> {
+  contract_spec(contract).methods
+}

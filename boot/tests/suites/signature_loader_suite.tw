@@ -158,7 +158,7 @@ pub fn suite() runner.Suite {
       group := try find_group(groups, "Vector").ok_or("no Vector group")
       sig := try find_sig(group.sigs, "append").ok_or("no append sig")
       try assert.int_eq(sig.type_params.len(), 1)
-      try assert.str_eq(sig.type_params[0], "T")
+      try assert.str_eq(sig.type_params[0].name, "T")
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })

@@ -1,5 +1,36 @@
 # Contracts Implementation Plan
 
+## Status
+
+Completed.
+
+The contracts MVP described in this plan is now implemented, including:
+
+* builtin `Stringify`
+* bounded type parameters on functions and type declarations
+* bound preservation through parsing, resolution, and signature loading
+* contract-backed method lookup on bounded type parameters
+* satisfaction checks at generic instantiation sites
+* bounded type declaration instantiation checks
+* conditional satisfaction through witness methods for user-defined and builtin generic types
+* deferred contract-backed lowering and monomorphization for generic bodies
+* interpolation through `Stringify`
+* `Vector<T>: Stringify` via the same prelude witness model as other witness-backed conformances
+
+The remaining work after this plan is follow-up work, not MVP completion.
+
+## Running tests
+
+```bash
+# Boot compiler tests (fast — compile with Rust stage0, run via Node)
+tools/boot-test-fast.sh
+
+# Rust stage0 unit tests (use --release; targeted filter recommended)
+cargo test --release <filter>
+```
+
+---
+
 ## Goal
 
 Introduce contracts as Twinkle's lightweight constrained-polymorphism model,

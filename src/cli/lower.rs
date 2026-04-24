@@ -67,6 +67,21 @@ fn print_core_expr(expr: &crate::ir::CoreExpr, indent: usize) {
                 print_core_expr(arg, indent + 4);
             }
         }
+        ContractCall {
+            contract,
+            method,
+            receiver,
+            args,
+        } => {
+            println!(
+                "{}ContractCall {}.{} : {:?}",
+                pad, contract, method, expr.ty
+            );
+            print_core_expr(receiver, indent + 2);
+            for arg in args {
+                print_core_expr(arg, indent + 4);
+            }
+        }
         MakeClosure { func_id, free_vars } => {
             println!(
                 "{}MakeClosure FuncId({}) free_vars={:?}",

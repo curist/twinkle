@@ -32,6 +32,7 @@ pub struct TypeChecker {
 
     // Type variable scope — names in scope resolve to MonoType::Var
     type_var_scope: Vec<String>,
+    current_type_param_bounds: HashMap<String, String>,
 
     // Names declared `pub` at module scope — these cannot be rebound
     pub_bindings: HashSet<String>,
@@ -88,6 +89,7 @@ impl TypeChecker {
             current_function_ret: None,
             module_aliases,
             type_var_scope: Vec::new(),
+            current_type_param_bounds: HashMap::new(),
             pub_bindings: HashSet::new(),
             next_meta: 0,
             meta_subst: HashMap::new(),
@@ -250,7 +252,21 @@ impl TypeChecker {
 
     fn check_function(&mut self, decl: &FunctionDecl) {
         // Push type variable scope for generic functions
-        let saved_type_vars = std::mem::replace(&mut self.type_var_scope, decl.type_params.clone());
+        let saved_type_vars = std::mem::replace(
+            &mut self.type_var_scope,
+            decl.type_params.iter().map(|p| p.name.clone()).collect(),
+        );
+        let saved_type_param_bounds = std::mem::replace(
+            &mut self.current_type_param_bounds,
+            decl.type_params
+                .iter()
+                .filter_map(|p| {
+                    p.bound
+                        .as_ref()
+                        .map(|bound| (p.name.clone(), bound.clone()))
+                })
+                .collect(),
+        );
 
         // Push a new scope for the function body
         self.local_env.push_scope();
@@ -319,6 +335,7 @@ impl TypeChecker {
         self.current_function_ret = None;
         self.local_env.pop_scope();
         self.type_var_scope = saved_type_vars;
+        self.current_type_param_bounds = saved_type_param_bounds;
     }
 
     //
@@ -1490,7 +1507,7 @@ impl TypeChecker {
                 params: sig.params.clone(),
                 ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
             };
-            let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
+            let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
             let (inst_params, inst_ret) = match inst_ty {
                 MonoType::Function { params, ret } => (params, *ret),
                 _ => unreachable!(),
@@ -1504,6 +1521,7 @@ impl TypeChecker {
             for (arg, expected_ty) in args.iter().zip(inst_params.iter()) {
                 self.check_expr(arg, expected_ty)?;
             }
+            self.check_instantiated_stringify_bounds(&sig, &var_to_meta, span)?;
             return Ok(self.zonk(&inst_ret));
         }
         // Not a function or undefined
@@ -1528,83 +1546,136 @@ impl TypeChecker {
         self.validate_interpolation_to_string(expr, &expr_ty)
     }
 
+    fn has_stringify_bound(&self, ty: &MonoType) -> bool {
+        matches!(ty, MonoType::Var(name) if self.current_type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify"))
+    }
+
+    fn validate_stringify_type(
+        &mut self,
+        ty: &MonoType,
+        active: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        let ty = self.zonk(ty);
+        if self.has_stringify_bound(&ty) {
+            return Ok(());
+        }
+        match &ty {
+            MonoType::Int
+            | MonoType::Float
+            | MonoType::Bool
+            | MonoType::String
+            | MonoType::Byte => {
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let key = format!("{}::Stringify", ty.format_with_names(&self.type_env));
+        if !active.insert(key.clone()) {
+            return Err(format!(
+                "cyclic Stringify proof for {}",
+                ty.format_with_names(&self.type_env)
+            ));
+        }
+
+        let Some(type_id) = method_receiver_type_id(&ty) else {
+            active.remove(&key);
+            return Err("missing inherent `to_string() -> String`".to_string());
+        };
+        let Some(method_info) = self.type_env.get_method(type_id, "to_string").cloned() else {
+            active.remove(&key);
+            return Err("missing inherent `to_string() -> String`".to_string());
+        };
+        let Some(sig) = method_info
+            .signature
+            .or_else(|| self.value_env.get_function(&method_info.func_name).cloned())
+        else {
+            active.remove(&key);
+            return Err("missing inherent `to_string() -> String`".to_string());
+        };
+
+        let full_fn_ty = MonoType::Function {
+            params: sig.params.clone(),
+            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+        };
+        let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+        let (inst_params, inst_ret) = match inst_ty {
+            MonoType::Function { params, ret } => (params, *ret),
+            _ => unreachable!(),
+        };
+        if inst_params.len() != 1 {
+            active.remove(&key);
+            return Err("has `to_string`, but it does not have receiver-only shape".to_string());
+        }
+        self.unify(
+            &ty,
+            &inst_params[0],
+            Span::new(crate::syntax::span::FileId(0), 0, 0),
+        )
+        .map_err(|_| {
+            format!(
+                "missing inherent `to_string() -> String` for {}",
+                ty.format_with_names(&self.type_env)
+            )
+        })?;
+        let ret_ty = self.zonk(&inst_ret);
+        if ret_ty != MonoType::String {
+            active.remove(&key);
+            return Err(format!(
+                "has `to_string`, but it returns {} (expected String)",
+                ret_ty.format_with_names(&self.type_env)
+            ));
+        }
+        for (name, meta_ty) in var_to_meta {
+            if sig.type_param_bounds.get(&name).map(|b| b.as_str()) == Some("Stringify") {
+                self.validate_stringify_type(&self.zonk(&meta_ty), active)?;
+            }
+        }
+        active.remove(&key);
+        Ok(())
+    }
+
+    fn check_instantiated_stringify_bounds(
+        &mut self,
+        sig: &crate::types::ty::FunctionSignature,
+        var_to_meta: &[(String, MonoType)],
+        span: Span,
+    ) -> Result<(), ()> {
+        for (name, meta_ty) in var_to_meta {
+            if sig.type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify") {
+                let concrete = self.zonk(meta_ty);
+                if let Err(reason) = self.validate_stringify_type(&concrete, &mut HashSet::new()) {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "contract bound",
+                        span,
+                        note: format!(
+                            "type argument {} does not satisfy Stringify: {}",
+                            concrete.format_with_names(&self.type_env),
+                            reason
+                        ),
+                    });
+                    return Err(());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate_interpolation_to_string(
         &mut self,
         expr: &Expr,
         expr_ty: &MonoType,
     ) -> Result<(), ()> {
-        match expr_ty {
-            MonoType::Int
-            | MonoType::Float
-            | MonoType::Bool
-            | MonoType::String
-            | MonoType::Byte => Ok(()),
-            MonoType::Named { type_id, .. } => {
-                if let Some(method_info) = self.type_env.get_method(*type_id, "to_string").cloned()
-                {
-                    let sig_opt = method_info
-                        .signature
-                        .or_else(|| self.value_env.get_function(&method_info.func_name).cloned());
-                    if let Some(sig) = sig_opt {
-                        let full_fn_ty = MonoType::Function {
-                            params: sig.params.clone(),
-                            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
-                        };
-                        let (inst_ty, _) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
-                        let (inst_params, inst_ret) = match inst_ty {
-                            MonoType::Function { params, ret } => (params, *ret),
-                            _ => unreachable!(),
-                        };
-
-                        if inst_params.len() != 1 {
-                            self.errors.push(TypeError::UnsupportedFeature {
-                                feature: "string interpolation",
-                                span: expr.span,
-                                note: format!(
-                                    "Type {} has inherent method `to_string`, but interpolation requires `to_string() -> String`",
-                                    expr_ty.format_with_names(&self.type_env)
-                                ),
-                            });
-                            return Err(());
-                        }
-
-                        self.unify(expr_ty, &inst_params[0], expr.span)?;
-
-                        let ret_ty = self.zonk(&inst_ret);
-                        if ret_ty == MonoType::String {
-                            return Ok(());
-                        }
-
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "string interpolation",
-                            span: expr.span,
-                            note: format!(
-                                "Type {} has `to_string`, but it returns {} (expected String)",
-                                expr_ty.format_with_names(&self.type_env),
-                                ret_ty.format_with_names(&self.type_env)
-                            ),
-                        });
-                        return Err(());
-                    }
-                }
-
+        match self.validate_stringify_type(expr_ty, &mut HashSet::new()) {
+            Ok(()) => Ok(()),
+            Err(reason) => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "string interpolation",
                     span: expr.span,
                     note: format!(
-                        "Cannot interpolate type {}: missing inherent `to_string() -> String`",
-                        expr_ty.format_with_names(&self.type_env)
-                    ),
-                });
-                Err(())
-            }
-            _ => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "string interpolation",
-                    span: expr.span,
-                    note: format!(
-                        "Cannot interpolate type {}: missing inherent `to_string() -> String`",
-                        expr_ty.format_with_names(&self.type_env)
+                        "Cannot interpolate type {}: {}",
+                        expr_ty.format_with_names(&self.type_env),
+                        reason
                     ),
                 });
                 Err(())
@@ -1701,7 +1772,7 @@ impl TypeChecker {
             params: sig.params.clone(),
             ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
         };
-        let (inst_ty, _var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+        let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
         let (inst_params, inst_ret) = match inst_ty {
             MonoType::Function { params, ret } => (params, *ret),
             _ => unreachable!(),
@@ -1718,6 +1789,7 @@ impl TypeChecker {
         for (arg, expected_ty) in args.iter().zip(inst_params.iter().skip(1)) {
             self.check_expr(arg, expected_ty)?;
         }
+        self.check_instantiated_stringify_bounds(&sig, &var_to_meta, span)?;
         Ok(Some(self.zonk(&inst_ret)))
     }
 
@@ -1737,6 +1809,9 @@ impl TypeChecker {
             self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
         {
             return Ok(ret_ty);
+        }
+        if method == "to_string" && args.is_empty() && self.has_stringify_bound(&base_ty) {
+            return Ok(MonoType::String);
         }
 
         if let MonoType::Named {
@@ -2161,6 +2236,13 @@ impl TypeChecker {
         method: &str,
         span: Span,
     ) -> Result<MonoType, ()> {
+        if method == "to_string" && self.has_stringify_bound(base_ty) {
+            return Ok(MonoType::Function {
+                params: vec![],
+                ret: Box::new(MonoType::String),
+            });
+        }
+
         let method_info = if let Some(info) = self.type_env.get_method(type_id, method).cloned() {
             info
         } else {

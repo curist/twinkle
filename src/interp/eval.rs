@@ -311,6 +311,15 @@ impl<W: Write> Interpreter<W> {
                 }
             }
 
+            ContractCall {
+                contract, method, ..
+            } => {
+                panic!(
+                    "interpreter bug: unresolved contract call {}.{} survived monomorphization",
+                    contract, method
+                )
+            }
+
             If {
                 cond,
                 then_branch,

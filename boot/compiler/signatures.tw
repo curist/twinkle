@@ -9,11 +9,12 @@
 use @std.fs
 use @std.path
 use compiler.parser
-use compiler.ast.{Item, Param, TypeExpr}
+use compiler.ast.{Item, Param, TypeExpr, TypeParam, type_param_names}
 use compiler.resolver.{
   FunctionSig, MethodEntry, MonoType, ResolvedEnv,
-  resolve_type_expr, TypeResolveResult,
+  resolve_type_expr, TypeResolveResult, ResolvedTypeParam, ResolvedContractRef,
 }
+use compiler.contracts.{resolve_builtin_contract_name}
 
 /// One file's worth of resolved signatures, tagged with an optional receiver
 /// type name.  receiver=None means the functions are free (e.g. range.tw).
@@ -116,6 +117,23 @@ pub fn group_method_entries(group: SignatureGroup) Vector<MethodEntry> {
 
 // ── type resolution ──────────────────────────────────────────────────────────
 
+fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedTypeParam>, String> {
+  resolved: Vector<ResolvedTypeParam> = []
+  for tp in ast_params {
+    bounds: Vector<ResolvedContractRef> = []
+    for bound_path in tp.bounds {
+      seg := bound_path.segments[0]
+      bound := case resolve_builtin_contract_name(seg) {
+        .Some(c) => ResolvedContractRef.Builtin(c),
+        .None => { return .Err("unknown contract '${seg}'") },
+      }
+      bounds = bounds.append(bound)
+    }
+    resolved = resolved.append(.{ name: tp.name, bounds })
+  }
+  .Ok(resolved)
+}
+
 fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>) Result<MonoType, String> {
   case param.ty {
     .None => .Err("parameter '${param.name}' has no type annotation"),
@@ -165,7 +183,8 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
     case item {
       .Function(decl) => {
         if !decl.is_pub { continue }
-        type_vars := decl.type_params
+        resolved_type_params := try resolve_type_params(decl.type_params)
+        type_vars := type_param_names(decl.type_params)
 
         param_tys: Vector<MonoType> = []
         param_names: Vector<String> = []
@@ -187,7 +206,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
         ret := try resolve_return_type(env, decl.return_type, type_vars)
         sig := FunctionSig.{
           name: decl.name,
-          type_params: type_vars,
+          type_params: resolved_type_params,
           param_names: param_names,
           params: param_tys,
           ret: ret,

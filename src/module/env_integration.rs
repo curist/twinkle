@@ -95,6 +95,7 @@ mod tests {
             FunctionSignature {
                 name: "double".to_string(),
                 type_params: vec![],
+                type_param_bounds: HashMap::new(),
                 param_names: vec!["x".to_string()],
                 params: vec![MonoType::Int],
                 ret: Some(MonoType::Int),
@@ -162,6 +163,7 @@ mod tests {
             FunctionSignature {
                 name: "map".to_string(),
                 type_params: vec!["A".to_string(), "B".to_string()],
+                type_param_bounds: HashMap::new(),
                 param_names: vec!["xs".to_string(), "f".to_string()],
                 params: vec![
                     MonoType::Vector(Box::new(MonoType::Int)),

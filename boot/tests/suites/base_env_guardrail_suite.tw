@@ -65,7 +65,7 @@ pub fn suite() runner.Suite {
     .test("builtin_env has vector_append with type param T", fn() {
       sig := try require_registered_sig("vector_append")
       try assert.int_eq(sig.type_params.len(), 1)
-      try assert.str_eq(sig.type_params[0], "T")
+      try assert.str_eq(sig.type_params[0].name, "T")
       try assert.int_eq(sig.params.len(), 2)
       .Ok({})
     })

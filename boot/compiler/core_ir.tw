@@ -5,6 +5,7 @@
 
 use lib.source.span.{Span}
 use .resolver.{MonoType, ResolvedEnv, TypeId}
+use .contracts.{BuiltinContract}
 
 // ── Identity types ──────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ pub type CoreExprKind = {
 
   // Calls & closures
   Call(CoreExpr, Vector<CoreExpr>),
+  ContractCall(BuiltinContract, String, CoreExpr, Vector<CoreExpr>),
   MakeClosure(FuncId, Vector<LocalId>),
 
   // Control flow
@@ -104,6 +106,7 @@ pub type CoreModule = .{
   functions: Vector<FunctionDef>,
   type_env: ResolvedEnv,
   init_func_id: FuncId?,
+  func_table: Dict<String, FuncId>,
 }
 
 // ── Linker types ────────────────────────────────────────────────────

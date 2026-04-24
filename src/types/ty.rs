@@ -333,6 +333,7 @@ pub struct Variant {
 pub struct FunctionSignature {
     pub name: String,
     pub type_params: Vec<String>, // generic type parameter names (e.g. ["A", "B"])
+    pub type_param_bounds: HashMap<String, String>,
     pub param_names: Vec<String>,
     pub params: Vec<MonoType>,
     pub ret: Option<MonoType>, // None means infer from body

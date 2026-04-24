@@ -284,8 +284,8 @@ pub fn suite() runner.Suite {
         .Function(f) => {
           try assert.str_eq(f.name, "map")
           try assert.int_eq(f.type_params.len(), 2)
-          try assert.str_eq(f.type_params[0], "A")
-          assert.str_eq(f.type_params[1], "B")
+          try assert.str_eq(f.type_params[0].name, "A")
+          assert.str_eq(f.type_params[1].name, "B")
         },
         _ => assert.fail("expected function"),
       }
