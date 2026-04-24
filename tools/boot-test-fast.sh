@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fast boot compiler test runner: compile to Wasm, then run via Node.js.
-# ~3s vs ~16s for the full `twk run` path.
+# Fast boot compiler test runner: compile tests with the self-hosted boot
+# compiler, then run the produced Wasm directly via Node.js.
 #
 # Usage:
 #   tools/boot-test-fast.sh              # build + run
@@ -13,7 +13,7 @@ ENTRY="boot/tests/main.tw"
 
 if [[ "${1:-}" != "--run-only" ]]; then
   echo ":: Compiling $ENTRY → $WASM_OUT"
-  cargo run --release --bin twk -- build -o "$WASM_OUT" "$ENTRY"
+  tools/twk_boot.mjs build "$ENTRY" -o "$WASM_OUT"
 fi
 
 echo ":: Running via Node.js"

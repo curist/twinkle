@@ -4,6 +4,7 @@ use compiler.core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
   LocalId, FieldId, VariantId, BinOp, UnOp, FieldInit, MatchArm, CorePattern,
 }
+use compiler.contracts.{BuiltinContract, contract_spec}
 use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,
@@ -30,6 +31,10 @@ fn join_lines(lines: Vector<String>) String {
 
 fn bool_name(v: Bool) String {
   if v { "true" } else { "false" }
+}
+
+fn contract_name(contract: BuiltinContract) String {
+  contract_spec(contract).name
 }
 
 fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
@@ -194,6 +199,13 @@ pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr,
     .Call(callee, args) => {
       args.fold(render_core_expr(line(lines, indent, "Call : ${ty}"), env, callee, indent + 2), fn(out, arg) {
         render_core_expr(out, env, arg, indent + 4)
+      })
+    },
+    .ContractCall(contract, method_name, receiver, args) => {
+      out := line(lines, indent, "ContractCall ${contract_name(contract)}.${method_name} : ${ty}")
+      out = render_core_expr(out, env, receiver, indent + 2)
+      args.fold(out, fn(inner_out, arg) {
+        render_core_expr(inner_out, env, arg, indent + 4)
       })
     },
     .MakeClosure(func_id, free_vars) => {

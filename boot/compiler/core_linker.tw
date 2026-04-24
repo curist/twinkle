@@ -16,6 +16,7 @@ use compiler.core_ir.{
   CompiledModule, ExternalRef,
 }
 use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.contracts.{BuiltinContract}
 use lib.source.span.{Span}
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -61,8 +62,10 @@ pub fn link(
     }
   }
 
-  // Step 3: Build per-module remap tables and rewrite functions.
+  // Step 3: Build per-module remap tables, rewrite functions, and preserve
+  // a linked name → FuncId table for downstream passes like monomorphization.
   all_functions: Vector<FunctionDef> = []
+  linked_func_table: Dict<String, FuncId> = Dict.new()
   all_init_ids: Vector<FuncId> = []
   entry_init: FuncId? = .None
   entry_func_ids: Vector<Int> = []
@@ -97,6 +100,18 @@ pub fn link(
             },
             .None => {},
           }
+        },
+        .None => {},
+      }
+    }
+
+    // Preserve the module's visible name table with remapped global FuncIds.
+    // Later modules overwrite earlier ones, which matches dependency order
+    // and lets the entry module's bindings win on conflicts.
+    for name in m.func_table.keys() {
+      case m.func_table[name] {
+        .Some(fid) => {
+          linked_func_table[name] = remap_func_id(fid, remap)
         },
         .None => {},
       }
@@ -142,7 +157,7 @@ pub fn link(
   // Without this, unreachable prelude functions with generic types cause
   // downstream passes (monomorphize, lower_anf) to trip on unresolved types.
   // Roots: combined init + all entry module functions (the user's code).
-  reachable := compute_reachable(linked_functions, combined_init.init_func_id, entry_func_ids)
+  reachable := compute_reachable(linked_functions, combined_init.init_func_id, entry_func_ids, entry_env, linked_func_table)
   live_functions: Vector<FunctionDef> = []
   for f in linked_functions {
     if reachable.has(f.func_id.id) {
@@ -150,11 +165,23 @@ pub fn link(
     }
   }
 
+  live_func_table: Dict<String, FuncId> = Dict.new()
+  for name in linked_func_table.keys() {
+    case linked_func_table[name] {
+      .Some(fid) => {
+        if fid.id < builtin_count or reachable.has(fid.id) {
+          live_func_table[name] = fid
+        }
+      },
+      .None => {},
+    }
+  }
+
   CoreModule.{
     functions: live_functions,
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
-    func_table: Dict.new(),
+    func_table: live_func_table,
   }
 }
 
@@ -172,10 +199,15 @@ pub fn validate_compiled_module_links(
     defined[f.func_id.id] = true
   }
 
+  func_map: Dict<Int, FunctionDef> = Dict.new()
+  for f in m.core.functions {
+    func_map[f.func_id.id] = f
+  }
+
   // Imported refs must either be builtins, locally defined functions, or have
   // an ExternalRef recorded by the module compiler/lowering pipeline.
   for f in m.core.functions {
-    refs := collect_func_refs(f.body)
+    refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map)
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) {
         continue
@@ -279,7 +311,7 @@ fn make_call(func_id: FuncId, s: Span) CoreExpr {
 // ── Reachability (lightweight DCE) ──────────────────────────────────
 
 /// Compute the set of reachable FuncIds starting from init + entry functions.
-fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_func_ids: Vector<Int>) Dict<Int, Bool> {
+fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_func_ids: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>) Dict<Int, Bool> {
   // Build FuncId → FunctionDef lookup
   func_map: Dict<Int, FunctionDef> = Dict.new()
   for f in functions {
@@ -308,7 +340,7 @@ fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_fun
 
   // BFS: find all reachable functions
   // Use a helper to work around nested-scope mutation issues
-  bfs_result := bfs_reachable(func_map, queue, reachable)
+  bfs_result := bfs_reachable(func_map, queue, reachable, env, func_table)
   reachable = bfs_result.reachable
 
   reachable
@@ -320,13 +352,13 @@ type BfsState = .{
 }
 
 /// BFS to find all reachable FuncIds.
-fn bfs_reachable(func_map: Dict<Int, FunctionDef>, queue: Vector<Int>, reachable: Dict<Int, Bool>) BfsState {
+fn bfs_reachable(func_map: Dict<Int, FunctionDef>, queue: Vector<Int>, reachable: Dict<Int, Bool>, env: ResolvedEnv, func_table: Dict<String, FuncId>) BfsState {
   state := BfsState.{ queue, reachable }
   qi := 0
   for qi < state.queue.len() {
     fid := state.queue[qi]
     qi = qi + 1
-    refs := get_body_refs(func_map, fid)
+    refs := get_body_refs(func_map, fid, env, func_table)
     state = add_refs(state, refs)
   }
   state
@@ -351,20 +383,66 @@ fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {
 }
 
 /// Look up a function by FuncId and return its body's func refs, or empty.
-fn get_body_refs(func_map: Dict<Int, FunctionDef>, fid: Int) Vector<Int> {
+fn get_body_refs(func_map: Dict<Int, FunctionDef>, fid: Int, env: ResolvedEnv, func_table: Dict<String, FuncId>) Vector<Int> {
   case func_map[fid] {
-    .Some(func) => collect_func_refs(func.body),
+    .Some(func) => collect_func_refs(func.body, env, func_table, func_map),
     .None => [],
   }
 }
 
-/// Collect all FuncId references from an expression tree.
-pub fn collect_func_refs(expr: CoreExpr) Vector<Int> {
-  refs: Vector<Int> = []
-  collect_func_refs_into(expr, refs)
+fn name_matches_method(fn_name: String, method_name: String) Bool {
+  if fn_name == method_name {
+    return true
+  }
+  if fn_name.len() <= method_name.len() + 1 {
+    return false
+  }
+  dot_idx := fn_name.len() - method_name.len() - 1
+  fn_name.slice(dot_idx, fn_name.len()) == ".${method_name}"
 }
 
-fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
+fn fallback_contract_refs(method_name: String, func_map: Dict<Int, FunctionDef>) Vector<Int> {
+  refs: Vector<Int> = []
+  for fid in func_map.keys() {
+    case func_map[fid] {
+      .Some(func) => {
+        if name_matches_method(func.name, method_name) {
+          refs = refs.append(func.func_id.id)
+        }
+      },
+      .None => {},
+    }
+  }
+  refs
+}
+
+fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+  case contract {
+    .Stringify => {
+      case receiver_ty {
+        .Int => env.lookup_method("Int", method_name),
+        .Float => env.lookup_method("Float", method_name),
+        .Bool => env.lookup_method("Bool", method_name),
+        .Byte => env.lookup_method("Byte", method_name),
+        .String => env.lookup_method("String", method_name),
+        .Vector(_) => env.lookup_method("Vector", method_name),
+        .Dict(_, _) => env.lookup_method("Dict", method_name),
+        .Optional(_) => env.lookup_method("Option", method_name),
+        .Result(_, _) => env.lookup_method("Result", method_name),
+        .Named(tid, _) => env.lookup_type_method(tid, method_name),
+        _ => .None,
+      }
+    },
+  }
+}
+
+/// Collect all FuncId references from an expression tree.
+pub fn collect_func_refs(expr: CoreExpr, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) Vector<Int> {
+  refs: Vector<Int> = []
+  collect_func_refs_into(expr, refs, env, func_table, func_map)
+}
+
+fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) Vector<Int> {
   case expr.kind {
     .LitInt(_) => refs,
     .LitFloat(_) => refs,
@@ -377,72 +455,81 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>) Vector<Int> {
     .GlobalFunc(id) => refs.append(id.id),
 
     .Let(_, value, body) => {
-      r := collect_func_refs_into(value, refs)
-      collect_func_refs_into(body, r)
+      r := collect_func_refs_into(value, refs, env, func_table, func_map)
+      collect_func_refs_into(body, r, env, func_table, func_map)
     },
-    .Assign(_, value) => collect_func_refs_into(value, refs),
+    .Assign(_, value) => collect_func_refs_into(value, refs, env, func_table, func_map),
 
     .BinOp(_, lhs, rhs) => {
-      r := collect_func_refs_into(lhs, refs)
-      collect_func_refs_into(rhs, r)
+      r := collect_func_refs_into(lhs, refs, env, func_table, func_map)
+      collect_func_refs_into(rhs, r, env, func_table, func_map)
     },
-    .UnOp(_, operand) => collect_func_refs_into(operand, refs),
+    .UnOp(_, operand) => collect_func_refs_into(operand, refs, env, func_table, func_map),
 
     .Call(callee, args) => {
-      r := collect_func_refs_into(callee, refs)
-      collect_func_refs_list(args, r)
+      r := collect_func_refs_into(callee, refs, env, func_table, func_map)
+      collect_func_refs_list(args, r, env, func_table, func_map)
     },
-    .ContractCall(_, _, receiver, args) => {
-      r := collect_func_refs_into(receiver, refs)
-      collect_func_refs_list(args, r)
+    .ContractCall(contract, method_name, receiver, args) => {
+      r := case resolve_contract_target_name(contract, receiver.ty, method_name, env) {
+        .Some(target_name) => {
+          case func_table[target_name] {
+            .Some(fid) => refs.append(fid.id),
+            .None => fallback_contract_refs(method_name, func_map).fold(refs, fn(out, id) { out.append(id) }),
+          }
+        },
+        .None => fallback_contract_refs(method_name, func_map).fold(refs, fn(out, id) { out.append(id) }),
+      }
+      r = collect_func_refs_into(receiver, r, env, func_table, func_map)
+      collect_func_refs_list(args, r, env, func_table, func_map)
     },
     .MakeClosure(func_id, _) => refs.append(func_id.id),
 
     .If(cond, then_br, else_br) => {
-      r := collect_func_refs_into(cond, refs)
-      r = collect_func_refs_into(then_br, r)
-      collect_func_refs_into(else_br, r)
+      r := collect_func_refs_into(cond, refs, env, func_table, func_map)
+      r = collect_func_refs_into(then_br, r, env, func_table, func_map)
+      collect_func_refs_into(else_br, r, env, func_table, func_map)
     },
     .Match(scrutinee, arms) => {
-      arms.fold(collect_func_refs_into(scrutinee, refs), fn(r, arm) {
-        collect_func_refs_into(arm.body, r)
+      arms.fold(collect_func_refs_into(scrutinee, refs, env, func_table, func_map), fn(r, arm) {
+        collect_func_refs_into(arm.body, r, env, func_table, func_map)
       })
     },
-    .Loop(body) => collect_func_refs_into(body, refs),
+    .Loop(body) => collect_func_refs_into(body, refs, env, func_table, func_map),
     .Break(val) => {
       case val {
-        .Some(v) => collect_func_refs_into(v, refs),
+        .Some(v) => collect_func_refs_into(v, refs, env, func_table, func_map),
         .None => refs,
       }
     },
     .Continue => refs,
     .Return(val) => {
       case val {
-        .Some(v) => collect_func_refs_into(v, refs),
+        .Some(v) => collect_func_refs_into(v, refs, env, func_table, func_map),
         .None => refs,
       }
     },
-    .Defer(body) => collect_func_refs_into(body, refs),
+    .Defer(body) => collect_func_refs_into(body, refs, env, func_table, func_map),
 
     .Record(_, fields) => {
-      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r) })
+      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r, env, func_table, func_map) })
     },
-    .RecordGet(rec, _) => collect_func_refs_into(rec, refs),
+    .RecordGet(rec, _) => collect_func_refs_into(rec, refs, env, func_table, func_map),
     .RecordUpdate(rec, _, value) => {
-      r := collect_func_refs_into(rec, refs)
-      collect_func_refs_into(value, r)
+      r := collect_func_refs_into(rec, refs, env, func_table, func_map)
+      collect_func_refs_into(value, r, env, func_table, func_map)
     },
-    .Variant(_, _, args) => collect_func_refs_list(args, refs),
-    .ArrayLit(elems) => collect_func_refs_list(elems, refs),
+    .Variant(_, _, args) => collect_func_refs_list(args, refs, env, func_table, func_map),
+    .ArrayLit(elems) => collect_func_refs_list(elems, refs, env, func_table, func_map),
     .Index(arr, idx) => {
-      r := collect_func_refs_into(arr, refs)
-      collect_func_refs_into(idx, r)
+      r := collect_func_refs_into(arr, refs, env, func_table, func_map)
+      collect_func_refs_into(idx, r, env, func_table, func_map)
     },
   }
 }
 
-fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>) Vector<Int> {
-  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r) })
+fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) Vector<Int> {
+  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, env, func_table, func_map) })
 }
 
 // ── FuncId remapping ────────────────────────────────────────────────

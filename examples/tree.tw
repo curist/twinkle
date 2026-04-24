@@ -28,6 +28,27 @@ fn count<T>(t: Tree<T>) Int {
   }
 }
 
+fn render_branch<T: Stringify>(t: Tree<T>, prefix: String, is_tail: Bool) String {
+  connector := if is_tail { "└── " } else { "├── " }
+  child_prefix := if is_tail { "${prefix}    " } else { "${prefix}│   " }
+
+  case t {
+    .Empty => "${prefix}${connector}∅",
+    .Node(value, left, right) => {
+      "${prefix}${connector}${value}\n${render_branch(left, child_prefix, false)}\n${render_branch(right, child_prefix, true)}"
+    },
+  }
+}
+
+fn to_string<T: Stringify>(t: Tree<T>) String {
+  case t {
+    .Empty => "∅",
+    .Node(value, left, right) => {
+      "${value}\n${render_branch(left, "", false)}\n${render_branch(right, "", true)}"
+    },
+  }
+}
+
 fn contains(t: Tree<Int>, target: Int) Bool {
   case t {
     .Empty => false,
@@ -59,6 +80,7 @@ fn main() {
     )
   )
 
+  println("Tree:\n${tree}")
   println("Sum:   ${sum(tree)}")
   println("Depth: ${depth(tree)}")
   println("Count: ${count(tree)}")

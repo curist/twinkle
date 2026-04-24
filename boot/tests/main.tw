@@ -1,6 +1,7 @@
 use tests.runner
 use tests.suites.assert_helpers_suite
 use tests.suites.semantic_suite
+use tests.suites.semantic_tree_stringify_suite
 use tests.suites.equality_repro_suite
 use tests.suites.equality_matrix_suite
 use tests.suites.semantic_closure_rebinding_suite
@@ -54,65 +55,100 @@ use tests.suites.signature_loader_suite
 use tests.suites.builtins_canonical_suite
 use tests.suites.signature_drift_suite
 
-suites := [
-  assert_helpers_suite.suite(),
-  semantic_suite.suite(),
-  equality_repro_suite.suite(),
-  equality_matrix_suite.suite(),
-  semantic_closure_rebinding_suite.suite(),
-  semantic_control_flow_suite.suite(),
-  api_option_result_suite.suite(),
-  api_cell_suite.suite(),
-  api_vector_suite.suite(),
-  api_string_suite.suite(),
-  api_dict_suite.suite(),
-  api_range_iterator_suite.suite(),
-  stdlib_path_suite.suite(),
-  stdlib_host_suite.suite(),
-  source_suite.suite(),
-  parser_suite.suite(),
-  resolver_suite.suite(),
-  checker_suite.suite(),
-  checker_coverage_suite.suite(),
-  core_ir_suite.suite(),
-  anf_suite.suite(),
-  anf_lower_suite.suite(),
-  anf_analysis_suite.suite(),
-  opt_builder_region_suite.suite(),
-  opt_dead_let_suite.suite(),
-  opt_const_fold_suite.suite(),
-  opt_analysis_suite.suite(),
-  opt_loop_builder_suite.suite(),
-  opt_pipeline_suite.suite(),
-  opt_liveness_suite.suite(),
-  opt_semantics_suite.suite(),
-  opt_uniqueness_suite.suite(),
-  opt_defer_elim_suite.suite(),
-  builtins_suite.suite(),
-  wasm_ir_suite.suite(),
-  wasm_layout_suite.suite(),
-]
-// Using append here avoids a current boot-compiler cast failure when a
-// cross-module populated Suite value appears directly inside a vector literal.
-suites = suites.append(wasm_plan_suite.suite())
-suites = suites.append(backend_prepare_suite.suite())
-suites = suites.append(backend_repr_suite.suite())
-suites = suites.append(backend_verify_suite.suite())
-// Keep extending the suite list one item at a time. This avoids backend cast
-// hazards around large cross-module Suite vector literals/concat chains.
-suites = suites.append(insert_boundaries_suite.suite())
-suites = suites.append(slot_assign_suite.suite())
-suites = suites.append(wat_suite.suite())
-suites = suites.append(linker_suite.suite())
-suites = suites.append(runtime_suite.suite())
-suites = suites.append(module_loader_suite.suite())
-suites = suites.append(dependency_graph_suite.suite())
-suites = suites.append(query_keys_suite.suite())
-suites = suites.append(imports_suite.suite())
-suites = suites.append(multi_module_suite.suite())
-suites = suites.append(base_env_guardrail_suite.suite())
-suites = suites.append(signature_loader_suite.suite())
-suites = suites.append(builtins_canonical_suite.suite())
-suites = suites.append(signature_drift_suite.suite())
+fn run_batch(suites: Vector<runner.Suite>) Void {
+  runner.run_all(suites)
+}
 
-runner.run_all(suites)
+batch1: Vector<runner.Suite> = []
+batch1 = batch1.append(assert_helpers_suite.suite())
+batch1 = batch1.append(semantic_suite.suite())
+run_batch(batch1)
+
+batch2: Vector<runner.Suite> = []
+batch2 = batch2.append(semantic_tree_stringify_suite.suite())
+run_batch(batch2)
+
+batch3: Vector<runner.Suite> = []
+batch3 = batch3.append(equality_repro_suite.suite())
+batch3 = batch3.append(equality_matrix_suite.suite())
+batch3 = batch3.append(semantic_closure_rebinding_suite.suite())
+batch3 = batch3.append(semantic_control_flow_suite.suite())
+batch3 = batch3.append(api_option_result_suite.suite())
+run_batch(batch3)
+
+batch4: Vector<runner.Suite> = []
+batch4 = batch4.append(api_cell_suite.suite())
+batch4 = batch4.append(api_vector_suite.suite())
+batch4 = batch4.append(api_string_suite.suite())
+batch4 = batch4.append(api_dict_suite.suite())
+batch4 = batch4.append(api_range_iterator_suite.suite())
+run_batch(batch4)
+
+batch5: Vector<runner.Suite> = []
+batch5 = batch5.append(stdlib_path_suite.suite())
+batch5 = batch5.append(stdlib_host_suite.suite())
+batch5 = batch5.append(source_suite.suite())
+batch5 = batch5.append(parser_suite.suite())
+batch5 = batch5.append(resolver_suite.suite())
+run_batch(batch5)
+
+batch6: Vector<runner.Suite> = []
+batch6 = batch6.append(checker_suite.suite())
+batch6 = batch6.append(checker_coverage_suite.suite())
+batch6 = batch6.append(core_ir_suite.suite())
+batch6 = batch6.append(anf_suite.suite())
+batch6 = batch6.append(anf_lower_suite.suite())
+run_batch(batch6)
+
+batch7: Vector<runner.Suite> = []
+batch7 = batch7.append(anf_analysis_suite.suite())
+batch7 = batch7.append(opt_builder_region_suite.suite())
+batch7 = batch7.append(opt_dead_let_suite.suite())
+batch7 = batch7.append(opt_const_fold_suite.suite())
+batch7 = batch7.append(opt_analysis_suite.suite())
+run_batch(batch7)
+
+batch8: Vector<runner.Suite> = []
+batch8 = batch8.append(opt_loop_builder_suite.suite())
+batch8 = batch8.append(opt_pipeline_suite.suite())
+batch8 = batch8.append(opt_liveness_suite.suite())
+batch8 = batch8.append(opt_semantics_suite.suite())
+batch8 = batch8.append(opt_uniqueness_suite.suite())
+run_batch(batch8)
+
+batch9: Vector<runner.Suite> = []
+batch9 = batch9.append(opt_defer_elim_suite.suite())
+batch9 = batch9.append(builtins_suite.suite())
+batch9 = batch9.append(wasm_ir_suite.suite())
+batch9 = batch9.append(wasm_layout_suite.suite())
+batch9 = batch9.append(wasm_plan_suite.suite())
+run_batch(batch9)
+
+batch10: Vector<runner.Suite> = []
+batch10 = batch10.append(insert_boundaries_suite.suite())
+batch10 = batch10.append(slot_assign_suite.suite())
+batch10 = batch10.append(backend_prepare_suite.suite())
+batch10 = batch10.append(backend_repr_suite.suite())
+batch10 = batch10.append(backend_verify_suite.suite())
+run_batch(batch10)
+
+batch11: Vector<runner.Suite> = []
+batch11 = batch11.append(wat_suite.suite())
+batch11 = batch11.append(linker_suite.suite())
+batch11 = batch11.append(runtime_suite.suite())
+batch11 = batch11.append(module_loader_suite.suite())
+batch11 = batch11.append(dependency_graph_suite.suite())
+run_batch(batch11)
+
+batch12: Vector<runner.Suite> = []
+batch12 = batch12.append(query_keys_suite.suite())
+batch12 = batch12.append(imports_suite.suite())
+batch12 = batch12.append(multi_module_suite.suite())
+batch12 = batch12.append(base_env_guardrail_suite.suite())
+batch12 = batch12.append(signature_loader_suite.suite())
+run_batch(batch12)
+
+batch13: Vector<runner.Suite> = []
+batch13 = batch13.append(builtins_canonical_suite.suite())
+batch13 = batch13.append(signature_drift_suite.suite())
+run_batch(batch13)

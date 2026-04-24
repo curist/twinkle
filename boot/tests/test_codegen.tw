@@ -10,21 +10,24 @@ use tests.suites.codegen_integration_suite
 use tests.suites.slot_assign_suite
 use tests.suites.backend_verify_suite
 
-suites := [
-  wasm_ir_suite.suite(),
-  wasm_layout_suite.suite(),
-]
-// Using append here avoids a current boot-compiler cast failure when a
-// cross-module populated Suite value appears directly inside a vector literal.
-suites = suites.append(wasm_plan_suite.suite())
-suites = suites.concat([
-  insert_boundaries_suite.suite(),
-  wat_suite.suite(),
-  linker_suite.suite(),
-  runtime_suite.suite(),
-  codegen_integration_suite.suite(),
-  slot_assign_suite.suite(),
-  backend_verify_suite.suite(),
-])
+batch1: Vector<runner.Suite> = []
+batch1 = batch1.append(wasm_ir_suite.suite())
+batch1 = batch1.append(wasm_layout_suite.suite())
+runner.run_all(batch1)
 
-runner.run_all(suites)
+batch2: Vector<runner.Suite> = []
+batch2 = batch2.append(wasm_plan_suite.suite())
+batch2 = batch2.append(insert_boundaries_suite.suite())
+batch2 = batch2.append(slot_assign_suite.suite())
+runner.run_all(batch2)
+
+batch3: Vector<runner.Suite> = []
+batch3 = batch3.append(wat_suite.suite())
+batch3 = batch3.append(linker_suite.suite())
+batch3 = batch3.append(runtime_suite.suite())
+runner.run_all(batch3)
+
+batch4: Vector<runner.Suite> = []
+batch4 = batch4.append(codegen_integration_suite.suite())
+batch4 = batch4.append(backend_verify_suite.suite())
+runner.run_all(batch4)

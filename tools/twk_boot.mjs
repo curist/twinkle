@@ -5,10 +5,10 @@
 //   node tools/twk_boot.mjs <twk args...>
 //
 // Environment:
-//   BOOT_WASM=/path/to/boot-main.wasm   Override the boot compiler Wasm path.
+//   BOOT_WASM=/path/to/boot.wasm   Override the boot compiler Wasm path.
 //
 // Default boot wasm path:
-//   target/boot-main.wasm
+//   target/boot.wasm
 
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -18,7 +18,7 @@ import { runWasmFile } from "./run_wasm_node.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT_DIR = resolve(__dirname, "..");
-const DEFAULT_BOOT_WASM = resolve(ROOT_DIR, "target/boot-main.wasm");
+const DEFAULT_BOOT_WASM = resolve(ROOT_DIR, "target/boot.wasm");
 const BOOT_ENTRY = resolve(ROOT_DIR, "boot/main.tw");
 
 function resolveBootWasm() {

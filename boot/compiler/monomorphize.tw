@@ -473,12 +473,12 @@ fn capture_subst_from_free_vars(target: FunctionDef, free_vars: Vector<LocalId>,
   out
 }
 
-fn collect_instantiations_func(func: FunctionDef, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue) InstQueue {
+fn collect_instantiations_func(func: FunctionDef, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue, env: ResolvedEnv, table: Dict<String, FuncId>) InstQueue {
   local_types: Dict<Int, MonoType> = Dict.new()
   for p in func.params {
     local_types[p.local.id] = p.ty
   }
-  collect_instantiations(func.body, generic_ids, func_map, queue, local_types)
+  collect_instantiations(func.body, generic_ids, func_map, queue, local_types, env, table)
 }
 
 fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
@@ -501,20 +501,60 @@ fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType
   }
 }
 
-fn lower_resolved_contract_call(parent: CoreExpr, contract: BuiltinContract, method_name: String, receiver: CoreExpr, args: Vector<CoreExpr>, env: ResolvedEnv, func_table: Dict<String, FuncId>) CoreExprKind {
-  target_name := case resolve_contract_target_name(contract, receiver.ty, method_name, env) {
-    .Some(name) => name,
-    .None => error("monomorphize: unresolved contract call for ${env.ty_to_string_env(receiver.ty)}.${method_name}"),
+fn name_matches_method(fn_name: String, method_name: String) Bool {
+  if fn_name == method_name {
+    return true
   }
-  fid := case func_table[target_name] {
+  if fn_name.len() <= method_name.len() + 1 {
+    return false
+  }
+  dot_idx := fn_name.len() - method_name.len() - 1
+  fn_name.slice(dot_idx, fn_name.len()) == ".${method_name}"
+}
+
+fn fallback_contract_target_id(receiver_ty: MonoType, method_name: String, func_map: Dict<Int, FunctionDef>) FuncId? {
+  for fid in func_map.keys() {
+    case func_map[fid] {
+      .Some(func) => {
+        if !name_matches_method(func.name, method_name) { continue }
+        if func.params.len() == 0 { continue }
+        if func.return_ty != MonoType.String { continue }
+
+        recv_pattern := func.params[0].ty
+        subst := match_type_against(recv_pattern, receiver_ty, Dict.new())
+        type_params := collect_type_params(func)
+        if type_params.len() == 0 or subst_covers(type_params, subst) or !contains_var(recv_pattern) {
+          return .Some(func.func_id)
+        }
+      },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) FuncId? {
+  case resolve_contract_target_name(.Stringify, receiver_ty, method_name, env) {
+    .Some(target_name) => {
+      case func_table[target_name] {
+        .Some(id) => .Some(id),
+        .None => fallback_contract_target_id(receiver_ty, method_name, func_map),
+      }
+    },
+    .None => fallback_contract_target_id(receiver_ty, method_name, func_map),
+  }
+}
+
+fn lower_resolved_contract_call(parent: CoreExpr, contract: BuiltinContract, method_name: String, receiver: CoreExpr, args: Vector<CoreExpr>, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) CoreExprKind {
+  fid := case resolve_contract_target_id(receiver.ty, method_name, env, func_table, func_map) {
     .Some(id) => id,
-    .None => error("monomorphize: missing FuncId for contract target ${target_name}"),
+    .None => error("monomorphize: unresolved contract call for ${env.ty_to_string_env(receiver.ty)}.${method_name}"),
   }
   callee_ty := MonoType.Function([receiver.ty].concat(collect a in args { a.ty }), parent.ty)
   .Call(CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: parent.span }, [receiver].concat(args))
 }
 
-fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue, local_types: Dict<Int, MonoType>) InstQueue {
+fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map: Dict<Int, FunctionDef>, queue: InstQueue, local_types: Dict<Int, MonoType>, env: ResolvedEnv, table: Dict<String, FuncId>) InstQueue {
   case expr.kind {
     .Call(callee, args) => {
       case callee.kind {
@@ -532,19 +572,37 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
             }
           }
           args.fold(queue, fn(q, arg) {
-            collect_instantiations(arg, generic_ids, func_map, q, local_types)
+            collect_instantiations(arg, generic_ids, func_map, q, local_types, env, table)
           })
         },
         _ => {
-          args.fold(collect_instantiations(callee, generic_ids, func_map, queue, local_types), fn(q, arg) {
-            collect_instantiations(arg, generic_ids, func_map, q, local_types)
+          args.fold(collect_instantiations(callee, generic_ids, func_map, queue, local_types, env, table), fn(q, arg) {
+            collect_instantiations(arg, generic_ids, func_map, q, local_types, env, table)
           })
         },
       }
     },
-    .ContractCall(_, _, receiver, args) => {
-      queue = collect_instantiations(receiver, generic_ids, func_map, queue, local_types)
-      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q, local_types) })
+    .ContractCall(_, method_name, receiver, args) => {
+      case resolve_contract_target_id(receiver.ty, method_name, env, table, func_map) {
+        .Some(fid) => {
+          if generic_ids.has(fid.id) {
+            case func_map[fid.id] {
+              .Some(gf) => {
+                call_args := [receiver].concat(args)
+                type_params := collect_type_params(gf)
+                subst := infer_call_subst(gf, call_args, expr.ty)
+                if subst_covers(type_params, subst) {
+                  queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+                }
+              },
+              .None => {},
+            }
+          }
+        },
+        .None => {},
+      }
+      queue = collect_instantiations(receiver, generic_ids, func_map, queue, local_types, env, table)
+      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q, local_types, env, table) })
     },
     .GlobalFunc(fid) => {
       if generic_ids.has(fid.id) {
@@ -581,59 +639,59 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
       queue
     },
     .Let(local, value, body) => {
-      queue = collect_instantiations(value, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(value, generic_ids, func_map, queue, local_types, env, table)
       next_local_types := local_types
       next_local_types[local.id] = value.ty
-      collect_instantiations(body, generic_ids, func_map, queue, next_local_types)
+      collect_instantiations(body, generic_ids, func_map, queue, next_local_types, env, table)
     },
-    .Assign(_, value) => collect_instantiations(value, generic_ids, func_map, queue, local_types),
+    .Assign(_, value) => collect_instantiations(value, generic_ids, func_map, queue, local_types, env, table),
     .BinOp(_, lhs, rhs) => {
-      queue = collect_instantiations(lhs, generic_ids, func_map, queue, local_types)
-      collect_instantiations(rhs, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(lhs, generic_ids, func_map, queue, local_types, env, table)
+      collect_instantiations(rhs, generic_ids, func_map, queue, local_types, env, table)
     },
-    .UnOp(_, inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types),
+    .UnOp(_, inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types, env, table),
     .If(cond, then_e, else_e) => {
-      queue = collect_instantiations(cond, generic_ids, func_map, queue, local_types)
-      queue = collect_instantiations(then_e, generic_ids, func_map, queue, local_types)
-      collect_instantiations(else_e, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(cond, generic_ids, func_map, queue, local_types, env, table)
+      queue = collect_instantiations(then_e, generic_ids, func_map, queue, local_types, env, table)
+      collect_instantiations(else_e, generic_ids, func_map, queue, local_types, env, table)
     },
     .Match(scrut, arms) => {
-      arms.fold(collect_instantiations(scrut, generic_ids, func_map, queue, local_types), fn(q, arm) {
-        collect_instantiations(arm.body, generic_ids, func_map, q, local_types)
+      arms.fold(collect_instantiations(scrut, generic_ids, func_map, queue, local_types, env, table), fn(q, arm) {
+        collect_instantiations(arm.body, generic_ids, func_map, q, local_types, env, table)
       })
     },
-    .Loop(body) => collect_instantiations(body, generic_ids, func_map, queue, local_types),
+    .Loop(body) => collect_instantiations(body, generic_ids, func_map, queue, local_types, env, table),
     .Break(val) => {
       case val {
-        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types),
+        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types, env, table),
         .None => queue,
       }
     },
     .Return(val) => {
       case val {
-        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types),
+        .Some(v) => collect_instantiations(v, generic_ids, func_map, queue, local_types, env, table),
         .None => queue,
       }
     },
     .Record(_, fields) => {
-      fields.fold(queue, fn(q, fi) { collect_instantiations(fi.value, generic_ids, func_map, q, local_types) })
+      fields.fold(queue, fn(q, fi) { collect_instantiations(fi.value, generic_ids, func_map, q, local_types, env, table) })
     },
-    .RecordGet(target, _) => collect_instantiations(target, generic_ids, func_map, queue, local_types),
+    .RecordGet(target, _) => collect_instantiations(target, generic_ids, func_map, queue, local_types, env, table),
     .RecordUpdate(base, _, value) => {
-      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types)
-      collect_instantiations(value, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types, env, table)
+      collect_instantiations(value, generic_ids, func_map, queue, local_types, env, table)
     },
     .Variant(_, _, args) => {
-      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q, local_types) })
+      args.fold(queue, fn(q, a) { collect_instantiations(a, generic_ids, func_map, q, local_types, env, table) })
     },
     .ArrayLit(elems) => {
-      elems.fold(queue, fn(q, e) { collect_instantiations(e, generic_ids, func_map, q, local_types) })
+      elems.fold(queue, fn(q, e) { collect_instantiations(e, generic_ids, func_map, q, local_types, env, table) })
     },
     .Index(base, idx) => {
-      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types)
-      collect_instantiations(idx, generic_ids, func_map, queue, local_types)
+      queue = collect_instantiations(base, generic_ids, func_map, queue, local_types, env, table)
+      collect_instantiations(idx, generic_ids, func_map, queue, local_types, env, table)
     },
-    .Defer(inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types),
+    .Defer(inner) => collect_instantiations(inner, generic_ids, func_map, queue, local_types, env, table),
     _ => queue,
   }
 }
@@ -792,7 +850,7 @@ fn rewrite_calls_kind(parent: CoreExpr, spec_map: Dict<String, FuncId>, generic_
       for a in args {
         new_args = new_args.append(rewrite_calls(a, spec_map, generic_ids, func_map, local_types, env, table))
       }
-      lowered := CoreExpr.{ kind: lower_resolved_contract_call(parent, contract, method_name, new_receiver, new_args, env, table), ty: parent.ty, span: parent.span }
+      lowered := CoreExpr.{ kind: lower_resolved_contract_call(parent, contract, method_name, new_receiver, new_args, env, table, func_map), ty: parent.ty, span: parent.span }
       rewrite_calls_kind(lowered, spec_map, generic_ids, func_map, local_types, env, table)
     },
     .GlobalFunc(fid) => {
@@ -938,7 +996,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   queue := InstQueue.{ items: [] }
   for func in module.functions {
     if !generic_ids.has(func.func_id.id) {
-      queue = collect_instantiations_func(func, generic_ids, func_map, queue)
+      queue = collect_instantiations_func(func, generic_ids, func_map, queue, module.type_env, module.func_table)
     }
   }
 
@@ -1009,7 +1067,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         }
 
         // Collect transitive instantiations from the specialized body
-        queue = collect_instantiations_func(specialized, generic_ids, func_map, queue)
+        queue = collect_instantiations_func(specialized, generic_ids, func_map, queue, module.type_env, module.func_table)
         new_functions = new_functions.append(specialized)
       },
       .None => {},

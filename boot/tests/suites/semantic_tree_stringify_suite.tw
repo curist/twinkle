@@ -1,0 +1,54 @@
+use tests.runner
+use tests.assert
+
+type Tree<T> = {
+  Empty,
+  Node(T, Tree<T>, Tree<T>),
+}
+
+fn to_string<T: Stringify>(t: Tree<T>) String {
+  case t {
+    .Empty => "Empty",
+    .Node(value, left, right) => "Node(${value}, ${left.to_string()}, ${right.to_string()})",
+  }
+}
+
+fn show<T: Stringify>(x: T) String {
+  x.to_string()
+}
+
+fn sample_tree() Tree<Int> {
+  empty: Tree<Int> = Tree.Empty
+  Tree.Node(5,
+    .Node(3,
+      .Node(1, empty, empty),
+      .Node(4, empty, empty)
+    ),
+    .Node(8,
+      .Node(7, empty, empty),
+      empty
+    )
+  )
+}
+
+fn expected_tree_string() String {
+  "Node(5, Node(3, Node(1, Empty, Empty), Node(4, Empty, Empty)), Node(8, Node(7, Empty, Empty), Empty))"
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("semantic tree stringify")
+    .test("custom recursive container satisfies Stringify", fn() {
+      tree := sample_tree()
+      expected := expected_tree_string()
+      try assert.str_eq(tree.to_string(), expected)
+      try assert.str_eq("${tree}", expected)
+      try assert.str_eq(show(tree), expected)
+      .Ok({})
+    })
+    .test("vector stringify composes with custom tree witness", fn() {
+      tree := sample_tree()
+      trees: Vector<Tree<Int>> = [tree, Tree.Empty]
+      try assert.str_eq(trees.to_string(), "[${expected_tree_string()}, Empty]")
+      .Ok({})
+    })
+}
