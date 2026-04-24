@@ -43,18 +43,6 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Node (for tree-sitter CLI)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install tree-sitter CLI
-        run: npm install -g tree-sitter-cli
-
-      - name: Build tree-sitter-twinkle.wasm
-        working-directory: tree-sitter-twinkle
-        run: tree-sitter build --wasm
-
       - name: Install playground dependencies
         working-directory: playground
         run: bun install --frozen-lockfile
