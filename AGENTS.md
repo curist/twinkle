@@ -21,6 +21,16 @@ tools/twk_boot.mjs run boot/tests/main.tw
 cargo run --release -- build boot/main.tw -o target/boot-main.wasm
 ```
 
+### Update the tree-sitter grammar
+After editing `tree-sitter-twinkle/grammar.js`, regenerate and rebuild:
+```bash
+cd tree-sitter-twinkle
+npx tree-sitter generate   # regenerates src/parser.c, src/grammar.json, src/node-types.json
+npx tree-sitter build --wasm  # requires Docker; rebuilds tree-sitter-twinkle.wasm
+```
+Commit `grammar.js`, the regenerated `src/` files, and `tree-sitter-twinkle.wasm` together.
+The wasm is tracked in git so CI doesn't need Docker.
+
 ### Test
 ```bash
 cargo test
