@@ -1,154 +1,114 @@
-use tests.runner
-use tests.suites.assert_helpers_suite
-use tests.suites.semantic_suite
-use tests.suites.semantic_tree_stringify_suite
-use tests.suites.equality_repro_suite
-use tests.suites.equality_matrix_suite
-use tests.suites.semantic_closure_rebinding_suite
-use tests.suites.semantic_control_flow_suite
-use tests.suites.api_option_result_suite
-use tests.suites.api_cell_suite
-use tests.suites.api_vector_suite
-use tests.suites.api_string_suite
-use tests.suites.api_dict_suite
-use tests.suites.api_range_iterator_suite
-use tests.suites.stdlib_path_suite
-use tests.suites.stdlib_host_suite
-use tests.suites.source_suite
-use tests.suites.parser_suite
-use tests.suites.resolver_suite
-use tests.suites.checker_suite
-use tests.suites.checker_coverage_suite
-use tests.suites.core_ir_suite
-use tests.suites.anf_suite
-use tests.suites.anf_lower_suite
-use tests.suites.anf_analysis_suite
-use tests.suites.opt_builder_region_suite
-use tests.suites.opt_dead_let_suite
-use tests.suites.opt_const_fold_suite
-use tests.suites.opt_analysis_suite
-use tests.suites.opt_loop_builder_suite
-use tests.suites.opt_pipeline_suite
-use tests.suites.opt_liveness_suite
-use tests.suites.opt_semantics_suite
-use tests.suites.opt_uniqueness_suite
-use tests.suites.opt_defer_elim_suite
-use tests.suites.builtins_suite
-use tests.suites.wasm_ir_suite
-use tests.suites.wasm_layout_suite
-use tests.suites.wasm_plan_suite
-use tests.suites.insert_boundaries_suite
-use tests.suites.slot_assign_suite
-use tests.suites.backend_prepare_suite
-use tests.suites.backend_repr_suite
-use tests.suites.backend_verify_suite
-use tests.suites.wat_suite
-use tests.suites.linker_suite
-use tests.suites.runtime_suite
-use tests.suites.module_loader_suite
-use tests.suites.dependency_graph_suite
-use tests.suites.query_keys_suite
-use tests.suites.imports_suite
-use tests.suites.multi_module_suite
-use tests.suites.base_env_guardrail_suite
-use tests.suites.signature_loader_suite
-use tests.suites.builtins_canonical_suite
-use tests.suites.signature_drift_suite
+use .runner
+use .suites.assert_helpers_suite
+use .suites.semantic_suite
+use .suites.semantic_tree_stringify_suite
+use .suites.equality_repro_suite
+use .suites.equality_matrix_suite
+use .suites.semantic_closure_rebinding_suite
+use .suites.semantic_control_flow_suite
+use .suites.api_option_result_suite
+use .suites.api_cell_suite
+use .suites.api_vector_suite
+use .suites.api_string_suite
+use .suites.api_dict_suite
+use .suites.api_range_iterator_suite
+use .suites.stdlib_path_suite
+use .suites.stdlib_host_suite
+use .suites.source_suite
+use .suites.parser_suite
+use .suites.resolver_suite
+use .suites.checker_suite
+use .suites.checker_coverage_suite
+use .suites.core_ir_suite
+use .suites.anf_suite
+use .suites.anf_lower_suite
+use .suites.anf_analysis_suite
+use .suites.opt_builder_region_suite
+use .suites.opt_dead_let_suite
+use .suites.opt_const_fold_suite
+use .suites.opt_analysis_suite
+use .suites.opt_loop_builder_suite
+use .suites.opt_pipeline_suite
+use .suites.opt_liveness_suite
+use .suites.opt_semantics_suite
+use .suites.opt_uniqueness_suite
+use .suites.opt_defer_elim_suite
+use .suites.builtins_suite
+use .suites.wasm_ir_suite
+use .suites.wasm_layout_suite
+use .suites.wasm_plan_suite
+use .suites.insert_boundaries_suite
+use .suites.slot_assign_suite
+use .suites.backend_prepare_suite
+use .suites.backend_repr_suite
+use .suites.backend_verify_suite
+use .suites.wat_suite
+use .suites.linker_suite
+use .suites.runtime_suite
+use .suites.module_loader_suite
+use .suites.dependency_graph_suite
+use .suites.query_keys_suite
+use .suites.imports_suite
+use .suites.multi_module_suite
+use .suites.base_env_guardrail_suite
+use .suites.signature_loader_suite
+use .suites.builtins_canonical_suite
+use .suites.signature_drift_suite
 
-fn run_batch(suites: Vector<runner.Suite>) Void {
-  runner.run_all(suites)
-}
-
-batch1: Vector<runner.Suite> = []
-batch1 = batch1.append(assert_helpers_suite.suite())
-batch1 = batch1.append(semantic_suite.suite())
-run_batch(batch1)
-
-batch2: Vector<runner.Suite> = []
-batch2 = batch2.append(semantic_tree_stringify_suite.suite())
-run_batch(batch2)
-
-batch3: Vector<runner.Suite> = []
-batch3 = batch3.append(equality_repro_suite.suite())
-batch3 = batch3.append(equality_matrix_suite.suite())
-batch3 = batch3.append(semantic_closure_rebinding_suite.suite())
-batch3 = batch3.append(semantic_control_flow_suite.suite())
-batch3 = batch3.append(api_option_result_suite.suite())
-run_batch(batch3)
-
-batch4: Vector<runner.Suite> = []
-batch4 = batch4.append(api_cell_suite.suite())
-batch4 = batch4.append(api_vector_suite.suite())
-batch4 = batch4.append(api_string_suite.suite())
-batch4 = batch4.append(api_dict_suite.suite())
-batch4 = batch4.append(api_range_iterator_suite.suite())
-run_batch(batch4)
-
-batch5: Vector<runner.Suite> = []
-batch5 = batch5.append(stdlib_path_suite.suite())
-batch5 = batch5.append(stdlib_host_suite.suite())
-batch5 = batch5.append(source_suite.suite())
-batch5 = batch5.append(parser_suite.suite())
-batch5 = batch5.append(resolver_suite.suite())
-run_batch(batch5)
-
-batch6: Vector<runner.Suite> = []
-batch6 = batch6.append(checker_suite.suite())
-batch6 = batch6.append(checker_coverage_suite.suite())
-batch6 = batch6.append(core_ir_suite.suite())
-batch6 = batch6.append(anf_suite.suite())
-batch6 = batch6.append(anf_lower_suite.suite())
-run_batch(batch6)
-
-batch7: Vector<runner.Suite> = []
-batch7 = batch7.append(anf_analysis_suite.suite())
-batch7 = batch7.append(opt_builder_region_suite.suite())
-batch7 = batch7.append(opt_dead_let_suite.suite())
-batch7 = batch7.append(opt_const_fold_suite.suite())
-batch7 = batch7.append(opt_analysis_suite.suite())
-run_batch(batch7)
-
-batch8: Vector<runner.Suite> = []
-batch8 = batch8.append(opt_loop_builder_suite.suite())
-batch8 = batch8.append(opt_pipeline_suite.suite())
-batch8 = batch8.append(opt_liveness_suite.suite())
-batch8 = batch8.append(opt_semantics_suite.suite())
-batch8 = batch8.append(opt_uniqueness_suite.suite())
-run_batch(batch8)
-
-batch9: Vector<runner.Suite> = []
-batch9 = batch9.append(opt_defer_elim_suite.suite())
-batch9 = batch9.append(builtins_suite.suite())
-batch9 = batch9.append(wasm_ir_suite.suite())
-batch9 = batch9.append(wasm_layout_suite.suite())
-batch9 = batch9.append(wasm_plan_suite.suite())
-run_batch(batch9)
-
-batch10: Vector<runner.Suite> = []
-batch10 = batch10.append(insert_boundaries_suite.suite())
-batch10 = batch10.append(slot_assign_suite.suite())
-batch10 = batch10.append(backend_prepare_suite.suite())
-batch10 = batch10.append(backend_repr_suite.suite())
-batch10 = batch10.append(backend_verify_suite.suite())
-run_batch(batch10)
-
-batch11: Vector<runner.Suite> = []
-batch11 = batch11.append(wat_suite.suite())
-batch11 = batch11.append(linker_suite.suite())
-batch11 = batch11.append(runtime_suite.suite())
-batch11 = batch11.append(module_loader_suite.suite())
-batch11 = batch11.append(dependency_graph_suite.suite())
-run_batch(batch11)
-
-batch12: Vector<runner.Suite> = []
-batch12 = batch12.append(query_keys_suite.suite())
-batch12 = batch12.append(imports_suite.suite())
-batch12 = batch12.append(multi_module_suite.suite())
-batch12 = batch12.append(base_env_guardrail_suite.suite())
-batch12 = batch12.append(signature_loader_suite.suite())
-run_batch(batch12)
-
-batch13: Vector<runner.Suite> = []
-batch13 = batch13.append(builtins_canonical_suite.suite())
-batch13 = batch13.append(signature_drift_suite.suite())
-run_batch(batch13)
+runner.run_all([
+  assert_helpers_suite.suite(),
+  semantic_suite.suite(),
+  semantic_tree_stringify_suite.suite(),
+  equality_repro_suite.suite(),
+  equality_matrix_suite.suite(),
+  semantic_closure_rebinding_suite.suite(),
+  semantic_control_flow_suite.suite(),
+  api_option_result_suite.suite(),
+  api_cell_suite.suite(),
+  api_vector_suite.suite(),
+  api_string_suite.suite(),
+  api_dict_suite.suite(),
+  api_range_iterator_suite.suite(),
+  stdlib_path_suite.suite(),
+  stdlib_host_suite.suite(),
+  source_suite.suite(),
+  parser_suite.suite(),
+  resolver_suite.suite(),
+  checker_suite.suite(),
+  checker_coverage_suite.suite(),
+  core_ir_suite.suite(),
+  anf_suite.suite(),
+  anf_lower_suite.suite(),
+  anf_analysis_suite.suite(),
+  opt_builder_region_suite.suite(),
+  opt_dead_let_suite.suite(),
+  opt_const_fold_suite.suite(),
+  opt_analysis_suite.suite(),
+  opt_loop_builder_suite.suite(),
+  opt_pipeline_suite.suite(),
+  opt_liveness_suite.suite(),
+  opt_semantics_suite.suite(),
+  opt_uniqueness_suite.suite(),
+  opt_defer_elim_suite.suite(),
+  builtins_suite.suite(),
+  wasm_ir_suite.suite(),
+  wasm_layout_suite.suite(),
+  wasm_plan_suite.suite(),
+  insert_boundaries_suite.suite(),
+  slot_assign_suite.suite(),
+  backend_prepare_suite.suite(),
+  backend_repr_suite.suite(),
+  backend_verify_suite.suite(),
+  wat_suite.suite(),
+  linker_suite.suite(),
+  runtime_suite.suite(),
+  module_loader_suite.suite(),
+  dependency_graph_suite.suite(),
+  query_keys_suite.suite(),
+  imports_suite.suite(),
+  multi_module_suite.suite(),
+  base_env_guardrail_suite.suite(),
+  signature_loader_suite.suite(),
+  builtins_canonical_suite.suite(),
+  signature_drift_suite.suite(),
+])

@@ -224,46 +224,49 @@ Pursue the issue in this order:
 
 ### Phase 1: isolate a minimal repro
 
-- [ ] Add a dedicated tiny repro entrypoint under `boot/tests/fixtures/` or a
-      focused suite helper that builds a small `Vector<runner.Suite>` from two
-      imported suite modules
-- [ ] Record which source shapes fail:
-      literal / append / concat / local alias / batched run
-- [ ] Confirm whether the failure still requires `semantic_tree_stringify_suite`
-      specifically or whether any additional cross-module suite is enough
+- [x] Add a dedicated repro entrypoint:
+      `boot/tests/repros/suite_cast_repro.tw`
+- [x] Two-suite repro (`semantic_suite` + `semantic_tree_stringify_suite`) was
+      the minimal failing shape; no further reduction needed
+- [x] All three aggregation shapes (literal, append, concat) reproduced the
+      same class of failure; individual suites always passed
+- [x] Any second cross-module suite was sufficient to trigger the cast; the
+      issue was not specific to `semantic_tree_stringify_suite`
 
 ### Phase 2: capture backend evidence
 
-- [ ] Dump Core / mono / ANF / prepared backend IR for the minimal repro
-- [ ] Dump WAT for both stage0-built and boot-built outputs
-- [ ] Compare the Wasm type names and helper calls for:
-      - `runner.Suite`
-      - `runner.Test`
-      - vectors containing them
-      - closure fields inside `Test`
+- [x] Root cause identified via code inspection without full IR/WAT dumps:
+      `resolve_func_id_by_name` used unqualified suffix matching, aliasing
+      unrelated `to_string` functions across modules; `match_type_against` for
+      `Named` types did not guard on `type_id`, allowing wrong type unification
 
 ### Phase 3: identify the broken invariant
 
-- [ ] Determine whether the bug is:
-      - nominal type duplication,
-      - container helper mismatch,
-      - closure packaging mismatch,
-      - or another backend cast insertion bug
-- [ ] Confirm whether the same root cause explains both
-      `boot/tests/main.tw` and `boot/tests/test_frontend.tw`
+- [x] Bug was in monomorphization: cross-module suffix-name aliasing wired
+      the wrong `to_string` specialization into some suite records, producing
+      mistyped closure fields that tripped `illegal cast` at runtime
+- [x] Same root cause explained all entrypoint failures
 
 ### Phase 4: implement the real fix
 
-- [ ] Fix the compiler/backend invariant in boot
-- [ ] Mirror the same fix into Rust stage0 if the drift is there too
-- [ ] Add focused regression tests for the exact failing aggregation shape
+- [x] Fix in `src/ir/monomorphize.rs`:
+      - `match_type_against` now requires `type_id` equality for `Named` types
+      - `resolve_func_id_by_name` uses exact qualified names only
+      - `resolve_stringify_target` routes through the type env's qualified name
+        before falling back to scan, with `func_matches_stringify_receiver` guard
+- [x] Fix in `src/ir/lower.rs`:
+      - `FunctionDef` names are now emitted as fully-qualified names, preventing
+        unqualified suffix collisions downstream in monomorphization
+- [x] Focused regression tests added in `src/ir/monomorphize.rs`:
+      - `match_named_type_requires_same_type_id`
+      - `resolve_func_id_by_name_prefers_exact_qualified_user_match`
 
 ### Phase 5: remove workarounds
 
-- [ ] Collapse `boot/tests/main.tw` back to one `runner.run_all(...)`
-- [ ] Collapse `boot/tests/test_frontend.tw` batching
-- [ ] Collapse `boot/tests/test_codegen.tw` batching
-- [ ] Keep only regression coverage, not workaround comments
+- [x] Collapse `boot/tests/main.tw` back to one `runner.run_all(...)`
+- [x] Collapse `boot/tests/test_frontend.tw` batching
+- [x] Collapse `boot/tests/test_codegen.tw` batching
+- [x] Keep only regression coverage, not workaround comments
 
 ---
 
@@ -271,10 +274,14 @@ Pursue the issue in this order:
 
 At minimum, add targeted tests covering:
 
-- [ ] vector literal of imported `runner.Suite` values
-- [ ] repeated `.append(...)` of imported `runner.Suite` values
-- [ ] `concat` of two `Vector<runner.Suite>` values built in different modules
-- [ ] direct `runner.run_all(...)` over a large cross-module suite list
+- [x] vector literal of imported `runner.Suite` values
+      (`boot/tests/repros/suite_cast_repro.tw`)
+- [x] repeated `.append(...)` of imported `runner.Suite` values
+      (`boot/tests/repros/suite_cast_append_repro.tw`)
+- [x] `concat` of two `Vector<runner.Suite>` values built in different modules
+      (`boot/tests/repros/suite_cast_concat_repro.tw`)
+- [x] direct `runner.run_all(...)` over a large cross-module suite list
+      (`boot/tests/main.tw` now uses a single 55-suite literal)
 - [ ] stage0-built and boot-built execution of the same repro entrypoint
 
 A useful extra regression would be a non-test-harness version using user-defined

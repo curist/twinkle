@@ -1,0 +1,11 @@
+use tests.runner
+use tests.suites.semantic_suite
+use tests.suites.semantic_tree_stringify_suite
+
+// Regression: concat of two Vector<runner.Suite> values built from different
+// modules must not trip illegal cast.
+
+a: Vector<runner.Suite> = [semantic_suite.suite()]
+b: Vector<runner.Suite> = [semantic_tree_stringify_suite.suite()]
+
+runner.run_all(a.concat(b))

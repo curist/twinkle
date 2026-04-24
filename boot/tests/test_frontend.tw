@@ -1,25 +1,22 @@
-use tests.runner
-use tests.suites.parser_suite
-use tests.suites.resolver_suite
-use tests.suites.checker_suite
-use tests.suites.checker_coverage_suite
-use tests.suites.semantic_suite
-use tests.suites.semantic_closure_rebinding_suite
-use tests.suites.semantic_control_flow_suite
-use tests.suites.base_env_guardrail_suite
-use tests.suites.signature_loader_suite
+use .runner
+use .suites.parser_suite
+use .suites.resolver_suite
+use .suites.checker_suite
+use .suites.checker_coverage_suite
+use .suites.semantic_suite
+use .suites.semantic_closure_rebinding_suite
+use .suites.semantic_control_flow_suite
+use .suites.base_env_guardrail_suite
+use .suites.signature_loader_suite
 
-batch1: Vector<runner.Suite> = []
-batch1 = batch1.append(parser_suite.suite())
-batch1 = batch1.append(resolver_suite.suite())
-batch1 = batch1.append(checker_suite.suite())
-batch1 = batch1.append(checker_coverage_suite.suite())
-batch1 = batch1.append(semantic_suite.suite())
-runner.run_all(batch1)
-
-batch2: Vector<runner.Suite> = []
-batch2 = batch2.append(semantic_closure_rebinding_suite.suite())
-batch2 = batch2.append(semantic_control_flow_suite.suite())
-batch2 = batch2.append(base_env_guardrail_suite.suite())
-batch2 = batch2.append(signature_loader_suite.suite())
-runner.run_all(batch2)
+runner.run_all([
+  parser_suite.suite(),
+  resolver_suite.suite(),
+  checker_suite.suite(),
+  checker_coverage_suite.suite(),
+  semantic_suite.suite(),
+  semantic_closure_rebinding_suite.suite(),
+  semantic_control_flow_suite.suite(),
+  base_env_guardrail_suite.suite(),
+  signature_loader_suite.suite(),
+])

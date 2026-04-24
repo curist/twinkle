@@ -68,10 +68,19 @@ pub fn match_type_against(
                 match_type_against(rp, rc, out);
             }
         }
-        MonoType::Named { args: ap, .. } => {
-            if let MonoType::Named { args: ac, .. } = concrete {
-                for (ap_ty, ac_ty) in ap.iter().zip(ac.iter()) {
-                    match_type_against(ap_ty, ac_ty, out);
+        MonoType::Named {
+            type_id: expected_type_id,
+            args: ap,
+        } => {
+            if let MonoType::Named {
+                type_id: actual_type_id,
+                args: ac,
+            } = concrete
+            {
+                if expected_type_id == actual_type_id {
+                    for (ap_ty, ac_ty) in ap.iter().zip(ac.iter()) {
+                        match_type_against(ap_ty, ac_ty, out);
+                    }
                 }
             }
         }
@@ -214,42 +223,68 @@ fn resolve_func_id_by_name(module: &CoreModule, name: &str) -> Option<FuncId> {
     if let Some(fid) = func_table.get(name) {
         return Some(*fid);
     }
-    let local_name = name.rsplit('.').next().unwrap_or(name);
+
+    // User-defined method targets in the type environment are fully qualified.
+    // Falling back to an unqualified suffix match lets unrelated cross-module
+    // functions like `a.to_string` and `b.to_string` alias each other during
+    // monomorphization, which can wire Stringify calls to the wrong FuncId.
     module
         .functions
         .iter()
-        .find(|f| f.name == name || f.name == local_name)
+        .find(|f| f.name == name)
         .map(|f| f.func_id)
 }
 
+fn func_matches_stringify_receiver(func: &FunctionDef, receiver_ty: &MonoType) -> bool {
+    if func.name.rsplit('.').next().unwrap_or(&func.name) != "to_string" {
+        return false;
+    }
+    let Some(recv_pattern) = func.param_tys.first() else {
+        return false;
+    };
+    let mut subst = HashMap::new();
+    match_type_against(recv_pattern, receiver_ty, &mut subst);
+    let type_params = collect_type_params(&func.param_tys, &func.return_ty);
+    type_params.iter().all(|p| subst.contains_key(p)) || !contains_var(recv_pattern)
+}
+
 fn resolve_stringify_target(module: &CoreModule, receiver_ty: &MonoType) -> Option<FuncId> {
-    let via_methods = match receiver_ty {
+    let method_name = match receiver_ty {
         MonoType::Named { type_id, .. } => module
             .type_env
             .get_method(*type_id, "to_string")
-            .and_then(|info| resolve_func_id_by_name(module, &info.func_name)),
+            .map(|info| info.func_name.clone()),
         _ => method_receiver_type_id(receiver_ty)
             .and_then(|type_id| module.type_env.get_method(type_id, "to_string"))
-            .and_then(|info| resolve_func_id_by_name(module, &info.func_name)),
+            .map(|info| info.func_name.clone()),
     };
-    if via_methods.is_some() {
-        return via_methods;
+
+    if let Some(method_name) = method_name.as_ref() {
+        if let Some(fid) = resolve_func_id_by_name(module, method_name) {
+            match module.functions.iter().find(|f| f.func_id == fid) {
+                // Builtins/intrinsics are resolved via the global registry and
+                // do not live in `module.functions`.
+                None => return Some(fid),
+                Some(f) if func_matches_stringify_receiver(f, receiver_ty) => return Some(fid),
+                Some(_) => {}
+            }
+        }
+
+        if let Some(fid) = module
+            .functions
+            .iter()
+            .find(|f| f.name == *method_name && func_matches_stringify_receiver(f, receiver_ty))
+            .map(|f| f.func_id)
+        {
+            return Some(fid);
+        }
     }
 
-    module.functions.iter().find_map(|f| {
-        if f.name.rsplit('.').next().unwrap_or(&f.name) != "to_string" {
-            return None;
-        }
-        let recv_pattern = f.param_tys.first()?;
-        let mut subst = HashMap::new();
-        match_type_against(recv_pattern, receiver_ty, &mut subst);
-        let type_params = collect_type_params(&f.param_tys, &f.return_ty);
-        if type_params.iter().all(|p| subst.contains_key(p)) || !contains_var(recv_pattern) {
-            Some(f.func_id)
-        } else {
-            None
-        }
-    })
+    module
+        .functions
+        .iter()
+        .find(|f| func_matches_stringify_receiver(f, receiver_ty))
+        .map(|f| f.func_id)
 }
 
 // ─── Tree traversals ──────────────────────────────────────────────────────────
@@ -1012,6 +1047,7 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ty::TypeId;
 
     // ── contains_var ─────────────────────────────────────────────────────────
 
@@ -1084,6 +1120,23 @@ mod tests {
         );
         assert_eq!(out.get("A"), Some(&MonoType::Int));
         assert_eq!(out.get("B"), Some(&MonoType::String));
+    }
+
+    #[test]
+    fn match_named_type_requires_same_type_id() {
+        let mut out = HashMap::new();
+        match_type_against(
+            &MonoType::Named {
+                type_id: TypeId(19),
+                args: vec![MonoType::Var("T".into())],
+            },
+            &MonoType::Named {
+                type_id: TypeId(20),
+                args: vec![MonoType::Int],
+            },
+            &mut out,
+        );
+        assert!(out.is_empty());
     }
 
     #[test]
@@ -1236,6 +1289,35 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: vec![],
         }
+    }
+
+    #[test]
+    fn resolve_func_id_by_name_prefers_exact_qualified_user_match() {
+        let wrong = make_func(
+            41,
+            "tests.suites.semantic_suite.to_string",
+            vec![0],
+            vec![MonoType::Int],
+            expr(CoreExprKind::LitVoid, MonoType::Void),
+            MonoType::Void,
+        );
+        let wanted = make_func(
+            42,
+            "tests.suites.semantic_tree_stringify_suite.to_string",
+            vec![0],
+            vec![MonoType::Int],
+            expr(CoreExprKind::LitVoid, MonoType::Void),
+            MonoType::Void,
+        );
+        let module = empty_module(vec![wrong, wanted]);
+
+        assert_eq!(
+            resolve_func_id_by_name(
+                &module,
+                "tests.suites.semantic_tree_stringify_suite.to_string"
+            ),
+            Some(FuncId(42))
+        );
     }
 
     /// Generic `id<T>(x: T) T { x }` called with `Int` from `__init__`.

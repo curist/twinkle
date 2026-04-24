@@ -1,0 +1,12 @@
+use tests.runner
+use tests.suites.semantic_suite
+use tests.suites.semantic_tree_stringify_suite
+
+// Regression: repeated .append(...) aggregation of cross-module Suite values
+// must not trip illegal cast.
+
+suites: Vector<runner.Suite> = []
+suites = suites.append(semantic_suite.suite())
+suites = suites.append(semantic_tree_stringify_suite.suite())
+
+runner.run_all(suites)

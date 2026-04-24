@@ -601,12 +601,29 @@ impl Lowerer {
             _ => body.ty.clone(),
         };
         let func_id = *self.func_table.get(&decl.name)?;
+        let qualified_name = self
+            .func_table
+            .iter()
+            .filter_map(|(name, id)| {
+                if *id == func_id
+                    && name != &decl.name
+                    && name
+                        .strip_suffix(&decl.name)
+                        .is_some_and(|prefix| prefix.ends_with('.'))
+                {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .min_by_key(|name| name.len())
+            .unwrap_or_else(|| decl.name.clone());
 
         self.current_type_param_bounds = saved_type_param_bounds;
 
         Some(FunctionDef {
             func_id,
-            name: decl.name.clone(),
+            name: qualified_name,
             params,
             param_tys,
             body,

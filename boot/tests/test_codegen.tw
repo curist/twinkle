@@ -1,33 +1,24 @@
-use tests.runner
-use tests.suites.wasm_ir_suite
-use tests.suites.wasm_layout_suite
-use tests.suites.wasm_plan_suite
-use tests.suites.insert_boundaries_suite
-use tests.suites.wat_suite
-use tests.suites.linker_suite
-use tests.suites.runtime_suite
-use tests.suites.codegen_integration_suite
-use tests.suites.slot_assign_suite
-use tests.suites.backend_verify_suite
+use .runner
+use .suites.wasm_ir_suite
+use .suites.wasm_layout_suite
+use .suites.wasm_plan_suite
+use .suites.insert_boundaries_suite
+use .suites.wat_suite
+use .suites.linker_suite
+use .suites.runtime_suite
+use .suites.codegen_integration_suite
+use .suites.slot_assign_suite
+use .suites.backend_verify_suite
 
-batch1: Vector<runner.Suite> = []
-batch1 = batch1.append(wasm_ir_suite.suite())
-batch1 = batch1.append(wasm_layout_suite.suite())
-runner.run_all(batch1)
-
-batch2: Vector<runner.Suite> = []
-batch2 = batch2.append(wasm_plan_suite.suite())
-batch2 = batch2.append(insert_boundaries_suite.suite())
-batch2 = batch2.append(slot_assign_suite.suite())
-runner.run_all(batch2)
-
-batch3: Vector<runner.Suite> = []
-batch3 = batch3.append(wat_suite.suite())
-batch3 = batch3.append(linker_suite.suite())
-batch3 = batch3.append(runtime_suite.suite())
-runner.run_all(batch3)
-
-batch4: Vector<runner.Suite> = []
-batch4 = batch4.append(codegen_integration_suite.suite())
-batch4 = batch4.append(backend_verify_suite.suite())
-runner.run_all(batch4)
+runner.run_all([
+  wasm_ir_suite.suite(),
+  wasm_layout_suite.suite(),
+  wasm_plan_suite.suite(),
+  insert_boundaries_suite.suite(),
+  slot_assign_suite.suite(),
+  wat_suite.suite(),
+  linker_suite.suite(),
+  runtime_suite.suite(),
+  codegen_integration_suite.suite(),
+  backend_verify_suite.suite(),
+])
