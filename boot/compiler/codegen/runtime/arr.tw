@@ -605,16 +605,29 @@ fn concat_fn() FuncDef {
   .{ name: "concat", params: [pvec_null(), pvec_null()], results: [pvec_ref()],
     locals: [arr_null()],
     body: [
-      .LocalGet(0),
-      .Call("builder_from"),
-      .LocalSet(2),
+      // Fast path: if b is empty return a; if a is empty return b.
+      .LocalGet(1), .RefAsNonNull, .StructGet(t_pvec(), pv_len()), .I32Eqz,
+      .If(.Some(pvec_ref()),
+        [.LocalGet(0), .RefAsNonNull],
+        [
+          .LocalGet(0), .RefAsNonNull, .StructGet(t_pvec(), pv_len()), .I32Eqz,
+          .If(.Some(pvec_ref()),
+            [.LocalGet(1), .RefAsNonNull],
+            [
+              .LocalGet(0),
+              .Call("builder_from"),
+              .LocalSet(2),
 
-      .LocalGet(2),
-      .LocalGet(1),
-      .Call("builder_extend"),
+              .LocalGet(2),
+              .LocalGet(1),
+              .Call("builder_extend"),
 
-      .LocalGet(2),
-      .Call("builder_freeze"),
+              .LocalGet(2),
+              .Call("builder_freeze"),
+            ],
+          ),
+        ],
+      ),
     ],
   }
 }
