@@ -1252,7 +1252,7 @@ fn emit_intrinsic_vector_append(args: Vector<PreparedAtom>, result_idx: Int, ctx
 
 fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // Result is Option<T> → typed sum struct
-  sum_layout := get_sum_layout(result_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   elem_mono := case result_mono {
     .Optional(inner) => inner,
     _ => .Anyref_,
@@ -1287,7 +1287,7 @@ fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result
 // ── vector_set: bounds-checked COW → Option<Vector<T>> ─────────────────
 
 fn emit_intrinsic_vector_set(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  sum_layout := get_sum_layout(result_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
@@ -1343,7 +1343,7 @@ fn emit_intrinsic_dict_get_unsafe(args: Vector<PreparedAtom>, result_idx: Int, r
 // ── string_get: s.get(i) → Option<Byte> ───────────────────────────────
 
 fn emit_intrinsic_string_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  sum_layout := get_sum_layout(result_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
@@ -1431,7 +1431,7 @@ fn emit_intrinsic_char_code_at(args: Vector<PreparedAtom>, result_idx: Int, ctx:
 // ── from_char_code: Int → Option<String> ───────────────────────────────
 
 fn emit_intrinsic_from_char_code(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  sum_layout := get_sum_layout(result_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
@@ -1490,7 +1490,7 @@ fn emit_intrinsic_string_from_utf8(args: Vector<PreparedAtom>, result_idx: Int, 
 // ── byte_from_int: Int → Option<Byte> ──────────────────────────────────
 
 fn emit_intrinsic_byte_from_int(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  sum_layout := get_sum_layout(result_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
@@ -1605,7 +1605,7 @@ fn emit_intrinsic_cell_update(args: Vector<PreparedAtom>, result_idx: Int, ctx: 
 
 fn emit_intrinsic_range(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // 0..end → Range struct (start=0, end=end, step=1)
-  layout := layout_of(result_mono, ctx.env)
+  layout := cached_layout_of(result_mono, ctx)
   sym := case layout { .Record(r) => r.sym, _ => error("range: expected Record layout") }
   buf2 := buf.append(.I64Const(0))  // start
   buf3 := emit_atom(args[0], ctx, buf2)  // end
@@ -1614,7 +1614,7 @@ fn emit_intrinsic_range(args: Vector<PreparedAtom>, result_idx: Int, result_mono
 
 fn emit_intrinsic_range_from(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // start..end → Range struct
-  layout := layout_of(result_mono, ctx.env)
+  layout := cached_layout_of(result_mono, ctx)
   sym := case layout { .Record(r) => r.sym, _ => error("range_from: expected Record layout") }
   buf2 := emit_atom(args[0], ctx, buf)  // start
   buf3 := emit_atom(args[1], ctx, buf2)  // end
@@ -1623,7 +1623,7 @@ fn emit_intrinsic_range_from(args: Vector<PreparedAtom>, result_idx: Int, result
 
 fn emit_intrinsic_range_step(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // range_step(start, end, step) → Range struct
-  layout := layout_of(result_mono, ctx.env)
+  layout := cached_layout_of(result_mono, ctx)
   sym := case layout { .Record(r) => r.sym, _ => error("range_step: expected Record layout") }
   buf2 := emit_atom(args[0], ctx, buf)  // start
   buf3 := emit_atom(args[1], ctx, buf2)  // end
@@ -1635,7 +1635,7 @@ fn emit_intrinsic_range_step(args: Vector<PreparedAtom>, result_idx: Int, result
 
 fn emit_intrinsic_iterator_unfold(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // iterator_unfold(seed, step_fn) → IteratorState struct
-  layout := layout_of(result_mono, ctx.env)
+  layout := cached_layout_of(result_mono, ctx)
   sym := case layout {
     .Record(r) => r.sym,
     .Iterator_(it) => it.state_sym,
@@ -1657,6 +1657,32 @@ fn emit_intrinsic_iterator_next(args: Vector<PreparedAtom>, result_idx: Int, res
 
 // ── Record operations ──────────────────────────────────────────────────
 
+fn cached_layout_of(mono: MonoType, ctx: EmitCtx) WasmLayout {
+  key := mono_to_key(mono)
+  case ctx.registry.layout_cache[key] {
+    .Some(layout) => layout,
+    .None => layout_of(mono, ctx.env),
+  }
+}
+
+fn record_layout_of_ctx(mono: MonoType, ctx: EmitCtx) WasmRecordLayout {
+  layout := cached_layout_of(mono, ctx)
+  case layout {
+    .Record(r) => r,
+    _ => {
+      case mono {
+        .Named(tid, args) => {
+          case ctx.env.lookup_type_def(tid) {
+            .Some(.Alias(_, type_params, target)) => record_layout_of_ctx(subst_type_params(target, type_params, args), ctx),
+            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+          }
+        },
+        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+      }
+    },
+  }
+}
+
 fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
   layout := layout_of(mono, env)
   case layout {
@@ -1675,8 +1701,16 @@ fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
   }
 }
 
+fn get_sum_layout_ctx(mono: MonoType, ctx: EmitCtx) WasmSumLayout {
+  layout := cached_layout_of(mono, ctx)
+  case layout {
+    .Sum(s) => s,
+    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
+  }
+}
+
 fn emit_record_literal(tid: TypeId, fields: Vector<PreparedFieldAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  rec_layout := record_layout_of(result_mono, ctx.env)
+  rec_layout := record_layout_of_ctx(result_mono, ctx)
   sym := rec_layout.sym
 
   // Emit fields in order of the struct definition
@@ -1705,7 +1739,7 @@ fn emit_record_get(target: PreparedAtom, fid: FieldId, tid: TypeId, result_mono:
   case target_mono {
     .Void => emit_default_value(val_type_of_mono(result_mono, ctx.env), buf),
     _ => {
-      rec := record_layout_of(target_mono, ctx.env)
+      rec := record_layout_of_ctx(target_mono, ctx)
       field_idx := find_field_index(rec, fid)
       emit_atom(target, ctx, buf).append(.StructGet(rec.sym, field_idx))
     },
@@ -1716,7 +1750,7 @@ fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom, can
   base_mono := require_typed_record_atom(base, ctx, "emit_record_update")
   case base_mono {
     .Void => {
-      rec := record_layout_of(result_mono, ctx.env)
+      rec := record_layout_of_ctx(result_mono, ctx)
       for fl in rec.fields {
         if fl.field_id.id == fid.id {
           buf = emit_atom(value, ctx, buf)
@@ -1730,7 +1764,7 @@ fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom, can
     _ => {},
   }
 
-  rec := record_layout_of(base_mono, ctx.env)
+  rec := record_layout_of_ctx(base_mono, ctx)
   field_idx := find_field_index(rec, fid)
 
   field_vt := rec.fields[field_idx].val_type
@@ -1768,7 +1802,7 @@ fn find_field_index(rec: WasmRecordLayout, fid: FieldId) Int {
 
 fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   // All variants → typed sum struct
-  layout := layout_of(result_mono, ctx.env)
+  layout := cached_layout_of(result_mono, ctx)
   sum := case layout {
     .Sum(s) => s,
     _ => error("emit_variant_literal: expected Sum layout for type"),
@@ -1878,7 +1912,7 @@ fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, resul
           out.append(.Call("rt_dict__get_option"))
         },
         _ => {
-          sum_layout := get_sum_layout(result_ty, ctx.env)
+          sum_layout := get_sum_layout_ctx(result_ty, ctx)
           value_mono := case result_ty {
             .Optional(inner) => inner,
             _ => error("emit_index_op: dict index expected Optional result, got ${mono_to_key(result_ty)}"),
@@ -2115,7 +2149,7 @@ fn emit_variant_pattern_condition(
   tid: TypeId, vid: VariantId, fields: Vector<PreparedPattern>,
   scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>,
 ) Vector<Instr> {
-  sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
+  sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
 
   // Tag check — build as a separate small vector, then prepend to buf
   tag_check := scrutinee_instrs
@@ -2181,7 +2215,7 @@ fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Inst
       if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
         []
       } else {
-        sum_layout := get_sum_layout(scrutinee_mono, ctx.env)
+        sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
         variant_layout := find_variant_layout(sum_layout, vid)
         out: Vector<Instr> = []
         for fp,i in fields {

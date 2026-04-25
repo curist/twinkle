@@ -265,6 +265,235 @@ Changes since previous snapshot:
 `compile_modules` (442ms) and `prepare_backend` (211ms) are the top two targets.
 `emit_wasm_binary` (198ms) and `verify` (116ms) follow.
 
+---
+
+## Snapshot (2026-04-25, emission layout-cache reuse)
+
+Observed shape during this follow-up:
+
+```
+compile_modules    ~619–664ms
+optimize           ~238–250ms
+prepare_backend    ~216–234ms
+emit_module        ~185–188ms   (was ~243–250ms before this change)
+emit_wasm_binary   ~238–250ms
+verify             ~127–137ms
+plan_wasm_types    ~41–46ms
+link               ~59–77ms
+```
+
+Representative stable reruns after the change:
+
+- `emit_module`: `185ms`, `185ms`, `188ms`
+- `emit_func` body sub-timing: `137ms`, `136ms`, `140ms`
+
+### Investigation notes
+
+The initial suspicion was that match lowering itself was expensive because of the
+recursive else-chain shape in `emit_arm_chain()`. Temporary sub-timing inside
+`emit_module` showed the real cost was in function-body emission, not helper
+collection or local-map setup. Deeper control-flow timing then showed:
+
+- `match` dominated `emit_op`
+- within `match`, most time was attributed to arm lowering rather than
+  scrutinee setup
+- within pattern emission, `emit_variant_pattern_condition()` spent most of its
+  time in `get_sum_layout()` / `layout_of()` rather than tag checks, inner
+  checks, or binding construction
+
+A trial iterative rewrite of `emit_arm_chain()` did not produce a clear win and
+was reverted.
+
+### Fix
+
+Reused `WasmTypeRegistry.layout_cache` directly during emission in `emit.tw`.
+Added cached lookup helpers for emission-time layout queries and switched the
+hot record/sum/intrinsic paths to use them instead of recomputing layouts from
+`layout_of()` on every call.
+
+This reduced repeated layout work in:
+
+- `get_sum_layout()`-style sum emission paths
+- record layout lookup for record literal/get/update
+- intrinsic emitters that materialize typed record/sum results
+- variant literal emission
+
+### Result
+
+This was a real codegen win:
+
+- `emit_module`: roughly `~245ms -> ~186ms` (~24% reduction)
+- `emit_func` body work: roughly `~200ms -> ~138ms` (~31% reduction)
+
+### Updated priority order
+
+1. `prepare_backend` — especially `repr_assign`
+2. `emit_wasm_binary` / `code_section`
+3. residual emit-time type/value-type lookup cleanup
+
+---
+
+## Snapshot (2026-04-25, repr_assign cache reuse)
+
+After cleaning up the temporary diagnostics above, the next optimization reused
+the same memoization idea in backend preparation.
+
+### Investigation notes
+
+Temporary sub-timing in `prepare_backend` showed:
+
+- `insert_boundaries` was moderate
+- `slot_assign` was moderate
+- `repr_assign` was the dominant subphase
+
+Code inspection showed `repr_assign` repeatedly recomputed the same facts for
+many slots across the whole module graph:
+
+- `repr_of_mono(mono, env)`
+- `val_type_of_mono(mono, env)`
+- `layout_of(mono, env)` through named-type repr derivation
+
+With ~64k slots in the workload, the same monotypes were being re-derived many
+times.
+
+### Fix
+
+Added a shared cache threaded through `assign_repr_for_module()` and
+`assign_repr_for_func()` for:
+
+- mono → `ReprKind`
+- mono → `ValType`
+- mono → `WasmLayout`
+
+The public helper behavior stayed the same; the optimization is internal to the
+repr-assignment pass. Boundary overrides (`AWrapAnyref`, `AUnwrapAnyref`) still
+apply exactly as before.
+
+### Result
+
+Representative reruns after the cache landed:
+
+```
+compile_modules    ~562–583ms
+prepare_backend    ~136–137ms   (was ~216–234ms before this change)
+emit_module        ~136ms
+emit_wasm_binary   ~210–211ms
+  code_section     ~182–183ms
+```
+
+This was a large backend-preparation win:
+
+- `prepare_backend`: roughly `~225ms -> ~136ms` (~40% reduction)
+
+### Updated priority order
+
+1. `emit_wasm_binary` / `code_section`
+2. `emit_module` and other residual codegen lookup cleanup
+3. any remaining preparation hotspots after cache reuse
+
+---
+
+## Current snapshot (2026-04-25, after repr_assign cache reuse)
+
+Fresh whole-pipeline timing after the cleanup and repr cache work:
+
+```
+compile_modules    559ms
+core_link           41ms
+monomorphize        26ms
+lower_anf           51ms
+optimize           223ms
+closure_convert     13ms
+prepare_backend    137ms
+verify             125ms
+plan_wasm_types     40ms
+emit_module        136ms
+link                53ms
+emit_wasm_binary   210ms
+  type_order         4ms
+  build_ctx          7ms
+  type_section       3ms
+  small_sections    13ms
+  code_section     182ms
+```
+
+### What this means now
+
+The earlier cache-reuse work changed the shape of the compiler substantially.
+The main remaining heavy phases are now:
+
+1. `compile_modules`
+2. `optimize`
+3. `code_section` inside `emit_wasm_binary`
+4. `prepare_backend`, `verify`, and `emit_module` in a tight second tier
+
+Within backend/codegen specifically, the single clearest isolated target is now
+still `code_section`.
+
+### Reusable optimization pattern
+
+Two recent wins had the same structure:
+
+- `emit.tw`: reuse precomputed `layout_cache` instead of repeatedly calling
+  `layout_of()` in hot emission paths
+- `repr_assign.tw`: thread a shared cache for repeated mono-derived facts
+  (`ReprKind`, `ValType`, `WasmLayout`) across all functions and slots
+
+The common lesson is:
+
+> when a hot pass repeatedly recomputes facts from the same monotypes or names,
+> a shared per-pass cache can beat local refactors by a wide margin.
+
+So the next investigations should actively look for repeated derivation and
+lookup churn before attempting structural rewrites.
+
+### Current plan
+
+#### 1. `emit_wasm_binary` / `code_section`
+
+Check whether the same cache-reuse pattern applies to Wasm binary encoding.
+Likely candidates:
+
+- repeated `type_idx_of(ctx, name)` calls during instruction encoding
+- repeated `func_idx_of(ctx, name)` / `global_idx_of(ctx, name)` lookups for
+  call/global/ref-func heavy bodies
+- repeated `find_label_depth()` scans over the same label stacks in dense
+  control-flow regions
+- payload assembly patterns that repeatedly append temporary function bodies
+
+The likely highest-ROI version of the same pattern here is **pre-resolving or
+memoizing instruction-adjacent indices**, not a large serializer rewrite.
+
+#### 2. `compile_modules`
+
+Now that backend work is healthier, `compile_modules` is again the largest whole
+phase. Apply the same question there:
+
+- are there repeated monotype substitutions, instantiations, or env lookups
+  that can be cached per module or per checker pass?
+- are there repeated layout/type-entry lookups in checker/lowering code that can
+  reuse already-derived facts instead of rediscovering them?
+
+The parser-specific `Cursor` threading suspicion is currently deprioritized; the
+better heuristic is still to hunt repeated derivation/lookup hot spots first.
+
+#### 3. `optimize`
+
+`optimize` is no longer dramatic, but at ~223ms it is large enough that the same
+memoization question is still worth asking for the dominant subpasses once the
+current codegen target is exhausted.
+
+#### 4. `verify` / residual codegen cleanup
+
+These are now medium-sized. Continue applying the same approach opportunistically
+when a probe shows repeated fact derivation rather than true algorithmic work.
+
+### Notes on temporary instrumentation
+
+The follow-up used temporary sub-timings in `prepare_backend`, `emit_module`,
+`code_section`, and several match/pattern helpers. Those probes were useful for
+isolating the real hotspot and were removed after the investigation.
+
 ### Potential further improvements
 
 **RRB-Trees for PVec** — current PVec concat is O(m·log n); RRB-Trees
