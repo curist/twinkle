@@ -464,6 +464,101 @@ Likely candidates:
 The likely highest-ROI version of the same pattern here is **pre-resolving or
 memoizing instruction-adjacent indices**, not a large serializer rewrite.
 
+---
+
+## Snapshot (2026-04-25, wasm code-section follow-up)
+
+This follow-up started from `emit_wasm_binary` with `code_section` as the
+clearest isolated backend hotspot and applied the same “remove repeated work
+first” heuristic in three steps.
+
+### 1. Reuse instruction-adjacent index lookups
+
+Added a shared `CodeSectionCache` threaded through the hot code-section encoder
+for repeated lookups of:
+
+- type name → type index
+- func symbol → func index
+- global name → global index
+- data segment name → data index
+
+Named heap-type encoding for `ref.null` / `ref.test` / `ref.cast` now reuses
+that same cached type-index path.
+
+### 2. Replace label-stack scans with a compact label context
+
+Replaced the cached-path `Vector<String>` label-stack threading with `LabelCtx`,
+which carries:
+
+- current nesting depth
+- named label → definition depth
+
+This lets the hot encoder resolve branch depths directly instead of rescanning a
+stack vector and avoids repeated `label_stack.append(...)` churn in nested
+control flow.
+
+### 3. Remove large temporary section copies
+
+Temporary detail timing inside `encode_code_section_payload()` showed that a
+large part of the remaining `code_section` cost was not just instruction
+encoding but payload assembly.
+
+The main issue was that `emit_wasm_parts()` still built a full section payload,
+then wrapped it with `encode_section(...)` into another temporary vector, then
+appended that vector into the final module buffer. For the code section, that
+meant copying a large payload again.
+
+Replaced `encode_section(...)` with `emit_section_into(...)` so section headers
+and payload bytes are appended directly into the final module buffer.
+
+### Result
+
+Representative reruns after the full follow-up landed:
+
+```
+compile_modules    ~556–560ms
+optimize           ~218–220ms
+prepare_backend    ~136–137ms
+verify             ~124–126ms
+plan_wasm_types     ~39ms
+emit_module        ~134ms
+link                ~53–54ms
+emit_wasm_binary   ~169–170ms
+  type_order         ~2ms
+  build_ctx          ~7ms
+  type_section       ~3ms
+  small_sections    ~13.5–13.7ms
+  code_section     ~142–143ms
+```
+
+Compared to the previous whole-pipeline snapshot:
+
+- `emit_wasm_binary`: roughly `~210ms -> ~170ms`
+- `code_section`: roughly `~182ms -> ~143ms`
+
+Compared to the start of this follow-up before any wasm changes:
+
+- `emit_wasm_binary`: roughly `~221ms -> ~170ms`
+- `code_section`: roughly `~193ms -> ~143ms`
+
+### Interpretation
+
+The first two fixes confirmed that repeated name lookup and repeated label-depth
+reconstruction still mattered, but only incrementally at this stage.
+
+The largest remaining backend win came from payload assembly: the code section
+was paying for an extra full-section temporary copy. Removing that copy changed
+`code_section` much more than the smaller lookup/context cleanups.
+
+### Updated priority order
+
+With this follow-up in place, the main remaining heavy phases are now:
+
+1. `compile_modules`
+2. `optimize`
+3. `emit_wasm_binary` / `code_section` and `emit_module`
+4. `prepare_backend` / `verify`
+
 #### 2. `compile_modules`
 
 Now that backend work is healthier, `compile_modules` is again the largest whole
