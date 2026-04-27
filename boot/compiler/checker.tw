@@ -158,27 +158,60 @@ fn fresh_meta(ctx: InferCtx) SynthOut {
   .{ ty, ctx, diags: [] }
 }
 
+type ZonkMetaOut = .{ ty: MonoType, has_meta: Bool }
+
 fn zonk(ty: MonoType, subst: Dict<Int, MonoType>) MonoType {
+  zonk_with_meta(ty, subst).ty
+}
+
+fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
   case ty {
     .MetaVar(id) => {
       case subst[id] {
-        .Some(resolved) => zonk(resolved, subst),
-        .None => ty,
+        .Some(resolved) => zonk_with_meta(resolved, subst),
+        .None => .{ ty: ty, has_meta: true },
       }
     },
-    .Vector(inner) => MonoType.Vector(zonk(inner, subst)),
-    .Dict(k, v) => MonoType.Dict(zonk(k, subst), zonk(v, subst)),
+    .Vector(inner) => {
+      r := zonk_with_meta(inner, subst)
+      .{ ty: MonoType.Vector(r.ty), has_meta: r.has_meta }
+    },
+    .Dict(k, v) => {
+      kr := zonk_with_meta(k, subst)
+      vr := zonk_with_meta(v, subst)
+      .{ ty: MonoType.Dict(kr.ty, vr.ty), has_meta: kr.has_meta or vr.has_meta }
+    },
     .Function(params, ret) => {
-      zonked_params := collect p in params { zonk(p, subst) }
-      MonoType.Function(zonked_params, zonk(ret, subst))
+      zonked_params: Vector<MonoType> = []
+      has_meta := false
+      for p in params {
+        pr := zonk_with_meta(p, subst)
+        zonked_params = zonked_params.append(pr.ty)
+        if pr.has_meta { has_meta = true }
+      }
+      rr := zonk_with_meta(ret, subst)
+      .{ ty: MonoType.Function(zonked_params, rr.ty), has_meta: has_meta or rr.has_meta }
     },
-    .Optional(inner) => MonoType.Optional(zonk(inner, subst)),
-    .Result(ok, err) => MonoType.Result(zonk(ok, subst), zonk(err, subst)),
+    .Optional(inner) => {
+      r := zonk_with_meta(inner, subst)
+      .{ ty: MonoType.Optional(r.ty), has_meta: r.has_meta }
+    },
+    .Result(ok, err) => {
+      ok_r := zonk_with_meta(ok, subst)
+      err_r := zonk_with_meta(err, subst)
+      .{ ty: MonoType.Result(ok_r.ty, err_r.ty), has_meta: ok_r.has_meta or err_r.has_meta }
+    },
     .Named(tid, args) => {
-      zonked_args := collect a in args { zonk(a, subst) }
-      MonoType.Named(tid, zonked_args)
+      zonked_args: Vector<MonoType> = []
+      has_meta := false
+      for a in args {
+        ar := zonk_with_meta(a, subst)
+        zonked_args = zonked_args.append(ar.ty)
+        if ar.has_meta { has_meta = true }
+      }
+      .{ ty: MonoType.Named(tid, zonked_args), has_meta: has_meta }
     },
-    _ => ty,
+    _ => .{ ty: ty, has_meta: false },
   }
 }
 
@@ -3159,9 +3192,9 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   for key in ctx.type_map.keys() {
     case ctx.type_map[key] {
       .Some(ty) => {
-        zonked := zonk(ty, ctx.subst)
-        final_map[key] = zonked
-        if contains_meta(zonked) {
+        zonked := zonk_with_meta(ty, ctx.subst)
+        final_map[key] = zonked.ty
+        if zonked.has_meta {
           // Only report for entries with a known source position.  Entries
           // written via set_type_map (no span) are internal type-name nodes;
           // they rarely stay ambiguous and must not share bucket 0 with real
