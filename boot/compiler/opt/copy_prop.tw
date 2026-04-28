@@ -6,7 +6,7 @@
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
-use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars}
+use compiler.opt.use_count.{count_uses_and_free_var_flags}
 
 pub type PropResult = .{ expr: AnfExpr, changed: Bool }
 
@@ -111,18 +111,11 @@ pub fn copy_propagate(expr: AnfExpr) PropResult {
 }
 
 pub fn copy_propagate_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) PropResult {
-  uses := count_uses_excluding_free_vars(expr)
-  all_uses := count_uses(expr)
-  free_var_uses: Dict<Int, Bool> = Dict.new()
-  for k in all_uses.keys() {
-    if all_uses[k].unwrap_or(0) != uses[k].unwrap_or(0) {
-      free_var_uses[k] = true
-    }
-  }
+  counts := count_uses_and_free_var_flags(expr)
   assigned := collect_assigned_locals(expr)
   // Merge pinned into assigned so pinned locals are never propagated
   for k in pinned.keys() { assigned[k] = true }
-  copy_prop_inner(expr, uses, free_var_uses, assigned)
+  copy_prop_inner(expr, counts.uses, counts.free_var_uses, assigned)
 }
 
 // Check if an atom can be propagated into N use sites.

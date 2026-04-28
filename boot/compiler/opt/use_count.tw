@@ -108,42 +108,58 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
 
 // ── count_uses_excluding_free_vars ──────────────────────────────────
 
-pub fn count_uses_excluding_free_vars(expr: AnfExpr) Dict<Int, Int> {
-  uses: Dict<Int, Int> = Dict.new()
-  count_expr_ex(expr, uses)
+pub type UsesAndFreeVars = .{
+  uses: Dict<Int, Int>,
+  free_var_uses: Dict<Int, Bool>,
 }
 
-fn count_expr_ex(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
+pub fn count_uses_excluding_free_vars(expr: AnfExpr) Dict<Int, Int> {
+  count_uses_and_free_var_flags(expr).uses
+}
+
+pub fn count_uses_and_free_var_flags(expr: AnfExpr) UsesAndFreeVars {
+  uses: Dict<Int, Int> = Dict.new()
+  free_var_uses: Dict<Int, Bool> = Dict.new()
+  count_expr_ex(expr, uses, free_var_uses)
+}
+
+fn count_expr_ex(expr: AnfExpr, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) UsesAndFreeVars {
   case expr {
     .Let(_, op, body) => {
-      u := count_op_ex(op, uses)
-      count_expr_ex(body, u)
+      op_result := count_op_ex(op, uses, free_var_uses)
+      count_expr_ex(body, op_result.uses, op_result.free_var_uses)
     },
-    .Atom(a) => count_atom(a, uses),
-    .Return(.Some(a)) => count_atom(a, uses),
-    .Return(.None) => uses,
-    .Break(.Some(a)) => count_atom(a, uses),
-    .Break(.None) => uses,
-    .Continue => uses,
+    .Atom(a) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
+    .Return(.Some(a)) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
+    .Return(.None) => .{ uses: uses, free_var_uses: free_var_uses },
+    .Break(.Some(a)) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
+    .Break(.None) => .{ uses: uses, free_var_uses: free_var_uses },
+    .Continue => .{ uses: uses, free_var_uses: free_var_uses },
   }
 }
 
-fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
+fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) UsesAndFreeVars {
   case op {
-    .AMakeClosure(_, _) => uses,
+    .AMakeClosure(_, free_vars) => {
+      fv := free_var_uses
+      for v in free_vars { fv[v.id] = true }
+      .{ uses: uses, free_var_uses: fv }
+    },
     .AIf(cond, then_e, else_e) => {
       u := count_atom(cond, uses)
-      u = count_expr_ex(then_e, u)
-      count_expr_ex(else_e, u)
+      then_result := count_expr_ex(then_e, u, free_var_uses)
+      count_expr_ex(else_e, then_result.uses, then_result.free_var_uses)
     },
     .AMatch(scrutinee, arms) => {
-      u := count_atom(scrutinee, uses)
-      for arm in arms { u = count_expr_ex(arm.body, u) }
-      u
+      result := UsesAndFreeVars.{ uses: count_atom(scrutinee, uses), free_var_uses: free_var_uses }
+      for arm in arms {
+        result = count_expr_ex(arm.body, result.uses, result.free_var_uses)
+      }
+      result
     },
-    .ALoop(body) => count_expr_ex(body, uses),
-    .ADefer(inner) => count_expr_ex(inner, uses),
-    _ => count_op(op, uses),
+    .ALoop(body) => count_expr_ex(body, uses, free_var_uses),
+    .ADefer(inner) => count_expr_ex(inner, uses, free_var_uses),
+    _ => .{ uses: count_op(op, uses), free_var_uses: free_var_uses },
   }
 }
 

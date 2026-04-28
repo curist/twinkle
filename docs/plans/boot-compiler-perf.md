@@ -583,6 +583,96 @@ current codegen target is exhausted.
 These are now medium-sized. Continue applying the same approach opportunistically
 when a probe shows repeated fact derivation rather than true algorithmic work.
 
+---
+
+## Snapshot (2026-04-28, optimizer use-count fusion + checker subst fast path)
+
+Fresh timing with the latest small follow-ups:
+
+```
+compile_modules    571ms
+core_link           41ms
+monomorphize        26ms
+lower_anf           64ms
+optimize           228ms
+closure_convert     18ms
+prepare_backend    175ms
+verify             141ms
+plan_wasm_types     44ms
+emit_module        151ms
+link                59ms
+emit_wasm_binary   178ms
+  type_order         2ms
+  build_ctx          7ms
+  type_section       3ms
+  small_sections    14ms
+  code_section     150ms
+```
+
+Observed whole-pipeline timings were still noisy during this round, so the two
+landed changes were justified with direct same-session A/B checks on the
+subphases they targeted rather than by relying only on one total snapshot.
+
+### 1. `copy_prop`: fuse use counting with free-var detection
+
+`copy_prop` previously traversed the ANF twice:
+
+- `count_uses_excluding_free_vars(expr)`
+- `count_uses(expr)`
+- then diffed the two maps to derive `free_var_uses`
+
+This was unnecessary repeated work in a hot optimization pass. The fix added a
+single traversal in `use_count.tw` that returns both:
+
+- normal uses excluding closure free-var positions
+- a `free_var_uses` flag set
+
+`copy_prop.tw` now consumes that fused result directly.
+
+#### Result
+
+Direct A/B on the same workload shape showed a real optimizer win:
+
+- `copy_prop`: roughly `~88ms -> ~50ms`
+- `optimize`: roughly `~251ms -> ~207ms`
+
+This was worth keeping because it removes a whole traversal and does not make
+`copy_prop` meaningfully more complicated.
+
+### 2. `checker`: skip substitution when the var map is empty
+
+Added a tiny fast path in `checker.tw`:
+
+- `subst_vars(ty, var_map)` now returns `ty` immediately when `var_map.len() == 0`
+
+This targets the common non-generic case where the checker still threads through
+substitution helpers but there is nothing to substitute.
+
+#### Result
+
+Direct A/B on the checker path showed a modest but consistent win:
+
+- `compile_modules`: roughly `~578ms -> ~571ms`
+
+This is a small improvement, but the code change is trivial and removes clearly
+wasted recursive rebuilding work, so it was kept.
+
+### What this means now
+
+The priority order is still broadly the same:
+
+1. `compile_modules`
+2. `optimize`
+3. `emit_wasm_binary` / `code_section`
+4. `prepare_backend` / `verify` / `emit_module`
+
+The best next `compile_modules` heuristic remains:
+
+- look for repeated `expand_alias(zonk(...))`
+- avoid rebuilding substitution maps in record/variant helpers when there are no
+  type arguments or when the target field/variant lookup can fail early
+- continue preferring repeated-work elimination over structural rewrites
+
 ### Notes on temporary instrumentation
 
 The follow-up used temporary sub-timings in `prepare_backend`, `emit_module`,

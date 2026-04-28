@@ -398,6 +398,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<Diagnos
 }
 
 fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
+  if var_map.len() == 0 { return ty }
   case ty {
     .Var(name) => {
       case var_map[name] {
