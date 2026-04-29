@@ -1,8 +1,10 @@
-// JSON value type, decoder combinators, and stringify.
+// JSON value type, decoder combinators, parse, and stringify.
 //
 // Decoder<A> is a thin record wrapper around fn(Json) Result<A, String>.
 // Because it is transparent, users can write plain functions as decoders
 // without any special wrapping — they just need to match the signature.
+
+use lib.ascii
 
 pub type Json = {
   Null,
@@ -18,8 +20,355 @@ pub type Decoder<A> = .{
   run: fn(Json) Result<A, String>,
 }
 
+pub type Field = .{
+  key: String,
+  value: Json,
+}
+
 fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> {
   .{ run: f }
+}
+
+type ParseResult<A> = .{
+  value: A,
+  next: Int,
+}
+
+// ---------------------------------------------------------------------------
+// Parse
+// ---------------------------------------------------------------------------
+
+pub fn parse(input: String) Result<Json, String> {
+  start := skip_ws(input, 0)
+  parsed := try parse_value(input, start)
+  end := skip_ws(input, parsed.next)
+  if end != input.len() {
+    .Err("unexpected trailing input at ${end}")
+  } else {
+    .Ok(parsed.value)
+  }
+}
+
+pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
+  value := try parse(input)
+  decode(value, da)
+}
+
+fn skip_ws(input: String, i: Int) Int {
+  j := i
+  for j < input.len() and ascii.is_space(input[j].to_int()) {
+    j = j + 1
+  }
+  j
+}
+
+fn parse_value(input: String, i: Int) Result<ParseResult<Json>, String> {
+  j := skip_ws(input, i)
+  if j >= input.len() {
+    return .Err("unexpected end of input")
+  }
+
+  c := input[j].to_int()
+  if c == 110 { parse_null(input, j) }       // n
+  else if c == 116 { parse_true(input, j) }  // t
+  else if c == 102 { parse_false(input, j) } // f
+  else if c == 34 {                          // "
+    s := try parse_json_string(input, j)
+    .Ok(.{ value: Json.Str(s.value), next: s.next })
+  }
+  else if c == 91 { parse_array(input, j) }  // [
+  else if c == 123 { parse_object(input, j) } // {
+  else if c == 45 or ascii.is_digit(c) { parse_number(input, j) }
+  else { .Err("unexpected character at ${j}") }
+}
+
+fn starts_with_at(input: String, i: Int, text: String) Bool {
+  end := i + text.len()
+  end <= input.len() and input.slice(i, end) == text
+}
+
+fn parse_null(input: String, i: Int) Result<ParseResult<Json>, String> {
+  if starts_with_at(input, i, "null") {
+    .Ok(.{ value: Json.Null, next: i + 4 })
+  } else {
+    .Err("expected null at ${i}")
+  }
+}
+
+fn parse_true(input: String, i: Int) Result<ParseResult<Json>, String> {
+  if starts_with_at(input, i, "true") {
+    .Ok(.{ value: Json.Bool(true), next: i + 4 })
+  } else {
+    .Err("expected true at ${i}")
+  }
+}
+
+fn parse_false(input: String, i: Int) Result<ParseResult<Json>, String> {
+  if starts_with_at(input, i, "false") {
+    .Ok(.{ value: Json.Bool(false), next: i + 5 })
+  } else {
+    .Err("expected false at ${i}")
+  }
+}
+
+fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
+  j := i
+  has_float_part := false
+
+  if j < input.len() and input[j].to_int() == 45 {
+    j = j + 1
+  }
+
+  if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+    return .Err("expected number at ${i}")
+  }
+
+  if input[j].to_int() == 48 {
+    j = j + 1
+  } else {
+    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+      j = j + 1
+    }
+  }
+
+  if j < input.len() and input[j].to_int() == 46 {
+    has_float_part = true
+    j = j + 1
+    if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+      return .Err("expected digit after decimal point at ${j}")
+    }
+    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+      j = j + 1
+    }
+  }
+
+  if j < input.len() and (input[j].to_int() == 101 or input[j].to_int() == 69) {
+    has_float_part = true
+    j = j + 1
+    if j < input.len() and (input[j].to_int() == 43 or input[j].to_int() == 45) {
+      j = j + 1
+    }
+    if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+      return .Err("expected digit in exponent at ${j}")
+    }
+    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+      j = j + 1
+    }
+  }
+
+  text := input.slice(i, j)
+  if has_float_part {
+    case Float.from_string(text) {
+      .Some(f) => .Ok(.{ value: Json.Float(f), next: j }),
+      .None => .Err("invalid float at ${i}"),
+    }
+  } else {
+    case Int.from_string(text) {
+      .Some(n) => .Ok(.{ value: Json.Int(n), next: j }),
+      .None => .Err("invalid int at ${i}"),
+    }
+  }
+}
+
+fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> {
+  if i >= input.len() or input[i].to_int() != 34 {
+    return .Err("expected string at ${i}")
+  }
+
+  out: Vector<Byte> = []
+  j := i + 1
+  for j < input.len() {
+    c := input[j].to_int()
+    if c == 34 {
+      case String.from_utf8(out) {
+        .Some(s) => { return .Ok(.{ value: s, next: j + 1 }) },
+        .None => { return .Err("invalid utf-8 in string at ${i}") },
+      }
+    }
+    if c < 32 {
+      return .Err("unescaped control character in string at ${j}")
+    }
+    if c == 92 {
+      esc := try parse_escape(input, j)
+      out = out.concat(esc.value.utf8_bytes())
+      j = esc.next
+    } else {
+      out = out.append(input[j])
+      j = j + 1
+    }
+  }
+  .Err("unterminated string at ${i}")
+}
+
+fn parse_escape(input: String, i: Int) Result<ParseResult<String>, String> {
+  if i + 1 >= input.len() or input[i].to_int() != 92 {
+    return .Err("expected escape at ${i}")
+  }
+  c := input[i + 1].to_int()
+  if c == 34 { .Ok(.{ value: "\"", next: i + 2 }) }
+  else if c == 92 { .Ok(.{ value: "\\", next: i + 2 }) }
+  else if c == 47 { .Ok(.{ value: "/", next: i + 2 }) }
+  else if c == 98 { .Ok(.{ value: code_point_string(8), next: i + 2 }) }
+  else if c == 102 { .Ok(.{ value: code_point_string(12), next: i + 2 }) }
+  else if c == 110 { .Ok(.{ value: "\n", next: i + 2 }) }
+  else if c == 114 { .Ok(.{ value: "\r", next: i + 2 }) }
+  else if c == 116 { .Ok(.{ value: "\t", next: i + 2 }) }
+  else if c == 117 { parse_unicode_escape(input, i) }
+  else { .Err("invalid escape at ${i}") }
+}
+
+fn parse_unicode_escape(input: String, i: Int) Result<ParseResult<String>, String> {
+  code := try read_unicode_code_unit(input, i)
+
+  if code >= 0xD800 and code <= 0xDBFF {
+    next := i + 6
+    if next + 5 >= input.len() or input[next].to_int() != 92 or input[next + 1].to_int() != 117 {
+      return .Err("expected low surrogate after high surrogate at ${i}")
+    }
+    low := try read_unicode_code_unit(input, next)
+    if low < 0xDC00 or low > 0xDFFF {
+      return .Err("invalid low surrogate at ${next}")
+    }
+    scalar := 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
+    case String.from_code_point(scalar) {
+      .Some(s) => .Ok(.{ value: s, next: next + 6 }),
+      .None => .Err("invalid unicode code point at ${i}"),
+    }
+  } else if code >= 0xDC00 and code <= 0xDFFF {
+    .Err("unexpected low surrogate at ${i}")
+  } else {
+    case String.from_code_point(code) {
+      .Some(s) => .Ok(.{ value: s, next: i + 6 }),
+      .None => .Err("invalid unicode code point at ${i}"),
+    }
+  }
+}
+
+fn read_unicode_code_unit(input: String, i: Int) Result<Int, String> {
+  if i + 5 >= input.len() {
+    return .Err("incomplete unicode escape at ${i}")
+  }
+  a := hex_value(input[i + 2].to_int())
+  b := hex_value(input[i + 3].to_int())
+  c := hex_value(input[i + 4].to_int())
+  d := hex_value(input[i + 5].to_int())
+  if a < 0 or b < 0 or c < 0 or d < 0 {
+    return .Err("invalid unicode escape at ${i}")
+  }
+  .Ok(((a * 16 + b) * 16 + c) * 16 + d)
+}
+
+fn hex_value(c: Int) Int {
+  if c >= 48 and c <= 57 { c - 48 }
+  else if c >= 65 and c <= 70 { c - 65 + 10 }
+  else if c >= 97 and c <= 102 { c - 97 + 10 }
+  else { -1 }
+}
+
+fn code_point_string(code: Int) String {
+  case String.from_code_point(code) {
+    .Some(s) => s,
+    .None => "",
+  }
+}
+
+fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
+  items: Vector<Json> = []
+  j := skip_ws(input, i + 1)
+
+  if j < input.len() and input[j].to_int() == 93 {
+    return .Ok(.{ value: Json.Array(items), next: j + 1 })
+  }
+
+  for true {
+    item := try parse_value(input, j)
+    items = items.append(item.value)
+    j = skip_ws(input, item.next)
+
+    if j >= input.len() {
+      return .Err("unterminated array at ${i}")
+    }
+
+    c := input[j].to_int()
+    if c == 93 {
+      return .Ok(.{ value: Json.Array(items), next: j + 1 })
+    }
+    if c != 44 {
+      return .Err("expected ',' or ']' at ${j}")
+    }
+
+    j = skip_ws(input, j + 1)
+    if j < input.len() and input[j].to_int() == 93 {
+      return .Err("trailing comma in array at ${j}")
+    }
+  }
+
+  .Err("unreachable")
+}
+
+fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
+  obj: Dict<String, Json> = Dict.new()
+  j := skip_ws(input, i + 1)
+
+  if j < input.len() and input[j].to_int() == 125 {
+    return .Ok(.{ value: Json.Object(obj), next: j + 1 })
+  }
+
+  for true {
+    if j >= input.len() or input[j].to_int() != 34 {
+      return .Err("expected object key at ${j}")
+    }
+
+    key := try parse_json_string(input, j)
+    j = skip_ws(input, key.next)
+
+    if j >= input.len() or input[j].to_int() != 58 {
+      return .Err("expected ':' after object key at ${j}")
+    }
+
+    value := try parse_value(input, j + 1)
+    obj[key.value] = value.value
+    j = skip_ws(input, value.next)
+
+    if j >= input.len() {
+      return .Err("unterminated object at ${i}")
+    }
+
+    c := input[j].to_int()
+    if c == 125 {
+      return .Ok(.{ value: Json.Object(obj), next: j + 1 })
+    }
+    if c != 44 {
+      return .Err("expected ',' or '}' at ${j}")
+    }
+
+    j = skip_ws(input, j + 1)
+    if j < input.len() and input[j].to_int() == 125 {
+      return .Err("trailing comma in object at ${j}")
+    }
+  }
+
+  .Err("unreachable")
+}
+
+// ---------------------------------------------------------------------------
+// Construction helpers
+// ---------------------------------------------------------------------------
+
+pub fn kv(key: String, value: Json) Field {
+  .{ key, value }
+}
+
+pub fn object(fields: Vector<Field>) Json {
+  obj: Dict<String, Json> = Dict.new()
+  for field in fields {
+    obj[field.key] = field.value
+  }
+  .Object(obj)
+}
+
+pub fn array(items: Vector<Json>) Json {
+  .Array(items)
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +578,26 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
   })
 }
 
+// Decode every value of a JSON object, preserving the original keys.
+pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
+  make(fn(json: Json) {
+    case json {
+      .Object(obj) => {
+        out: Dict<String, A> = Dict.new()
+        for key in obj.keys() {
+          value := case obj[key] { .Some(v) => v, .None => Json.Null }
+          case da.run(value) {
+            .Ok(a)  => out[key] = a,
+            .Err(e) => { return .Err("key '${key}': ${e}") },
+          }
+        }
+        .Ok(out)
+      },
+      _ => .Err("expected object"),
+    }
+  })
+}
+
 // Try each decoder in order; return first success.
 pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
   make(fn(json: Json) {
@@ -305,9 +674,12 @@ fn quote_string(s: String) String {
     n := Byte.to_int(b)
     escape := if n == 34 { "\\\"" }       // "
               else if n == 92 { "\\\\" }  // \
+              else if n == 8  { "\\b" }   // backspace
+              else if n == 12 { "\\f" }   // form feed
               else if n == 10 { "\\n" }   // newline
               else if n == 13 { "\\r" }   // carriage return
               else if n == 9  { "\\t" }   // tab
+              else if n < 32  { "\\u00${hex_digit(n / 16)}${hex_digit(n % 16)}" }
               else { "" }
     if escape == "" {
       buf = buf.append(b)
@@ -319,4 +691,8 @@ fn quote_string(s: String) String {
   }
   inner := case String.from_utf8(buf) { .Some(s) => s, .None => "" }
   "\"".concat(inner).concat("\"")
+}
+
+fn hex_digit(n: Int) String {
+  if n < 10 { code_point_string(48 + n) } else { code_point_string(87 + n) }
 }

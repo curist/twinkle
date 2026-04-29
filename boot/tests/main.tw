@@ -49,6 +49,7 @@ use .suites.module_loader_suite
 use .suites.dependency_graph_suite
 use .suites.query_keys_suite
 use .suites.imports_suite
+use .suites.lib_json_suite
 use .suites.multi_module_suite
 use .suites.base_env_guardrail_suite
 use .suites.signature_loader_suite
@@ -106,6 +107,7 @@ runner.run_all([
   dependency_graph_suite.suite(),
   query_keys_suite.suite(),
   imports_suite.suite(),
+  lib_json_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),
