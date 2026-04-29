@@ -1,0 +1,179 @@
+// In-memory stage cache for query-friendly compiler entrypoints.
+//
+// The cache is explicit state: callers thread Store through query/stage APIs.
+// That keeps the boot compiler portable and lets long-lived hosts (like LSP)
+// decide cache lifetime and invalidation policy.
+
+use compiler.ast
+use compiler.checker
+use compiler.lower_core
+use compiler.resolver
+use lib.graph.dependency
+use lib.source.diagnostic.{Diagnostic, StageResult}
+
+pub type ParsedModule = .{
+  module: ast.Module,
+  diagnostics: Vector<Diagnostic>,
+}
+
+pub type CacheStats = .{
+  parse_hits: Int,
+  parse_misses: Int,
+  resolve_hits: Int,
+  resolve_misses: Int,
+  typecheck_hits: Int,
+  typecheck_misses: Int,
+  lower_hits: Int,
+  lower_misses: Int,
+}
+
+type CacheEntry<T> = .{
+  key: Int,
+  value: T,
+}
+
+pub type Store = .{
+  parsed: Dict<String, CacheEntry<ParsedModule>>,
+  resolved: Dict<String, CacheEntry<resolver.ResolveResult>>,
+  typed: Dict<String, CacheEntry<checker.CheckResult>>,
+  lowered: Dict<String, CacheEntry<lower_core.LowerResult>>,
+  module_hashes: Dict<String, Int>,
+  graph: dependency.DependencyGraph,
+  stats: CacheStats,
+}
+
+pub type Lookup<T> = .{
+  store: Store,
+  value: T?,
+  cache_hit: Bool,
+}
+
+pub fn empty_stats() CacheStats {
+  .{
+    parse_hits: 0,
+    parse_misses: 0,
+    resolve_hits: 0,
+    resolve_misses: 0,
+    typecheck_hits: 0,
+    typecheck_misses: 0,
+    lower_hits: 0,
+    lower_misses: 0,
+  }
+}
+
+pub fn empty() Store {
+  .{
+    parsed: Dict.new(),
+    resolved: Dict.new(),
+    typed: Dict.new(),
+    lowered: Dict.new(),
+    module_hashes: Dict.new(),
+    graph: dependency.empty(),
+    stats: empty_stats(),
+  }
+}
+
+pub fn stats(store: Store) CacheStats {
+  store.stats
+}
+
+pub fn set_dependencies(store: Store, module: String, deps: Vector<String>) Store {
+  store.graph = dependency.set_dependencies(store.graph, module, deps)
+  store
+}
+
+pub fn set_module_hash(store: Store, module: String, hash: Int) Store {
+  store.module_hashes[module] = hash
+  store
+}
+
+pub fn module_hash(store: Store, module: String) Int? {
+  store.module_hashes[module]
+}
+
+pub fn invalidate_changed_module(store: Store, module: String) Store {
+  affected := dependency.reverse_dependents_closure(store.graph, module)
+  for path in affected {
+    store.resolved = store.resolved.remove(path)
+    store.typed = store.typed.remove(path)
+    store.lowered = store.lowered.remove(path)
+    store.module_hashes = store.module_hashes.remove(path)
+  }
+  store
+}
+
+pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
+  case store.parsed[module] {
+    .Some(entry) => {
+      if entry.key == key {
+        store.stats.parse_hits = store.stats.parse_hits + 1
+        return .{ store, value: .Some(entry.value), cache_hit: true }
+      }
+    },
+    .None => {},
+  }
+  store.stats.parse_misses = store.stats.parse_misses + 1
+  .{ store, value: .None, cache_hit: false }
+}
+
+pub fn put_parsed(store: Store, module: String, key: Int, value: ParsedModule) Store {
+  store.parsed[module] = .{ key, value }
+  store
+}
+
+pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.ResolveResult> {
+  case store.resolved[module] {
+    .Some(entry) => {
+      if entry.key == key {
+        store.stats.resolve_hits = store.stats.resolve_hits + 1
+        return .{ store, value: .Some(entry.value), cache_hit: true }
+      }
+    },
+    .None => {},
+  }
+  store.stats.resolve_misses = store.stats.resolve_misses + 1
+  .{ store, value: .None, cache_hit: false }
+}
+
+pub fn put_resolved(store: Store, module: String, key: Int, value: resolver.ResolveResult) Store {
+  store.resolved[module] = .{ key, value }
+  store
+}
+
+pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckResult> {
+  case store.typed[module] {
+    .Some(entry) => {
+      if entry.key == key {
+        store.stats.typecheck_hits = store.stats.typecheck_hits + 1
+        return .{ store, value: .Some(entry.value), cache_hit: true }
+      }
+    },
+    .None => {},
+  }
+  store.stats.typecheck_misses = store.stats.typecheck_misses + 1
+  .{ store, value: .None, cache_hit: false }
+}
+
+pub fn put_typed(store: Store, module: String, key: Int, value: checker.CheckResult) Store {
+  store.typed[module] = .{ key, value }
+  store
+}
+
+pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.LowerResult> {
+  case store.lowered[module] {
+    .Some(entry) => {
+      if entry.key == key {
+        store.stats.lower_hits = store.stats.lower_hits + 1
+        return .{ store, value: .Some(entry.value), cache_hit: true }
+      }
+    },
+    .None => {},
+  }
+  store.stats.lower_misses = store.stats.lower_misses + 1
+  .{ store, value: .None, cache_hit: false }
+}
+
+pub fn put_lowered(store: Store, module: String, key: Int, value: lower_core.LowerResult) Store {
+  store.lowered[module] = .{ key, value }
+  store
+}
