@@ -5,10 +5,13 @@
 //   node tools/twk_boot.mjs <twk args...>
 //
 // Environment:
-//   BOOT_WASM=/path/to/boot.wasm   Override the boot compiler Wasm path.
+//   BOOT_WASM=/path/to/boot.wasm   Override the compiler Wasm payload.
 //
-// Default boot wasm path:
+// Default compiler payload:
 //   target/boot.wasm
+//
+// That payload is expected to be the verified stage2 compiler produced by:
+//   tools/selfhost_loop.sh boot/main.tw
 
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -31,8 +34,9 @@ function ensureBootWasm(bootWasm) {
   }
 
   console.error(`Error: boot compiler wasm not found at ${bootWasm}`);
-  console.error("Build it with:");
-  console.error(`  cargo run --release -- build ${BOOT_ENTRY} -o ${bootWasm}`);
+  console.error("Build the verified self-hosted payload with:");
+  console.error(`  cargo build --release`);
+  console.error(`  tools/selfhost_loop.sh ${BOOT_ENTRY}`);
   process.exit(1);
 }
 
