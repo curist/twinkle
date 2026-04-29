@@ -2,6 +2,7 @@ use tests.runner
 use tests.assert
 use lib.json
 use lib.lsp.protocol
+use lib.lsp.document_store
 use lib.lsp.server_core
 
 fn only_out(step: server_core.Step) json.Json!String {
@@ -59,8 +60,67 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try json.decode(err, json.field("message", json.string())), "method not found")
       .Ok({})
     })
-    .test("unknown notification is ignored", fn() {
+    .test("didOpen stores the document", fn() {
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///a.tw")),
+          json.kv("languageId", .Str("twinkle")),
+          json.kv("version", .Int(1)),
+          json.kv("text", .Str("old")),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(params) })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
+      try assert.str_eq(doc.text, "old")
+      try assert.int_eq(try doc.version.ok_or("missing version"), 1)
+      try assert.int_eq(step.outgoing.len(), 0)
+      .Ok({})
+    })
+    .test("didChange replaces full document text", fn() {
+      opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+      state := server_core.State.{ initialized: true, shutdown_requested: false, should_exit: false, documents: opened }
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///a.tw")),
+          json.kv("version", .Int(2)),
+        ])),
+        json.kv("contentChanges", json.array([
+          json.object([json.kv("text", .Str("new"))]),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(params) })
+      step := server_core.handle_message(state, msg)
+      doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
+      try assert.str_eq(doc.text, "new")
+      try assert.int_eq(try doc.version.ok_or("missing version"), 2)
+      try assert.int_eq(step.outgoing.len(), 0)
+      .Ok({})
+    })
+    .test("didClose removes the document", fn() {
+      opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+      state := server_core.State.{ initialized: true, shutdown_requested: false, should_exit: false, documents: opened }
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///a.tw")),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didClose", params: .Some(params) })
+      step := server_core.handle_message(state, msg)
+      try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+      try assert.int_eq(step.outgoing.len(), 0)
+      .Ok({})
+    })
+    .test("malformed document notification is ignored", fn() {
       msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.int_eq(step.outgoing.len(), 0)
+      try assert.is_false(step.state.should_exit)
+      try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+      .Ok({})
+    })
+    .test("unknown notification is ignored", fn() {
+      msg := protocol.Message.Notification(.{ method: "twinkle/nope", params: .None })
       step := server_core.handle_message(server_core.initial_state(), msg)
       try assert.int_eq(step.outgoing.len(), 0)
       try assert.is_false(step.state.should_exit)

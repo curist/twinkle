@@ -4,12 +4,15 @@
 // responses so server behavior can be tested without stdio.
 
 use lib.json
+use lib.lsp.document_store
+use lib.lsp.params
 use lib.lsp.protocol
 
 pub type State = .{
   initialized: Bool,
   shutdown_requested: Bool,
   should_exit: Bool,
+  documents: document_store.Store,
 }
 
 pub type Step = .{
@@ -18,7 +21,7 @@ pub type Step = .{
 }
 
 pub fn initial_state() State {
-  .{ initialized: false, shutdown_requested: false, should_exit: false }
+  .{ initialized: false, shutdown_requested: false, should_exit: false, documents: document_store.empty() }
 }
 
 pub fn handle_message(state: State, message: protocol.Message) Step {
@@ -44,7 +47,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
       .{ state, outgoing: [protocol.success_response(req.id, result)] }
     },
     "shutdown" => {
-      next := State.{ initialized: state.initialized, shutdown_requested: true, should_exit: state.should_exit }
+      next := with_shutdown_requested(state, true)
       .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] }
     },
     _ => {
@@ -57,13 +60,68 @@ fn handle_request(state: State, req: protocol.Request) Step {
 fn handle_notification(state: State, note: protocol.Notification) Step {
   case note.method {
     "initialized" => {
-      next := State.{ initialized: true, shutdown_requested: state.shutdown_requested, should_exit: state.should_exit }
+      next := with_initialized(state, true)
       .{ state: next, outgoing: [] }
     },
     "exit" => {
-      next := State.{ initialized: state.initialized, shutdown_requested: state.shutdown_requested, should_exit: true }
+      next := with_should_exit(state, true)
       .{ state: next, outgoing: [] }
     },
+    "textDocument/didOpen" => handle_did_open(state, note),
+    "textDocument/didChange" => handle_did_change(state, note),
+    "textDocument/didClose" => handle_did_close(state, note),
     _ => .{ state, outgoing: [] },
   }
+}
+
+fn handle_did_open(state: State, note: protocol.Notification) Step {
+  case params.decode_did_open(note.params) {
+    .Ok(open) => {
+      doc := open.text_document
+      store := document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
+      .{ state: with_documents(state, store), outgoing: [] }
+    },
+    .Err(_) => .{ state, outgoing: [] },
+  }
+}
+
+fn handle_did_change(state: State, note: protocol.Notification) Step {
+  case params.decode_did_change(note.params) {
+    .Ok(change) => {
+      if change.content_changes.len() == 0 {
+        return .{ state, outgoing: [] }
+      }
+      full := change.content_changes[change.content_changes.len() - 1]
+      doc := change.text_document
+      store := document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
+      .{ state: with_documents(state, store), outgoing: [] }
+    },
+    .Err(_) => .{ state, outgoing: [] },
+  }
+}
+
+fn handle_did_close(state: State, note: protocol.Notification) Step {
+  case params.decode_did_close(note.params) {
+    .Ok(close) => {
+      store := document_store.close(state.documents, close.text_document.uri)
+      .{ state: with_documents(state, store), outgoing: [] }
+    },
+    .Err(_) => .{ state, outgoing: [] },
+  }
+}
+
+fn with_initialized(state: State, initialized: Bool) State {
+  .{ initialized, shutdown_requested: state.shutdown_requested, should_exit: state.should_exit, documents: state.documents }
+}
+
+fn with_shutdown_requested(state: State, shutdown_requested: Bool) State {
+  .{ initialized: state.initialized, shutdown_requested, should_exit: state.should_exit, documents: state.documents }
+}
+
+fn with_should_exit(state: State, should_exit: Bool) State {
+  .{ initialized: state.initialized, shutdown_requested: state.shutdown_requested, should_exit, documents: state.documents }
+}
+
+fn with_documents(state: State, documents: document_store.Store) State {
+  .{ initialized: state.initialized, shutdown_requested: state.shutdown_requested, should_exit: state.should_exit, documents }
 }

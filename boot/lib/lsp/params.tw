@@ -1,0 +1,98 @@
+// Typed decoders for LSP notification parameters.
+//
+// These records intentionally capture only fields the server currently needs.
+// Keeping JSON decoding at the protocol edge lets document/query code stay
+// independent from JSON-RPC shapes.
+
+use lib.json
+
+pub type TextDocumentItem = .{
+  uri: String,
+  language_id: String,
+  version: Int,
+  text: String,
+}
+
+pub type VersionedTextDocumentIdentifier = .{
+  uri: String,
+  version: Int?,
+}
+
+pub type TextDocumentIdentifier = .{
+  uri: String,
+}
+
+pub type TextDocumentContentChangeEvent = .{
+  text: String,
+}
+
+pub type DidOpenTextDocumentParams = .{
+  text_document: TextDocumentItem,
+}
+
+pub type DidChangeTextDocumentParams = .{
+  text_document: VersionedTextDocumentIdentifier,
+  content_changes: Vector<TextDocumentContentChangeEvent>,
+}
+
+pub type DidCloseTextDocumentParams = .{
+  text_document: TextDocumentIdentifier,
+}
+
+pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
+  .Ok(.{ text_document })
+}
+
+pub fn decode_did_change(params: json.Json?) Result<DidChangeTextDocumentParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(value, json.field("textDocument", versioned_text_document_identifier_decoder()))
+  content_changes := try json.decode(value, json.field("contentChanges", json.list(content_change_decoder())))
+  .Ok(.{ text_document, content_changes })
+}
+
+pub fn decode_did_close(params: json.Json?) Result<DidCloseTextDocumentParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(value, json.field("textDocument", text_document_identifier_decoder()))
+  .Ok(.{ text_document })
+}
+
+fn required_params(params: json.Json?) Result<json.Json, String> {
+  case params {
+    .Some(value) => .Ok(value),
+    .None => .Err("missing params"),
+  }
+}
+
+fn text_document_item_decoder() json.Decoder<TextDocumentItem> {
+  .{ run: fn(value: json.Json) Result<TextDocumentItem, String> {
+    uri := try json.decode(value, json.field("uri", json.string()))
+    language_id := try json.decode(value, json.field("languageId", json.string()))
+    version := try json.decode(value, json.field("version", json.int()))
+    text := try json.decode(value, json.field("text", json.string()))
+    .Ok(.{ uri, language_id, version, text })
+  } }
+}
+
+fn versioned_text_document_identifier_decoder() json.Decoder<VersionedTextDocumentIdentifier> {
+  .{ run: fn(value: json.Json) Result<VersionedTextDocumentIdentifier, String> {
+    uri := try json.decode(value, json.field("uri", json.string()))
+    version := try json.decode(value, json.optional_field("version", json.int()))
+    .Ok(.{ uri, version })
+  } }
+}
+
+fn text_document_identifier_decoder() json.Decoder<TextDocumentIdentifier> {
+  .{ run: fn(value: json.Json) Result<TextDocumentIdentifier, String> {
+    uri := try json.decode(value, json.field("uri", json.string()))
+    .Ok(.{ uri })
+  } }
+}
+
+fn content_change_decoder() json.Decoder<TextDocumentContentChangeEvent> {
+  .{ run: fn(value: json.Json) Result<TextDocumentContentChangeEvent, String> {
+    text := try json.decode(value, json.field("text", json.string()))
+    .Ok(.{ text })
+  } }
+}
