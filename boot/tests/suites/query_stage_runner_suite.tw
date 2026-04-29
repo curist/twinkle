@@ -16,7 +16,7 @@ pub fn suite() runner.Suite {
       try assert.is_false(first.cache_hit)
       try assert.is_true(second.cache_hit)
       try assert.int_eq(second.value.diagnostics.len(), 0)
-      st := cache.stats(second.store)
+      st := cache.get_stats(second.store)
       try assert.int_eq(st.parse_hits, 1)
       try assert.int_eq(st.parse_misses, 1)
       .Ok({})
@@ -40,7 +40,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(typed2.cache_hit)
       try assert.int_eq(typed2.value.diagnostics.len(), 0)
 
-      st := cache.stats(typed2.store)
+      st := cache.get_stats(typed2.store)
       try assert.int_eq(st.resolve_hits, 1)
       try assert.int_eq(st.typecheck_hits, 1)
       .Ok({})

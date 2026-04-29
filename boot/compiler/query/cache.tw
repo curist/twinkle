@@ -73,7 +73,7 @@ pub fn empty() Store {
   }
 }
 
-pub fn stats(store: Store) CacheStats {
+pub fn get_stats(store: Store) CacheStats {
   store.stats
 }
 

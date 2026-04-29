@@ -9,14 +9,11 @@ use @std.fs
 use @std.path
 use @std.date
 use @std.proc
-use compiler.parser
 use compiler.resolver.{
   ResolvedEnv, ModuleExports, TypeEntry,
   extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
   extend_types_from,
 }
-use compiler.checker
-use compiler.lower_core
 use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
@@ -28,8 +25,11 @@ use compiler.ast.{Module}
 use compiler.imports
 use compiler.core_linker
 use compiler.base_env.{builtin_env, add_internal_host_builtins}
+use compiler.query.cache as query_cache
+use compiler.query.stage_runner
 use compiler.util.{fs_error_message}
 use lib.module.loader
+use lib.query.keys
 use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ pub type CompileState = .{
   shared_types: Vector<TypeEntry>,
   shared_type_names: Vector<String>,
   shared_type_origins: Dict<Int, String>,
+  query_cache: query_cache.Store,
 }
 
 /// Result of compiling a single module.
@@ -80,6 +81,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     shared_types: base_env.types,
     shared_type_names: base_env.type_names,
     shared_type_origins: base_env.type_origins,
+    query_cache: query_cache.empty(),
   }
   importing_stack: Vector<String> = []
   timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
@@ -178,14 +180,18 @@ fn compile_module(
     },
   }
 
-  parsed := parser.parse(source, 0)
+  source_hash := keys.hash_text(source)
+  parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
+  parsed_out := stage_runner.parse(parse_runner, state.query_cache, source, 0)
+  state.query_cache = parsed_out.store
+  parsed := parsed_out.value
   if parsed.diagnostics.len() > 0 {
     return .Err(format_stage_error("parse", canonical, source, parsed.diagnostics))
   }
   tm1 := date.now()
 
   // Plan dependencies
-  dep_plan := try imports.plan_dependencies(parsed.value, canonical, state.project_root)
+  dep_plan := try imports.plan_dependencies(parsed.module, canonical, state.project_root)
 
   // Push onto importing stack
   stack := importing_stack.append(canonical)
@@ -237,6 +243,29 @@ fn compile_module(
       },
     }
   }
+  cur_state.query_cache = query_cache.set_dependencies(
+    cur_state.query_cache,
+    canonical,
+    collect dep in dep_plan.dependencies { dep.canonical_path },
+  )
+  dep_hash_entries: Vector<keys.DepEntry> = []
+  for dep in dep_plan.dependencies {
+    dep_hash := case query_cache.module_hash(cur_state.query_cache, dep.canonical_path) {
+      .Some(hash) => hash,
+      .None => 0,
+    }
+    dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
+  }
+  deps_hash := keys.deps_hash(dep_hash_entries)
+  context_entries: Vector<keys.DepEntry> = []
+  for module_path in cur_state.query_cache.module_hashes.keys() {
+    case cur_state.query_cache.module_hashes[module_path] {
+      .Some(hash) => context_entries = context_entries.append(.{ path: module_path, hash }),
+      .None => {},
+    }
+  }
+  context_hash := keys.context_hash(context_entries)
+  runner := stage_runner.new(canonical, source_hash, deps_hash, context_hash, dep_plan.is_internal)
   tm2 := date.now()
 
   if dep_plan.is_internal {
@@ -248,14 +277,18 @@ fn compile_module(
   local_type_start := env.types.len()
 
   // Resolve this module with the accumulated env
-  resolved := env.resolve(parsed.value)
+  resolved_out := stage_runner.resolve(runner, cur_state.query_cache, parsed, env)
+  cur_state.query_cache = resolved_out.store
+  resolved := resolved_out.value
   if resolved.diagnostics.len() > 0 {
     return .Err(format_stage_error("resolve", canonical, source, resolved.diagnostics))
   }
   tm3 := date.now()
 
   // Type-check
-  check_result := checker.check(parsed.value, resolved.env)
+  check_out := stage_runner.typecheck(runner, cur_state.query_cache, parsed, resolved)
+  cur_state.query_cache = check_out.store
+  check_result := check_out.value
   if check_result.diagnostics.len() > 0 {
     return .Err(format_stage_error("check", canonical, source, check_result.diagnostics))
   }
@@ -267,10 +300,17 @@ fn compile_module(
   cur_state = capture_local_types(cur_state, check_result.env, canonical, local_type_start)
 
   // Lower to Core IR
-  lowered := lower_core.lower_module(parsed.value, check_result, cur_state.builtins)
+  lowered_out := stage_runner.lower(runner, cur_state.query_cache, parsed, check_result, cur_state.builtins, 0)
+  cur_state.query_cache = lowered_out.store
+  lowered := lowered_out.value
   if lowered.diagnostics.len() > 0 {
     return .Err(format_stage_error("lower", canonical, source, lowered.diagnostics))
   }
+  cur_state.query_cache = query_cache.set_module_hash(
+    cur_state.query_cache,
+    canonical,
+    keys.module_hash(source_hash, deps_hash),
+  )
   tm5 := date.now()
 
   if timed_mod {
@@ -293,7 +333,7 @@ fn compile_module(
   }
 
   // Extract exports for importing modules
-  module_exports := extract_exports_for_module(check_result.env, parsed.value, canonical)
+  module_exports := extract_exports_for_module(check_result.env, parsed.module, canonical)
 
   // Cache and accumulate
   cur_state.cache[canonical] = module_exports
