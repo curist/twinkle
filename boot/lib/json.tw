@@ -581,21 +581,25 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
 // Decode every value of a JSON object, preserving the original keys.
 pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
   make(fn(json: Json) {
-    case json {
-      .Object(obj) => {
-        out: Dict<String, A> = Dict.new()
-        for key in obj.keys() {
-          value := case obj[key] { .Some(v) => v, .None => Json.Null }
-          case da.run(value) {
-            .Ok(a)  => out[key] = a,
-            .Err(e) => { return .Err("key '${key}': ${e}") },
-          }
-        }
-        .Ok(out)
-      },
-      _ => .Err("expected object"),
-    }
+    decode_dict_values(json, da)
   })
+}
+
+fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, String> {
+  case json {
+    .Object(obj) => {
+      out: Dict<String, A> = Dict.new()
+      for key in obj.keys() {
+        value := case obj[key] { .Some(v) => v, .None => Json.Null }
+        case da.run(value) {
+          .Ok(a)  => out[key] = a,
+          .Err(e) => { return .Err("key '${key}': ${e}") },
+        }
+      }
+      .Ok(out)
+    },
+    _ => .Err("expected object"),
+  }
 }
 
 // Try each decoder in order; return first success.

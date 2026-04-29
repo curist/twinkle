@@ -414,6 +414,11 @@ pub fn suite() runner.Suite {
       try assert.str_eq(try type_at(r, src, "pair(1"), "Int")
       .Ok({})
     })
+    .test("generic type variable in nested local annotation", fn() {
+      src := "fn keep<A>(d: Dict<String, A>) Dict<String, A> {\n  out: Dict<String, A> = d\n  out\n}\nfn main(d: Dict<String, Int>) Dict<String, Int> { keep(d) }"
+      _ := try check_ok(src)
+      .Ok({})
+    })
     .test("bounded type parameter method lookup", fn() {
       src := "fn show<T: Stringify>(x: T) String { x.to_string() }"
       r := try check_ok(src)

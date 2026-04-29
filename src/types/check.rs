@@ -2,8 +2,9 @@ use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
-    ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, TypeDef, TypeId,
-    builtin_method_alias, contains_meta, method_receiver_type_id, zonk_ty,
+    CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
+    RESULT_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, builtin_method_alias, contains_meta,
+    method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -566,16 +567,129 @@ impl TypeChecker {
         })
     }
 
-    /// Resolve an AST type annotation to a MonoType
-    /// Delegates to TypeEnv's shared implementation
+    /// Resolve an AST type annotation to a MonoType, including type variables
+    /// from the current generic function scope even when nested inside generic
+    /// containers such as `Dict<String, A>`.
     fn resolve_type(&mut self, ty: &AstType) -> Result<MonoType, ()> {
-        // Check type var scope first
+        if self.type_var_scope.is_empty() {
+            return self.type_env.resolve_type(ty, &mut self.errors);
+        }
+        self.resolve_type_with_current_vars(ty)
+    }
+
+    fn resolve_type_with_current_vars(&mut self, ty: &AstType) -> Result<MonoType, ()> {
         if let AstType::Named { name, args, .. } = ty {
             if args.is_empty() && self.type_var_scope.contains(name) {
                 return Ok(MonoType::Var(name.clone()));
             }
         }
-        self.type_env.resolve_type(ty, &mut self.errors)
+
+        match ty {
+            AstType::Named { name, args, span } if !args.is_empty() => {
+                let resolved_args: Vec<MonoType> = args
+                    .iter()
+                    .map(|a| self.resolve_type_with_current_vars(a))
+                    .collect::<Result<_, _>>()?;
+
+                match name.as_str() {
+                    "Vector" if resolved_args.len() == 1 => Ok(MonoType::Vector(Box::new(
+                        resolved_args.into_iter().next().unwrap(),
+                    ))),
+                    "Dict" if resolved_args.len() == 2 => {
+                        let mut it = resolved_args.into_iter();
+                        let key = it.next().unwrap();
+                        match &key {
+                            MonoType::Int | MonoType::String | MonoType::Byte => {}
+                            _ => {
+                                self.errors.push(TypeError::InvalidDictKey {
+                                    key_type: key.clone(),
+                                    span: *span,
+                                });
+                                return Err(());
+                            }
+                        }
+                        Ok(MonoType::Dict(Box::new(key), Box::new(it.next().unwrap())))
+                    }
+                    "Option" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: OPTION_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Result" if resolved_args.len() == 2 => Ok(MonoType::Named {
+                        type_id: RESULT_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Cell" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: CELL_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Iterator" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: ITERATOR_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "IterItem" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: ITER_ITEM_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "UnfoldStep" if resolved_args.len() == 2 => Ok(MonoType::Named {
+                        type_id: UNFOLD_STEP_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    _ => match self.type_env.lookup_type(name) {
+                        Some(type_id) => {
+                            if let Some(TypeDef::Alias { .. }) = self.type_env.get_def(type_id) {
+                                self.errors.push(TypeError::GenericNotSupported {
+                                    name: name.clone(),
+                                    span: *span,
+                                    note: "Type aliases cannot take type arguments".to_string(),
+                                });
+                                return Err(());
+                            }
+                            let expected_arity = self
+                                .type_env
+                                .get_def(type_id)
+                                .map(|d| d.type_params().len())
+                                .unwrap_or(0);
+                            if resolved_args.len() != expected_arity {
+                                self.errors.push(TypeError::UndefinedType {
+                                    name: format!(
+                                        "{} (expected {} type arg(s), found {})",
+                                        name,
+                                        expected_arity,
+                                        resolved_args.len()
+                                    ),
+                                    span: *span,
+                                });
+                                Err(())
+                            } else {
+                                Ok(MonoType::Named {
+                                    type_id,
+                                    args: resolved_args,
+                                })
+                            }
+                        }
+                        None => {
+                            self.errors.push(TypeError::UndefinedType {
+                                name: name.clone(),
+                                span: *span,
+                            });
+                            Err(())
+                        }
+                    },
+                }
+            }
+            AstType::Function { params, ret, .. } => {
+                let param_tys: Vec<MonoType> = params
+                    .iter()
+                    .map(|p| self.resolve_type_with_current_vars(p))
+                    .collect::<Result<_, _>>()?;
+                let ret_ty = self.resolve_type_with_current_vars(ret)?;
+                Ok(MonoType::Function {
+                    params: param_tys,
+                    ret: Box::new(ret_ty),
+                })
+            }
+            _ => self.type_env.resolve_type(ty, &mut self.errors),
+        }
     }
 
     //
