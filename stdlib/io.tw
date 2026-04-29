@@ -1,0 +1,11 @@
+pub fn read_stdin_chunk(max_bytes: Int) Vector<Byte> {
+  __host_stdin_read_chunk(max_bytes)
+}
+
+pub fn write_stdout_bytes(bytes: Vector<Byte>) {
+  __host_stdout_write_bytes(bytes)
+}
+
+pub fn write_stdout_text(text: String) {
+  write_stdout_bytes(text.utf8_bytes())
+}

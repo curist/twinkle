@@ -331,6 +331,20 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(HOST_EXIT, "__host_exit", Runtime, false, false),
     spec!(HOST_NOW, "__host_now", Runtime, false, false),
     spec!(HOST_RUN_WASM, "__host_run_wasm", Runtime, false, false),
+    spec!(
+        HOST_STDIN_READ_CHUNK,
+        "__host_stdin_read_chunk",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(
+        HOST_STDOUT_WRITE_BYTES,
+        "__host_stdout_write_bytes",
+        Runtime,
+        false,
+        false
+    ),
 ];
 
 pub fn all_specs() -> &'static [IntrinsicSpec] {
@@ -393,6 +407,14 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("__host_exit", prelude_ids::HOST_EXIT),
     ("__host_now", prelude_ids::HOST_NOW),
     ("__host_run_wasm", prelude_ids::HOST_RUN_WASM),
+    (
+        "__host_stdin_read_chunk",
+        prelude_ids::HOST_STDIN_READ_CHUNK,
+    ),
+    (
+        "__host_stdout_write_bytes",
+        prelude_ids::HOST_STDOUT_WRITE_BYTES,
+    ),
 ];
 
 const LEGACY_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[

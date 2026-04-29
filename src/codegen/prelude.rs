@@ -4,8 +4,8 @@ use crate::intrinsics::registry::{self, IntrinsicDispatch};
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_VARIANT, ref_array_null, ref_pdict, ref_pdict_null, ref_pvec, ref_pvec_null, ref_string,
-    ref_string_null,
+    T_VARIANT, ref_array, ref_array_null, ref_pdict, ref_pdict_null, ref_pvec, ref_pvec_null,
+    ref_string, ref_string_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
@@ -384,6 +384,22 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             vec![ref_array_null(), ref_array_null()],
             vec![ValType::I64],
         )),
+        id if id == prelude_ids::HOST_STDIN_READ_CHUNK => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "host",
+            "stdin_read_chunk",
+            "host_stdin_read_chunk",
+            vec![ValType::I32],
+            vec![ref_array()],
+        )),
+        id if id == prelude_ids::HOST_STDOUT_WRITE_BYTES => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "host",
+            "stdout_write_bytes",
+            "host_stdout_write_bytes",
+            vec![ref_array_null()],
+            vec![],
+        )),
         _ => None,
     }
 }
@@ -448,6 +464,8 @@ mod tests {
             prelude_ids::HOST_EXIT.0,
             prelude_ids::HOST_NOW.0,
             prelude_ids::HOST_RUN_WASM.0,
+            prelude_ids::HOST_STDIN_READ_CHUNK.0,
+            prelude_ids::HOST_STDOUT_WRITE_BYTES.0,
             prelude_ids::CHAR_CODE_AT.0,
             prelude_ids::FROM_CHAR_CODE.0,
             prelude_ids::STRING_UTF8_BYTES.0,

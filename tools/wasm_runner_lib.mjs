@@ -17,7 +17,7 @@
 // small bridge Wasm module to create/read Wasm GC values (since JS cannot
 // directly construct or inspect Wasm GC arrays/structs).
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -197,6 +197,21 @@ function makeHostImports(b, runtime) {
       write_bytes: (pathRef, bytesRef) => {
         const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
         writeFileSync(filePath, decodeByteArray(b, bytesRef));
+      },
+      stdin_read_chunk: (maxBytes) => {
+        const n = Number(maxBytes);
+        if (n <= 0) return makeByteArray(b, []);
+        const buf = Buffer.allocUnsafe(n);
+        const read = readSync(0, buf, 0, n, null);
+        return makeByteArray(b, buf.subarray(0, read));
+      },
+      stdout_write_bytes: (bytesRef) => {
+        const bytes = decodeByteArray(b, bytesRef);
+        if (runtime.stdout?.fd !== undefined) {
+          writeSync(runtime.stdout.fd, bytes);
+        } else {
+          runtime.stdout.write(Buffer.from(bytes));
+        }
       },
       mkdirp: (pathRef) => {
         const dirPath = resolve(runtime.cwd, decodeString(b, pathRef));

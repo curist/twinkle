@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::types::ty::RESULT_TYPE_ID;
@@ -58,6 +58,8 @@ struct HostImportTypes {
     read_file: Option<FuncType>,
     write_file: Option<FuncType>,
     write_bytes: Option<FuncType>,
+    stdin_read_chunk: Option<FuncType>,
+    stdout_write_bytes: Option<FuncType>,
     mkdirp: Option<FuncType>,
     list_dir: Option<FuncType>,
     exists: Option<FuncType>,
@@ -152,6 +154,26 @@ impl HostImportTypes {
                         "duplicate host import: write_bytes"
                     );
                     out.write_bytes = Some(func_ty);
+                }
+                "stdin_read_chunk" => {
+                    let result_ty = concrete_array_from_func_result(&func_ty, 0)
+                        .with_context(|| format!("invalid host import signature for {name}"))?;
+                    merge_runtime_array_ty(&mut out.runtime_array_ty, result_ty)?;
+                    ensure!(
+                        out.stdin_read_chunk.is_none(),
+                        "duplicate host import: stdin_read_chunk"
+                    );
+                    out.stdin_read_chunk = Some(func_ty);
+                }
+                "stdout_write_bytes" => {
+                    let bytes_ty = concrete_array_from_func_param(&func_ty, 0)
+                        .with_context(|| format!("invalid host import signature for {name}"))?;
+                    merge_runtime_array_ty(&mut out.runtime_array_ty, bytes_ty)?;
+                    ensure!(
+                        out.stdout_write_bytes.is_none(),
+                        "duplicate host import: stdout_write_bytes"
+                    );
+                    out.stdout_write_bytes = Some(func_ty);
                 }
                 "mkdirp" => {
                     let path_ty = concrete_array_from_func_param(&func_ty, 0)
@@ -415,6 +437,65 @@ impl HostImportTypes {
                     std::fs::write(&host_path, bytes).with_context(|| {
                         format!("host.write_bytes failed for '{}'", host_path.display())
                     })?;
+                    Ok(())
+                },
+            )?;
+        }
+
+        if let Some(ty) = &self.stdin_read_chunk {
+            let runtime_array_ty = self
+                .runtime_array_ty
+                .clone()
+                .ok_or_else(|| anyhow!("missing runtime array type for host.stdin_read_chunk"))?;
+            linker.func_new(
+                "host",
+                "stdin_read_chunk",
+                ty.clone(),
+                move |mut caller, params, results| {
+                    ensure!(
+                        params.len() == 1,
+                        "host.stdin_read_chunk expected 1 argument"
+                    );
+                    ensure!(
+                        results.len() == 1,
+                        "host.stdin_read_chunk expected 1 result"
+                    );
+                    let max_bytes = match params[0] {
+                        Val::I32(n) => n.max(0) as usize,
+                        Val::I64(n) => n.max(0) as usize,
+                        ref other => {
+                            bail!("host.stdin_read_chunk expected integer argument, got {other:?}")
+                        }
+                    };
+                    let mut buf = vec![0u8; max_bytes];
+                    let read = std::io::stdin()
+                        .read(&mut buf)
+                        .context("host.stdin_read_chunk failed")?;
+                    buf.truncate(read);
+                    let bytes = encode_runtime_byte_vector(&mut caller, &runtime_array_ty, &buf)?;
+                    results[0] = Val::AnyRef(Some(bytes));
+                    Ok(())
+                },
+            )?;
+        }
+
+        if let Some(ty) = &self.stdout_write_bytes {
+            linker.func_new(
+                "host",
+                "stdout_write_bytes",
+                ty.clone(),
+                move |mut caller, params, _results| {
+                    ensure!(
+                        params.len() == 1,
+                        "host.stdout_write_bytes expected 1 argument"
+                    );
+                    let bytes = decode_runtime_bytes(&mut caller, &params[0])?;
+                    std::io::stdout()
+                        .write_all(&bytes)
+                        .context("host.stdout_write_bytes failed")?;
+                    std::io::stdout()
+                        .flush()
+                        .context("host.stdout_write_bytes flush failed")?;
                     Ok(())
                 },
             )?;

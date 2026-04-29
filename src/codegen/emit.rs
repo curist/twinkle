@@ -7097,7 +7097,10 @@ fn emit_runtime_prelude_call(
 /// Host functions that return a flat $Array representing a Vector.
 fn is_host_vector_returning(func_id: FuncId) -> bool {
     use crate::ir::lower::prelude as ids;
-    func_id == ids::HOST_ARGS || func_id == ids::HOST_LIST_DIR || func_id == ids::HOST_ENV
+    func_id == ids::HOST_ARGS
+        || func_id == ids::HOST_LIST_DIR
+        || func_id == ids::HOST_ENV
+        || func_id == ids::HOST_STDIN_READ_CHUNK
 }
 
 fn is_host_read_file(func_id: FuncId) -> bool {
@@ -7110,13 +7113,16 @@ fn is_host_read_file(func_id: FuncId) -> bool {
 fn is_host_vector_arg(func_id: FuncId, index: usize) -> bool {
     use crate::ir::lower::prelude as ids;
     (func_id == ids::HOST_WRITE_BYTES && index == 1)
+        || (func_id == ids::HOST_STDOUT_WRITE_BYTES && index == 0)
         || (func_id == ids::HOST_RUN_WASM && (index == 0 || index == 1))
 }
 
 /// Whether any arg of `func_id` needs PVec → Array conversion.
 fn has_host_vector_args(func_id: FuncId) -> bool {
     use crate::ir::lower::prelude as ids;
-    func_id == ids::HOST_WRITE_BYTES || func_id == ids::HOST_RUN_WASM
+    func_id == ids::HOST_WRITE_BYTES
+        || func_id == ids::HOST_STDOUT_WRITE_BYTES
+        || func_id == ids::HOST_RUN_WASM
 }
 
 fn ensure_rt_arr_from_array_import(ctx: &mut EmitCtx<'_>) {

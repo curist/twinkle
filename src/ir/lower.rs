@@ -136,6 +136,8 @@ pub mod prelude {
     pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
     pub const HOST_NOW: FuncId = FuncId(1030); // () -> Float (milliseconds since time origin)
     pub const HOST_RUN_WASM: FuncId = FuncId(1031); // (bytes: Vector<Byte>, argv: Vector<String>) -> Int
+    pub const HOST_STDIN_READ_CHUNK: FuncId = FuncId(1032); // (max_bytes: Int) -> Vector<Byte>
+    pub const HOST_STDOUT_WRITE_BYTES: FuncId = FuncId(1033); // (bytes: Vector<Byte>) -> Void
 
     // User functions start here
     pub const USER_FUNC_START: u32 = 41;

@@ -995,6 +995,20 @@ impl ValueEnv {
                 ret: Box::new(MonoType::Int),
             },
         );
+        env.builtins.insert(
+            "__host_stdin_read_chunk".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Vector(Box::new(MonoType::Byte))),
+            },
+        );
+        env.builtins.insert(
+            "__host_stdout_write_bytes".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Vector(Box::new(MonoType::Byte))],
+                ret: Box::new(MonoType::Void),
+            },
+        );
 
         // Note: len() is intentionally NOT pre-registered as a builtin here.
         // It will be handled specially in check.rs::synth_call() to support both
