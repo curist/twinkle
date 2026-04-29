@@ -53,6 +53,9 @@ use .suites.lib_json_suite
 use .suites.utf16_suite
 use .suites.line_index_suite
 use .suites.lsp_protocol_suite
+use .suites.lsp_framing_suite
+use .suites.lsp_document_store_suite
+use .suites.lsp_server_core_suite
 use .suites.multi_module_suite
 use .suites.base_env_guardrail_suite
 use .suites.signature_loader_suite
@@ -114,6 +117,9 @@ runner.run_all([
   utf16_suite.suite(),
   line_index_suite.suite(),
   lsp_protocol_suite.suite(),
+  lsp_framing_suite.suite(),
+  lsp_document_store_suite.suite(),
+  lsp_server_core_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),

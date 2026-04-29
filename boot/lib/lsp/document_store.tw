@@ -1,0 +1,51 @@
+// Pure document state for LSP features.
+//
+// This module intentionally avoids transport and compiler dependencies so query
+// code (hover, goto definition, diagnostics) can be tested against in-memory
+// documents before being wired into the server loop.
+
+use lib.text.line_index
+
+pub type Document = .{
+  uri: String,
+  text: String,
+  version: Int?,
+  index: line_index.LineIndex,
+}
+
+pub type Store = .{
+  docs: Dict<String, Document>,
+}
+
+pub fn empty() Store {
+  .{ docs: Dict.new() }
+}
+
+pub fn open(store: Store, uri: String, text: String, version: Int?) Store {
+  put(store, make_document(uri, text, version))
+}
+
+pub fn change_full_text(store: Store, uri: String, text: String, version: Int?) Store {
+  put(store, make_document(uri, text, version))
+}
+
+pub fn close(store: Store, uri: String) Store {
+  .{ docs: store.docs.remove(uri) }
+}
+
+pub fn get(store: Store, uri: String) Document? {
+  store.docs[uri]
+}
+
+fn make_document(uri: String, text: String, version: Int?) Document {
+  .{ uri, text, version, index: line_index.new(text) }
+}
+
+fn put(store: Store, doc: Document) Store {
+  docs: Dict<String, Document> = Dict.new()
+  for uri, existing in store.docs {
+    docs[uri] = existing
+  }
+  docs[doc.uri] = doc
+  .{ docs }
+}

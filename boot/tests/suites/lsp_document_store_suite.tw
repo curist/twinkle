@@ -1,0 +1,43 @@
+use tests.runner
+use tests.assert
+use lib.lsp.document_store
+use lib.text.line_index
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp document store")
+    .test("opens and gets a document", fn() {
+      store := document_store.open(document_store.empty(), "file:///a.tw", "one\ntwo", .Some(1))
+      doc := try document_store.get(store, "file:///a.tw").ok_or("missing document")
+      try assert.str_eq(doc.uri, "file:///a.tw")
+      try assert.str_eq(doc.text, "one\ntwo")
+      try assert.int_eq(try doc.version.ok_or("missing version"), 1)
+      pos := line_index.byte_offset_to_position(doc.index, 4, .Utf16)
+      try assert.int_eq(pos.line, 1)
+      try assert.int_eq(pos.character, 0)
+      .Ok({})
+    })
+    .test("changes full text and rebuilds index", fn() {
+      store := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+      changed := document_store.change_full_text(store, "file:///a.tw", "a𝄞b\ncd", .Some(2))
+      doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+      try assert.str_eq(doc.text, "a𝄞b\ncd")
+      try assert.int_eq(try doc.version.ok_or("missing version"), 2)
+      pos := line_index.byte_offset_to_position(doc.index, 5, .Utf16)
+      try assert.int_eq(pos.character, 3)
+      .Ok({})
+    })
+    .test("updates do not mutate previous store", fn() {
+      original := document_store.empty()
+      opened := document_store.open(original, "file:///a.tw", "text", .None)
+      try assert.is_none(document_store.get(original, "file:///a.tw"))
+      try assert.is_some(document_store.get(opened, "file:///a.tw"))
+      .Ok({})
+    })
+    .test("closes a document", fn() {
+      store := document_store.open(document_store.empty(), "file:///a.tw", "text", .None)
+      closed := document_store.close(store, "file:///a.tw")
+      try assert.is_none(document_store.get(closed, "file:///a.tw"))
+      try assert.is_some(document_store.get(store, "file:///a.tw"))
+      .Ok({})
+    })
+}

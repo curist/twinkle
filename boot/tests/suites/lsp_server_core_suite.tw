@@ -1,0 +1,69 @@
+use tests.runner
+use tests.assert
+use lib.json
+use lib.lsp.protocol
+use lib.lsp.server_core
+
+fn only_out(step: server_core.Step) json.Json!String {
+  if step.outgoing.len() != 1 {
+    .Err("expected one outgoing message")
+  } else {
+    .Ok(step.outgoing[0])
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp server core")
+    .test("initialize returns minimal capabilities", fn() {
+      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      out := try only_out(step)
+      result := try json.decode(out, json.field("result", json.raw()))
+      caps := try json.decode(result, json.field("capabilities", json.raw()))
+      try assert.str_eq(try json.decode(caps, json.field("positionEncoding", json.string())), "utf-16")
+      try assert.int_eq(try json.decode(caps, json.field("textDocumentSync", json.int())), 1)
+      info := try json.decode(result, json.field("serverInfo", json.raw()))
+      try assert.str_eq(try json.decode(info, json.field("name", json.string())), "twinkle-lsp")
+      .Ok({})
+    })
+    .test("initialized notification updates state without response", fn() {
+      msg := protocol.Message.Notification(.{ method: "initialized", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.is_true(step.state.initialized)
+      try assert.int_eq(step.outgoing.len(), 0)
+      .Ok({})
+    })
+    .test("shutdown responds null and marks state", fn() {
+      msg := protocol.Message.Request(.{ id: .StringId("s"), method: "shutdown", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.is_true(step.state.shutdown_requested)
+      out := try only_out(step)
+      case try json.decode(out, json.field("result", json.raw())) {
+        .Null => .Ok({}),
+        _ => assert.fail("expected null result"),
+      }
+    })
+    .test("exit notification requests exit", fn() {
+      msg := protocol.Message.Notification(.{ method: "exit", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.is_true(step.state.should_exit)
+      try assert.int_eq(step.outgoing.len(), 0)
+      .Ok({})
+    })
+    .test("unknown request returns method not found", fn() {
+      msg := protocol.Message.Request(.{ id: .IntId(9), method: "twinkle/nope", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      out := try only_out(step)
+      err := try json.decode(out, json.field("error", json.raw()))
+      try assert.int_eq(try json.decode(err, json.field("code", json.int())), -32601)
+      try assert.str_eq(try json.decode(err, json.field("message", json.string())), "method not found")
+      .Ok({})
+    })
+    .test("unknown notification is ignored", fn() {
+      msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.int_eq(step.outgoing.len(), 0)
+      try assert.is_false(step.state.should_exit)
+      .Ok({})
+    })
+}

@@ -1,0 +1,68 @@
+use tests.runner
+use tests.assert
+use lib.lsp.framing
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp framing")
+    .test("encodes content length header", fn() {
+      try assert.str_eq(framing.content_length_header("{}"), "Content-Length: 2\r\n")
+      try assert.str_eq(framing.encode_message("{}"), "Content-Length: 2\r\n\r\n{}")
+      .Ok({})
+    })
+    .test("decodes complete frame and rest", fn() {
+      input := "Content-Length: 2\r\n\r\n{}next"
+      result := try framing.try_decode_frame(input)
+      case result {
+        .Decoded(frame, rest) => {
+          try assert.str_eq(frame.body, "{}")
+          try assert.str_eq(rest, "next")
+          try assert.str_eq(try frame.headers["Content-Length"].ok_or("missing header"), "2")
+          .Ok({})
+        },
+        .NeedMore => assert.fail("expected decoded frame"),
+      }
+    })
+    .test("keeps additional headers", fn() {
+      input := "Content-Length: 2\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}"
+      result := try framing.try_decode_frame(input)
+      case result {
+        .Decoded(frame, _) => {
+          try assert.str_eq(try frame.headers["Content-Type"].ok_or("missing header"), "application/vscode-jsonrpc; charset=utf-8")
+          .Ok({})
+        },
+        .NeedMore => assert.fail("expected decoded frame"),
+      }
+    })
+    .test("needs more for incomplete header or body", fn() {
+      case try framing.try_decode_frame("Content-Length: 2\r\n") {
+        .NeedMore => {},
+        .Decoded(_, _) => { return assert.fail("expected need more for header") },
+      }
+      case try framing.try_decode_frame("Content-Length: 4\r\n\r\n{}") {
+        .NeedMore => .Ok({}),
+        .Decoded(_, _) => assert.fail("expected need more for body"),
+      }
+    })
+    .test("rejects missing or invalid content length", fn() {
+      try assert.is_err(framing.try_decode_frame("X-Test: y\r\n\r\n{}"))
+      try assert.is_err(framing.try_decode_frame("Content-Length: nope\r\n\r\n{}"))
+      try assert.is_err(framing.try_decode_frame("Content-Length: -1\r\n\r\n{}"))
+      .Ok({})
+    })
+    .test("decodes byte frames with partial input", fn() {
+      partial := "Content-Length: 2\r\n\r\n{".utf8_bytes()
+      case try framing.try_decode_frame_bytes(partial) {
+        .NeedMoreBytes => {},
+        .DecodedBytes(_, _) => { return assert.fail("expected need more") },
+      }
+      complete := partial.concat("}rest".utf8_bytes())
+      case try framing.try_decode_frame_bytes(complete) {
+        .DecodedBytes(frame, rest) => {
+          try assert.str_eq(frame.body, "{}")
+          try assert.str_eq(try String.from_utf8(rest).ok_or("invalid rest"), "rest")
+          .Ok({})
+        },
+        .NeedMoreBytes => assert.fail("expected decoded bytes"),
+      }
+    })
+}
