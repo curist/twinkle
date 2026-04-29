@@ -21,6 +21,22 @@ tools/twk_boot.mjs run boot/tests/main.tw
 cargo run --release -- build boot/main.tw -o target/boot-main.wasm
 ```
 
+### Build the bundled CLI
+`tools/build_bun_cli.sh` only bundles the existing `target/boot.wasm`; it does not rebuild the self-hosted compiler payload. After changing `boot/main.tw` or any code that should be embedded in `./target/twk`, refresh the stage2 payload first:
+```bash
+cargo build --release
+tools/selfhost_loop.sh boot/main.tw
+tools/build_bun_cli.sh
+./target/twk --help
+```
+
+The Makefile wraps these steps:
+```bash
+make stage2            # rebuild target/boot.wasm via the self-host loop
+make bundle-cli        # rebuild target/boot.wasm, then bundle ./target/twk
+make quick-bundle-cli  # only rebundle an already-fresh target/boot.wasm
+```
+
 ### Update the tree-sitter grammar
 After editing `tree-sitter-twinkle/grammar.js`, regenerate and rebuild:
 ```bash
@@ -35,6 +51,16 @@ The wasm is tracked in git so CI doesn't need Docker.
 ```bash
 cargo test
 tools/twk_boot.mjs run boot/tests/main.tw
+```
+Fast boot test wrapper:
+```bash
+tools/boot-test-fast.sh
+```
+Makefile wrappers:
+```bash
+make test
+make boot-test
+make rust-test
 ```
 
 ### Implementation focus
