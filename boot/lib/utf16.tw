@@ -1,0 +1,111 @@
+// UTF-8 traversal and UTF-16 code-unit accounting helpers.
+//
+// LSP positions are commonly expressed in UTF-16 code units. Twinkle strings
+// are byte-indexed UTF-8, so LSP support needs small conversion primitives.
+
+pub type CodePoint = .{
+  value: Int,
+  byte_start: Int,
+  byte_end: Int,
+}
+
+pub fn code_unit_len(cp: Int) Int {
+  if cp <= 0xFFFF { 1 } else { 2 }
+}
+
+pub fn code_points(s: String) Iterator<CodePoint> {
+  Iterator.unfold(0, fn(pos: Int) {
+    if pos >= s.len() {
+      UnfoldStep.Done
+    } else {
+      len := utf8_len_at(s, pos)
+      cp := decode_cp(s, pos)
+      UnfoldStep.Yield(CodePoint.{ value: cp, byte_start: pos, byte_end: pos + len }, pos + len)
+    }
+  })
+}
+
+pub fn count_code_units(s: String) Int {
+  count := 0
+  pos := 0
+  for pos < s.len() {
+    cp := decode_cp(s, pos)
+    count = count + code_unit_len(cp)
+    pos = pos + utf8_len_at(s, pos)
+  }
+  count
+}
+
+/// Convert a UTF-8 byte offset to a UTF-16 code-unit offset.
+/// If byte_offset falls inside a multi-byte code point, returns the code-unit
+/// offset at the start of that code point.
+pub fn byte_offset_to_code_units(s: String, byte_offset: Int) Int {
+  if byte_offset <= 0 {
+    return 0
+  }
+  target := if byte_offset > s.len() { s.len() } else { byte_offset }
+  count := 0
+  pos := 0
+  for pos < target {
+    len := utf8_len_at(s, pos)
+    if pos + len > target {
+      return count
+    }
+    cp := decode_cp(s, pos)
+    count = count + code_unit_len(cp)
+    pos = pos + len
+  }
+  count
+}
+
+/// Convert a UTF-16 code-unit offset to a UTF-8 byte offset.
+/// Returns None when the requested offset lands in the middle of a surrogate
+/// pair or lies outside the string.
+pub fn code_units_to_byte_offset(s: String, units: Int) Int? {
+  if units < 0 {
+    return .None
+  }
+  if units == 0 {
+    return .Some(0)
+  }
+
+  count := 0
+  pos := 0
+  for pos < s.len() {
+    cp := decode_cp(s, pos)
+    width := code_unit_len(cp)
+    next_count := count + width
+    next_pos := pos + utf8_len_at(s, pos)
+    if units == next_count {
+      return .Some(next_pos)
+    }
+    if units > count and units < next_count {
+      return .None
+    }
+    count = next_count
+    pos = next_pos
+  }
+
+  .None
+}
+
+fn utf8_len_at(s: String, pos: Int) Int {
+  lead := Byte.to_int(s[pos])
+  if lead < 0x80 { 1 }
+  else if lead < 0xE0 { 2 }
+  else if lead < 0xF0 { 3 }
+  else { 4 }
+}
+
+fn decode_cp(s: String, pos: Int) Int {
+  lead := Byte.to_int(s[pos])
+  if lead < 0x80 {
+    lead
+  } else if lead < 0xE0 {
+    ((lead - 0xC0) * 64) + (Byte.to_int(s[pos + 1]) - 0x80)
+  } else if lead < 0xF0 {
+    ((lead - 0xE0) * 4096) + ((Byte.to_int(s[pos + 1]) - 0x80) * 64) + (Byte.to_int(s[pos + 2]) - 0x80)
+  } else {
+    ((lead - 0xF0) * 262144) + ((Byte.to_int(s[pos + 1]) - 0x80) * 4096) + ((Byte.to_int(s[pos + 2]) - 0x80) * 64) + (Byte.to_int(s[pos + 3]) - 0x80)
+  }
+}

@@ -1,0 +1,141 @@
+// Byte/line/character position conversion for LSP-style text documents.
+
+use lib.utf16
+
+pub type PositionEncoding = {
+  Utf8,
+  Utf16,
+  Utf32,
+}
+
+pub type Position = .{
+  line: Int,
+  character: Int,
+}
+
+pub type TextRange = .{
+  start: Position,
+  end: Position,
+}
+
+pub type LineIndex = .{
+  source: String,
+  line_starts: Vector<Int>,
+}
+
+pub fn new(source: String) LineIndex {
+  starts: Vector<Int> = [0]
+  i := 0
+  for i < source.len() {
+    if source[i].to_int() == 10 {
+      starts = starts.append(i + 1)
+    }
+    i = i + 1
+  }
+  .{ source, line_starts: starts }
+}
+
+pub fn byte_offset_to_position(index: LineIndex, offset: Int, encoding: PositionEncoding) Position {
+  clamped := clamp(offset, 0, index.source.len())
+  line := line_for_offset(index, clamped)
+  start := index.line_starts[line]
+  rel_bytes := clamped - start
+  line_text := index.source.slice(start, clamped)
+  character := case encoding {
+    .Utf8 => rel_bytes,
+    .Utf16 => utf16.byte_offset_to_code_units(line_text, rel_bytes),
+    .Utf32 => byte_offset_to_scalars(line_text, rel_bytes),
+  }
+  .{ line, character }
+}
+
+pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: PositionEncoding) Int? {
+  if pos.line < 0 or pos.line >= index.line_starts.len() or pos.character < 0 {
+    return .None
+  }
+  start := index.line_starts[pos.line]
+  end := line_content_end(index, pos.line)
+  line_text := index.source.slice(start, end)
+  rel := case encoding {
+    .Utf8 => {
+      if pos.character > line_text.len() { return .None }
+      pos.character
+    },
+    .Utf16 => case utf16.code_units_to_byte_offset(line_text, pos.character) {
+      .Some(v) => v,
+      .None => { return .None },
+    },
+    .Utf32 => case scalars_to_byte_offset(line_text, pos.character) {
+      .Some(v) => v,
+      .None => { return .None },
+    },
+  }
+  .Some(start + rel)
+}
+
+pub fn byte_range_to_range(index: LineIndex, start: Int, end: Int, encoding: PositionEncoding) TextRange {
+  .{
+    start: byte_offset_to_position(index, start, encoding),
+    end: byte_offset_to_position(index, end, encoding),
+  }
+}
+
+fn line_for_offset(index: LineIndex, offset: Int) Int {
+  line := 0
+  i := 0
+  for i < index.line_starts.len() {
+    if index.line_starts[i] <= offset {
+      line = i
+    } else {
+      break
+    }
+    i = i + 1
+  }
+  line
+}
+
+fn line_content_end(index: LineIndex, line: Int) Int {
+  raw_end := if line + 1 < index.line_starts.len() {
+    index.line_starts[line + 1] - 1
+  } else {
+    index.source.len()
+  }
+  if raw_end > index.line_starts[line] and index.source[raw_end - 1].to_int() == 13 {
+    raw_end - 1
+  } else {
+    raw_end
+  }
+}
+
+fn byte_offset_to_scalars(s: String, byte_offset: Int) Int {
+  target := clamp(byte_offset, 0, s.len())
+  count := 0
+  for cp in utf16.code_points(s) {
+    if cp.byte_end > target {
+      return count
+    }
+    count = count + 1
+  }
+  count
+}
+
+fn scalars_to_byte_offset(s: String, scalar_count: Int) Int? {
+  if scalar_count < 0 {
+    return .None
+  }
+  if scalar_count == 0 {
+    return .Some(0)
+  }
+  count := 0
+  for cp in utf16.code_points(s) {
+    count = count + 1
+    if count == scalar_count {
+      return .Some(cp.byte_end)
+    }
+  }
+  .None
+}
+
+fn clamp(value: Int, lo: Int, hi: Int) Int {
+  if value < lo { lo } else if value > hi { hi } else { value }
+}

@@ -50,6 +50,8 @@ use .suites.dependency_graph_suite
 use .suites.query_keys_suite
 use .suites.imports_suite
 use .suites.lib_json_suite
+use .suites.utf16_suite
+use .suites.line_index_suite
 use .suites.multi_module_suite
 use .suites.base_env_guardrail_suite
 use .suites.signature_loader_suite
@@ -108,6 +110,8 @@ runner.run_all([
   query_keys_suite.suite(),
   imports_suite.suite(),
   lib_json_suite.suite(),
+  utf16_suite.suite(),
+  line_index_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),
