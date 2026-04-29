@@ -1,5 +1,6 @@
 use tests.runner
 use tests.assert
+use compiler.query.cache as query_cache
 use lib.json
 use lib.lsp.protocol
 use lib.lsp.document_store
@@ -66,20 +67,30 @@ pub fn suite() runner.Suite {
           json.kv("uri", .Str("file:///a.tw")),
           json.kv("languageId", .Str("twinkle")),
           json.kv("version", .Int(1)),
-          json.kv("text", .Str("old")),
+          json.kv("text", .Str("x := 1\n")),
         ])),
       ])
       msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(params) })
       step := server_core.handle_message(server_core.initial_state(), msg)
       doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
-      try assert.str_eq(doc.text, "old")
+      try assert.str_eq(doc.text, "x := 1\n")
       try assert.int_eq(try doc.version.ok_or("missing version"), 1)
-      try assert.int_eq(step.outgoing.len(), 0)
+      out := try only_out(step)
+      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      params_out := try json.decode(out, json.field("params", json.raw()))
+      try assert.str_eq(try json.decode(params_out, json.field("uri", json.string())), "file:///a.tw")
+      try assert.int_eq(try json.decode(params_out, json.field("version", json.int())), 1)
       .Ok({})
     })
     .test("didChange replaces full document text", fn() {
       opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
-      state := server_core.State.{ initialized: true, shutdown_requested: false, should_exit: false, documents: opened }
+      state := server_core.State.{
+        initialized: true,
+        shutdown_requested: false,
+        should_exit: false,
+        documents: opened,
+        query_cache: query_cache.empty(),
+      }
       params := json.object([
         json.kv("textDocument", json.object([
           json.kv("uri", .Str("file:///a.tw")),
@@ -94,12 +105,19 @@ pub fn suite() runner.Suite {
       doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
       try assert.str_eq(doc.text, "new")
       try assert.int_eq(try doc.version.ok_or("missing version"), 2)
-      try assert.int_eq(step.outgoing.len(), 0)
+      out := try only_out(step)
+      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
       .Ok({})
     })
     .test("didClose removes the document", fn() {
       opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
-      state := server_core.State.{ initialized: true, shutdown_requested: false, should_exit: false, documents: opened }
+      state := server_core.State.{
+        initialized: true,
+        shutdown_requested: false,
+        should_exit: false,
+        documents: opened,
+        query_cache: query_cache.empty(),
+      }
       params := json.object([
         json.kv("textDocument", json.object([
           json.kv("uri", .Str("file:///a.tw")),
@@ -108,7 +126,11 @@ pub fn suite() runner.Suite {
       msg := protocol.Message.Notification(.{ method: "textDocument/didClose", params: .Some(params) })
       step := server_core.handle_message(state, msg)
       try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
-      try assert.int_eq(step.outgoing.len(), 0)
+      out := try only_out(step)
+      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      params_out := try json.decode(out, json.field("params", json.raw()))
+      diagnostics := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+      try assert.int_eq(diagnostics.len(), 0)
       .Ok({})
     })
     .test("malformed document notification is ignored", fn() {

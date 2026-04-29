@@ -59,6 +59,7 @@ use .suites.lsp_protocol_suite
 use .suites.lsp_framing_suite
 use .suites.lsp_params_suite
 use .suites.lsp_document_store_suite
+use .suites.lsp_diagnostics_suite
 use .suites.lsp_server_core_suite
 use .suites.multi_module_suite
 use .suites.base_env_guardrail_suite
@@ -127,6 +128,7 @@ runner.run_all([
   lsp_framing_suite.suite(),
   lsp_params_suite.suite(),
   lsp_document_store_suite.suite(),
+  lsp_diagnostics_suite.suite(),
   lsp_server_core_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),

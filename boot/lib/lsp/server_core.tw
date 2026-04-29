@@ -3,7 +3,10 @@
 // Transport code owns framing and I/O. This module owns protocol state and
 // responses so server behavior can be tested without stdio.
 
+use compiler.query.cache as query_cache
+use compiler.query.diagnostics as query_diagnostics
 use lib.json
+use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
 use lib.lsp.params
 use lib.lsp.protocol
@@ -13,6 +16,7 @@ pub type State = .{
   shutdown_requested: Bool,
   should_exit: Bool,
   documents: document_store.Store,
+  query_cache: query_cache.Store,
 }
 
 pub type Step = .{
@@ -21,7 +25,13 @@ pub type Step = .{
 }
 
 pub fn initial_state() State {
-  .{ initialized: false, shutdown_requested: false, should_exit: false, documents: document_store.empty() }
+  .{
+    initialized: false,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: document_store.empty(),
+    query_cache: query_cache.empty(),
+  }
 }
 
 pub fn handle_message(state: State, message: protocol.Message) Step {
@@ -79,7 +89,8 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
     .Ok(open) => {
       doc := open.text_document
       store := document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
-      .{ state: with_documents(state, store), outgoing: [] }
+      next := with_documents(state, store)
+      publish_document_diagnostics(next, doc.uri)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -94,7 +105,8 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
       full := change.content_changes[change.content_changes.len() - 1]
       doc := change.text_document
       store := document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
-      .{ state: with_documents(state, store), outgoing: [] }
+      next := with_documents(state, store)
+      publish_document_diagnostics(next, doc.uri)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -103,25 +115,80 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
 fn handle_did_close(state: State, note: protocol.Notification) Step {
   case params.decode_did_close(note.params) {
     .Ok(close) => {
-      store := document_store.close(state.documents, close.text_document.uri)
-      .{ state: with_documents(state, store), outgoing: [] }
+      uri := close.text_document.uri
+      version := case document_store.get(state.documents, uri) {
+        .Some(doc) => doc.version,
+        .None => .None,
+      }
+      store := document_store.close(state.documents, uri)
+      next := with_documents(state, store)
+      .{ state: next, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
     },
     .Err(_) => .{ state, outgoing: [] },
   }
 }
 
 fn with_initialized(state: State, initialized: Bool) State {
-  .{ initialized, shutdown_requested: state.shutdown_requested, should_exit: state.should_exit, documents: state.documents }
+  .{
+    initialized,
+    shutdown_requested: state.shutdown_requested,
+    should_exit: state.should_exit,
+    documents: state.documents,
+    query_cache: state.query_cache,
+  }
 }
 
 fn with_shutdown_requested(state: State, shutdown_requested: Bool) State {
-  .{ initialized: state.initialized, shutdown_requested, should_exit: state.should_exit, documents: state.documents }
+  .{
+    initialized: state.initialized,
+    shutdown_requested,
+    should_exit: state.should_exit,
+    documents: state.documents,
+    query_cache: state.query_cache,
+  }
 }
 
 fn with_should_exit(state: State, should_exit: Bool) State {
-  .{ initialized: state.initialized, shutdown_requested: state.shutdown_requested, should_exit, documents: state.documents }
+  .{
+    initialized: state.initialized,
+    shutdown_requested: state.shutdown_requested,
+    should_exit,
+    documents: state.documents,
+    query_cache: state.query_cache,
+  }
 }
 
 fn with_documents(state: State, documents: document_store.Store) State {
-  .{ initialized: state.initialized, shutdown_requested: state.shutdown_requested, should_exit: state.should_exit, documents }
+  .{
+    initialized: state.initialized,
+    shutdown_requested: state.shutdown_requested,
+    should_exit: state.should_exit,
+    documents,
+    query_cache: state.query_cache,
+  }
+}
+
+fn with_query_cache(state: State, cache: query_cache.Store) State {
+  .{
+    initialized: state.initialized,
+    shutdown_requested: state.shutdown_requested,
+    should_exit: state.should_exit,
+    documents: state.documents,
+    query_cache: cache,
+  }
+}
+
+fn publish_document_diagnostics(state: State, uri: String) Step {
+  doc := case document_store.get(state.documents, uri) {
+    .Some(d) => d,
+    .None => { return .{ state, outgoing: [] } },
+  }
+  result := query_diagnostics.analyze_document(state.query_cache, .{
+    uri: doc.uri,
+    text: doc.text,
+    version: doc.version,
+  })
+  next := with_query_cache(state, result.cache)
+  notification := lsp_diagnostics.publish_diagnostics(doc.uri, doc.version, doc.index, result.diagnostics)
+  .{ state: next, outgoing: [notification] }
 }

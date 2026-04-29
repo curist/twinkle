@@ -1,0 +1,51 @@
+use tests.runner
+use tests.assert
+use compiler.query.diagnostics as query_diagnostics
+use lib.json
+use lib.lsp.diagnostics
+use lib.source.diagnostic as source_diag
+use lib.source.span
+use lib.text.line_index
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp diagnostics")
+    .test("converts query diagnostics to publishDiagnostics", fn() {
+      index := line_index.new("a𝄞b\ncd")
+      diag := query_diagnostics.Diagnostic.{
+        uri: "file:///a.tw",
+        version: .Some(2),
+        span: .Some(span.Span.{ file_id: 0, start: 1, end: 5 }),
+        severity: source_diag.Severity.Error,
+        message: "bad",
+        stage: "check",
+      }
+      out := diagnostics.publish_diagnostics("file:///a.tw", .Some(2), index, [diag])
+      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      params := try json.decode(out, json.field("params", json.raw()))
+      try assert.str_eq(try json.decode(params, json.field("uri", json.string())), "file:///a.tw")
+      try assert.int_eq(try json.decode(params, json.field("version", json.int())), 2)
+      items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+      try assert.int_eq(items.len(), 1)
+      item := items[0]
+      try assert.int_eq(try json.decode(item, json.field("severity", json.int())), 1)
+      try assert.str_eq(try json.decode(item, json.field("source", json.string())), "twinkle")
+      try assert.str_eq(try json.decode(item, json.field("message", json.string())), "bad")
+      range := try json.decode(item, json.field("range", json.raw()))
+      start := try json.decode(range, json.field("start", json.raw()))
+      end := try json.decode(range, json.field("end", json.raw()))
+      try assert.int_eq(try json.decode(start, json.field("line", json.int())), 0)
+      try assert.int_eq(try json.decode(start, json.field("character", json.int())), 1)
+      try assert.int_eq(try json.decode(end, json.field("character", json.int())), 3)
+      .Ok({})
+    })
+    .test("clear diagnostics publishes empty list", fn() {
+      out := diagnostics.clear_diagnostics("file:///a.tw", .None)
+      params := try json.decode(out, json.field("params", json.raw()))
+      items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+      try assert.int_eq(items.len(), 0)
+      case try json.decode(params, json.field("version", json.raw())) {
+        .Null => .Ok({}),
+        _ => assert.fail("expected null version"),
+      }
+    })
+}

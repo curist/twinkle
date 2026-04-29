@@ -1,0 +1,79 @@
+// LSP diagnostic JSON adapter.
+//
+// Compiler query diagnostics stay plain and byte-span based. This module is the
+// protocol edge that translates them into LSP ranges and publishDiagnostics
+// notifications.
+
+use compiler.query.diagnostics as query_diagnostics
+use lib.json
+use lib.lsp.protocol
+use lib.source.diagnostic as source_diag
+use lib.text.line_index
+
+pub fn publish_diagnostics(
+  uri: String,
+  version: Int?,
+  index: line_index.LineIndex,
+  diagnostics: Vector<query_diagnostics.Diagnostic>,
+) json.Json {
+  items := collect d in diagnostics { diagnostic_to_json(index, d) }
+  protocol.notification("textDocument/publishDiagnostics", .Some(json.object([
+    json.kv("uri", .Str(uri)),
+    json.kv("version", version_to_json(version)),
+    json.kv("diagnostics", json.array(items)),
+  ])))
+}
+
+pub fn clear_diagnostics(uri: String, version: Int?) json.Json {
+  protocol.notification("textDocument/publishDiagnostics", .Some(json.object([
+    json.kv("uri", .Str(uri)),
+    json.kv("version", version_to_json(version)),
+    json.kv("diagnostics", json.array([])),
+  ])))
+}
+
+fn diagnostic_to_json(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) json.Json {
+  json.object([
+    json.kv("range", range_to_json(diagnostic_range(index, d))),
+    json.kv("severity", .Int(severity_to_lsp(d.severity))),
+    json.kv("source", .Str("twinkle")),
+    json.kv("message", .Str(d.message)),
+  ])
+}
+
+fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) line_index.TextRange {
+  case d.span {
+    .Some(sp) => line_index.byte_range_to_range(index, sp.start, sp.end, .Utf16),
+    .None => line_index.byte_range_to_range(index, 0, 0, .Utf16),
+  }
+}
+
+fn range_to_json(range: line_index.TextRange) json.Json {
+  json.object([
+    json.kv("start", position_to_json(range.start)),
+    json.kv("end", position_to_json(range.end)),
+  ])
+}
+
+fn position_to_json(pos: line_index.Position) json.Json {
+  json.object([
+    json.kv("line", .Int(pos.line)),
+    json.kv("character", .Int(pos.character)),
+  ])
+}
+
+fn severity_to_lsp(severity: source_diag.Severity) Int {
+  case severity {
+    .Error => 1,
+    .Warning => 2,
+    .Info => 3,
+    .Hint => 4,
+  }
+}
+
+fn version_to_json(version: Int?) json.Json {
+  case version {
+    .Some(v) => .Int(v),
+    .None => .Null,
+  }
+}
