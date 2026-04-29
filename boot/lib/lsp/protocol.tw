@@ -1,0 +1,181 @@
+// Minimal JSON-RPC/LSP protocol envelope helpers.
+
+use lib.json
+
+pub type RequestId = {
+  IntId(Int),
+  StringId(String),
+  NullId,
+}
+
+pub type RpcError = .{
+  code: Int,
+  message: String,
+  data: json.Json?,
+}
+
+pub type Request = .{
+  id: RequestId,
+  method: String,
+  params: json.Json?,
+}
+
+pub type Notification = .{
+  method: String,
+  params: json.Json?,
+}
+
+pub type Response = .{
+  id: RequestId,
+  result: json.Json?,
+  error: RpcError?,
+}
+
+pub type Message = {
+  Request(Request),
+  Notification(Notification),
+  Response(Response),
+}
+
+pub fn parse_message(input: String) Result<Message, String> {
+  value := try json.parse(input)
+  decode_message(value)
+}
+
+pub fn decode_message(value: json.Json) Result<Message, String> {
+  version := try json.decode(value, json.field("jsonrpc", json.string()))
+  if version != "2.0" {
+    return .Err("expected jsonrpc 2.0")
+  }
+
+  case value {
+    .Object(obj) => {
+      has_method := has_key(obj, "method")
+      has_id := has_key(obj, "id")
+      has_result := has_key(obj, "result")
+      has_error := has_key(obj, "error")
+
+      if has_method {
+        method := try json.decode(value, json.field("method", json.string()))
+        params := optional_raw(obj, "params")
+        if has_id {
+          id_value := case obj["id"] { .Some(v) => v, .None => json.Json.Null }
+          id := try decode_request_id(id_value)
+          .Ok(.Request(.{ id, method, params }))
+        } else {
+          .Ok(.Notification(.{ method, params }))
+        }
+      } else if has_result or has_error {
+        if !has_id {
+          return .Err("response missing id")
+        }
+        id_value := case obj["id"] { .Some(v) => v, .None => json.Json.Null }
+        id := try decode_request_id(id_value)
+        result := optional_raw(obj, "result")
+        err: RpcError? = .None
+        if has_error {
+          error_value := case obj["error"] { .Some(v) => v, .None => json.Json.Null }
+          err = .Some(try decode_rpc_error(error_value))
+        }
+        .Ok(.Response(.{ id, result, error: err }))
+      } else {
+        .Err("expected request, notification, or response")
+      }
+    },
+    _ => .Err("expected object message"),
+  }
+}
+
+pub fn decode_request_id(value: json.Json) Result<RequestId, String> {
+  case value {
+    .Int(n) => .Ok(.IntId(n)),
+    .Str(s) => .Ok(.StringId(s)),
+    .Null => .Ok(.NullId),
+    _ => .Err("expected request id"),
+  }
+}
+
+pub fn request_id_to_json(id: RequestId) json.Json {
+  case id {
+    .IntId(n) => .Int(n),
+    .StringId(s) => .Str(s),
+    .NullId => .Null,
+  }
+}
+
+pub fn success_response(id: RequestId, result: json.Json) json.Json {
+  json.object([
+    json.kv("jsonrpc", .Str("2.0")),
+    json.kv("id", request_id_to_json(id)),
+    json.kv("result", result),
+  ])
+}
+
+pub fn error_response(id: RequestId, err: RpcError) json.Json {
+  json.object([
+    json.kv("jsonrpc", .Str("2.0")),
+    json.kv("id", request_id_to_json(id)),
+    json.kv("error", rpc_error_to_json(err)),
+  ])
+}
+
+pub fn notification(method: String, params: json.Json?) json.Json {
+  fields: Vector<json.Field> = [
+    json.kv("jsonrpc", .Str("2.0")),
+    json.kv("method", .Str(method)),
+  ]
+  case params {
+    .Some(p) => fields = fields.append(json.kv("params", p)),
+    .None => {},
+  }
+  json.object(fields)
+}
+
+pub fn request(id: RequestId, method: String, params: json.Json?) json.Json {
+  fields: Vector<json.Field> = [
+    json.kv("jsonrpc", .Str("2.0")),
+    json.kv("id", request_id_to_json(id)),
+    json.kv("method", .Str(method)),
+  ]
+  case params {
+    .Some(p) => fields = fields.append(json.kv("params", p)),
+    .None => {},
+  }
+  json.object(fields)
+}
+
+pub fn rpc_error_to_json(err: RpcError) json.Json {
+  fields: Vector<json.Field> = [
+    json.kv("code", .Int(err.code)),
+    json.kv("message", .Str(err.message)),
+  ]
+  case err.data {
+    .Some(data) => fields = fields.append(json.kv("data", data)),
+    .None => {},
+  }
+  json.object(fields)
+}
+
+fn decode_rpc_error(value: json.Json) Result<RpcError, String> {
+  code := try json.decode(value, json.field("code", json.int()))
+  message := try json.decode(value, json.field("message", json.string()))
+  data := case value {
+    .Object(obj) => optional_raw(obj, "data"),
+    _ => .None,
+  }
+  .Ok(.{ code, message, data })
+}
+
+fn optional_raw(obj: Dict<String, json.Json>, key: String) json.Json? {
+  case obj[key] {
+    .Some(v) => .Some(v),
+    .None => .None,
+  }
+}
+
+fn has_key(obj: Dict<String, json.Json>, key: String) Bool {
+  case obj[key] {
+    .Some(_) => true,
+    .None => false,
+  }
+}

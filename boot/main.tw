@@ -44,6 +44,10 @@ fn build_cmd() Command {
     .add_short_option("output", "o", "Output path (.wat or .wasm)")
 }
 
+fn lsp_cmd() Command {
+  command.make("lsp", "Start the Language Server Protocol server")
+}
+
 fn twk_app() App {
   app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
     parse_cmd(),
@@ -51,6 +55,7 @@ fn twk_app() App {
     ir_cmd(),
     run_cmd(),
     build_cmd(),
+    lsp_cmd(),
   ])
 }
 
@@ -300,6 +305,12 @@ fn resolve_build_output(parsed: ParseResult, file: String) String!String {
   .Ok(out)
 }
 
+fn run_lsp_command(_parsed: ParseResult) {
+  eprintln("error: LSP server transport is not implemented yet")
+  eprintln("JSON-RPC/LSP protocol helpers are available in lib.lsp.protocol.")
+  proc.exit(1)
+}
+
 fn run_build_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
@@ -366,6 +377,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
           output := try resolve_build_output(parsed, file)
           "Would build '${file}' to '${output}'."
         },
+        "lsp" => "Would start the LSP server.",
         _ => { return .Err("internal error: unsupported command '${cmd}'") },
       }
       .Ok(.{ cmd: cmd, detail: detail })
@@ -380,6 +392,7 @@ fn run_command(parsed: ParseResult) {
     .Some("check") => run_check_command(parsed),
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
+    .Some("lsp") => run_lsp_command(parsed),
     .Some("run") => {
       file := case get_positional(parsed, 0, "file") {
         .Ok(path) => path,
