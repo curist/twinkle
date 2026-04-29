@@ -1,0 +1,49 @@
+use tests.runner
+use tests.assert
+use compiler.query.cache
+use compiler.query.diagnostics
+
+fn input(text: String) diagnostics.DocumentInput {
+  .{ uri: "file:///main.tw", text, version: .Some(1) }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("query diagnostics")
+    .test("clean document has no diagnostics", fn() {
+      result := diagnostics.analyze_document(cache.empty(), input("x := 1\n"))
+      try assert.int_eq(result.diagnostics.len(), 0)
+      .Ok({})
+    })
+    .test("reports parse diagnostics", fn() {
+      result := diagnostics.analyze_document(cache.empty(), input("fn f( {"))
+      try assert.is_true(result.diagnostics.len() > 0)
+      try assert.str_eq(result.diagnostics[0].stage, "parse")
+      try assert.str_eq(result.diagnostics[0].uri, "file:///main.tw")
+      try assert.int_eq(try result.diagnostics[0].version.ok_or("missing version"), 1)
+      .Ok({})
+    })
+    .test("reports resolve diagnostics", fn() {
+      result := diagnostics.analyze_document(cache.empty(), input("fn f(x: Missing) Void { }"))
+      try assert.is_true(result.diagnostics.len() > 0)
+      try assert.str_eq(result.diagnostics[0].stage, "resolve")
+      try assert.str_contains(result.diagnostics[0].message, "undefined type")
+      .Ok({})
+    })
+    .test("reports typecheck diagnostics", fn() {
+      result := diagnostics.analyze_document(cache.empty(), input("fn answer() String { 42 }"))
+      try assert.is_true(result.diagnostics.len() > 0)
+      try assert.str_eq(result.diagnostics[0].stage, "check")
+      try assert.str_contains(result.diagnostics[0].message, "type mismatch")
+      .Ok({})
+    })
+    .test("reuses cached stages on second analysis", fn() {
+      first := diagnostics.analyze_document(cache.empty(), input("x := 1\n"))
+      second := diagnostics.analyze_document(first.cache, input("x := 1\n"))
+      try assert.int_eq(second.diagnostics.len(), 0)
+      stats := cache.get_stats(second.cache)
+      try assert.int_eq(stats.parse_hits, 1)
+      try assert.int_eq(stats.resolve_hits, 1)
+      try assert.int_eq(stats.typecheck_hits, 1)
+      .Ok({})
+    })
+}

@@ -1,0 +1,78 @@
+// Pure diagnostics query for compiler-aware tooling.
+//
+// This module exposes structured diagnostics over in-memory document text. It
+// intentionally stops at type checking: LSP diagnostics do not need lowering,
+// linking, monomorphization, or codegen.
+
+use compiler.base_env
+use compiler.query.cache
+use compiler.query.stage_runner
+use lib.query.keys
+use lib.source.span
+use lib.source.diagnostic as source_diag
+
+pub type Diagnostic = .{
+  uri: String,
+  version: Int?,
+  span: span.Span?,
+  severity: source_diag.Severity,
+  message: String,
+  stage: String,
+}
+
+pub type DocumentInput = .{
+  uri: String,
+  text: String,
+  version: Int?,
+}
+
+pub type AnalysisResult = .{
+  cache: cache.Store,
+  diagnostics: Vector<Diagnostic>,
+}
+
+pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult {
+  source_hash := keys.hash_text(input.text)
+  runner := stage_runner.new(input.uri, source_hash, 0, 0, false)
+
+  parsed_out := stage_runner.parse(runner, store, input.text, 0)
+  cur_cache := parsed_out.store
+  parsed := parsed_out.value
+  if parsed.diagnostics.len() > 0 {
+    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "parse", parsed.diagnostics) }
+  }
+
+  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
+  cur_cache = resolved_out.store
+  resolved := resolved_out.value
+  if resolved.diagnostics.len() > 0 {
+    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "resolve", resolved.diagnostics) }
+  }
+
+  checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved)
+  cur_cache = checked_out.store
+  checked := checked_out.value
+  if checked.diagnostics.len() > 0 {
+    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "check", checked.diagnostics) }
+  }
+
+  cur_cache = cache.set_module_hash(cur_cache, input.uri, keys.module_hash(source_hash, 0))
+  .{ cache: cur_cache, diagnostics: [] }
+}
+
+fn convert_diagnostics(
+  input: DocumentInput,
+  stage: String,
+  diagnostics: Vector<source_diag.Diagnostic>,
+) Vector<Diagnostic> {
+  collect d in diagnostics {
+    .{
+      uri: input.uri,
+      version: input.version,
+      span: .Some(d.span),
+      severity: d.severity,
+      message: d.message,
+      stage,
+    }
+  }
+}

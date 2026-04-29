@@ -50,6 +50,7 @@ use .suites.dependency_graph_suite
 use .suites.query_keys_suite
 use .suites.query_cache_suite
 use .suites.query_stage_runner_suite
+use .suites.query_diagnostics_suite
 use .suites.imports_suite
 use .suites.lib_json_suite
 use .suites.utf16_suite
@@ -117,6 +118,7 @@ runner.run_all([
   query_keys_suite.suite(),
   query_cache_suite.suite(),
   query_stage_runner_suite.suite(),
+  query_diagnostics_suite.suite(),
   imports_suite.suite(),
   lib_json_suite.suite(),
   utf16_suite.suite(),
