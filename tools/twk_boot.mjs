@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runWasmFile } from "./run_wasm_node.mjs";
+import { runWasmFile } from "./wasm_runner_lib.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
