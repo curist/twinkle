@@ -164,6 +164,7 @@ fn analyze_module(
   source := case overlay.lookup(state.overlay, module_id) {
     .Ok(found) => found,
     .Err(err) => {
+      state.cache = cache.clear_module(state.cache, canonical)
       next := add_synthetic(state, module_id.uri, .None, "source", err)
       return .{ env: base, state: next, ok: false }
     },
@@ -185,6 +186,7 @@ fn analyze_module(
   }) {
     .Ok(plan) => plan,
     .Err(err) => {
+      state.cache = cache.clear_resolved_and_later(state.cache, canonical)
       next := add_synthetic(state, source.identity.uri, source.version, "import", err)
       return .{ env: base, state: next, ok: false }
     },
@@ -224,6 +226,7 @@ fn analyze_module(
   }
   cur.cache = cache.set_dependencies(cur.cache, canonical, collect dep in dep_plan.dependencies { dep.canonical_path })
   if !deps_ok {
+    cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
     return .{ env, state: cur, ok: false }
   }
 
@@ -247,6 +250,7 @@ fn analyze_module(
   cur.cache = resolved_out.store
   resolved := resolved_out.value
   if resolved.diagnostics.len() > 0 {
+    cur.cache = cache.clear_typed_and_later(cur.cache, canonical)
     cur.diagnostics = cur.diagnostics.concat(convert_source_diagnostics(source, "resolve", resolved.diagnostics))
     return .{ env, state: cur, ok: false }
   }
@@ -255,6 +259,7 @@ fn analyze_module(
   cur.cache = checked_out.store
   checked := checked_out.value
   if checked.diagnostics.len() > 0 {
+    cur.cache = cache.clear_lowered_and_hash(cur.cache, canonical)
     cur.diagnostics = cur.diagnostics.concat(convert_source_diagnostics(source, "check", checked.diagnostics))
     return .{ env, state: cur, ok: false }
   }

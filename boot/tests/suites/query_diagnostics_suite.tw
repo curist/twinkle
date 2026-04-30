@@ -66,6 +66,34 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       .Ok({})
     })
+    .test("workspace semantic snapshot drops stale entry semantics when a dependency fails", fn() {
+      entry := "file:///tmp/semantic-workspace/main.tw"
+      dep := "file:///tmp/semantic-workspace/dep.tw"
+      first := semantic.snapshot_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp/semantic-workspace",
+        open_documents: [
+          doc(entry, "use dep\nx := dep.answer()\n", 1),
+          doc(dep, "pub fn answer() Int { 42 }\n", 1),
+        ],
+      })
+      try assert.is_true(first.ok)
+      try assert.is_some(first.typed)
+
+      second := semantic.snapshot_workspace(first.cache, .{
+        entry_uri: entry,
+        project_root: "/tmp/semantic-workspace",
+        open_documents: [
+          doc(entry, "use dep\nx := dep.answer()\n", 1),
+          doc(dep, "pub fn answer() String { 42 }\n", 2),
+        ],
+      })
+      try assert.is_false(second.ok)
+      try assert.is_some(second.parsed)
+      try assert.is_none(second.resolved)
+      try assert.is_none(second.typed)
+      .Ok({})
+    })
     .test("semantic snapshot stays usable across edits", fn() {
       entry := "file:///tmp/semantic-edit.tw"
       first := semantic.snapshot(cache.empty(), doc(entry, "fn answer() Int { 1 }\n", 1))

@@ -116,12 +116,54 @@ pub fn invalidate_changed_module(store: Store, module: String) Store {
     if path == module {
       store.parsed = store.parsed.remove(path)
     }
-    store.resolved = store.resolved.remove(path)
-    store.typed = store.typed.remove(path)
-    store.lowered = store.lowered.remove(path)
-    store.module_hashes = store.module_hashes.remove(path)
+    store = clear_resolved_and_later(store, path)
   }
   store
+}
+
+pub fn clear_module(store: Store, module: String) Store {
+  store.parsed = store.parsed.remove(module)
+  store = clear_resolved_and_later(store, module)
+  store
+}
+
+pub fn clear_resolved_and_later(store: Store, module: String) Store {
+  store.resolved = store.resolved.remove(module)
+  store = clear_typed_and_later(store, module)
+  store
+}
+
+pub fn clear_typed_and_later(store: Store, module: String) Store {
+  store.typed = store.typed.remove(module)
+  store = clear_lowered_and_hash(store, module)
+  store
+}
+
+pub fn clear_lowered_and_hash(store: Store, module: String) Store {
+  store.lowered = store.lowered.remove(module)
+  store.module_hashes = store.module_hashes.remove(module)
+  store
+}
+
+pub fn latest_parsed(store: Store, module: String) ParsedModule? {
+  case store.parsed[module] {
+    .Some(entry) => .Some(entry.value),
+    .None => .None,
+  }
+}
+
+pub fn latest_resolved(store: Store, module: String) resolver.ResolveResult? {
+  case store.resolved[module] {
+    .Some(entry) => .Some(entry.value),
+    .None => .None,
+  }
+}
+
+pub fn latest_typed(store: Store, module: String) checker.CheckResult? {
+  case store.typed[module] {
+    .Some(entry) => .Some(entry.value),
+    .None => .None,
+  }
 }
 
 pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {

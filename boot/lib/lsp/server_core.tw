@@ -192,7 +192,11 @@ fn handle_definition(state: State, req: protocol.Request) Step {
           next := with_query_cache(state, snap.cache)
           case query_definition.definition(snap, offset) {
             .Some(result) => {
-              .{ state: next, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(doc.index, result))] }
+              target_index := case document_store.get(next.documents, result.uri) {
+                .Some(target_doc) => target_doc.index,
+                .None => doc.index,
+              }
+              .{ state: next, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
             },
             .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
           }

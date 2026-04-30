@@ -3,21 +3,23 @@
 // This module exposes parsed/resolved/typed artifacts and lightweight source
 // lookup helpers without lowering or codegen.
 
-use compiler.base_env
 use compiler.ast
+use compiler.base_env
 use compiler.checker.{CheckResult}
+use compiler.imports
 use compiler.query.cache
 use compiler.query.diagnostics
 use compiler.query.stage_runner
 use compiler.resolver.{ResolveResult}
 use lib.query.keys
 use lib.source.identity
-use lib.source.overlay
 use lib.source.span
 
 pub type SemanticSnapshot = .{
   cache: cache.Store,
   uri: String,
+  canonical_path: String,
+  project_root: String,
   version: Int?,
   parsed: cache.ParsedModule?,
   resolved: ResolveResult?,
@@ -45,25 +47,51 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
     .Err(_) => identity.from_path(input.entry_uri),
   }
 
-  docs: Vector<overlay.OverlayDocument> = []
+  // Run full workspace analysis (resolves imports from disk/overlays).
+  result := diagnostics.analyze_workspace(store, input)
+  cur_cache := result.cache
+
+  // Find the canonical path for this entry so we can look up cached artifacts.
+  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
+
+  // Find diagnostics and version for this entry.
+  version: Int? = .None
   for doc in input.open_documents {
     doc_id := case identity.from_file_uri(doc.uri) {
-      .Ok(parsed) => parsed,
+      .Ok(p) => p,
       .Err(_) => identity.from_path(doc.uri),
     }
-    docs = docs.append(.{ identity: doc_id, text: doc.text, version: doc.version })
+    if doc_id.path == id.path {
+      version = doc.version
+      break
+    }
   }
 
-  source := case overlay.lookup(overlay.from_documents(docs), id) {
-    .Ok(found) => found,
-    .Err(err) => {
-      diag := diagnostics.Diagnostic.{ uri: id.uri, version: .None, span: .None, severity: .Error, message: err, stage: "source" }
-      return .{ cache: store, uri: id.uri, version: .None, parsed: .None, resolved: .None, typed: .None, diagnostics: [diag], ok: false }
-    },
+  entry_diags: Vector<diagnostics.Diagnostic> = []
+  for group in result.diagnostics_by_uri {
+    if group.uri == id.uri {
+      entry_diags = group.diagnostics
+      break
+    }
   }
 
-  doc_input := diagnostics.DocumentInput.{ uri: source.identity.uri, text: source.text, version: source.version }
-  snapshot_source(store, source.identity, doc_input)
+  // Extract cached artifacts for the entry module.
+  parsed := cache.latest_parsed(cur_cache, canonical)
+  resolved := cache.latest_resolved(cur_cache, canonical)
+  typed := cache.latest_typed(cur_cache, canonical)
+
+  .{
+    cache: cur_cache,
+    uri: id.uri,
+    canonical_path: canonical,
+    project_root: input.project_root,
+    version,
+    parsed,
+    resolved,
+    typed,
+    diagnostics: entry_diags,
+    ok: entry_diags.len() == 0 and typed != .None,
+  }
 }
 
 pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSnapshot {
@@ -71,10 +99,6 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.uri),
   }
-  snapshot_source(store, id, input)
-}
-
-fn snapshot_source(store: cache.Store, id: identity.SourceIdentity, input: diagnostics.DocumentInput) SemanticSnapshot {
   source_hash := keys.hash_text(input.text)
   store = cache.note_source_hash(store, id.path, source_hash)
   runner := stage_runner.new(id.path, source_hash, 0, 0, false)
@@ -84,14 +108,9 @@ fn snapshot_source(store: cache.Store, id: identity.SourceIdentity, input: diagn
   parsed := parsed_out.value
   if parsed.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache,
-      uri: id.uri,
-      version: input.version,
-      parsed: .Some(parsed),
-      resolved: .None,
-      typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics),
-      ok: false,
+      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
+      parsed: .Some(parsed), resolved: .None, typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics), ok: false,
     }
   }
 
@@ -100,14 +119,9 @@ fn snapshot_source(store: cache.Store, id: identity.SourceIdentity, input: diagn
   resolved := resolved_out.value
   if resolved.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache,
-      uri: id.uri,
-      version: input.version,
-      parsed: .Some(parsed),
-      resolved: .Some(resolved),
-      typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics),
-      ok: false,
+      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
+      parsed: .Some(parsed), resolved: .Some(resolved), typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics), ok: false,
     }
   }
 
@@ -116,26 +130,17 @@ fn snapshot_source(store: cache.Store, id: identity.SourceIdentity, input: diagn
   checked := checked_out.value
   if checked.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache,
-      uri: id.uri,
-      version: input.version,
-      parsed: .Some(parsed),
-      resolved: .Some(resolved),
-      typed: .Some(checked),
-      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics),
-      ok: false,
+      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
+      parsed: .Some(parsed), resolved: .Some(resolved), typed: .Some(checked),
+      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics), ok: false,
     }
   }
 
   .{
     cache: cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0)),
-    uri: id.uri,
-    version: input.version,
-    parsed: .Some(parsed),
-    resolved: .Some(resolved),
-    typed: .Some(checked),
-    diagnostics: [],
-    ok: true,
+    uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
+    parsed: .Some(parsed), resolved: .Some(resolved), typed: .Some(checked),
+    diagnostics: [], ok: true,
   }
 }
 

@@ -17,6 +17,18 @@ fn state_with_doc(uri: String, text: String) server_core.State {
   }
 }
 
+fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
+  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
+  docs := document_store.open(docs0, uri_b, text_b, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+  }
+}
+
 fn def_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
   params := json.object([
     json.kv("textDocument", json.object([
@@ -58,6 +70,15 @@ fn is_null_result(step: server_core.Step) Bool!String {
     .Null => .Ok(true),
     _ => .Ok(false),
   }
+}
+
+fn def_result_uri(step: server_core.Step) String!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  json.decode(result, json.field("uri", json.string()))
 }
 
 pub fn suite() runner.Suite {
@@ -103,17 +124,44 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("goto def on type name jumps to type decl", fn() {
-      // Line 0: type Point = .{ x: Int, y: Int }
-      // Line 1: fn make() Point { .{ x: 0, y: 0 } }
-      // We hover on Point in the function — but that's a TypeExpr, not an Expr ident.
-      // Instead test calling a function named after a type.
-      // Actually let's test: a top-level let that references a function.
-      src := "fn greet() String { \"hi\" }\ntype Msg = .{ text: String }\nfn make() Msg { .{ text: greet() } }\nx := greet()\n"
+      src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
       state := state_with_doc("file:///a.tw", src)
-      // "greet" on line 3 at char 5
-      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 3, 5))
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 10))
       r := try def_result_range(step)
       try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 0)
+      .Ok({})
+    })
+    .test("goto def on imported function jumps to defining module", fn() {
+      dep := "pub fn answer() Int { 42 }\n"
+      main := "use dep\nx := dep.answer()\n"
+      state := state_with_two_docs("file:///tmp/lsp-def/dep.tw", dep, "file:///tmp/lsp-def/main.tw", main)
+      step := server_core.handle_message(state, def_request(1, "file:///tmp/lsp-def/main.tw", 1, 9))
+      uri := try def_result_uri(step)
+      try assert.str_eq(uri, "file:///tmp/lsp-def/dep.tw")
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 0)
+      .Ok({})
+    })
+    .test("goto def on imported type annotation jumps to defining module", fn() {
+      dep := "pub type Point = .{ x: Int }\n"
+      main := "use dep\nfn make() dep.Point { dep.Point.{ x: 1 } }\n"
+      state := state_with_two_docs("file:///tmp/lsp-def-type/dep.tw", dep, "file:///tmp/lsp-def-type/main.tw", main)
+      step := server_core.handle_message(state, def_request(1, "file:///tmp/lsp-def-type/main.tw", 1, 15))
+      uri := try def_result_uri(step)
+      try assert.str_eq(uri, "file:///tmp/lsp-def-type/dep.tw")
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 0)
+      .Ok({})
+    })
+    .test("goto def on method call uses receiver type identity", fn() {
+      src := "type Counter = .{ n: Int }\nfn inc(c: Counter) Counter { .{ n: c.n + 1 } }\nfn main() Counter {\n  c := Counter.{ n: 1 }\n  c.inc()\n}\n"
+      state := state_with_doc("file:///method.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///method.tw", 4, 4))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 1)
       try assert.int_eq(r.start_char, 0)
       .Ok({})
     })
