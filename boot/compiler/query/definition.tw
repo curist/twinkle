@@ -237,7 +237,7 @@ fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: St
   for item in parsed.module.items {
     case item {
       .Function(decl) => if decl.name == name {
-        return .Some(.{ uri: identity.from_path(module_path).uri, span: decl.span })
+        return .Some(.{ uri: identity.from_path(module_path).uri, span: function_name_span(decl) })
       },
       _ => {},
     }
@@ -253,7 +253,7 @@ fn find_type_in_module(snap: SemanticSnapshot, module_path: String, name: String
   for item in parsed.module.items {
     case item {
       .Type(decl) => if decl.name == name {
-        return .Some(.{ uri: identity.from_path(module_path).uri, span: decl.span })
+        return .Some(.{ uri: identity.from_path(module_path).uri, span: type_name_span(decl) })
       },
       _ => {},
     }
@@ -274,7 +274,7 @@ fn find_variant_in_module(snap: SemanticSnapshot, module_path: String, type_name
           .Sum(variants) => {
             for v in variants {
               if v.name == variant_name {
-                return .Some(.{ uri: identity.from_path(module_path).uri, span: v.span })
+                return .Some(.{ uri: identity.from_path(module_path).uri, span: .{ file_id: v.span.file_id, start: v.span.start, end: v.span.start + v.name.len() } })
               }
             }
           },
@@ -285,6 +285,16 @@ fn find_variant_in_module(snap: SemanticSnapshot, module_path: String, type_name
     }
   }
   .None
+}
+
+fn function_name_span(decl: FunctionDecl) span.Span {
+  start := decl.span.start + if decl.is_pub { 7 } else { 3 }
+  .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
+}
+
+fn type_name_span(decl: TypeDecl) span.Span {
+  start := decl.span.start + if decl.is_pub { 9 } else { 5 }
+  .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
 fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule, alias: String) String? {
@@ -541,7 +551,12 @@ fn find_expr_refs(exprs: Vector<Expr>, offset: Int) Ref? {
 }
 
 fn find_expr_ref_in_entries(entries: Vector<RecordEntry>, offset: Int) Ref? {
-  for entry in entries { case entry.value { .Some(e) => case find_expr_ref_in_expr(e, offset) { .Some(r) => { return .Some(r) }, .None => {} }, .None => {} } }
+  for entry in entries {
+    case entry.value {
+      .Some(e) => case find_expr_ref_in_expr(e, offset) { .Some(r) => { return .Some(r) }, .None => {} },
+      .None => if entry.span.contains(offset) { return .Some(.Ident(entry.name)) },
+    }
+  }
   .None
 }
 

@@ -91,9 +91,10 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///a.tw", src)
       step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 5))
       r := try def_result_range(step)
-      // Function decl starts at line 0 char 0
       try assert.int_eq(r.start_line, 0)
-      try assert.int_eq(r.start_char, 0)
+      try assert.int_eq(r.start_char, 3)
+      try assert.int_eq(r.end_line, 0)
+      try assert.int_eq(r.end_char, 8)
       .Ok({})
     })
     .test("goto def on local variable jumps to let binding", fn() {
@@ -129,7 +130,9 @@ pub fn suite() runner.Suite {
       step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 10))
       r := try def_result_range(step)
       try assert.int_eq(r.start_line, 0)
-      try assert.int_eq(r.start_char, 0)
+      try assert.int_eq(r.start_char, 5)
+      try assert.int_eq(r.end_line, 0)
+      try assert.int_eq(r.end_char, 8)
       .Ok({})
     })
     .test("goto def on imported function jumps to defining module", fn() {
@@ -141,7 +144,9 @@ pub fn suite() runner.Suite {
       try assert.str_eq(uri, "file:///tmp/lsp-def/dep.tw")
       r := try def_result_range(step)
       try assert.int_eq(r.start_line, 0)
-      try assert.int_eq(r.start_char, 0)
+      try assert.int_eq(r.start_char, 7)
+      try assert.int_eq(r.end_line, 0)
+      try assert.int_eq(r.end_char, 13)
       .Ok({})
     })
     .test("goto def on imported type annotation jumps to defining module", fn() {
@@ -153,7 +158,9 @@ pub fn suite() runner.Suite {
       try assert.str_eq(uri, "file:///tmp/lsp-def-type/dep.tw")
       r := try def_result_range(step)
       try assert.int_eq(r.start_line, 0)
-      try assert.int_eq(r.start_char, 0)
+      try assert.int_eq(r.start_char, 9)
+      try assert.int_eq(r.end_line, 0)
+      try assert.int_eq(r.end_char, 14)
       .Ok({})
     })
     .test("goto def on method call uses receiver type identity", fn() {
@@ -162,7 +169,27 @@ pub fn suite() runner.Suite {
       step := server_core.handle_message(state, def_request(1, "file:///method.tw", 4, 4))
       r := try def_result_range(step)
       try assert.int_eq(r.start_line, 1)
-      try assert.int_eq(r.start_char, 0)
+      try assert.int_eq(r.start_char, 3)
+      try assert.int_eq(r.end_line, 1)
+      try assert.int_eq(r.end_char, 6)
+      .Ok({})
+    })
+    .test("goto def on anonymous record shorthand jumps to parameter", fn() {
+      src := "type Pair = .{ x: Int, y: Int }\nfn mk(x: Int, y: Int) Pair {\n  .{ x, y }\n}\n"
+      state := state_with_doc("file:///record.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///record.tw", 2, 5))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 1)
+      try assert.int_eq(r.start_char, 6)
+      .Ok({})
+    })
+    .test("goto def on named record shorthand jumps to parameter", fn() {
+      src := "type Pair = .{ x: Int, y: Int }\nfn mk(x: Int, y: Int) Pair {\n  Pair.{ x, y }\n}\n"
+      state := state_with_doc("file:///record.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///record.tw", 2, 9))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 1)
+      try assert.int_eq(r.start_char, 6)
       .Ok({})
     })
     .test("goto def returns null for non-identifier positions", fn() {
