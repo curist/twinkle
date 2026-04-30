@@ -1,0 +1,260 @@
+// Hover query: find the type of the expression at a given byte offset.
+
+use compiler.ast.{
+  Module, Item, Block, Stmt, Expr, ExprKind, StringPart,
+  RecordEntry, CaseArm, CollectExpr, FunctionDecl,
+}
+use compiler.checker.{CheckResult}
+use compiler.resolver.{ResolvedEnv, MonoType, ty_to_string_env}
+use compiler.query.semantic.{SemanticSnapshot}
+use lib.source.span
+
+pub type HoverResult = .{
+  content: String,
+  span: span.Span,
+}
+
+pub fn hover(snap: SemanticSnapshot, byte_offset: Int) HoverResult? {
+  parsed := case snap.parsed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  typed := case snap.typed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+
+  for item in parsed.module.items {
+    case item {
+      .Function(decl) => {
+        if decl.span.contains(byte_offset) {
+          case hover_function_decl(decl, byte_offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          }
+        }
+      },
+      .Stmt(stmt) => case stmt {
+        .Let(ls) => {
+          if ls.span.contains(byte_offset) {
+            case hover_expr(ls.value, byte_offset, typed) {
+              .Some(r) => { return .Some(r) },
+              .None => {},
+            }
+          }
+        },
+        .Expr(es) => {
+          if es.span.contains(byte_offset) {
+            case hover_expr(es.expr, byte_offset, typed) {
+              .Some(r) => { return .Some(r) },
+              .None => {},
+            }
+          }
+        },
+        _ => {},
+      },
+      _ => {},
+    }
+  }
+  .None
+}
+
+fn hover_function_decl(decl: FunctionDecl, offset: Int, typed: CheckResult) HoverResult? {
+  hover_block(decl.body, offset, typed)
+}
+
+fn hover_block(block: Block, offset: Int, typed: CheckResult) HoverResult? {
+  for stmt in block.stmts {
+    case hover_stmt(stmt, offset, typed) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+  case block.tail {
+    .Some(expr) => hover_expr(expr, offset, typed),
+    .None => .None,
+  }
+}
+
+fn hover_stmt(stmt: Stmt, offset: Int, typed: CheckResult) HoverResult? {
+  case stmt {
+    .Let(ls) => {
+      if ls.span.contains(offset) {
+        return hover_expr(ls.value, offset, typed)
+      }
+      .None
+    },
+    .For(fs) => {
+      if fs.span.contains(offset) {
+        case fs.iter {
+          .Some(iter) => case hover_expr(iter, offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          },
+          .None => {},
+        }
+        case fs.condition {
+          .Some(cond) => case hover_expr(cond, offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          },
+          .None => {},
+        }
+        return hover_block(fs.body, offset, typed)
+      }
+      .None
+    },
+    .Return(rs) => case rs.value {
+      .Some(expr) => hover_expr(expr, offset, typed),
+      .None => .None,
+    },
+    .Break(bs) => case bs.value {
+      .Some(expr) => hover_expr(expr, offset, typed),
+      .None => .None,
+    },
+    .Defer(ds) => hover_expr(ds.expr, offset, typed),
+    .Expr(es) => {
+      if es.span.contains(offset) {
+        return hover_expr(es.expr, offset, typed)
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn hover_expr(expr: Expr, offset: Int, typed: CheckResult) HoverResult? {
+  if !expr.span.contains(offset) {
+    return .None
+  }
+
+  // Try to find a deeper child match first.
+  case hover_expr_children(expr, offset, typed) {
+    .Some(r) => .Some(r),
+    .None => expr_type(expr, typed),
+  }
+}
+
+fn expr_type(expr: Expr, typed: CheckResult) HoverResult? {
+  case typed.type_map[expr.id] {
+    .Some(ty) => {
+      content := ty_to_string_env(typed.env, ty)
+      .Some(HoverResult.{ content, span: expr.span })
+    },
+    .None => .None,
+  }
+}
+
+fn hover_expr_children(expr: Expr, offset: Int, typed: CheckResult) HoverResult? {
+  case expr.kind {
+    .Unary(_, inner) => hover_expr(inner, offset, typed),
+    .Binary(_, lhs, rhs) => {
+      case hover_expr(lhs, offset, typed) {
+        .Some(r) => .Some(r),
+        .None => hover_expr(rhs, offset, typed),
+      }
+    },
+    .Call(callee, args) => {
+      case hover_expr(callee, offset, typed) {
+        .Some(r) => .Some(r),
+        .None => hover_exprs(args, offset, typed),
+      }
+    },
+    .Field(base, _) => hover_expr(base, offset, typed),
+    .Index(base, idx) => {
+      case hover_expr(base, offset, typed) {
+        .Some(r) => .Some(r),
+        .None => hover_expr(idx, offset, typed),
+      }
+    },
+    .BlockExpr(block) => hover_block(block, offset, typed),
+    .If(cond, then_block, else_expr) => {
+      case hover_expr(cond, offset, typed) {
+        .Some(r) => .Some(r),
+        .None => case hover_block(then_block, offset, typed) {
+          .Some(r) => .Some(r),
+          .None => case else_expr {
+            .Some(e) => hover_expr(e, offset, typed),
+            .None => .None,
+          },
+        },
+      }
+    },
+    .Case(scrutinee, arms) => {
+      case hover_expr(scrutinee, offset, typed) {
+        .Some(r) => .Some(r),
+        .None => {
+          for arm in arms {
+            if arm.span.contains(offset) {
+              case hover_expr(arm.expr, offset, typed) {
+                .Some(r) => { return .Some(r) },
+                .None => {},
+              }
+            }
+          }
+          .None
+        },
+      }
+    },
+    .Array(elems) => hover_exprs(elems, offset, typed),
+    .Record(entries) => hover_record_entries(entries, offset, typed),
+    .NamedRecord(_, entries) => hover_record_entries(entries, offset, typed),
+    .Variant(_, fields) => hover_exprs(fields, offset, typed),
+    .Closure(_, _, body) => hover_block(body, offset, typed),
+    .Collect(col) => hover_collect(col, offset, typed),
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => case hover_expr(e, offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          },
+          _ => {},
+        }
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn hover_exprs(exprs: Vector<Expr>, offset: Int, typed: CheckResult) HoverResult? {
+  for e in exprs {
+    case hover_expr(e, offset, typed) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn hover_record_entries(entries: Vector<RecordEntry>, offset: Int, typed: CheckResult) HoverResult? {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => case hover_expr(e, offset, typed) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn hover_collect(col: CollectExpr, offset: Int, typed: CheckResult) HoverResult? {
+  case col.iter {
+    .Some(iter) => case hover_expr(iter, offset, typed) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    },
+    .None => {},
+  }
+  case col.condition {
+    .Some(cond) => case hover_expr(cond, offset, typed) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    },
+    .None => {},
+  }
+  hover_block(col.body, offset, typed)
+}

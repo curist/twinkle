@@ -1,0 +1,137 @@
+use tests.runner
+use tests.assert
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.protocol
+use lib.lsp.document_store
+use lib.lsp.server_core
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+  }
+}
+
+fn hover_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([
+      json.kv("uri", .Str(uri)),
+    ])),
+    json.kv("position", json.object([
+      json.kv("line", .Int(line)),
+      json.kv("character", .Int(character)),
+    ])),
+  ])
+  protocol.Message.Request(.{ id: .IntId(id), method: "textDocument/hover", params: .Some(params) })
+}
+
+fn hover_content(step: server_core.Step) String!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  contents := try json.decode(result, json.field("contents", json.raw()))
+  value := try json.decode(contents, json.field("value", json.string()))
+  .Ok(value)
+}
+
+fn is_null_result(step: server_core.Step) Bool!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  case result {
+    .Null => .Ok(true),
+    _ => .Ok(false),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp hover")
+    .test("hover on integer literal shows Int", fn() {
+      //         01234567
+      state := state_with_doc("file:///a.tw", "x := 42\n")
+      // "42" is at offset 5-7, line 0 char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on string literal shows String", fn() {
+      state := state_with_doc("file:///a.tw", "x := \"hello\"\n")
+      // "hello" starts at offset 5, line 0 char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nString\n```")
+      .Ok({})
+    })
+    .test("hover on boolean literal shows Bool", fn() {
+      state := state_with_doc("file:///a.tw", "x := true\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nBool\n```")
+      .Ok({})
+    })
+    .test("hover on variable shows inferred type", fn() {
+      //                                              0123456789...
+      state := state_with_doc("file:///a.tw", "x := 42\ny := x\n")
+      // "x" on line 1 is at char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on function name shows function type", fn() {
+      state := state_with_doc("file:///a.tw", "fn add(a: Int, b: Int) Int { a + b }\nx := add(1, 2)\n")
+      // "add" on line 1 at char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nfn(Int, Int) Int\n```")
+      .Ok({})
+    })
+    .test("hover on argument shows argument type", fn() {
+      state := state_with_doc("file:///a.tw", "fn add(a: Int, b: Int) Int { a + b }\nx := add(1, 2)\n")
+      // "1" on line 1 at char 9
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 9))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover returns null for unknown document", fn() {
+      state := state_with_doc("file:///a.tw", "x := 1\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///other.tw", 0, 0))
+      try assert.is_true(try is_null_result(step))
+      .Ok({})
+    })
+    .test("hover returns null for position outside expressions", fn() {
+      state := state_with_doc("file:///a.tw", "x := 1\n\n\n")
+      // line 2 is empty
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 0))
+      try assert.is_true(try is_null_result(step))
+      .Ok({})
+    })
+    .test("hover on nested expression shows inner type", fn() {
+      state := state_with_doc("file:///a.tw", "x := 1 + 2\n")
+      // "1" at char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("initialize advertises hoverProvider", fn() {
+      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      out := step.outgoing[0]
+      result := try json.decode(out, json.field("result", json.raw()))
+      caps := try json.decode(result, json.field("capabilities", json.raw()))
+      try assert.is_true(try json.decode(caps, json.field("hoverProvider", json.bool())))
+      .Ok({})
+    })
+}

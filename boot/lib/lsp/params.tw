@@ -35,6 +35,16 @@ pub type DidChangeTextDocumentParams = .{
   content_changes: Vector<TextDocumentContentChangeEvent>,
 }
 
+pub type Position = .{
+  line: Int,
+  character: Int,
+}
+
+pub type HoverParams = .{
+  text_document: TextDocumentIdentifier,
+  position: Position,
+}
+
 pub type DidCloseTextDocumentParams = .{
   text_document: TextDocumentIdentifier,
 }
@@ -50,6 +60,13 @@ pub fn decode_did_change(params: json.Json?) Result<DidChangeTextDocumentParams,
   text_document := try json.decode(value, json.field("textDocument", versioned_text_document_identifier_decoder()))
   content_changes := try json.decode(value, json.field("contentChanges", json.list(content_change_decoder())))
   .Ok(.{ text_document, content_changes })
+}
+
+pub fn decode_hover(params: json.Json?) Result<HoverParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(value, json.field("textDocument", text_document_identifier_decoder()))
+  position := try json.decode(value, json.field("position", position_decoder()))
+  .Ok(.{ text_document, position })
 }
 
 pub fn decode_did_close(params: json.Json?) Result<DidCloseTextDocumentParams, String> {
@@ -87,6 +104,14 @@ fn text_document_identifier_decoder() json.Decoder<TextDocumentIdentifier> {
   .{ run: fn(value: json.Json) Result<TextDocumentIdentifier, String> {
     uri := try json.decode(value, json.field("uri", json.string()))
     .Ok(.{ uri })
+  } }
+}
+
+fn position_decoder() json.Decoder<Position> {
+  .{ run: fn(value: json.Json) Result<Position, String> {
+    line := try json.decode(value, json.field("line", json.int()))
+    character := try json.decode(value, json.field("character", json.int()))
+    .Ok(.{ line, character })
   } }
 }
 
