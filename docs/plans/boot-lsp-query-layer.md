@@ -106,12 +106,12 @@ without lowering or linking.
 
 Checklist:
 
-- [ ] Reuse or extract module import discovery from the existing compiler path.
-- [ ] Resolve relative, project, and stdlib imports from the LSP entry file.
-- [ ] Build a dependency plan in semantic-check order.
-- [ ] Detect and report missing imports through diagnostics.
-- [ ] Detect cycles and report useful diagnostics without crashing the server.
-- [ ] Add tests for same-directory imports, relative imports, stdlib imports,
+- [x] Reuse or extract module import discovery from the existing compiler path.
+- [x] Resolve relative, project, and stdlib imports from the LSP entry file.
+- [x] Build a dependency plan in semantic-check order.
+- [x] Detect and report missing imports through diagnostics.
+- [x] Detect cycles and report useful diagnostics without crashing the server.
+- [x] Add tests for same-directory imports, relative imports, stdlib imports,
   missing imports, and cycles.
 
 Likely files:

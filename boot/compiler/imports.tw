@@ -42,6 +42,15 @@ pub type CanonicalRoots = .{
 /// then auto-injected prelude modules (sorted, deduplicated).
 /// Internal modules (stdlib/prelude) skip prelude injection.
 pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, String> {
+  plan_dependencies_with_exists(module, file_path, project_root, fn(path_str: String) Bool { fs.exists(path_str) })
+}
+
+pub fn plan_dependencies_with_exists(
+  module: Module,
+  file_path: String,
+  project_root: String,
+  exists: fn(String) Bool,
+) Result<DependencyPlan, String> {
   roots := make_canonical_roots(project_root)
   stdlib_root := loader.resolve_stdlib_root(project_root)
   prelude_root := loader.resolve_prelude_root(project_root)
@@ -55,7 +64,7 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
     case item {
       .Use(decl) => {
         dep_path := canonical_module_path(resolve_import_path(decl, file_path, import_root, stdlib_root), roots)
-        if !fs.exists(dep_path) {
+        if !exists(dep_path) {
           label := format_import_path(decl)
           return .Err("Cannot resolve module '${label}': expected file '${dep_path}'")
         }
@@ -85,7 +94,7 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
       canonical_prelude := canonical_module_path(prelude_path, roots)
       // Skip if already explicitly imported
       if canonical_paths.contains(canonical_prelude) { continue }
-      if !fs.exists(canonical_prelude) { continue }
+      if !exists(canonical_prelude) { continue }
 
       stem := path.stem(canonical_prelude)
       canonical_paths = canonical_paths.append(canonical_prelude)
