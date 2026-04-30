@@ -941,11 +941,12 @@ fn parse_param(c: Cursor) ParamParse {
       c.span(),
       "expected parameter name",
     ))
-    param := Param.{ name: "", ty: .None, span: c.span() }
+    param := Param.{ name: "", ty: .None, name_span: c.span(), span: c.span() }
     return .{ value: param, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
   name := c.text()
+  name_span := c.span()
   param_start := c.pos
   c = c.advance()
   ty: TypeExpr? = .None
@@ -958,7 +959,7 @@ fn parse_param(c: Cursor) ParamParse {
     ty = .Some(parsed_ty.value)
   }
 
-  param := Param.{ name, ty, span: c.span_from(param_start) }
+  param := Param.{ name, ty, name_span, span: c.span_from(param_start) }
   .{ value: param, cursor: c, diagnostics: diagnostics_out }
 }
 
@@ -1848,15 +1849,19 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   start_pos := c.pos
   c = c.advance()
   pattern: String? = .None
+  pattern_span: span.Span? = .None
   index: String? = .None
+  index_span: span.Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 
   if c.kind() == .Ident {
     first_name := c.text()
+    first_span := c.span()
 
     if c.at(1).kind() == .In {
       pattern = .Some(first_name)
+      pattern_span = .Some(first_span)
       c = c.at(2)
       parsed_iter := parse_expr_bp(c, 0)
       diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
@@ -1864,7 +1869,9 @@ fn parse_collect_expr(c: Cursor) ExprParse {
       c = parsed_iter.cursor
     } else if c.at(1).kind() == .Comma and c.at(2).kind() == .Ident and c.at(3).kind() == .In {
       pattern = .Some(first_name)
+      pattern_span = .Some(first_span)
       index = .Some(c.at(2).text())
+      index_span = .Some(c.at(2).span())
       c = c.at(4)
       parsed_iter := parse_expr_bp(c, 0)
       diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
@@ -1890,7 +1897,7 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   collect_span := c.span_from(start_pos)
   expr := Expr.{
     id: c.alloc_expr_id(),
-    kind: .Collect(CollectExpr.{ pattern, index, iter, condition, body: parsed_body.value }),
+    kind: .Collect(CollectExpr.{ pattern, pattern_span, index, index_span, iter, condition, body: parsed_body.value }),
     span: collect_span,
   }
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
@@ -2090,6 +2097,7 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   }
 
   name := c.text()
+  name_span := c.span()
   c = c.advance()
   ty: TypeExpr? = .None
   is_rebind := false
@@ -2132,6 +2140,7 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
     value: parsed_value.value,
     is_rebind,
     is_pub,
+    name_span,
     span: c.span_from(start_pos),
   })
 
@@ -2200,15 +2209,19 @@ fn parse_for_stmt(c: Cursor) StmtParse {
   start_pos := c.pos
   c = c.advance()
   pattern: String? = .None
+  pattern_span: span.Span? = .None
   index: String? = .None
+  index_span: span.Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 
   if c.kind() == .Ident {
     first_name := c.text()
+    first_span := c.span()
 
     if c.at(1).kind() == .In {
       pattern = .Some(first_name)
+      pattern_span = .Some(first_span)
       c = c.at(2)
       parsed_iter := parse_expr_bp(c, 0)
       diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
@@ -2216,7 +2229,9 @@ fn parse_for_stmt(c: Cursor) StmtParse {
       c = parsed_iter.cursor
     } else if c.at(1).kind() == .Comma and c.at(2).kind() == .Ident and c.at(3).kind() == .In {
       pattern = .Some(first_name)
+      pattern_span = .Some(first_span)
       index = .Some(c.at(2).text())
+      index_span = .Some(c.at(2).span())
       c = c.at(4)
       parsed_iter := parse_expr_bp(c, 0)
       diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
@@ -2242,7 +2257,9 @@ fn parse_for_stmt(c: Cursor) StmtParse {
 
   stmt: Stmt = .For(ForStmt.{
     pattern,
+    pattern_span,
     index,
+    index_span,
     iter,
     condition,
     body,

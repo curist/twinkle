@@ -112,6 +112,7 @@ pub type TypeExprKind = {
 pub type Param = .{
   name: String,
   ty: TypeExpr?,
+  name_span: span.Span,
   span: span.Span,
 }
 
@@ -138,12 +139,15 @@ pub type LetStmt = .{
   value: Expr,
   is_rebind: Bool,
   is_pub: Bool,
+  name_span: span.Span,
   span: span.Span,
 }
 
 pub type ForStmt = .{
   pattern: String?,
+  pattern_span: span.Span?,
   index: String?,
+  index_span: span.Span?,
   iter: Expr?,
   condition: Expr?,
   body: Block,
@@ -206,7 +210,9 @@ pub type ExprKind = {
 
 pub type CollectExpr = .{
   pattern: String?,
+  pattern_span: span.Span?,
   index: String?,
+  index_span: span.Span?,
   iter: Expr?,
   condition: Expr?,
   body: Block,

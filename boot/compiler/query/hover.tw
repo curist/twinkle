@@ -46,11 +46,9 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int) HoverResult? {
       .Stmt(stmt) => case stmt {
         .Let(ls) => {
           if ls.span.contains(byte_offset) {
-            name_start := ls.span.start + if ls.is_pub { 4 } else { 0 }
-            name_span: span.Span = .{ file_id: ls.span.file_id, start: name_start, end: name_start + ls.name.len() }
-            if name_span.contains(byte_offset) {
+            if ls.name_span.contains(byte_offset) {
               case typed.type_map[ls.value.id] {
-                .Some(ty) => { return .Some(HoverResult.{ content: ty_to_string_env(typed.env, ty), span: name_span }) },
+                .Some(ty) => { return .Some(HoverResult.{ content: ty_to_string_env(typed.env, ty), span: ls.name_span }) },
                 .None => {},
               }
             }

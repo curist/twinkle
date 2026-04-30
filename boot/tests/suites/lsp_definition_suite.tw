@@ -192,6 +192,41 @@ pub fn suite() runner.Suite {
       try assert.int_eq(r.start_char, 6)
       .Ok({})
     })
+    .test("goto def on case arm binding jumps to pattern binder", fn() {
+      src := "type ParseError = { HelpRequested(String), Other }\nfn main(err: ParseError) String {\n  case err {\n    .HelpRequested(msg) => msg,\n    .Other => \"\",\n  }\n}\n"
+      state := state_with_doc("file:///case-binding.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///case-binding.tw", 3, 27))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 3)
+      try assert.int_eq(r.start_char, 19)
+      try assert.int_eq(r.end_char, 22)
+      .Ok({})
+    })
+    .test("goto def on for loop value and index jump to loop binders", fn() {
+      src := "fn main() Int {\n  xs := [1, 2]\n  total := 0\n  for x,i in xs {\n    total = total + x + i\n  }\n  total\n}\n"
+      state := state_with_doc("file:///for-binding.tw", src)
+      x_step := server_core.handle_message(state, def_request(1, "file:///for-binding.tw", 4, 20))
+      x_range := try def_result_range(x_step)
+      try assert.int_eq(x_range.start_line, 3)
+      try assert.int_eq(x_range.start_char, 6)
+      try assert.int_eq(x_range.end_char, 7)
+      i_step := server_core.handle_message(state, def_request(2, "file:///for-binding.tw", 4, 24))
+      i_range := try def_result_range(i_step)
+      try assert.int_eq(i_range.start_line, 3)
+      try assert.int_eq(i_range.start_char, 8)
+      try assert.int_eq(i_range.end_char, 9)
+      .Ok({})
+    })
+    .test("goto def finds references inside for iter expressions", fn() {
+      src := "fn make_items() Vector<Int> { [1, 2] }\nfn main() Int {\n  total := 0\n  for x in make_items() {\n    total = total + x\n  }\n  total\n}\n"
+      state := state_with_doc("file:///for-iter.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///for-iter.tw", 3, 11))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 3)
+      try assert.int_eq(r.end_char, 13)
+      .Ok({})
+    })
     .test("goto def returns null for non-identifier positions", fn() {
       state := state_with_doc("file:///a.tw", "x := 42\n")
       // On "42" which is IntLit, not Ident
