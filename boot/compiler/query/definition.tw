@@ -391,8 +391,26 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
     },
     .Optional(inner) => find_type_ref(inner, offset),
     .Result(ok, err) => case find_type_ref(ok, offset) { .Some(r) => .Some(r), .None => find_type_ref(err, offset) },
-    .Record(fields) => { for f in fields { case find_type_ref(f.ty, offset) { .Some(r) => { return .Some(r) }, .None => {} } }; .None },
-    .Sum(vars) => { for v in vars { for f in v.fields { case find_type_ref(f, offset) { .Some(r) => { return .Some(r) }, .None => {} } } }; .None },
+    .Record(fields) => {
+      for f in fields {
+        case find_type_ref(f.ty, offset) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
+      }
+      .None
+    },
+    .Sum(vars) => {
+      for v in vars {
+        for f in v.fields {
+          case find_type_ref(f, offset) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          }
+        }
+      }
+      .None
+    },
     _ => .None,
   }
 }
@@ -533,14 +551,38 @@ fn find_expr_ref_in_expr(expr: Expr, offset: Int) Ref? {
     .Index(base, idx) => case find_expr_ref_in_expr(base, offset) { .Some(r) => .Some(r), .None => find_expr_ref_in_expr(idx, offset) },
     .BlockExpr(block) => find_expr_ref_in_block(block, offset),
     .If(cond, then_block, else_expr) => case find_expr_ref_in_expr(cond, offset) { .Some(r) => .Some(r), .None => case find_expr_ref_in_block(then_block, offset) { .Some(r) => .Some(r), .None => case else_expr { .Some(e) => find_expr_ref_in_expr(e, offset), .None => .None } } },
-    .Case(scrutinee, arms) => case find_expr_ref_in_expr(scrutinee, offset) { .Some(r) => .Some(r), .None => { for arm in arms { if arm.span.contains(offset) { case find_expr_ref_in_expr(arm.expr, offset) { .Some(r) => { return .Some(r) }, .None => {} } } }; .None } },
+    .Case(scrutinee, arms) => case find_expr_ref_in_expr(scrutinee, offset) {
+      .Some(r) => .Some(r),
+      .None => {
+        for arm in arms {
+          if arm.span.contains(offset) {
+            case find_expr_ref_in_expr(arm.expr, offset) {
+              .Some(r) => { return .Some(r) },
+              .None => {},
+            }
+          }
+        }
+        .None
+      },
+    },
     .Array(elems) => find_expr_refs(elems, offset),
     .Record(entries) => find_expr_ref_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_expr_ref_in_entries(entries, offset),
     .Variant(name, fields) => if on_suffix(expr.span, name, offset) { .Some(.Variant(name, .None)) } else { find_expr_refs(fields, offset) },
     .Closure(params, _, body) => find_expr_ref_in_block(body, offset),
     .Collect(col) => find_expr_ref_in_collect(col, offset),
-    .StringInterp(parts) => { for part in parts { case part { .Interpolation(e) => case find_expr_ref_in_expr(e, offset) { .Some(r) => { return .Some(r) }, .None => {} }, _ => {} } }; .None },
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => case find_expr_ref_in_expr(e, offset) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          },
+          _ => {},
+        }
+      }
+      .None
+    },
     _ => .None,
   }
 }
