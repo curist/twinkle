@@ -28,7 +28,8 @@ Implemented groundwork:
 - Boot module compiler partially uses query stages.
 - LSP publishes workspace diagnostics for open documents on lifecycle events.
 - Framed stdio smoke coverage exists for valid diagnostics, invalid diagnostics,
-  clearing diagnostics, and shutdown.
+  workspace import diagnostics, dependency edits affecting importers, clearing
+  diagnostics, and shutdown.
 
 Current limitation:
 
@@ -206,10 +207,10 @@ Checklist:
 
 - [x] Keep malformed document notifications ignored or converted to protocol
   errors without breaking server state.
-- [ ] Ensure analysis failures become diagnostics, not LSP process exits.
-- [ ] Support repeated open/change/close cycles for the same URI.
-- [ ] Add framed LSP integration coverage for imported modules.
-- [ ] Add framed LSP integration coverage for dependency edits affecting an
+- [x] Ensure analysis failures become diagnostics, not LSP process exits.
+- [x] Support repeated open/change/close cycles for the same URI.
+- [x] Add framed LSP integration coverage for imported modules.
+- [x] Add framed LSP integration coverage for dependency edits affecting an
   already-open importer.
 - [x] Document the recommended smoke command in developer docs or Makefile help.
 

@@ -155,6 +155,69 @@ pub fn suite() runner.Suite {
       try assert.int_eq(try diagnostic_count(dep_out), 0)
       .Ok({})
     })
+    .test("missing import publishes diagnostics without breaking state", fn() {
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///tmp/missing_import.tw")),
+          json.kv("languageId", .Str("twinkle")),
+          json.kv("version", .Int(1)),
+          json.kv("text", .Str("use missing\nx := 1\n")),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(params) })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      try assert.is_false(step.state.should_exit)
+      out := try published_for(step, "file:///tmp/missing_import.tw")
+      try assert.is_true((try diagnostic_count(out)) > 0)
+      .Ok({})
+    })
+    .test("supports repeated open change close cycles for same uri", fn() {
+      uri := "file:///tmp/reopen.tw"
+      open_params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str(uri)),
+          json.kv("languageId", .Str("twinkle")),
+          json.kv("version", .Int(1)),
+          json.kv("text", .Str("x := 1\n")),
+        ])),
+      ])
+      open_step := server_core.handle_message(server_core.initial_state(), protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(open_params) }))
+      try assert.is_some(document_store.get(open_step.state.documents, uri))
+
+      close_params := json.object([
+        json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+      ])
+      close_step := server_core.handle_message(open_step.state, protocol.Message.Notification(.{ method: "textDocument/didClose", params: .Some(close_params) }))
+      try assert.is_none(document_store.get(close_step.state.documents, uri))
+
+      reopen_params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str(uri)),
+          json.kv("languageId", .Str("twinkle")),
+          json.kv("version", .Int(2)),
+          json.kv("text", .Str("x := 2\n")),
+        ])),
+      ])
+      reopen_step := server_core.handle_message(close_step.state, protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(reopen_params) }))
+      doc := try document_store.get(reopen_step.state.documents, uri).ok_or("missing reopened document")
+      try assert.int_eq(try doc.version.ok_or("missing version"), 2)
+
+      change_params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str(uri)),
+          json.kv("version", .Int(3)),
+        ])),
+        json.kv("contentChanges", json.array([
+          json.object([json.kv("text", .Str("x := 3\n"))]),
+        ])),
+      ])
+      change_step := server_core.handle_message(reopen_step.state, protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(change_params) }))
+      changed := try document_store.get(change_step.state.documents, uri).ok_or("missing changed document")
+      try assert.str_eq(changed.text, "x := 3\n")
+      try assert.int_eq(try changed.version.ok_or("missing version"), 3)
+      try assert.is_false(change_step.state.should_exit)
+      .Ok({})
+    })
     .test("didChange clears stale importer diagnostics", fn() {
       docs := document_store.empty()
         .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))

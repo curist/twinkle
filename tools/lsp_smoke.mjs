@@ -5,6 +5,8 @@ import process from "node:process";
 
 const cli = process.argv[2] ?? "target/twk";
 const uri = "file:///tmp/twinkle-lsp-smoke.tw";
+const importerUri = "file:///tmp/twinkle-lsp-smoke/main.tw";
+const depUri = "file:///tmp/twinkle-lsp-smoke/dep.tw";
 
 function frame(message) {
   const body = Buffer.from(JSON.stringify(message), "utf8");
@@ -42,11 +44,19 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function diagnosticsFor(messages, version) {
+function diagnosticsFor(messages, targetUri, version) {
   return messages.find((message) =>
     message.method === "textDocument/publishDiagnostics" &&
-    message.params?.uri === uri &&
+    message.params?.uri === targetUri &&
     message.params?.version === version
+  );
+}
+
+function diagnosticEvents(messages, targetUri, version) {
+  return messages.filter((message) =>
+    message.method === "textDocument/publishDiagnostics" &&
+    message.params?.uri === targetUri &&
+    (version === undefined || message.params?.version === version)
   );
 }
 
@@ -65,34 +75,52 @@ child.stderr.on("data", (chunk) => {
   stderr += chunk.toString("utf8");
 });
 
-const requests = [
-  { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
-  { jsonrpc: "2.0", method: "initialized", params: {} },
-  {
+function didOpen(targetUri, version, text) {
+  return {
     jsonrpc: "2.0",
     method: "textDocument/didOpen",
     params: {
       textDocument: {
-        uri,
+        uri: targetUri,
         languageId: "twinkle",
-        version: 1,
-        text: "x := 1\n",
+        version,
+        text,
       },
     },
-  },
-  {
+  };
+}
+
+function didChange(targetUri, version, text) {
+  return {
     jsonrpc: "2.0",
     method: "textDocument/didChange",
     params: {
-      textDocument: { uri, version: 2 },
-      contentChanges: [{ text: "x := \n" }],
+      textDocument: { uri: targetUri, version },
+      contentChanges: [{ text }],
     },
-  },
-  {
+  };
+}
+
+function didClose(targetUri) {
+  return {
     jsonrpc: "2.0",
     method: "textDocument/didClose",
-    params: { textDocument: { uri } },
-  },
+    params: { textDocument: { uri: targetUri } },
+  };
+}
+
+const requests = [
+  { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+  { jsonrpc: "2.0", method: "initialized", params: {} },
+  didOpen(uri, 1, "x := 1\n"),
+  didChange(uri, 2, "x := \n"),
+  didClose(uri),
+  didOpen(depUri, 1, "pub fn answer() Int { 1 }\n"),
+  didOpen(importerUri, 1, "use dep\nx: Int = dep.answer()\n"),
+  didChange(depUri, 2, "pub fn answer() String { \"nope\" }\n"),
+  didChange(depUri, 3, "pub fn answer() Int { 1 }\n"),
+  didClose(importerUri),
+  didClose(depUri),
   { jsonrpc: "2.0", id: 2, method: "shutdown", params: null },
   { jsonrpc: "2.0", method: "exit", params: null },
 ];
@@ -113,20 +141,36 @@ try {
   const initialize = messages.find((message) => message.id === 1);
   assert(initialize?.result?.capabilities?.textDocumentSync === 1, "initialize response missing text sync capability");
 
-  const opened = diagnosticsFor(messages, 1);
+  const opened = diagnosticsFor(messages, uri, 1);
   assert(opened, "didOpen did not publish diagnostics");
   assert(opened.params.diagnostics.length === 0, "valid didOpen text should publish empty diagnostics");
 
-  const changed = diagnosticsFor(messages, 2);
+  const changed = diagnosticsFor(messages, uri, 2);
   assert(changed, "didChange did not publish diagnostics");
   assert(changed.params.diagnostics.length > 0, "invalid didChange text should publish diagnostics");
 
-  const clears = messages.filter((message) =>
-    message.method === "textDocument/publishDiagnostics" &&
-    message.params?.uri === uri &&
+  const clears = diagnosticEvents(messages, uri).filter((message) =>
     message.params?.diagnostics?.length === 0
   );
   assert(clears.length >= 2, "didClose should publish an empty diagnostics notification");
+
+  const depOpened = diagnosticsFor(messages, depUri, 1);
+  assert(depOpened, "dependency didOpen did not publish diagnostics");
+  assert(depOpened.params.diagnostics.length === 0, "valid dependency should publish empty diagnostics");
+
+  const importerEvents = diagnosticEvents(messages, importerUri, 1);
+  assert(importerEvents.some((message) => message.params.diagnostics.length > 0),
+    "dependency edit should publish importer diagnostics");
+  assert(importerEvents.some((message) => message.params.diagnostics.length === 0),
+    "dependency fix should clear importer diagnostics");
+
+  const badDep = diagnosticsFor(messages, depUri, 2);
+  assert(badDep, "dependency edit did not publish dependency diagnostics");
+  assert(badDep.params.diagnostics.length === 0, "well-typed dependency edit should not diagnose dependency itself");
+
+  const fixedDep = diagnosticsFor(messages, depUri, 3);
+  assert(fixedDep, "dependency fix did not publish dependency diagnostics");
+  assert(fixedDep.params.diagnostics.length === 0, "fixed dependency should publish empty diagnostics");
 
   const shutdown = messages.find((message) => message.id === 2);
   assert(shutdown && Object.hasOwn(shutdown, "result") && shutdown.result === null, "shutdown response should be null");
