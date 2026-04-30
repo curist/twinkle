@@ -14,6 +14,23 @@ fn only_out(step: server_core.Step) json.Json!String {
   }
 }
 
+fn published_for(step: server_core.Step, uri: String) json.Json!String {
+  for out in step.outgoing {
+    params := try json.decode(out, json.field("params", json.raw()))
+    out_uri := try json.decode(params, json.field("uri", json.string()))
+    if out_uri == uri {
+      return .Ok(out)
+    }
+  }
+  .Err("missing diagnostics for ${uri}")
+}
+
+fn diagnostic_count(out: json.Json) Int!String {
+  params := try json.decode(out, json.field("params", json.raw()))
+  diagnostics := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+  .Ok(diagnostics.len())
+}
+
 pub fn suite() runner.Suite {
   runner.suite("lsp server core")
     .test("initialize returns minimal capabilities", fn() {
@@ -107,6 +124,62 @@ pub fn suite() runner.Suite {
       try assert.int_eq(try doc.version.ok_or("missing version"), 2)
       out := try only_out(step)
       try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      .Ok({})
+    })
+    .test("didChange publishes diagnostics for open importers", fn() {
+      docs := document_store.empty()
+        .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
+        .open("file:///tmp/dep.tw", "pub fn answer() Int { 1 }\n", .Some(1))
+      state := server_core.State.{
+        initialized: true,
+        shutdown_requested: false,
+        should_exit: false,
+        documents: docs,
+        query_cache: query_cache.empty(),
+      }
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///tmp/dep.tw")),
+          json.kv("version", .Int(2)),
+        ])),
+        json.kv("contentChanges", json.array([
+          json.object([json.kv("text", .Str("pub fn answer() String { \"nope\" }\n"))]),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(params) })
+      step := server_core.handle_message(state, msg)
+      try assert.int_eq(step.outgoing.len(), 2)
+      importer_out := try published_for(step, "file:///tmp/a.tw")
+      try assert.is_true((try diagnostic_count(importer_out)) > 0)
+      dep_out := try published_for(step, "file:///tmp/dep.tw")
+      try assert.int_eq(try diagnostic_count(dep_out), 0)
+      .Ok({})
+    })
+    .test("didChange clears stale importer diagnostics", fn() {
+      docs := document_store.empty()
+        .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
+        .open("file:///tmp/dep.tw", "pub fn answer() String { \"nope\" }\n", .Some(1))
+      state := server_core.State.{
+        initialized: true,
+        shutdown_requested: false,
+        should_exit: false,
+        documents: docs,
+        query_cache: query_cache.empty(),
+      }
+      params := json.object([
+        json.kv("textDocument", json.object([
+          json.kv("uri", .Str("file:///tmp/dep.tw")),
+          json.kv("version", .Int(2)),
+        ])),
+        json.kv("contentChanges", json.array([
+          json.object([json.kv("text", .Str("pub fn answer() Int { 1 }\n"))]),
+        ])),
+      ])
+      msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(params) })
+      step := server_core.handle_message(state, msg)
+      try assert.int_eq(step.outgoing.len(), 2)
+      importer_out := try published_for(step, "file:///tmp/a.tw")
+      try assert.int_eq(try diagnostic_count(importer_out), 0)
       .Ok({})
     })
     .test("didClose removes the document", fn() {

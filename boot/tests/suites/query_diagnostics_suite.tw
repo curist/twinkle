@@ -90,6 +90,29 @@ pub fn suite() runner.Suite {
       try assert.int_eq(result.diagnostics.len(), 0)
       .Ok({})
     })
+    .test("workspace diagnostics groups results by uri and includes clean open docs", fn() {
+      entry := "file:///tmp/twinkle-query-main.tw"
+      dep := "file:///tmp/dep.tw"
+      result := diagnostics.analyze_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp",
+        open_documents: [
+          doc(entry, "use dep\nx: Int = dep.answer()\n", 1),
+          doc(dep, "pub fn answer() String { \"nope\" }\n", 2),
+        ],
+      })
+      try assert.is_true(result.diagnostics.len() > 0)
+      try assert.int_eq(result.diagnostics_by_uri.len(), 2)
+      for group in result.diagnostics_by_uri {
+        if group.uri == entry {
+          try assert.is_true(group.diagnostics.len() > 0)
+        }
+        if group.uri == dep {
+          try assert.int_eq(group.diagnostics.len(), 0)
+        }
+      }
+      .Ok({})
+    })
     .test("workspace diagnostics report dependency errors on dependency uri", fn() {
       entry := "file:///tmp/twinkle-query-main.tw"
       dep := "file:///tmp/dep.tw"

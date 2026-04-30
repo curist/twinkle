@@ -18,22 +18,25 @@ Implemented groundwork:
 
 - LSP framed stdio transport and JSON-RPC message handling.
 - LSP document lifecycle handling for open/change/close.
-- In-memory document store.
+- In-memory document store with source identities and overlay export.
 - Pure diagnostics query for one in-memory document.
+- Workspace diagnostics query that resolves imports, checks dependencies in
+  semantic order, uses open-buffer overlays, and reports dependency failures as
+  diagnostics.
 - Query cache and stage runner foundation for parse/resolve/typecheck/lower.
+- Dependency graph storage with reverse-dependency invalidation helpers.
 - Boot module compiler partially uses query stages.
-- LSP publishes diagnostics on document lifecycle events.
+- LSP publishes workspace diagnostics for open documents on lifecycle events.
 - Framed stdio smoke coverage exists for valid diagnostics, invalid diagnostics,
   clearing diagnostics, and shutdown.
 
 Current limitation:
 
-- LSP diagnostics analyze only one in-memory document against the builtin
-environment.
-- Imports are not resolved through the LSP query path.
-- Open buffers are not used as overlays for dependencies.
-- Cache invalidation does not yet reason about affected modules.
-- Diagnostics are not yet returned for dependent/imported modules.
+- LSP workspace publishing is conservative: it rechecks open documents as roots
+  instead of using a precise affected-module set.
+- Diagnostics for unopened files are kept internal until those files open.
+- Cache invalidation primitives exist, but LSP diagnostics do not yet use
+  affected-module planning or dependency export fingerprints.
 
 ---
 
@@ -136,15 +139,15 @@ edited document.
 
 Checklist:
 
-- [ ] Change diagnostics query output from a single diagnostics list to
+- [x] Change diagnostics query output from a single diagnostics list to
   diagnostics grouped by source identity/URI.
-- [ ] Publish diagnostics for all open affected documents.
-- [ ] Decide how to handle diagnostics for unopened files in LSP:
+- [x] Publish diagnostics for all open affected documents.
+- [x] Decide how to handle diagnostics for unopened files in LSP:
   - [ ] publish them when a URI is known, or
-  - [ ] keep them internal until the file opens.
-- [ ] Clear stale diagnostics when a file becomes clean or is removed from the
+  - [x] keep them internal until the file opens.
+- [x] Clear stale diagnostics when a file becomes clean or is removed from the
   affected set.
-- [ ] Add tests for dependency errors surfacing in importers and stale diagnostic
+- [x] Add tests for dependency errors surfacing in importers and stale diagnostic
   clearing.
 
 Likely files:
@@ -172,7 +175,8 @@ Checklist:
   export fingerprints.
 - [ ] Invalidate parse artifacts when source text changes.
 - [ ] Invalidate resolve/typecheck artifacts when dependency exports change.
-- [ ] Track reverse dependencies for affected-module discovery.
+- [x] Add reverse-dependency graph helpers for affected-module discovery.
+- [ ] Use reverse dependencies from the LSP workspace diagnostics flow.
 - [ ] Keep cache updates explicit in query outputs.
 - [ ] Add tests showing unaffected modules reuse cached stages.
 
@@ -198,14 +202,14 @@ Purpose: make the workspace diagnostics query reliable under editor behavior.
 
 Checklist:
 
-- [ ] Keep malformed document notifications ignored or converted to protocol
+- [x] Keep malformed document notifications ignored or converted to protocol
   errors without breaking server state.
 - [ ] Ensure analysis failures become diagnostics, not LSP process exits.
 - [ ] Support repeated open/change/close cycles for the same URI.
 - [ ] Add framed LSP integration coverage for imported modules.
 - [ ] Add framed LSP integration coverage for dependency edits affecting an
   already-open importer.
-- [ ] Document the recommended smoke command in developer docs or Makefile help.
+- [x] Document the recommended smoke command in developer docs or Makefile help.
 
 Likely files:
 

@@ -37,6 +37,18 @@ pub type AnalysisResult = .{
   diagnostics: Vector<Diagnostic>,
 }
 
+pub type DiagnosticGroup = .{
+  uri: String,
+  version: Int?,
+  diagnostics: Vector<Diagnostic>,
+}
+
+pub type WorkspaceAnalysisResult = .{
+  cache: cache.Store,
+  diagnostics: Vector<Diagnostic>,
+  diagnostics_by_uri: Vector<DiagnosticGroup>,
+}
+
 pub type WorkspaceInput = .{
   entry_uri: String,
   project_root: String,
@@ -90,11 +102,12 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   .{ cache: cur_cache, diagnostics: [] }
 }
 
-pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) AnalysisResult {
+pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAnalysisResult {
   entry_id := case identity.from_file_uri(input.entry_uri) {
     .Ok(id) => id,
     .Err(err) => {
-      return .{ cache: store, diagnostics: [synthetic_diagnostic(input.entry_uri, .None, "source", err)] }
+      diags := [synthetic_diagnostic(input.entry_uri, .None, "source", err)]
+      return .{ cache: store, diagnostics: diags, diagnostics_by_uri: group_diagnostics(diags, input.open_documents) }
     },
   }
 
@@ -121,7 +134,11 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) AnalysisResu
   }
 
   result := analyze_module(entry_id, "__entry", base, state, [])
-  .{ cache: result.state.cache, diagnostics: result.state.diagnostics }
+  .{
+    cache: result.state.cache,
+    diagnostics: result.state.diagnostics,
+    diagnostics_by_uri: group_diagnostics(result.state.diagnostics, input.open_documents),
+  }
 }
 
 fn analyze_module(
@@ -274,6 +291,43 @@ fn capture_local_types(state: WorkspaceState, env: ResolvedEnv, canonical: Strin
     }
   }
   state
+}
+
+fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<DocumentInput>) Vector<DiagnosticGroup> {
+  groups: Vector<DiagnosticGroup> = []
+
+  for d in diagnostics {
+    found := false
+    for i in 0..groups.len() {
+      if groups[i].uri == d.uri {
+        groups[i].diagnostics = groups[i].diagnostics.append(d)
+        found = true
+        break
+      }
+    }
+    if !found {
+      groups = groups.append(.{ uri: d.uri, version: d.version, diagnostics: [d] })
+    }
+  }
+
+  for doc in open_documents {
+    uri := case identity.from_file_uri(doc.uri) {
+      .Ok(id) => id.uri,
+      .Err(_) => identity.from_path(doc.uri).uri,
+    }
+    found := false
+    for group in groups {
+      if group.uri == uri {
+        found = true
+        break
+      }
+    }
+    if !found {
+      groups = groups.append(.{ uri, version: doc.version, diagnostics: [] })
+    }
+  }
+
+  groups
 }
 
 fn add_synthetic(state: WorkspaceState, uri: String, version: Int?, stage: String, message: String) WorkspaceState {
