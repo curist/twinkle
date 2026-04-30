@@ -90,6 +90,58 @@ pub fn suite() runner.Suite {
       try assert.int_eq(result.diagnostics.len(), 0)
       .Ok({})
     })
+    .test("workspace cache reuses unchanged dependency stages after entry edit", fn() {
+      entry := "file:///tmp/twinkle-query-cache/main.tw"
+      dep := "file:///tmp/twinkle-query-cache/cache_dep.tw"
+      first := diagnostics.analyze_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp/twinkle-query-cache",
+        open_documents: [
+          doc(entry, "use cache_dep as dep\nx := dep.answer()\n", 1),
+          doc(dep, "pub fn answer() Int { 42 }\n", 1),
+        ],
+      })
+      second := diagnostics.analyze_workspace(first.cache, .{
+        entry_uri: entry,
+        project_root: "/tmp/twinkle-query-cache",
+        open_documents: [
+          doc(entry, "use cache_dep as dep\nx := dep.answer()\ny := 1\n", 2),
+          doc(dep, "pub fn answer() Int { 42 }\n", 1),
+        ],
+      })
+      try assert.int_eq(second.diagnostics.len(), 0)
+      stats := cache.get_stats(second.cache)
+      try assert.is_true(stats.parse_hits > 0)
+      try assert.is_true(stats.resolve_hits > 0)
+      try assert.is_true(stats.typecheck_hits > 0)
+      .Ok({})
+    })
+    .test("workspace cache invalidates importer semantics after dependency edit", fn() {
+      entry := "file:///tmp/twinkle-query-cache/main.tw"
+      dep := "file:///tmp/twinkle-query-cache/cache_dep.tw"
+      first := diagnostics.analyze_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp/twinkle-query-cache",
+        open_documents: [
+          doc(entry, "use cache_dep as dep\nx: Int = dep.answer()\n", 1),
+          doc(dep, "pub fn answer() Int { 42 }\n", 1),
+        ],
+      })
+      second := diagnostics.analyze_workspace(first.cache, .{
+        entry_uri: entry,
+        project_root: "/tmp/twinkle-query-cache",
+        open_documents: [
+          doc(entry, "use cache_dep as dep\nx: Int = dep.answer()\n", 1),
+          doc(dep, "pub fn answer() String { \"nope\" }\n", 2),
+        ],
+      })
+      try assert.is_true(second.diagnostics.len() > 0)
+      stats := cache.get_stats(second.cache)
+      try assert.is_true(stats.parse_hits > 0)
+      try assert.int_eq(stats.resolve_hits, 0)
+      try assert.int_eq(stats.typecheck_hits, 0)
+      .Ok({})
+    })
     .test("workspace diagnostics groups results by uri and includes clean open docs", fn() {
       entry := "file:///tmp/twinkle-query-main.tw"
       dep := "file:///tmp/dep.tw"

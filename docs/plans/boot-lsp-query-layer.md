@@ -35,8 +35,9 @@ Current limitation:
 - LSP workspace publishing is conservative: it rechecks open documents as roots
   instead of using a precise affected-module set.
 - Diagnostics for unopened files are kept internal until those files open.
-- Cache invalidation primitives exist, but LSP diagnostics do not yet use
-  affected-module planning or dependency export fingerprints.
+- Cache invalidation tracks source changes and reverse dependencies, but LSP
+  publishing still rechecks all open roots instead of scheduling only the
+  affected open modules.
 
 ---
 
@@ -171,14 +172,15 @@ correct.
 
 Checklist:
 
-- [ ] Define cache keys that include source content and relevant dependency
-  export fingerprints.
-- [ ] Invalidate parse artifacts when source text changes.
-- [ ] Invalidate resolve/typecheck artifacts when dependency exports change.
+- [x] Define cache keys that include source content and relevant dependency
+  semantic fingerprints.
+- [x] Invalidate parse artifacts when source text changes.
+- [x] Invalidate resolve/typecheck artifacts when dependency semantic inputs
+  change.
 - [x] Add reverse-dependency graph helpers for affected-module discovery.
-- [ ] Use reverse dependencies from the LSP workspace diagnostics flow.
-- [ ] Keep cache updates explicit in query outputs.
-- [ ] Add tests showing unaffected modules reuse cached stages.
+- [x] Use reverse dependencies from workspace diagnostics cache invalidation.
+- [x] Keep cache updates explicit in query outputs.
+- [x] Add tests showing unaffected modules reuse cached stages.
 
 Likely files:
 

@@ -169,6 +169,7 @@ fn analyze_module(
     },
   }
   source_hash := keys.hash_text(source.text)
+  state.cache = cache.note_source_hash(state.cache, canonical, source_hash)
   parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
   parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
   state.cache = parsed_out.store
@@ -235,14 +236,7 @@ fn analyze_module(
     dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
   }
   deps_hash := keys.deps_hash(dep_hash_entries)
-  context_entries: Vector<keys.DepEntry> = []
-  for module_path in cur.cache.module_hashes.keys() {
-    case cur.cache.module_hashes[module_path] {
-      .Some(hash) => context_entries = context_entries.append(.{ path: module_path, hash }),
-      .None => {},
-    }
-  }
-  context_hash := keys.context_hash(context_entries)
+  context_hash := keys.context_hash(dep_hash_entries)
   runner := stage_runner.new(canonical, source_hash, deps_hash, context_hash, dep_plan.is_internal)
   if dep_plan.is_internal {
     env = base_env.add_internal_host_builtins(env)
