@@ -3,6 +3,8 @@ use tests.assert
 use lib.source.span
 use lib.source.registry
 use lib.source.diagnostic
+use lib.source.identity
+use lib.source.overlay
 
 pub fn suite() runner.Suite {
   runner.suite("source")
@@ -203,6 +205,43 @@ pub fn suite() runner.Suite {
       registry.add_file(reg, "test.tw", "hello")
       s := span.new(0, -1, 5)
       try assert.is_none(registry.line_text(reg, s))
+      .Ok({})
+    })
+
+    // ── Source identity and overlay ──
+    .test("file URI decoding normalizes paths", fn() {
+      id := try identity.from_file_uri("file:///tmp/twinkle%20space/../source.tw")
+      try assert.str_eq(id.path, "/tmp/source.tw")
+      try assert.str_eq(id.uri, "file:///tmp/source.tw")
+      .Ok({})
+    })
+    .test("file URI decoding accepts localhost", fn() {
+      id := try identity.from_file_uri("file://localhost/tmp/source.tw")
+      try assert.str_eq(id.path, "/tmp/source.tw")
+      .Ok({})
+    })
+    .test("file URI decoding rejects remote hosts", fn() {
+      res := identity.from_file_uri("file://example.com/tmp/source.tw")
+      try assert.is_err(res)
+      .Ok({})
+    })
+    .test("path to file URI percent-encodes reserved bytes", fn() {
+      uri := identity.path_to_file_uri("/tmp/a b#c.tw")
+      try assert.str_eq(uri, "file:///tmp/a%20b%23c.tw")
+      .Ok({})
+    })
+    .test("source overlay prefers open document text", fn() {
+      id := identity.from_path("boot/tests/fixtures/multi/type_flow_source.tw")
+      ov := overlay.from_documents([
+        overlay.OverlayDocument.{ identity: id, text: "open text", version: .Some(7) },
+      ])
+      source := try overlay.lookup(ov, id)
+      try assert.str_eq(source.text, "open text")
+      try assert.is_true(source.from_overlay)
+      case source.version {
+        .Some(v) => try assert.int_eq(v, 7),
+        .None => { return assert.fail("expected overlay version") },
+      }
       .Ok({})
     })
 

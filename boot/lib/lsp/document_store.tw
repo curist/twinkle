@@ -5,9 +5,12 @@
 // documents before being wired into the server loop.
 
 use lib.text.line_index
+use lib.source.identity
+use lib.source.overlay
 
 pub type Document = .{
   uri: String,
+  identity: identity.SourceIdentity,
   text: String,
   version: Int?,
   index: line_index.LineIndex,
@@ -37,8 +40,18 @@ pub fn get(store: Store, uri: String) Document? {
   store.docs[uri]
 }
 
+pub fn overlay_documents(store: Store) Vector<overlay.OverlayDocument> {
+  collect doc in store.docs.values() {
+    overlay.OverlayDocument.{ identity: doc.identity, text: doc.text, version: doc.version }
+  }
+}
+
 fn make_document(uri: String, text: String, version: Int?) Document {
-  .{ uri, text, version, index: line_index.new(text) }
+  id := case identity.from_file_uri(uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(uri),
+  }
+  .{ uri, identity: id, text, version, index: line_index.new(text) }
 }
 
 fn put(store: Store, doc: Document) Store {

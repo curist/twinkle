@@ -9,6 +9,7 @@ pub fn suite() runner.Suite {
       store := document_store.open(document_store.empty(), "file:///a.tw", "one\ntwo", .Some(1))
       doc := try document_store.get(store, "file:///a.tw").ok_or("missing document")
       try assert.str_eq(doc.uri, "file:///a.tw")
+      try assert.str_eq(doc.identity.path, "/a.tw")
       try assert.str_eq(doc.text, "one\ntwo")
       try assert.int_eq(try doc.version.ok_or("missing version"), 1)
       pos := line_index.byte_offset_to_position(doc.index, 4, .Utf16)
@@ -38,6 +39,15 @@ pub fn suite() runner.Suite {
       closed := document_store.close(store, "file:///a.tw")
       try assert.is_none(document_store.get(closed, "file:///a.tw"))
       try assert.is_some(document_store.get(store, "file:///a.tw"))
+      .Ok({})
+    })
+    .test("exports overlay documents keyed by source identity", fn() {
+      store := document_store.open(document_store.empty(), "file:///tmp/a%20b.tw", "text", .Some(4))
+      docs := document_store.overlay_documents(store)
+      try assert.int_eq(docs.len(), 1)
+      try assert.str_eq(docs[0].identity.path, "/tmp/a b.tw")
+      try assert.str_eq(docs[0].text, "text")
+      try assert.int_eq(try docs[0].version.ok_or("missing version"), 4)
       .Ok({})
     })
 }
