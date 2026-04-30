@@ -1,0 +1,330 @@
+// Go-to-definition query: find the definition location for the symbol at a
+// given byte offset within the same file.
+
+use compiler.ast.{
+  Module, Item, Block, Stmt, Expr, ExprKind, StringPart,
+  RecordEntry, CaseArm, CollectExpr, FunctionDecl, Param,
+}
+use compiler.query.semantic.{SemanticSnapshot}
+use lib.source.span
+
+pub type DefinitionResult = .{
+  uri: String,
+  span: span.Span,
+}
+
+pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
+  parsed := case snap.parsed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+
+  // Find the identifier name at cursor.
+  name := case find_ident_at(parsed.module.items, byte_offset) {
+    .Some(n) => n,
+    .None => { return .None },
+  }
+
+  // Search for definition in same file.
+  case find_definition(parsed.module.items, name, byte_offset) {
+    .Some(def_span) => .Some(DefinitionResult.{ uri: snap.uri, span: def_span }),
+    .None => .None,
+  }
+}
+
+// ── Find identifier at cursor ──────────────────────────────────────
+
+fn find_ident_at(items: Vector<Item>, offset: Int) String? {
+  for item in items {
+    case item {
+      .Function(decl) => {
+        if decl.span.contains(offset) {
+          return find_ident_in_block(decl.body, offset)
+        }
+      },
+      .Stmt(stmt) => case find_ident_in_stmt(stmt, offset) {
+        .Some(n) => { return .Some(n) },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  .None
+}
+
+fn find_ident_in_block(block: Block, offset: Int) String? {
+  for stmt in block.stmts {
+    case find_ident_in_stmt(stmt, offset) {
+      .Some(n) => { return .Some(n) },
+      .None => {},
+    }
+  }
+  case block.tail {
+    .Some(expr) => find_ident_in_expr(expr, offset),
+    .None => .None,
+  }
+}
+
+fn find_ident_in_stmt(stmt: Stmt, offset: Int) String? {
+  case stmt {
+    .Let(ls) => {
+      if ls.span.contains(offset) {
+        return find_ident_in_expr(ls.value, offset)
+      }
+      .None
+    },
+    .For(fs) => {
+      if fs.span.contains(offset) {
+        case fs.iter {
+          .Some(iter) => case find_ident_in_expr(iter, offset) {
+            .Some(n) => { return .Some(n) },
+            .None => {},
+          },
+          .None => {},
+        }
+        case fs.condition {
+          .Some(cond) => case find_ident_in_expr(cond, offset) {
+            .Some(n) => { return .Some(n) },
+            .None => {},
+          },
+          .None => {},
+        }
+        return find_ident_in_block(fs.body, offset)
+      }
+      .None
+    },
+    .Return(rs) => case rs.value {
+      .Some(expr) => find_ident_in_expr(expr, offset),
+      .None => .None,
+    },
+    .Break(bs) => case bs.value {
+      .Some(expr) => find_ident_in_expr(expr, offset),
+      .None => .None,
+    },
+    .Defer(ds) => find_ident_in_expr(ds.expr, offset),
+    .Expr(es) => {
+      if es.span.contains(offset) {
+        return find_ident_in_expr(es.expr, offset)
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn find_ident_in_expr(expr: Expr, offset: Int) String? {
+  if !expr.span.contains(offset) {
+    return .None
+  }
+  case expr.kind {
+    .Ident(name) => .Some(name),
+    .Unary(_, inner) => find_ident_in_expr(inner, offset),
+    .Binary(_, lhs, rhs) => {
+      case find_ident_in_expr(lhs, offset) {
+        .Some(n) => .Some(n),
+        .None => find_ident_in_expr(rhs, offset),
+      }
+    },
+    .Call(callee, args) => {
+      case find_ident_in_expr(callee, offset) {
+        .Some(n) => .Some(n),
+        .None => find_ident_in_exprs(args, offset),
+      }
+    },
+    .Field(base, _) => find_ident_in_expr(base, offset),
+    .Index(base, idx) => {
+      case find_ident_in_expr(base, offset) {
+        .Some(n) => .Some(n),
+        .None => find_ident_in_expr(idx, offset),
+      }
+    },
+    .BlockExpr(block) => find_ident_in_block(block, offset),
+    .If(cond, then_block, else_expr) => {
+      case find_ident_in_expr(cond, offset) {
+        .Some(n) => .Some(n),
+        .None => case find_ident_in_block(then_block, offset) {
+          .Some(n) => .Some(n),
+          .None => case else_expr {
+            .Some(e) => find_ident_in_expr(e, offset),
+            .None => .None,
+          },
+        },
+      }
+    },
+    .Case(scrutinee, arms) => {
+      case find_ident_in_expr(scrutinee, offset) {
+        .Some(n) => .Some(n),
+        .None => {
+          for arm in arms {
+            if arm.span.contains(offset) {
+              case find_ident_in_expr(arm.expr, offset) {
+                .Some(n) => { return .Some(n) },
+                .None => {},
+              }
+            }
+          }
+          .None
+        },
+      }
+    },
+    .Array(elems) => find_ident_in_exprs(elems, offset),
+    .Record(entries) => find_ident_in_entries(entries, offset),
+    .NamedRecord(_, entries) => find_ident_in_entries(entries, offset),
+    .Variant(_, fields) => find_ident_in_exprs(fields, offset),
+    .Closure(_, _, body) => find_ident_in_block(body, offset),
+    .Collect(col) => {
+      case col.iter {
+        .Some(iter) => case find_ident_in_expr(iter, offset) {
+          .Some(n) => { return .Some(n) },
+          .None => {},
+        },
+        .None => {},
+      }
+      case col.condition {
+        .Some(cond) => case find_ident_in_expr(cond, offset) {
+          .Some(n) => { return .Some(n) },
+          .None => {},
+        },
+        .None => {},
+      }
+      find_ident_in_block(col.body, offset)
+    },
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => case find_ident_in_expr(e, offset) {
+            .Some(n) => { return .Some(n) },
+            .None => {},
+          },
+          _ => {},
+        }
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn find_ident_in_exprs(exprs: Vector<Expr>, offset: Int) String? {
+  for e in exprs {
+    case find_ident_in_expr(e, offset) {
+      .Some(n) => { return .Some(n) },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn find_ident_in_entries(entries: Vector<RecordEntry>, offset: Int) String? {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => case find_ident_in_expr(e, offset) {
+        .Some(n) => { return .Some(n) },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  .None
+}
+
+// ── Find definition by name ────────────────────────────────────────
+
+fn find_definition(items: Vector<Item>, name: String, ref_offset: Int) span.Span? {
+  // 1. Top-level functions.
+  for item in items {
+    case item {
+      .Function(decl) => {
+        if decl.name == name {
+          return .Some(decl.span)
+        }
+      },
+      _ => {},
+    }
+  }
+
+  // 2. Top-level types.
+  for item in items {
+    case item {
+      .Type(decl) => {
+        if decl.name == name {
+          return .Some(decl.span)
+        }
+      },
+      _ => {},
+    }
+  }
+
+  // 3. Top-level let bindings.
+  for item in items {
+    case item {
+      .Stmt(stmt) => case stmt {
+        .Let(ls) => {
+          if ls.name == name and ls.span.start < ref_offset {
+            return .Some(ls.span)
+          }
+        },
+        _ => {},
+      },
+      _ => {},
+    }
+  }
+
+  // 4. Look inside the enclosing function for params and local lets.
+  for item in items {
+    case item {
+      .Function(decl) => {
+        if decl.span.contains(ref_offset) {
+          // Check params.
+          for p in decl.params {
+            if p.name == name {
+              return .Some(p.span)
+            }
+          }
+          // Check local lets.
+          case find_local_let(decl.body, name, ref_offset) {
+            .Some(s) => { return .Some(s) },
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+fn find_local_let(block: Block, name: String, ref_offset: Int) span.Span? {
+  // Walk statements looking for the most recent let binding of `name`
+  // that appears before the reference offset.
+  found: span.Span? = .None
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => {
+        if ls.name == name and ls.span.start < ref_offset {
+          found = .Some(ls.span)
+        }
+      },
+      .For(fs) => {
+        if fs.span.contains(ref_offset) {
+          // Check for loop variable.
+          case fs.pattern {
+            .Some(pat_name) => {
+              if pat_name == name {
+                return .Some(fs.span)
+              }
+            },
+            .None => {},
+          }
+          case find_local_let(fs.body, name, ref_offset) {
+            .Some(s) => { return .Some(s) },
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  found
+}

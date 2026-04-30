@@ -6,12 +6,14 @@
 use @std.path
 use compiler.query.cache as query_cache
 use compiler.query.diagnostics as query_diagnostics
+use compiler.query.definition as query_definition
 use compiler.query.hover as query_hover
 use compiler.query.semantic
 use lib.json
 use lib.module.loader
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
+use lib.lsp.definition as lsp_definition
 use lib.lsp.hover as lsp_hover
 use lib.lsp.params
 use lib.lsp.protocol
@@ -56,6 +58,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
           json.kv("positionEncoding", .Str("utf-16")),
           json.kv("textDocumentSync", .Int(1)),
           json.kv("hoverProvider", .Bool(true)),
+          json.kv("definitionProvider", .Bool(true)),
         ])),
         json.kv("serverInfo", json.object([
           json.kv("name", .Str("twinkle-lsp")),
@@ -64,6 +67,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
       .{ state, outgoing: [protocol.success_response(req.id, result)] }
     },
     "textDocument/hover" => handle_hover(state, req),
+    "textDocument/definition" => handle_definition(state, req),
     "shutdown" => {
       next := with_shutdown_requested(state, true)
       .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] }
@@ -151,6 +155,32 @@ fn handle_hover(state: State, req: protocol.Request) Step {
           case query_hover.hover(snap, offset) {
             .Some(result) => {
               .{ state: next, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
+            },
+            .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
+          }
+        },
+        .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
+      }
+    },
+    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
+  }
+}
+
+fn handle_definition(state: State, req: protocol.Request) Step {
+  case params.decode_definition(req.params) {
+    .Ok(def_params) => {
+      uri := def_params.text_document.uri
+      case document_store.get(state.documents, uri) {
+        .Some(doc) => {
+          offset := case line_index.position_to_byte_offset(doc.index, .{ line: def_params.position.line, character: def_params.position.character }, .Utf16) {
+            .Some(o) => o,
+            .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
+          }
+          snap := semantic.snapshot(state.query_cache, .{ uri: doc.uri, text: doc.text, version: doc.version })
+          next := with_query_cache(state, snap.cache)
+          case query_definition.definition(snap, offset) {
+            .Some(result) => {
+              .{ state: next, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(doc.index, result))] }
             },
             .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
           }

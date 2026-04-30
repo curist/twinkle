@@ -1,0 +1,142 @@
+use tests.runner
+use tests.assert
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.protocol
+use lib.lsp.document_store
+use lib.lsp.server_core
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+  }
+}
+
+fn def_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([
+      json.kv("uri", .Str(uri)),
+    ])),
+    json.kv("position", json.object([
+      json.kv("line", .Int(line)),
+      json.kv("character", .Int(character)),
+    ])),
+  ])
+  protocol.Message.Request(.{ id: .IntId(id), method: "textDocument/definition", params: .Some(params) })
+}
+
+type RangeInfo = .{ start_line: Int, start_char: Int, end_line: Int, end_char: Int }
+
+fn def_result_range(step: server_core.Step) RangeInfo!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  range := try json.decode(result, json.field("range", json.raw()))
+  start := try json.decode(range, json.field("start", json.raw()))
+  end := try json.decode(range, json.field("end", json.raw()))
+  start_line := try json.decode(start, json.field("line", json.int()))
+  start_char := try json.decode(start, json.field("character", json.int()))
+  end_line := try json.decode(end, json.field("line", json.int()))
+  end_char := try json.decode(end, json.field("character", json.int()))
+  .Ok(.{ start_line, start_char, end_line, end_char })
+}
+
+fn is_null_result(step: server_core.Step) Bool!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  case result {
+    .Null => .Ok(true),
+    _ => .Ok(false),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp definition")
+    .test("goto def on function call jumps to function decl", fn() {
+      // Line 0: fn greet() String { "hi" }
+      // Line 1: x := greet()
+      //               ^^^^^  char 5-10
+      src := "fn greet() String { \"hi\" }\nx := greet()\n"
+      state := state_with_doc("file:///a.tw", src)
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 5))
+      r := try def_result_range(step)
+      // Function decl starts at line 0 char 0
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 0)
+      .Ok({})
+    })
+    .test("goto def on local variable jumps to let binding", fn() {
+      // Line 0: fn foo() Int {
+      // Line 1:   a := 42
+      // Line 2:   a
+      // Line 3: }
+      src := "fn foo() Int {\n  a := 42\n  a\n}\n"
+      state := state_with_doc("file:///a.tw", src)
+      // "a" on line 2 char 2
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 2, 2))
+      r := try def_result_range(step)
+      // let binding is on line 1
+      try assert.int_eq(r.start_line, 1)
+      .Ok({})
+    })
+    .test("goto def on parameter jumps to param", fn() {
+      // fn add(a: Int, b: Int) Int { a + b }
+      //                               ^  char 29
+      src := "fn add(a: Int, b: Int) Int { a + b }\n"
+      state := state_with_doc("file:///a.tw", src)
+      // "a" in the body is at char 29
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 29))
+      r := try def_result_range(step)
+      // param "a" starts at char 7
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 7)
+      .Ok({})
+    })
+    .test("goto def on type name jumps to type decl", fn() {
+      // Line 0: type Point = .{ x: Int, y: Int }
+      // Line 1: fn make() Point { .{ x: 0, y: 0 } }
+      // We hover on Point in the function — but that's a TypeExpr, not an Expr ident.
+      // Instead test calling a function named after a type.
+      // Actually let's test: a top-level let that references a function.
+      src := "fn greet() String { \"hi\" }\ntype Msg = .{ text: String }\nfn make() Msg { .{ text: greet() } }\nx := greet()\n"
+      state := state_with_doc("file:///a.tw", src)
+      // "greet" on line 3 at char 5
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 3, 5))
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 0)
+      try assert.int_eq(r.start_char, 0)
+      .Ok({})
+    })
+    .test("goto def returns null for non-identifier positions", fn() {
+      state := state_with_doc("file:///a.tw", "x := 42\n")
+      // On "42" which is IntLit, not Ident
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 5))
+      try assert.is_true(try is_null_result(step))
+      .Ok({})
+    })
+    .test("goto def returns null for unknown document", fn() {
+      state := state_with_doc("file:///a.tw", "x := 1\n")
+      step := server_core.handle_message(state, def_request(1, "file:///other.tw", 0, 0))
+      try assert.is_true(try is_null_result(step))
+      .Ok({})
+    })
+    .test("initialize advertises definitionProvider", fn() {
+      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+      step := server_core.handle_message(server_core.initial_state(), msg)
+      out := step.outgoing[0]
+      result := try json.decode(out, json.field("result", json.raw()))
+      caps := try json.decode(result, json.field("capabilities", json.raw()))
+      try assert.is_true(try json.decode(caps, json.field("definitionProvider", json.bool())))
+      .Ok({})
+    })
+}

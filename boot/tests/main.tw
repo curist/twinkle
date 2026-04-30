@@ -62,6 +62,7 @@ use .suites.lsp_document_store_suite
 use .suites.lsp_diagnostics_suite
 use .suites.lsp_server_core_suite
 use .suites.lsp_hover_suite
+use .suites.lsp_definition_suite
 use .suites.multi_module_suite
 use .suites.base_env_guardrail_suite
 use .suites.signature_loader_suite
@@ -132,6 +133,7 @@ runner.run_all([
   lsp_diagnostics_suite.suite(),
   lsp_server_core_suite.suite(),
   lsp_hover_suite.suite(),
+  lsp_definition_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),
