@@ -125,6 +125,53 @@ pub fn suite() runner.Suite {
       try assert.str_eq(content, "```twinkle\nInt\n```")
       .Ok({})
     })
+    .test("hover on type annotation name shows type", fn() {
+      state := state_with_doc("file:///a.tw", "type Program = .{ source: String }\nfn f(x: Program) Program { x }\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 8))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nProgram\n```")
+      .Ok({})
+    })
+    .test("hover on function declaration name shows signature", fn() {
+      state := state_with_doc("file:///a.tw", "fn make(x: Int) Int { x }\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 4))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nfn(x: Int) Int\n```")
+      .Ok({})
+    })
+    .test("hover on type declaration name shows type", fn() {
+      state := state_with_doc("file:///a.tw", "type Program = .{ source: String }\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 6))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nProgram\n```")
+      .Ok({})
+    })
+    .test("hover on top-level binding name shows inferred type", fn() {
+      state := state_with_doc("file:///a.tw", "value := 42\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 1))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on case arm variant shows constructor", fn() {
+      source := "type ParseError = { HelpRequested(String), Other }\nfn main(err: ParseError) String {\n  case err {\n    .HelpRequested(msg) => msg,\n    .Other => \"\",\n  }\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nParseError.HelpRequested(String)\n```")
+      .Ok({})
+    })
+    .test("hover on Result case arm variants shows constructors", fn() {
+      source := "fn main() Int {\n  r: Int!String = .Ok(1)\n  case r {\n    .Ok(v) => v,\n    .Err(_) => 0,\n  }\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      ok_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+      ok_content := try hover_content(ok_step)
+      try assert.str_eq(ok_content, "```twinkle\nResult.Ok(Int)\n```")
+      err_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
+      err_content := try hover_content(err_step)
+      try assert.str_eq(err_content, "```twinkle\nResult.Err(String)\n```")
+      .Ok({})
+    })
     .test("initialize advertises hoverProvider", fn() {
       msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
       step := server_core.handle_message(server_core.initial_state(), msg)
