@@ -140,6 +140,18 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
   }
 }
 
+fn workspace_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
+  open_docs := state.documents.docs.values()
+  overlay_docs := collect d in open_docs {
+    query_diagnostics.DocumentInput.{ uri: d.uri, text: d.text, version: d.version }
+  }
+  semantic.snapshot_workspace(state.query_cache, .{
+    entry_uri: doc.uri,
+    project_root: project_root_for_document(doc.identity.path),
+    open_documents: overlay_docs,
+  })
+}
+
 fn handle_hover(state: State, req: protocol.Request) Step {
   case params.decode_hover(req.params) {
     .Ok(hover_params) => {
@@ -150,7 +162,7 @@ fn handle_hover(state: State, req: protocol.Request) Step {
             .Some(o) => o,
             .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
           }
-          snap := semantic.snapshot(state.query_cache, .{ uri: doc.uri, text: doc.text, version: doc.version })
+          snap := workspace_snapshot(state, doc)
           next := with_query_cache(state, snap.cache)
           case query_hover.hover(snap, offset) {
             .Some(result) => {
@@ -176,7 +188,7 @@ fn handle_definition(state: State, req: protocol.Request) Step {
             .Some(o) => o,
             .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
           }
-          snap := semantic.snapshot(state.query_cache, .{ uri: doc.uri, text: doc.text, version: doc.version })
+          snap := workspace_snapshot(state, doc)
           next := with_query_cache(state, snap.cache)
           case query_definition.definition(snap, offset) {
             .Some(result) => {
