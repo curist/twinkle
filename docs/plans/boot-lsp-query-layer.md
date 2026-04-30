@@ -27,6 +27,8 @@ Implemented groundwork:
 - Dependency graph storage with reverse-dependency invalidation helpers.
 - Boot module compiler partially uses query stages.
 - LSP publishes workspace diagnostics for open documents on lifecycle events.
+- Query layer exposes semantic snapshots with parsed/resolved/typed artifacts
+  and basic source-position lookup helpers for editor features.
 - Framed stdio smoke coverage exists for valid diagnostics, invalid diagnostics,
   workspace import diagnostics, dependency edits affecting importers, clearing
   diagnostics, and shutdown.
@@ -237,12 +239,12 @@ document symbols, and completion.
 
 Checklist:
 
-- [ ] Define a typed semantic snapshot returned by the query layer.
-- [ ] Preserve source spans and symbol identities needed by editor features.
-- [ ] Add lookup helpers for symbol-at-position and enclosing syntax context.
-- [ ] Decide fallback behavior when the latest snapshot has parse/resolve/type
+- [x] Define a typed semantic snapshot returned by the query layer.
+- [x] Preserve source spans and symbol identities needed by editor features.
+- [x] Add lookup helpers for symbol-at-position and enclosing syntax context.
+- [x] Decide fallback behavior when the latest snapshot has parse/resolve/type
   errors.
-- [ ] Add tests for semantic snapshot stability across edits.
+- [x] Add tests for semantic snapshot stability across edits.
 
 Likely future LSP features:
 
@@ -250,6 +252,15 @@ Likely future LSP features:
 - [ ] Go-to-definition.
 - [ ] Document symbols.
 - [ ] Completion.
+
+Fallback behavior:
+
+- Parse diagnostics return a snapshot with parse artifacts when available and no
+  resolved/typed artifacts.
+- Resolve diagnostics preserve parsed and resolved artifacts, but omit typed
+  artifacts.
+- Type diagnostics preserve parsed, resolved, and typed artifacts so editor
+  features can still answer best-effort source/symbol queries.
 
 Acceptance:
 

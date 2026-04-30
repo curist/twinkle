@@ -3,6 +3,7 @@ use tests.runner
 use tests.assert
 use compiler.query.cache
 use compiler.query.diagnostics
+use compiler.query.semantic
 
 fn input(text: String) diagnostics.DocumentInput {
   .{ uri: "file:///main.tw", text, version: .Some(1) }
@@ -39,6 +40,49 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.str_eq(result.diagnostics[0].stage, "check")
       try assert.str_contains(result.diagnostics[0].message, "type mismatch")
+      .Ok({})
+    })
+    .test("semantic snapshot exposes parsed resolved and typed artifacts", fn() {
+      entry := "file:///tmp/semantic-main.tw"
+      result := semantic.snapshot_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp",
+        open_documents: [doc(entry, "fn answer() Int { 42 }\nx := answer()\n", 5)],
+      })
+      try assert.is_true(result.ok)
+      try assert.is_some(result.parsed)
+      try assert.is_some(result.resolved)
+      try assert.is_some(result.typed)
+      try assert.int_eq(try result.version.ok_or("missing version"), 5)
+      .Ok({})
+    })
+    .test("semantic snapshot preserves partial artifacts on errors", fn() {
+      entry := "file:///tmp/semantic-error.tw"
+      result := semantic.snapshot(cache.empty(), doc(entry, "fn answer() Missing { 42 }\n", 1))
+      try assert.is_false(result.ok)
+      try assert.is_some(result.parsed)
+      try assert.is_some(result.resolved)
+      try assert.is_none(result.typed)
+      try assert.is_true(result.diagnostics.len() > 0)
+      .Ok({})
+    })
+    .test("semantic snapshot stays usable across edits", fn() {
+      entry := "file:///tmp/semantic-edit.tw"
+      first := semantic.snapshot(cache.empty(), doc(entry, "fn answer() Int { 1 }\n", 1))
+      second := semantic.snapshot(first.cache, doc(entry, "fn answer() Int { 2 }\n", 2))
+      try assert.is_true(second.ok)
+      try assert.int_eq(try second.version.ok_or("missing version"), 2)
+      sym := try semantic.symbol_at_position(second, 4).ok_or("missing symbol")
+      try assert.str_eq(sym.name, "answer")
+      .Ok({})
+    })
+    .test("semantic snapshot finds symbols and enclosing syntax by byte offset", fn() {
+      entry := "file:///tmp/semantic-symbol.tw"
+      result := semantic.snapshot(cache.empty(), doc(entry, "type Point = .{ x: Int }\nfn answer() Int { 42 }\ny := answer()\n", 1))
+      sym := try semantic.symbol_at_position(result, 31).ok_or("missing symbol")
+      try assert.str_eq(sym.name, "answer")
+      syntax := try semantic.enclosing_syntax(result, 55).ok_or("missing syntax")
+      try assert.str_eq(syntax.kind, "let")
       .Ok({})
     })
     .test("reuses cached stages on second analysis", fn() {

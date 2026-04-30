@@ -1,0 +1,198 @@
+// Semantic snapshots for editor-oriented query features.
+//
+// This module exposes parsed/resolved/typed artifacts and lightweight source
+// lookup helpers without lowering or codegen.
+
+use compiler.base_env
+use compiler.ast
+use compiler.checker.{CheckResult}
+use compiler.query.cache
+use compiler.query.diagnostics
+use compiler.query.stage_runner
+use compiler.resolver.{ResolveResult}
+use lib.query.keys
+use lib.source.identity
+use lib.source.overlay
+use lib.source.span
+
+pub type SemanticSnapshot = .{
+  cache: cache.Store,
+  uri: String,
+  version: Int?,
+  parsed: cache.ParsedModule?,
+  resolved: ResolveResult?,
+  typed: CheckResult?,
+  diagnostics: Vector<diagnostics.Diagnostic>,
+  ok: Bool,
+}
+
+pub type SymbolKind = { Import, Type, Function, Let }
+
+pub type SymbolAtPosition = .{
+  name: String,
+  kind: SymbolKind,
+  span: span.Span,
+}
+
+pub type EnclosingSyntax = .{
+  kind: String,
+  span: span.Span,
+}
+
+pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
+  id := case identity.from_file_uri(input.entry_uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(input.entry_uri),
+  }
+
+  docs: Vector<overlay.OverlayDocument> = []
+  for doc in input.open_documents {
+    doc_id := case identity.from_file_uri(doc.uri) {
+      .Ok(parsed) => parsed,
+      .Err(_) => identity.from_path(doc.uri),
+    }
+    docs = docs.append(.{ identity: doc_id, text: doc.text, version: doc.version })
+  }
+
+  source := case overlay.lookup(overlay.from_documents(docs), id) {
+    .Ok(found) => found,
+    .Err(err) => {
+      diag := diagnostics.Diagnostic.{ uri: id.uri, version: .None, span: .None, severity: .Error, message: err, stage: "source" }
+      return .{ cache: store, uri: id.uri, version: .None, parsed: .None, resolved: .None, typed: .None, diagnostics: [diag], ok: false }
+    },
+  }
+
+  doc_input := diagnostics.DocumentInput.{ uri: source.identity.uri, text: source.text, version: source.version }
+  snapshot_source(store, source.identity, doc_input)
+}
+
+pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSnapshot {
+  id := case identity.from_file_uri(input.uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(input.uri),
+  }
+  snapshot_source(store, id, input)
+}
+
+fn snapshot_source(store: cache.Store, id: identity.SourceIdentity, input: diagnostics.DocumentInput) SemanticSnapshot {
+  source_hash := keys.hash_text(input.text)
+  store = cache.note_source_hash(store, id.path, source_hash)
+  runner := stage_runner.new(id.path, source_hash, 0, 0, false)
+
+  parsed_out := stage_runner.parse(runner, store, input.text, 0)
+  cur_cache := parsed_out.store
+  parsed := parsed_out.value
+  if parsed.diagnostics.len() > 0 {
+    return .{
+      cache: cur_cache,
+      uri: id.uri,
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .None,
+      typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics),
+      ok: false,
+    }
+  }
+
+  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
+  cur_cache = resolved_out.store
+  resolved := resolved_out.value
+  if resolved.diagnostics.len() > 0 {
+    return .{
+      cache: cur_cache,
+      uri: id.uri,
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .Some(resolved),
+      typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics),
+      ok: false,
+    }
+  }
+
+  checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved)
+  cur_cache = checked_out.store
+  checked := checked_out.value
+  if checked.diagnostics.len() > 0 {
+    return .{
+      cache: cur_cache,
+      uri: id.uri,
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .Some(resolved),
+      typed: .Some(checked),
+      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics),
+      ok: false,
+    }
+  }
+
+  .{
+    cache: cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0)),
+    uri: id.uri,
+    version: input.version,
+    parsed: .Some(parsed),
+    resolved: .Some(resolved),
+    typed: .Some(checked),
+    diagnostics: [],
+    ok: true,
+  }
+}
+
+pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosition? {
+  parsed := case snap.parsed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  for item in parsed.module.items {
+    case item {
+      .Use(decl) => {
+        if decl.span.contains(byte_offset) {
+          return .Some(SymbolAtPosition.{ name: decl.path.join("."), kind: .Import, span: decl.span })
+        }
+      },
+      .Type(decl) => {
+        if decl.span.contains(byte_offset) {
+          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span })
+        }
+      },
+      .Function(decl) => {
+        if decl.span.contains(byte_offset) {
+          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Function, span: decl.span })
+        }
+      },
+      .Stmt(stmt) => case stmt {
+        .Let(let_stmt) => {
+          if let_stmt.span.contains(byte_offset) {
+            return .Some(SymbolAtPosition.{ name: let_stmt.name, kind: .Let, span: let_stmt.span })
+          }
+        },
+        _ => {},
+      },
+      _ => {},
+    }
+  }
+  .None
+}
+
+pub fn enclosing_syntax(snap: SemanticSnapshot, byte_offset: Int) EnclosingSyntax? {
+  parsed := case snap.parsed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  for item in parsed.module.items {
+    case item {
+      .Use(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "import", span: decl.span }) },
+      .Type(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "type", span: decl.span }) },
+      .Function(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "function", span: decl.span }) },
+      .Stmt(stmt) => case stmt {
+        .Let(let_stmt) => if let_stmt.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "let", span: let_stmt.span }) },
+        .Expr(expr_stmt) => if expr_stmt.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "expr", span: expr_stmt.span }) },
+        _ => {},
+      },
+      _ => {},
+    }
+  }
+  if parsed.module.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "module", span: parsed.module.span }) }
+  .None
+}

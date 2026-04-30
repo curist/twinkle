@@ -350,7 +350,7 @@ fn convert_source_diagnostics(
   }
 }
 
-fn convert_diagnostics(
+pub fn convert_diagnostics(
   input: DocumentInput,
   stage: String,
   diagnostics: Vector<source_diag.Diagnostic>,
