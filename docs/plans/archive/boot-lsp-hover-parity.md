@@ -4,6 +4,10 @@
 
 Close the remaining hover behavior gaps between the Rust stage0 LSP implementation and the boot compiler LSP implementation.
 
+## Status
+
+Complete. Boot hover now covers symbol-aware calls and methods, scoped binders, user docs, builtin/prelude docs, builtin type docs, variants in expressions and patterns, imported variants, nested patterns, and UTF-16/multibyte stability. The boot hover suite includes parity coverage for these cases, and the self-hosted bundle path has been verified.
+
 Boot hover should resolve the same user-facing symbols as goto-definition where hover is meaningful, display stable identifier ranges, include available documentation, and behave correctly for UTF-16 LSP positions.
 
 ## Current state

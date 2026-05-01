@@ -29,7 +29,8 @@ fn builtin_sig(name: String, params: Vector<String>, param_tys: Vector<resolver.
     param_names: params,
     params: param_tys,
     ret: ret,
-  }
+    doc: .None,
+}
 }
 
 fn test_env() resolver.ResolvedEnv {
@@ -1190,7 +1191,8 @@ pub fn suite() runner.Suite {
         param_names: ["p"],
         params: [resolver.MonoType.Named(point_tid, [])],
         ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
 
       env := resolver.empty_env()
         .register_type_entry(point_entry, "dep.Point")

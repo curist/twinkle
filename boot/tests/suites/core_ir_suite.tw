@@ -1135,14 +1135,16 @@ pub fn suite() runner.Suite {
         param_names: ["xs", "pred"],
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
-      }
+        doc: .None,
+}
       vector_filter_sig := resolver.FunctionSig.{
         name: "vector_filter",
         type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
-      }
+        doc: .None,
+}
       origin := resolver.FunctionOrigin.{ module_path: "prelude/vector.tw", func_name: "filter" }
 
       env := resolver.empty_env()

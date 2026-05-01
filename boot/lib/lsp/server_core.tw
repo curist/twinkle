@@ -164,7 +164,7 @@ fn handle_hover(state: State, req: protocol.Request) Step {
           }
           snap := workspace_snapshot(state, doc)
           next := with_query_cache(state, snap.cache)
-          case query_hover.hover(snap, offset) {
+          case query_hover.hover(snap, offset, doc.text) {
             .Some(result) => {
               .{ state: next, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
             },

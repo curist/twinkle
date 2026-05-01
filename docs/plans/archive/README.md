@@ -95,6 +95,7 @@ Related historical context outside this folder:
 | [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [lsp-file-watching.md](lsp-file-watching.md) | Watched-file refresh plan for `twk lsp` disk snapshot updates and diagnostics refresh |
 | [boot-lsp-query-layer.md](boot-lsp-query-layer.md) | Boot LSP query layer for workspace-aware diagnostics, source overlays, cache invalidation, and reusable semantic snapshots |
+| [boot-lsp-hover-parity.md](boot-lsp-hover-parity.md) | Boot LSP hover parity with stage0: symbol-aware function/method hover, binders, user and prelude docs, variant hover, and UTF-16 stability |
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Twinkle-native test runner and suite infrastructure in `boot/tests/` |
 | [string-graphemes.md](string-graphemes.md) | `String.graphemes()` for extended grapheme cluster iteration (UAX #29) |
 | [iterator-to-vector.md](iterator-to-vector.md) | `Iterator.to_vector()` method-form materialization equivalent to `collect` |

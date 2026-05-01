@@ -12,7 +12,18 @@ fn builtin_sig(
   params: Vector<MonoType>,
   ret: MonoType?,
 ) FunctionSig {
-  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret }
+  builtin_doc_sig(name, type_params, param_names, params, ret, .None)
+}
+
+fn builtin_doc_sig(
+  name: String,
+  type_params: Vector<String>,
+  param_names: Vector<String>,
+  params: Vector<MonoType>,
+  ret: MonoType?,
+  doc: String?,
+) FunctionSig {
+  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret, doc }
 }
 
 
@@ -219,11 +230,11 @@ pub fn builtin_env() ResolvedEnv {
 
   hardcoded := [
     // ── I/O ──
-    builtin_sig("print",    [],    ["s"],            [.String],              .Some(.Void)),
-    builtin_sig("println",  [],    ["s"],            [.String],              .Some(.Void)),
-    builtin_sig("error",    [],    ["msg"],          [.String],              .Some(.Never)),
-    builtin_sig("eprint",   [],    ["s"],            [.String],              .Some(.Void)),
-    builtin_sig("eprintln", [],    ["s"],            [.String],              .Some(.Void)),
+    builtin_doc_sig("print",    [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stdout.")),
+    builtin_doc_sig("println",  [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stdout followed by a newline.")),
+    builtin_doc_sig("error",    [], ["msg"], [.String], .Some(.Never), .Some("Trap with an unrecoverable error message.")),
+    builtin_doc_sig("eprint",   [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr.")),
+    builtin_doc_sig("eprintln", [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr followed by a newline.")),
     // ── String (internal-only, not in signature files) ──
     builtin_sig("string_substring", [], ["s", "start", "end"], [.String, .Int, .Int], .Some(.String)),
     // ── Vector builders (internal, not in signature files) ──

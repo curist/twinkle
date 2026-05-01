@@ -91,6 +91,7 @@ pub type FunctionSig = .{
   param_names: Vector<String>,
   params: Vector<MonoType>,
   ret: MonoType?,
+  doc: String?,
 }
 
 /// Canonical defining-site identity for an imported function.
@@ -1402,6 +1403,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
     param_names: param_names,
     params: param_types,
     ret: ret_ty,
+    doc: .None,
   })
 
   .{ env: new_env, diagnostics: diags }
@@ -1703,6 +1705,7 @@ fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, Ty
     param_names: sig.param_names,
     params,
     ret,
+    doc: sig.doc,
   }
 }
 

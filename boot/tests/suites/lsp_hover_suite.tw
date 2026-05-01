@@ -17,6 +17,18 @@ fn state_with_doc(uri: String, text: String) server_core.State {
   }
 }
 
+fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
+  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
+  docs := document_store.open(docs0, uri_b, text_b, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+  }
+}
+
 fn hover_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
   params := json.object([
     json.kv("textDocument", json.object([
@@ -93,7 +105,7 @@ pub fn suite() runner.Suite {
       // "add" on line 1 at char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(Int, Int) Int\n```")
+      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
       .Ok({})
     })
     .test("hover on argument shows argument type", fn() {
@@ -170,6 +182,226 @@ pub fn suite() runner.Suite {
       err_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
       err_content := try hover_content(err_step)
       try assert.str_eq(err_content, "```twinkle\nResult.Err(String)\n```")
+      .Ok({})
+    })
+    .test("hover on receiver method name shows signature with param names", fn() {
+      source := "type Counter = .{ value: Int }\nfn inc(c: Counter) Counter { Counter.{ value: c.value + 1 } }\nn := Counter.{ value: 1 }\nresult := n.inc()\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "inc" on the last line: "result := n.inc()"
+      //  0123456789012345
+      //  result := n.inc()
+      // "inc" starts at char 12
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 12))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nfn(c: Counter) Counter\n```")
+      .Ok({})
+    })
+    .test("hover on module-qualified function shows signature", fn() {
+      source := "fn add(a: Int, b: Int) Int { a + b }\nx := add(1, 2)\n"
+      state := state_with_doc("file:///a.tw", source)
+      // hover on "add" in the call on line 1 at char 5
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
+      .Ok({})
+    })
+    .test("hover stable across method name characters", fn() {
+      source := "type Counter = .{ value: Int }\nfn inc(c: Counter) Counter { Counter.{ value: c.value + 1 } }\nn := Counter.{ value: 1 }\nresult := n.inc()\n"
+      state := state_with_doc("file:///a.tw", source)
+      // hover on first char 'i' of "inc" at char 12
+      step1 := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 12))
+      c1 := try hover_content(step1)
+      // hover on last char 'c' of "inc" at char 14
+      step2 := server_core.handle_message(state, hover_request(2, "file:///a.tw", 3, 14))
+      c2 := try hover_content(step2)
+      try assert.str_eq(c1, c2)
+      .Ok({})
+    })
+    .test("hover on function parameter name shows type", fn() {
+      //                          fn add(a: Int, b: Int) Int { a + b }
+      // line 0:                  0123456789...
+      // "a" is at char 7
+      state := state_with_doc("file:///a.tw", "fn add(a: Int, b: Int) Int { a + b }\n")
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 7))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on let binding name in function body shows type", fn() {
+      source := "fn main() Int {\n  x := 42\n  x\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "x" on line 1 at char 2
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 2))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on for loop value binder shows element type", fn() {
+      source := "fn main() Int {\n  sum := 0\n  for x in [1, 2, 3] {\n    sum = sum + x\n  }\n  sum\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "x" on line 2: "  for x in [1, 2, 3] {"
+      //                  01234
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 6))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on case pattern binder shows type", fn() {
+      source := "fn main() Int {\n  x: Int? = .Some(42)\n  case x {\n    .Some(v) => v,\n    .None => 0,\n  }\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "v" in ".Some(v)" on line 3: "    .Some(v) => v,"
+      //                                0123456789
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 10))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on closure parameter shows type", fn() {
+      source := "fn main() Int {\n  f := fn(x: Int) Int { x + 1 }\n  f(1)\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "x" in "fn(x: Int)" on line 1: "  f := fn(x: Int) Int { x + 1 }"
+      //                                  0123456789...
+      // x is at char 10
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 10))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on user function call shows doc comment", fn() {
+      source := "/// Add one to x.\nfn add_one(x: Int) Int {\n  x + 1\n}\n\nvalue := add_one(1)\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "add_one" on line 5: "value := add_one(1)"
+      //                       012345678
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 5, 9))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(x: Int) Int")
+      try assert.str_contains(content, "Add one to x.")
+      .Ok({})
+    })
+    .test("hover on user function declaration name shows doc comment", fn() {
+      source := "/// Add one to x.\nfn add_one(x: Int) Int {\n  x + 1\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "add_one" on line 1: "fn add_one(x: Int) Int {"
+      //                       0123
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(x: Int) Int")
+      try assert.str_contains(content, "Add one to x.")
+      .Ok({})
+    })
+    .test("hover on user type declaration name shows doc comment", fn() {
+      source := "/// RGB color value.\ntype Color = .{ r: Int, g: Int, b: Int }\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "Color" on line 1: "type Color = ..."
+      //                      01234567
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 6))
+      content := try hover_content(step)
+      try assert.str_contains(content, "Color")
+      try assert.str_contains(content, "RGB color value.")
+      .Ok({})
+    })
+    .test("hover on builtin println shows docs", fn() {
+      source := "println(\"hello\")\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 1))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(s: String) Void")
+      try assert.str_contains(content, "Print a string to stdout followed by a newline.")
+      .Ok({})
+    })
+    .test("hover on prelude free function shows signature docs", fn() {
+      source := "r := range(10)\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 6))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(end: Int) Range")
+      try assert.str_contains(content, "Create a range from 0 to end (exclusive).")
+      .Ok({})
+    })
+    .test("hover on prelude receiver method shows signature docs", fn() {
+      source := "xs := [1, 2, 3]\nn := xs.len()\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 8))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(xs: Vector<Int>) Int")
+      try assert.str_contains(content, "Return the number of elements.")
+      .Ok({})
+    })
+    .test("hover on builtin Option type shows docs", fn() {
+      source := "x: Option<Int> = .Some(1)\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 3))
+      content := try hover_content(step)
+      try assert.str_contains(content, "Option")
+      try assert.str_contains(content, "Optional value: None or Some(T).")
+      .Ok({})
+    })
+    .test("hover on qualified builtin function shows docs", fn() {
+      source := "x := Int.from_string(\"42\")\n"
+      state := state_with_doc("file:///a.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 10))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(s: String) Int?")
+      try assert.str_contains(content, "Parse a string as an integer")
+      .Ok({})
+    })
+    .test("hover on Option case arm variants shows constructors", fn() {
+      source := "fn main() Int {\n  x: Int? = .Some(42)\n  case x {\n    .Some(v) => v,\n    .None => 0,\n  }\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      some_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+      some_content := try hover_content(some_step)
+      try assert.str_eq(some_content, "```twinkle\nOption.Some(Int)\n```")
+      none_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
+      none_content := try hover_content(none_step)
+      try assert.str_eq(none_content, "```twinkle\nOption.None\n```")
+      .Ok({})
+    })
+    .test("hover on expression variant constructor shows constructor", fn() {
+      source := "fn main() Int!String {\n  .Ok(1)\n}\n"
+      state := state_with_doc("file:///variant-expr.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///variant-expr.tw", 1, 3))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nResult.Ok(Int)\n```")
+      .Ok({})
+    })
+    .test("hover on qualified variant constructor shows constructor", fn() {
+      source := "type Color = { Red, Rgb(Int, Int, Int) }\nfn main() Color { Color.Rgb(1, 2, 3) }\n"
+      state := state_with_doc("file:///qualified-variant.tw", source)
+      step := server_core.handle_message(state, hover_request(1, "file:///qualified-variant.tw", 1, 24))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nColor.Rgb(Int, Int, Int)\n```")
+      .Ok({})
+    })
+    .test("hover on imported qualified variant constructor shows constructor", fn() {
+      dep := "pub type Color = { Red, Rgb(Int) }\n"
+      main := "use dep\nfn main() dep.Color { dep.Color.Rgb(1) }\n"
+      state := state_with_two_docs("file:///tmp/lsp-hover-variant/dep.tw", dep, "file:///tmp/lsp-hover-variant/main.tw", main)
+      step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-variant/main.tw", 1, 32))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nColor.Rgb(Int)\n```")
+      .Ok({})
+    })
+    .test("hover on nested pattern variants and binders shows types", fn() {
+      source := "type Box = { Box(Int?) }\nfn main(b: Box) Int {\n  case b {\n    .Box(.Some(v)) => v,\n  }\n}\n"
+      state := state_with_doc("file:///nested-pattern.tw", source)
+      some_step := server_core.handle_message(state, hover_request(1, "file:///nested-pattern.tw", 3, 10))
+      some_content := try hover_content(some_step)
+      try assert.str_eq(some_content, "```twinkle\nOption.Some(Int)\n```")
+      binder_step := server_core.handle_message(state, hover_request(2, "file:///nested-pattern.tw", 3, 15))
+      binder_content := try hover_content(binder_step)
+      try assert.str_eq(binder_content, "```twinkle\nInt\n```")
+      .Ok({})
+    })
+    .test("hover on method with multibyte prefix line is stable", fn() {
+      // em-dash — is 3 bytes in UTF-8, 1 code unit in UTF-16... actually 1 char
+      // Actually — is U+2014, encoded as 3 bytes UTF-8 but 1 UTF-16 code unit
+      source := "type Text = .{ data: String }\nfn greet(t: Text) String { t.data }\n// ASCII \xe2\x80\x94 each char is its own grapheme\nt := Text.{ data: \"hello\" }\ng := t.greet()\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "greet" on last line: "g := t.greet()"
+      //                        01234567
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 4, 7))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn(t: Text) String")
       .Ok({})
     })
     .test("initialize advertises hoverProvider", fn() {

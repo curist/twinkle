@@ -715,7 +715,8 @@ pub fn suite() runner.Suite {
           resolver.MonoType.Function([resolver.MonoType.Var("A")], resolver.MonoType.Var("B")),
         ],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("B"))),
-      }
+        doc: .None,
+}
       env := resolver.empty_env().with_functions([prelude_sig])
 
       // User defines their own "map" — should shadow prelude's
@@ -739,7 +740,8 @@ pub fn suite() runner.Suite {
         param_names: ["x"],
         params: [resolver.MonoType.Int],
         ret: .Some(resolver.MonoType.String),
-      }
+        doc: .None,
+}
       env := resolver.empty_env().with_functions([prelude_sig])
 
       // User redefines to_string — should NOT produce a "duplicate" diagnostic
@@ -823,12 +825,14 @@ pub fn suite() runner.Suite {
       sig1 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       env = env.add_function( sig1)
       sig2 := resolver.FunctionSig.{
         name: "bar", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
-      }
+        doc: .None,
+}
       env = env.add_function( sig2)
 
       try assert.is_true(resolver.has_function(env, "foo"))
@@ -841,13 +845,15 @@ pub fn suite() runner.Suite {
       sig1 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       env = env.add_function( sig1)
       // Add another "foo" — should shadow the first
       sig2 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
-      }
+        doc: .None,
+}
       env = env.add_function( sig2)
 
       case resolver.lookup_function(env, "foo") {
@@ -1121,7 +1127,8 @@ pub fn suite() runner.Suite {
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
-      }
+        doc: .None,
+}
       parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
       env := resolver.empty_env().register_type_entry(entry, "dep.Support").with_functions([sig])
 
@@ -1155,7 +1162,8 @@ pub fn suite() runner.Suite {
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(outer_tid, [])], ret: .Some(resolver.MonoType.Named(outer_tid, [])),
-      }
+        doc: .None,
+}
       parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
       env := resolver.empty_env()
         .register_type_entry(inner_entry, "dep.Inner")
@@ -1245,11 +1253,13 @@ pub fn suite() runner.Suite {
       make_sig := resolver.FunctionSig.{
         name: "make_env", type_params: [], param_names: [],
         params: [], ret: .Some(resolver.MonoType.Named(env_tid, [])),
-      }
+        doc: .None,
+}
       resolve_sig := resolver.FunctionSig.{
         name: "dep.resolve", type_params: [], param_names: ["env"],
         params: [resolver.MonoType.Named(env_tid, [])], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       env := resolver.empty_env()
         .register_type_entry(env_entry, "dep.Env")
         .add_function(make_sig)
@@ -1306,7 +1316,8 @@ pub fn suite() runner.Suite {
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
-      }
+        doc: .None,
+}
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") }],
@@ -1516,7 +1527,8 @@ pub fn suite() runner.Suite {
       builtin_sig := resolver.FunctionSig.{
         name: "len", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       env := resolver.empty_env().with_functions([builtin_sig])
 
       // Create prelude export with a different "len"
@@ -1638,7 +1650,8 @@ pub fn suite() runner.Suite {
       env = env.add_function(resolver.FunctionSig.{
         name: "filter", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      })
+        doc: .None,
+})
 
       // Origin should be cleared for the now-local function
       case resolver.lookup_function_origin(env, "filter") {
@@ -1651,11 +1664,13 @@ pub fn suite() runner.Suite {
       imported := resolver.FunctionSig.{
         name: "filter", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       local := resolver.FunctionSig.{
         name: "local_only", type_params: [], param_names: [],
         params: [], ret: .Some(resolver.MonoType.Void),
-      }
+        doc: .None,
+}
 
       env := resolver.empty_env()
         .with_functions([imported, local])
@@ -1675,7 +1690,8 @@ pub fn suite() runner.Suite {
       sig := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [],
@@ -1705,7 +1721,8 @@ pub fn suite() runner.Suite {
       helper_sig := resolver.FunctionSig.{
         name: "helper", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
-      }
+        doc: .None,
+}
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [],
