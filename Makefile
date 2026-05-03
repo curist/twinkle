@@ -8,8 +8,8 @@ help:
 	@printf '  make lsp-smoke         Run framed stdio LSP smoke test against target/twk\n'
 	@printf '  make stage0            Build the Rust stage0 compiler\n'
 	@printf '  make stage2            Rebuild target/boot.wasm via self-host loop\n'
-	@printf '  make bundle-cli        Rebuild stage2 payload and bundle target/twk\n'
-	@printf '  make quick-bundle-cli  Bundle target/twk from existing target/boot.wasm\n'
+	@printf '  make bundle-cli        Rebuild stage2 payload and build Node SEA target/twk\n'
+	@printf '  make quick-bundle-cli  Build Node SEA target/twk from existing target/boot.wasm\n'
 	@printf '  make cli               Alias for bundle-cli\n'
 
 # Fast day-to-day validation for boot compiler changes.
@@ -32,18 +32,18 @@ stage0:
 stage2: stage0
 	tools/selfhost_loop.sh boot/main.tw
 
-# Full bundled CLI rebuild. Use this after changing boot/main.tw or any code
+# Full standalone CLI rebuild. Use this after changing boot/main.tw or any code
 # that should be embedded into ./target/twk.
 bundle-cli: stage2
-	tools/build_bun_cli.sh
+	tools/build_node_sea_cli.sh
 
 cli: bundle-cli
 
-# Rebundle the CLI from the existing target/boot.wasm without rebuilding the
-# self-hosted payload. This is only correct when target/boot.wasm is already fresh.
+# Rebuild the standalone CLI from the existing target/boot.wasm without rebuilding
+# the self-hosted payload. This is only correct when target/boot.wasm is already fresh.
 quick-bundle-cli:
-	tools/build_bun_cli.sh
+	tools/build_node_sea_cli.sh
 
 clean:
 	cargo clean
-	rm -f target/boot.wasm target/boot-stage1.wasm target/twk target/twk_cli_payload.mjs
+	rm -f target/boot.wasm target/boot-stage1.wasm target/twk
