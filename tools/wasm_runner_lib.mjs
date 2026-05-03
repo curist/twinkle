@@ -174,7 +174,7 @@ function makeHostImports(b, runtime) {
           env: runtime.env,
           stdout: runtime.stdout,
           stderr: runtime.stderr,
-          bridgeBytes,
+          bridgeBytes: runtime.bridgeBytes,
         });
         return BigInt(exitCode);
       },
@@ -266,6 +266,7 @@ export function runWasmBytes(
     env,
     stdout,
     stderr,
+    bridgeBytes,
   };
 
   const hostImports = makeHostImports(b, runtime);

@@ -2795,7 +2795,10 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     }
   }
 
-  // Pre-pass 1: assign GlobalLocal IDs to module-level lets
+  // Pre-pass 1: assign a distinct GlobalLocal ID to each module-level let.
+  // Keep the IDs in source order so __init__ can bind names sequentially and
+  // support top-level shadowing (e.g. `x := ...; ...; x := ...`).
+  module_let_globals: Vector<LocalId> = []
   for item in module.items {
     case item {
       .Stmt(stmt) => {
@@ -2804,6 +2807,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             gid := LocalId.{ id: ctx.next_global }
             ctx.next_global = ctx.next_global + 1
             ctx.module_globals[ls.name] = gid
+            module_let_globals = module_let_globals.append(gid)
           },
           _ => {},
         }
@@ -2849,7 +2853,11 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // Ensure local IDs don't collide with module globals
   if ctx.next_local < ctx.next_global { ctx.next_local = ctx.next_global }
 
-  // Lower module-level lets into __init__ function
+  // Lower module-level statements into __init__. Rebuild the module-global
+  // name environment as we walk so expressions see the latest preceding
+  // top-level binding, not the final binding from the pre-pass.
+  ctx.module_globals = Dict.new()
+  module_let_index := 0
   init_stmts: Vector<CoreExpr> = []
   has_init := false
   for item in module.items {
@@ -2858,18 +2866,16 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         case stmt {
           .Let(ls) => {
             has_init = true
+            gid := module_let_globals[module_let_index]
+            module_let_index = module_let_index + 1
             r := ctx.lower_expr(ls.value)
             ctx = r.ctx
-            case ctx.module_globals[ls.name] {
-              .Some(gid) => {
-                init_stmts = init_stmts.append(.{
-                  kind: .Assign(gid, r.expr),
-                  ty: .Void,
-                  span: ls.span,
-                })
-              },
-              .None => {},
-            }
+            init_stmts = init_stmts.append(.{
+              kind: .Assign(gid, r.expr),
+              ty: .Void,
+              span: ls.span,
+            })
+            ctx.module_globals[ls.name] = gid
           },
           .Expr(es) => {
             has_init = true
