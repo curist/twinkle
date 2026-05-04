@@ -1,0 +1,270 @@
+# Wasm Tail Calls Plan
+
+## Goal
+
+Teach the boot compiler to emit WebAssembly tail-call instructions for calls in
+true tail position. Tail-call support is a required target-runtime capability for
+Twinkle-generated Wasm, not an optional compatibility mode.
+
+The immediate target is direct monomorphic calls that currently lower to
+`call` followed by `return`. Later phases can extend this to closure calls and
+other indirect call paths.
+
+## Current State
+
+The backend already has partial plumbing:
+
+- `boot/compiler/codegen/wasm_ir.tw` defines `ReturnCall` and `ReturnCallRef`.
+- `boot/compiler/codegen/wat.tw` prints them as `return_call` and
+  `return_call_ref`.
+- `boot/compiler/codegen/wasm.tw` serializes them in the binary emitter.
+- `boot/compiler/codegen/linker.tw` rewrites them during symbol/type renaming.
+
+What is missing is a producer: normal codegen does not appear to choose these
+instructions for tail-position calls yet.
+
+## Non-Goals
+
+- Do not change Twinkle source semantics.
+- Do not provide a compatibility mode for runtimes without Wasm tail-call
+  support.
+- Do not use tail calls across cleanup/finalization boundaries such as future
+  `defer` lowering.
+- Do not introduce Wasm exception handling as part of this work.
+
+## Design Principles
+
+### 1. Tail calls are part of the required Wasm target
+
+The compiler may emit `return_call` / `return_call_ref` whenever a call is in a
+valid Wasm tail position. Runtimes that cannot validate tail-call instructions
+are unsupported targets for Twinkle-generated Wasm.
+
+### 2. Tail calls remain semantics-preserving
+
+Tail-call emission must not change Twinkle source semantics, modulo stack usage
+and stack traces. The compiler should still emit normal `call` / `call_ref` for
+calls that are not in tail position or are not ABI-compatible with the enclosing
+return continuation.
+
+### 3. Only emit when the Wasm call signature matches
+
+A tail call is valid only when the callee ABI result matches the enclosing
+function continuation exactly.
+
+Initial rule:
+
+- callee params are already prepared as usual
+- callee results exactly match the enclosing function results
+- no result boxing, unboxing, cast, struct construction, or adapter call remains
+  after the call
+
+If result adaptation is needed, keep the old non-tail sequence. A later phase
+can introduce typed tail-call adapter shims when that becomes valuable.
+
+### 4. Respect evaluation order
+
+Argument evaluation and side effects must remain identical. The optimization
+should replace only the terminal call/return shape, not move computations across
+other effects.
+
+## Tail Position Definition
+
+A call is in tail position when its result is immediately returned from the
+current function with no remaining work.
+
+Source-level examples that should eventually qualify:
+
+```tw
+fn loop(n: Int, acc: Int) Int {
+  if n == 0 { acc } else { loop(n - 1, acc + n) }
+}
+```
+
+```tw
+fn dispatch(x: Int) Int {
+  case x {
+    0 => zero(),
+    _ => dispatch(x - 1),
+  }
+}
+```
+
+Implementation should not rely on source syntax directly. Prefer recognizing
+the shape after lowering, where function bodies have explicit terminal forms.
+
+## Implementation Plan
+
+### Phase 1: Declare tail calls as a target requirement
+
+- Document tail-call support as part of Twinkle's required Wasm target feature
+  set alongside Wasm GC / typed references.
+- Update CLI/help/runtime documentation to state that runtimes without tail-call
+  support are unsupported.
+- Keep existing non-tail call emission for calls that are not in valid tail
+  position.
+
+Acceptance criteria:
+
+- Project docs clearly describe tail calls as required target support.
+- There is no `--no-wasm-tail-calls` compatibility path in the design.
+
+### Phase 2: Direct-call tail emission
+
+Find the code path that emits prepared direct calls and teach it to distinguish
+normal value context from return context.
+
+Suggested shape:
+
+- introduce an `EmitMode` or `Continuation` enum, such as:
+
+```tw
+type EmitContinuation = {
+  Value,
+  Return(Vector<ValType>),
+}
+```
+
+- when emitting the body of a function, emit the final expression/terminal in
+  `Return(...)` mode
+- when a direct call is emitted in `Return(...)` mode and its result signature
+  matches, emit `ReturnCall(sym)` instead of `Call(sym)` plus outer `Return`
+- when the call is not in tail position or still needs post-call adaptation,
+  keep the existing normal-call codegen
+
+Acceptance criteria:
+
+- A simple tail-recursive function emits `return_call`.
+- A non-tail recursive function still emits `call`.
+- A function that must adapt the result representation after the call still
+  emits the current non-tail sequence.
+
+### Phase 3: Tail-position propagation through control flow
+
+Propagate return context through structured terminal constructs:
+
+- `if` branches whose result is the function result
+- `case` / match arms
+- block tail expressions after local bindings
+- loops only when the tail call is on an exit path, not when more loop work
+  remains
+
+The key rule is local: only pass `Return(...)` into subexpressions that are
+known to be the final value of the enclosing function.
+
+Acceptance criteria:
+
+- Tail calls inside both branches of an `if` can become `return_call`.
+- Tail calls inside match arms can become `return_call`.
+- Calls followed by arithmetic, wrapping, variant construction, field access, or
+  cleanup remain normal calls.
+
+### Phase 4: Closure and function-reference tail calls
+
+Extend the same machinery to closure calls once direct calls are stable.
+
+Current closure calls use `call_ref` with typed function references. In tail
+position, eligible calls can become `ReturnCallRef(type_sym)`.
+
+Extra care points:
+
+- preserve the existing stack order for closure environment and argument array
+  preparation
+- only use `return_call_ref` when the referenced function type matches the
+  enclosing continuation result exactly
+- keep erased closure helper paths as fallback when representation adaptation is
+  still needed
+
+Acceptance criteria:
+
+- Tail-position closure calls emit `return_call_ref` when enabled and eligible.
+- Non-tail closure calls continue to emit `call_ref`.
+
+### Phase 5: Optional adapter shims
+
+Many currently non-eligible calls may fail only because of a small result
+adapter, such as a cast or typed/erased boundary conversion.
+
+Rather than performing work after a tail call, generate or reuse an adapter
+function whose body performs the call and adaptation, then tail-call that
+adapter where profitable.
+
+This is optional and should wait until the direct implementation is reliable.
+
+## Validation Strategy
+
+### Static/WAT tests
+
+Add compiler tests that inspect emitted WAT/IR for:
+
+- direct tail recursion uses `return_call`
+- direct non-tail recursion does not
+- tail calls under `if` and `case` use `return_call`
+- non-tail-position calls do not emit `return_call` / `return_call_ref`
+
+### Runtime tests
+
+Add a recursion-depth test that would normally overflow the host/Wasm stack but
+succeeds on the required target runtime because tail calls are supported.
+
+### Binary/validator tests
+
+Update the binary subset reference and ensure the emitted binary validates with
+the chosen engine/toolchain when tail calls are enabled.
+
+## Runtime Requirement
+
+Tail calls are part of Twinkle's required WebAssembly target. The compiler may
+emit tail-call instructions without probing for fallback support.
+
+Required policy:
+
+- document the minimum supported runtimes/engines that validate Wasm GC plus
+  tail calls
+- fail early or clearly when invoking a bundled runner that lacks tail-call
+  support
+- do not add a portable fallback mode whose purpose is supporting runtimes
+  without tail calls
+
+## Expected Impact On The Current Boot Compiler
+
+A snapshot of the current boot compiler output suggests tail calls are useful but
+not likely to be a large immediate throughput win by themselves.
+
+The compiler source already uses explicit `for` loops for many hot traversals,
+so tail recursion is not the dominant looping idiom. In the generated boot WAT,
+there are many ordinary calls, but only a small subset are in obvious terminal
+call shapes. Most direct opportunities are wrapper/delegation functions,
+runtime helper exits, and closure trampoline tails. Direct self-tail recursion is
+rare in the current emitted module; one clear example is a recursive HAMT lookup
+path in the dictionary runtime, whose recursion depth is bounded by the trie
+shape.
+
+So the expected near-term value is:
+
+- improved stack behavior for future tail-recursive compiler algorithms
+- small wins from replacing terminal delegation calls
+- cleaner support for functional/control-flow-heavy library code
+- not a major standalone speedup for the current boot compiler pipeline
+
+Larger performance impact would likely require combining tail calls with other
+backend work, especially reducing erased adapter chains and enabling
+`return_call_ref` for closure/trampoline-heavy paths.
+
+## Risks
+
+- Engine support may lag behind Wasm GC support in some environments.
+- Tail calls can make stack traces less informative.
+- Incorrectly marking a call as tail could skip required result adaptation or
+  cleanup work.
+- `return_call_ref` combines tail calls with typed function references, so it
+  should be validated separately from direct `return_call`.
+
+## Suggested Milestones
+
+1. Feature flag and no-op plumbing.
+2. Direct self-recursive `return_call` in simple function tails.
+3. Tail-position propagation through `if` and `case`.
+4. Runtime-gated deep recursion test.
+5. Closure `return_call_ref` support.
+6. Optional adapter shims for representation-boundary cases.
