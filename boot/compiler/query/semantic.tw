@@ -41,6 +41,52 @@ pub type EnclosingSyntax = .{
   span: span.Span,
 }
 
+pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot? {
+  id := case identity.from_file_uri(input.entry_uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(input.entry_uri),
+  }
+  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
+
+  parsed := case cache.latest_parsed(store, canonical) {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  resolved := case cache.latest_resolved(store, canonical) {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  typed := case cache.latest_typed(store, canonical) {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+
+  version: Int? = .None
+  for doc in input.open_documents {
+    doc_id := case identity.from_file_uri(doc.uri) {
+      .Ok(p) => p,
+      .Err(_) => identity.from_path(doc.uri),
+    }
+    if doc_id.path == id.path {
+      version = doc.version
+      break
+    }
+  }
+
+  .Some(.{
+    cache: store,
+    uri: id.uri,
+    canonical_path: canonical,
+    project_root: input.project_root,
+    version,
+    parsed: .Some(parsed),
+    resolved: .Some(resolved),
+    typed: .Some(typed),
+    diagnostics: [],
+    ok: true,
+  })
+}
+
 pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,

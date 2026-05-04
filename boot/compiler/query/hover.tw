@@ -73,7 +73,10 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
             }
           }
         },
-        _ => {},
+        _ => case hover_stmt(stmt, byte_offset, typed, parsed.module.items, source) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        },
       },
       _ => {},
     }
@@ -298,42 +301,39 @@ fn hover_stmt(stmt: Stmt, offset: Int, typed: CheckResult, items: Vector<Item>, 
       .None
     },
     .For(fs) => {
-      if fs.span.contains(offset) {
-        case fs.pattern_span {
-          .Some(ps) => if ps.contains(offset) {
-            case fs.iter {
-              .Some(iter) => case typed.type_map[iter.id] {
-                .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, iter_element_type(ty)), span: ps }) },
-                .None => {},
-              },
+      case fs.pattern_span {
+        .Some(ps) => if ps.contains(offset) {
+          case fs.iter {
+            .Some(iter) => case typed.type_map[iter.id] {
+              .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, iter_element_type(ty)), span: ps }) },
               .None => {},
-            }
-          },
-          .None => {},
-        }
-        case fs.index_span {
-          .Some(is) => if is.contains(offset) {
-            return .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
-          },
-          .None => {},
-        }
-        case fs.iter {
-          .Some(iter) => case hover_expr(iter, offset, typed, items, source) {
-            .Some(r) => { return .Some(r) },
+            },
             .None => {},
-          },
-          .None => {},
-        }
-        case fs.condition {
-          .Some(cond) => case hover_expr(cond, offset, typed, items, source) {
-            .Some(r) => { return .Some(r) },
-            .None => {},
-          },
-          .None => {},
-        }
-        return hover_block(fs.body, offset, typed, items, source)
+          }
+        },
+        .None => {},
       }
-      .None
+      case fs.index_span {
+        .Some(is) => if is.contains(offset) {
+          return .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
+        },
+        .None => {},
+      }
+      case fs.iter {
+        .Some(iter) => case hover_expr(iter, offset, typed, items, source) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        },
+        .None => {},
+      }
+      case fs.condition {
+        .Some(cond) => case hover_expr(cond, offset, typed, items, source) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        },
+        .None => {},
+      }
+      hover_block(fs.body, offset, typed, items, source)
     },
     .Return(rs) => case rs.value {
       .Some(expr) => hover_expr(expr, offset, typed, items, source),
@@ -409,6 +409,10 @@ fn hover_expr_children(expr: Expr, offset: Int, typed: CheckResult, items: Vecto
       field_start := expr.span.end - field.len()
       if offset >= field_start and offset < expr.span.end {
         field_span := span.Span.{ file_id: expr.span.file_id, start: field_start, end: expr.span.end }
+        case hover_recorded_method(expr.id, base, field_span, typed) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
         case hover_method(base, field, field_span, typed) {
           .Some(r) => { return .Some(r) },
           .None => {},
@@ -512,6 +516,22 @@ fn hover_expr_children(expr: Expr, offset: Int, typed: CheckResult, items: Vecto
     },
     _ => .None,
   }
+}
+
+fn hover_recorded_method(callee_id: Int, base: Expr, method_span: span.Span, typed: CheckResult) HoverResult? {
+  meta := case typed.method_calls[callee_id] {
+    .Some(info) => info,
+    .None => { return .None },
+  }
+  if meta.func_name == "" {
+    return .None
+  }
+  sig := case typed.env.lookup_registered_function(meta.func_name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+  display_sig := if meta.has_receiver { instantiate_receiver_sig(sig, base, typed) } else { sig }
+  .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
 }
 
 fn hover_method(base: Expr, method: String, method_span: span.Span, typed: CheckResult) HoverResult? {

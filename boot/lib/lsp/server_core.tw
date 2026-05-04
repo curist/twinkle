@@ -141,15 +141,23 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
 }
 
 fn workspace_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
+  input := workspace_input(state, doc)
+  case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
+    .Some(snap) => snap,
+    .None => semantic.snapshot_workspace(state.query_cache, input),
+  }
+}
+
+fn workspace_input(state: State, doc: document_store.Document) query_diagnostics.WorkspaceInput {
   open_docs := state.documents.docs.values()
   overlay_docs := collect d in open_docs {
     query_diagnostics.DocumentInput.{ uri: d.uri, text: d.text, version: d.version }
   }
-  semantic.snapshot_workspace(state.query_cache, .{
+  .{
     entry_uri: doc.uri,
     project_root: project_root_for_document(doc.identity.path),
     open_documents: overlay_docs,
-  })
+  }
 }
 
 fn handle_hover(state: State, req: protocol.Request) Step {
@@ -272,8 +280,13 @@ fn publish_workspace_diagnostics(state: State) Step {
 
   cur_cache := state.query_cache
   outgoing: Vector<json.Json> = []
+  published: Dict<String, Bool> = Dict.new()
 
   for doc in open_docs {
+    if published.has(doc.identity.uri) {
+      continue
+    }
+
     result := query_diagnostics.analyze_workspace(cur_cache, .{
       entry_uri: doc.uri,
       project_root: project_root_for_document(doc.identity.path),
@@ -281,17 +294,28 @@ fn publish_workspace_diagnostics(state: State) Step {
     })
     cur_cache = result.cache
 
-    diagnostics: Vector<query_diagnostics.Diagnostic> = []
     for group in result.diagnostics_by_uri {
-      if group.uri == doc.identity.uri {
-        diagnostics = group.diagnostics
-        break
+      case document_by_identity_uri(state.documents, group.uri) {
+        .Some(group_doc) => {
+          if !published.has(group.uri) {
+            outgoing = outgoing.append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+            published[group.uri] = true
+          }
+        },
+        .None => {},
       }
     }
-
-    outgoing = outgoing.append(lsp_diagnostics.publish_diagnostics(doc.uri, doc.version, doc.index, diagnostics))
   }
 
   next := with_query_cache(state, cur_cache)
   .{ state: next, outgoing }
+}
+
+fn document_by_identity_uri(store: document_store.Store, identity_uri: String) document_store.Document? {
+  for doc in store.docs.values() {
+    if doc.identity.uri == identity_uri {
+      return .Some(doc)
+    }
+  }
+  .None
 }
