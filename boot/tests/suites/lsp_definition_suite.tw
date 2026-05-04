@@ -1,3 +1,4 @@
+use @std.fs
 use tests.runner
 use tests.assert
 use compiler.query.cache as query_cache
@@ -146,6 +147,26 @@ pub fn suite() runner.Suite {
       try assert.int_eq(r.start_line, 0)
       try assert.int_eq(r.start_char, 7)
       try assert.int_eq(r.end_line, 0)
+      try assert.int_eq(r.end_char, 13)
+      .Ok({})
+    })
+    .test("goto def on unopened disk import uses target file line index", fn() {
+      dep_uri := "file:///tmp/lsp_def_disk_dep.tw"
+      main_uri := "file:///tmp/lsp_def_disk_main.tw"
+      dep := "// prelude line\n\npub fn answer() Int { 42 }\n"
+      case fs.write_text("/tmp/lsp_def_disk_dep.tw", dep) {
+        .Ok(_) => {},
+        .Err(_) => { return .Err("failed to write disk dependency") },
+      }
+      main := "use lsp_def_disk_dep\nx := lsp_def_disk_dep.answer()\n"
+      state := state_with_doc(main_uri, main)
+      step := server_core.handle_message(state, def_request(1, main_uri, 1, 22))
+      uri := try def_result_uri(step)
+      try assert.str_eq(uri, dep_uri)
+      r := try def_result_range(step)
+      try assert.int_eq(r.start_line, 2)
+      try assert.int_eq(r.start_char, 7)
+      try assert.int_eq(r.end_line, 2)
       try assert.int_eq(r.end_char, 13)
       .Ok({})
     })

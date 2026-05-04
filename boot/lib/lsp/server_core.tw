@@ -3,6 +3,7 @@
 // Transport code owns framing and I/O. This module owns protocol state and
 // responses so server behavior can be tested without stdio.
 
+use @std.fs
 use @std.path
 use compiler.query.cache as query_cache
 use compiler.query.diagnostics as query_diagnostics
@@ -11,6 +12,7 @@ use compiler.query.hover as query_hover
 use compiler.query.semantic
 use lib.json
 use lib.module.loader
+use lib.source.identity
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
 use lib.lsp.definition as lsp_definition
@@ -200,10 +202,7 @@ fn handle_definition(state: State, req: protocol.Request) Step {
           next := with_query_cache(state, snap.cache)
           case query_definition.definition(snap, offset) {
             .Some(result) => {
-              target_index := case document_store.get(next.documents, result.uri) {
-                .Some(target_doc) => target_doc.index,
-                .None => doc.index,
-              }
+              target_index := definition_target_index(next.documents, result.uri, doc.index)
               .{ state: next, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
             },
             .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
@@ -318,4 +317,27 @@ fn document_by_identity_uri(store: document_store.Store, identity_uri: String) d
     }
   }
   .None
+}
+
+fn definition_target_index(store: document_store.Store, target_uri: String, fallback: line_index.LineIndex) line_index.LineIndex {
+  case document_by_identity_uri(store, target_uri) {
+    .Some(target_doc) => { return target_doc.index },
+    .None => {},
+  }
+
+  target_path := case identity_path_from_uri(target_uri) {
+    .Some(p) => p,
+    .None => { return fallback },
+  }
+  case fs.read_text(target_path) {
+    .Ok(text) => line_index.new(text),
+    .Err(_) => fallback,
+  }
+}
+
+fn identity_path_from_uri(uri: String) String? {
+  case identity.from_file_uri(uri) {
+    .Ok(id) => .Some(id.path),
+    .Err(_) => .None,
+  }
 }
