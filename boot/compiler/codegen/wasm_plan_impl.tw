@@ -1,7 +1,8 @@
 // Wasm type registry and plan_wasm_types: pre-computes the complete set
 // of Wasm type definitions needed by the module before emission starts.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry, ResolvedTypeParam}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry}
+use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FuncId}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinEntry, RuntimeInfo}
@@ -9,10 +10,11 @@ use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
 use compiler.backend.callable_targets as callable_targets
+use compiler.backend.facts as facts
 use compiler.codegen.wasm_layout.{
   WasmLayout, WasmClosureLayout,
   layout_of, val_type_of, mono_to_key,
@@ -55,19 +57,19 @@ pub fn plan_wasm_types_impl(
   total_slot_reg: Int = 0
   for func in input.funcs {
     for sid in func.captures {
-      info := slot_info(func, sid)
+      info := facts.slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' capture slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
       total_slot_reg = total_slot_reg + 1
     }
     for sid in func.params {
-      info := slot_info(func, sid)
+      info := facts.slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' parameter slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
       total_slot_reg = total_slot_reg + 1
     }
     for sid in func.locals {
-      info := slot_info(func, sid)
+      info := facts.slot_info(func, sid)
       validate_concrete_mono(info.mono, env, "function '${func.name}' local slot S${sid.id} / L${info.source_local.id}")
       reg = register_mono(reg, info.mono, env)
       total_slot_reg = total_slot_reg + 1
@@ -335,35 +337,6 @@ fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
   error("find_type_entry: TypeId ${tid.id} not found")
 }
 
-fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for p,i in type_params {
-        if p.name == name {
-          if i < args.len() {
-            return args[i]
-          }
-          error("subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)")
-        }
-      }
-      ty
-    },
-    .Named(tid, inner_args) => {
-      new_args := collect a in inner_args { subst_type_params(a, type_params, args) }
-      .Named(tid, new_args)
-    },
-    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
-    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
-    .Function(ps, r) => {
-      new_ps := collect p in ps { subst_type_params(p, type_params, args) }
-      .Function(new_ps, subst_type_params(r, type_params, args))
-    },
-    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
-    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
-    _ => ty,
-  }
-}
-
 fn with_type_defs_and_index(reg: WasmTypeRegistry, type_defs: Vector<TypeDef>, type_index: Dict<String, Int>) WasmTypeRegistry {
   .{
     type_defs: type_defs,
@@ -513,26 +486,9 @@ fn find_prepared_func(funcs_by_id: Dict<Int, PreparedFunc>, fid: FuncId) Prepare
 }
 
 fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
-  case find_slot_by_source_local(init_func, local_id) {
+  case facts.find_slot_by_source_local(init_func, local_id) {
     .Some(info) => info.mono,
     .None => error("resolve_module_global_mono: __init__ has no slot for module global L${local_id}"),
-  }
-}
-
-fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
-  for sid in func.slots.keys() {
-    case func.slots[sid] {
-      .Some(info) => if info.source_local.id == local_id { return .Some(info) },
-      .None => {},
-    }
-  }
-  .None
-}
-
-fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
-  case func.slots[sid.id] {
-    .Some(info) => info,
-    .None => error("slot_info: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})"),
   }
 }
 

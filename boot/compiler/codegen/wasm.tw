@@ -9,6 +9,7 @@ use compiler.codegen.wasm_ir.{
   GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
 }
 use compiler.codegen.linker.{LinkedModule}
+use compiler.codegen.wasm_type_util.{val_type_eq}
 use @std.date
 use @std.proc
 
@@ -206,34 +207,6 @@ fn ft_sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
   p := collect vt in params { val_type_key(vt) }
   r := collect vt in results { val_type_key(vt) }
   "P(${p.join(",")})R(${r.join(",")})"
-}
-
-fn heap_type_eq(a: HeapType, b: HeapType) Bool {
-  case a {
-    .Any    => case b { .Any => true, _ => false },
-    .Eq     => case b { .Eq => true, _ => false },
-    .I31    => case b { .I31 => true, _ => false },
-    .Func   => case b { .Func => true, _ => false },
-    .None_  => case b { .None_ => true, _ => false },
-    .Extern => case b { .Extern => true, _ => false },
-    .Named(n1) => case b { .Named(n2) => n1 == n2, _ => false },
-  }
-}
-
-fn val_type_eq(a: ValType, b: ValType) Bool {
-  case a {
-    .I8      => case b { .I8 => true, _ => false },
-    .I32     => case b { .I32 => true, _ => false },
-    .I64     => case b { .I64 => true, _ => false },
-    .F64     => case b { .F64 => true, _ => false },
-    .Anyref  => case b { .Anyref => true, _ => false },
-    .I31ref  => case b { .I31ref => true, _ => false },
-    .Funcref => case b { .Funcref => true, _ => false },
-    .Ref(n1, ht1) => case b {
-      .Ref(n2, ht2) => n1 == n2 and heap_type_eq(ht1, ht2),
-      _ => false,
-    },
-  }
 }
 
 fn register_anon_ft(

@@ -25,6 +25,8 @@ use compiler.backend.prepared_ir.{
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.callable_targets as callable_targets
+use compiler.backend.facts as facts
+use compiler.codegen.wasm_type_util.{val_type_eq, heap_type_eq}
 use @std.date
 use @std.proc
 
@@ -196,7 +198,7 @@ fn verify_slot_membership(
   env: ResolvedEnv,
   label: String,
 ) Result<Void, String> {
-  info := try slot_info(pf, sid, label)
+  info := try facts.slot_info_result(pf, sid, label)
   if !slot_role_eq(info.role, expected_role) {
     return fail_func(
       pf,
@@ -211,7 +213,7 @@ fn verify_local_slot_membership(
   sid: SlotId,
   env: ResolvedEnv,
 ) Result<Void, String> {
-  info := try slot_info(pf, sid, "local slot")
+  info := try facts.slot_info_result(pf, sid, "local slot")
   role_ok := case info.role {
     .Local => true,
     .PatternLocal => true,
@@ -245,7 +247,7 @@ fn verify_capture_alignment(
         )
       }
       for sid,i in pf.captures {
-        info := try slot_info(pf, sid, "capture slot")
+        info := try facts.slot_info_result(pf, sid, "capture slot")
         cap := captures[i]
         if info.source_local.id != cap.param_local.id {
           return fail_func(
@@ -333,7 +335,7 @@ fn verify_expr(
 ) Result<Void, String> {
   case expr {
     .Let(slot, op, body) => {
-      result_info := try slot_info(pf, slot, "let result")
+      result_info := try facts.slot_info_result(pf, slot, "let result")
       try verify_op(pf, closure_captures, funcs_by_id, env, module_globals, builtins, result_info, op)
       verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body)
     },
@@ -428,7 +430,7 @@ fn verify_op(
                 )
               }
               for fv,i in free_vars {
-                info := try slot_info(pf, fv, "closure capture")
+                info := try facts.slot_info_result(pf, fv, "closure capture")
                 cap := caps[i]
                 source_local := canonical_capture_source_local(pf, closure_captures, info)
                 if source_local.id != cap.local_id.id {
@@ -498,7 +500,7 @@ fn verify_op(
       }
     },
     .AAssign(target, atom) => {
-      target_info := try slot_info(pf, target, "assign target")
+      target_info := try facts.slot_info_result(pf, target, "assign target")
       try reject_dead_use(pf, target_info, "assign target")
       try verify_atom_use(pf, atom, "assign value", module_globals)
       verify_value_for_slot(pf, target_info, atom, funcs_by_id, module_globals, env, builtins, "assign value")
@@ -599,7 +601,7 @@ fn verify_call_shape(
 ) Result<Void, String> {
   case callee {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, "call callee")
+      info := try facts.slot_info_result(pf, sid, "call callee")
       case expand_mono_alias(info.mono, env, 0) {
         .Function(params, _) => {
           if args.len() != params.len() {
@@ -1064,7 +1066,7 @@ fn verify_call_callee(
   try verify_atom_use(pf, atom, "call callee", module_globals)
   case atom {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, "call callee")
+      info := try facts.slot_info_result(pf, sid, "call callee")
       case info.repr {
         .ClosureRef => .Ok({}),
         _ => fail_slot(pf, info, "call callee must have ClosureRef repr, got ${repr_name(info.repr)}"),
@@ -1082,7 +1084,7 @@ fn verify_atom_mapped(
 ) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      _ := try slot_info(pf, sid, context)
+      _ := try facts.slot_info_result(pf, sid, context)
       .Ok({})
     },
     .AGlobalLocal(lid) => {
@@ -1103,7 +1105,7 @@ fn verify_atom_use(
 ) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, context)
+      info := try facts.slot_info_result(pf, sid, context)
       reject_dead_use(pf, info, context)
     },
     .AGlobalLocal(lid) => {
@@ -1170,7 +1172,7 @@ fn verify_match_scrutinee_mono(
 fn verify_pattern_bindings(pf: PreparedFunc, pattern: PreparedPattern) Result<Void, String> {
   case pattern {
     .Var(sid) => {
-      info := try slot_info(pf, sid, "pattern binding")
+      info := try facts.slot_info_result(pf, sid, "pattern binding")
       case info.role {
         .PatternLocal => .Ok({}),
         _ => fail_slot(pf, info, "pattern binding must target PatternLocal slot"),
@@ -1274,7 +1276,7 @@ fn verify_opkind_atom(
   }
   case atom {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, context)
+      info := try facts.slot_info_result(pf, sid, context)
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
@@ -1311,7 +1313,7 @@ fn verify_condition_atom(
 ) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, "if condition")
+      info := try facts.slot_info_result(pf, sid, "if condition")
       if repr_matches_category(info.repr, .I32) {
         .Ok({})
       } else {
@@ -1363,7 +1365,7 @@ fn require_local_repr_if_local(
 ) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try slot_info(pf, sid, context)
+      info := try facts.slot_info_result(pf, sid, context)
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
@@ -1421,27 +1423,7 @@ fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Voi
 
 
 fn local_info(pf: PreparedFunc, lid: LocalId, context: String) Result<SlotInfo, String> {
-  case find_slot_by_source_local(pf, lid.id) {
-    .Some(info) => .Ok(info),
-    .None => .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} references unmapped local L${lid.id}"),
-  }
-}
-
-fn find_slot_by_source_local(pf: PreparedFunc, lid: Int) SlotInfo? {
-  for sid_int in pf.slots.keys() {
-    case pf.slots[sid_int] {
-      .Some(info) => if info.source_local.id == lid { return .Some(info) },
-      .None => {},
-    }
-  }
-  .None
-}
-
-fn slot_info(pf: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, String> {
-  case pf.slots[sid.id] {
-    .None => .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} references missing slot S${sid.id}"),
-    .Some(info) => .Ok(info),
-  }
+  facts.slot_by_source_local_result(pf, lid.id, context)
 }
 
 // ── Call arg repr compatibility (Milestone 4a) ────────────────────────────
@@ -1459,21 +1441,15 @@ fn infer_atom_repr(
   module_globals: Dict<Int, MonoType>,
   env: ResolvedEnv,
 ) ReprKind? {
-  case atom {
-    .ASlot(sid) => case pf.slots[sid.id] {
-      .Some(info) => .Some(info.repr),
-      .None => .None,
+  case facts.atom_repr(atom, pf) {
+    .Some(repr) => .Some(repr),
+    .None => case atom {
+      .AGlobalLocal(lid) => case module_globals[lid.id] {
+        .Some(mono) => .Some(repr_of_mono(mono, env)),
+        .None => .None,
+      },
+      _ => .None,
     },
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
-      .Some(mono) => .Some(repr_of_mono(mono, env)),
-      .None => .None,
-    },
-    .ALitInt(_) => .Some(.I64),
-    .ALitFloat(_) => .Some(.F64),
-    .ALitBool(_) => .Some(.I32),
-    .ALitStr(_) => .Some(.TypedRef(.String)),
-    .ALitVoid => .Some(.OpaqueAnyref),
-    .AGlobalFunc(_) => .Some(.ClosureRef),
   }
 }
 
@@ -1681,30 +1657,3 @@ fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
   true
 }
 
-fn val_type_eq(a: ValType, b: ValType) Bool {
-  case a {
-    .I8 => case b { .I8 => true, _ => false },
-    .I32 => case b { .I32 => true, _ => false },
-    .I64 => case b { .I64 => true, _ => false },
-    .F64 => case b { .F64 => true, _ => false },
-    .Anyref => case b { .Anyref => true, _ => false },
-    .I31ref => case b { .I31ref => true, _ => false },
-    .Funcref => case b { .Funcref => true, _ => false },
-    .Ref(nullable_a, heap_a) => case b {
-      .Ref(nullable_b, heap_b) => nullable_a == nullable_b and heap_type_eq(heap_a, heap_b),
-      _ => false,
-    },
-  }
-}
-
-fn heap_type_eq(a: HeapType, b: HeapType) Bool {
-  case a {
-    .Named(name_a) => case b { .Named(name_b) => name_a == name_b, _ => false },
-    .Any => case b { .Any => true, _ => false },
-    .Eq => case b { .Eq => true, _ => false },
-    .I31 => case b { .I31 => true, _ => false },
-    .Func => case b { .Func => true, _ => false },
-    .None_ => case b { .None_ => true, _ => false },
-    .Extern => case b { .Extern => true, _ => false },
-  }
-}

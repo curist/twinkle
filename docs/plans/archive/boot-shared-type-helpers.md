@@ -77,51 +77,53 @@ Suggested responsibilities:
 
 ### Phase 1: Inventory duplicates
 
-- [ ] List all local `subst_type_params` implementations.
-- [ ] List all local `atom_mono`/slot lookup implementations.
-- [ ] List all `ValType`/`HeapType` equality implementations.
-- [ ] Mark each duplicate as semantic, backend-prepared, or wasm-encoding
+- [x] List all local `subst_type_params` implementations.
+- [x] List all local `atom_mono`/slot lookup implementations.
+- [x] List all `ValType`/`HeapType` equality implementations.
+- [x] Mark each duplicate as semantic, backend-prepared, or wasm-encoding
       specific.
 
 ### Phase 2: Extract pure `MonoType` helpers
 
-- [ ] Add `compiler.type_util`.
-- [ ] Move one canonical `subst_type_params` implementation into it.
-- [ ] Replace duplicate substitution helpers one file at a time.
-- [ ] Keep error messages stable where tests rely on them.
+- [x] Add `compiler.type_util`.
+- [x] Move one canonical `subst_type_params` implementation into it.
+- [x] Replace duplicate substitution helpers one file at a time.
+- [x] Keep error messages stable where tests rely on them.
 
 ### Phase 3: Extract Wasm type helpers
 
-- [ ] Add `compiler.codegen.wasm_type_util`.
-- [ ] Move value-type and heap-type equality helpers.
-- [ ] Replace verifier, emitter, and binary writer copies.
-- [ ] Add focused tests if any equality behavior is not already covered.
+- [x] Add `compiler.codegen.wasm_type_util`.
+- [x] Move value-type and heap-type equality helpers.
+- [x] Replace verifier, emitter, and binary writer copies.
+- [x] Add focused tests if any equality behavior is not already covered.
 
 ### Phase 4: Extract prepared backend facts
 
-- [ ] Add `compiler.backend.facts` for helpers that read `PreparedFunc`,
-      `SlotInfo`, `PreparedAtom`, and related records.
-- [ ] Replace local slot/atom fact helpers in planner and emitter.
-- [ ] Keep backend passes reading from `PreparedModule` facts rather than
+- [x] Add `compiler.backend.facts` for helpers that read `PreparedFunc` and
+      `SlotInfo` slot facts.
+- [x] Add prepared atom/repr accessors where they can stay independent of
+      emission-local context.
+- [x] Replace local slot/atom fact helpers in planner and emitter.
+- [x] Keep backend passes reading from `PreparedModule` facts rather than
       rediscovering facts from ANF.
 
 ### Phase 5: Cleanup and documentation
 
-- [ ] Remove obsolete local copies.
-- [ ] Add comments identifying which helpers are type-system-level and which are
+- [x] Remove obsolete local copies.
+- [x] Add comments identifying which helpers are type-system-level and which are
       backend-prepared-fact-level.
-- [ ] Update architecture notes if helper modules become part of the stable
+- [x] Update architecture notes if helper modules become part of the stable
       backend boundary.
 
 ---
 
 ## Validation
 
-- [ ] Boot tests
-- [ ] Backend prepare/verify suites
-- [ ] Wasm layout/plan/binary suites
-- [ ] Codegen integration suites
-- [ ] `target/twk build boot/main.tw -o /tmp/boot.wasm`
+- [x] Boot tests
+- [x] Backend prepare/verify suites
+- [x] Wasm layout/plan/binary suites
+- [x] Codegen integration suites
+- [x] `target/twk build boot/main.tw -o /tmp/boot.wasm`
 
 ---
 

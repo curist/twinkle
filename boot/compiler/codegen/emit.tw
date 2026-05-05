@@ -7,7 +7,8 @@
 //   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
 //   - Pattern match emission is inline (single implementation)
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, ResolvedTypeParam}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant}
+use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, BinOp, UnOp}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, BuiltinEntry, BuiltinKind, RuntimeInfo}
@@ -34,6 +35,8 @@ use compiler.backend.prepared_ir.{
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.callable_targets as callable_targets
+use compiler.backend.facts as facts
+use compiler.codegen.wasm_type_util.{val_type_eq, heap_type_eq}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -236,7 +239,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   idx := 0
 
   for sid in prepared.captures {
-    info := slot_info(prepared, sid)
+    info := facts.slot_info(prepared, sid)
     vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
     repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
@@ -251,7 +254,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   }
 
   for sid in prepared.params {
-    info := slot_info(prepared, sid)
+    info := facts.slot_info(prepared, sid)
     vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
     repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
@@ -266,7 +269,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   }
 
   for sid in prepared.locals {
-    info := slot_info(prepared, sid)
+    info := facts.slot_info(prepared, sid)
     vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
     repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
     local_map[sid.id] = LocalEntry.{
@@ -651,6 +654,13 @@ fn emit_atom(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr>
 }
 
 fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
+  case current_prepared_func(ctx) {
+    .Some(pf) => case facts.atom_mono(atom, pf) {
+      .Some(mono) => { return mono },
+      .None => {},
+    },
+    .None => {},
+  }
   case atom {
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,
@@ -672,6 +682,13 @@ fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
 }
 
 fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
+  case current_prepared_func(ctx) {
+    .Some(pf) => case facts.atom_repr(atom, pf) {
+      .Some(repr) => { return repr },
+      .None => {},
+    },
+    .None => {},
+  }
   case atom {
     .ALitInt(_) => .I64,
     .ALitFloat(_) => .F64,
@@ -693,6 +710,13 @@ fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
 }
 
 fn atom_val_type(atom: PreparedAtom, ctx: EmitCtx) ValType {
+  case current_prepared_func(ctx) {
+    .Some(pf) => case facts.atom_val_type(atom, pf) {
+      .Some(vt) => { return vt },
+      .None => {},
+    },
+    .None => {},
+  }
   case atom {
     .ALitInt(_) => .I64,
     .ALitFloat(_) => .F64,
@@ -1061,34 +1085,6 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
         }
       }
       out.append(.LocalSet(result_idx))
-    },
-  }
-}
-
-fn heap_type_eq(a: HeapType, b: HeapType) Bool {
-  case a {
-    .Named(name_a) => case b { .Named(name_b) => name_a == name_b, _ => false },
-    .Any => case b { .Any => true, _ => false },
-    .Eq => case b { .Eq => true, _ => false },
-    .I31 => case b { .I31 => true, _ => false },
-    .Func => case b { .Func => true, _ => false },
-    .None_ => case b { .None_ => true, _ => false },
-    .Extern => case b { .Extern => true, _ => false },
-  }
-}
-
-fn val_type_eq(a: ValType, b: ValType) Bool {
-  case a {
-    .I8 => case b { .I8 => true, _ => false },
-    .I32 => case b { .I32 => true, _ => false },
-    .I64 => case b { .I64 => true, _ => false },
-    .F64 => case b { .F64 => true, _ => false },
-    .Anyref => case b { .Anyref => true, _ => false },
-    .I31ref => case b { .I31ref => true, _ => false },
-    .Funcref => case b { .Funcref => true, _ => false },
-    .Ref(nullable_a, heap_a) => case b {
-      .Ref(nullable_b, heap_b) => nullable_a == nullable_b and heap_type_eq(heap_a, heap_b),
-      _ => false,
     },
   }
 }
@@ -2334,7 +2330,7 @@ fn emit_trampolines_for_func(func: PreparedFunc, ctx: EmitCtx) Vector<FuncDef> {
     .None => {
       if func.captures.len() > 0 {
         sig := FuncSigEntry.{
-          param_types: collect sid in func.params { slot_info(func, sid).mono },
+          param_types: collect sid in func.params { facts.slot_info(func, sid).mono },
           return_type: func.return_mono,
         }
         [emit_universal_trampoline(func, sig, ctx)]
@@ -2521,7 +2517,7 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
 
   // Extract captures from env (param 0)
   for sid,i in func.captures {
-    cap := slot_info(func, sid)
+    cap := facts.slot_info(func, sid)
     body = body.append(.LocalGet(0))
     body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
     body = body.append(.I32Const(i))
@@ -2531,7 +2527,7 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
 
   // Extract args from args array (param 1)
   for sid,i in func.params {
-    p := slot_info(func, sid)
+    p := facts.slot_info(func, sid)
     body = body.append(.LocalGet(1))
     body = body.append(.RefCast(true, .Named("rt_types__Array")))
     body = body.append(.I32Const(i))
@@ -3191,10 +3187,10 @@ fn emit_default_value(vt: ValType, buf: Vector<Instr>) Vector<Instr> {
 
 // ── Helper utilities ───────────────────────────────────────────────────
 
-fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
-  case func.slots[sid.id] {
-    .Some(info) => info,
-    .None => error("emit: missing SlotInfo for S${sid.id} in F${func.func_id.id}"),
+fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {
+  case ctx.current_func_id {
+    .Some(fid) => ctx.prepared_funcs[fid.id],
+    .None => .None,
   }
 }
 
@@ -3296,30 +3292,6 @@ fn resolve_named_variant_field(tid: TypeId, args: Vector<MonoType>, vid: Variant
       subst_type_params(field_ty, type_params, args)
     },
     _ => .Void,
-  }
-}
-
-fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for p,i in type_params {
-        if p.name == name { return args[i] }
-      }
-      ty
-    },
-    .Named(tid, inner_args) => {
-      new_args := collect a in inner_args { subst_type_params(a, type_params, args) }
-      .Named(tid, new_args)
-    },
-    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
-    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
-    .Function(ps, r) => {
-      new_ps := collect p in ps { subst_type_params(p, type_params, args) }
-      .Function(new_ps, subst_type_params(r, type_params, args))
-    },
-    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
-    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
-    _ => ty,
   }
 }
 

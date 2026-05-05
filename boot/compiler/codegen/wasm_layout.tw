@@ -6,6 +6,7 @@
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, ResolvedTypeParam, TypeEntry}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.codegen.wasm_ir.{ValType, HeapType}
+use compiler.type_util.{subst_type_params}
 
 // ── Wasm value type (simplified for layout) ─────────────────────────
 
@@ -310,37 +311,6 @@ fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv)
     param_types: param_vts,
     result_type: ret_vt,
   })
-}
-
-// ── Type parameter substitution ─────────────────────────────────────
-
-fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for p,i in type_params {
-        if p.name == name {
-          if i < args.len() {
-            return args[i]
-          }
-          error("subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)")
-        }
-      }
-      ty
-    },
-    .Named(tid, inner_args) => {
-      new_args := collect a in inner_args { subst_type_params(a, type_params, args) }
-      .Named(tid, new_args)
-    },
-    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
-    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
-    .Function(ps, r) => {
-      new_ps := collect p in ps { subst_type_params(p, type_params, args) }
-      .Function(new_ps, subst_type_params(r, type_params, args))
-    },
-    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
-    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
-    _ => ty,
-  }
 }
 
 fn cell_layout_key(inner: WasmLayout) String {

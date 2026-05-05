@@ -4,7 +4,8 @@
 //
 // Phase D, Milestone 4.
 
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeDef, ResolvedTypeParam, lookup_type_def}
+use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeDef, lookup_type_def}
+use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FuncId, LocalId, Param, FieldId, VariantId}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
@@ -433,24 +434,6 @@ fn variant_payload_mono(sum_mono: MonoType, vid: Int, field_idx: Int, env: Resol
       }
     },
     _ => .Void,
-  }
-}
-
-fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for p,i in type_params {
-        if p.name == name { return args[i] }
-      }
-      ty
-    },
-    .Named(tid, inner_args) => .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) }),
-    .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
-    .Dict(k, v) => .Dict(subst_type_params(k, type_params, args), subst_type_params(v, type_params, args)),
-    .Function(ps, r) => .Function(collect p in ps { subst_type_params(p, type_params, args) }, subst_type_params(r, type_params, args)),
-    .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
-    .Result(ok, err) => .Result(subst_type_params(ok, type_params, args), subst_type_params(err, type_params, args)),
-    _ => ty,
   }
 }
 

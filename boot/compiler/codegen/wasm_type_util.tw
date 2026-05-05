@@ -1,0 +1,34 @@
+// Shared helpers for comparing Wasm IR value and heap types.
+//
+// Keep these helpers format-independent: WAT emission, binary emission, and
+// backend verification should agree on equality for the shared Wasm IR types.
+
+use compiler.codegen.wasm_ir.{ValType, HeapType}
+
+pub fn heap_type_eq(a: HeapType, b: HeapType) Bool {
+  case a {
+    .Named(name_a) => case b { .Named(name_b) => name_a == name_b, _ => false },
+    .Any => case b { .Any => true, _ => false },
+    .Eq => case b { .Eq => true, _ => false },
+    .I31 => case b { .I31 => true, _ => false },
+    .Func => case b { .Func => true, _ => false },
+    .None_ => case b { .None_ => true, _ => false },
+    .Extern => case b { .Extern => true, _ => false },
+  }
+}
+
+pub fn val_type_eq(a: ValType, b: ValType) Bool {
+  case a {
+    .I8 => case b { .I8 => true, _ => false },
+    .I32 => case b { .I32 => true, _ => false },
+    .I64 => case b { .I64 => true, _ => false },
+    .F64 => case b { .F64 => true, _ => false },
+    .Anyref => case b { .Anyref => true, _ => false },
+    .I31ref => case b { .I31ref => true, _ => false },
+    .Funcref => case b { .Funcref => true, _ => false },
+    .Ref(nullable_a, heap_a) => case b {
+      .Ref(nullable_b, heap_b) => nullable_a == nullable_b and heap_type_eq(heap_a, heap_b),
+      _ => false,
+    },
+  }
+}

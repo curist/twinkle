@@ -1,0 +1,88 @@
+// Shared accessors for prepared backend IR facts.
+//
+// These helpers are deliberately limited to facts already materialized in
+// PreparedFunc and related prepared-IR records. They should not rediscover
+// semantic ANF facts or depend on Wasm planning/emission state.
+
+use compiler.backend.prepared_ir.{PreparedFunc, PreparedAtom, SlotId, SlotInfo, ReprKind}
+use compiler.resolver.{MonoType}
+use compiler.codegen.wasm_ir.{ValType}
+
+pub fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
+  case func.slots[sid.id] {
+    .Some(info) => info,
+    .None => error("backend facts: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})"),
+  }
+}
+
+pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, String> {
+  case func.slots[sid.id] {
+    .Some(info) => .Ok(info),
+    .None => .Err("backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references missing slot S${sid.id}"),
+  }
+}
+
+pub fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
+  for sid_int in func.slots.keys() {
+    case func.slots[sid_int] {
+      .Some(info) => if info.source_local.id == local_id { return .Some(info) },
+      .None => {},
+    }
+  }
+  .None
+}
+
+pub fn slot_by_source_local_result(func: PreparedFunc, local_id: Int, context: String) Result<SlotInfo, String> {
+  case find_slot_by_source_local(func, local_id) {
+    .Some(info) => .Ok(info),
+    .None => .Err("backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references unmapped local L${local_id}"),
+  }
+}
+
+pub fn atom_mono(atom: PreparedAtom, func: PreparedFunc) MonoType? {
+  case atom {
+    .ALitInt(_) => .Some(.Int),
+    .ALitFloat(_) => .Some(.Float),
+    .ALitBool(_) => .Some(.Bool),
+    .ALitStr(_) => .Some(.String),
+    .ALitVoid => .Some(.Void),
+    .ASlot(sid) => case func.slots[sid.id] {
+      .Some(info) => .Some(info.mono),
+      .None => .None,
+    },
+    .AGlobalLocal(_) => .None,
+    .AGlobalFunc(_) => .None,
+  }
+}
+
+pub fn atom_repr(atom: PreparedAtom, func: PreparedFunc) ReprKind? {
+  case atom {
+    .ALitInt(_) => .Some(.I64),
+    .ALitFloat(_) => .Some(.F64),
+    .ALitBool(_) => .Some(.I32),
+    .ALitStr(_) => .Some(.TypedRef(.String)),
+    .ALitVoid => .Some(.OpaqueAnyref),
+    .ASlot(sid) => case func.slots[sid.id] {
+      .Some(info) => .Some(info.repr),
+      .None => .None,
+    },
+    .AGlobalLocal(_) => .None,
+    .AGlobalFunc(_) => .Some(.ClosureRef),
+  }
+}
+
+pub fn atom_val_type(atom: PreparedAtom, func: PreparedFunc) ValType? {
+  case atom {
+    .ALitInt(_) => .Some(.I64),
+    .ALitFloat(_) => .Some(.F64),
+    .ALitBool(_) => .Some(.I32),
+    .ALitStr(_) => .Some(.Ref(true, .Named("rt_types__String"))),
+    .ALitVoid => .Some(.Anyref),
+    .ASlot(sid) => case func.slots[sid.id] {
+      .Some(info) => .Some(info.wasm_type),
+      .None => .None,
+    },
+    .AGlobalLocal(_) => .None,
+    .AGlobalFunc(_) => .Some(.Ref(false, .Func)),
+  }
+}

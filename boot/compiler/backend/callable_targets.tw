@@ -3,7 +3,8 @@ use compiler.resolver as resolver
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
-use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId}
+use compiler.backend.facts as facts
 
 // Which dedicated wrapper trampoline a builtin closure needs
 pub type WrapperKind = {
@@ -39,7 +40,7 @@ pub fn callable_target(
 ) CallableTargetInfo? {
   case funcs_by_id[fid.id] {
     .Some(func) => .Some(CallableTargetInfo.{
-      semantic_params: collect sid in func.params { slot_info(func, sid).mono },
+      semantic_params: collect sid in func.params { facts.slot_info(func, sid).mono },
       semantic_ret: func.return_mono,
       builtin_name: .None,
       closure_materializable: true,
@@ -134,9 +135,3 @@ fn builtin_generic_closure_materializable(name: String) Bool {
     or name == "string_to_string"
 }
 
-fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
-  case func.slots[sid.id] {
-    .Some(info) => info,
-    .None => error("callable_targets.slot_info: missing slot S${sid.id} in ${func.name}"),
-  }
-}

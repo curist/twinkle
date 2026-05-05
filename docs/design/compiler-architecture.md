@@ -88,6 +88,13 @@ Host interface expectations (deterministic, no clock/random/process spawning):
    Keep `boot/` progression incremental and continuously bootstrap-able from
    stage0.
 
+7. **Shared compiler helper boundaries**
+   Keep semantic type helpers independent from backend facts and Wasm encoding
+   details. In the boot compiler, `compiler.type_util` owns pure `MonoType`
+   traversal/substitution, `compiler.backend.facts` owns prepared backend IR
+   fact accessors, and `compiler.codegen.wasm_type_util` owns format-neutral
+   Wasm IR type comparisons.
+
 ---
 
 ## Repository Layout (Current)

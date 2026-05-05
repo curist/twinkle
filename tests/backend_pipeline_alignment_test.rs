@@ -40,11 +40,11 @@ fn backend_anf_pipeline_monomorphizes_generic_fixture() {
         .map(|func| func.name.as_str())
         .collect::<Vec<_>>();
 
-    assert!(names.contains(&"id__Int"));
-    assert!(names.contains(&"id__String"));
-    assert!(names.contains(&"id__Bool"));
-    assert!(names.contains(&"apply__Int_Int"));
-    assert!(names.contains(&"first__String_Bool"));
+    assert!(names.contains(&"generic_user_funcs.id__Int"));
+    assert!(names.contains(&"generic_user_funcs.id__String"));
+    assert!(names.contains(&"generic_user_funcs.id__Bool"));
+    assert!(names.contains(&"generic_user_funcs.apply__Int_Int"));
+    assert!(names.contains(&"generic_user_funcs.first__String_Bool"));
     assert!(!names.contains(&"id"));
     assert!(!names.contains(&"apply"));
     assert!(!names.contains(&"first"));
@@ -79,8 +79,8 @@ fn backend_opt_pipeline_keeps_monomorphized_generic_fixture() {
         .map(|func| func.name.as_str())
         .collect::<Vec<_>>();
 
-    assert!(names.contains(&"id__Int"));
-    assert!(names.contains(&"apply__Int_Int"));
+    assert!(names.contains(&"generic_user_funcs.id__Int"));
+    assert!(names.contains(&"generic_user_funcs.apply__Int_Int"));
     assert!(!names.contains(&"id"));
     assert!(!names.contains(&"apply"));
 }
