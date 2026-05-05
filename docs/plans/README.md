@@ -50,6 +50,22 @@ Self-hosting is complete. Historical design and status docs live in
 | Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
 | LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
 
+### Boot Compiler Refactor Plans
+
+These plans capture focused refactors identified from the current boot compiler.
+They are intentionally separated so performance-oriented work can proceed without
+blocking lower-risk maintainability cleanup.
+
+| Plan | Impact | Difficulty | Description |
+|------|--------|------------|-------------|
+| [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | High | High | Split module analysis around explicit module interfaces so builds and LSP diagnostics do less whole-environment rebuilding |
+| [boot-shared-type-helpers.md](boot-shared-type-helpers.md) | Medium | Medium | Consolidate duplicated `MonoType`, substitution, backend fact, and Wasm type helper logic |
+| [boot-wasm-type-ordering-refactor.md](boot-wasm-type-ordering-refactor.md) | Medium | Medium | Share Wasm GC type dependency/SCC ordering between WAT, binary emission, and planning |
+| [boot-optimizer-pass-refactor.md](boot-optimizer-pass-refactor.md) | High | High | Make optimizer pass ordering explicit and reduce repeated ANF tree walks where safe |
+| [boot-backend-verifier-refactor.md](boot-backend-verifier-refactor.md) | Medium | Medium | Split backend verifier invariants and prepare for configurable verification levels |
+| [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Medium | High | Decompose large parser/checker/lowerer/emitter files after shared helpers stabilize |
+| [boot-contract-reachability-index.md](boot-contract-reachability-index.md) | Low-Medium | Low | Pre-index contract-call fallback targets in the Core linker reachability pass |
+
 ### Active cross-cutting plans
 
 | Plan | Description |
