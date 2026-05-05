@@ -43,7 +43,7 @@ The wasm is tracked in git so CI doesn't need Docker.
 
 ### Test
 ```bash
-cargo test                          # Rust test suite
+cargo test --release                # Rust test suite
 target/twk run boot/tests/main.tw   # boot compiler test suite
 make test                           # both of the above
 make boot-test                      # boot tests only

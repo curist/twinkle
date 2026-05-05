@@ -59,7 +59,6 @@ blocking lower-risk maintainability cleanup.
 | Plan | Status | Impact | Difficulty | Description |
 |------|--------|--------|------------|-------------|
 | [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | Planned | High | High | Split module analysis around explicit module interfaces so builds and LSP diagnostics do less whole-environment rebuilding |
-| [boot-wasm-type-ordering-refactor.md](boot-wasm-type-ordering-refactor.md) | Planned | Medium | Medium | Share Wasm GC type dependency/SCC ordering between WAT, binary emission, and planning |
 | [boot-optimizer-pass-refactor.md](boot-optimizer-pass-refactor.md) | Planned | High | High | Make optimizer pass ordering explicit and reduce repeated ANF tree walks where safe |
 | [boot-backend-verifier-refactor.md](boot-backend-verifier-refactor.md) | Planned | Medium | Medium | Split backend verifier invariants and prepare for configurable verification levels |
 | [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Planned | Medium | High | Decompose large parser/checker/lowerer/emitter files after shared helpers stabilize |

@@ -49,6 +49,14 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Boot Compiler Refactor Plans
+
+| Plan | Description |
+|------|-------------|
+| [boot-wasm-type-ordering-refactor.md](boot-wasm-type-ordering-refactor.md) | Shared Wasm GC type dependency/SCC ordering between WAT and binary emission, with planner ownership intentionally kept as an emitter utility decision |
+
+---
+
 ## Archived Cross-Cutting Plans
 
 | Plan | Description |

@@ -46,39 +46,44 @@ Responsibilities:
 
 ### Phase 1: Extract without changing callers
 
-- [ ] Copy the current canonical ordering behavior into `type_order.tw`.
-- [ ] Add small wrapper types/functions if needed so both WAT and binary paths can
+- [x] Copy the current canonical ordering behavior into `type_order.tw`.
+- [x] Add small wrapper types/functions if needed so both WAT and binary paths can
       call the same API.
-- [ ] Keep old local implementations until the shared module is tested.
+- [x] Keep old local implementations until the shared module is tested.
 
 ### Phase 2: Switch WAT emission
 
-- [ ] Replace local type ordering in `codegen/wat.tw`.
-- [ ] Preserve existing WAT output ordering.
-- [ ] Run WAT-focused suites.
+- [x] Replace local type ordering in `codegen/wat.tw`.
+- [x] Preserve existing WAT output ordering.
+- [x] Run WAT-focused suites.
 
 ### Phase 3: Switch binary emission
 
-- [ ] Replace local type ordering in `codegen/wasm.tw`.
-- [ ] Preserve binary type-section behavior.
-- [ ] Run Wasm binary/linking suites.
+- [x] Replace local type ordering in `codegen/wasm.tw`.
+- [x] Preserve binary type-section behavior.
+- [x] Run Wasm binary/linking suites.
 
 ### Phase 4: Decide planner ownership
 
-- [ ] Decide whether `wasm_plan_impl.tw` should compute ordered groups once and
+- [x] Decide whether `wasm_plan_impl.tw` should compute ordered groups once and
       store them in the plan/registry.
-- [ ] If yes, move order computation earlier and make emitters consume the plan.
-- [ ] If no, keep the shared helper as an emitter utility and document why.
+- N/A: If yes, move order computation earlier and make emitters consume the plan.
+- [x] If no, keep the shared helper as an emitter utility and document why.
+
+Current decision: keep SCC grouping as an emitter utility. `wasm_plan_impl.tw`
+still produces a simple dependency-sorted type list for stable planning, while
+WAT and binary emission need recursive type groups and now share that
+format-independent grouping logic directly.
 
 ---
 
 ## Validation
 
-- [ ] Wasm layout suite
-- [ ] Wasm plan suite
-- [ ] WAT suite
-- [ ] Codegen integration suite
-- [ ] Boot self-build to Wasm
+- [x] Wasm layout suite
+- [x] Wasm plan suite
+- [x] WAT suite
+- [x] Codegen integration suite
+- [x] Boot self-build to Wasm
 
 ---
 
