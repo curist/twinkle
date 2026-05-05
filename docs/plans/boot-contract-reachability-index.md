@@ -53,18 +53,25 @@ lookup rather than scanning all functions repeatedly.
 
 ### Phase 2: Make exact vs fallback resolution visible
 
-- [ ] Separate exact contract target resolution from fallback resolution in code.
-- [ ] Add comments explaining why fallback exists and when it is expected.
-- [ ] Add tests around contract calls that rely on exact resolution and fallback
+- [x] Separate exact contract target resolution from fallback resolution in code.
+- [x] Add comments explaining why fallback exists and when it is expected.
+- [x] Add tests around contract calls that rely on exact resolution and fallback
       resolution.
 
 ### Phase 3: Tighten fallback over time
 
-- [ ] Audit cases where fallback is still required.
-- [ ] Prefer exact typed method resolution where enough type/env information is
+- [x] Audit cases where fallback is still required.
+- [x] Prefer exact typed method resolution where enough type/env information is
       available.
-- [ ] Consider turning unexpected fallback into verifier diagnostics once the
+- [x] Consider turning unexpected fallback into verifier diagnostics once the
       exact path is complete.
+
+Audit result: exact typed method resolution is now the preferred path whenever
+`ResolvedEnv` and the linked function table can identify the target. The fallback
+remains intentionally conservative for older or partial lowering/linking paths
+that do not preserve enough target information. Turning fallback into a verifier
+diagnostic is deferred until those paths are eliminated; doing it now would risk
+removing valid DCE roots.
 
 ---
 

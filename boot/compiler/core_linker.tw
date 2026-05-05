@@ -440,6 +440,24 @@ fn fallback_contract_refs(method_name: String, index: ReachabilityIndex) Vector<
   }
 }
 
+fn exact_contract_ref(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv, func_table: Dict<String, FuncId>) FuncId? {
+  case resolve_contract_target_name(contract, receiver_ty, method_name, env) {
+    .Some(target_name) => func_table[target_name],
+    .None => .None,
+  }
+}
+
+// Contract calls should normally resolve through the typed receiver and linked
+// function table. The fallback index is intentionally conservative: it keeps
+// method-shaped functions reachable when older lowering/linking paths have not
+// preserved enough exact target information yet.
+fn contract_call_refs(contract: BuiltinContract, method_name: String, receiver_ty: MonoType, env: ResolvedEnv, func_table: Dict<String, FuncId>, index: ReachabilityIndex) Vector<Int> {
+  case exact_contract_ref(contract, receiver_ty, method_name, env, func_table) {
+    .Some(fid) => [fid.id],
+    .None => fallback_contract_refs(method_name, index),
+  }
+}
+
 fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
   case contract {
     .Stringify => {
@@ -506,15 +524,8 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, env: ResolvedEnv, f
       collect_func_refs_list(args, r, env, func_table, index)
     },
     .ContractCall(contract, method_name, receiver, args) => {
-      r := case resolve_contract_target_name(contract, receiver.ty, method_name, env) {
-        .Some(target_name) => {
-          case func_table[target_name] {
-            .Some(fid) => refs.append(fid.id),
-            .None => fallback_contract_refs(method_name, index).fold(refs, fn(out, id) { out.append(id) }),
-          }
-        },
-        .None => fallback_contract_refs(method_name, index).fold(refs, fn(out, id) { out.append(id) }),
-      }
+      r := contract_call_refs(contract, method_name, receiver.ty, env, func_table, index)
+        .fold(refs, fn(out, id) { out.append(id) })
       r = collect_func_refs_into(receiver, r, env, func_table, index)
       collect_func_refs_list(args, r, env, func_table, index)
     },
