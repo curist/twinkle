@@ -89,6 +89,7 @@ Related historical context outside this folder:
 | [module-compile-orchestrator-refactor.md](module-compile-orchestrator-refactor.md) | Refactor module compile orchestration into dependency, stage-runner, and env-integration layers |
 | [codegen-boundary-separation.md](codegen-boundary-separation.md) | Separate codegen planning, representation-flow analysis, and instruction emission |
 | [boot-shared-type-helpers.md](boot-shared-type-helpers.md) | Consolidate shared boot compiler type substitution, prepared backend fact, and Wasm type comparison helpers |
+| [boot-contract-reachability-index.md](boot-contract-reachability-index.md) | Pre-index contract-call fallback targets in the Core linker reachability pass |
 | [string-escape-sequences.md](string-escape-sequences.md) | Add ergonomic string escapes (`\xNN`, `\e`, `\u{...}`) with lexer diagnostics and runtime coverage |
 | [anf-verifier-pass.md](anf-verifier-pass.md) | ANF invariant verifier pass for control-flow, local binding, representation, and codegen metadata consistency |
 | [first-class-inherent-methods.md](first-class-inherent-methods.md) | First-class inherent method values (`receiver.method` → closure) |
