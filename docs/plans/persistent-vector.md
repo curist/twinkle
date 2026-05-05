@@ -19,20 +19,28 @@ intended end state for supported concrete vector code paths.
 
 ## Current State
 
-- `Vector<T>` is backed by `rt.arr` using a flat Wasm GC array (`rt_types__Array`).
-- `set`, `concat`, and `slice` allocate and copy.
+- The boot compiler and stage0 now use an erased persistent bit-partitioned trie
+  representation for `Vector<T>`:
+  - outer vectors are `rt_types__PVec`
+  - internal trie nodes are `rt_types__VecInternal` / `rt_types__VecChildren`
+  - tail and leaf payloads still use `rt_types__Array`
+- `append`, `get`, and `set` operate on the persistent trie representation.
+  `set` path-copies the updated path and preserves previous versions.
+- `concat` and `slice` are correctness-first helpers that rebuild through the builder
+  path rather than using RRB-style tree concatenation/slicing.
 - The boot compiler's current collection contract is split:
   - user-facing `Vector.append/get/set/make` are compiler intrinsics
   - raw runtime helpers are `len`, `set` (`vector_set_unsafe`), `concat`, `slice`
   - `collect` and loop-push rewrites depend on `builder_new`, `builder_from`,
     `builder_push`, and `builder_freeze`
-- Indexed assignment `xs[i] = v` currently lowers to the raw persistent update helper
+- Indexed assignment `xs[i] = v` lowers to the raw persistent update helper
   (`vector_set_unsafe`), while safe `Vector.set` remains an intrinsic that wraps
   bounds checks and returns `Option<Vector<T>>`.
 - Runtime implementation lives in `boot/compiler/codegen/runtime/arr.tw` and mirrors
   stage0 `src/runtime/arr.rs`.
-- Element storage is erased through `anyref`, so scalar payloads are boxed at container
-  boundaries and recovered on reads.
+- Element storage is still erased through `anyref`, so scalar payloads are boxed at
+  container boundaries and recovered on reads. Typed per-instantiation vector families
+  remain the main unfinished part of this plan.
 
 ## Target State
 
@@ -94,6 +102,53 @@ home of the persistent vector algorithm.
   - element slots use the element's concrete Wasm type, not `anyref`
 - Keep `rt_types__Array` only for genuinely erased payload arrays and compatibility
   boundaries that still require universal storage.
+
+## Boot Compiler Specialization Signal
+
+A static WAT census is available via `tools/analyze_vector_wat.py`:
+
+```bash
+target/twk ir boot/main.tw --wat > /tmp/boot.wat
+tools/analyze_vector_wat.py /tmp/boot.wat
+```
+
+When changing the analyzer itself, validate its syntax with:
+
+```bash
+python3 -m py_compile tools/analyze_vector_wat.py
+```
+
+Current boot-compiler signal from the erased `PVec` baseline:
+
+```text
+rt.arr push call sites          1668
+rt.arr get call sites           1324
+get followed by named ref cast   709
+anyref array.get sites           708
+BoxedInt allocations             531
+get followed by Int unbox          59
+push from boxed Int                30
+```
+
+Interpretation:
+
+- A scalar-only `Vector<Int>` specialization is unlikely to be the whole win for
+  boot self-compilation. There are visible boxed-Int vector paths, but most vector
+  reads in the compiler are reference payloads such as `Vector<Instr>`,
+  `Vector<String>`, `Vector<MonoType>`, `Vector<ValType>`, and other record/sum
+  refs.
+- A concrete vector container should therefore target both scalar and typed-ref
+  families. The typed-ref families would remove many `anyref` array reads and
+  post-read `ref.cast`s even though they do not eliminate scalar boxing.
+- Use the census only as a static signal. It does not replace same-session
+  self-compilation timings, but it suggests that any future boot-performance
+  experiment should include a typed-ref family (for example `Vector<Instr>` or a
+  generic ref-element family) rather than only `Vector<Int>`.
+
+Decision note: postpone implementation for now. A type-definition-only kickoff would
+not improve runtime speed, and full per-concrete helper families could noticeably
+increase emitted artifact size. Revisit when there is a clear budget for code size
+or a design that shares most helper bodies across typed-ref vectors.
 
 ## Implementation Tasks
 
@@ -166,6 +221,13 @@ home of the persistent vector algorithm.
   - `String`
   - concrete record/sum refs
   - typed closure refs where those are already available in the backend
+- For boot-compiler performance, do not treat scalar vectors as the only first step.
+  The current self-hosted compiler has many hot-looking typed-ref vector reads, so the
+  first experiment should include one of:
+  - a generated family per concrete ref element type (`Vector<Instr>`,
+    `Vector<MonoType>`, etc.), or
+  - a transitional typed-ref family keyed by heap type, plus dedicated scalar families
+    for direct `i64`/`f64`/`i32` payloads.
 - Define fallback:
   - temporary erased/universal vector family only for genuinely non-concrete or
     unsupported `T` during migration
@@ -196,16 +258,31 @@ home of the persistent vector algorithm.
 
 ## Staging
 
-1. Add new runtime types and keep old flat operations compiling.
-2. Introduce dedicated outer vector refs and planner/codegen plumbing.
-3. Specialize scalar element families first (`Int`, `Float`, `Bool`, `Byte`).
-4. Move `get/set/len` onto the specialized persistent representation.
-5. Move `push` + builder path onto the specialized representation.
-6. Add `String` and common ref-element families.
-7. Move `concat/slice`.
-8. Restrict transitional erased fallback to unsupported/non-concrete cases only, then
+Completed:
+
+- Added the erased persistent vector runtime types and the dedicated outer `PVec` ref.
+- Moved `get`, `set`, `len`, `push`, and builder operations onto the persistent
+  representation.
+- Kept array/PVec boundary helpers for host/runtime compatibility.
+- Added semantic coverage for trie boundaries, deep append chains, branching versions,
+  builder/collect behavior, and large literals.
+
+Deferred next steps:
+
+1. Establish an explicit code-size budget before introducing typed vector helpers.
+2. Add typed vector-family planning so monomorphized `Vector<T>` can select a concrete
+   container family from `T`, but keep this behind a measurement gate until helper
+   sharing/code-size strategy is clear.
+3. Prefer typed-ref vectors as the first performance experiment; scalar families
+   (`Int`, `Float`, `Bool`, `Byte`) are still required for the long-term anyref
+   elimination goal, but are unlikely to be the largest boot-compiler win alone.
+4. Move specialized `get/set/len`, then `push` + builder paths, away from `anyref`
+   only after comparing artifact growth against self-compilation speedup.
+5. Revisit `concat/slice`; keep rebuild-through-builder for correctness, or move to an
+   RRB-style representation if profiling shows concat/slice dominate.
+6. Restrict transitional erased fallback to unsupported/non-concrete cases only, then
    remove it for supported concrete families.
-9. Update snapshots and perf baseline.
+7. Update snapshots and perf baseline after each representation step.
 
 ## Risks
 

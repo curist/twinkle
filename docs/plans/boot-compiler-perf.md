@@ -690,3 +690,53 @@ with a size table. Would benefit sub-body instruction-vector building in codegen
 eliminating the separate HamtEntry struct allocation per entry. Fewer
 allocations, better iteration locality. Scala 2.13's HashMap uses CHAMP.
 
+
+---
+
+## Current baseline (2026-05-05, erased persistent PVec)
+
+This snapshot was taken after the runtime vector representation moved from flat
+copy-on-write arrays to the erased persistent `PVec` trie described in
+[`persistent-vector.md`](persistent-vector.md). Use it as the baseline before the
+next vector-layout work.
+
+Wall-clock self-compilation through the bundled CLI:
+
+```text
+hyperfine --warmup 1 --runs 5 'target/twk build boot/main.tw -o /tmp/twinkle-boot-baseline.wasm'
+mean 2.067s, range 2.039s–2.112s
+```
+
+Phase timing from the same compiler shape:
+
+```text
+compile_modules    724ms
+core_link           87ms
+monomorphize        51ms
+lower_anf           57ms
+optimize           244ms
+  dead_let          63ms
+  copy_prop         62ms
+  uniqueness        60ms
+closure_convert     18ms
+prepare_backend    206ms
+verify             158ms
+plan_wasm_types     61ms
+emit_module        239ms
+link               133ms
+emit_wasm_binary   191ms
+  type_order         3ms
+  build_ctx         12ms
+  type_section       3ms
+  small_sections    34ms
+  code_section     139ms
+```
+
+Interpretation:
+
+- `compile_modules` remains the largest whole phase.
+- `optimize`, `emit_module`, `prepare_backend`, and `emit_wasm_binary` are the next
+  tier and close enough that local changes should be justified with same-session
+  timing rather than one full-pipeline sample.
+- The current PVec runtime still stores elements through `anyref`; the next vector
+  work should measure against this baseline before introducing typed vector families.
