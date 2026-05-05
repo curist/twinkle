@@ -11,6 +11,7 @@ use compiler.lower_core
 use compiler.monomorphize
 use compiler.builtins.{make_builtin_registry}
 use compiler.base_env.{builtin_env}
+use compiler.contracts.{BuiltinContract}
 use lib.source.span
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1257,6 +1258,29 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
+    })
+    .test("core linker contract fallback indexes method suffixes", fn() Result<Void, String> {
+      s := span.Span.{ file_id: 0, start: 0, end: 0 }
+      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: resolver.MonoType.Int, span: s }
+      body := core_ir.CoreExpr.{
+        kind: .ContractCall(BuiltinContract.Stringify, "to_string", receiver, []),
+        ty: resolver.MonoType.String,
+        span: s,
+      }
+      target := core_ir.FunctionDef.{
+        func_id: core_ir.FuncId.{ id: 42 },
+        name: "Int.to_string",
+        params: [],
+        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: resolver.MonoType.String, span: s },
+        return_ty: resolver.MonoType.String,
+      }
+      func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
+      func_map[42] = target
+      func_table: Dict<String, core_ir.FuncId> = Dict.new()
+      refs := core_linker.collect_func_refs(body, builtin_env(), func_table, func_map)
+      try assert.int_eq(refs.len(), 1)
+      try assert.int_eq(refs[0], 42)
+      .Ok({})
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"

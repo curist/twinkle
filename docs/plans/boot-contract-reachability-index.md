@@ -46,10 +46,10 @@ lookup rather than scanning all functions repeatedly.
 
 ### Phase 1: Introduce an index without behavior changes
 
-- [ ] Add a `ReachabilityIndex` helper type near linker reachability code.
-- [ ] Build `funcs_by_id` and `fallback_methods` once from linked functions.
-- [ ] Replace `fallback_contract_refs` scans with index lookups.
-- [ ] Preserve current matching rules exactly.
+- [x] Add a `ReachabilityIndex` helper type near linker reachability code.
+- [x] Build `funcs_by_id` and `fallback_methods` once from linked functions.
+- [x] Replace `fallback_contract_refs` scans with index lookups.
+- [x] Preserve current matching rules exactly.
 
 ### Phase 2: Make exact vs fallback resolution visible
 
@@ -70,10 +70,10 @@ lookup rather than scanning all functions repeatedly.
 
 ## Validation
 
-- [ ] Core linker suite
-- [ ] Contract/stringify-related tests
-- [ ] Codegen integration suite
-- [ ] Boot self-build
+- [x] Core linker suite
+- [x] Contract/stringify-related tests
+- [x] Codegen integration suite
+- [x] Boot self-build
 
 ---
 
