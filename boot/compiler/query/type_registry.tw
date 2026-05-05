@@ -1,0 +1,46 @@
+// Stable TypeId registry for incremental compilation.
+//
+// Maps (module_path, type_name) → TypeId so that recompiling a module
+// produces the same TypeIds regardless of compilation order.
+// New types get the next available ID; re-registered types get their
+// existing ID back.
+
+use compiler.resolver.{TypeId}
+
+pub type TypeRegistry = .{
+  assignments: Dict<String, Int>,  // "module::name" → type id
+  next_id: Int,
+}
+
+pub type AssignResult = .{
+  registry: TypeRegistry,
+  id: TypeId,
+}
+
+pub fn empty(start_id: Int) TypeRegistry {
+  .{ assignments: Dict.new(), next_id: start_id }
+}
+
+/// Look up or assign a stable TypeId for a type defined in a module.
+/// Returns the same TypeId on repeated calls with the same key.
+pub fn assign(registry: TypeRegistry, module_path: String, type_name: String) AssignResult {
+  key := "${module_path}::${type_name}"
+  case registry.assignments[key] {
+    .Some(id) => .{ registry, id: TypeId.{ id } },
+    .None => {
+      id := registry.next_id
+      registry.assignments[key] = id
+      registry.next_id = id + 1
+      .{ registry, id: TypeId.{ id } }
+    },
+  }
+}
+
+/// Look up an existing TypeId without allocating.
+pub fn lookup(registry: TypeRegistry, module_path: String, type_name: String) TypeId? {
+  key := "${module_path}::${type_name}"
+  case registry.assignments[key] {
+    .Some(id) => .Some(TypeId.{ id }),
+    .None => .None,
+  }
+}

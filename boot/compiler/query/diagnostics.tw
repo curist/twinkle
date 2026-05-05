@@ -3,14 +3,15 @@
 // This module exposes structured diagnostics over in-memory document text. It
 // intentionally stops at type checking: LSP diagnostics do not need lowering,
 // linking, monomorphization, or codegen.
+//
+// Workspace analysis delegates to the shared analyze module, which is also
+// used by module_compiler for builds. Single-document analysis (no imports)
+// remains self-contained here.
 
-use @std.fs
 use compiler.base_env
-use compiler.imports
-use compiler.resolver.{ResolvedEnv, ModuleExports, TypeEntry, extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports, extend_types_from}
+use compiler.query.analyze
 use compiler.query.cache
 use compiler.query.stage_runner
-use lib.module.loader
 use lib.query.keys
 use lib.source.identity
 use lib.source.overlay
@@ -53,24 +54,6 @@ pub type WorkspaceInput = .{
   entry_uri: String,
   project_root: String,
   open_documents: Vector<DocumentInput>,
-}
-
-type WorkspaceState = .{
-  cache: cache.Store,
-  overlay: overlay.Overlay,
-  project_root: String,
-  canonical_roots: imports.CanonicalRoots,
-  exports: Dict<String, ModuleExports>,
-  shared_types: Vector<TypeEntry>,
-  shared_type_names: Vector<String>,
-  shared_type_origins: Dict<Int, String>,
-  diagnostics: Vector<Diagnostic>,
-}
-
-type AnalyzeModuleResult = .{
-  env: ResolvedEnv,
-  state: WorkspaceState,
-  ok: Bool,
 }
 
 pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult {
@@ -121,175 +104,31 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
   }
 
   base := base_env.builtin_env()
-  state := WorkspaceState.{
-    cache: store,
-    overlay: overlay.from_documents(docs),
-    project_root: input.project_root,
-    canonical_roots: imports.make_canonical_roots(input.project_root),
-    exports: Dict.new(),
-    shared_types: base.types,
-    shared_type_names: base.type_names,
-    shared_type_origins: base.type_origins,
-    diagnostics: [],
-  }
+  ov := overlay.from_documents(docs)
+  state := analyze.new_state(base, store, ov, input.project_root)
+  result := analyze.analyze_module(entry_id, "__entry", base, state, [])
 
-  result := analyze_module(entry_id, "__entry", base, state, [])
+  diags := convert_analysis_diags(result.diagnostics)
   .{
     cache: result.state.cache,
-    diagnostics: result.state.diagnostics,
-    diagnostics_by_uri: group_diagnostics(result.state.diagnostics, input.open_documents),
+    diagnostics: diags,
+    diagnostics_by_uri: group_diagnostics(diags, input.open_documents),
   }
 }
 
-fn analyze_module(
-  id: identity.SourceIdentity,
-  alias: String,
-  base: ResolvedEnv,
-  state: WorkspaceState,
-  stack: Vector<String>,
-) AnalyzeModuleResult {
-  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
-  module_id := identity.from_path(canonical)
+// ── Helpers ─────────────────────────────────────────────────────────
 
-  case state.exports[canonical] {
-    .Some(_) => { return .{ env: base, state, ok: true } },
-    .None => {},
-  }
-
-  if stack.contains(canonical) {
-    next := add_synthetic(state, module_id.uri, .None, "import", "Circular import detected: '${canonical}' is already being analyzed")
-    return .{ env: base, state: next, ok: false }
-  }
-
-  source := case overlay.lookup(state.overlay, module_id) {
-    .Ok(found) => found,
-    .Err(err) => {
-      state.cache = cache.clear_module(state.cache, canonical)
-      next := add_synthetic(state, module_id.uri, .None, "source", err)
-      return .{ env: base, state: next, ok: false }
-    },
-  }
-  source_hash := keys.hash_text(source.text)
-  state.cache = cache.note_source_hash(state.cache, canonical, source_hash)
-  parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
-  parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
-  state.cache = parsed_out.store
-  parsed := parsed_out.value
-  if parsed.diagnostics.len() > 0 {
-    state.diagnostics = state.diagnostics.concat(convert_source_diagnostics(source, "parse", parsed.diagnostics))
-    return .{ env: base, state, ok: false }
-  }
-
-  dep_plan := case imports.plan_dependencies_with_exists(parsed.module, canonical, state.project_root, fn(path_str: String) Bool {
-    dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
-    state.overlay.documents.has(dep_id.path) or fs.exists(dep_id.path)
-  }) {
-    .Ok(plan) => plan,
-    .Err(err) => {
-      state.cache = cache.clear_resolved_and_later(state.cache, canonical)
-      next := add_synthetic(state, source.identity.uri, source.version, "import", err)
-      return .{ env: base, state: next, ok: false }
-    },
-  }
-
-  stack2 := stack.append(canonical)
-  env := base.extend_types_from(state.shared_types, state.shared_type_names, state.shared_type_origins)
-  cur := state
-  deps_ok := true
-  for dep in dep_plan.dependencies {
-    dep_id := identity.from_path(dep.canonical_path)
-    dep_base := base.extend_types_from(cur.shared_types, cur.shared_type_names, cur.shared_type_origins)
-    dep_result := analyze_module(dep_id, dep.alias, dep_base, cur, stack2)
-    cur = dep_result.state
-    if !dep_result.ok {
-      deps_ok = false
-      continue
-    }
-
-    env = env.extend_types_from(cur.shared_types, cur.shared_type_names, cur.shared_type_origins)
-    dep_exports := case cur.exports[dep.canonical_path] {
-      .Some(exports) => exports,
-      .None => {
-        deps_ok = false
-        continue
-      },
-    }
-    case dep.kind {
-      .Import => {
-        case dep.items {
-          .Some(items) => env = env.merge_selective_imports(dep.alias, dep.canonical_path, dep_exports, items),
-          .None => env = env.merge_module_exports(dep.alias, dep.canonical_path, dep_exports),
-        }
-      },
-      .Prelude => env = env.merge_prelude_exports(dep.alias, dep.canonical_path, dep_exports),
+fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic> {
+  collect d in diags {
+    Diagnostic.{
+      uri: d.identity.uri,
+      version: d.version,
+      span: d.span,
+      severity: d.severity,
+      message: d.message,
+      stage: d.stage,
     }
   }
-  cur.cache = cache.set_dependencies(cur.cache, canonical, collect dep in dep_plan.dependencies { dep.canonical_path })
-  if !deps_ok {
-    cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
-    return .{ env, state: cur, ok: false }
-  }
-
-  dep_hash_entries: Vector<keys.DepEntry> = []
-  for dep in dep_plan.dependencies {
-    dep_hash := case cache.module_hash(cur.cache, dep.canonical_path) {
-      .Some(hash) => hash,
-      .None => 0,
-    }
-    dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
-  }
-  deps_hash := keys.deps_hash(dep_hash_entries)
-  context_hash := keys.context_hash(dep_hash_entries)
-  runner := stage_runner.new(canonical, source_hash, deps_hash, context_hash, dep_plan.is_internal)
-  if dep_plan.is_internal {
-    env = base_env.add_internal_host_builtins(env)
-  }
-  local_type_start := env.types.len()
-
-  resolved_out := stage_runner.resolve(runner, cur.cache, parsed, env)
-  cur.cache = resolved_out.store
-  resolved := resolved_out.value
-  if resolved.diagnostics.len() > 0 {
-    cur.cache = cache.clear_typed_and_later(cur.cache, canonical)
-    cur.diagnostics = cur.diagnostics.concat(convert_source_diagnostics(source, "resolve", resolved.diagnostics))
-    return .{ env, state: cur, ok: false }
-  }
-
-  checked_out := stage_runner.typecheck(runner, cur.cache, parsed, resolved)
-  cur.cache = checked_out.store
-  checked := checked_out.value
-  if checked.diagnostics.len() > 0 {
-    cur.cache = cache.clear_lowered_and_hash(cur.cache, canonical)
-    cur.diagnostics = cur.diagnostics.concat(convert_source_diagnostics(source, "check", checked.diagnostics))
-    return .{ env, state: cur, ok: false }
-  }
-
-  cur = capture_local_types(cur, checked.env, canonical, local_type_start)
-  exports := extract_exports_for_module(checked.env, parsed.module, canonical)
-  cur.exports[canonical] = exports
-  cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
-  .{ env: checked.env, state: cur, ok: true }
-}
-
-fn capture_local_types(state: WorkspaceState, env: ResolvedEnv, canonical: String, local_type_start: Int) WorkspaceState {
-  if env.types.len() <= local_type_start { return state }
-  for i in local_type_start..env.types.len() {
-    entry := env.types[i]
-    name := env.type_names[i]
-    state.shared_types = state.shared_types.append(entry)
-    state.shared_type_names = state.shared_type_names.append(name)
-    case env.type_origins[entry.id.id] {
-      .Some(origin) => {
-        if !state.shared_type_origins.has(entry.id.id) {
-          state.shared_type_origins[entry.id.id] = origin
-        }
-      },
-      .None => {
-        state.shared_type_origins[entry.id.id] = "${canonical}::${name}"
-      },
-    }
-  }
-  state
 }
 
 fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<DocumentInput>) Vector<DiagnosticGroup> {
@@ -329,30 +168,8 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
   groups
 }
 
-fn add_synthetic(state: WorkspaceState, uri: String, version: Int?, stage: String, message: String) WorkspaceState {
-  state.diagnostics = state.diagnostics.append(synthetic_diagnostic(uri, version, stage, message))
-  state
-}
-
 fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: String) Diagnostic {
   .{ uri, version, span: .None, severity: .Error, message, stage }
-}
-
-fn convert_source_diagnostics(
-  source: overlay.SourceText,
-  stage: String,
-  diagnostics: Vector<source_diag.Diagnostic>,
-) Vector<Diagnostic> {
-  collect d in diagnostics {
-    .{
-      uri: source.identity.uri,
-      version: source.version,
-      span: .Some(d.span),
-      severity: d.severity,
-      message: d.message,
-      stage,
-    }
-  }
 }
 
 pub fn convert_diagnostics(

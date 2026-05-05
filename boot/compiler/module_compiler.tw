@@ -1,7 +1,9 @@
 // Multi-module compiler: recursive module loading with caching and cycle detection.
 //
-// Orchestrates the compilation of a module and all its transitive dependencies,
-// building up the resolved environment by merging each dependency's exports.
+// Orchestrates the compilation of a module and all its transitive dependencies.
+// Frontend analysis (parse → resolve → typecheck → exports) is delegated to the
+// shared analyze module, which is also used by the LSP diagnostics path.
+// This module adds lowering to Core IR on top, then links all modules.
 //
 // Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
 
@@ -9,62 +11,31 @@ use @std.fs
 use @std.path
 use @std.date
 use @std.proc
-use compiler.resolver.{
-  ResolvedEnv, ModuleExports, TypeEntry,
-  extract_exports_for_module, merge_module_exports, merge_selective_imports, merge_prelude_exports,
-  extend_types_from,
-}
 use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.core_ir.{CoreModule, CompiledModule, ExternalRef}
+use compiler.builtins.{make_builtin_registry}
+use compiler.core_ir.{CompiledModule, ExternalRef}
 use compiler.artifacts.{PipelineArtifacts}
-use compiler.anf.{AnfModule}
-use compiler.ast.{Module}
 use compiler.imports
 use compiler.core_linker
-use compiler.base_env.{builtin_env, add_internal_host_builtins}
+use compiler.base_env.{builtin_env}
+use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
-use compiler.util.{fs_error_message}
 use lib.module.loader
-use lib.query.keys
+use lib.source.identity
+use lib.source.overlay
+use lib.source.span
 use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 
-// ── Types ───────────────────────────────────────────────────────────
-
-/// Accumulated state during multi-module compilation.
-pub type CompileState = .{
-  cache: Dict<String, ModuleExports>,       // canonical_path → exports
-  compiled_modules: Vector<CompiledModule>, // for linking
-  builtins: BuiltinRegistry,
-  project_root: String,
-  canonical_roots: imports.CanonicalRoots,
-  // Accumulated type definitions across all modules.
-  // TypeIds are indices into this vector, so it must grow monotonically
-  // to prevent overlapping TypeIds from different modules.
-  shared_types: Vector<TypeEntry>,
-  shared_type_names: Vector<String>,
-  shared_type_origins: Dict<Int, String>,
-  query_cache: query_cache.Store,
-}
-
-/// Result of compiling a single module.
-type CompileModuleResult = .{
-  exports: ModuleExports,
-  env: ResolvedEnv,
-  state: CompileState,
-}
-
-// ── Public API ──────────────────────────────────────────────────────
+// ── Public API ────────────────────��───────────────────────���─────────
 
 /// Compile an entry file and all its transitive dependencies.
 ///
 /// Returns PipelineArtifacts for the fully linked, monomorphized,
 /// and optimized program.
 pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
-  // Find project root
   dir := path.dirname(entry_path)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
@@ -72,46 +43,90 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
 
   builtins := make_builtin_registry()
   base_env := builtin_env()
-  state := CompileState.{
-    cache: Dict.new(),
-    compiled_modules: [],
-    builtins,
-    project_root,
-    canonical_roots,
-    shared_types: base_env.types,
-    shared_type_names: base_env.type_names,
-    shared_type_origins: base_env.type_origins,
-    query_cache: query_cache.empty(),
-  }
-  importing_stack: Vector<String> = []
   timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
 
+  // Phase 1: Frontend analysis (parse → resolve → typecheck → exports)
+  // Uses the shared analyze module (same path as LSP diagnostics).
   t_modules_start := date.now()
-  result := try compile_module(
-    canonical_entry,
-    "__entry",
-    base_env,
-    state,
-    importing_stack,
-  )
-  state = result.state
+  entry_id := identity.from_path(canonical_entry)
+  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
+
+  if !a_result.ok {
+    if a_result.diagnostics.len() > 0 {
+      return .Err(format_analysis_errors(a_result.diagnostics))
+    }
+    return .Err("analysis failed")
+  }
+
+  // Phase 2: Lower each analyzed module to Core IR
+  compiled_modules: Vector<CompiledModule> = []
+  cur_cache := a_result.state.cache
+  for module_path in a_result.state.module_order {
+    // Retrieve cached artifacts
+    parsed := case query_cache.latest_parsed(cur_cache, module_path) {
+      .Some(p) => p,
+      .None => { return .Err("internal: missing parsed cache for '${module_path}'") },
+    }
+    typed := case query_cache.latest_typed(cur_cache, module_path) {
+      .Some(t) => t,
+      .None => { return .Err("internal: missing typed cache for '${module_path}'") },
+    }
+    runner := case a_result.state.module_runners[module_path] {
+      .Some(r) => r,
+      .None => { return .Err("internal: missing runner for '${module_path}'") },
+    }
+
+    lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins, 0)
+    cur_cache = lowered_out.store
+    lowered := lowered_out.value
+    if lowered.diagnostics.len() > 0 {
+      source := case fs.read_text(module_path) {
+        .Ok(text) => text,
+        .Err(_) => "",
+      }
+      return .Err(format_stage_error("lower", module_path, source, lowered.diagnostics))
+    }
+
+    // Build external_refs from lowering's canonical imported origins.
+    external_refs: Dict<Int, ExternalRef> = Dict.new()
+    for fid in lowered.imported_func_origins.keys() {
+      case lowered.imported_func_origins[fid] {
+        .Some(origin) => {
+          external_refs[fid] = ExternalRef.{
+            module_path: origin.module_path,
+            func_name: origin.func_name,
+          }
+        },
+        .None => {},
+      }
+    }
+
+    compiled_modules = compiled_modules.append(.{
+      path: module_path,
+      core: lowered.module,
+      func_table: lowered.func_table,
+      external_refs,
+      builtin_count: builtins.next_id,
+    })
+  }
   t_modules_end := date.now()
   if timed {
-    n := state.compiled_modules.len()
+    n := compiled_modules.len()
     eprintln("[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms")
   }
 
-  if state.compiled_modules.len() == 0 {
+  if compiled_modules.len() == 0 {
     return .Err("no modules compiled")
   }
 
-  // Link all compiled modules into a single CoreModule
+  // Phase 3: Link, monomorphize, ANF lower, optimize
   t0 := date.now()
   core := core_linker.link(
-    state.compiled_modules,
+    compiled_modules,
     canonical_entry,
-    result.env,
-    state.builtins.next_id,
+    a_result.env,
+    builtins.next_id,
   )
   t1 := date.now()
   if timed { eprintln("[time] core_link: ${Float.to_string(t1 - t0)}ms") }
@@ -129,8 +144,8 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   if timed { eprintln("[time] optimize: ${Float.to_string(t4 - t3)}ms") }
 
   .Ok(.{
-    env: result.env,
-    builtins: state.builtins,
+    env: a_result.env,
+    builtins,
     core,
     mono,
     anf,
@@ -138,253 +153,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   })
 }
 
-// ── Internal ────────────────────────────────────────────────────────
-
-/// Compile a single module and all its dependencies recursively.
-///
-/// Each dependency is compiled against the base_env (builtins + name bindings)
-/// extended with accumulated shared types so that TypeIds are globally unique.
-/// This mirrors the Rust stage0's snapshot/restore/project pattern where
-/// type definitions accumulate but name bindings are scoped.
-fn compile_module(
-  file_path: String,
-  alias: String,
-  base_env: ResolvedEnv,
-  state: CompileState,
-  importing_stack: Vector<String>,
-) Result<CompileModuleResult, String> {
-  // Normalize path for deduplication
-  canonical := imports.canonical_module_path(file_path, state.canonical_roots)
-
-  // Already compiled? Return cached exports.
-  case state.cache[canonical] {
-    .Some(exports) => {
-      return .Ok(.{ exports, env: base_env, state })
-    },
-    .None => {},
-  }
-
-  // Circular import detection
-  if importing_stack.contains(canonical) {
-    return .Err("Circular import detected: '${file_path}' is already being compiled")
-  }
-
-  timed_mod := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
-  tm0 := date.now()
-
-  // Read and parse
-  source := case fs.read_text(canonical) {
-    .Ok(text) => text,
-    .Err(err) => {
-      return .Err("Cannot read '${canonical}': ${fs_error_message(err)}")
-    },
-  }
-
-  source_hash := keys.hash_text(source)
-  parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
-  parsed_out := stage_runner.parse(parse_runner, state.query_cache, source, 0)
-  state.query_cache = parsed_out.store
-  parsed := parsed_out.value
-  if parsed.diagnostics.len() > 0 {
-    return .Err(format_stage_error("parse", canonical, source, parsed.diagnostics))
-  }
-  tm1 := date.now()
-
-  // Plan dependencies
-  dep_plan := try imports.plan_dependencies(parsed.module, canonical, state.project_root)
-
-  // Push onto importing stack
-  stack := importing_stack.append(canonical)
-
-  // Compile dependencies and build up the env for this module.
-  // Also track function origins for the linker's external_refs.
-  env := base_env.extend_types_from(
-    state.shared_types, state.shared_type_names, state.shared_type_origins,
-  )
-  cur_state := state
-  for dep in dep_plan.dependencies {
-    // Compile dependency against base_env extended with accumulated types.
-    // Name bindings are isolated (base_env only), but TypeIds are globally
-    // unique because shared_types grows monotonically.
-    dep_base := base_env.extend_types_from(
-      cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
-    )
-    dep_result := try compile_module(
-      dep.canonical_path,
-      dep.alias,
-      dep_base,
-      cur_state,
-      stack,
-    )
-    cur_state = dep_result.state
-
-    // Extend env with the latest shared types before merging exports.
-    // This ensures plan_export_type_ids finds the dep's types already
-    // present (with correct globally unique TypeIds) rather than
-    // allocating new overlapping IDs.
-    env = env.extend_types_from(
-      cur_state.shared_types, cur_state.shared_type_names, cur_state.shared_type_origins,
-    )
-
-    // Project exports into this module's env
-    case dep.kind {
-      .Import => {
-        case dep.items {
-          .Some(items) => {
-            env = env.merge_selective_imports(dep.alias, dep.canonical_path, dep_result.exports, items)
-          },
-          .None => {
-            env = env.merge_module_exports(dep.alias, dep.canonical_path, dep_result.exports)
-          },
-        }
-      },
-      .Prelude => {
-        env = env.merge_prelude_exports(dep.alias, dep.canonical_path, dep_result.exports)
-      },
-    }
-  }
-  cur_state.query_cache = query_cache.set_dependencies(
-    cur_state.query_cache,
-    canonical,
-    collect dep in dep_plan.dependencies { dep.canonical_path },
-  )
-  dep_hash_entries: Vector<keys.DepEntry> = []
-  for dep in dep_plan.dependencies {
-    dep_hash := case query_cache.module_hash(cur_state.query_cache, dep.canonical_path) {
-      .Some(hash) => hash,
-      .None => 0,
-    }
-    dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
-  }
-  deps_hash := keys.deps_hash(dep_hash_entries)
-  context_entries: Vector<keys.DepEntry> = []
-  for module_path in cur_state.query_cache.module_hashes.keys() {
-    case cur_state.query_cache.module_hashes[module_path] {
-      .Some(hash) => context_entries = context_entries.append(.{ path: module_path, hash }),
-      .None => {},
-    }
-  }
-  context_hash := keys.context_hash(context_entries)
-  runner := stage_runner.new(canonical, source_hash, deps_hash, context_hash, dep_plan.is_internal)
-  tm2 := date.now()
-
-  if dep_plan.is_internal {
-    env = add_internal_host_builtins(env)
-  }
-
-  // Imports may append interface types into the per-module env, but only
-  // types declared by this module should be promoted into shared_types.
-  local_type_start := env.types.len()
-
-  // Resolve this module with the accumulated env
-  resolved_out := stage_runner.resolve(runner, cur_state.query_cache, parsed, env)
-  cur_state.query_cache = resolved_out.store
-  resolved := resolved_out.value
-  if resolved.diagnostics.len() > 0 {
-    return .Err(format_stage_error("resolve", canonical, source, resolved.diagnostics))
-  }
-  tm3 := date.now()
-
-  // Type-check
-  check_out := stage_runner.typecheck(runner, cur_state.query_cache, parsed, resolved)
-  cur_state.query_cache = check_out.store
-  check_result := check_out.value
-  if check_result.diagnostics.len() > 0 {
-    return .Err(format_stage_error("check", canonical, source, check_result.diagnostics))
-  }
-  tm4 := date.now()
-
-  // Capture only this module's own type definitions into shared state so
-  // subsequent modules see globally unique TypeIds without re-sharing
-  // per-import remapped interface copies.
-  cur_state = capture_local_types(cur_state, check_result.env, canonical, local_type_start)
-
-  // Lower to Core IR
-  lowered_out := stage_runner.lower(runner, cur_state.query_cache, parsed, check_result, cur_state.builtins, 0)
-  cur_state.query_cache = lowered_out.store
-  lowered := lowered_out.value
-  if lowered.diagnostics.len() > 0 {
-    return .Err(format_stage_error("lower", canonical, source, lowered.diagnostics))
-  }
-  cur_state.query_cache = query_cache.set_module_hash(
-    cur_state.query_cache,
-    canonical,
-    keys.module_hash(source_hash, deps_hash),
-  )
-  tm5 := date.now()
-
-  if timed_mod {
-    total := tm5 - tm0
-    eprintln("[time:mod] ${canonical}  total=${Float.to_string(total)}ms  parse=${Float.to_string(tm1 - tm0)}ms  deps=${Float.to_string(tm2 - tm1)}ms  resolve=${Float.to_string(tm3 - tm2)}ms  check=${Float.to_string(tm4 - tm3)}ms  lower=${Float.to_string(tm5 - tm4)}ms")
-  }
-
-  // Build external_refs directly from lowering's canonical imported origins.
-  external_refs: Dict<Int, ExternalRef> = Dict.new()
-  for fid in lowered.imported_func_origins.keys() {
-    case lowered.imported_func_origins[fid] {
-      .Some(origin) => {
-        external_refs[fid] = ExternalRef.{
-          module_path: origin.module_path,
-          func_name: origin.func_name,
-        }
-      },
-      .None => {},
-    }
-  }
-
-  // Extract exports for importing modules
-  module_exports := extract_exports_for_module(check_result.env, parsed.module, canonical)
-
-  // Cache and accumulate
-  cur_state.cache[canonical] = module_exports
-  cur_state.compiled_modules = cur_state.compiled_modules.append(.{
-    path: canonical,
-    core: lowered.module,
-    func_table: lowered.func_table,
-    external_refs,
-    builtin_count: cur_state.builtins.next_id,
-  })
-
-  .Ok(.{ exports: module_exports, env: check_result.env, state: cur_state })
-}
-
-// ── Type accumulation ────────────────────────────────────────────────
-
-/// Capture only this module's local type entries into the shared state.
-/// Imported interface types may be remapped per-import inside the module env,
-/// so re-sharing them would duplicate nominal identities across modules.
-fn capture_local_types(
-  state: CompileState,
-  env: ResolvedEnv,
-  canonical: String,
-  local_type_start: Int,
-) CompileState {
-  if env.types.len() <= local_type_start {
-    return state
-  }
-
-  for i in local_type_start..env.types.len() {
-    entry := env.types[i]
-    name := env.type_names[i]
-    state.shared_types = state.shared_types.append(entry)
-    state.shared_type_names = state.shared_type_names.append(name)
-
-    case env.type_origins[entry.id.id] {
-      .Some(origin) => {
-        if !state.shared_type_origins.has(entry.id.id) {
-          state.shared_type_origins[entry.id.id] = origin
-        }
-      },
-      .None => {
-        state.shared_type_origins[entry.id.id] = "${canonical}::${name}"
-      },
-    }
-  }
-
-  state
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────
+// ── Helpers ────────────���──────────────────────���─────────────────────
 
 fn format_stage_error(
   stage: String,
@@ -393,4 +162,26 @@ fn format_stage_error(
   diagnostics: Vector<Diagnostic>,
 ) String {
   "${stage}:\n${format_source_diagnostics(file_path, source, diagnostics)}"
+}
+
+/// Format analysis diagnostics with source locations.
+/// Groups by file so each diagnostic's span is resolved against the correct source.
+fn format_analysis_errors(diags: Vector<analyze.AnalysisDiag>) String {
+  if diags.len() == 0 { return "analysis failed" }
+  stage := diags[0].stage
+  parts: Vector<String> = []
+  for d in diags {
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
+    }
+    raw_span := case d.span {
+      .Some(s) => span.new(0, s.start, s.end),
+      .None => span.new(0, 0, 0),
+    }
+    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
+    parts = parts.append(format_source_diagnostics(d.identity.path, source, raw))
+  }
+  sep := "\n"
+  "${stage}:\n${parts.join(sep)}"
 }

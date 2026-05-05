@@ -8,12 +8,20 @@ use compiler.ast
 use compiler.checker
 use compiler.lower_core
 use compiler.resolver
+use compiler.query.type_registry
 use lib.graph.dependency
 use lib.source.diagnostic.{Diagnostic, StageResult}
 
 pub type ParsedModule = .{
   module: ast.Module,
   diagnostics: Vector<Diagnostic>,
+}
+
+pub type StageKind = {
+  Parsed,
+  Resolved,
+  Typed,
+  Lowered,
 }
 
 pub type CacheStats = .{
@@ -30,6 +38,8 @@ pub type CacheStats = .{
 type CacheEntry<T> = .{
   key: Int,
   value: T,
+  verified_at: Int,
+  changed_at: Int,
 }
 
 pub type Store = .{
@@ -39,8 +49,11 @@ pub type Store = .{
   lowered: Dict<String, CacheEntry<lower_core.LowerResult>>,
   module_hashes: Dict<String, Int>,
   source_hashes: Dict<String, Int>,
+  exports_fingerprints: Dict<String, Int>,
+  type_registry: type_registry.TypeRegistry,
   graph: dependency.DependencyGraph,
   stats: CacheStats,
+  revision: Int,
 }
 
 pub type Lookup<T> = .{
@@ -70,8 +83,11 @@ pub fn empty() Store {
     lowered: Dict.new(),
     module_hashes: Dict.new(),
     source_hashes: Dict.new(),
+    exports_fingerprints: Dict.new(),
+    type_registry: type_registry.empty(0),
     graph: dependency.empty(),
     stats: empty_stats(),
+    revision: 0,
   }
 }
 
@@ -93,17 +109,28 @@ pub fn module_hash(store: Store, module: String) Int? {
   store.module_hashes[module]
 }
 
+pub fn set_exports_fingerprint(store: Store, module: String, fingerprint: Int) Store {
+  store.exports_fingerprints[module] = fingerprint
+  store
+}
+
+pub fn exports_fingerprint(store: Store, module: String) Int? {
+  store.exports_fingerprints[module]
+}
+
 pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
   case store.source_hashes[module] {
     .Some(prev) => {
       if prev == source_hash { return store }
     },
     .None => {
+      store.revision = store.revision + 1
       store.source_hashes[module] = source_hash
       return store
     },
   }
 
+  store.revision = store.revision + 1
   store.parsed = store.parsed.remove(module)
   store = invalidate_changed_module(store, module)
   store.source_hashes[module] = source_hash
@@ -116,7 +143,9 @@ pub fn invalidate_changed_module(store: Store, module: String) Store {
     if path == module {
       store.parsed = store.parsed.remove(path)
     }
-    store = clear_resolved_and_later(store, path)
+    // Clear module_hashes so key recomputation reflects the change,
+    // but preserve resolved/typed/lowered entries for lazy verification.
+    store.module_hashes = store.module_hashes.remove(path)
   }
   store
 }
@@ -171,6 +200,7 @@ pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
     .Some(entry) => {
       if entry.key == key {
         store.stats.parse_hits = store.stats.parse_hits + 1
+        store.parsed[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
@@ -181,7 +211,7 @@ pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
 }
 
 pub fn put_parsed(store: Store, module: String, key: Int, value: ParsedModule) Store {
-  store.parsed[module] = .{ key, value }
+  store.parsed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
@@ -190,6 +220,7 @@ pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.Reso
     .Some(entry) => {
       if entry.key == key {
         store.stats.resolve_hits = store.stats.resolve_hits + 1
+        store.resolved[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
@@ -200,7 +231,7 @@ pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.Reso
 }
 
 pub fn put_resolved(store: Store, module: String, key: Int, value: resolver.ResolveResult) Store {
-  store.resolved[module] = .{ key, value }
+  store.resolved[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
@@ -209,6 +240,7 @@ pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckRes
     .Some(entry) => {
       if entry.key == key {
         store.stats.typecheck_hits = store.stats.typecheck_hits + 1
+        store.typed[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
@@ -219,7 +251,7 @@ pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckRes
 }
 
 pub fn put_typed(store: Store, module: String, key: Int, value: checker.CheckResult) Store {
-  store.typed[module] = .{ key, value }
+  store.typed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
@@ -228,6 +260,7 @@ pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.Low
     .Some(entry) => {
       if entry.key == key {
         store.stats.lower_hits = store.stats.lower_hits + 1
+        store.lowered[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
@@ -238,6 +271,48 @@ pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.Low
 }
 
 pub fn put_lowered(store: Store, module: String, key: Int, value: lower_core.LowerResult) Store {
-  store.lowered[module] = .{ key, value }
+  store.lowered[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
+}
+
+pub fn verified_at(store: Store, module: String, stage: StageKind) Int {
+  case stage {
+    .Parsed => case store.parsed[module] {
+      .Some(entry) => entry.verified_at,
+      .None => 0,
+    },
+    .Resolved => case store.resolved[module] {
+      .Some(entry) => entry.verified_at,
+      .None => 0,
+    },
+    .Typed => case store.typed[module] {
+      .Some(entry) => entry.verified_at,
+      .None => 0,
+    },
+    .Lowered => case store.lowered[module] {
+      .Some(entry) => entry.verified_at,
+      .None => 0,
+    },
+  }
+}
+
+pub fn changed_at(store: Store, module: String, stage: StageKind) Int {
+  case stage {
+    .Parsed => case store.parsed[module] {
+      .Some(entry) => entry.changed_at,
+      .None => 0,
+    },
+    .Resolved => case store.resolved[module] {
+      .Some(entry) => entry.changed_at,
+      .None => 0,
+    },
+    .Typed => case store.typed[module] {
+      .Some(entry) => entry.changed_at,
+      .None => 0,
+    },
+    .Lowered => case store.lowered[module] {
+      .Some(entry) => entry.changed_at,
+      .None => 0,
+    },
+  }
 }

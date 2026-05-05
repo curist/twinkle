@@ -49,7 +49,11 @@ use .suites.module_loader_suite
 use .suites.dependency_graph_suite
 use .suites.query_keys_suite
 use .suites.query_cache_suite
+use .suites.query_revision_suite
+use .suites.fingerprint_suite
+use .suites.type_registry_suite
 use .suites.query_stage_runner_suite
+use .suites.query_analyze_suite
 use .suites.query_diagnostics_suite
 use .suites.imports_suite
 use .suites.lib_json_suite
@@ -120,7 +124,11 @@ runner.run_all([
   dependency_graph_suite.suite(),
   query_keys_suite.suite(),
   query_cache_suite.suite(),
+  query_revision_suite.suite(),
+  fingerprint_suite.suite(),
+  type_registry_suite.suite(),
   query_stage_runner_suite.suite(),
+  query_analyze_suite.suite(),
   query_diagnostics_suite.suite(),
   imports_suite.suite(),
   lib_json_suite.suite(),

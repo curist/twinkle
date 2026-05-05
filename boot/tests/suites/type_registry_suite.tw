@@ -1,0 +1,75 @@
+use tests.runner
+use tests.assert
+use compiler.query.type_registry as registry
+
+pub fn suite() runner.Suite {
+  runner.suite("type registry")
+
+    .test("empty registry starts at given id", fn() {
+      reg := registry.empty(8)
+      try assert.int_eq(reg.next_id, 8)
+      .Ok({})
+    })
+
+    .test("assign allocates sequential ids", fn() {
+      reg := registry.empty(8)
+      out1 := registry.assign(reg, "/a.tw", "Foo")
+      out2 := registry.assign(out1.registry, "/a.tw", "Bar")
+      try assert.int_eq(out1.id.id, 8)
+      try assert.int_eq(out2.id.id, 9)
+      try assert.int_eq(out2.registry.next_id, 10)
+      .Ok({})
+    })
+
+    .test("assign returns same id on repeated call", fn() {
+      reg := registry.empty(8)
+      out1 := registry.assign(reg, "/a.tw", "Point")
+      out2 := registry.assign(out1.registry, "/a.tw", "Point")
+      try assert.int_eq(out1.id.id, out2.id.id)
+      try assert.int_eq(out2.registry.next_id, 9)
+      .Ok({})
+    })
+
+    .test("same name in different modules gets different ids", fn() {
+      reg := registry.empty(8)
+      out1 := registry.assign(reg, "/a.tw", "Point")
+      out2 := registry.assign(out1.registry, "/b.tw", "Point")
+      try assert.is_true(out1.id.id != out2.id.id)
+      .Ok({})
+    })
+
+    .test("lookup finds assigned id", fn() {
+      reg := registry.empty(8)
+      out := registry.assign(reg, "/a.tw", "Foo")
+      found := registry.lookup(out.registry, "/a.tw", "Foo")
+      try assert.is_some(found)
+      case found {
+        .Some(tid) => try assert.int_eq(tid.id, 8),
+        .None => {},
+      }
+      .Ok({})
+    })
+
+    .test("lookup returns None for unregistered type", fn() {
+      reg := registry.empty(8)
+      found := registry.lookup(reg, "/a.tw", "Missing")
+      try assert.is_none(found)
+      .Ok({})
+    })
+
+    .test("recompile scenario: same types get same ids regardless of order", fn() {
+      // First compile: A then B
+      reg := registry.empty(8)
+      out_a1 := registry.assign(reg, "/a.tw", "TypeA")
+      out_b1 := registry.assign(out_a1.registry, "/b.tw", "TypeB")
+
+      // Second compile: B then A (different order, same registry)
+      out_b2 := registry.assign(out_b1.registry, "/b.tw", "TypeB")
+      out_a2 := registry.assign(out_b2.registry, "/a.tw", "TypeA")
+
+      // Same ids regardless of access order
+      try assert.int_eq(out_a1.id.id, out_a2.id.id)
+      try assert.int_eq(out_b1.id.id, out_b2.id.id)
+      .Ok({})
+    })
+}

@@ -1,0 +1,284 @@
+// Shared frontend analysis: parse → resolve → typecheck → exports.
+//
+// This is the single recursive module-graph analysis used by both
+// module_compiler (build) and diagnostics (LSP). The build path adds
+// lowering on top; the LSP path wraps with structured diagnostics.
+
+use @std.fs
+use compiler.base_env.{add_internal_host_builtins}
+use compiler.imports
+use compiler.resolver.{
+  ResolvedEnv, ModuleExports, TypeEntry,
+  extract_exports_for_module, merge_module_exports, merge_selective_imports,
+  merge_prelude_exports, extend_types_from,
+}
+use compiler.query.cache
+use compiler.query.fingerprint
+use compiler.query.stage_runner
+use compiler.query.type_registry
+use lib.query.keys
+use lib.source.identity
+use lib.source.overlay
+use lib.source.span
+use lib.source.diagnostic as source_diag
+
+// ── Types ───────────────────────────────────────────────────────────
+
+/// A diagnostic emitted during analysis, tagged with module identity.
+pub type AnalysisDiag = .{
+  identity: identity.SourceIdentity,
+  version: Int?,
+  span: span.Span?,
+  severity: source_diag.Severity,
+  message: String,
+  stage: String,
+}
+
+/// Accumulated state during recursive module-graph analysis.
+pub type AnalysisState = .{
+  cache: cache.Store,
+  overlay: overlay.Overlay,
+  project_root: String,
+  canonical_roots: imports.CanonicalRoots,
+  exports: Dict<String, ModuleExports>,
+  shared_types: Vector<TypeEntry>,
+  shared_type_names: Vector<String>,
+  shared_type_origins: Dict<Int, String>,
+  module_order: Vector<String>,
+  // Stage runners per module, preserved for downstream lowering.
+  module_runners: Dict<String, stage_runner.Runner>,
+}
+
+/// Result of analyzing a single module (and its transitive deps).
+pub type ModuleResult = .{
+  env: ResolvedEnv,
+  state: AnalysisState,
+  diagnostics: Vector<AnalysisDiag>,
+  ok: Bool,
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+/// Create a fresh analysis state.
+/// `base` provides the initial type vectors (from builtin_env).
+pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, project_root: String) AnalysisState {
+  .{
+    cache: store,
+    overlay: ov,
+    project_root,
+    canonical_roots: imports.make_canonical_roots(project_root),
+    exports: Dict.new(),
+    shared_types: base.types,
+    shared_type_names: base.type_names,
+    shared_type_origins: base.type_origins,
+    module_order: [],
+    module_runners: Dict.new(),
+  }
+}
+
+/// Analyze a module and all its transitive dependencies.
+///
+/// Uses the overlay for source reading (falls back to disk).
+/// Accumulates diagnostics rather than short-circuiting.
+pub fn analyze_module(
+  id: identity.SourceIdentity,
+  alias: String,
+  base: ResolvedEnv,
+  state: AnalysisState,
+  stack: Vector<String>,
+) ModuleResult {
+  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
+  module_id := identity.from_path(canonical)
+
+  // Already analyzed? Return cached exports.
+  case state.exports[canonical] {
+    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true } },
+    .None => {},
+  }
+
+  // Circular import detection
+  if stack.contains(canonical) {
+    diag := synthetic_diag(module_id, .None, "import", "Circular import detected: '${canonical}' is already being analyzed")
+    return .{ env: base, state, diagnostics: [diag], ok: false }
+  }
+
+  // Read source via overlay (falls back to disk)
+  source := case overlay.lookup(state.overlay, module_id) {
+    .Ok(found) => found,
+    .Err(err) => {
+      state.cache = cache.clear_module(state.cache, canonical)
+      diag := synthetic_diag(module_id, .None, "source", err)
+      return .{ env: base, state, diagnostics: [diag], ok: false }
+    },
+  }
+  source_hash := keys.hash_text(source.text)
+  state.cache = cache.note_source_hash(state.cache, canonical, source_hash)
+  parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
+  parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
+  state.cache = parsed_out.store
+  parsed := parsed_out.value
+  if parsed.diagnostics.len() > 0 {
+    diags := convert_source_diags(source, "parse", parsed.diagnostics)
+    return .{ env: base, state, diagnostics: diags, ok: false }
+  }
+
+  // Plan dependencies (overlay-aware exists check)
+  dep_plan := case imports.plan_dependencies_with_exists(parsed.module, canonical, state.project_root, fn(path_str: String) Bool {
+    dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
+    state.overlay.documents.has(dep_id.path) or fs.exists(dep_id.path)
+  }) {
+    .Ok(plan) => plan,
+    .Err(err) => {
+      state.cache = cache.clear_resolved_and_later(state.cache, canonical)
+      diag := synthetic_diag(source.identity, source.version, "import", err)
+      return .{ env: base, state, diagnostics: [diag], ok: false }
+    },
+  }
+
+  stack2 := stack.append(canonical)
+  env := base.extend_types_from(state.shared_types, state.shared_type_names, state.shared_type_origins)
+  cur := state
+  all_diags: Vector<AnalysisDiag> = []
+  deps_ok := true
+  for dep in dep_plan.dependencies {
+    dep_id := identity.from_path(dep.canonical_path)
+    dep_base := base.extend_types_from(cur.shared_types, cur.shared_type_names, cur.shared_type_origins)
+    dep_result := analyze_module(dep_id, dep.alias, dep_base, cur, stack2)
+    cur = dep_result.state
+    all_diags = all_diags.concat(dep_result.diagnostics)
+    if !dep_result.ok {
+      deps_ok = false
+      continue
+    }
+
+    env = env.extend_types_from(cur.shared_types, cur.shared_type_names, cur.shared_type_origins)
+    dep_exports := case cur.exports[dep.canonical_path] {
+      .Some(exports) => exports,
+      .None => {
+        deps_ok = false
+        continue
+      },
+    }
+    case dep.kind {
+      .Import => {
+        case dep.items {
+          .Some(items) => env = env.merge_selective_imports(dep.alias, dep.canonical_path, dep_exports, items),
+          .None => env = env.merge_module_exports(dep.alias, dep.canonical_path, dep_exports),
+        }
+      },
+      .Prelude => env = env.merge_prelude_exports(dep.alias, dep.canonical_path, dep_exports),
+    }
+  }
+  cur.cache = cache.set_dependencies(cur.cache, canonical, collect dep in dep_plan.dependencies { dep.canonical_path })
+  if !deps_ok {
+    cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
+    return .{ env, state: cur, diagnostics: all_diags, ok: false }
+  }
+
+  dep_hash_entries: Vector<keys.DepEntry> = []
+  for dep in dep_plan.dependencies {
+    dep_hash := case cache.exports_fingerprint(cur.cache, dep.canonical_path) {
+      .Some(fp) => fp,
+      .None => case cache.module_hash(cur.cache, dep.canonical_path) {
+        .Some(hash) => hash,
+        .None => 0,
+      },
+    }
+    dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
+  }
+  deps_hash := keys.deps_hash(dep_hash_entries)
+  context_hash := keys.context_hash(dep_hash_entries)
+  runner := stage_runner.new(canonical, source_hash, deps_hash, context_hash, dep_plan.is_internal)
+  cur.module_runners[canonical] = runner
+  if dep_plan.is_internal {
+    env = add_internal_host_builtins(env)
+  }
+  local_type_start := env.types.len()
+
+  // Resolve
+  resolved_out := stage_runner.resolve(runner, cur.cache, parsed, env)
+  cur.cache = resolved_out.store
+  resolved := resolved_out.value
+  if resolved.diagnostics.len() > 0 {
+    cur.cache = cache.clear_typed_and_later(cur.cache, canonical)
+    diags := convert_source_diags(source, "resolve", resolved.diagnostics)
+    return .{ env, state: cur, diagnostics: all_diags.concat(diags), ok: false }
+  }
+
+  // Typecheck
+  checked_out := stage_runner.typecheck(runner, cur.cache, parsed, resolved)
+  cur.cache = checked_out.store
+  checked := checked_out.value
+  if checked.diagnostics.len() > 0 {
+    cur.cache = cache.clear_lowered_and_hash(cur.cache, canonical)
+    diags := convert_source_diags(source, "check", checked.diagnostics)
+    return .{ env, state: cur, diagnostics: all_diags.concat(diags), ok: false }
+  }
+
+  // Capture local types
+  cur = capture_local_types(cur, checked.env, canonical, local_type_start)
+
+  // Extract exports and store fingerprint
+  exports := extract_exports_for_module(checked.env, parsed.module, canonical)
+  cur.exports[canonical] = exports
+  cur.cache = cache.set_exports_fingerprint(cur.cache, canonical, fingerprint.fingerprint_exports(exports))
+  cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
+
+  // Track module order (dependency-first)
+  cur.module_order = cur.module_order.append(canonical)
+
+  .{ env: checked.env, state: cur, diagnostics: all_diags, ok: true }
+}
+
+// ── Type accumulation ────────────────────────────────────────────────
+
+fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String, local_type_start: Int) AnalysisState {
+  if env.types.len() <= local_type_start { return state }
+  reg := state.cache.type_registry
+  for i in local_type_start..env.types.len() {
+    entry := env.types[i]
+    name := env.type_names[i]
+    state.shared_types = state.shared_types.append(entry)
+    state.shared_type_names = state.shared_type_names.append(name)
+    // Record the assignment for future stable TypeId enforcement (Phase 4).
+    // The returned out.id is not yet used — TypeIds still come from the
+    // resolver/checker's sequential allocation.
+    out := type_registry.assign(reg, canonical, name)
+    reg = out.registry
+    case env.type_origins[entry.id.id] {
+      .Some(origin) => {
+        if !state.shared_type_origins.has(entry.id.id) {
+          state.shared_type_origins[entry.id.id] = origin
+        }
+      },
+      .None => {
+        state.shared_type_origins[entry.id.id] = "${canonical}::${name}"
+      },
+    }
+  }
+  state.cache.type_registry = reg
+  state
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn synthetic_diag(id: identity.SourceIdentity, version: Int?, stage: String, message: String) AnalysisDiag {
+  .{ identity: id, version, span: .None, severity: .Error, message, stage }
+}
+
+fn convert_source_diags(
+  source: overlay.SourceText,
+  stage: String,
+  diagnostics: Vector<source_diag.Diagnostic>,
+) Vector<AnalysisDiag> {
+  collect d in diagnostics {
+    AnalysisDiag.{
+      identity: source.identity,
+      version: source.version,
+      span: .Some(d.span),
+      severity: d.severity,
+      message: d.message,
+      stage,
+    }
+  }
+}
