@@ -10,6 +10,7 @@ Twinkle is a statically typed programming language targeting WebAssembly GC. It 
 ## Development Commands
 
 ### Primary compiler workflow
+`target/twk` is the standalone CLI produced by `make bundle-cli` (see below).
 ```bash
 target/twk build boot/main.tw -o /tmp/boot.wasm
 target/twk ir boot/main.tw --opt
