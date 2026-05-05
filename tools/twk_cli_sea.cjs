@@ -47,7 +47,7 @@ function loadBootWasm() {
     console.error(`Error: boot compiler wasm not found: ${e.message}`);
     console.error("Build the verified self-hosted payload with:");
     console.error("  cargo build --release");
-    console.error("  tools/selfhost_loop.sh boot/main.tw");
+    console.error("  make stage2");
     process.exit(1);
   }
 }

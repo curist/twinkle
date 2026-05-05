@@ -18,12 +18,3 @@ url = "2.5"
 
 [dev-dependencies]
 insta = { version = "1.34", features = ["glob"] }
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "compile"
-harness = false
-
-[[bench]]
-name = "wasm_exec"
-harness = false

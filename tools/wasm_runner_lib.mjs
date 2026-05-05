@@ -1,21 +1,10 @@
-#!/usr/bin/env node
-// Node.js / Bun runner for Twinkle-emitted Wasm GC modules.
+// Shared Wasm GC runtime library for the Node.js host.
 //
-// Usage:
-//   node tools/run_wasm_node.mjs <file.wasm> [program args...]
-//   node tools/run_wasm_node.mjs <file.wasm> -- [program args...]
-//   bun  tools/run_wasm_node.mjs <file.wasm> [program args...]
-//   bun  tools/run_wasm_node.mjs <file.wasm> -- [program args...]
+// Provides the "host" imports that Twinkle's compiler emits, using a small
+// bridge Wasm module to create/read Wasm GC values (since JS cannot directly
+// construct or inspect Wasm GC arrays/structs).
 //
-// The optional `--` is consumed by this runner and not forwarded to the Wasm
-// program. This is useful when the guest program itself expects command-like
-// args, e.g. running a compiled `boot/main.tw` as:
-//
-//   node tools/run_wasm_node.mjs out/boot-main.wasm -- build boot/main.tw
-//
-// Provides the "host" imports that Twinkle's stage0 compiler emits, using a
-// small bridge Wasm module to create/read Wasm GC values (since JS cannot
-// directly construct or inspect Wasm GC arrays/structs).
+// Used by tools/twk_cli_sea.cjs (the standalone CLI entry point).
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } from "node:fs";
 import { resolve, dirname } from "node:path";

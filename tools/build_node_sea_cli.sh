@@ -32,7 +32,7 @@ fi
 
 if [[ ! -f "$BOOT_WASM" ]]; then
   printf 'error: missing stage2 compiler payload: %s\n' "$BOOT_WASM" >&2
-  printf 'build it with:\n  cargo build --release\n  tools/selfhost_loop.sh boot/main.tw\n' >&2
+  printf 'build it with:\n  make stage2\n' >&2
   exit 1
 fi
 

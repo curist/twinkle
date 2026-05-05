@@ -11,9 +11,9 @@ Twinkle is a statically typed programming language targeting WebAssembly GC. It 
 
 ### Primary compiler workflow
 ```bash
-tools/twk_boot.mjs build boot/main.tw -o /tmp/boot.wasm
-tools/twk_boot.mjs ir boot/main.tw --opt
-tools/twk_boot.mjs run boot/tests/main.tw
+target/twk build boot/main.tw -o /tmp/boot.wasm
+target/twk ir boot/main.tw --opt
+target/twk run boot/tests/main.tw
 ```
 
 ### Bootstrap the boot compiler
@@ -22,19 +22,12 @@ cargo run --release -- build boot/main.tw -o target/boot-main.wasm
 ```
 
 ### Build the standalone CLI
-`tools/build_node_sea_cli.sh` builds `target/twk` as a Node.js SEA executable from the existing `target/boot.wasm`; it does not rebuild the self-hosted compiler payload. After changing `boot/main.tw` or any code that should be embedded in `./target/twk`, refresh the stage2 payload first:
+`make bundle-cli` rebuilds the self-hosted compiler payload (`target/boot.wasm`) via the
+self-host loop and then builds `target/twk` as a Node.js SEA executable:
 ```bash
-cargo build --release
-tools/selfhost_loop.sh boot/main.tw
-tools/build_node_sea_cli.sh
-./target/twk --help
-```
-
-The Makefile wraps these steps:
-```bash
-make stage2            # rebuild target/boot.wasm via the self-host loop
 make bundle-cli        # rebuild target/boot.wasm, then build ./target/twk
 make quick-bundle-cli  # rebuild ./target/twk from an already-fresh target/boot.wasm
+make stage2            # rebuild target/boot.wasm only (no SEA)
 ```
 
 ### Update the tree-sitter grammar
@@ -49,18 +42,11 @@ The wasm is tracked in git so CI doesn't need Docker.
 
 ### Test
 ```bash
-cargo test
-tools/twk_boot.mjs run boot/tests/main.tw
-```
-Fast boot test wrapper:
-```bash
-tools/boot-test-fast.sh
-```
-Makefile wrappers:
-```bash
-make test
-make boot-test
-make rust-test
+cargo test                          # Rust test suite
+target/twk run boot/tests/main.tw   # boot compiler test suite
+make test                           # both of the above
+make boot-test                      # boot tests only
+make rust-test                      # Rust tests only
 ```
 
 ### Implementation focus
