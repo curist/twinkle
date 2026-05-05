@@ -11,7 +11,7 @@ use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
 use compiler.backend.prepare.{prepare_backend, PreparedModule}
-use compiler.backend.verify.{verify_prepared_module}
+use compiler.backend.verify.{verify_prepared_module, verify_prepared_module_with_level}
 use compiler.base_env
 
 fn lid(n: Int) LocalId { LocalId.{ id: n } }
@@ -189,6 +189,12 @@ pub fn suite() runner.Suite {
     body: AnfExpr = .Return(.Some(.ALitInt(1)))
     prepared := prepared_module([], body, Dict.new(), .Void)
     verify_err(prepared, "void function must not return a value")
+  })
+
+  .test("basic verification skips expression-only invariants", fn() {
+    body: AnfExpr = .Return(.Some(.ALitInt(1)))
+    prepared := prepared_module([], body, Dict.new(), .Void)
+    assert.is_ok(verify_prepared_module_with_level(prepared, empty_env(), empty_builtins(), .Basic))
   })
 
   .test("non-void function missing return value is rejected", fn() {

@@ -1,0 +1,167 @@
+// Shared backend verifier helpers.
+
+use compiler.backend.prepared_ir.{ReprKind, SlotInfo, PreparedFunc, SlotRole}
+use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.codegen.wasm_ir.{ValType, HeapType}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+
+pub fn fail_func(pf: PreparedFunc, msg: String) Result<Void, String> {
+  .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${msg}")
+}
+
+pub fn fail_slot(pf: PreparedFunc, info: SlotInfo, msg: String) Result<Void, String> {
+  .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}), slot S${info.slot.id} / local L${info.source_local.id}: ${msg}")
+}
+
+pub fn expected_wasm_type(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValType {
+  case repr {
+    .I64 => .I64,
+    .F64 => .F64,
+    .I32 => .I32,
+    .TypedRef(m) => val_type_of_mono(m, env),
+    .TypedSum(m) => val_type_of_mono(m, env),
+    .ClosureRef => val_type_of_mono(mono, env),
+    .ErasedSum => .Anyref,
+    .OpaqueAnyref => .Anyref,
+    .DeadValue => .Anyref,
+  }
+}
+
+pub fn slot_role_eq(a: SlotRole, b: SlotRole) Bool {
+  case a {
+    .Param => case b { .Param => true, _ => false },
+    .CaptureParam => case b { .CaptureParam => true, _ => false },
+    .Local => case b { .Local => true, _ => false },
+    .PatternLocal => case b { .PatternLocal => true, _ => false },
+    .DeadPlaceholder => case b { .DeadPlaceholder => true, _ => false },
+  }
+}
+
+pub fn slot_role_name(role: SlotRole) String {
+  case role {
+    .Param => "Param",
+    .CaptureParam => "CaptureParam",
+    .Local => "Local",
+    .PatternLocal => "PatternLocal",
+    .DeadPlaceholder => "DeadPlaceholder",
+  }
+}
+
+pub fn repr_name(repr: ReprKind) String {
+  case repr {
+    .I64 => "I64",
+    .F64 => "F64",
+    .I32 => "I32",
+    .TypedRef(_) => "TypedRef",
+    .TypedSum(_) => "TypedSum",
+    .ClosureRef => "ClosureRef",
+    .ErasedSum => "ErasedSum",
+    .OpaqueAnyref => "OpaqueAnyref",
+    .DeadValue => "DeadValue",
+  }
+}
+
+pub fn mono_name(mono: MonoType) String {
+  case mono {
+    .Int => "Int",
+    .Float => "Float",
+    .Bool => "Bool",
+    .Byte => "Byte",
+    .String => "String",
+    .Void => "Void",
+    .Anyref_ => "Anyref_",
+    .Var(name) => "Var(${name})",
+    .Named(tid, args) => {
+      if args.len() == 0 {
+        "Named(T${tid.id})"
+      } else {
+        rendered := collect arg in args { mono_name(arg) }
+        "Named(T${tid.id}<${rendered.join(", ")}>)"
+      }
+    },
+    .Vector(inner) => "Vector<${mono_name(inner)}>",
+    .Dict(key, value) => "Dict<${mono_name(key)}, ${mono_name(value)}>",
+    .Function(params, ret) => {
+      rendered := collect param in params { mono_name(param) }
+      "Function(${rendered.join(", ")}) -> ${mono_name(ret)}"
+    },
+    .Optional(inner) => "Optional<${mono_name(inner)}>",
+    .Result(ok, err) => "Result<${mono_name(ok)}, ${mono_name(err)}>",
+    .MetaVar(id) => "MetaVar(${id})",
+    .Never => "Never",
+    .ErrorType => "ErrorType",
+  }
+}
+
+pub fn val_type_name(vt: ValType) String {
+  case vt {
+    .I8 => "I8",
+    .I32 => "I32",
+    .I64 => "I64",
+    .F64 => "F64",
+    .Anyref => "Anyref",
+    .I31ref => "I31ref",
+    .Funcref => "Funcref",
+    .Ref(nullable, heap) => {
+      if nullable {
+        "Ref(nullable, ${heap_type_name(heap)})"
+      } else {
+        "Ref(non-null, ${heap_type_name(heap)})"
+      }
+    },
+  }
+}
+
+pub fn heap_type_name(ht: HeapType) String {
+  case ht {
+    .Named(name) => "Named(${name})",
+    .Any => "Any",
+    .Eq => "Eq",
+    .I31 => "I31",
+    .Func => "Func",
+    .None_ => "None",
+    .Extern => "Extern",
+  }
+}
+
+pub fn mono_eq(a: MonoType, b: MonoType) Bool {
+  case a {
+    .Int => case b { .Int => true, _ => false },
+    .Float => case b { .Float => true, _ => false },
+    .Bool => case b { .Bool => true, _ => false },
+    .Byte => case b { .Byte => true, _ => false },
+    .String => case b { .String => true, _ => false },
+    .Void => case b { .Void => true, _ => false },
+    .Anyref_ => case b { .Anyref_ => true, _ => false },
+    .Var(name_a) => case b { .Var(name_b) => name_a == name_b, _ => false },
+    .Named(tid_a, args_a) => case b {
+      .Named(tid_b, args_b) => tid_a.id == tid_b.id and mono_vec_eq(args_a, args_b),
+      _ => false,
+    },
+    .Vector(inner_a) => case b { .Vector(inner_b) => mono_eq(inner_a, inner_b), _ => false },
+    .Dict(ka, va) => case b {
+      .Dict(kb, vb) => mono_eq(ka, kb) and mono_eq(va, vb),
+      _ => false,
+    },
+    .Function(pa, ra) => case b {
+      .Function(pb, rb) => mono_vec_eq(pa, pb) and mono_eq(ra, rb),
+      _ => false,
+    },
+    .Optional(inner_a) => case b { .Optional(inner_b) => mono_eq(inner_a, inner_b), _ => false },
+    .Result(ok_a, err_a) => case b {
+      .Result(ok_b, err_b) => mono_eq(ok_a, ok_b) and mono_eq(err_a, err_b),
+      _ => false,
+    },
+    .MetaVar(id_a) => case b { .MetaVar(id_b) => id_a == id_b, _ => false },
+    .Never => case b { .Never => true, _ => false },
+    .ErrorType => case b { .ErrorType => true, _ => false },
+  }
+}
+
+fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
+  if a.len() != b.len() { return false }
+  for item,i in a {
+    if !mono_eq(item, b[i]) { return false }
+  }
+  true
+}

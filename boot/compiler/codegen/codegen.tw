@@ -26,7 +26,7 @@ use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.verify.{verify_prepared_module}
+use compiler.backend.verify.{verify_prepared_module_with_level, VerifyLevel}
 use compiler.backend.closure_convert.{convert_closures}
 
 fn timings_enabled() Bool {
@@ -35,6 +35,13 @@ fn timings_enabled() Bool {
 
 fn log_time(label: String, ms: Float) {
   eprintln("[time] ${label}: ${Float.to_string(ms)}ms")
+}
+
+fn verify_level_from_env() VerifyLevel {
+  case proc.env("TWINKLE_VERIFY_LEVEL") {
+    .Some("basic") => .Basic,
+    _ => .Full,
+  }
 }
 
 pub fn runtime_modules() Vector<WasmModule> {
@@ -72,7 +79,7 @@ pub fn link_program(
   if timed { log_time("prepare_backend", t2 - t1) }
 
   // 3. Verify prepared backend IR.
-  case verify_prepared_module(prepared, env, builtins) {
+  case verify_prepared_module_with_level(prepared, env, builtins, verify_level_from_env()) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }

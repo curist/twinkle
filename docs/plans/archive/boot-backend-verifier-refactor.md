@@ -59,42 +59,42 @@ type VerifyLevel = { Basic, Full }
 
 ### Phase 1: Mechanical split
 
-- [ ] Move slot membership checks into a focused module.
-- [ ] Move expression walk checks into a focused module.
-- [ ] Move repr/type consistency helpers into a focused module.
-- [ ] Keep public API and behavior unchanged.
+- [x] Move slot membership checks into a focused module.
+- [x] Move expression walk checks into a focused module.
+- [x] Move repr/type consistency helpers into a focused module.
+- [x] Keep public API and behavior unchanged.
 
 ### Phase 2: Share verifier helpers
 
-- [ ] Reuse shared Wasm type equality helpers once available.
-- [ ] Reuse backend fact helpers once available.
-- [ ] Standardize error formatting helpers across verifier modules.
+- [x] Reuse shared Wasm type equality helpers once available.
+- [x] Reuse backend fact helpers once available.
+- [x] Standardize error formatting helpers across verifier modules.
 
 ### Phase 3: Introduce verification levels
 
-- [ ] Define `VerifyLevel` and default to current full behavior.
-- [ ] Decide how build entrypoints select basic vs full verification.
-- [ ] Keep tests running full verification unless a test specifically targets
+- [x] Define `VerifyLevel` and default to current full behavior.
+- [x] Decide how build entrypoints select basic vs full verification.
+- [x] Keep tests running full verification unless a test specifically targets
       level selection.
 
 ### Phase 4: Avoid unnecessary recomputation
 
-- [ ] Identify facts recomputed by the verifier that already exist in
+- [x] Identify facts recomputed by the verifier that already exist in
       `PreparedModule` or the Wasm plan.
-- [ ] Replace recomputation with prepared facts where that keeps the invariant
+- [x] Replace recomputation with prepared facts where that keeps the invariant
       equally strong.
-- [ ] Keep cross-checks when they intentionally validate consistency between two
+- [x] Keep cross-checks when they intentionally validate consistency between two
       representations.
 
 ---
 
 ## Validation
 
-- [ ] Backend verifier suite
-- [ ] Backend prepare suite
-- [ ] Codegen integration suite
-- [ ] Boot self-build with verification enabled
-- [ ] Build path using the chosen non-full verification mode, if introduced
+- [x] Backend verifier suite
+- [x] Backend prepare suite
+- [x] Codegen integration suite
+- [x] Boot self-build with verification enabled
+- [x] Build path using the chosen non-full verification mode, if introduced
 
 ---
 
