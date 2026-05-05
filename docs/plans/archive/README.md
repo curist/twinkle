@@ -54,6 +54,7 @@ Related historical context outside this folder:
 | Plan | Description |
 |------|-------------|
 | [boot-wasm-type-ordering-refactor.md](boot-wasm-type-ordering-refactor.md) | Shared Wasm GC type dependency/SCC ordering between WAT and binary emission, with planner ownership intentionally kept as an emitter utility decision |
+| [boot-optimizer-pass-refactor.md](boot-optimizer-pass-refactor.md) | Made optimizer context, pass ordering, fixed-point policy, and timing aggregation explicit while preserving existing optimization semantics |
 
 ---
 

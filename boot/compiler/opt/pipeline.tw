@@ -3,7 +3,7 @@
 
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{AnfFunctionDef, AnfModule}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
 use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
@@ -59,49 +59,180 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   pinned
 }
 
+// ── pass manager data ───────────────────────────────────────────────
+
+fn fixed_point_cap() Int { 10 }
+
+type OptimizerContext = .{
+  pinned: Dict<Int, Bool>,
+  semantics: OptimizerSemantics?,
+  cow_config: CowConfig?,
+  consumed_params: Dict<Int, Dict<Int, Bool>>,
+  fresh_record_helpers: Dict<Int, Bool>,
+}
+
+type PassTiming = .{
+  dead_let: Float,
+  copy_prop: Float,
+  const_fold: Float,
+  branch_simp: Float,
+  uniqueness: Float,
+  defer_elim: Float,
+}
+
+type FixedPointResult = .{
+  expr: AnfExpr,
+  rounds: Int,
+  at_cap: Bool,
+  timing: PassTiming,
+}
+
+type FunctionOptimizeResult = .{
+  func: AnfFunctionDef,
+  timing: PassTiming,
+  rounds: Int,
+  at_cap: Bool,
+}
+
+fn zero_pass_timing() PassTiming {
+  PassTiming.{
+    dead_let: 0.0,
+    copy_prop: 0.0,
+    const_fold: 0.0,
+    branch_simp: 0.0,
+    uniqueness: 0.0,
+    defer_elim: 0.0,
+  }
+}
+
+fn add_pass_timing(a: PassTiming, b: PassTiming) PassTiming {
+  PassTiming.{
+    dead_let: a.dead_let + b.dead_let,
+    copy_prop: a.copy_prop + b.copy_prop,
+    const_fold: a.const_fold + b.const_fold,
+    branch_simp: a.branch_simp + b.branch_simp,
+    uniqueness: a.uniqueness + b.uniqueness,
+    defer_elim: a.defer_elim + b.defer_elim,
+  }
+}
+
+fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) OptimizerContext {
+  OptimizerContext.{
+    pinned: compute_pinned(module),
+    semantics: semantics,
+    cow_config: cow_config,
+    // Interprocedural consume analysis: compute before per-function rewrites.
+    // Determines which params are consumed at all non-self-recursive call sites.
+    consumed_params: collect_consumed_params(module),
+    fresh_record_helpers: collect_fresh_record_helpers(module),
+  }
+}
+
 // ── optimize_func ───────────────────────────────────────────────────
 
 fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics?) AnfFunctionDef {
+  ctx := OptimizerContext.{
+    pinned: pinned,
+    semantics: semantics,
+    cow_config: .None,
+    consumed_params: Dict.new(),
+    fresh_record_helpers: Dict.new(),
+  }
+  optimize_function_with_context(func, ctx).func
+}
+
+fn rebuild_func_with_body(func: AnfFunctionDef, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: func.func_id,
+    name: func.name,
+    params: func.params,
+    op_result_mono: func.op_result_mono,
+    body: body,
+    return_ty: func.return_ty,
+  }
+}
+
+fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) FunctionOptimizeResult {
+  timing := zero_pass_timing()
+
   // eliminate_defers first: branch_simplify would otherwise hoist ADefer nodes
   // out of constant-condition branches, breaking block-scoped defer semantics.
-  func = eliminate_defers(func)
-  expr := func.body
+  ta0 := date.now()
+  deferred := eliminate_defers(func)
+  tb0 := date.now()
+  timing.defer_elim = timing.defer_elim + (tb0 - ta0)
+
+  fixed := run_fixed_point_simplifications(deferred.body, ctx)
+  timing = add_pass_timing(timing, fixed.timing)
+
+  optimized := rebuild_func_with_body(deferred, fixed.expr)
+
+  ta2 := date.now()
+  f_consumed: Dict<Int, Bool> = case ctx.consumed_params[optimized.func_id.id] {
+    .Some(params) => params,
+    .None => Dict.new(),
+  }
+  optimized = case ctx.semantics {
+    .Some(config) => uniqueness_rewrite_with_semantics_and_consumed_and_fresh(optimized, config, f_consumed, ctx.fresh_record_helpers),
+    .None => case ctx.cow_config {
+      .Some(config) => uniqueness_rewrite(optimized, config),
+      .None => optimized,
+    },
+  }
+  tb2 := date.now()
+  timing.uniqueness = timing.uniqueness + (tb2 - ta2)
+
+  FunctionOptimizeResult.{
+    func: optimized,
+    timing: timing,
+    rounds: fixed.rounds,
+    at_cap: fixed.at_cap,
+  }
+}
+
+fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPointResult {
+  timing := zero_pass_timing()
+  cur := expr
   round := 0
 
-  for round < 10 {
+  cap := fixed_point_cap()
+  for round < cap {
     round = round + 1
 
-    // 1. Dead let elimination (with pinned locals)
-    r1 := case semantics {
-      .Some(sem) => dead_let_elim_with_pinned_and_semantics(expr, pinned, sem),
-      .None => dead_let_elim_with_pinned(expr, pinned),
+    ta := date.now()
+    r1 := case ctx.semantics {
+      .Some(sem) => dead_let_elim_with_pinned_and_semantics(cur, ctx.pinned, sem),
+      .None => dead_let_elim_with_pinned(cur, ctx.pinned),
     }
-    expr = r1.expr
+    cur = r1.expr
+    tb := date.now()
+    timing.dead_let = timing.dead_let + (tb - ta)
 
-    // 2. Copy propagation (with pinned locals)
-    r2 := copy_propagate_with_pinned(expr, pinned)
-    expr = r2.expr
+    r2 := copy_propagate_with_pinned(cur, ctx.pinned)
+    cur = r2.expr
+    tc := date.now()
+    timing.copy_prop = timing.copy_prop + (tc - tb)
 
-    // 3. Constant folding
-    r3 := constant_fold(expr)
-    expr = r3.expr
+    r3 := constant_fold(cur)
+    cur = r3.expr
+    td := date.now()
+    timing.const_fold = timing.const_fold + (td - tc)
 
-    // 4. Branch simplification
-    r4 := branch_simplify(expr)
-    expr = r4.expr
+    r4 := branch_simplify(cur)
+    cur = r4.expr
+    te := date.now()
+    timing.branch_simp = timing.branch_simp + (te - td)
 
     if !r1.changed and !r2.changed and !r3.changed and !r4.changed {
       break
     }
   }
 
-  AnfFunctionDef.{
-    func_id: func.func_id,
-    name: func.name,
-    params: func.params,
-    op_result_mono: func.op_result_mono,
-    body: expr,
-    return_ty: func.return_ty,
+  FixedPointResult.{
+    expr: cur,
+    rounds: round,
+    at_cap: round >= cap,
+    timing: timing,
   }
 }
 
@@ -135,100 +266,26 @@ pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) An
 
 fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) AnfModule {
   timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
-  pinned := compute_pinned(module)
-  // Interprocedural consume analysis: compute before per-function rewrites.
-  // Determines which params are consumed at all non-self-recursive call sites.
-  all_consumed_params := collect_consumed_params(module)
-  fresh_helper_ids := collect_fresh_record_helpers(module)
+  ctx := optimizer_context(module, semantics, cow_config)
 
-  t_dead_let: Float = 0.0
-  t_copy_prop: Float = 0.0
-  t_const_fold: Float = 0.0
-  t_branch_simp: Float = 0.0
-  t_uniqueness: Float = 0.0
-  t_defer: Float = 0.0
+  timing := zero_pass_timing()
   total_rounds: Int = 0
   funcs_at_cap: Int = 0
 
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
-    // eliminate_defers first: branch_simplify would otherwise hoist ADefer nodes
-    // out of constant-condition branches, breaking block-scoped defer semantics.
-    ta0 := date.now()
-    f = eliminate_defers(f)
-    tb0 := date.now()
-    t_defer = t_defer + (tb0 - ta0)
-
-    expr := f.body
-    round := 0
-
-    for round < 10 {
-      round = round + 1
-
-      ta := date.now()
-      r1 := case semantics {
-        .Some(sem) => dead_let_elim_with_pinned_and_semantics(expr, pinned, sem),
-        .None => dead_let_elim_with_pinned(expr, pinned),
-      }
-      expr = r1.expr
-      tb := date.now()
-      t_dead_let = t_dead_let + (tb - ta)
-
-      r2 := copy_propagate_with_pinned(expr, pinned)
-      expr = r2.expr
-      tc := date.now()
-      t_copy_prop = t_copy_prop + (tc - tb)
-
-      r3 := constant_fold(expr)
-      expr = r3.expr
-      td := date.now()
-      t_const_fold = t_const_fold + (td - tc)
-
-      r4 := branch_simplify(expr)
-      expr = r4.expr
-      te := date.now()
-      t_branch_simp = t_branch_simp + (te - td)
-
-      if !r1.changed and !r2.changed and !r3.changed and !r4.changed {
-        break
-      }
-    }
-
-    total_rounds = total_rounds + round
-    if round >= 10 { funcs_at_cap = funcs_at_cap + 1 }
-
-    optimized := AnfFunctionDef.{
-      func_id: f.func_id,
-      name: f.name,
-      params: f.params,
-      op_result_mono: f.op_result_mono,
-      body: expr,
-      return_ty: f.return_ty,
-    }
-
-    ta2 := date.now()
-    f_consumed: Dict<Int, Bool> = case all_consumed_params[f.func_id.id] {
-      .Some(params) => params,
-      .None => Dict.new(),
-    }
-    optimized = case semantics {
-      .Some(config) => uniqueness_rewrite_with_semantics_and_consumed_and_fresh(optimized, config, f_consumed, fresh_helper_ids),
-      .None => case cow_config {
-        .Some(config) => uniqueness_rewrite(optimized, config),
-        .None => optimized,
-      },
-    }
-    tb2 := date.now()
-    t_uniqueness = t_uniqueness + (tb2 - ta2)
-
-    optimized
+    result := optimize_function_with_context(f, ctx)
+    timing = add_pass_timing(timing, result.timing)
+    total_rounds = total_rounds + result.rounds
+    if result.at_cap { funcs_at_cap = funcs_at_cap + 1 }
+    result.func
   }
 
   if timed {
     n := module.functions.len()
     avg_rounds := Float.to_string(Int.to_float(total_rounds) / Int.to_float(n))
     eprintln("[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(total_rounds)}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(funcs_at_cap)}")
-    eprintln("[time:opt] dead_let=${Float.to_string(t_dead_let)}ms  copy_prop=${Float.to_string(t_copy_prop)}ms  const_fold=${Float.to_string(t_const_fold)}ms  branch_simp=${Float.to_string(t_branch_simp)}ms")
-    eprintln("[time:opt] uniqueness=${Float.to_string(t_uniqueness)}ms  defer_elim=${Float.to_string(t_defer)}ms")
+    eprintln("[time:opt] dead_let=${Float.to_string(timing.dead_let)}ms  copy_prop=${Float.to_string(timing.copy_prop)}ms  const_fold=${Float.to_string(timing.const_fold)}ms  branch_simp=${Float.to_string(timing.branch_simp)}ms")
+    eprintln("[time:opt] uniqueness=${Float.to_string(timing.uniqueness)}ms  defer_elim=${Float.to_string(timing.defer_elim)}ms")
   }
 
   AnfModule.{
