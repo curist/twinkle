@@ -56,6 +56,7 @@ Related historical context outside this folder:
 | [boot-wasm-type-ordering-refactor.md](boot-wasm-type-ordering-refactor.md) | Shared Wasm GC type dependency/SCC ordering between WAT and binary emission, with planner ownership intentionally kept as an emitter utility decision |
 | [boot-optimizer-pass-refactor.md](boot-optimizer-pass-refactor.md) | Made optimizer context, pass ordering, fixed-point policy, and timing aggregation explicit while preserving existing optimization semantics |
 | [boot-backend-verifier-refactor.md](boot-backend-verifier-refactor.md) | Split backend verification into slot, expression, and shared-helper modules with explicit basic/full verification levels |
+| [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | Split frontend analysis around module interfaces, dependency-interface fingerprints, and lower-churn import environment construction |
 
 ---
 

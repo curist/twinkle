@@ -78,55 +78,55 @@ The exact fields may change during implementation. The important boundary is:
 
 ### Phase 1: Extract helper boundaries without behavior changes
 
-- [ ] Split source loading and source-hash handling into a helper.
-- [ ] Split dependency planning into a helper that returns canonical dependency
+- [x] Split source loading and source-hash handling into a helper.
+- [x] Split dependency planning into a helper that returns canonical dependency
       entries and import/prelude kind.
-- [ ] Split dependency analysis loop out of `analyze_module`.
-- [ ] Split resolve/typecheck/cache-update code out of `analyze_module`.
-- [ ] Keep all data structures unchanged during this phase.
+- [x] Split dependency analysis loop out of `analyze_module`.
+- [x] Split resolve/typecheck/cache-update code out of `analyze_module`.
+- [x] Keep all data structures unchanged during this phase.
 
 ### Phase 2: Add module interface records
 
-- [ ] Define `ModuleInterface` in an appropriate query/frontend module.
-- [ ] Store interfaces in `AnalysisState` separately from full exports if useful.
-- [ ] Compute interface fingerprints from exported surface only.
-- [ ] Add tests showing unchanged dependency implementation details do not force
+- [x] Define `ModuleInterface` in an appropriate query/frontend module.
+- [x] Store interfaces in `AnalysisState` separately from full exports if useful.
+- [x] Compute interface fingerprints from exported surface only.
+- [x] Add tests showing unchanged dependency implementation details do not force
       unnecessary downstream cache invalidation when the export fingerprint is
       stable.
 
 ### Phase 3: Build import environments from interfaces
 
-- [ ] Replace dependency merge logic that needs full module state with merge from
+- [x] Replace dependency merge logic that needs full module state with merge from
       `ModuleInterface`.
-- [ ] Keep type identity/origin preservation explicit.
-- [ ] Ensure selective imports, module aliases, relative imports, and prelude
+- [x] Keep type identity/origin preservation explicit.
+- [x] Ensure selective imports, module aliases, relative imports, and prelude
       imports all use the same interface path.
 
 ### Phase 4: Reduce repeated shared type extension
 
-- [ ] Avoid repeatedly extending from the full accumulated shared type vector
+- [x] Avoid repeatedly extending from the full accumulated shared type vector
       when only a small set of newly visible dependency types changed.
-- [ ] Keep a stable TypeId lookup path for checked modules.
-- [ ] Validate multi-module tests, signature drift tests, and LSP diagnostics.
+- [x] Keep a stable TypeId lookup path for checked modules.
+- [x] Validate multi-module tests, signature drift tests, and LSP diagnostics.
 
 ### Phase 5: Cache/invalidation cleanup
 
-- [ ] Document which keys depend on source hash, dependency hash, context hash,
+- [x] Document which keys depend on source hash, dependency hash, context hash,
       and internal-module status.
-- [ ] Make invalidation comments in `query/cache.tw` match the new interface
+- [x] Make invalidation comments in `query/cache.tw` match the new interface
       layer.
-- [ ] Add targeted tests for dependency implementation-only changes, export
+- [x] Add targeted tests for dependency implementation-only changes, export
       changes, and parse/typecheck failures.
 
 ---
 
 ## Validation
 
-- [ ] `target/twk run boot/tests/main.tw`
-- [ ] `target/twk build boot/main.tw -o /tmp/boot.wasm`
-- [ ] LSP diagnostic suites
-- [ ] Query cache and stage runner suites
-- [ ] Multi-module/import suites
+- [x] `target/twk run boot/tests/main.tw`
+- [x] `target/twk build boot/main.tw -o /tmp/boot.wasm`
+- [x] LSP diagnostic suites
+- [x] Query cache and stage runner suites
+- [x] Multi-module/import suites
 
 ---
 

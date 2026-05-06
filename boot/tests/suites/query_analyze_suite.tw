@@ -177,4 +177,27 @@ pub fn suite() runner.Suite {
       try assert.is_true(stats.typecheck_hits > 0)
       .Ok({})
     })
+
+    .test("early cutoff: dep export change invalidates importer typecheck", fn() {
+      ov1 := overlay.from_documents([
+        ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
+        ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 1 }\n"),
+      ])
+      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
+      id := identity.from_path("/tmp/analyze/main.tw")
+      first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+      try assert.is_true(first.ok)
+      first_changed := cache.changed_at(first.state.cache, "/tmp/analyze/main.tw", .Typed)
+
+      ov2 := overlay.from_documents([
+        ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
+        ov_doc("/tmp/analyze/helper.tw", "pub fn value() String { \"one\" }\n"),
+      ])
+      state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
+      second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+      try assert.is_false(second.ok)
+      try assert.is_true(second.diagnostics.len() > 0)
+      try assert.is_true(cache.changed_at(second.state.cache, "/tmp/analyze/main.tw", .Typed) != first_changed)
+      .Ok({})
+    })
 }

@@ -58,7 +58,6 @@ blocking lower-risk maintainability cleanup.
 
 | Plan | Status | Impact | Difficulty | Description |
 |------|--------|--------|------------|-------------|
-| [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | Planned | High | High | Split module analysis around explicit module interfaces so builds and LSP diagnostics do less whole-environment rebuilding |
 | [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Planned | Medium | High | Decompose large parser/checker/lowerer/emitter files after shared helpers stabilize |
 
 ### Language Features

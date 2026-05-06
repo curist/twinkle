@@ -13,6 +13,7 @@ use tests.suites.source_suite
 use tests.suites.module_loader_suite
 use tests.suites.dependency_graph_suite
 use tests.suites.query_keys_suite
+use tests.suites.query_analyze_suite
 use tests.suites.imports_suite
 use tests.suites.multi_module_suite
 
@@ -22,6 +23,7 @@ runner.run_all([
   module_loader_suite.suite(),
   dependency_graph_suite.suite(),
   query_keys_suite.suite(),
+  query_analyze_suite.suite(),
   imports_suite.suite(),
   multi_module_suite.suite(),
   api_option_result_suite.suite(),
