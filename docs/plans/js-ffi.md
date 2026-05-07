@@ -7,8 +7,9 @@ external (host-provided) functions. This replaces the current hardcoded
 `__host_*` builtins with a user-facing language feature that maps directly to
 WASM import declarations.
 
-The design proceeds in three phases: individual extern declarations (A),
-playground/tooling integration (B-bridge), and grouped module blocks (C).
+The design proceeds in two compiler phases: extern declarations with grouped
+blocks (Phase 1), and richer boundary types (Phase 2). Playground/tooling
+integration is a separate deployment concern, not a compiler gate.
 
 ## Current State
 
@@ -31,9 +32,9 @@ All host interop is internal to the compiler:
 
 ## Design
 
-### Phase 1: `extern` Function Declarations
+### Phase 1: `extern` Declarations (Individual + Grouped)
 
-New top-level syntax:
+New top-level syntax for individual declarations:
 
 ```twinkle
 // Import a single function from module "console"
@@ -46,11 +47,30 @@ extern "crypto" fn random() Float
 extern fn my_helper(x: Int) Int
 ```
 
+Grouped syntax (sugar for multiple declarations sharing an import module):
+
+```twinkle
+extern "canvas" {
+  fn clear()
+  fn draw_rect(x: Float, y: Float, w: Float, h: Float)
+  fn set_color(r: Int, g: Int, b: Int)
+  fn get_width() Int
+}
+```
+
+Grouped blocks desugar to individual `extern "canvas" fn ...` declarations.
+Can be `pub extern "canvas" { ... }` to export all.
+
 **Grammar addition:**
 
 ```ebnf
-extern_decl = "extern" [ string_lit ] "fn" ident "(" params ")" [ type ] ;
+extern_decl  = "extern" [ string_lit ] "fn" ident "(" params ")" [ type ] ;
+extern_block = [ "pub" ] "extern" string_lit "{" { extern_fn_sig } "}" ;
+extern_fn_sig = "fn" ident "(" params ")" [ type ] ;
 ```
+
+**Parser note:** When `extern` is followed by a string literal and then `{`
+(instead of `fn`), parse as block.
 
 **Semantics:**
 
@@ -66,7 +86,7 @@ extern_decl = "extern" [ string_lit ] "fn" ident "(" params ")" [ type ] ;
 |---|---|---|
 | `Int` | `i64` | |
 | `Float` | `f64` | |
-| `Bool` | `i32` | 0/1 — checker maps `Bool` → `ValType::I32` specifically for extern signatures |
+| `Bool` | `i32` | 0/1 — checker maps `Bool` → `ValType::I32` specifically for extern signatures. **ABI note:** the host is trusted to pass only 0/1; non-boolean `i32` values are interpreted without validation. |
 | `String` | `(ref $string)` | GC string ref, host uses bridge to decode |
 | `()` (void) | (no result) | |
 
@@ -74,7 +94,7 @@ Note: `Vector<Byte>` is intentionally excluded from Phase 1. The user-facing
 `Vector<T>` is a PVec (persistent 32-way trie), not a flat GC array. Passing it
 across the boundary as `(ref $array)` would be an ABI mismatch. Raw byte
 arrays (the internal `$array` type used for strings) are not directly
-expressible in user code. Phase 3b will address compound types with proper
+expressible in user code. Phase 2 will address compound types with proper
 bridge-assisted marshaling.
 
 Compound types (`Option`, `Result`, user structs, `Vector`) are disallowed in
@@ -93,7 +113,7 @@ types at the boundary".
 | Lower Core | `lower_core.tw` | Calls to extern fns lower to `Call(GlobalFunc(id), args)` with an extern marker |
 | Module IR | `core_ir.tw` | Add `extern_imports` to `CompiledModule` |
 | Core Linker | `core_linker.tw` | Propagate `extern_imports` during multi-module merging |
-| Codegen | `codegen.tw` | Generate `ImportDef` from `ExternImport` metadata |
+| Codegen | `codegen.tw` | Generate `FuncType` typedef + `ImportDef` from `ExternImport` metadata |
 | Linker | `codegen/linker.tw` | Generalize BOTH `module == "host"` guards (see below) |
 
 **`ExternImport` type:**
@@ -107,19 +127,36 @@ pub type ExternImport = .{
 }
 ```
 
+**Alternative: reuse `ExternalRef` (boot compiler).**
+
+The boot compiler already has an `ExternalRef` type in `core_ir.tw` that tracks
+phantom FuncIds for imported functions (`{ module_path, func_name }`), with
+plumbing through `core_linker.tw`. Instead of adding a wholly new
+`ExternImport` side table, consider extending `ExternalRef` with a
+`wasm_module: Option<String>` field. When present, this marks the ref as a
+user-declared extern import rather than a cross-module reference. This reuses
+the existing phantom-FuncId infrastructure and avoids duplicating the pipeline
+threading logic. The stage 0 (Rust) compiler does not have `ExternalRef`, so it
+would need a new structure regardless.
+
 **Linker: two guards must be generalized.**
 
 The current linker has two independent `module == "host"` checks:
 
-1. **Resolution-skip guard** (`linker.tw:259`, `linker.rs:225`): Skips redirect
-   resolution for host imports so they aren't treated as inter-module references.
-2. **Import-emission guard** (`linker.tw:318`, `linker.rs:332`): Only emits
-   imports where `module == "host"` into `out_imports`; all others are dropped.
+1. **Resolution-skip guard** (`linker.tw:259`, `linker.rs:225+246`): Skips
+   redirect resolution for host imports so they aren't treated as inter-module
+   references. The Rust linker has this in two adjacent loops (qualified and
+   unqualified redirect passes).
+2. **Import-emission guard** (`linker.tw:318`, `linker.rs:330`): Only emits
+   imports where `module == "host"` into `merged_imports`; all others are dropped.
 
-Both must be generalized to an `is_external_import(imp)` predicate that returns
-true for any module name that is NOT a known Twinkle module namespace. If only
-guard (1) is changed, user extern imports compile but are silently dropped from
-the final WASM binary — producing a confusing instantiation-time error.
+Both must be generalized to an `is_external_import(imp)` predicate. The
+predicate returns true when the import's `(module, name)` pair was NOT resolved
+to any compiled Twinkle module's exports — i.e., it inverts the existing
+resolution logic rather than maintaining a list of "known external" module
+names. If only guard (1) is changed, user extern imports compile but are
+silently dropped from the final WASM binary — producing a confusing
+instantiation-time error.
 
 **Pipeline threading: extern metadata through mono/ANF.**
 
@@ -133,11 +170,19 @@ ANF lowering. The `ExternImport` metadata is carried as a side-table:
 - `core_linker.tw` merges extern_imports from all modules during linking.
 - After linking, the merged extern_imports map is passed directly to
   `emit_module` as a parameter (or attached to `PreparedModule`).
-- Codegen reads it to produce `ImportDef` entries.
+- Codegen reads it to produce `FuncType` typedefs and `ImportDef` entries.
+  Each extern import requires a corresponding `(type ...)` declaration in the
+  WASM output (existing `__host_*` imports get theirs from
+  `codegen/intrinsics.tw`; user externs need the emitter to synthesize one from
+  the `ExternImport.params`/`.results` vectors).
 
 Extern FuncIds are never lowered to function bodies — calls to them emit
-`call $extern_name` referencing the import index. The monomorphizer skips
-extern FuncIds (no body to clone).
+`call $extern_name` referencing the import index. The monomorphizer must
+explicitly skip extern FuncIds: when it encounters a `Call(GlobalFunc(id), ...)`
+where `id` is in the `extern_imports` map, it leaves the call as-is rather than
+attempting to look up and clone a body. Without this guard, the monomorphizer
+will panic or silently miscompile when it cannot find a body for the extern
+FuncId.
 
 **Visibility semantics.**
 
@@ -147,10 +192,11 @@ not — always produces a WASM import declaration. A non-`pub` extern fn is
 callable only within its declaring module but still requires the host to provide
 the import at instantiation time.
 
-### Phase 2: Playground & Tooling Integration
+### Playground & Tooling Integration (non-blocking)
 
 Once extern declarations compile, the playground needs a way to provide
-implementations.
+implementations. This is a deployment/tooling concern and does not block
+compiler work.
 
 **Option 2a — Curated web modules:**
 
@@ -194,36 +240,7 @@ provides them. Missing imports produce a WASM instantiation error at runtime
 instantiation fail with a clear error if imports are missing). Add 2a for
 common web APIs as a convenience layer.
 
-### Phase 3: `extern` Module Blocks
-
-Once individual extern fns are stable, add grouped syntax:
-
-```twinkle
-extern "canvas" {
-  fn clear()
-  fn draw_rect(x: Float, y: Float, w: Float, h: Float)
-  fn set_color(r: Int, g: Int, b: Int)
-  fn get_width() Int
-}
-```
-
-**Semantics:**
-
-- Sugar for multiple `extern "canvas" fn ...` declarations.
-- All functions in the block share the same import module.
-- Can be `pub extern "canvas" { ... }` to export all.
-
-**Grammar:**
-
-```ebnf
-extern_block = [ "pub" ] "extern" string_lit "{" { extern_fn_sig } "}" ;
-extern_fn_sig = "fn" ident "(" params ")" [ type ] ;
-```
-
-**Parser change:** When `extern` is followed by a string literal and then `{`
-(instead of `fn`), parse as block.
-
-### Phase 3b: Richer Boundary Types
+### Phase 2: Richer Boundary Types
 
 Once the basic mechanism is proven, extend extern-safe types:
 
@@ -265,15 +282,24 @@ This is a cleanup, not a blocker for the FFI feature.
 1. **Import deduplication**: If a user declares `extern "host" fn print(...)`,
    the runtime already emits an `ImportDef` for `(host, print)`. Emitting a
    duplicate WASM import for the same `(module, name)` pair is a WASM validation
-   error. **Resolution:** The linker must deduplicate imports by `(module, name)`
-   key. If a user extern matches an existing runtime import, the linker uses the
-   existing one and patches the user's call to reference it. If signatures
-   conflict, emit a compile error: "extern declaration conflicts with runtime
-   import". This also means `extern "host" fn ...` effectively shadows/overrides
-   the builtin from the user's perspective but reuses the same WASM import slot.
+   error. **Resolution:** The WAT linker (`src/wasm/linker.rs` /
+   `boot/compiler/codegen/linker.tw`) must deduplicate imports by
+   `(module, name)` key when building `merged_imports`. If a user extern matches
+   an existing runtime import, the linker uses the existing one and patches the
+   user's call to reference it. If signatures conflict, emit a compile error:
+   "extern declaration conflicts with runtime import". Dedup must happen at link
+   time (not in the checker or lower_core) to catch duplicates arising from
+   different compiled modules. This also means `extern "host" fn ...` effectively
+   shadows/overrides the builtin from the user's perspective but reuses the same
+   WASM import slot. The same rule applies to user-to-user collisions: if two
+   modules both declare `extern "canvas" fn clear()` with matching signatures,
+   the linker emits one WASM import and both call sites reference it. If the
+   signatures differ (e.g., one returns `()` and the other takes a parameter),
+   the linker emits a compile error: "conflicting extern signatures for
+   (canvas, clear)".
 
 2. **Multi-value returns**: WASM supports multi-value. Should extern fns allow
-   returning tuples? Maps naturally to `(result i64 f64)` etc. Defer to Phase 3b.
+   returning tuples? Maps naturally to `(result i64 f64)` etc. Defer to Phase 2.
 
 3. **Callback / funcref passing**: Passing Twinkle closures to JS requires
    exporting the closure's funcref. Defer to a later phase.
@@ -298,7 +324,7 @@ This is a cleanup, not a blocker for the FFI feature.
 
 | File | Change |
 |------|--------|
-| `tree-sitter-twinkle/grammar.js` | Add `extern_declaration` and `extern_block` rules |
+| `tree-sitter-twinkle/grammar.js` | Add `extern_declaration` and `extern_block` rules (Phase 1) |
 | `tree-sitter-twinkle/queries/highlights.scm` | Highlight `extern` as keyword, module string as `@string.special` |
 | `tree-sitter-twinkle/test/corpus/` | Add test cases for extern syntax |
 
@@ -313,9 +339,9 @@ This is a cleanup, not a blocker for the FFI feature.
 | `src/ir/lower.rs` | Handle extern FuncIds (no body); produce `GlobalFunc(id)` refs |
 | `src/module/mod.rs` | Carry extern_imports through module assembly |
 | `src/codegen/ctx.rs` | Track extern imports for emission |
-| `src/codegen/emit.rs` | Emit `ImportDef` from extern metadata |
+| `src/codegen/emit.rs` | Synthesize `FuncType` typedef + emit `ImportDef` from extern metadata |
 | `src/wasm/ir.rs` | (Already has `ImportDef` — may need no change) |
-| `src/wasm/linker.rs` | Generalize BOTH `module == "host"` guards (lines 225 and 332) |
+| `src/wasm/linker.rs` | Generalize BOTH `module == "host"` guards (lines 225+246 and 330) |
 
 ### Boot compiler (self-hosted)
 
@@ -369,12 +395,15 @@ If the scope feels large, a minimal viable approach is:
 ## Implementation Order
 
 1. Add `extern` keyword to stage 0 lexer/parser (`src/syntax/`)
-2. Stage 0: register extern fns in type env, emit WASM imports
-3. Tree-sitter: add `extern_declaration` rule + highlights
-4. Boot compiler: lexer/parser/resolver/checker
-5. Boot compiler: lower_core + codegen + linker
-6. End-to-end test: extern fn called from user code, provided by test harness
-7. Parse extern blocks (Phase 3 grouped syntax) in both compilers
-8. Update `docs/spec.md` and `docs/grammar.ebnf`
-9. Playground: curated web API modules
-10. Extend extern-safe type set (Phase 3b)
+2. Stage 0: register extern fns in type env, synthesize `FuncType` + emit WASM imports
+3. Stage 0: generalize both linker guards, add import deduplication
+4. End-to-end test: extern fn called from user code, assert WAT output contains
+   correct `(import ...)` declaration
+5. Stage 0: parse extern blocks (grouped syntax)
+6. Tree-sitter: add `extern_declaration` + `extern_block` rules + highlights
+7. Boot compiler: lexer/parser/resolver/checker
+8. Boot compiler: lower_core + codegen + linker (consider `ExternalRef` reuse)
+9. Boot compiler: add monomorphizer guard for extern FuncIds
+10. Update `docs/spec.md` and `docs/grammar.ebnf`
+11. Playground: curated web API modules
+12. Extend extern-safe type set (Phase 2: richer boundary types)
