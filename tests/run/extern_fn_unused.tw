@@ -1,5 +1,5 @@
 // Unused extern declarations still describe required host imports.
 
-extern "unused" fn ping()
+extern unused fn ping()
 
 value := 1

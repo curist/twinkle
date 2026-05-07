@@ -145,7 +145,20 @@ impl CompileState {
 
         // Register qualified function signatures and FuncIds
         for (func_name, sig) in &exports.public_functions {
-            let qualified_name = format!("{}.{}", alias, func_name);
+            // Extern functions are registered under their extern namespace
+            // (e.g., "console.log"), not the import alias.
+            let qualified_name = if sig.extern_module.is_some() {
+                // Already extern-qualified (e.g., "console.log") — use as-is
+                func_name.clone()
+            } else {
+                format!("{}.{}", alias, func_name)
+            };
+
+            if let Some(ref ext_mod) = sig.extern_module {
+                self.module_aliases.insert(ext_mod.clone());
+                self.value_env.add_extern_namespace(ext_mod.clone());
+            }
+
             let qualified_sig = FunctionSignature {
                 name: qualified_name.clone(),
                 type_params: sig.type_params.clone(),

@@ -101,11 +101,11 @@
   name: (identifier) @function)
 
 (extern_declaration
-  module: (string_literal) @string.special
+  module: (identifier) @module
   name: (identifier) @function)
 
 (extern_block
-  module: (string_literal) @string.special)
+  module: (identifier) @module)
 
 (extern_signature
   name: (identifier) @function)

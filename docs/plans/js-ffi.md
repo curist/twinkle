@@ -38,19 +38,19 @@ New top-level syntax for individual declarations:
 
 ```twinkle
 // Import a single function from module "console"
-extern "console" fn log(msg: String)
+extern console fn log(msg: String)
 
 // With return type
-extern "crypto" fn random() Float
+extern crypto fn random() Float
 
 // The import module is always explicit
-extern "env" fn my_helper(x: Int) Int
+extern env fn my_helper(x: Int) Int
 ```
 
 Grouped syntax (sugar for multiple declarations sharing an import module):
 
 ```twinkle
-extern "canvas" {
+extern canvas {
   fn clear()
   fn draw_rect(x: Float, y: Float, w: Float, h: Float)
   fn set_color(r: Int, g: Int, b: Int)
@@ -58,20 +58,42 @@ extern "canvas" {
 }
 ```
 
-Grouped blocks desugar to individual `extern "canvas" fn ...` declarations.
-Can be `pub extern "canvas" { ... }` to export all.
+Grouped blocks desugar to individual `extern canvas fn ...` declarations.
+Can be `pub extern canvas { ... }` to export all.
+
+**Calling convention: module-qualified names.**
+
+The module name is a bare identifier that doubles as the WASM import module
+name and the call-site namespace:
+
+```twinkle
+console.log("hello")
+crypto.random()
+canvas.clear()
+canvas.draw_rect(0.0, 0.0, 100.0, 50.0)
+```
+
+The module name acts as a namespace at the call site, matching how these
+APIs are structured on the host (e.g., `console.log`, `Math.sqrt` in JS).
+This prevents name collisions between different extern modules and makes
+call sites self-documenting. Two different modules can export functions with
+the same bare name (e.g., `extern a fn init()` and `extern b fn init()`
+coexist as `a.init()` and `b.init()`).
+
+**Future extension:** Module aliasing (`extern "globalThis.performance" as perf`)
+is deferred. For now the namespace always matches the module name exactly.
 
 **Grammar addition:**
 
 ```ebnf
-extern_decl  = "extern" string_lit "fn" ident "(" params ")" [ type ] ;
-extern_block = [ "pub" ] "extern" string_lit "{" { extern_fn_sig } "}" ;
+extern_decl  = "extern" ident "fn" ident "(" params ")" [ type ] ;
+extern_block = [ "pub" ] "extern" ident "{" { extern_fn_sig } "}" ;
 extern_fn_sig = "fn" ident "(" params ")" [ type ] ;
 ```
 
-**Parser note:** When `extern` is followed by a string literal and then `{`
-(instead of `fn`), parse as block. The module string is required for both
-individual declarations and grouped blocks; there is no implicit default module.
+**Parser note:** When `extern` is followed by an identifier and then `{`
+(instead of `fn`), parse as block. The module name is a bare identifier,
+required for both individual declarations and grouped blocks.
 
 **Semantics:**
 

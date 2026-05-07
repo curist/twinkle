@@ -668,11 +668,11 @@ impl Parser {
     fn parse_extern_function_decl(&mut self, is_pub: bool) -> ParseResult<ExternFunctionDecl> {
         let start = self.expect(TokenKind::Extern)?;
 
-        // Required WASM import module name string literal
-        let module_tok = self.expect(TokenKind::StringLit)?;
+        // Required WASM import module name (bare identifier)
+        let module_tok = self.expect(TokenKind::Ident)?;
         let module = module_tok.text.clone();
 
-        // Check for grouped block: extern "module" { fn ...; fn ...; }
+        // Check for grouped block: extern module { fn ...; fn ...; }
         if self.peek_is(TokenKind::LBrace) {
             return self.parse_extern_block(is_pub, module, start.span);
         }
@@ -2808,13 +2808,15 @@ foo
 
     #[test]
     fn test_extern_fn_requires_module() {
+        // "extern fn helper(...)" — `fn` is consumed as the module ident,
+        // then `helper` is not `fn` or `{`, so this should fail.
         let result = parse_source("extern fn helper(x: Int) Int");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_extern_fn_with_module() {
-        let decl = get_extern_fn(r#"extern "console" fn log(msg: String)"#);
+        let decl = get_extern_fn("extern console fn log(msg: String)");
         assert!(!decl.is_pub);
         assert_eq!(decl.module, "console");
         assert_eq!(decl.name, "log");
@@ -2824,7 +2826,7 @@ foo
 
     #[test]
     fn test_extern_fn_pub() {
-        let decl = get_extern_fn(r#"pub extern "crypto" fn random() Float"#);
+        let decl = get_extern_fn("pub extern crypto fn random() Float");
         assert!(decl.is_pub);
         assert_eq!(decl.module, "crypto");
         assert_eq!(decl.name, "random");
@@ -2834,7 +2836,7 @@ foo
 
     #[test]
     fn test_extern_fn_multiple_params() {
-        let decl = get_extern_fn(r#"extern "math" fn add(a: Int, b: Int) Int"#);
+        let decl = get_extern_fn("extern math fn add(a: Int, b: Int) Int");
         assert_eq!(decl.params.len(), 2);
         assert_eq!(decl.params[0].name, "a");
         assert_eq!(decl.params[1].name, "b");
@@ -2842,7 +2844,7 @@ foo
 
     #[test]
     fn test_extern_fn_void() {
-        let decl = get_extern_fn(r#"extern "host" fn noop()"#);
+        let decl = get_extern_fn("extern host fn noop()");
         assert_eq!(decl.module, "host");
         assert_eq!(decl.name, "noop");
         assert_eq!(decl.params.len(), 0);
@@ -2852,11 +2854,7 @@ foo
     #[test]
     fn test_extern_block() {
         let sf = parse_source(
-            r#"extern "canvas" {
-  fn clear()
-  fn draw_rect(x: Float, y: Float, w: Float, h: Float)
-  fn get_width() Int
-}"#,
+            "extern canvas {\n  fn clear()\n  fn draw_rect(x: Float, y: Float, w: Float, h: Float)\n  fn get_width() Int\n}",
         )
         .unwrap();
 
@@ -2888,13 +2886,8 @@ foo
 
     #[test]
     fn test_extern_block_pub() {
-        let sf = parse_source(
-            r#"pub extern "io" {
-  fn read() String
-  fn write(s: String)
-}"#,
-        )
-        .unwrap();
+        let sf =
+            parse_source("pub extern io {\n  fn read() String\n  fn write(s: String)\n}").unwrap();
 
         assert_eq!(sf.items.len(), 2);
         for item in &sf.items {
@@ -2907,7 +2900,7 @@ foo
 
     #[test]
     fn test_extern_fn_uppercase_rejected() {
-        let result = parse_source(r#"extern "host" fn BadName()"#);
+        let result = parse_source("extern host fn BadName()");
         assert!(result.is_err());
     }
 }

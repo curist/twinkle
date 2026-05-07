@@ -247,7 +247,8 @@ impl TypeChecker {
     }
 
     fn can_use_module_alias(&self, name: &str) -> bool {
-        self.module_aliases.contains(name) && !self.resolves_as_value_binding(name)
+        (self.module_aliases.contains(name) || self.value_env.is_extern_namespace(name))
+            && !self.resolves_as_value_binding(name)
     }
 
     //

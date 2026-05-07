@@ -1100,10 +1100,10 @@ fn parse_extern(c: Cursor) ItemsParse {
 
   extern_span := c.span()
   c = c.advance()
-  if c.kind() != .StringLit {
+  if c.kind() != .Ident {
     diagnostics_out = diagnostics_out.append(diagnostic.error(
       extern_span,
-      "expected import module string after 'extern'",
+      "expected module name after 'extern'",
     ))
     recovered := recover_to_next_item(c)
     if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }

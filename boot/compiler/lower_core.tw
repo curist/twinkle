@@ -134,9 +134,16 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         r := ctx.alloc_func_id()
         ctx = r.ctx
         ctx.func_table[sig.name] = r.func_id
+        // sig.name is qualified ("console.log"); extract bare name after the dot
+        prefix := "${wasm_module}."
+        wasm_name := if sig.name.len() > prefix.len() {
+          sig.name.slice(prefix.len(), sig.name.len())
+        } else {
+          sig.name
+        }
         ctx.extern_imports[r.func_id.id] = .{
           wasm_module,
-          wasm_name: sig.name,
+          wasm_name,
           param_tys: sig.params,
           return_ty: sig.ret,
         }

@@ -1,14 +1,15 @@
-// Extern function declarations should type-check successfully
+// Extern function declarations should type-check successfully.
+// Calls use module-qualified syntax: module.func(args).
 
-extern "console" fn log(msg: String)
-extern "crypto" fn random() Float
-extern "env" fn helper(x: Int, y: Int) Int
-pub extern "host" fn noop()
+extern console fn log(msg: String)
+extern crypto fn random() Float
+extern env fn helper(x: Int, y: Int) Int
+pub extern host fn noop()
 
 // Call sites should type-check against the declared signature
 fn main() {
-  log("hello")
-  x := random()
-  y := helper(1, 2)
-  noop()
+  console.log("hello")
+  x := crypto.random()
+  y := env.helper(1, 2)
+  host.noop()
 }

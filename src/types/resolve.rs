@@ -157,20 +157,23 @@ impl Resolver {
     }
 
     fn collect_extern_function_decl(&mut self, decl: &ExternFunctionDecl) {
-        // Check for duplicate function names (including conflicts with regular fns)
-        if let Some(first_span) = self.function_spans.get(&decl.name) {
+        // Extern functions are namespaced by their module string: "console.log", "Math.sqrt", etc.
+        let qualified = format!("{}.{}", decl.module, decl.name);
+
+        // Check for duplicate qualified names (including conflicts with regular fns)
+        if let Some(first_span) = self.function_spans.get(&qualified) {
             self.errors.push(TypeError::DuplicateDefinition {
-                name: decl.name.clone(),
+                name: qualified,
                 first: *first_span,
                 second: decl.span,
             });
             return;
         }
 
-        self.function_spans.insert(decl.name.clone(), decl.span);
+        self.function_spans.insert(qualified.clone(), decl.span);
         self.extern_function_decls
-            .insert(decl.name.clone(), decl.clone());
-        self.extern_function_decl_order.push(decl.name.clone());
+            .insert(qualified.clone(), decl.clone());
+        self.extern_function_decl_order.push(qualified);
     }
 
     //
@@ -422,19 +425,21 @@ impl Resolver {
             };
 
             let wasm_module = decl.module.clone();
+            let qualified = format!("{}.{}", wasm_module, decl.name);
 
             let sig = FunctionSignature {
-                name: decl.name.clone(),
+                name: qualified,
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
                 param_names: decl.params.iter().map(|p| p.name.clone()).collect(),
                 params,
                 ret,
                 doc: None,
-                extern_module: Some(wasm_module),
+                extern_module: Some(wasm_module.clone()),
             };
 
             self.value_env.add_function(sig);
+            self.value_env.add_extern_namespace(wasm_module);
         }
     }
 

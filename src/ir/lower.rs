@@ -326,9 +326,10 @@ impl Lowerer {
     /// Collect extern function metadata for WASM import generation.
     fn collect_extern_import(&mut self, func_id: FuncId, decl: &ExternFunctionDecl) {
         let wasm_module = decl.module.clone();
+        let qualified = format!("{}.{}", wasm_module, decl.name);
 
-        // Resolve parameter types from the value_env signature
-        let sig = self.value_env.get_function(&decl.name);
+        // Resolve parameter types from the value_env signature (registered under qualified name)
+        let sig = self.value_env.get_function(&qualified);
         let (param_tys, return_ty) = if let Some(sig) = sig {
             (sig.params.clone(), sig.ret.clone())
         } else {
@@ -370,9 +371,10 @@ impl Lowerer {
                     }
                 }
                 Item::ExternFunction(decl) => {
-                    if !self.func_table.contains_key(&decl.name) {
+                    let qualified = format!("{}.{}", decl.module, decl.name);
+                    if !self.func_table.contains_key(&qualified) {
                         let func_id = FuncId(next_func_id);
-                        self.func_table.insert(decl.name.clone(), func_id);
+                        self.func_table.insert(qualified, func_id);
                         next_func_id += 1;
                         self.collect_extern_import(func_id, decl);
                     }
@@ -434,7 +436,8 @@ impl Lowerer {
         // Collect extern import metadata for pre-assigned extern function FuncIds
         for item in &ast.items {
             if let Item::ExternFunction(decl) = item {
-                if let Some(&func_id) = self.func_table.get(&decl.name) {
+                let qualified = format!("{}.{}", decl.module, decl.name);
+                if let Some(&func_id) = self.func_table.get(&qualified) {
                     self.collect_extern_import(func_id, decl);
                 }
             }
@@ -487,7 +490,8 @@ impl Lowerer {
     }
 
     fn can_use_module_alias(&self, name: &str) -> bool {
-        self.module_aliases.contains(name) && !self.resolves_as_value_binding(name)
+        (self.module_aliases.contains(name) || self.value_env.is_extern_namespace(name))
+            && !self.resolves_as_value_binding(name)
     }
 
     /// Extract a dotted name from an Ident/FieldAccess chain and look it up as a type.

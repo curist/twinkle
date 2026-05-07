@@ -84,7 +84,18 @@ pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: 
         .None => {},
       }
 
-      case ctx.env.lookup_method(name, field_name) {
+      fn_name: String? = case ctx.env.lookup_method(name, field_name) {
+        .Some(n) => .Some(n),
+        .None => {
+          // For extern namespaces, try direct qualified lookup
+          qualified := "${name}.${field_name}"
+          case ctx.env.lookup_function(qualified) {
+            .Some(_) => .Some(qualified),
+            .None => .None,
+          }
+        },
+      }
+      case fn_name {
         .Some(fn_name) => {
           case ctx.func_table[fn_name] {
             .Some(fid) => {

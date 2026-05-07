@@ -790,6 +790,18 @@ fn build_module_exports(
                     exports.public_func_ids.insert(decl.name.clone(), func_id);
                 }
             }
+            Item::ExternFunction(decl) if decl.is_pub => {
+                // Extern functions use their extern-qualified name (e.g., "console.log")
+                let extern_qualified = format!("{}.{}", decl.module, decl.name);
+                if let Some(sig) = state.value_env.get_function(&extern_qualified).cloned() {
+                    exports
+                        .public_functions
+                        .insert(extern_qualified.clone(), sig);
+                }
+                if let Some(&func_id) = state.func_table.get(&extern_qualified) {
+                    exports.public_func_ids.insert(extern_qualified, func_id);
+                }
+            }
             Item::Stmt(Stmt::Let {
                 pattern: Pattern::Ident(name, _),
                 is_pub,

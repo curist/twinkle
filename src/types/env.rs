@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::error::TypeError;
 use super::ty::{
@@ -807,12 +807,17 @@ pub struct ValueEnv {
     functions: HashMap<String, FunctionSignature>,
     values: HashMap<String, MonoType>,
     builtins: HashMap<String, MonoType>,
+    /// Extern module namespace names (e.g., "console", "Math") derived from
+    /// `extern "module" fn ...` declarations.  Used by the checker and lowerer
+    /// to recognise `module.func(...)` as a qualified extern call.
+    extern_namespaces: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValueEnvBindingSnapshot {
     functions: HashMap<String, FunctionSignature>,
     values: HashMap<String, MonoType>,
+    extern_namespaces: HashSet<String>,
 }
 
 impl ValueEnv {
@@ -829,6 +834,7 @@ impl ValueEnv {
             functions: HashMap::new(),
             values: HashMap::new(),
             builtins: HashMap::new(),
+            extern_namespaces: HashSet::new(),
         };
 
         // Register built-in functions
@@ -1110,6 +1116,7 @@ impl ValueEnv {
         ValueEnvBindingSnapshot {
             functions: self.functions.clone(),
             values: self.values.clone(),
+            extern_namespaces: self.extern_namespaces.clone(),
         }
     }
 
@@ -1117,6 +1124,22 @@ impl ValueEnv {
     pub fn restore_bindings(&mut self, snapshot: ValueEnvBindingSnapshot) {
         self.functions = snapshot.functions;
         self.values = snapshot.values;
+        self.extern_namespaces = snapshot.extern_namespaces;
+    }
+
+    /// Register an extern module namespace name (e.g., "console" from `extern "console" fn ...`).
+    pub fn add_extern_namespace(&mut self, name: String) {
+        self.extern_namespaces.insert(name);
+    }
+
+    /// Check whether a name is a registered extern namespace.
+    pub fn is_extern_namespace(&self, name: &str) -> bool {
+        self.extern_namespaces.contains(name)
+    }
+
+    /// Get all extern namespace names.
+    pub fn extern_namespaces(&self) -> &HashSet<String> {
+        &self.extern_namespaces
     }
 }
 

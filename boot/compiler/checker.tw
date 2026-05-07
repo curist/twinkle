@@ -1050,7 +1050,8 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
 }
 
 fn is_module_alias(ctx: InferCtx, name: String) Bool {
-  ctx.module_aliases.has(name)
+  if ctx.module_aliases.has(name) { return true }
+  ctx.env.extern_namespaces.has(name)
 }
 
 fn method_owner_name(base_ty: MonoType, env: ResolvedEnv) String? {
@@ -1157,7 +1158,13 @@ fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
 fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx: InferCtx, diags: Vector<Diagnostic>) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
-    .None => { return .None },
+    .None => {
+      qualified := "${type_name}.${method_name}"
+      case ctx.env.lookup_function(qualified) {
+        .Some(_) => qualified,
+        .None => { return .None },
+      }
+    },
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(s) => s,
@@ -1170,7 +1177,14 @@ fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx:
 fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<Diagnostic>, call_expected: MonoType?) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
-    .None => { return .None },
+    .None => {
+      // For extern namespaces, look up directly as qualified name
+      qualified := "${type_name}.${method_name}"
+      case ctx.env.lookup_function(qualified) {
+        .Some(_) => qualified,
+        .None => { return .None },
+      }
+    },
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(s) => s,

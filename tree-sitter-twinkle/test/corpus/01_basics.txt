@@ -805,8 +805,8 @@ fn foo() Void {
 Extern declarations
 ================================================================================
 
-extern "console" fn log(msg: String)
-pub extern "canvas" {
+extern console fn log(msg: String)
+pub extern canvas {
   fn clear()
   fn width() Int
 }
@@ -815,8 +815,7 @@ pub extern "canvas" {
 
 (source_file
   (extern_declaration
-    module: (string_literal
-      (string_content))
+    module: (identifier)
     name: (identifier)
     parameters: (parameter_list
       (parameters
@@ -825,8 +824,7 @@ pub extern "canvas" {
           type: (type
             (primitive_type))))))
   (extern_block
-    module: (string_literal
-      (string_content))
+    module: (identifier)
     (extern_signature
       name: (identifier)
       parameters: (parameter_list))

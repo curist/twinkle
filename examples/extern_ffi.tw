@@ -1,16 +1,18 @@
 // Extern FFI: call JavaScript functions from Twinkle.
 //
 // `extern` declarations map directly to WASM imports. The runner
-// auto-bridges to globalThis[module][name], so `extern "console"`
-// resolves to the JS `console` object and `extern "Math"` resolves
+// auto-bridges to globalThis[module][name], so `extern console`
+// resolves to the JS `console` object and `extern Math` resolves
 // to the JS `Math` object — no glue code needed.
+//
+// Calls use module-qualified syntax: console.log(...), Math.sqrt(...).
 
-extern "console" {
+extern console {
   fn log(msg: String)
   fn warn(msg: String)
 }
 
-extern "Math" {
+extern Math {
   fn sqrt(x: Float) Float
   fn floor(x: Float) Float
   fn ceil(x: Float) Float
@@ -18,17 +20,17 @@ extern "Math" {
 }
 
 // Use console.log / console.warn
-log("Hello from Twinkle via extern FFI!")
-warn("This is a warning")
+console.log("Hello from Twinkle via extern FFI!")
+console.warn("This is a warning")
 
 // Use Math functions
-hypotenuse := sqrt(pow(3.0, 2.0) + pow(4.0, 2.0))
-log("hypotenuse of 3-4-5 triangle: ${hypotenuse}")
+hypotenuse := Math.sqrt(Math.pow(3.0, 2.0) + Math.pow(4.0, 2.0))
+console.log("hypotenuse of 3-4-5 triangle: ${hypotenuse}")
 
-log("floor(2.7) = ${floor(2.7)}")
-log("ceil(2.3) = ${ceil(2.3)}")
+console.log("floor(2.7) = ${Math.floor(2.7)}")
+console.log("ceil(2.3) = ${Math.ceil(2.3)}")
 
 // Mix extern and built-in functions
 for i in range_from(1, 6) {
-  log("sqrt(${i}) = ${sqrt(i.to_float())}")
+  console.log("sqrt(${i}) = ${Math.sqrt(i.to_float())}")
 }

@@ -246,10 +246,11 @@ pub fn preassign_module_function_ids(
                 func_table.insert(qualified, func_id);
             }
             Item::ExternFunction(decl) => {
-                if !func_table.contains_key(&decl.name) {
+                let extern_qualified = format!("{}.{}", decl.module, decl.name);
+                if !func_table.contains_key(&extern_qualified) {
                     let func_id = FuncId(*next_func_id);
                     *next_func_id += 1;
-                    func_table.insert(decl.name.clone(), func_id);
+                    func_table.insert(extern_qualified, func_id);
                 }
             }
             _ => {}

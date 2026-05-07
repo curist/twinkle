@@ -201,15 +201,16 @@ Functions form **lexical scope boundaries**: names defined outside a function ca
 Extern declarations describe host-provided functions and compile to Wasm imports:
 
 ```tw
-extern "console" fn log(msg: String)
-extern "crypto" fn random() Float
-pub extern "canvas" {
+extern console fn log(msg: String)
+extern crypto fn random() Float
+pub extern canvas {
   fn clear()
   fn width() Int
 }
 ```
 
-The module string is mandatory and becomes the Wasm import module. The function
+The module name is a bare identifier that doubles as the Wasm import module name
+and the call-site namespace (`console.log(...)`, `canvas.clear()`). The function
 name becomes the Wasm import field name. `pub` controls Twinkle module visibility
 only; every extern declaration emits/reuses a Wasm import.
 

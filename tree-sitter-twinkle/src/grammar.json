@@ -792,7 +792,7 @@
             "name": "module",
             "content": {
               "type": "SYMBOL",
-              "name": "string_literal"
+              "name": "identifier"
             }
           },
           {
@@ -858,7 +858,7 @@
           "name": "module",
           "content": {
             "type": "SYMBOL",
-            "name": "string_literal"
+            "name": "identifier"
           }
         },
         {

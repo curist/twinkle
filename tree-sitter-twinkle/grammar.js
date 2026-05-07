@@ -157,7 +157,7 @@ module.exports = grammar({
     extern_declaration: $ => prec.right(seq(
       optional('pub'),
       'extern',
-      field('module', $.string_literal),
+      field('module', $.identifier),
       'fn',
       field('name', $.identifier),
       field('parameters', $.parameter_list),
@@ -167,7 +167,7 @@ module.exports = grammar({
     extern_block: $ => seq(
       optional('pub'),
       'extern',
-      field('module', $.string_literal),
+      field('module', $.identifier),
       '{',
       repeat($.extern_signature),
       '}',

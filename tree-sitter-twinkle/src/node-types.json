@@ -729,7 +729,7 @@
         "required": true,
         "types": [
           {
-            "type": "string_literal",
+            "type": "identifier",
             "named": true
           }
         ]
@@ -755,7 +755,7 @@
         "required": true,
         "types": [
           {
-            "type": "string_literal",
+            "type": "identifier",
             "named": true
           }
         ]

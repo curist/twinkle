@@ -151,6 +151,7 @@ pub type ResolvedEnv = .{
   type_index: Dict<String, Int>,
   type_id_index: Dict<Int, Int>,
   func_index: Dict<String, Int>,
+  extern_namespaces: Dict<String, Bool>,
 }
 
 pub fn empty_env() ResolvedEnv {
@@ -167,6 +168,7 @@ pub fn empty_env() ResolvedEnv {
     type_index: Dict.new(),
     type_id_index: Dict.new(),
     func_index: Dict.new(),
+    extern_namespaces: Dict.new(),
   }
 }
 
@@ -685,7 +687,8 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       },
       .ExternFunction(decl) => {
         if !decl.is_pub { continue }
-        case env.lookup_function(decl.name) {
+        qualified := "${decl.module}.${decl.name}"
+        case env.lookup_function(qualified) {
           .Some(sig) => {
             exported_functions = exported_functions.append(.{
               name: sig.name,
@@ -898,7 +901,15 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: Str
   cur := env
   visible_functions := visible_function_names(exports)
   for exported in all_exported_functions(exports) {
-    qualified_name := qualify_name(alias, exported.name)
+    // Extern functions keep their extern-qualified name (e.g., "console.log")
+    // instead of being prefixed with the import alias.
+    qualified_name := case exported.sig.extern_module {
+      .Some(ext_mod) => {
+        cur.extern_namespaces[ext_mod] = true
+        exported.name
+      },
+      .None => qualify_name(alias, exported.name),
+    }
     cur = cur.register_function(remap_function_sig(exported.sig, qualified_name, type_ids))
     if bind_qualified_names and visible_functions.has(exported.name) {
       cur = cur.bind_function(qualified_name, qualified_name)
@@ -920,7 +931,11 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
 
   methods := cur.methods
   module_entries := collect exported in exports.functions {
-    me(exported.name, qualify_name(alias, exported.name))
+    // Extern functions are namespaced by their extern module, not the import alias
+    case exported.sig.extern_module {
+      .Some(_) => { continue },
+      .None => me(exported.name, qualify_name(alias, exported.name)),
+    }
   }
   if module_entries.len() > 0 {
     methods = register_methods(methods, alias, module_entries)
@@ -1156,10 +1171,11 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
         }
       },
       .ExternFunction(decl) => {
-        if seen_fns.has(decl.name) {
-          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
+        qualified := "${decl.module}.${decl.name}"
+        if seen_fns.has(qualified) {
+          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${qualified}"))
         } else {
-          seen_fns[decl.name] = true
+          seen_fns[qualified] = true
         }
       },
       // Use/Stmt items: imports deferred to multi-module Phase E;
@@ -1205,8 +1221,9 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
         }
       },
       .ExternFunction(decl) => {
-        if !seen_fns.has(decl.name) {
-          seen_fns[decl.name] = true
+        qualified := "${decl.module}.${decl.name}"
+        if !seen_fns.has(qualified) {
+          seen_fns[qualified] = true
           r := resolve_extern_function_decl(cur, decl)
           cur = r.env
           result_diags = result_diags.concat(r.diagnostics)
@@ -1453,8 +1470,9 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
     .None => .None,
   }
 
+  qualified := "${decl.module}.${decl.name}"
   new_env := env.add_function(.{
-    name: decl.name,
+    name: qualified,
     type_params: [],
     param_names: param_names,
     params: param_types,
@@ -1462,6 +1480,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
     doc: .None,
     extern_module: .Some(decl.module),
   })
+  new_env.extern_namespaces[decl.module] = true
 
   .{ env: new_env, diagnostics: diags }
 }
