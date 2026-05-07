@@ -1127,19 +1127,14 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             prelude_ids::STRING_SLICE => {
-                // String.slice(s, start, end) -> String — byte offsets with UTF-8 boundary validation
+                // String.slice(s, start, end) -> String — byte offsets with clamping and UTF-8 boundary validation
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Str(s), Value::Int(start), Value::Int(end)) => {
                         let bytes = s.as_bytes();
                         let len = bytes.len() as i64;
-                        let start = *start;
-                        let end = *end;
-                        if start < 0 || start > len || end < 0 || end > len || start > end {
-                            return Err(Signal::Trap(TrapError::UserError(format!(
-                                "String.slice: indices [{}, {}) out of bounds for string of byte length {}",
-                                start, end, len
-                            ))));
-                        }
+                        // Clamp to [0, len]
+                        let start = (*start).max(0).min(len);
+                        let end = (*end).max(0).min(len).max(start);
                         let s_off = start as usize;
                         let e_off = end as usize;
                         // Check UTF-8 scalar boundaries

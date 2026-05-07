@@ -5629,72 +5629,64 @@ fn emit_string_slice_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     // String.slice(s: String, start: Int, end: Int) -> String
-    // Byte-offset slice with UTF-8 boundary validation.
-    // Traps if: OOB, start > end, or start/end not on scalar boundary.
+    // Byte-offset slice with bounds clamping and UTF-8 boundary validation.
+    // Out-of-range indices are clamped to [0, len]; start > end ⇒ end = start.
+    // Traps only if start or end lands on a UTF-8 continuation byte.
     //
-    // Implementation: validate in Wasm, then delegate to rt_str__substring.
-    // A UTF-8 continuation byte has bits 10xxxxxx, i.e. (byte & 0xC0) == 0x80.
-    // A scalar boundary is: offset == 0 || offset == len || (byte & 0xC0) != 0x80.
+    // Implementation: clamp in Wasm, validate UTF-8 boundaries, then delegate
+    // to rt_str__substring. A UTF-8 continuation byte has bits 10xxxxxx,
+    // i.e. (byte & 0xC0) == 0x80. A scalar boundary is:
+    // offset == 0 || offset == len || (byte & 0xC0) != 0x80.
     //
     // Atoms are re-emitted freely (they're just local.get or const — cheap).
+    // Clamping uses `select`: select(a, b, cond) returns a if cond != 0, else b.
     ensure_rt_str_substring_import(ctx);
 
-    // Helper closures to emit start/end as i64/i32.
-    let emit_start_i64 =
-        |ctx: &mut EmitCtx<'_>| -> Vec<Instr> { emit_atom(&args[1], Some(&ValType::I64), ctx) };
-    let emit_end_i64 =
-        |ctx: &mut EmitCtx<'_>| -> Vec<Instr> { emit_atom(&args[2], Some(&ValType::I64), ctx) };
-    let emit_start_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
-        let mut v = emit_start_i64(ctx);
-        v.push(Instr::I32WrapI64);
-        v
-    };
-    let emit_end_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
-        let mut v = emit_end_i64(ctx);
-        v.push(Instr::I32WrapI64);
-        v
-    };
     let emit_str = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
         emit_atom(&args[0], Some(&ref_string_null()), ctx)
+    };
+    let emit_len_i32 = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+        let mut v = emit_str(ctx);
+        v.push(Instr::ArrayLen);
+        v
+    };
+
+    // Clamp a single i64 value to [0, len] and convert to i32.
+    // Stack effect: [] -> [i32]
+    let emit_clamped_i32 = |arg_idx: usize, ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+        let emit_val = |ctx: &mut EmitCtx<'_>| -> Vec<Instr> {
+            emit_atom(&args[arg_idx], Some(&ValType::I64), ctx)
+        };
+        let mut v = Vec::new();
+        // clamp_low = max(val, 0): select(val, 0, val >= 0)
+        v.extend(emit_val(ctx));
+        v.push(Instr::I64Const(0));
+        v.extend(emit_val(ctx));
+        v.push(Instr::I64Const(0));
+        v.push(Instr::I64GeS);
+        v.push(Instr::Select);
+        // Now i64 on stack is max(val, 0). Wrap to i32.
+        v.push(Instr::I32WrapI64);
+        // clamp_high = min(clamped, len): select(clamped, len, clamped <= len)
+        // rt_str__substring clamps to len internally, so just ensure >= 0 here.
+        v
     };
 
     let mut instrs = Vec::new();
 
-    // Bounds check in full Int (i64) domain:
-    // start >= 0 && end >= 0 && start <= end && end <= len.
-    // This avoids i64->i32 wraparound accepting large invalid indices.
-    instrs.extend(emit_start_i64(ctx));
-    instrs.push(Instr::I64Const(0));
-    instrs.push(Instr::I64GeS);
-    instrs.extend(emit_end_i64(ctx));
-    instrs.push(Instr::I64Const(0));
-    instrs.push(Instr::I64GeS);
-    instrs.push(Instr::I32And);
-    instrs.extend(emit_start_i64(ctx));
-    instrs.extend(emit_end_i64(ctx));
-    instrs.push(Instr::I64LeS);
-    instrs.push(Instr::I32And);
-    instrs.extend(emit_end_i64(ctx));
-    instrs.extend(emit_str(ctx));
-    instrs.push(Instr::ArrayLen);
-    instrs.push(Instr::I64ExtendI32U);
-    instrs.push(Instr::I64LeS);
-    instrs.push(Instr::I32And);
-    instrs.push(Instr::If {
-        result: None,
-        then_body: vec![],
-        else_body: vec![Instr::Unreachable],
-    });
+    // Compute clamped start (max(start, 0) as i32; runtime clamps to len)
+    let clamped_start = emit_clamped_i32(1, ctx);
+    // Compute clamped end (max(end, 0) as i32; runtime clamps to len)
+    let clamped_end = emit_clamped_i32(2, ctx);
 
     // UTF-8 boundary check for start:
     // if start > 0 && start < len: check (s[start] & 0xC0) != 0x80
-    // (start == len is a valid boundary — one-past-end)
-    instrs.extend(emit_start_i32(ctx));
+    let start_i32 = clamped_start.clone();
+    instrs.extend(start_i32.clone());
     instrs.push(Instr::I32Const(0));
     instrs.push(Instr::I32GtU);
-    instrs.extend(emit_start_i32(ctx));
-    instrs.extend(emit_str(ctx));
-    instrs.push(Instr::ArrayLen);
+    instrs.extend(start_i32.clone());
+    instrs.extend(emit_len_i32(ctx));
     instrs.push(Instr::I32LtU);
     instrs.push(Instr::I32And);
     instrs.push(Instr::If {
@@ -5702,7 +5694,7 @@ fn emit_string_slice_intrinsic(
         then_body: {
             let mut body = emit_str(ctx);
             body.push(Instr::RefAsNonNull);
-            body.extend(emit_start_i32(ctx));
+            body.extend(start_i32.clone());
             body.push(Instr::ArrayGetU(T_STRING.to_string()));
             body.push(Instr::I32Const(0xC0));
             body.push(Instr::I32And);
@@ -5720,16 +5712,16 @@ fn emit_string_slice_intrinsic(
 
     // UTF-8 boundary check for end:
     // if end < len: check (s[end] & 0xC0) != 0x80
-    instrs.extend(emit_end_i32(ctx));
-    instrs.extend(emit_str(ctx));
-    instrs.push(Instr::ArrayLen);
+    let end_i32 = clamped_end.clone();
+    instrs.extend(end_i32.clone());
+    instrs.extend(emit_len_i32(ctx));
     instrs.push(Instr::I32LtU);
     instrs.push(Instr::If {
         result: None,
         then_body: {
             let mut body = emit_str(ctx);
             body.push(Instr::RefAsNonNull);
-            body.extend(emit_end_i32(ctx));
+            body.extend(end_i32.clone());
             body.push(Instr::ArrayGetU(T_STRING.to_string()));
             body.push(Instr::I32Const(0xC0));
             body.push(Instr::I32And);
@@ -5745,10 +5737,11 @@ fn emit_string_slice_intrinsic(
         else_body: vec![],
     });
 
-    // All checks passed — call rt_str__substring(s, start, end)
+    // Call rt_str__substring(s, start, end) — runtime handles len clamping
+    // and end < start normalization.
     instrs.extend(emit_str(ctx));
-    instrs.extend(emit_start_i32(ctx));
-    instrs.extend(emit_end_i32(ctx));
+    instrs.extend(start_i32);
+    instrs.extend(end_i32);
     instrs.push(Instr::Call("rt_str__substring".to_string()));
     instrs.extend(emit_coerce_stack(&ref_string(), bind_ty));
     instrs

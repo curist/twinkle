@@ -528,11 +528,6 @@ fn trap_string_large_index_traps() {
 }
 
 #[test]
-fn trap_string_slice_large_index() {
-    check_trap("tests/run/traps/string_slice_large_index.tw");
-}
-
-#[test]
 fn byte_type() {
     check("tests/run/byte_type.tw");
 }

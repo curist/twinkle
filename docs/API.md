@@ -162,7 +162,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.len()` | `fn(s: String) Int` | Length in **bytes** |
 | `s[i]` | — | Byte at byte offset `i` (returns `Byte`, traps on OOB) |
 | `.get(i)` | `fn(s: String, i: Int) Option<Byte>` | Safe byte lookup at byte offset |
-| `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`, traps if indices fall mid-codepoint |
+| `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`. Out-of-range indices are clamped to `[0, len]`. Traps if a clamped index falls mid-codepoint |
 | `.concat(other)` | `fn(s: String, other: String) String` | Concatenate two strings |
 | `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at byte offset `i` (same as `Byte.to_int(s[i])`) |
 | `.utf8_bytes()` | `fn(s: String) Vector<Byte>` | Copy string bytes into a vector |
@@ -183,6 +183,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
+| `.substr(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **character indices** `[start, end)`. Safe for multi-byte UTF-8. Indices clamped to `[0, char_len]`. O(n) |
 | `.chars()` | `fn(s: String) Iterator<String>` | Iterate Unicode scalars (each as a 1–4 byte `String`) |
 | `.char_len()` | `fn(s: String) Int` | Number of Unicode scalars |
 | `.code_point_at(i)` | `fn(s: String, i: Int) Option<Int>` | Code point at **scalar index** `i` (O(n)) |

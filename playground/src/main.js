@@ -211,6 +211,78 @@ for i in range_from(1, 6) {
 }
 `,
 
+  benchmark: `// Benchmark using JS performance.now() via extern FFI
+
+extern performance {
+  fn now() Float
+}
+
+fn bench(name: String, f: fn() String) {
+  start := performance.now()
+  result := f()
+  elapsed_str := (performance.now() - start).to_string()
+  println("\${name}: \${result}  (\${elapsed_str.slice(0, 6)} ms)")
+}
+
+// 1. Fibonacci
+fn fib(n: Int) Int {
+  if n <= 1 { n }
+  else { fib(n - 1) + fib(n - 2) }
+}
+
+bench("fib(30)", fn() { fib(30).to_string() })
+
+// 2. Build a large vector
+bench("vector append 10k", fn() {
+  v: Vector<Int> = []
+  for i in range_from(0, 10000) { v = v.append(i) }
+  "len = \${v.len()}"
+})
+
+// 3. Dict insert + lookup
+bench("dict 1000 insert+lookup", fn() {
+  d: Dict<String, Int> = Dict.new()
+  for i in range_from(0, 1000) {
+    d["\${i}"] = i * i
+  }
+  sum := 0
+  for key in d.keys() {
+    sum = sum + d[key].unwrap_or(0)
+  }
+  "sum = \${sum}"
+})
+
+// 4. String building
+bench("string concat 500", fn() {
+  s := ""
+  for i in range_from(0, 500) {
+    s = "\${s}\${i}"
+  }
+  "len = \${s.len()}"
+})
+
+// 5. Sum of primes (trial division)
+fn is_prime(n: Int) Bool {
+  if n < 2 { return false }
+  if n == 2 { return true }
+  if n % 2 == 0 { return false }
+  d := 3
+  for d * d <= n {
+    if n % d == 0 { return false }
+    d = d + 2
+  }
+  true
+}
+
+bench("sum primes < 5000", fn() {
+  sum := 0
+  for n in range_from(2, 5000) {
+    if is_prime(n) { sum = sum + n }
+  }
+  "\${sum}"
+})
+`,
+
   caesar: `// Caesar cipher — string ↔ byte manipulation
 fn shift_char(b: Byte, shift: Int) Byte {
   n := b.to_int()

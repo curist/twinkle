@@ -255,6 +255,22 @@ pub fn code_point_at(s: String, i: Int) Int? {
   .None
 }
 
+/// Return a substring by character (Unicode scalar) indices [start, end).
+/// Indices are clamped to [0, char_len]; start > end yields "".
+pub fn substr(s: String, start: Int, end: Int) String {
+  start := if start < 0 { 0 } else { start }
+  end := if end < 0 { 0 } else { end }
+  if start >= end { return "" }
+  result := ""
+  i := 0
+  for ch in s.chars() {
+    if i >= end { break }
+    if i >= start { result = result.concat(ch) }
+    i = i + 1
+  }
+  result
+}
+
 /// Return the number of Unicode scalars.
 pub fn char_len(s: String) Int {
   count := 0

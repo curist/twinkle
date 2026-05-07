@@ -1119,25 +1119,23 @@ fn emit_intrinsic_string_get(args: Vector<PreparedAtom>, result_idx: Int, result
 
 // ── string_slice: s.slice(start, end) ──────────────────────────────────
 
+// Emit max(arg, 0) as i32: select(val, 0, val >= 0) then i32.wrap
+fn emit_clamped_i32(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  buf2 := emit_atom(arg, ctx, buf)     // val (i64)
+  buf3 := buf2.append(.I64Const(0))    // 0 (i64)
+  buf4 := emit_atom(arg, ctx, buf3)    // val again
+  buf4.append(.I64Const(0)).append(.I64GeS).append(.Select).append(.I32WrapI64)
+}
+
 fn emit_intrinsic_string_slice(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  // Bounds checks + UTF-8 boundary validation, then call rt_str__substring
-  buf2 := emit_atom(args[1], ctx, buf)  // start >= 0
-  buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
-  buf4 := emit_atom(args[2], ctx, buf3)  // end >= 0
-  buf5 := buf4.append(.I64Const(0)).append(.I64GeS).append(.I32And)
-  buf6 := emit_atom(args[1], ctx, buf5)
-  buf7 := emit_atom(args[2], ctx, buf6)
-  buf8 := buf7.append(.I64LeS).append(.I32And)  // start <= end
-  buf9 := emit_atom(args[2], ctx, buf8)
-  buf10 := emit_atom(args[0], ctx, buf9)
-  buf11 := buf10.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LeS).append(.I32And)  // end <= len
-  buf12 := buf11.append(.I32Eqz).append(.If(.None, [.Unreachable], []))
-  buf13 := emit_utf8_boundary_check(args[0], args[1], ctx, buf12)
-  buf14 := emit_utf8_boundary_check(args[0], args[2], ctx, buf13)
-  buf15 := emit_atom(args[0], ctx, buf14)
-  buf16 := emit_checked_i32_narrow(args[1], ctx, buf15)
-  buf17 := emit_checked_i32_narrow(args[2], ctx, buf16)
-  buf17.append(.Call("rt_str__substring")).append(.LocalSet(result_idx))
+  // Clamp start/end to >= 0, then UTF-8 boundary validation, then call
+  // rt_str__substring (which clamps to len and normalizes end >= start).
+  buf2 := emit_utf8_boundary_check_clamped(args[0], args[1], ctx, buf)
+  buf3 := emit_utf8_boundary_check_clamped(args[0], args[2], ctx, buf2)
+  buf4 := emit_atom(args[0], ctx, buf3)
+  buf5 := emit_clamped_i32(args[1], ctx, buf4)
+  buf6 := emit_clamped_i32(args[2], ctx, buf5)
+  buf6.append(.Call("rt_str__substring")).append(.LocalSet(result_idx))
 }
 
 fn emit_utf8_boundary_check(str_atom: PreparedAtom, idx_atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
@@ -1158,6 +1156,30 @@ fn emit_utf8_boundary_check(str_atom: PreparedAtom, idx_atom: PreparedAtom, ctx:
   buf4 := emit_atom(idx_atom, ctx, buf3)
   buf5 := emit_atom(str_atom, ctx, buf4)
   buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
+    .append(.If(.None, check, []))
+}
+
+fn emit_utf8_boundary_check_clamped(str_atom: PreparedAtom, idx_atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  // Like emit_utf8_boundary_check but uses clamped idx (max(idx, 0) as i32).
+  // if clamped_idx > 0 && clamped_idx < len: check (s[clamped_idx] & 0xC0) != 0x80
+
+  // Build the check body
+  check_buf1 := emit_atom(str_atom, ctx, [])
+  check_buf2 := emit_clamped_i32(idx_atom, ctx, check_buf1)
+  check : Vector<Instr> = check_buf2
+    .append(.ArrayGetU("rt_types__String"))
+    .append(.I32Const(192))
+    .append(.I32And)
+    .append(.I32Const(128))
+    .append(.I32Eq)
+    .append(.If(.None, [.Unreachable], []))
+
+  // Condition: clamped > 0 && clamped < len
+  buf2 := emit_clamped_i32(idx_atom, ctx, buf)
+  buf3 := buf2.append(.I32Const(0)).append(.I32GtU)
+  buf4 := emit_clamped_i32(idx_atom, ctx, buf3)
+  buf5 := emit_atom(str_atom, ctx, buf4)
+  buf5.append(.ArrayLen).append(.I32LtU).append(.I32And)
     .append(.If(.None, check, []))
 }
 

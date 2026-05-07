@@ -23,6 +23,11 @@ pub fn slice(s: String, start: Int, end: Int) String {
   ""
 }
 
+/// Return a substring by character (Unicode scalar) indices [start, end).
+pub fn substr(s: String, start: Int, end: Int) String {
+  ""
+}
+
 /// Return the byte value at i as Int.
 pub fn char_code_at(s: String, i: Int) Int {
   0
