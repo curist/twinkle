@@ -128,9 +128,7 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             if decl.is_pub {
                 write!(out, " (pub)").unwrap();
             }
-            if let Some(ref module) = decl.module {
-                write!(out, " [module={}]", module).unwrap();
-            }
+            write!(out, " [module={}]", decl.module).unwrap();
             write!(out, ": {}", decl.name).unwrap();
             write!(out, "(").unwrap();
             for (i, param) in decl.params.iter().enumerate() {

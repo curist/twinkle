@@ -421,10 +421,7 @@ impl Resolver {
                 None
             };
 
-            let wasm_module = decl
-                .module
-                .clone()
-                .expect("extern declarations require an explicit module string");
+            let wasm_module = decl.module.clone();
 
             let sig = FunctionSignature {
                 name: decl.name.clone(),

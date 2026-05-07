@@ -128,7 +128,7 @@ pub struct FunctionDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunctionDecl {
     pub is_pub: bool,
-    pub module: Option<String>, // WASM import module; parser requires Some
+    pub module: String, // WASM import module name (always required)
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,

@@ -670,7 +670,7 @@ impl Parser {
 
         // Required WASM import module name string literal
         let module_tok = self.expect(TokenKind::StringLit)?;
-        let module = Some(module_tok.text.clone());
+        let module = module_tok.text.clone();
 
         // Check for grouped block: extern "module" { fn ...; fn ...; }
         if self.peek_is(TokenKind::LBrace) {
@@ -751,7 +751,7 @@ impl Parser {
     fn parse_extern_block(
         &mut self,
         is_pub: bool,
-        module: Option<String>,
+        module: String,
         start_span: Span,
     ) -> ParseResult<ExternFunctionDecl> {
         self.expect(TokenKind::LBrace)?;
@@ -2816,7 +2816,7 @@ foo
     fn test_extern_fn_with_module() {
         let decl = get_extern_fn(r#"extern "console" fn log(msg: String)"#);
         assert!(!decl.is_pub);
-        assert_eq!(decl.module, Some("console".to_string()));
+        assert_eq!(decl.module, "console");
         assert_eq!(decl.name, "log");
         assert_eq!(decl.params.len(), 1);
         assert!(decl.return_type.is_none());
@@ -2826,7 +2826,7 @@ foo
     fn test_extern_fn_pub() {
         let decl = get_extern_fn(r#"pub extern "crypto" fn random() Float"#);
         assert!(decl.is_pub);
-        assert_eq!(decl.module, Some("crypto".to_string()));
+        assert_eq!(decl.module, "crypto");
         assert_eq!(decl.name, "random");
         assert_eq!(decl.params.len(), 0);
         assert!(decl.return_type.is_some());
@@ -2843,7 +2843,7 @@ foo
     #[test]
     fn test_extern_fn_void() {
         let decl = get_extern_fn(r#"extern "host" fn noop()"#);
-        assert_eq!(decl.module, Some("host".to_string()));
+        assert_eq!(decl.module, "host");
         assert_eq!(decl.name, "noop");
         assert_eq!(decl.params.len(), 0);
         assert!(decl.return_type.is_none());
@@ -2868,7 +2868,7 @@ foo
             other => panic!("Expected ExternFunction, got {:?}", other),
         };
         assert_eq!(decl0.name, "clear");
-        assert_eq!(decl0.module, Some("canvas".to_string()));
+        assert_eq!(decl0.module, "canvas");
         assert_eq!(decl0.params.len(), 0);
 
         let decl1 = match &sf.items[1] {

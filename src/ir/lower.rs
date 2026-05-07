@@ -325,10 +325,7 @@ impl Lowerer {
 
     /// Collect extern function metadata for WASM import generation.
     fn collect_extern_import(&mut self, func_id: FuncId, decl: &ExternFunctionDecl) {
-        let wasm_module = decl
-            .module
-            .clone()
-            .expect("extern declarations require an explicit module string");
+        let wasm_module = decl.module.clone();
 
         // Resolve parameter types from the value_env signature
         let sig = self.value_env.get_function(&decl.name);
