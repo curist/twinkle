@@ -4,7 +4,7 @@
 // is bound to a named local via Let, producing flat let-chains that
 // map directly to Wasm instructions.
 
-use .core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param}
+use .core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param, ExternImport}
 use .resolver.{MonoType, TypeId}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
@@ -78,4 +78,5 @@ pub type AnfFunctionDef = .{
 pub type AnfModule = .{
   functions: Vector<AnfFunctionDef>,
   init_func_id: FuncId?,
+  extern_imports: Dict<Int, ExternImport>,
 }

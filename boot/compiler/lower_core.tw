@@ -129,6 +129,22 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   for sig in ctx.env.functions {
     if ctx.func_table.has(sig.name) { continue }
 
+    case sig.extern_module {
+      .Some(wasm_module) => {
+        r := ctx.alloc_func_id()
+        ctx = r.ctx
+        ctx.func_table[sig.name] = r.func_id
+        ctx.extern_imports[r.func_id.id] = .{
+          wasm_module,
+          wasm_name: sig.name,
+          param_tys: sig.params,
+          return_ty: sig.ret,
+        }
+        continue
+      },
+      .None => {},
+    }
+
     // Signature-only aliases (notably internal prelude helper names like
     // vector_all → all) should reuse their target FuncId rather than reserve a
     // fresh phantom ID that can collide after linking.
@@ -348,6 +364,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       type_env: ctx.env,
       init_func_id,
       func_table: ctx.func_table,
+      extern_imports: ctx.extern_imports,
     },
     diagnostics: ctx.errors,
     func_table: ctx.func_table,

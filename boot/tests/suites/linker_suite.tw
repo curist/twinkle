@@ -455,7 +455,7 @@ fn test_link_preserves_host_imports() Result<Void, String> {
   .Ok({})
 }
 
-fn test_link_missing_export_errors() Result<Void, String> {
+fn test_link_unresolved_import_is_external() Result<Void, String> {
   m := WasmModule.{
     namespace: "app",
     types: [],
@@ -468,13 +468,9 @@ fn test_link_missing_export_errors() Result<Void, String> {
     data: [],
     start: .None,
   }
-  case link([m], .None) {
-    .Ok(_) => assert.fail("should have failed with missing export"),
-    .Err(errors) => {
-      try assert.ok(errors.len() > 0, "should have at least one error")
-      .Ok({})
-    },
-  }
+  linked := try link_ok([m], .None)
+  try assert.ok(has_import(linked, "missing_lib", "foo"), "unresolved import should be preserved as external")
+  .Ok({})
 }
 
 // ── Tests: start function synthesis ─────────────────────────────────
@@ -751,7 +747,7 @@ pub fn suite() runner.Suite {
     // Import resolution
     .test("resolves import to export", test_link_resolves_import_to_export)
     .test("preserves host imports", test_link_preserves_host_imports)
-    .test("missing export errors", test_link_missing_export_errors)
+    .test("unresolved import is external", test_link_unresolved_import_is_external)
     // Start function
     .test("synthesizes __linked_init from multiple starts", test_link_synthesizes_init_from_multiple_starts)
     .test("single start just qualifies", test_link_single_start_no_synth)

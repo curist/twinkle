@@ -102,11 +102,19 @@ pub type FunctionDef = .{
   return_ty: MonoType,
 }
 
+pub type ExternImport = .{
+  wasm_module: String,
+  wasm_name: String,
+  param_tys: Vector<MonoType>,
+  return_ty: MonoType?,
+}
+
 pub type CoreModule = .{
   functions: Vector<FunctionDef>,
   type_env: ResolvedEnv,
   init_func_id: FuncId?,
   func_table: Dict<String, FuncId>,
+  extern_imports: Dict<Int, ExternImport>,
 }
 
 // ── Linker types ────────────────────────────────────────────────────
@@ -117,6 +125,7 @@ pub type CompiledModule = .{
   core: CoreModule,
   func_table: Dict<String, FuncId>,
   external_refs: Dict<Int, ExternalRef>,
+  extern_imports: Dict<Int, ExternImport>,
   builtin_count: Int,
 }
 

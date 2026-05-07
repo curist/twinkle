@@ -391,6 +391,7 @@ pub fn suite() runner.Suite {
         type_env: resolver.empty_env(),
         init_func_id: .None,
         func_table: Dict.new(),
+        extern_imports: Dict.new(),
       }
       assert.int_eq(mod.functions.len(), 0)
     })
@@ -1137,6 +1138,7 @@ pub fn suite() runner.Suite {
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
         doc: .None,
+    extern_module: .None,
 }
       vector_filter_sig := resolver.FunctionSig.{
         name: "vector_filter",
@@ -1145,6 +1147,7 @@ pub fn suite() runner.Suite {
         params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
         doc: .None,
+    extern_module: .None,
 }
       origin := resolver.FunctionOrigin.{ module_path: "prelude/vector.tw", func_name: "filter" }
 
@@ -1192,9 +1195,11 @@ pub fn suite() runner.Suite {
           type_env: resolver.empty_env(),
           init_func_id: .None,
           func_table: Dict.new(),
+          extern_imports: Dict.new(),
         },
         func_table: Dict.new(),
         external_refs: Dict.new(),
+        extern_imports: Dict.new(),
         builtin_count: 0,
       }
       global_ids: Dict<String, Dict<String, Int>> = Dict.new()
@@ -1237,9 +1242,11 @@ pub fn suite() runner.Suite {
           type_env: resolver.empty_env(),
           init_func_id: .None,
           func_table: Dict.new(),
+          extern_imports: Dict.new(),
         },
         func_table: Dict.new(),
         external_refs: ext_refs,
+        extern_imports: Dict.new(),
         builtin_count: 0,
       }
       global_ids: Dict<String, Dict<String, Int>> = Dict.new()

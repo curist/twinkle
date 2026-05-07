@@ -716,6 +716,7 @@ pub fn suite() runner.Suite {
         ],
         ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("B"))),
         doc: .None,
+    extern_module: .None,
 }
       env := resolver.empty_env().with_functions([prelude_sig])
 
@@ -741,6 +742,7 @@ pub fn suite() runner.Suite {
         params: [resolver.MonoType.Int],
         ret: .Some(resolver.MonoType.String),
         doc: .None,
+    extern_module: .None,
 }
       env := resolver.empty_env().with_functions([prelude_sig])
 
@@ -826,12 +828,14 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       env = env.add_function( sig1)
       sig2 := resolver.FunctionSig.{
         name: "bar", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
         doc: .None,
+    extern_module: .None,
 }
       env = env.add_function( sig2)
 
@@ -846,6 +850,7 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       env = env.add_function( sig1)
       // Add another "foo" — should shadow the first
@@ -853,6 +858,7 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
         doc: .None,
+    extern_module: .None,
 }
       env = env.add_function( sig2)
 
@@ -1128,6 +1134,7 @@ pub fn suite() runner.Suite {
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
         doc: .None,
+    extern_module: .None,
 }
       parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
       env := resolver.empty_env().register_type_entry(entry, "dep.Support").with_functions([sig])
@@ -1163,6 +1170,7 @@ pub fn suite() runner.Suite {
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(outer_tid, [])], ret: .Some(resolver.MonoType.Named(outer_tid, [])),
         doc: .None,
+    extern_module: .None,
 }
       parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
       env := resolver.empty_env()
@@ -1254,11 +1262,13 @@ pub fn suite() runner.Suite {
         name: "make_env", type_params: [], param_names: [],
         params: [], ret: .Some(resolver.MonoType.Named(env_tid, [])),
         doc: .None,
+    extern_module: .None,
 }
       resolve_sig := resolver.FunctionSig.{
         name: "dep.resolve", type_params: [], param_names: ["env"],
         params: [resolver.MonoType.Named(env_tid, [])], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       env := resolver.empty_env()
         .register_type_entry(env_entry, "dep.Env")
@@ -1317,6 +1327,7 @@ pub fn suite() runner.Suite {
         name: "expose", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
         doc: .None,
+    extern_module: .None,
 }
       exports := resolver.ModuleExports.{
         visible_types: [],
@@ -1528,6 +1539,7 @@ pub fn suite() runner.Suite {
         name: "len", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       env := resolver.empty_env().with_functions([builtin_sig])
 
@@ -1651,6 +1663,7 @@ pub fn suite() runner.Suite {
         name: "filter", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 })
 
       // Origin should be cleared for the now-local function
@@ -1665,11 +1678,13 @@ pub fn suite() runner.Suite {
         name: "filter", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       local := resolver.FunctionSig.{
         name: "local_only", type_params: [], param_names: [],
         params: [], ret: .Some(resolver.MonoType.Void),
         doc: .None,
+    extern_module: .None,
 }
 
       env := resolver.empty_env()
@@ -1691,6 +1706,7 @@ pub fn suite() runner.Suite {
         name: "foo", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       exports := resolver.ModuleExports.{
         visible_types: [],
@@ -1722,6 +1738,7 @@ pub fn suite() runner.Suite {
         name: "helper", type_params: [], param_names: ["x"],
         params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
       exports := resolver.ModuleExports.{
         visible_types: [],

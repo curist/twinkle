@@ -122,7 +122,7 @@ fn rewrite_module(anf: AnfModule, captures: Dict<Int, Vector<CaptureParam>>) Anf
   functions := collect func in anf.functions {
     rewrite_func(func, captures)
   }
-  .{ functions: functions, init_func_id: anf.init_func_id }
+  .{ functions: functions, init_func_id: anf.init_func_id, extern_imports: anf.extern_imports }
 }
 
 fn rewrite_func(func: AnfFunctionDef, captures: Dict<Int, Vector<CaptureParam>>) AnfFunctionDef {

@@ -7,7 +7,7 @@ use compiler.ast.{Expr}
 use compiler.resolver.{MonoType, ResolvedEnv, FunctionOrigin}
 use compiler.checker.{CheckResult, MethodCallInfo}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.core_ir.{CoreExpr, FunctionDef, LocalId, FuncId}
+use compiler.core_ir.{CoreExpr, FunctionDef, LocalId, FuncId, ExternImport}
 
 pub type LowerCtx = .{
   type_map: Dict<Int, MonoType>,
@@ -28,6 +28,7 @@ pub type LowerCtx = .{
   imported_func_origins: Dict<Int, FunctionOrigin>,
   // Cache: serialized origin key → FuncId, for deduplicating phantom FuncIds.
   origin_cache: Dict<String, FuncId>,
+  extern_imports: Dict<Int, ExternImport>,
 }
 
 pub type ExprOut = .{ expr: CoreExpr, ctx: LowerCtx }
@@ -58,6 +59,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     method_calls: check_result.method_calls,
     imported_func_origins: Dict.new(),
     origin_cache: Dict.new(),
+    extern_imports: Dict.new(),
   }
 }
 

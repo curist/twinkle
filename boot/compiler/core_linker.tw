@@ -13,7 +13,7 @@ use compiler.core_ir.{
   CoreModule, CoreExpr, CoreExprKind, FunctionDef, Param,
   LocalId, FuncId, FieldId, VariantId,
   BinOp, UnOp, FieldInit, MatchArm, CorePattern,
-  CompiledModule, ExternalRef,
+  CompiledModule, ExternalRef, ExternImport,
 }
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.contracts.{BuiltinContract}
@@ -32,7 +32,7 @@ pub fn link(
   builtin_count: Int,
 ) CoreModule {
   if modules.len() == 0 {
-    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None, func_table: Dict.new() }
+    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None, func_table: Dict.new(), extern_imports: Dict.new() }
   }
 
   // Step 1: Assign globally unique FuncIds to all defined functions.
@@ -53,6 +53,17 @@ pub fn link(
     global_ids[m.path] = name_to_id
     defined_ids[m.path] = local_to_global
   }
+  for m in modules {
+    local_to_global := case defined_ids[m.path] {
+      .Some(ids) => ids,
+      .None => Dict.new(),
+    }
+    for local_id in m.extern_imports.keys() {
+      local_to_global[local_id] = next_global
+      next_global = next_global + 1
+    }
+    defined_ids[m.path] = local_to_global
+  }
 
   // Step 2: Validate imported-link invariants before remapping.
   for m in modules {
@@ -66,6 +77,7 @@ pub fn link(
   // a linked name → FuncId table for downstream passes like monomorphization.
   all_functions: Vector<FunctionDef> = []
   linked_func_table: Dict<String, FuncId> = Dict.new()
+  linked_extern_imports: Dict<Int, ExternImport> = Dict.new()
   all_init_ids: Vector<FuncId> = []
   entry_init: FuncId? = .None
   entry_func_ids: Vector<Int> = []
@@ -82,6 +94,22 @@ pub fn link(
     for f in m.core.functions {
       case mod_defined[f.func_id.id] {
         .Some(gid) => { remap[f.func_id.id] = gid },
+        .None => {},
+      }
+    }
+
+    for local_id in m.extern_imports.keys() {
+      global_id := case remap[local_id] {
+        .Some(gid) => gid,
+        .None => {
+          gid := next_global
+          next_global = next_global + 1
+          remap[local_id] = gid
+          gid
+        },
+      }
+      case m.extern_imports[local_id] {
+        .Some(ext) => { linked_extern_imports[global_id] = ext },
         .None => {},
       }
     }
@@ -182,6 +210,7 @@ pub fn link(
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
     func_table: live_func_table,
+    extern_imports: linked_extern_imports,
   }
 }
 
@@ -210,6 +239,9 @@ pub fn validate_compiled_module_links(
     refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map)
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) {
+        continue
+      }
+      if m.extern_imports.has(ref_id) {
         continue
       }
       if !m.external_refs.has(ref_id) {

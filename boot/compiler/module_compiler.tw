@@ -107,6 +107,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
       core: lowered.module,
       func_table: lowered.func_table,
       external_refs,
+      extern_imports: lowered.module.extern_imports,
       builtin_count: builtins.next_id,
     })
   }

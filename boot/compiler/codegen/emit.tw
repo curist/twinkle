@@ -78,6 +78,14 @@ pub fn emit_module(
     sym := "$f${func.func_id.id}_${sanitize_name(func.name)}"
     func_sym_map[func.func_id.id] = sym
   }
+  for fid in anf.extern_imports.keys() {
+    case anf.extern_imports[fid] {
+      .Some(ext) => {
+        func_sym_map[fid] = "$extern_${fid}_${sanitize_name(ext.wasm_module)}_${sanitize_name(ext.wasm_name)}"
+      },
+      .None => {},
+    }
+  }
   for pf in prepared.funcs {
     prepared_funcs[pf.func_id.id] = pf
   }
@@ -153,6 +161,28 @@ pub fn emit_module(
   }
 
   type_defs: Vector<TypeDef> = reg.type_defs
+  extern_imports: Vector<ImportDef> = []
+  for fid in anf.extern_imports.keys() {
+    case anf.extern_imports[fid] {
+      .Some(ext) => {
+        params := collect ty in ext.param_tys { val_type_of_mono(ty, env) }
+        results: Vector<ValType> = case ext.return_ty {
+          .Some(.Void) => [],
+          .Some(ty) => [val_type_of_mono(ty, env)],
+          .None => [],
+        }
+        extern_imports = extern_imports.append(.{
+          module: ext.wasm_module,
+          name: ext.wasm_name,
+          as_sym: lookup_func_sym(func_sym_map, .{ id: fid }),
+          params,
+          results,
+        })
+      },
+      .None => {},
+    }
+  }
+
   runtime_imports: Vector<ImportDef> = reg.runtime_imports.append(.{
     module: "codegen.intrinsics",
     name: "int_from_string_helper",
@@ -188,7 +218,7 @@ pub fn emit_module(
   WasmModule.{
     namespace: "user",
     types: type_defs,
-    imports: runtime_imports,
+    imports: runtime_imports.concat(extern_imports),
     funcs: funcs,
     globals: globals,
     tables: [],

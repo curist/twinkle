@@ -304,6 +304,7 @@ fn test_module() Result<Void, String> {
   module := AnfModule.{
     functions: [fdef],
     init_func_id: .Some(FuncId.{ id: 41 }),
+    extern_imports: Dict.new(),
   }
   try assert.int_eq(module.functions.len(), 1)
   case module.init_func_id {

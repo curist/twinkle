@@ -140,7 +140,7 @@ pub fn insert_boundaries(
   new_funcs := collect func in anf.functions {
     rewrite_func(func, registry, builtins, env, func_param_types, func_monos)
   }
-  AnfModule.{ functions: new_funcs, init_func_id: anf.init_func_id }
+  AnfModule.{ functions: new_funcs, init_func_id: anf.init_func_id, extern_imports: anf.extern_imports }
 }
 
 fn rewrite_func(

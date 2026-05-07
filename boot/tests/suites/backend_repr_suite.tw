@@ -154,7 +154,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{ functions: funcs, init_func_id: .None }
+  AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
 }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {

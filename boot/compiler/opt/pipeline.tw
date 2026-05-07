@@ -291,5 +291,6 @@ fn optimize_module_internal(module: AnfModule, semantics: OptimizerSemantics?, c
   AnfModule.{
     functions: new_funcs,
     init_func_id: module.init_func_id,
+    extern_imports: module.extern_imports,
   }
 }

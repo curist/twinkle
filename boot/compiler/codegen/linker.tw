@@ -256,10 +256,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   for m, mi in modules {
     redirects: Dict<String, String> = Dict.new()
     for imp in m.imports {
-      if imp.module == "host" {
-        // Host imports are preserved, not resolved
-        continue
-      }
       key := "${imp.module}\x00${imp.name}"
       case export_map[key] {
         .Some(qualified_export) => {
@@ -268,7 +264,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
           redirects[qualify(m.namespace, imp.as_sym)] = qualified_export
         },
         .None => {
-          errors = errors.append(LinkError.MissingExport(imp.module, imp.name))
+          // External import (host/user extern/etc.) — preserve it.
         },
       }
     }
@@ -315,7 +311,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for imp in m.imports {
-      if imp.module == "host" {
+      if !import_redirects.has(imp.as_sym) and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
         out_imports = out_imports.append(ImportDef.{
           module: imp.module,
           name: imp.name,

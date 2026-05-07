@@ -232,6 +232,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
   AnfModule.{
     functions: functions,
     init_func_id: module.init_func_id,
+    extern_imports: module.extern_imports,
   }
 }
 

@@ -1011,6 +1011,11 @@ pub fn monomorphize(module: CoreModule) CoreModule {
       next_func_id = func.func_id.id + 1
     }
   }
+  for fid in module.extern_imports.keys() {
+    if fid >= next_func_id {
+      next_func_id = fid + 1
+    }
+  }
 
   qi := 0
   for qi < queue.items.len() {
@@ -1106,5 +1111,6 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     type_env: module.type_env,
     init_func_id: module.init_func_id,
     func_table: module.func_table,
+    extern_imports: module.extern_imports,
   }
 }

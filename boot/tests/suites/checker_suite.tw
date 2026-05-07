@@ -30,6 +30,7 @@ fn builtin_sig(name: String, params: Vector<String>, param_tys: Vector<resolver.
     params: param_tys,
     ret: ret,
     doc: .None,
+    extern_module: .None,
 }
 }
 
@@ -1192,6 +1193,7 @@ pub fn suite() runner.Suite {
         params: [resolver.MonoType.Named(point_tid, [])],
         ret: .Some(resolver.MonoType.Int),
         doc: .None,
+    extern_module: .None,
 }
 
       env := resolver.empty_env()

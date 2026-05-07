@@ -52,7 +52,7 @@ fn test_cross_round_chain() Result<Void, String> {
       .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
         .Atom(.ALocal(lid(2))))))
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
   optimized := result.functions[0].body
 
@@ -75,7 +75,7 @@ fn test_branch_simp_then_dead_elim() Result<Void, String> {
       .Atom(.ALitInt(10))),
       .Atom(.ALocal(lid(1)))))
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
   optimized := result.functions[0].body
 
@@ -102,6 +102,7 @@ fn test_pinned_locals_preserved() Result<Void, String> {
   module: AnfModule = AnfModule.{
     functions: [init_func, other_func],
     init_func_id: .Some(fid(100)),
+    extern_imports: Dict.new(),
   }
   result := optimize_module(module)
   init_optimized := result.functions[0].body
@@ -119,7 +120,7 @@ fn test_no_init_no_pinning() Result<Void, String> {
   // let x = 42; Atom(Void) — x is unused and should be eliminated
   body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
   func := make_func(1, "test", body)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
   optimized := result.functions[0].body
 
@@ -143,7 +144,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
     .Atom(.ALocal(lid(0))))
   func2 := make_func(2, "f2", body2)
 
-  module: AnfModule = AnfModule.{ functions: [func1, func2], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func1, func2], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
 
   // Check func1: fully reduces to Atom(3)
@@ -164,7 +165,7 @@ fn test_already_optimal() Result<Void, String> {
   // let x = ACall(f, []); Atom(x) — cannot optimize
   body: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(0))))
   func := make_func(1, "test", body)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
   optimized := result.functions[0].body
 
@@ -191,6 +192,7 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
   module: AnfModule = AnfModule.{
     functions: [init_func, other_func],
     init_func_id: .Some(fid(100)),
+    extern_imports: Dict.new(),
   }
   result := optimize_module(module)
   init_optimized := result.functions[0].body
@@ -213,7 +215,7 @@ fn test_nested_multi_round() Result<Void, String> {
         .Let(lid(3), .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int),
           .Atom(.ALocal(lid(3)))))))
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   result := optimize_module(module)
   optimized := result.functions[0].body
 
@@ -230,7 +232,7 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
       .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
         .Atom(.ALocal(lid(2))))))
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None }
+  module: AnfModule = AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
 
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
