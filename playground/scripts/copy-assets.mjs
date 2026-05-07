@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copies build artifacts and source assets into public/ before Vite builds.
 //
-// Must be run after `cargo build` (produces bridge.wasm + boot-main.wasm)
+// Must be run after `cargo build` (produces bridge.wasm + boot.wasm)
 // and after `bun install` / `npm install` (provides tree-sitter.wasm).
 //
 // Usage:  node scripts/copy-assets.mjs
@@ -47,7 +47,7 @@ ensureDir(publicDir)
 // ── Wasm artifacts (require prior `cargo build`) ──────────────────────────
 console.log('\nwasm artifacts:')
 copyFile(join(projectRoot, 'tools/bridge.wasm'),      join(publicDir, 'bridge.wasm'))
-copyFile(join(projectRoot, 'target/boot-main.wasm'),  join(publicDir, 'boot-main.wasm'))
+copyFile(join(projectRoot, 'target/boot.wasm'),  join(publicDir, 'boot.wasm'))
 
 // ── Twinkle source files (always present) ─────────────────────────────────
 console.log('\ntwinkle source:')

@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev clean
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -15,6 +15,8 @@ help:
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Node SEA target/twk\n'
 	@printf '  make quick-bundle-cli  Build Node SEA target/twk from existing target/boot.wasm\n'
 	@printf '  make cli               Alias for bundle-cli\n'
+	@printf '  make playground        Build playground (all deps + vite build)\n'
+	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
 
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
@@ -62,6 +64,30 @@ cli: bundle-cli
 # the self-hosted payload. This is only correct when target/boot.wasm is already fresh.
 quick-bundle-cli:
 	tools/build_node_sea_cli.sh
+
+# ---------------------------------------------------------------------------
+# Playground
+# ---------------------------------------------------------------------------
+
+# Bridge module used by the JS runners
+tools/bridge.wasm: boot/tests/gen_bridge_wasm.tw
+	./target/release/twk run boot/tests/gen_bridge_wasm.tw
+
+# Tree-sitter grammar wasm (rebuild when grammar.js changes)
+tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
+	cd tree-sitter-twinkle && npx tree-sitter generate && npx tree-sitter build --wasm
+
+# Ensure playground npm deps are installed
+playground/node_modules: playground/package.json
+	cd playground && npm install && touch node_modules
+
+# Copy all artifacts into playground/public/, then run vite build
+playground: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+	cd playground && node scripts/copy-assets.mjs && npx vite build
+
+# Copy artifacts and start the vite dev server
+playground-dev: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+	cd playground && node scripts/copy-assets.mjs && npx vite
 
 clean:
 	cargo clean
