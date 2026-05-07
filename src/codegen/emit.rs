@@ -389,7 +389,7 @@ pub(crate) fn emit_named_module_from_plan(
             .map(|ty| mono_to_valtype(ty, type_env))
             .into_iter()
             .collect();
-        let as_sym = format!("extern_{}_{}", ext.wasm_module, func_id.0);
+        let as_sym = user_func_sym(*func_id);
         ctx.add_import(ImportDef {
             module: ext.wasm_module.clone(),
             name: ext.wasm_name.clone(),

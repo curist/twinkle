@@ -124,13 +124,45 @@ function decodeByteArray(b, arrRef) {
   return out;
 }
 
-function verifyImports(module, hostImports) {
+/**
+ * Auto-bridge extern imports by resolving `globalThis[module][name]` and
+ * wrapping with type conversions for Twinkle's extern-safe types:
+ *   - String params (GC refs) are decoded via bridge
+ *   - String returns from JS are encoded via bridge
+ *   - Int (bigint), Float (number), Bool (i32) pass through
+ */
+function autoBridgeExternImports(wasmModule, hostImports, b) {
   try {
-    for (const imp of WebAssembly.Module.imports(module)) {
-      const mod = hostImports[imp.module];
-      if (!mod || !(imp.name in mod)) {
-        throw new Error(`Unsupported host import: ${imp.module}.${imp.name}`);
+    for (const imp of WebAssembly.Module.imports(wasmModule)) {
+      // Already provided (host module, etc.) — skip
+      if (hostImports[imp.module]?.[imp.name] !== undefined) continue;
+      if (imp.kind !== "function") continue;
+
+      // Try globalThis[module][name]
+      const mod = globalThis[imp.module];
+      const fn = mod?.[imp.name];
+      if (typeof fn !== "function") {
+        throw new Error(`Unsupported host import: ${imp.module}.${imp.name} (not found on globalThis.${imp.module})`);
       }
+
+      // Create a bridged wrapper that auto-converts args and return values
+      const bridgedFn = (...args) => {
+        const jsArgs = args.map((arg) => {
+          if (typeof arg === "bigint") return Number(arg);
+          if (typeof arg === "number") return arg;
+          // GC ref — assume string
+          return decodeString(b, arg);
+        });
+        const result = fn.apply(mod, jsArgs);
+        if (result === undefined || result === null) return;
+        if (typeof result === "string") return encodeString(b, result);
+        if (typeof result === "number") return result;
+        if (typeof result === "bigint") return result;
+        return result;
+      };
+
+      if (!hostImports[imp.module]) hostImports[imp.module] = {};
+      hostImports[imp.module][imp.name] = bridgedFn;
     }
   } catch (e) {
     if (e.message?.startsWith("Unsupported host import:")) throw e;
@@ -274,7 +306,7 @@ function runWasmBytes(
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  verifyImports(mainModule, hostImports);
+  autoBridgeExternImports(mainModule, hostImports, b);
 
   try {
     new WebAssembly.Instance(mainModule, hostImports);
