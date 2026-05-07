@@ -894,6 +894,12 @@ pub fn link(state: CompileState) -> CoreModule {
             .map(|f| f.func_id.0)
             .filter(|id| *id >= prelude::USER_FUNC_START)
             .collect();
+        // Include extern import FuncIds so they get global remapping too
+        for &ext_id in modules[idx].extern_imports.keys() {
+            if ext_id.0 >= prelude::USER_FUNC_START {
+                local_ids.push(ext_id.0);
+            }
+        }
         local_ids.sort_unstable();
         local_ids.dedup();
         for local_id in local_ids {
@@ -908,6 +914,7 @@ pub fn link(state: CompileState) -> CoreModule {
     let mut linked_functions = Vec::new();
     let mut all_init_func_ids = Vec::new();
     let mut entry_init_func_id = None;
+    let mut linked_extern_imports: HashMap<FuncId, crate::ir::core::ExternImport> = HashMap::new();
 
     for idx in order {
         let module_key = module_key(&modules[idx], idx);
@@ -923,6 +930,7 @@ pub fn link(state: CompileState) -> CoreModule {
                 functions: Vec::new(),
                 init_func_id: None,
                 external_func_refs: HashMap::new(),
+                extern_imports: HashMap::new(),
                 next_func_id_after: prelude::USER_FUNC_START,
                 next_global_local_id_after: 0,
             },
@@ -960,6 +968,18 @@ pub fn link(state: CompileState) -> CoreModule {
             }
         }
 
+        // Remap extern import FuncIds
+        for (local_id, ext) in module.extern_imports {
+            let global_id = remap_func_id(
+                local_id,
+                idx,
+                &external_func_refs,
+                &key_to_idx,
+                &local_to_global,
+            );
+            linked_extern_imports.insert(global_id, ext);
+        }
+
         linked_functions.extend(module.functions.into_iter());
     }
 
@@ -968,6 +988,7 @@ pub fn link(state: CompileState) -> CoreModule {
         type_env: state.type_env,
         init_func_id: entry_init_func_id,
         all_init_func_ids,
+        extern_imports: linked_extern_imports,
     }
 }
 
@@ -1415,6 +1436,7 @@ fn register_inherent_methods(
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
                                 doc: sig.doc.clone(),
+                                extern_module: sig.extern_module.clone(),
                             };
                             let builtin_sig = builtin_method_alias(type_id).map(|builtin_alias| {
                                 FunctionSignature {
@@ -1425,6 +1447,7 @@ fn register_inherent_methods(
                                     params: sig.params.clone(),
                                     ret: sig.ret.clone(),
                                     doc: sig.doc.clone(),
+                                    extern_module: sig.extern_module.clone(),
                                 }
                             });
                             return Some((type_id, decl.name.clone(), method_sig, builtin_sig));

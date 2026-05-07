@@ -441,7 +441,7 @@ fn visit_item_case_pattern_variant<'a>(
     best: &mut Option<CasePatternVariantCandidate<'a>>,
 ) {
     match item {
-        Item::Import(_) | Item::TypeDecl(_) => {}
+        Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => {}
         Item::Function(decl) => {
             for stmt in &decl.body.stmts {
                 visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
@@ -835,7 +835,7 @@ impl<'a> LocalResolver<'a> {
             match item {
                 Item::Function(decl) => self.visit_function_decl(decl),
                 Item::Stmt(stmt) => self.visit_stmt(stmt),
-                Item::Import(_) | Item::TypeDecl(_) => {}
+                Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => {}
             }
         }
     }
@@ -1047,7 +1047,7 @@ fn find_expr_by_id(ast: &SourceFile, target_id: ExprId) -> Option<&Expr> {
 
 fn find_expr_by_id_in_item(item: &Item, target_id: ExprId) -> Option<&Expr> {
     match item {
-        Item::Import(_) | Item::TypeDecl(_) => None,
+        Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => None,
         Item::Function(decl) => find_expr_by_id_in_block(&decl.body, target_id),
         Item::Stmt(stmt) => find_expr_by_id_in_stmt(stmt, target_id),
     }

@@ -43,8 +43,8 @@ extern "console" fn log(msg: String)
 // With return type
 extern "crypto" fn random() Float
 
-// Default module is "env" when omitted
-extern fn my_helper(x: Int) Int
+// The import module is always explicit
+extern "env" fn my_helper(x: Int) Int
 ```
 
 Grouped syntax (sugar for multiple declarations sharing an import module):
@@ -64,13 +64,14 @@ Can be `pub extern "canvas" { ... }` to export all.
 **Grammar addition:**
 
 ```ebnf
-extern_decl  = "extern" [ string_lit ] "fn" ident "(" params ")" [ type ] ;
+extern_decl  = "extern" string_lit "fn" ident "(" params ")" [ type ] ;
 extern_block = [ "pub" ] "extern" string_lit "{" { extern_fn_sig } "}" ;
 extern_fn_sig = "fn" ident "(" params ")" [ type ] ;
 ```
 
 **Parser note:** When `extern` is followed by a string literal and then `{`
-(instead of `fn`), parse as block.
+(instead of `fn`), parse as block. The module string is required for both
+individual declarations and grouped blocks; there is no implicit default module.
 
 **Semantics:**
 
@@ -394,16 +395,16 @@ If the scope feels large, a minimal viable approach is:
 
 ## Implementation Order
 
-1. Add `extern` keyword to stage 0 lexer/parser (`src/syntax/`)
-2. Stage 0: register extern fns in type env, synthesize `FuncType` + emit WASM imports
-3. Stage 0: generalize both linker guards, add import deduplication
-4. End-to-end test: extern fn called from user code, assert WAT output contains
+1. [x] Add `extern` keyword to stage 0 lexer/parser (`src/syntax/`)
+2. [x] Stage 0: register extern fns in type env, synthesize `FuncType` + emit WASM imports
+3. [x] Stage 0: generalize both linker guards, add import deduplication
+4. [x] End-to-end test: extern fn called from user code, assert WAT output contains
    correct `(import ...)` declaration
-5. Stage 0: parse extern blocks (grouped syntax)
-6. Tree-sitter: add `extern_declaration` + `extern_block` rules + highlights
-7. Boot compiler: lexer/parser/resolver/checker
-8. Boot compiler: lower_core + codegen + linker (consider `ExternalRef` reuse)
-9. Boot compiler: add monomorphizer guard for extern FuncIds
-10. Update `docs/spec.md` and `docs/grammar.ebnf`
-11. Playground: curated web API modules
-12. Extend extern-safe type set (Phase 2: richer boundary types)
+5. [x] Stage 0: parse extern blocks (grouped syntax)
+6. [x] Tree-sitter: add `extern_declaration` + `extern_block` rules + highlights
+7. [ ] Boot compiler: lexer/parser/resolver/checker
+8. [ ] Boot compiler: lower_core + codegen + linker (consider `ExternalRef` reuse)
+9. [ ] Boot compiler: add monomorphizer guard for extern FuncIds
+10. [x] Update `docs/spec.md` and `docs/grammar.ebnf`
+11. [ ] Playground: curated web API modules
+12. [ ] Extend extern-safe type set (Phase 2: richer boundary types)

@@ -229,20 +229,30 @@ pub fn preassign_module_function_ids(
     next_func_id: &mut u32,
 ) {
     for item in &ast.items {
-        if let Item::Function(decl) = item {
-            let qualified = format!("{}.{}", alias, decl.name);
-            let func_id = if let Some(&existing) = func_table.get(&qualified) {
-                existing
-            } else {
-                let id = FuncId(*next_func_id);
-                *next_func_id += 1;
-                id
-            };
+        match item {
+            Item::Function(decl) => {
+                let qualified = format!("{}.{}", alias, decl.name);
+                let func_id = if let Some(&existing) = func_table.get(&qualified) {
+                    existing
+                } else {
+                    let id = FuncId(*next_func_id);
+                    *next_func_id += 1;
+                    id
+                };
 
-            // Bare names must point at the current module during lowering.
-            func_table.insert(decl.name.clone(), func_id);
-            // Register qualified name for cross-module and method calls.
-            func_table.insert(qualified, func_id);
+                // Bare names must point at the current module during lowering.
+                func_table.insert(decl.name.clone(), func_id);
+                // Register qualified name for cross-module and method calls.
+                func_table.insert(qualified, func_id);
+            }
+            Item::ExternFunction(decl) => {
+                if !func_table.contains_key(&decl.name) {
+                    let func_id = FuncId(*next_func_id);
+                    *next_func_id += 1;
+                    func_table.insert(decl.name.clone(), func_id);
+                }
+            }
+            _ => {}
         }
     }
 }

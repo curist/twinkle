@@ -188,7 +188,7 @@ Functions cannot mutate caller-visible ordinary values via assignment syntax.
 All assignment-like updates create new values and rebind local names. Side effects are explicit (e.g. `print`, `println`, `error`, `Cell.set`, `Cell.update`).
 
 Function declaration parameters must be explicitly annotated (`fn f(x: Int) ...`).
-Parameters are ordinary local bindings and may be rebound within the function body (see §7.3).
+Parameters are ordinary local bindings and may be rebound within the function body (see §7.4).
 
 The return type is written after the parameter list (no `->`). It may be omitted when inference suffices; when omitted, the function body’s value determines the return type.
 
@@ -196,9 +196,30 @@ For **function expressions** (`fn (...) { ... }`) used as callbacks, parameter a
 
 Functions form **lexical scope boundaries**: names defined outside a function cannot be rebound inside the function.
 
+### 7.2 Extern Declarations
+
+Extern declarations describe host-provided functions and compile to Wasm imports:
+
+```tw
+extern "console" fn log(msg: String)
+extern "crypto" fn random() Float
+pub extern "canvas" {
+  fn clear()
+  fn width() Int
+}
+```
+
+The module string is mandatory and becomes the Wasm import module. The function
+name becomes the Wasm import field name. `pub` controls Twinkle module visibility
+only; every extern declaration emits/reuses a Wasm import.
+
+Extern parameters must be annotated. Phase 1 boundary types are `Int`, `Float`,
+`Bool`, `String`, and `Void`/`()`. Compound values such as records, enums,
+`Vector`, `Dict`, callbacks, and `Result` are not valid extern boundary types.
+
 ---
 
-### 7.2 Bindings
+### 7.3 Bindings
 
 #### Initial binding
 
@@ -221,7 +242,7 @@ Lexical scopes are introduced by:
 
 ---
 
-### 7.3 Rebinding
+### 7.4 Rebinding
 
 Rebinding provides *syntactic convenience* for expressing new values that replace old ones.
 
@@ -251,7 +272,7 @@ fn bump(n: Int) Int {
 
 ---
 
-### 7.4 Rebinding and Control Flow
+### 7.5 Rebinding and Control Flow
 
 Control-flow constructs (`if`, `for`, `case`, blocks `{ ... }`) **do not** introduce new rebinding scopes, except for any names they explicitly define (e.g., loop variables, pattern-bound names).
 
@@ -295,7 +316,7 @@ case opt {
 
 ---
 
-### 7.5 Update Syntax (Desugaring)
+### 7.6 Update Syntax (Desugaring)
 
 Twinkle provides update-like syntax for ergonomics, but all updates are expressed as **rebinding to newly constructed values**.
 
@@ -351,7 +372,7 @@ The root of the chain must be a local identifier. Chains starting with expressio
 
 ---
 
-### 7.6 Aliasing and Value Semantics
+### 7.7 Aliasing and Value Semantics
 
 All values are immutable. Rebinding affects only the local name, not any other aliases:
 
@@ -368,7 +389,7 @@ q             // still Pt.{ y: 0 }
 
 Twinkle has **value semantics**, not reference semantics.
 
-### 7.7 Closure Capture
+### 7.8 Closure Capture
 
 A function expression (`fn (...) { ... }`) may reference names defined in its surrounding lexical scopes.
 When such a function is **defined**, Twinkle captures the **current value** of each free variable.
@@ -378,7 +399,7 @@ This section formalizes the capture model.
 
 ---
 
-#### 7.7.1 Capture-by-Value (Definition-Site Semantics)
+#### 7.8.1 Capture-by-Value (Definition-Site Semantics)
 
 When a closure is created:
 
@@ -403,7 +424,7 @@ Explanation:
 
 ---
 
-#### 7.7.2 Shadowing and Captured Variables
+#### 7.8.2 Shadowing and Captured Variables
 
 Closures always capture the **innermost lexical binding** visible at their definition site.
 
@@ -426,7 +447,7 @@ f()                      // returns 10
 
 ---
 
-#### 7.7.3 Rebinding After Closure Creation Does Not Affect Closures
+#### 7.8.3 Rebinding After Closure Creation Does Not Affect Closures
 
 Rebinding (`x = expr`) is sugar for introducing a new shadowing binding.
 Therefore, closures created **before** the rebinding continue to see the old binding.
@@ -445,7 +466,7 @@ This follows directly from capture-by-value semantics.
 
 ---
 
-#### 7.7.4 Closures Cannot Rebind Captured Variables
+#### 7.8.4 Closures Cannot Rebind Captured Variables
 
 Because rebinding always targets local bindings in the current function, closures cannot assign to variables defined outside their own function.
 
@@ -467,7 +488,7 @@ If shared mutable state is desired, express it explicitly using `Cell<T>` rather
 
 ---
 
-#### 7.7.5 Loop Variables Produce Fresh Bindings per Iteration
+#### 7.8.5 Loop Variables Produce Fresh Bindings per Iteration
 
 In `for` loops, loop variables are newly bound for each iteration.
 Thus each closure created inside the loop captures the **iteration’s** value, not a shared accumulator.
@@ -491,7 +512,7 @@ This avoids common “loop capture traps” seen in other languages.
 
 ---
 
-#### 7.7.6 Summary of Closure Capture Rules
+#### 7.8.6 Summary of Closure Capture Rules
 
 | Behavior                  | Rule                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------- |
@@ -530,7 +551,7 @@ Module-level value bindings are **module globals**:
 * They can be marked `pub` to export them.
 * They are evaluated once at module initialization time, top-to-bottom.
 * Public (`pub`) bindings cannot be rebound — they are part of the module's exported interface and each name may only be bound once.
-* Private bindings may be rebound at module scope, following the same rules as §7.3–7.4.
+* Private bindings may be rebound at module scope, following the same rules as §7.4–7.5.
 
 #### Expression statements
 

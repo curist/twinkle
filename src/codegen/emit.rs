@@ -375,6 +375,30 @@ pub(crate) fn emit_named_module_from_plan(
             }),
     );
 
+    // Add extern function imports
+    for (func_id, ext) in &anf.extern_imports {
+        let params: Vec<ValType> = ext
+            .param_tys
+            .iter()
+            .map(|ty| mono_to_valtype(ty, type_env))
+            .collect();
+        let results: Vec<ValType> = ext
+            .return_ty
+            .as_ref()
+            .filter(|ty| !matches!(ty, MonoType::Void))
+            .map(|ty| mono_to_valtype(ty, type_env))
+            .into_iter()
+            .collect();
+        let as_sym = format!("extern_{}_{}", ext.wasm_module, func_id.0);
+        ctx.add_import(ImportDef {
+            module: ext.wasm_module.clone(),
+            name: ext.wasm_name.clone(),
+            as_sym,
+            params,
+            results,
+        });
+    }
+
     module.imports.extend(ctx.imports());
 
     #[cfg(debug_assertions)]
@@ -8104,41 +8128,70 @@ fn build_user_sig_map_typed(
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
     >,
 ) -> HashMap<FuncId, FuncSigInfo> {
-    anf.functions
-        .iter()
-        .map(|func| {
-            let capture_count = closure_capture_layouts
-                .get(&func.func_id)
-                .map_or(0, Vec::len);
-            let mut params = func
-                .param_tys
-                .iter()
-                .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
-                .collect::<Vec<_>>();
-            params.extend(vec![ValType::Anyref; capture_count]);
-            let result = match &func.return_ty {
-                crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
-                other => Some(mono_to_valtype_for_user_abi_result(
-                    other,
-                    type_env,
-                    concrete_func_sigs,
-                )),
-            };
-            (
-                func.func_id,
-                FuncSigInfo {
-                    params,
-                    result,
-                    result_mono: match &func.return_ty {
-                        crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => {
-                            None
-                        }
-                        other => Some(other.clone()),
+    let mut sigs: HashMap<FuncId, FuncSigInfo> =
+        anf.functions
+            .iter()
+            .map(|func| {
+                let capture_count = closure_capture_layouts
+                    .get(&func.func_id)
+                    .map_or(0, Vec::len);
+                let mut params = func
+                    .param_tys
+                    .iter()
+                    .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
+                    .collect::<Vec<_>>();
+                params.extend(vec![ValType::Anyref; capture_count]);
+                let result = match &func.return_ty {
+                    crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
+                    other => Some(mono_to_valtype_for_user_abi_result(
+                        other,
+                        type_env,
+                        concrete_func_sigs,
+                    )),
+                };
+                (
+                    func.func_id,
+                    FuncSigInfo {
+                        params,
+                        result,
+                        result_mono: match &func.return_ty {
+                            crate::types::ty::MonoType::Void
+                            | crate::types::ty::MonoType::Never => None,
+                            other => Some(other.clone()),
+                        },
                     },
-                },
-            )
-        })
-        .collect()
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+    // Add extern function signatures so calls to extern fns resolve their ABI
+    for (func_id, ext) in &anf.extern_imports {
+        let params = ext
+            .param_tys
+            .iter()
+            .map(|ty| mono_to_valtype(ty, type_env))
+            .collect();
+        let result = ext
+            .return_ty
+            .as_ref()
+            .filter(|ty| !matches!(ty, MonoType::Void))
+            .map(|ty| mono_to_valtype(ty, type_env));
+        let result_mono = ext
+            .return_ty
+            .as_ref()
+            .filter(|ty| !matches!(ty, MonoType::Void | MonoType::Never))
+            .cloned();
+        sigs.insert(
+            *func_id,
+            FuncSigInfo {
+                params,
+                result,
+                result_mono,
+            },
+        );
+    }
+
+    sigs
 }
 
 fn collect_cell_payloads_from_mono(
@@ -8668,6 +8721,7 @@ mod tests {
             functions: vec![fib_like],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9150,6 +9204,7 @@ mod tests {
             functions: vec![func],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9224,6 +9279,7 @@ mod tests {
             functions: vec![callee, caller],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9260,6 +9316,7 @@ mod tests {
             functions: vec![],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9331,6 +9388,7 @@ mod tests {
             ],
             init_func_id: None,
             all_init_func_ids: Vec::new(),
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -10106,6 +10164,7 @@ mod tests {
             ],
             init_func_id: Some(FuncId(2)),
             all_init_func_ids: vec![FuncId(1), FuncId(2)],
+            extern_imports: HashMap::new(),
         };
 
         let module = emit_user_module(&anf, &type_env);

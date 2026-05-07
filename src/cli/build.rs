@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::codegen::emit::emit_user_module;
 use crate::runtime;
 use crate::wasm::emit::emit_wat;
-use crate::wasm::linker::{LinkError, link};
+use crate::wasm::linker::{LinkError, link_with_extern_modules};
 
 pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Result<()> {
     let wat = build_wat(file_path)?;
@@ -43,7 +43,14 @@ pub fn build_wat(file_path: &str) -> Result<String> {
     let mut modules = runtime::all_modules();
     modules.push(user_module);
 
-    let linked = link(modules, None).map_err(format_link_errors)?;
+    let extern_modules: std::collections::HashSet<String> = pipeline
+        .optimized_anf_module
+        .extern_imports
+        .values()
+        .map(|ext| ext.wasm_module.clone())
+        .collect();
+    let linked =
+        link_with_extern_modules(modules, None, &extern_modules).map_err(format_link_errors)?;
     Ok(emit_wat(&linked))
 }
 
@@ -185,6 +192,42 @@ mod tests {
                 wasm_out: Some(PathBuf::from("custom.wasm")),
                 wat_out: Some(PathBuf::from("custom.wat")),
             }
+        );
+    }
+
+    #[test]
+    fn build_wat_extern_fn_emits_imports() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = root.join("tests/run/extern_fn.tw");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for extern_fn.tw: {e}"));
+
+        // Each extern declaration should produce a WASM import
+        assert!(
+            wat.contains(r#"(import "console" "log""#),
+            "missing console.log import in WAT:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "math" "add""#),
+            "missing math.add import in WAT:\n{wat}"
+        );
+        // Explicit env module import
+        assert!(
+            wat.contains(r#"(import "env" "env_helper""#),
+            "missing env.env_helper import in WAT:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn build_wat_extern_fn_emits_unused_imports() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = root.join("tests/run/extern_fn_unused.tw");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for extern_fn_unused.tw: {e}"));
+
+        assert!(
+            wat.contains(r#"(import "unused" "ping""#),
+            "missing unused.ping import in WAT:\n{wat}"
         );
     }
 

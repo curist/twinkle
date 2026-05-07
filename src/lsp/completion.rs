@@ -501,7 +501,7 @@ fn collect_locals_at_offset(
                 }
             }
             Item::Stmt(stmt) => collector.visit_stmt(stmt),
-            Item::TypeDecl(_) | Item::Import(_) => {}
+            Item::TypeDecl(_) | Item::Import(_) | Item::ExternFunction(_) => {}
         }
         if collector.found {
             break;

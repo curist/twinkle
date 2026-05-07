@@ -1539,6 +1539,7 @@ mod tests {
             functions: vec![func1, func2],
             init_func_id: None,
             all_init_func_ids: vec![],
+            extern_imports: HashMap::new(),
         };
         let errors = verify_module(&module, &VerifyOptions::post_optimization());
         assert!(
@@ -1595,6 +1596,7 @@ mod tests {
             functions: vec![outer, mid, inner],
             init_func_id: None,
             all_init_func_ids: vec![],
+            extern_imports: HashMap::new(),
         };
         let errors = verify_module(&module, &VerifyOptions::post_optimization());
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);

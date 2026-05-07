@@ -1,0 +1,3 @@
+// Extern declarations reject compound boundary types in Phase 1.
+
+extern "host" fn send(xs: Vector<Int>)

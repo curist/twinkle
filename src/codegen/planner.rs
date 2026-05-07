@@ -47,7 +47,14 @@ impl ModuleEmitPlan {
             emit::emit_named_module_from_plan(self, anf, type_env, "user", &exported_names);
         let mut modules = crate::runtime::all_modules();
         modules.push(module_ir);
-        let linked = crate::wasm::linker::link(modules, None).expect("link should succeed");
+        // Collect extern import module names so the linker passes them through
+        let extern_modules: HashSet<String> = anf
+            .extern_imports
+            .values()
+            .map(|ext| ext.wasm_module.clone())
+            .collect();
+        let linked = crate::wasm::linker::link_with_extern_modules(modules, None, &extern_modules)
+            .expect("link should succeed");
         crate::wasm::emit::emit_wat(&linked)
     }
 }

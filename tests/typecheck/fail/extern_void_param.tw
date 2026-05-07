@@ -1,0 +1,3 @@
+// Void is valid as an extern return but not as a boundary parameter.
+
+extern "host" fn takes_void(x: Void)

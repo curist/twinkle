@@ -22,6 +22,8 @@ TopLevel =
       ImportDecl
     | TypeDecl
     | FunctionDecl
+    | ExternDecl
+    | ExternBlock
     | TopLevelStmt ;
 
 (* Implementation note:
@@ -116,10 +118,28 @@ ParamList =
 Param =
     Identifier [ ":" Type ] ;
 (* Implementation note:
-   - In FunctionDecl, parameter type annotations are required by the
-     language rules (enforced during name/type analysis).
+   - In FunctionDecl and ExternDecl, parameter type annotations are required by
+     the language rules (enforced during name/type analysis).
    - In FnExpr (callbacks), parameter annotations may be omitted when
      bidirectional checking provides an expected function type. *)
+
+ExternDecl =
+    [ "pub" ] "extern" StringLiteral "fn" Identifier
+    "(" [ ParamList ] ")"
+    [ Type ] ;
+
+ExternBlock =
+    [ "pub" ] "extern" StringLiteral "{"
+    { ExternFnSig }
+    "}" ;
+
+ExternFnSig =
+    "fn" Identifier "(" [ ParamList ] ")" [ Type ] ;
+(* Implementation note:
+   - The string literal is the Wasm import module and is mandatory.
+   - The function identifier is the Wasm import field name.
+   - Grouped blocks are syntax sugar for declarations sharing one module.
+   - Extern boundary types are restricted to Int, Float, Bool, String, and Void. *)
 
 (* ===== Function Expressions (values) ===== *)
 

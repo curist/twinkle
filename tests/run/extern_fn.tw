@@ -1,0 +1,9 @@
+// End-to-end test for extern function declarations.
+
+extern "console" fn log(msg: String)
+extern "math" fn add(a: Int, b: Int) Int
+extern "env" fn env_helper(x: Float) Float
+
+log("hello")
+result := add(1, 2)
+y := env_helper(3.14)

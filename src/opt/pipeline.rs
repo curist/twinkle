@@ -107,6 +107,7 @@ pub fn optimize_module(module: AnfModule) -> AnfModule {
         functions: peepholed.clone(),
         init_func_id: module.init_func_id,
         all_init_func_ids: module.all_init_func_ids.clone(),
+        extern_imports: module.extern_imports.clone(),
     });
 
     let functions = peepholed

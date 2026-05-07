@@ -33,6 +33,8 @@ module.exports = grammar({
       $.use_declaration,
       $.type_declaration,
       $.function_declaration,
+      $.extern_declaration,
+      $.extern_block,
       $._top_level_statement,
     ),
 
@@ -151,6 +153,34 @@ module.exports = grammar({
       optional(field('return_type', $.type)),
       field('body', $.block),
     ),
+
+    extern_declaration: $ => prec.right(seq(
+      optional('pub'),
+      'extern',
+      field('module', $.string_literal),
+      'fn',
+      field('name', $.identifier),
+      field('parameters', $.parameter_list),
+      optional(field('return_type', $.extern_type)),
+    )),
+
+    extern_block: $ => seq(
+      optional('pub'),
+      'extern',
+      field('module', $.string_literal),
+      '{',
+      repeat($.extern_signature),
+      '}',
+    ),
+
+    extern_signature: $ => prec.right(seq(
+      'fn',
+      field('name', $.identifier),
+      field('parameters', $.parameter_list),
+      optional(field('return_type', $.extern_type)),
+    )),
+
+    extern_type: $ => $._base_type,
 
     type_parameters: $ => seq(
       '<',

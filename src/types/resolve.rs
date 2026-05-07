@@ -5,7 +5,8 @@ use super::ty::{
 };
 use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
-    FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl, TypeDef as AstTypeDef,
+    ExternFunctionDecl, FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl,
+    TypeDef as AstTypeDef,
 };
 use crate::syntax::span::Span;
 use std::collections::{HashMap, HashSet};
@@ -28,6 +29,10 @@ pub struct Resolver {
     function_decls: HashMap<String, FunctionDecl>,
     function_spans: HashMap<String, Span>,
     function_decl_order: Vec<String>,
+
+    // Track extern function declarations for Pass 2
+    extern_function_decls: HashMap<String, ExternFunctionDecl>,
+    extern_function_decl_order: Vec<String>,
 
     // TypeIds defined in this module — only these are eligible for inherent methods
     local_type_ids: HashSet<TypeId>,
@@ -69,6 +74,8 @@ impl Resolver {
             function_decls: HashMap::new(),
             function_spans: HashMap::new(),
             function_decl_order: Vec::new(),
+            extern_function_decls: HashMap::new(),
+            extern_function_decl_order: Vec::new(),
             local_type_ids: HashSet::new(),
             is_internal,
         };
@@ -83,6 +90,7 @@ impl Resolver {
         // Pass 2: Resolve type references and build environments
         resolver.resolve_type_references();
         resolver.resolve_function_signatures();
+        resolver.resolve_extern_function_signatures();
         resolver.detect_circular_aliases();
 
         if !resolver.errors.is_empty() {
@@ -105,6 +113,7 @@ impl Resolver {
             match item {
                 Item::TypeDecl(decl) => self.collect_type_decl(decl),
                 Item::Function(decl) => self.collect_function_decl(decl),
+                Item::ExternFunction(decl) => self.collect_extern_function_decl(decl),
                 Item::Import(_) => {
                     // Imports are compiled before reaching this point; no-op
                 }
@@ -145,6 +154,23 @@ impl Resolver {
         self.function_spans.insert(decl.name.clone(), decl.span);
         self.function_decls.insert(decl.name.clone(), decl.clone());
         self.function_decl_order.push(decl.name.clone());
+    }
+
+    fn collect_extern_function_decl(&mut self, decl: &ExternFunctionDecl) {
+        // Check for duplicate function names (including conflicts with regular fns)
+        if let Some(first_span) = self.function_spans.get(&decl.name) {
+            self.errors.push(TypeError::DuplicateDefinition {
+                name: decl.name.clone(),
+                first: *first_span,
+                second: decl.span,
+            });
+            return;
+        }
+
+        self.function_spans.insert(decl.name.clone(), decl.span);
+        self.extern_function_decls
+            .insert(decl.name.clone(), decl.clone());
+        self.extern_function_decl_order.push(decl.name.clone());
     }
 
     //
@@ -335,6 +361,107 @@ impl Resolver {
         }
     }
 
+    fn resolve_extern_function_signatures(&mut self) {
+        let decls: Vec<ExternFunctionDecl> = self
+            .extern_function_decl_order
+            .iter()
+            .filter_map(|name| self.extern_function_decls.get(name).cloned())
+            .collect();
+
+        for decl in &decls {
+            // Extern functions have no type parameters
+            let mut params = Vec::new();
+            let mut ok = true;
+
+            for param in &decl.params {
+                if let Some(param_ty) = &param.ty {
+                    match self.resolve_type(param_ty) {
+                        Ok(ty) => {
+                            if self
+                                .validate_extern_safe_type(&ty, param_ty.span(), false)
+                                .is_ok()
+                            {
+                                params.push(ty);
+                            } else {
+                                ok = false;
+                            }
+                        }
+                        Err(()) => {
+                            ok = false;
+                        }
+                    }
+                } else {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "type inference for extern function parameters",
+                        span: param.span,
+                        note: "Extern function parameters must have type annotations".to_string(),
+                    });
+                    ok = false;
+                }
+            }
+
+            if !ok {
+                continue;
+            }
+
+            let ret = if let Some(ret_ty) = &decl.return_type {
+                match self.resolve_type(ret_ty) {
+                    Ok(ty) => {
+                        if self
+                            .validate_extern_safe_type(&ty, ret_ty.span(), true)
+                            .is_err()
+                        {
+                            continue;
+                        }
+                        Some(ty)
+                    }
+                    Err(()) => continue,
+                }
+            } else {
+                None
+            };
+
+            let wasm_module = decl
+                .module
+                .clone()
+                .expect("extern declarations require an explicit module string");
+
+            let sig = FunctionSignature {
+                name: decl.name.clone(),
+                type_params: vec![],
+                type_param_bounds: HashMap::new(),
+                param_names: decl.params.iter().map(|p| p.name.clone()).collect(),
+                params,
+                ret,
+                doc: None,
+                extern_module: Some(wasm_module),
+            };
+
+            self.value_env.add_function(sig);
+        }
+    }
+
+    fn validate_extern_safe_type(
+        &mut self,
+        ty: &MonoType,
+        span: Span,
+        allow_void: bool,
+    ) -> Result<(), ()> {
+        match ty {
+            MonoType::Int | MonoType::Float | MonoType::Bool | MonoType::String => Ok(()),
+            MonoType::Void if allow_void => Ok(()),
+            _ => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "extern functions only support primitive boundary types",
+                    span,
+                    note: "Allowed extern boundary types are Int, Float, Bool, String, and Void return"
+                        .to_string(),
+                });
+                Err(())
+            }
+        }
+    }
+
     fn resolve_function_sig(&mut self, decl: &FunctionDecl) -> Result<FunctionSignature, ()> {
         let type_params: Vec<String> = decl.type_params.iter().map(|p| p.name.clone()).collect();
         let type_param_bounds: HashMap<String, String> = decl
@@ -378,6 +505,7 @@ impl Resolver {
             params,
             ret,
             doc: decl.doc.clone(),
+            extern_module: None,
         })
     }
 

@@ -157,6 +157,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
             doc: Some("Print a string to stdout followed by a newline.".to_string()),
+            extern_module: None,
         },
         "print" => FunctionSignature {
             name: "print".to_string(),
@@ -166,6 +167,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
             doc: Some("Print a string to stdout without a trailing newline.".to_string()),
+            extern_module: None,
         },
         "eprintln" => FunctionSignature {
             name: "eprintln".to_string(),
@@ -175,6 +177,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
             doc: Some("Print a string to stderr followed by a newline.".to_string()),
+            extern_module: None,
         },
         "eprint" => FunctionSignature {
             name: "eprint".to_string(),
@@ -184,6 +187,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
             doc: Some("Print a string to stderr without a trailing newline.".to_string()),
+            extern_module: None,
         },
         "error" => FunctionSignature {
             name: "error".to_string(),
@@ -193,6 +197,7 @@ fn builtin_value_signature(name: &str) -> Option<FunctionSignature> {
             params: vec![MonoType::String],
             ret: Some(MonoType::Void),
             doc: Some("Abort execution with an error message (trap).".to_string()),
+            extern_module: None,
         },
         _ => return None,
     })
@@ -337,7 +342,7 @@ fn hover_definition_at_offset(
                     return hover_named_value(module, name);
                 }
             }
-            Item::Import(_) | Item::Stmt(_) => {}
+            Item::Import(_) | Item::Stmt(_) | Item::ExternFunction(_) => {}
         }
     }
     None
@@ -545,7 +550,7 @@ fn visit_item_case_pattern_variant<'a>(
     best: &mut Option<CasePatternVariantCandidate<'a>>,
 ) {
     match item {
-        Item::Import(_) | Item::TypeDecl(_) => {}
+        Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => {}
         Item::Function(decl) => {
             for stmt in &decl.body.stmts {
                 visit_stmt_case_pattern_variant(stmt, module, file_id, byte_offset, best);
@@ -787,7 +792,7 @@ fn visit_item_field_access<'a>(
     best: &mut Option<FieldAccessCandidate<'a>>,
 ) {
     match item {
-        Item::Import(_) | Item::TypeDecl(_) => {}
+        Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => {}
         Item::Function(decl) => {
             for stmt in &decl.body.stmts {
                 visit_stmt_field_access(stmt, file_id, byte_offset, best);

@@ -1,7 +1,22 @@
+use std::collections::HashMap;
+
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::syntax::span::Span;
 use crate::types::env::TypeEnv;
 use crate::types::ty::{MonoType, TypeId};
+
+/// Metadata for an extern function declaration (maps to a WASM import).
+#[derive(Debug, Clone)]
+pub struct ExternImport {
+    /// WASM import module name (e.g., "console", "host", "env")
+    pub wasm_module: String,
+    /// WASM import field name (the function name)
+    pub wasm_name: String,
+    /// Parameter types (resolved MonoTypes)
+    pub param_tys: Vec<MonoType>,
+    /// Return type (None = void)
+    pub return_ty: Option<MonoType>,
+}
 
 /// Unique identifier for a local variable within a function
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -205,4 +220,6 @@ pub struct CoreModule {
     pub init_func_id: Option<FuncId>,
     /// All module __init__ FuncIds in dependency order; the interpreter runs these in sequence
     pub all_init_func_ids: Vec<FuncId>,
+    /// Extern function declarations keyed by FuncId.
+    pub extern_imports: HashMap<FuncId, ExternImport>,
 }

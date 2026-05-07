@@ -54,7 +54,7 @@ fn collect_source_file(ast: &SourceFile, entries: &mut Vec<ExprSpanEntry>) {
 
 fn collect_item(item: &Item, entries: &mut Vec<ExprSpanEntry>) {
     match item {
-        Item::Import(_) | Item::TypeDecl(_) => {}
+        Item::Import(_) | Item::TypeDecl(_) | Item::ExternFunction(_) => {}
         Item::Function(decl) => collect_block(&decl.body, entries),
         Item::Stmt(stmt) => collect_stmt(stmt, entries),
     }

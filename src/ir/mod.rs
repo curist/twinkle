@@ -11,8 +11,8 @@ pub mod monomorphize;
 // Re-export commonly used types
 pub use anf::AnfModule;
 pub use core::{
-    CoreExpr, CoreExprKind, CoreModule, CorePattern, FieldId, FuncId, FunctionDef, LocalId,
-    MatchArm, VariantId,
+    CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldId, FuncId, FunctionDef,
+    LocalId, MatchArm, VariantId,
 };
 pub use error::LowerError;
 pub use local_allocator::LocalAllocator;

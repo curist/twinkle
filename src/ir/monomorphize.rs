@@ -1288,6 +1288,7 @@ mod tests {
             type_env: TypeEnv::default(),
             init_func_id: None,
             all_init_func_ids: vec![],
+            extern_imports: HashMap::new(),
         }
     }
 

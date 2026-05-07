@@ -11,6 +11,8 @@
 ; Keywords by semantic role
 "fn" @keyword.function
 
+"extern" @keyword.import
+
 "type" @keyword.type
 
 [ "use" "as" ] @keyword.import
@@ -96,6 +98,16 @@
 
 ; Function definitions - higher priority
 (function_declaration
+  name: (identifier) @function)
+
+(extern_declaration
+  module: (string_literal) @string.special
+  name: (identifier) @function)
+
+(extern_block
+  module: (string_literal) @string.special)
+
+(extern_signature
   name: (identifier) @function)
 
 ; Parameters

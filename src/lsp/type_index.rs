@@ -31,7 +31,7 @@ fn visit_item_types<'a>(
     best: &mut Option<&'a Type>,
 ) {
     match item {
-        Item::Import(_) => {}
+        Item::Import(_) | Item::ExternFunction(_) => {}
         Item::TypeDecl(decl) => visit_type_def(&decl.definition, file_id, byte_offset, best),
         Item::Function(decl) => {
             for param in &decl.params {

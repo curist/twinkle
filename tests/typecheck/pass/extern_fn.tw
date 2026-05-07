@@ -1,0 +1,14 @@
+// Extern function declarations should type-check successfully
+
+extern "console" fn log(msg: String)
+extern "crypto" fn random() Float
+extern "env" fn helper(x: Int, y: Int) Int
+pub extern "host" fn noop()
+
+// Call sites should type-check against the declared signature
+fn main() {
+  log("hello")
+  x := random()
+  y := helper(1, 2)
+  noop()
+}

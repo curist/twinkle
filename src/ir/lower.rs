@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::intrinsics::registry;
 use crate::syntax::ast::{
-    BinOp, Block, CaseArm, Expr, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
-    StringPart,
+    BinOp, Block, CaseArm, Expr, ExprKind, ExternFunctionDecl, FunctionDecl, Item, Literal,
+    Pattern, SourceFile, Stmt, StringPart,
 };
 use crate::syntax::span::Span;
 use crate::types::env::{TypeEnv, ValueEnv};
@@ -16,8 +16,8 @@ use crate::types::type_map::TypeMap;
 use crate::module::artifacts::{ExternalFuncRef, LoweredModule};
 
 use super::core::{
-    CoreExpr, CoreExprKind, CoreModule, CorePattern, FieldId, FuncId, FunctionDef, LocalId,
-    MatchArm, VariantId,
+    CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldId, FuncId, FunctionDef,
+    LocalId, MatchArm, VariantId,
 };
 use super::error::LowerError;
 use super::local_allocator::LocalAllocator;
@@ -229,6 +229,8 @@ pub struct Lowerer {
     /// Return type of the function currently being lowered (for `try Option` desugaring).
     current_fn_return_type: Option<MonoType>,
     current_type_param_bounds: HashMap<String, String>,
+    /// Extern function import metadata keyed by FuncId.
+    extern_imports: HashMap<FuncId, ExternImport>,
 }
 
 const EXTERNAL_FUNC_ID_START: u32 = 1_000_000_000;
@@ -272,6 +274,7 @@ impl Lowerer {
             in_init_context: false,
             current_fn_return_type: None,
             current_type_param_bounds: HashMap::new(),
+            extern_imports: HashMap::new(),
         }
     }
 
@@ -298,6 +301,7 @@ impl Lowerer {
             in_init_context: false,
             current_fn_return_type: None,
             current_type_param_bounds: HashMap::new(),
+            extern_imports: HashMap::new(),
         }
     }
 
@@ -319,26 +323,64 @@ impl Lowerer {
         self.next_global_id = next_id;
     }
 
+    /// Collect extern function metadata for WASM import generation.
+    fn collect_extern_import(&mut self, func_id: FuncId, decl: &ExternFunctionDecl) {
+        let wasm_module = decl
+            .module
+            .clone()
+            .expect("extern declarations require an explicit module string");
+
+        // Resolve parameter types from the value_env signature
+        let sig = self.value_env.get_function(&decl.name);
+        let (param_tys, return_ty) = if let Some(sig) = sig {
+            (sig.params.clone(), sig.ret.clone())
+        } else {
+            // Fallback — shouldn't happen if resolver ran correctly
+            (vec![], None)
+        };
+
+        self.extern_imports.insert(
+            func_id,
+            ExternImport {
+                wasm_module,
+                wasm_name: decl.name.clone(),
+                param_tys,
+                return_ty,
+            },
+        );
+    }
+
     /// Lower a complete source file to Core IR
     pub fn lower_module(mut self, ast: &SourceFile) -> Result<CoreModule, Vec<LowerError>> {
         // Pre-scan: assign stable LocalIds to module-level let bindings
         self.collect_module_globals(ast);
 
-        // First pass: assign FuncIds to all user functions (source order)
+        // First pass: assign FuncIds to all user functions and extern fns (source order)
         // Skip any that are already in the func_table (pre-assigned by context)
         let mut next_func_id = prelude::USER_FUNC_START;
         for item in &ast.items {
-            if let Item::Function(decl) = item {
-                if !self.func_table.contains_key(&decl.name) {
-                    let func_id = FuncId(next_func_id);
-                    self.func_table.insert(decl.name.clone(), func_id);
-                }
-                // Advance counter past any pre-assigned IDs
-                if let Some(existing) = self.func_table.get(&decl.name) {
-                    if existing.0 >= next_func_id {
-                        next_func_id = existing.0 + 1;
+            match item {
+                Item::Function(decl) => {
+                    if !self.func_table.contains_key(&decl.name) {
+                        let func_id = FuncId(next_func_id);
+                        self.func_table.insert(decl.name.clone(), func_id);
+                    }
+                    // Advance counter past any pre-assigned IDs
+                    if let Some(existing) = self.func_table.get(&decl.name) {
+                        if existing.0 >= next_func_id {
+                            next_func_id = existing.0 + 1;
+                        }
                     }
                 }
+                Item::ExternFunction(decl) => {
+                    if !self.func_table.contains_key(&decl.name) {
+                        let func_id = FuncId(next_func_id);
+                        self.func_table.insert(decl.name.clone(), func_id);
+                        next_func_id += 1;
+                        self.collect_extern_import(func_id, decl);
+                    }
+                }
+                _ => {}
             }
         }
         self.next_hoisted_id = next_func_id;
@@ -370,6 +412,7 @@ impl Lowerer {
                 type_env: self.type_env,
                 init_func_id,
                 all_init_func_ids,
+                extern_imports: self.extern_imports,
             })
         } else {
             Err(self.errors)
@@ -390,6 +433,15 @@ impl Lowerer {
     ) -> Result<LoweredModule, Vec<LowerError>> {
         // Pre-scan: assign stable LocalIds to module-level let bindings
         self.collect_module_globals(ast);
+
+        // Collect extern import metadata for pre-assigned extern function FuncIds
+        for item in &ast.items {
+            if let Item::ExternFunction(decl) = item {
+                if let Some(&func_id) = self.func_table.get(&decl.name) {
+                    self.collect_extern_import(func_id, decl);
+                }
+            }
+        }
 
         let mut functions = Vec::new();
         for item in &ast.items {
@@ -417,6 +469,7 @@ impl Lowerer {
                 functions,
                 init_func_id,
                 external_func_refs: self.external_func_refs,
+                extern_imports: self.extern_imports,
                 next_func_id_after: self.next_hoisted_id,
                 next_global_local_id_after: self.next_global_id,
             })

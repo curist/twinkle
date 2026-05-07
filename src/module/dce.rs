@@ -82,7 +82,15 @@ pub fn eliminate_dead_code_with_roots(
         .filter(|f| f.func_id.0 >= prelude::USER_FUNC_START)
         .map(|f| f.func_id)
         .collect();
+    // Include all extern import FuncIds so every declaration is preserved as a
+    // Wasm import, even when it is private or currently unused.
+    for &ext_id in module.extern_imports.keys() {
+        if ext_id.0 >= prelude::USER_FUNC_START {
+            sorted_ids.push(ext_id);
+        }
+    }
     sorted_ids.sort_by_key(|id| id.0);
+    sorted_ids.dedup();
     let mut next_id = prelude::USER_FUNC_START;
     for old_id in sorted_ids {
         while prelude_ids.contains(&next_id) {
@@ -115,6 +123,17 @@ pub fn eliminate_dead_code_with_roots(
             } else {
                 None
             }
+        })
+        .collect();
+
+    // Remap extern imports: keep every declaration so visibility/reachability
+    // does not change the required host import surface.
+    module.extern_imports = module
+        .extern_imports
+        .into_iter()
+        .map(|(id, ext)| {
+            let new_id = old_to_new.get(&id).copied().unwrap_or(id);
+            (new_id, ext)
         })
         .collect();
 
@@ -396,6 +415,7 @@ mod tests {
             type_env: TypeEnv::new(),
             init_func_id,
             all_init_func_ids,
+            extern_imports: HashMap::new(),
         }
     }
 

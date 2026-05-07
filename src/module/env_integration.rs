@@ -100,6 +100,7 @@ mod tests {
                 params: vec![MonoType::Int],
                 ret: Some(MonoType::Int),
                 doc: None,
+                extern_module: None,
             },
         );
         exports
@@ -174,6 +175,7 @@ mod tests {
                 ],
                 ret: Some(MonoType::Vector(Box::new(MonoType::Int))),
                 doc: None,
+                extern_module: None,
             },
         );
         prelude_exports

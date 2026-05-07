@@ -218,6 +218,9 @@ impl TypeChecker {
                 Item::Function(decl) => {
                     checker.check_function(decl);
                 }
+                Item::ExternFunction(_) => {
+                    // No body to type-check; signature already resolved
+                }
                 Item::Stmt(_) => {
                     // Already checked in Pass 1
                 }

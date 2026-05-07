@@ -84,6 +84,8 @@ pub struct Parser {
     pos: usize,
     file_id: FileId,
     next_expr_id: u32,
+    /// Items buffered from extern block desugaring.
+    pending_items: Vec<Item>,
 }
 
 impl Parser {
@@ -93,6 +95,7 @@ impl Parser {
             pos: 0,
             file_id,
             next_expr_id: 0,
+            pending_items: Vec::new(),
         }
     }
 
@@ -153,6 +156,10 @@ impl Parser {
         self.peek_kind() == Some(kind)
     }
 
+    fn peek_preceded_by_newline(&self) -> bool {
+        self.peek().map_or(false, |t| t.preceded_by_newline)
+    }
+
     fn consume_if(&mut self, kind: TokenKind) -> bool {
         if self.peek_is(kind) {
             self.advance();
@@ -178,7 +185,7 @@ impl Parser {
             .unwrap_or_else(|| self.eof_span());
         let mut items = Vec::new();
 
-        while !self.is_eof() {
+        while !self.is_eof() || !self.pending_items.is_empty() {
             items.push(self.parse_item()?);
         }
 
@@ -188,6 +195,7 @@ impl Parser {
                 Item::Import(i) => i.span,
                 Item::TypeDecl(t) => t.span,
                 Item::Function(f) => f.span,
+                Item::ExternFunction(e) => e.span,
                 Item::Stmt(s) => match s {
                     Stmt::Let { span, .. } => *span,
                     Stmt::For { span, .. } => *span,
@@ -207,6 +215,11 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> ParseResult<Item> {
+        // Drain any buffered items from extern block desugaring
+        if !self.pending_items.is_empty() {
+            return Ok(self.pending_items.remove(0));
+        }
+
         // Check for pub modifier
         let is_pub = if self.peek_is(TokenKind::Pub) {
             self.advance();
@@ -224,6 +237,9 @@ impl Parser {
             }
             Some(TokenKind::Type) => Ok(Item::TypeDecl(self.parse_type_decl(is_pub)?)),
             Some(TokenKind::Fn) => Ok(Item::Function(self.parse_function_decl(is_pub)?)),
+            Some(TokenKind::Extern) => Ok(Item::ExternFunction(
+                self.parse_extern_function_decl(is_pub)?,
+            )),
             _ => {
                 if is_pub {
                     // Only let bindings can be `pub` at module scope
@@ -231,7 +247,7 @@ impl Parser {
                         return Ok(Item::Stmt(self.parse_let_stmt(true)?));
                     }
                     return Err(ParseError::unexpected_token(
-                        vec!["fn", "type", "let binding"],
+                        vec!["fn", "type", "extern", "let binding"],
                         self.peek().unwrap(),
                     ));
                 }
@@ -647,6 +663,173 @@ impl Parser {
             body,
             span,
         })
+    }
+
+    fn parse_extern_function_decl(&mut self, is_pub: bool) -> ParseResult<ExternFunctionDecl> {
+        let start = self.expect(TokenKind::Extern)?;
+
+        // Required WASM import module name string literal
+        let module_tok = self.expect(TokenKind::StringLit)?;
+        let module = Some(module_tok.text.clone());
+
+        // Check for grouped block: extern "module" { fn ...; fn ...; }
+        if self.peek_is(TokenKind::LBrace) {
+            return self.parse_extern_block(is_pub, module, start.span);
+        }
+
+        self.expect(TokenKind::Fn)?;
+
+        let name_token = self.expect(TokenKind::Ident)?;
+        let name = name_token.text.clone();
+
+        if name.starts_with(|c: char| c.is_uppercase()) {
+            return Err(ParseError::new(
+                ParseErrorKind::CaseViolation {
+                    kind: "function name",
+                    name,
+                    expected: "a lowercase",
+                },
+                name_token.span,
+            ));
+        }
+
+        // Parameters
+        self.expect(TokenKind::LParen)?;
+        let mut params = Vec::new();
+
+        while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
+            params.push(self.parse_param()?);
+            if !self.peek_is(TokenKind::RParen) {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+
+        let end = self.expect(TokenKind::RParen)?;
+
+        // Optional return type (no body follows, so anything not a newline/EOF is a type)
+        let (return_type, span) = if !self.is_eof()
+            && !self.peek_is(TokenKind::Extern)
+            && !self.peek_is(TokenKind::Fn)
+            && !self.peek_is(TokenKind::Pub)
+            && !self.peek_is(TokenKind::Type)
+            && !self.peek_is(TokenKind::Use)
+            && !self.peek_is(TokenKind::RBrace)
+            && !self.peek_preceded_by_newline()
+        {
+            let ty = self.parse_type()?;
+            let span = start.span.merge(&ty.span());
+            (Some(ty), span)
+        } else {
+            (None, start.span.merge(&end.span))
+        };
+
+        Ok(ExternFunctionDecl {
+            is_pub,
+            module,
+            name,
+            params,
+            return_type,
+            span,
+        })
+    }
+
+    /// Parse `extern "module" { fn a(...) T \n fn b(...) \n }` grouped block.
+    /// Returns the first decl; remaining decls are pushed back as items by the
+    /// caller — actually, we rewrite: the block desugars to multiple ExternFunctionDecls
+    /// but since parse_item returns a single Item, we parse just the first and
+    /// stash the rest. Alternatively, we handle it differently.
+    ///
+    /// Actually, the simplest approach: parse the block and return a single
+    /// ExternFunctionDecl for the first fn, but that loses the others.
+    /// Instead, let's have parse_item handle extern blocks specially by
+    /// returning the first and storing the rest in a buffer.
+    ///
+    /// For now, we'll take a different approach: parse_extern_function_decl
+    /// detects the block case and we handle it in parse_item by collecting
+    /// all items. But since parse_item returns a single Item, we need a
+    /// pending items buffer on the parser.
+    fn parse_extern_block(
+        &mut self,
+        is_pub: bool,
+        module: Option<String>,
+        start_span: Span,
+    ) -> ParseResult<ExternFunctionDecl> {
+        self.expect(TokenKind::LBrace)?;
+
+        // Parse all fn signatures in the block, store extras in pending_items
+        let mut first: Option<ExternFunctionDecl> = None;
+
+        while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
+            self.expect(TokenKind::Fn)?;
+
+            let name_token = self.expect(TokenKind::Ident)?;
+            let name = name_token.text.clone();
+
+            if name.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "function name",
+                        name,
+                        expected: "a lowercase",
+                    },
+                    name_token.span,
+                ));
+            }
+
+            self.expect(TokenKind::LParen)?;
+            let mut params = Vec::new();
+            while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
+                params.push(self.parse_param()?);
+                if !self.peek_is(TokenKind::RParen) {
+                    self.expect(TokenKind::Comma)?;
+                }
+            }
+            let end = self.expect(TokenKind::RParen)?;
+
+            // Optional return type — next meaningful token is either `fn` or `}`
+            let (return_type, fn_span) = if !self.peek_is(TokenKind::Fn)
+                && !self.peek_is(TokenKind::RBrace)
+                && !self.is_eof()
+                && !self.peek_preceded_by_newline()
+            {
+                let ty = self.parse_type()?;
+                let span = start_span.merge(&ty.span());
+                (Some(ty), span)
+            } else {
+                (None, start_span.merge(&end.span))
+            };
+
+            let decl = ExternFunctionDecl {
+                is_pub,
+                module: module.clone(),
+                name,
+                params,
+                return_type,
+                span: fn_span,
+            };
+
+            if first.is_none() {
+                first = Some(decl);
+            } else {
+                self.pending_items.push(Item::ExternFunction(decl));
+            }
+        }
+
+        let end = self.expect(TokenKind::RBrace)?;
+
+        match first {
+            Some(mut decl) => {
+                decl.span = start_span.merge(&end.span);
+                Ok(decl)
+            }
+            None => Err(ParseError::new(
+                ParseErrorKind::UnexpectedToken {
+                    expected: vec!["fn".into()],
+                    found: "}".into(),
+                },
+                end.span,
+            )),
+        }
     }
 
     // Expression parsing with Pratt
@@ -2611,5 +2794,120 @@ foo
             }
             _ => panic!("Expected assignment with range on the right"),
         }
+    }
+
+    // --- extern function declaration tests ---
+
+    fn get_extern_fn(source: &str) -> ExternFunctionDecl {
+        let sf = parse_source(source).unwrap();
+        match &sf.items[0] {
+            Item::ExternFunction(decl) => decl.clone(),
+            other => panic!("Expected ExternFunction, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_extern_fn_requires_module() {
+        let result = parse_source("extern fn helper(x: Int) Int");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extern_fn_with_module() {
+        let decl = get_extern_fn(r#"extern "console" fn log(msg: String)"#);
+        assert!(!decl.is_pub);
+        assert_eq!(decl.module, Some("console".to_string()));
+        assert_eq!(decl.name, "log");
+        assert_eq!(decl.params.len(), 1);
+        assert!(decl.return_type.is_none());
+    }
+
+    #[test]
+    fn test_extern_fn_pub() {
+        let decl = get_extern_fn(r#"pub extern "crypto" fn random() Float"#);
+        assert!(decl.is_pub);
+        assert_eq!(decl.module, Some("crypto".to_string()));
+        assert_eq!(decl.name, "random");
+        assert_eq!(decl.params.len(), 0);
+        assert!(decl.return_type.is_some());
+    }
+
+    #[test]
+    fn test_extern_fn_multiple_params() {
+        let decl = get_extern_fn(r#"extern "math" fn add(a: Int, b: Int) Int"#);
+        assert_eq!(decl.params.len(), 2);
+        assert_eq!(decl.params[0].name, "a");
+        assert_eq!(decl.params[1].name, "b");
+    }
+
+    #[test]
+    fn test_extern_fn_void() {
+        let decl = get_extern_fn(r#"extern "host" fn noop()"#);
+        assert_eq!(decl.module, Some("host".to_string()));
+        assert_eq!(decl.name, "noop");
+        assert_eq!(decl.params.len(), 0);
+        assert!(decl.return_type.is_none());
+    }
+
+    #[test]
+    fn test_extern_block() {
+        let sf = parse_source(
+            r#"extern "canvas" {
+  fn clear()
+  fn draw_rect(x: Float, y: Float, w: Float, h: Float)
+  fn get_width() Int
+}"#,
+        )
+        .unwrap();
+
+        // Should desugar to 3 separate ExternFunction items
+        assert_eq!(sf.items.len(), 3);
+
+        let decl0 = match &sf.items[0] {
+            Item::ExternFunction(d) => d,
+            other => panic!("Expected ExternFunction, got {:?}", other),
+        };
+        assert_eq!(decl0.name, "clear");
+        assert_eq!(decl0.module, Some("canvas".to_string()));
+        assert_eq!(decl0.params.len(), 0);
+
+        let decl1 = match &sf.items[1] {
+            Item::ExternFunction(d) => d,
+            other => panic!("Expected ExternFunction, got {:?}", other),
+        };
+        assert_eq!(decl1.name, "draw_rect");
+        assert_eq!(decl1.params.len(), 4);
+
+        let decl2 = match &sf.items[2] {
+            Item::ExternFunction(d) => d,
+            other => panic!("Expected ExternFunction, got {:?}", other),
+        };
+        assert_eq!(decl2.name, "get_width");
+        assert!(decl2.return_type.is_some());
+    }
+
+    #[test]
+    fn test_extern_block_pub() {
+        let sf = parse_source(
+            r#"pub extern "io" {
+  fn read() String
+  fn write(s: String)
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(sf.items.len(), 2);
+        for item in &sf.items {
+            match item {
+                Item::ExternFunction(d) => assert!(d.is_pub),
+                other => panic!("Expected ExternFunction, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_extern_fn_uppercase_rejected() {
+        let result = parse_source(r#"extern "host" fn BadName()"#);
+        assert!(result.is_err());
     }
 }

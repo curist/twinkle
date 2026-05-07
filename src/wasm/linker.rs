@@ -1,5 +1,5 @@
 use crate::wasm::ir::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct LinkedModuleIR {
@@ -156,6 +156,12 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
     }
 }
 
+/// Returns true if this import module name is an external import (not a Twinkle module).
+/// "host" is always external; user-declared extern modules are in `extern_modules`.
+fn is_external_module(module: &str, extern_modules: &HashSet<String>) -> bool {
+    module == "host" || extern_modules.contains(module)
+}
+
 fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {
     if let ValType::Ref {
         heap: HeapType::Named(ty),
@@ -171,6 +177,16 @@ fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {
 pub fn link(
     modules: Vec<ModuleIR>,
     entry: Option<FuncSym>,
+) -> Result<LinkedModuleIR, Vec<LinkError>> {
+    link_with_extern_modules(modules, entry, &HashSet::new())
+}
+
+/// Link modules, treating `extern_modules` as external import module names
+/// that should pass through without resolution (like "host").
+pub fn link_with_extern_modules(
+    modules: Vec<ModuleIR>,
+    entry: Option<FuncSym>,
+    extern_modules: &HashSet<String>,
 ) -> Result<LinkedModuleIR, Vec<LinkError>> {
     let mut errors: Vec<LinkError> = Vec::new();
 
@@ -222,8 +238,8 @@ pub fn link(
         let mut redirects: HashMap<String, String> = HashMap::new();
 
         for imp in &module.imports {
-            if imp.module == "host" {
-                // Keep host imports — no redirect
+            if is_external_module(&imp.module, extern_modules) {
+                // External import (host, user extern, etc.) — no redirect
                 continue;
             }
             let key = (imp.module.clone(), imp.name.clone());
@@ -243,7 +259,7 @@ pub fn link(
 
         // Also redirect from unqualified import sym to resolved
         for imp in &module.imports {
-            if imp.module == "host" {
+            if is_external_module(&imp.module, extern_modules) {
                 continue;
             }
             let key = (imp.module.clone(), imp.name.clone());
@@ -270,6 +286,7 @@ pub fn link(
     let mut merged_exports: Vec<ExportDef> = Vec::new();
     let mut merged_data: Vec<DataSegment> = Vec::new();
     let mut start_funcs: Vec<FuncSym> = Vec::new();
+    let mut import_defs_by_key: HashMap<(String, String), (FuncSym, FuncSig)> = HashMap::new();
 
     for (mod_idx, module) in modules.into_iter().enumerate() {
         let ns = &module.namespace;
@@ -325,13 +342,40 @@ pub fn link(
             merged_types.push(renamed);
         }
 
-        // Merge host imports (qualified names)
+        // Merge external imports (host, user extern, etc.) with qualified names.
+        // Deduplicate by (module, name) so runtime imports and user externs can
+        // share one Wasm import slot when their signatures agree.
+        let mut external_import_aliases: HashMap<String, String> = HashMap::new();
         for imp in module.imports {
-            if imp.module != "host" {
+            if !is_external_module(&imp.module, extern_modules) {
+                // Inter-module import — already resolved via redirects
                 continue;
             }
+
+            let qualified_sym = qualify(ns, &imp.as_sym);
+            let key = (imp.module.clone(), imp.name.clone());
+            let sig = FuncSig {
+                params: imp.params.clone(),
+                results: imp.results.clone(),
+            };
+
+            if let Some((canonical_sym, canonical_sig)) = import_defs_by_key.get(&key) {
+                if canonical_sig != &sig {
+                    errors.push(LinkError::TypeMismatch {
+                        sym: format!("{}.{}", imp.module, imp.name),
+                        expected: canonical_sig.clone(),
+                        got: sig,
+                    });
+                    continue;
+                }
+                external_import_aliases.insert(imp.as_sym.clone(), canonical_sym.clone());
+                external_import_aliases.insert(qualified_sym, canonical_sym.clone());
+                continue;
+            }
+
+            import_defs_by_key.insert(key, (qualified_sym.clone(), sig));
             merged_imports.push(ImportDef {
-                as_sym: qualify(ns, &imp.as_sym),
+                as_sym: qualified_sym,
                 ..imp
             });
         }
@@ -344,6 +388,9 @@ pub fn link(
         }
         for (k, v) in redirects {
             combined.insert(k.clone(), v.clone());
+        }
+        for (k, v) in external_import_aliases {
+            combined.insert(k, v);
         }
 
         // Merge funcs
@@ -430,6 +477,10 @@ pub fn link(
         }
     }
 
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
     // Synthesize __linked_init if there are start functions or an entry point
     let final_start = if !start_funcs.is_empty() || entry.is_some() {
         let mut init_body: Vec<Instr> = start_funcs.into_iter().map(|s| Instr::Call(s)).collect();
@@ -459,4 +510,75 @@ pub fn link(
         data: merged_data,
         start: final_start,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn module_with_import(
+        ns: &str,
+        module: &str,
+        name: &str,
+        as_sym: &str,
+        params: Vec<ValType>,
+    ) -> ModuleIR {
+        let mut m = ModuleIR::new(ns);
+        m.imports.push(ImportDef {
+            module: module.to_string(),
+            name: name.to_string(),
+            as_sym: as_sym.to_string(),
+            params,
+            results: Vec::new(),
+        });
+        m.funcs.push(FuncDef {
+            name: "call_import".to_string(),
+            params: Vec::new(),
+            results: Vec::new(),
+            locals: Vec::new(),
+            body: vec![Instr::Call(as_sym.to_string())],
+        });
+        m
+    }
+
+    #[test]
+    fn deduplicates_matching_external_imports() {
+        let extern_modules = HashSet::from(["canvas".to_string()]);
+        let linked = link_with_extern_modules(
+            vec![
+                module_with_import("a", "canvas", "clear", "clear_a", Vec::new()),
+                module_with_import("b", "canvas", "clear", "clear_b", Vec::new()),
+            ],
+            None,
+            &extern_modules,
+        )
+        .expect("link should deduplicate matching imports");
+
+        assert_eq!(linked.imports.len(), 1);
+        assert_eq!(linked.imports[0].module, "canvas");
+        assert_eq!(linked.imports[0].name, "clear");
+        let canonical = linked.imports[0].as_sym.clone();
+        assert!(
+            linked
+                .funcs
+                .iter()
+                .any(|f| f.body == vec![Instr::Call(canonical.clone())])
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_external_import_signatures() {
+        let extern_modules = HashSet::from(["canvas".to_string()]);
+        let err = link_with_extern_modules(
+            vec![
+                module_with_import("a", "canvas", "clear", "clear_a", Vec::new()),
+                module_with_import("b", "canvas", "clear", "clear_b", vec![ValType::I64]),
+            ],
+            None,
+            &extern_modules,
+        )
+        .expect_err("conflicting imports should fail");
+
+        assert!(matches!(err.as_slice(), [LinkError::TypeMismatch { .. }]));
+    }
 }

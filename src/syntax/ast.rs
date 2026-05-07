@@ -17,6 +17,7 @@ pub enum Item {
     Import(ImportDecl),
     TypeDecl(TypeDecl),
     Function(FunctionDecl),
+    ExternFunction(ExternFunctionDecl),
     Stmt(Stmt),
 }
 
@@ -120,6 +121,17 @@ pub struct FunctionDecl {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// Extern function declaration (no body — maps to a WASM import)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFunctionDecl {
+    pub is_pub: bool,
+    pub module: Option<String>, // WASM import module; parser requires Some
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
     pub span: Span,
 }
 

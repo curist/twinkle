@@ -123,6 +123,33 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             writeln!(out).unwrap();
             print_block(&decl.body, out, indent + 2);
         }
+        Item::ExternFunction(decl) => {
+            write!(out, "{}ExternFunction", prefix).unwrap();
+            if decl.is_pub {
+                write!(out, " (pub)").unwrap();
+            }
+            if let Some(ref module) = decl.module {
+                write!(out, " [module={}]", module).unwrap();
+            }
+            write!(out, ": {}", decl.name).unwrap();
+            write!(out, "(").unwrap();
+            for (i, param) in decl.params.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ", ").unwrap();
+                }
+                write!(out, "{}", param.name).unwrap();
+                if let Some(ty) = &param.ty {
+                    write!(out, ": ").unwrap();
+                    print_type(ty, out);
+                }
+            }
+            write!(out, ")").unwrap();
+            if let Some(ret) = &decl.return_type {
+                write!(out, " -> ").unwrap();
+                print_type(ret, out);
+            }
+            writeln!(out).unwrap();
+        }
         Item::Stmt(stmt) => {
             print_stmt(stmt, out, indent);
         }

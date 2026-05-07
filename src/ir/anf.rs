@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ir::core::{CorePattern, FieldId, FuncId, LocalId, VariantId};
+use crate::ir::core::{CorePattern, ExternImport, FieldId, FuncId, LocalId, VariantId};
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::ty::{MonoType, TypeId};
 
@@ -207,6 +207,8 @@ pub struct AnfModule {
     pub init_func_id: Option<FuncId>,
     /// All module `__init__` FuncIds in dependency order.
     pub all_init_func_ids: Vec<FuncId>,
+    /// Extern function declarations keyed by FuncId.
+    pub extern_imports: HashMap<FuncId, ExternImport>,
 }
 
 // ── Display implementations ──────────────────────────────────────────────────

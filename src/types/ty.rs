@@ -338,6 +338,9 @@ pub struct FunctionSignature {
     pub params: Vec<MonoType>,
     pub ret: Option<MonoType>, // None means infer from body
     pub doc: Option<String>,
+    /// If this is an extern function, the WASM import module name.
+    /// None for regular (body-having) functions.
+    pub extern_module: Option<String>,
 }
 
 /// Apply meta-variable substitution to a type (zonking).

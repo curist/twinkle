@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::ir::core::{FuncId, FunctionDef};
+use crate::ir::core::{ExternImport, FuncId, FunctionDef};
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::type_map::TypeMap;
 
@@ -34,6 +34,7 @@ pub struct LoweredModule {
     pub functions: Vec<FunctionDef>,
     pub init_func_id: Option<FuncId>,
     pub external_func_refs: HashMap<FuncId, ExternalFuncRef>,
+    pub extern_imports: HashMap<FuncId, ExternImport>,
     pub next_func_id_after: u32,
     pub next_global_local_id_after: u32,
 }

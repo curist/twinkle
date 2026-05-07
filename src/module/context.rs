@@ -154,6 +154,7 @@ impl CompileState {
                 params: sig.params.clone(),
                 ret: sig.ret.clone(),
                 doc: sig.doc.clone(),
+                extern_module: sig.extern_module.clone(),
             };
             self.value_env.add_function(qualified_sig);
 
@@ -210,6 +211,7 @@ impl CompileState {
                                 params: sig.params.clone(),
                                 ret: sig.ret.clone(),
                                 doc: sig.doc.clone(),
+                                extern_module: sig.extern_module.clone(),
                             };
                             self.value_env.add_function(builtin_sig);
                             if let Some(&func_id) = exports.public_func_ids.get(func_name) {
@@ -279,6 +281,7 @@ impl CompileState {
                             params: sig.params.clone(),
                             ret: sig.ret.clone(),
                             doc: sig.doc.clone(),
+                            extern_module: sig.extern_module.clone(),
                         };
                         self.value_env.add_function(unq_sig);
 
@@ -393,6 +396,7 @@ impl CompileState {
                 params: sig.params.clone(),
                 ret: sig.ret.clone(),
                 doc: sig.doc.clone(),
+                extern_module: sig.extern_module.clone(),
             };
             self.value_env.add_function(builtin_sig);
 
