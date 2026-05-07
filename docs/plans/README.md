@@ -50,16 +50,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
 | LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
 
-### Boot Compiler Refactor Plans
-
-These plans capture focused refactors identified from the current boot compiler.
-They are intentionally separated so performance-oriented work can proceed without
-blocking lower-risk maintainability cleanup.
-
-| Plan | Status | Impact | Difficulty | Description |
-|------|--------|--------|------------|-------------|
-| [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Planned | Medium | High | Decompose large parser/checker/lowerer/emitter files after shared helpers stabilize |
-
 ### Language Features
 
 | Plan | Description | Status |

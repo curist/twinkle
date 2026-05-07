@@ -1,0 +1,79 @@
+// String interpolation lowering.
+
+use lib.source.span.{Span}
+use compiler.ast.{Expr, StringPart}
+use compiler.resolver.{MonoType}
+use compiler.core_ir.{CoreExpr}
+use compiler.lower_core.context.{LowerCtx, ExprOut}
+
+pub fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  str_ty := MonoType.String
+  cur_ctx := ctx
+  str_parts: Vector<CoreExpr> = []
+  for part in parts {
+    case part {
+      .Literal(text) => {
+        str_parts = str_parts.append(.{ kind: .LitStr(text), ty: str_ty, span: s })
+      },
+      .Interpolation(expr) => {
+        r := lower_expr_fn(cur_ctx, expr)
+        cur_ctx = r.ctx
+        part_ty := cur_ctx.expr_type(expr)
+        str_expr : CoreExpr = case part_ty {
+          .String => r.expr,
+          _ => {
+            case cur_ctx.method_calls[expr.id] {
+              .Some(info) => {
+                case info.contract {
+                  .Some(contract) => .{ kind: .ContractCall(contract, info.method_name, r.expr, []), ty: str_ty, span: s },
+                  .None => {
+                    fid := case cur_ctx.func_table[info.func_name] {
+                      .Some(id) => id,
+                      .None => cur_ctx.builtins.id("string_to_string"),
+                    }
+                    .{
+                      kind: .Call(
+                        .{ kind: .GlobalFunc(fid), ty: .Void, span: s },
+                        [r.expr],
+                      ),
+                      ty: str_ty,
+                      span: s,
+                    }
+                  },
+                }
+              },
+              .None => .{
+                kind: .Call(
+                  .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")), ty: .Void, span: s },
+                  [r.expr],
+                ),
+                ty: str_ty,
+                span: s,
+              },
+            }
+          },
+        }
+        str_parts = str_parts.append(str_expr)
+      },
+    }
+  }
+
+  // Fold parts with string_concat: left-fold
+  if str_parts.len() == 0 {
+    return .{ expr: .{ kind: .LitStr(""), ty: str_ty, span: s }, ctx: cur_ctx }
+  }
+  acc := str_parts[0]
+  i := 1
+  for i < str_parts.len() {
+    acc = .{
+      kind: .Call(
+        .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_concat")), ty: .Void, span: s },
+        [acc, str_parts[i]],
+      ),
+      ty: str_ty,
+      span: s,
+    }
+    i = i + 1
+  }
+  .{ expr: acc, ctx: cur_ctx }
+}

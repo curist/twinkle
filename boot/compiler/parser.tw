@@ -6,6 +6,7 @@ use .tokens.{Token, TokenKind}
 use .lexer
 use .cursor
 use .cursor.{Cursor}
+use .parser.literals.{parse_int_literal, parse_float_literal}
 use .ast.{
   Item, UseDecl, FunctionDecl, Param, TypeDecl, Module,
   ImportItem, ImportValueItem, ImportTypeItem,
@@ -1532,83 +1533,7 @@ fn parse_unary_op(c: Cursor, op: UnOp) ExprParse {
   .{ value: expr, cursor: parsed_rhs.cursor, diagnostics: parsed_rhs.diagnostics }
 }
 
-// ── Numeric literal parsing ─────────────────────────────────────────
-
-fn parse_hex(s: String) Int {
-  result := 0
-  i := 2  // skip "0x" or "0X"
-  for i < s.len() {
-    b := s[i]
-    digit := if b >= 0x30 and b <= 0x39 {
-      b.to_int() - 0x30
-    } else if b >= 0x41 and b <= 0x46 {
-      b.to_int() - 0x41 + 10
-    } else if b >= 0x61 and b <= 0x66 {
-      b.to_int() - 0x61 + 10
-    } else {
-      0
-    }
-    result = result * 16 + digit
-    i = i + 1
-  }
-  result
-}
-
-fn parse_int_literal(raw: String) Int {
-  if raw.starts_with("0x") or raw.starts_with("0X") {
-    return parse_hex(raw)
-  }
-  result := 0
-  neg := false
-  start := 0
-  if raw.starts_with("-") {
-    neg = true
-    start = 1
-  }
-  i := start
-  for i < raw.len() {
-    ch := raw.slice(i, i + 1)
-    if ch == "_" {
-      i = i + 1
-      continue
-    }
-    result = result * 10 + (raw[i].to_int() - 0x30)
-    i = i + 1
-  }
-  if neg { 0 - result } else { result }
-}
-
-fn parse_float_literal(raw: String) Float {
-  int_part := 0.0
-  frac_part := 0.0
-  frac_div := 1.0
-  in_frac := false
-  neg := false
-  i := 0
-  if raw.starts_with("-") {
-    neg = true
-    i = 1
-  }
-  for i < raw.len() {
-    ch := raw.slice(i, i + 1)
-    if ch == "." {
-      in_frac = true
-    } else if ch == "_" {
-      // skip
-    } else {
-      digit := (raw[i].to_int() - 0x30).to_float()
-      if in_frac {
-        frac_div = frac_div * 10.0
-        frac_part = frac_part + digit / frac_div
-      } else {
-        int_part = int_part * 10.0 + digit
-      }
-    }
-    i = i + 1
-  }
-  result := int_part + frac_part
-  if neg { 0.0 - result } else { result }
-}
+// ── Prefix expression parsing ──────────────────────────────────────
 
 fn parse_prefix(c: Cursor) ExprParse {
   diagnostics_out: Vector<Diagnostic> = []

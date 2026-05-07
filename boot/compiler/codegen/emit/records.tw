@@ -1,0 +1,100 @@
+// Record emission helpers.
+
+use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{FieldId}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedFieldAtom}
+use compiler.codegen.wasm_ir.{ValType, Instr}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.emit.context.{EmitCtx}
+use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.emit.layout_helpers.{record_layout_of_ctx, find_field_index}
+use compiler.codegen.emit.coercions.{emit_coerce_stack}
+
+pub type RecordEmitFns = .{
+  emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
+  atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
+  atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
+  require_typed_record_atom: fn(PreparedAtom, EmitCtx, String) MonoType,
+}
+
+pub fn emit_record_literal(tid: TypeId, fields: Vector<PreparedFieldAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: RecordEmitFns) Vector<Instr> {
+  rec_layout := record_layout_of_ctx(result_mono, ctx)
+  sym := rec_layout.sym
+
+  // Emit fields in order of the struct definition
+  out := buf
+  for fl in rec_layout.fields {
+    found := false
+    for fa in fields {
+      if fa.field.id == fl.field_id.id {
+        out = fns.emit_atom(fa.value, ctx, out)
+        out = emit_coerce_stack(fns.atom_val_type(fa.value, ctx), fl.val_type, fns.atom_mono(fa.value, ctx), ctx, out)
+        found = true
+      }
+    }
+    if !found {
+      out = emit_default_value(fl.val_type, out)
+    }
+  }
+  out.append(.StructNew(sym))
+}
+
+pub fn emit_record_get(target: PreparedAtom, fid: FieldId, tid: TypeId, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: RecordEmitFns) Vector<Instr> {
+  // Determine the record type from the target atom's mono type.
+  // Dead/impossible branches can leave a pattern-bound local typed as Void;
+  // in that case emit an arbitrary default of the requested result type.
+  target_mono := fns.require_typed_record_atom(target, ctx, "emit_record_get")
+  case target_mono {
+    .Void => emit_default_value(val_type_of_mono(result_mono, ctx.env), buf),
+    _ => {
+      rec := record_layout_of_ctx(target_mono, ctx)
+      field_idx := find_field_index(rec, fid)
+      fns.emit_atom(target, ctx, buf).append(.StructGet(rec.sym, field_idx))
+    },
+  }
+}
+
+pub fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: RecordEmitFns) Vector<Instr> {
+  base_mono := fns.require_typed_record_atom(base, ctx, "emit_record_update")
+  case base_mono {
+    .Void => {
+      rec := record_layout_of_ctx(result_mono, ctx)
+      for fl in rec.fields {
+        if fl.field_id.id == fid.id {
+          buf = fns.emit_atom(value, ctx, buf)
+          buf = emit_coerce_stack(fns.atom_val_type(value, ctx), fl.val_type, fns.atom_mono(value, ctx), ctx, buf)
+        } else {
+          buf = emit_default_value(fl.val_type, buf)
+        }
+      }
+      return buf.append(.StructNew(rec.sym))
+    },
+    _ => {},
+  }
+
+  rec := record_layout_of_ctx(base_mono, ctx)
+  field_idx := find_field_index(rec, fid)
+
+  field_vt := rec.fields[field_idx].val_type
+  if can_reuse {
+    // In-place update: struct.set then return same ref
+    buf = fns.emit_atom(base, ctx, buf)      // struct ref for StructSet
+    buf = fns.emit_atom(value, ctx, buf)    // new field value
+    buf = emit_coerce_stack(fns.atom_val_type(value, ctx), field_vt, fns.atom_mono(value, ctx), ctx, buf)
+    buf = buf.append(.StructSet(rec.sym, field_idx))
+    // Return the mutated struct
+    fns.emit_atom(base, ctx, buf)
+  } else {
+    // Copy: build new struct with all fields from base, except the updated one
+    for fl,i in rec.fields {
+      if fl.field_id.id == fid.id {
+        buf = fns.emit_atom(value, ctx, buf)
+        buf = emit_coerce_stack(fns.atom_val_type(value, ctx), fl.val_type, fns.atom_mono(value, ctx), ctx, buf)
+      } else {
+        buf = fns.emit_atom(base, ctx, buf)
+        buf = buf.append(.StructGet(rec.sym, i))
+      }
+    }
+    buf.append(.StructNew(rec.sym))
+  }
+}

@@ -1,0 +1,79 @@
+// Stack value coercion helpers for Wasm emission.
+
+use compiler.resolver.{MonoType}
+use compiler.core_ir.{FuncId}
+use compiler.codegen.wasm_ir.{ValType, Instr, AbiContract}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.wasm_type_util.{val_type_eq, heap_type_eq}
+use compiler.codegen.emit.context.{EmitCtx}
+use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_unbox_from_anyref}
+
+pub fn emit_coerce_stack(from: ValType, to: ValType, mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  if val_type_eq(from, to) { return buf }
+  case to {
+    .Anyref => { return emit_box_to_anyref(mono, ctx.env, buf) },
+    _ => {},
+  }
+  case from {
+    .Anyref => { return emit_unbox_from_anyref(mono, ctx.env, buf) },
+    _ => {},
+  }
+  case from {
+    .I32 => {
+      case to {
+        .I64 => { return buf.append(.I64ExtendI32S) },
+        _ => {},
+      }
+    },
+    .I64 => {
+      case to {
+        .I32 => { return buf.append(.I32WrapI64) },
+        _ => {},
+      }
+    },
+    .Ref(false, from_heap) => {
+      case to {
+        .Ref(true, to_heap) => {
+          if heap_type_eq(from_heap, to_heap) { return buf }
+        },
+        _ => {},
+      }
+    },
+    .Ref(true, from_heap) => {
+      case to {
+        .Ref(false, to_heap) => {
+          if heap_type_eq(from_heap, to_heap) { return buf.append(.RefAsNonNull) }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  case from {
+    .Ref(_, _) => {
+      case to {
+        .Ref(nullable, heap) => { return buf.append(.RefCast(nullable, heap)) },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+  buf
+}
+
+pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+  abi_opt: AbiContract? = case ctx.builtins.by_id[fid.id] {
+    .Some(entry) => .Some(entry.abi),
+    .None => .None,
+  }
+  case abi_opt {
+    .Some(abi) => {
+      if abi.result_types.len() == 1 {
+        emit_coerce_stack(abi.result_types[0], val_type_of_mono(result_mono, ctx.env), result_mono, ctx, [])
+      } else {
+        []
+      }
+    },
+    .None => [],
+  }
+}

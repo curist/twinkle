@@ -1,0 +1,23 @@
+// Default-value instruction helpers for Wasm emission.
+
+use compiler.codegen.wasm_ir.{ValType, Instr}
+
+pub fn emit_default_value(vt: ValType, buf: Vector<Instr>) Vector<Instr> {
+  case vt {
+    .I32 => buf.append(.I32Const(0)),
+    .I64 => buf.append(.I64Const(0)),
+    .F64 => buf.append(.F64Const(0.0)),
+    .Anyref => buf.append(.RefNull(.None_)),
+    .I31ref => buf.append(.I32Const(0)).append(.RefI31),
+    .Funcref => buf.append(.RefNull(.Func)),
+    .Ref(nullable, heap) => {
+      if nullable { buf.append(.RefNull(heap)) }
+      else {
+        // Non-nullable ref: can't produce a default. Use ref.null + cast
+        // (This will trap at runtime if actually used — only valid for dead code paths)
+        buf.append(.RefNull(heap)).append(.RefAsNonNull)
+      }
+    },
+    .I8 => buf.append(.I32Const(0)),
+  }
+}

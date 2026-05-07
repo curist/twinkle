@@ -1,0 +1,57 @@
+// Shared context types and lookup helpers for Wasm emission.
+
+use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.core_ir.{LocalId, FuncId}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
+
+pub type LocalEntry = .{
+  index: Int,
+  val_type: ValType,
+  mono: MonoType,
+  repr: ReprKind,
+  source_local: LocalId,
+}
+
+pub type LabelPair = .{
+  break_label: String,
+  continue_label: String,
+}
+
+pub type EmitCtx = .{
+  registry: WasmTypeRegistry,
+  builtins: BuiltinRegistry,
+  env: ResolvedEnv,
+  local_map: Dict<Int, LocalEntry>,  // SlotId.id → LocalEntry
+  next_local: Int,
+  wasm_locals: Vector<ValType>,       // additional locals (beyond params)
+  label_stack: Vector<LabelPair>,
+  current_func_id: FuncId?,
+  func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
+  prepared_funcs: Dict<Int, PreparedFunc>,
+  init_func_id: FuncId?,
+  loop_depth: Int,
+}
+
+pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {
+  case ctx.current_func_id {
+    .Some(fid) => ctx.prepared_funcs[fid.id],
+    .None => .None,
+  }
+}
+
+pub fn lookup_slot(ctx: EmitCtx, sid: SlotId) LocalEntry {
+  case ctx.local_map[sid.id] {
+    .Some(entry) => entry,
+    .None => error("lookup_slot: unknown SlotId S${sid.id}"),
+  }
+}
+
+pub fn lookup_func_sym(map: Dict<Int, String>, fid: FuncId) String {
+  case map[fid.id] {
+    .Some(sym) => sym,
+    .None => error("lookup_func_sym: unknown FuncId ${fid.id}"),
+  }
+}

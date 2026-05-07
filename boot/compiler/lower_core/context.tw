@@ -1,0 +1,145 @@
+// Lowering context and context-local helpers.
+
+use lib.source.span.{Span}
+use lib.source.diagnostic.{Diagnostic}
+use lib.source.diagnostic as diag
+use compiler.ast.{Expr}
+use compiler.resolver.{MonoType, ResolvedEnv, FunctionOrigin}
+use compiler.checker.{CheckResult, MethodCallInfo}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{CoreExpr, FunctionDef, LocalId, FuncId}
+
+pub type LowerCtx = .{
+  type_map: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  func_table: Dict<String, FuncId>,
+  locals: Vector<Dict<String, LocalId>>,
+  next_local: Int,
+  next_func: Int,
+  hoisted: Vector<FunctionDef>,
+  module_globals: Dict<String, LocalId>,
+  next_global: Int,
+  current_fn_return_type: MonoType?,
+  errors: Vector<Diagnostic>,
+  method_calls: Dict<Int, MethodCallInfo>,
+  // Imported phantom FuncId → canonical defining-site origin.
+  // Built during lower_module; consumed by module_compiler to build external_refs.
+  imported_func_origins: Dict<Int, FunctionOrigin>,
+  // Cache: serialized origin key → FuncId, for deduplicating phantom FuncIds.
+  origin_cache: Dict<String, FuncId>,
+}
+
+pub type ExprOut = .{ expr: CoreExpr, ctx: LowerCtx }
+pub type LocalOut = .{ local: LocalId, ctx: LowerCtx }
+pub type FuncIdOut = .{ func_id: FuncId, ctx: LowerCtx }
+
+pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
+  func_table: Dict<String, FuncId> = Dict.new()
+  for entry in reg.entries {
+    func_table[entry.name] = entry.func_id
+    if entry.name.starts_with("host_") {
+      func_table["__${entry.name}"] = entry.func_id
+    }
+  }
+  .{
+    type_map: check_result.type_map,
+    env: check_result.env,
+    builtins: reg,
+    func_table: func_table,
+    locals: [Dict.new()],
+    next_local: 0,
+    next_func: reg.next_id,
+    hoisted: [],
+    module_globals: Dict.new(),
+    next_global: 0,
+    current_fn_return_type: .None,
+    errors: [],
+    method_calls: check_result.method_calls,
+    imported_func_origins: Dict.new(),
+    origin_cache: Dict.new(),
+  }
+}
+
+pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
+  id := LocalId.{ id: ctx.next_local }
+  ctx.next_local = ctx.next_local + 1
+  scope_idx := ctx.locals.len() - 1
+  scope := ctx.locals[scope_idx]
+  scope[name] = id
+  case ctx.locals.set(scope_idx, scope) {
+    .Some(new_locals) => { ctx.locals = new_locals },
+    .None => {},
+  }
+  LocalOut.{ local: id, ctx }
+}
+
+pub fn alloc_anon_local(ctx: LowerCtx) LocalOut {
+  id := LocalId.{ id: ctx.next_local }
+  ctx.next_local = ctx.next_local + 1
+  LocalOut.{ local: id, ctx }
+}
+
+pub fn alloc_func_id(ctx: LowerCtx) FuncIdOut {
+  id := FuncId.{ id: ctx.next_func }
+  ctx.next_func = ctx.next_func + 1
+  FuncIdOut.{ func_id: id, ctx }
+}
+
+pub fn push_scope(ctx: LowerCtx) LowerCtx {
+  ctx.locals = ctx.locals.append(Dict.new())
+  ctx
+}
+
+pub fn pop_scope(ctx: LowerCtx) LowerCtx {
+  ctx.locals = ctx.locals.slice(0, ctx.locals.len() - 1)
+  ctx
+}
+
+pub fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
+  i := ctx.locals.len() - 1
+  for _ in 0..ctx.locals.len() {
+    case ctx.locals[i][name] {
+      .Some(id) => { return .Some(id) },
+      .None => {},
+    }
+    i = i - 1
+  }
+  .None
+}
+
+// Lookup a local or module global — used for lvalue assign targets.
+pub fn lookup_local_or_global(ctx: LowerCtx, name: String) LocalId? {
+  case ctx.lookup_local(name) {
+    .Some(id) => .Some(id),
+    .None => case ctx.module_globals[name] {
+      .Some(id) => .Some(id),
+      .None => .None,
+    },
+  }
+}
+
+pub fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
+  case ctx.func_table[name] {
+    .Some(id) => .Some(id),
+    .None => {
+      if name.starts_with("__host_") {
+        ctx.func_table[name.slice(2, name.len())]
+      } else {
+        .None
+      }
+    },
+  }
+}
+
+pub fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
+  case ctx.type_map[expr.id] {
+    .Some(ty) => ty,
+    .None => .Void,
+  }
+}
+
+pub fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
+  ctx.errors = ctx.errors.append(diag.error(s, msg))
+  ctx
+}

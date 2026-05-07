@@ -1,0 +1,249 @@
+// Type-shape helpers shared by Core lowering routines.
+
+use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeParam}
+
+pub fn find_field_index(env: ResolvedEnv, tid: TypeId, field_name: String) Int {
+  find_field_index_in_type(env, .Named(tid, []), field_name)
+}
+
+pub fn find_field_index_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) Int {
+  case ty {
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record(_, _, fields) => {
+              for i in 0..fields.len() {
+                if fields[i].name == field_name {
+                  return i
+                }
+              }
+              -1
+            },
+            .Alias(_, type_params, target) => {
+              expanded := subst_vars(target, build_var_map(type_params, args))
+              find_field_index_in_type(env, expanded, field_name)
+            },
+            _ => -1,
+          }
+        },
+        .None => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+pub fn find_field_type(env: ResolvedEnv, tid: TypeId, field_name: String) MonoType {
+  find_field_type_in_type(env, .Named(tid, []), field_name)
+}
+
+pub fn find_field_type_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) MonoType {
+  case ty {
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record(_, type_params, fields) => {
+              var_map := build_var_map(type_params, args)
+              for f in fields {
+                if f.name == field_name {
+                  return subst_vars(f.ty, var_map)
+                }
+              }
+              .Void
+            },
+            .Alias(_, type_params, target) => {
+              expanded := subst_vars(target, build_var_map(type_params, args))
+              find_field_type_in_type(env, expanded, field_name)
+            },
+            _ => .Void,
+          }
+        },
+        .None => .Void,
+      }
+    },
+    _ => .Void,
+  }
+}
+
+pub fn find_variant_index(env: ResolvedEnv, tid: TypeId, variant_name: String) Int {
+  case env.lookup_type_def(tid) {
+    .Some(def) => {
+      case def {
+        .Sum(_, _, variants) => {
+          for i in 0..variants.len() {
+            if variants[i].name == variant_name {
+              return i
+            }
+          }
+          -1
+        },
+        _ => -1,
+      }
+    },
+    .None => -1,
+  }
+}
+
+pub fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
+  case env.lookup_type(name) {
+    .Some(entry) => {
+      // Follow type aliases to the canonical record TypeId
+      case entry.def {
+        .Some(def) => {
+          case def {
+            .Alias(_, _, target_ty) => {
+              case target_ty {
+                .Named(tid, _) => .Some(tid),
+                _ => .Some(entry.id),
+              }
+            },
+            _ => .Some(entry.id),
+          }
+        },
+        .None => .Some(entry.id),
+      }
+    },
+    .None => .None,
+  }
+}
+
+// Resolve variant index for any MonoType (including builtin Optional/Result).
+pub fn variant_index(ty: MonoType, name: String, env: ResolvedEnv) Int {
+  case ty {
+    .Optional(_) => {
+      if name == "None" { 0 } else if name == "Some" { 1 } else { -1 }
+    },
+    .Result(_, _) => {
+      if name == "Ok" { 0 } else if name == "Err" { 1 } else { -1 }
+    },
+    .Named(tid, _) => find_variant_index(env, tid, name),
+    _ => -1,
+  }
+}
+
+pub fn type_id_from_mono(ty: MonoType) TypeId? {
+  case ty {
+    .Named(tid, _) => .Some(tid),
+    .Optional(_) => .Some(TypeId.{ id: 0 }),
+    .Result(_, _) => .Some(TypeId.{ id: 1 }),
+    _ => .None,
+  }
+}
+
+pub fn build_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+  m: Dict<String, MonoType> = Dict.new()
+  for i in 0..type_params.len() {
+    if i < type_args.len() { m[type_params[i].name] = type_args[i] }
+  }
+  m
+}
+
+pub fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      case var_map[name] {
+        .Some(replacement) => replacement,
+        .None => ty,
+      }
+    },
+    .Vector(inner) => .Vector(subst_vars(inner, var_map)),
+    .Dict(k, v) => .Dict(subst_vars(k, var_map), subst_vars(v, var_map)),
+    .Function(params, ret) => {
+      inst_params := collect p in params { subst_vars(p, var_map) }
+      .Function(inst_params, subst_vars(ret, var_map))
+    },
+    .Optional(inner) => .Optional(subst_vars(inner, var_map)),
+    .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
+    .Named(tid, args) => {
+      inst_args := collect a in args { subst_vars(a, var_map) }
+      .Named(tid, inst_args)
+    },
+    _ => ty,
+  }
+}
+
+// Extract variant field types for Option/Result given the MonoType.
+// User-defined sums go through the env; builtins have hard-coded field types.
+pub fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<MonoType> {
+  case ty {
+    .Optional(inner) => {
+      if name == "Some" { return [inner] }
+      []
+    },
+    .Result(ok_ty, err_ty) => {
+      if name == "Ok" { return [ok_ty] }
+      if name == "Err" { return [err_ty] }
+      []
+    },
+    .Named(tid, type_args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Sum(_, type_params, variants) => {
+              for v in variants {
+                if v.name == name {
+                  var_map := build_var_map(type_params, type_args)
+                  return collect ft in v.fields { subst_vars(ft, var_map) }
+                }
+              }
+              []
+            },
+            _ => [],
+          }
+        },
+        .None => [],
+      }
+    },
+    _ => [],
+  }
+}
+
+pub fn iter_elem_type(ty: MonoType, env: ResolvedEnv) MonoType {
+  expanded := expand_alias_for_iter(ty, env, 0)
+  case expanded {
+    .Vector(elem) => elem,
+    .String => .Byte,
+    .Dict(key, _) => key,
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Record("Range", _, _) => .Int,
+            .Record("Iterator", _, _) => {
+              if args.len() > 0 { args[0] } else { .Void }
+            },
+            .Sum("Iterator", _, _) => {
+              if args.len() > 0 { args[0] } else { .Void }
+            },
+            _ => .Void,
+          }
+        },
+        .None => .Void,
+      }
+    },
+    _ => .Void,
+  }
+}
+
+pub fn expand_alias_for_iter(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
+  if depth > 10 { return ty }
+  case ty {
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(def) => {
+          case def {
+            .Alias(_, type_params, target) => {
+              expanded := subst_vars(target, build_var_map(type_params, args))
+              expand_alias_for_iter(expanded, env, depth + 1)
+            },
+            _ => ty,
+          }
+        },
+        .None => ty,
+      }
+    },
+    _ => ty,
+  }
+}

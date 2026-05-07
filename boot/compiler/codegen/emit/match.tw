@@ -1,0 +1,66 @@
+// Pattern-match control-flow emission helpers.
+
+use compiler.resolver.{MonoType}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
+use compiler.codegen.wasm_ir.{ValType, Instr}
+use compiler.codegen.emit.context.{EmitCtx}
+use compiler.codegen.emit.helpers.{expr_always_diverges, all_arms_diverge}
+use compiler.codegen.emit.control_flow.{append_result_store}
+
+pub type MatchEmitFns = .{
+  emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_expr: fn(PreparedExpr, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
+  match_scrutinee_mono: fn(PreparedAtom, EmitCtx) MonoType,
+  emit_pattern_condition: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_pattern_bindings: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx) Vector<Instr>,
+}
+
+pub fn emit_match_op(scrutinee: PreparedAtom, arms: Vector<PreparedMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: MatchEmitFns) Vector<Instr> {
+  scrutinee_mono := fns.match_scrutinee_mono(scrutinee, ctx)
+  // scrutinee_instrs is used as sub-body content, so keep as fresh []
+  scrutinee_instrs := fns.emit_atom(scrutinee, ctx, [])
+  emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx, buf, fns)
+}
+
+fn emit_arm_chain(
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  arms: Vector<PreparedMatchArm>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: MatchEmitFns,
+) Vector<Instr> {
+  if arms.len() == 0 {
+    return buf.append(.Unreachable)
+  }
+
+  head := arms[0]
+  tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
+
+  // Pattern condition is used as sub-body content — use fresh []
+  cond_instrs := fns.emit_pattern_condition(head.pattern, scrutinee_instrs, scrutinee_mono, ctx, [])
+
+  // Then: bindings + body + store result — all fresh [] (sub-body)
+  bindings := fns.emit_pattern_bindings(head.pattern, scrutinee_instrs, scrutinee_mono, ctx)
+  body_instrs := fns.emit_expr(head.body, result_mono, ctx, [])
+  head_div := expr_always_diverges(head.body)
+
+  then_body := bindings.concat(body_instrs)
+  then_body = if !head_div {
+    append_result_store(then_body, result_idx, result_mono)
+  } else { then_body }
+
+  // Else: recurse on tail — fresh [] (sub-body)
+  else_body := emit_arm_chain(scrutinee_instrs, scrutinee_mono, tail, result_idx, result_mono, ctx, [], fns)
+
+  tail_div := all_arms_diverge(tail)
+  both_div := head_div and tail_div
+
+  out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
+  if both_div {
+    out = out.append(.Unreachable)
+  }
+  out
+}

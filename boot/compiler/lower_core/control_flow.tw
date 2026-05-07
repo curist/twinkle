@@ -1,0 +1,229 @@
+// Control-flow Core lowering and rewriting helpers.
+
+use lib.source.span.{Span}
+use compiler.ast.{Block, Expr}
+use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{CoreExpr, FieldInit, MatchArm, CorePattern}
+use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.lower_core.helpers.{void_expr, local_expr, variant_expr, variant_pattern, return_expr}
+
+pub fn lower_if(ctx: LowerCtx, cond_expr: Expr, then_block: Block, else_expr: Expr?, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut, lower_block_fn: fn(LowerCtx, Block) ExprOut) ExprOut {
+  cr := lower_expr_fn(ctx, cond_expr)
+  tr := lower_block_fn(cr.ctx, then_block)
+  case else_expr {
+    .Some(el) => {
+      er := lower_expr_fn(tr.ctx, el)
+      .{
+        expr: .{ kind: .If(cr.expr, tr.expr, er.expr), ty, span: s },
+        ctx: er.ctx,
+      }
+    },
+    .None => {
+      .{
+        expr: .{ kind: .If(cr.expr, tr.expr, void_expr(s)), ty, span: s },
+        ctx: tr.ctx,
+      }
+    },
+  }
+}
+
+pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ctx: LowerCtx) ExprOut {
+  case expr.kind {
+    .Continue => {
+      ao := ctx.alloc_anon_local()
+      cont := CoreExpr.{ kind: .Continue, ty: expr.ty, span: expr.span }
+      .{
+        expr: CoreExpr.{ kind: .Let(ao.local, before_continue, cont), ty: expr.ty, span: expr.span },
+        ctx: ao.ctx,
+      }
+    },
+    .Let(local, value, body) => {
+      value_r := rewrite_index_loop_continue(value, before_continue, ctx)
+      body_r := rewrite_index_loop_continue(body, before_continue, value_r.ctx)
+      .{ expr: CoreExpr.{ kind: .Let(local, value_r.expr, body_r.expr), ty: expr.ty, span: expr.span }, ctx: body_r.ctx }
+    },
+    .Assign(local, value) => {
+      value_r := rewrite_index_loop_continue(value, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .Assign(local, value_r.expr), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+    },
+    .BinOp(op, left, right) => {
+      left_r := rewrite_index_loop_continue(left, before_continue, ctx)
+      right_r := rewrite_index_loop_continue(right, before_continue, left_r.ctx)
+      .{ expr: CoreExpr.{ kind: .BinOp(op, left_r.expr, right_r.expr), ty: expr.ty, span: expr.span }, ctx: right_r.ctx }
+    },
+    .UnOp(op, inner) => {
+      inner_r := rewrite_index_loop_continue(inner, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .UnOp(op, inner_r.expr), ty: expr.ty, span: expr.span }, ctx: inner_r.ctx }
+    },
+    .Call(callee, args) => {
+      callee_r := rewrite_index_loop_continue(callee, before_continue, ctx)
+      new_args: Vector<CoreExpr> = []
+      cur := callee_r.ctx
+      for arg in args {
+        arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
+        new_args = new_args.append(arg_r.expr)
+        cur = arg_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Call(callee_r.expr, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .If(cond, then_e, else_e) => {
+      cond_r := rewrite_index_loop_continue(cond, before_continue, ctx)
+      then_r := rewrite_index_loop_continue(then_e, before_continue, cond_r.ctx)
+      else_r := rewrite_index_loop_continue(else_e, before_continue, then_r.ctx)
+      .{ expr: CoreExpr.{ kind: .If(cond_r.expr, then_r.expr, else_r.expr), ty: expr.ty, span: expr.span }, ctx: else_r.ctx }
+    },
+    .Match(scrutinee, arms) => {
+      scrutinee_r := rewrite_index_loop_continue(scrutinee, before_continue, ctx)
+      new_arms: Vector<MatchArm> = []
+      cur := scrutinee_r.ctx
+      for arm in arms {
+        body_r := rewrite_index_loop_continue(arm.body, before_continue, cur)
+        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: body_r.expr })
+        cur = body_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Match(scrutinee_r.expr, new_arms), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .Break(value) => {
+      case value {
+        .Some(v) => {
+          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+          .{ expr: CoreExpr.{ kind: .Break(.Some(value_r.expr)), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+        },
+        .None => .{ expr, ctx },
+      }
+    },
+    .Return(value) => {
+      case value {
+        .Some(v) => {
+          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+          .{ expr: CoreExpr.{ kind: .Return(.Some(value_r.expr)), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+        },
+        .None => .{ expr, ctx },
+      }
+    },
+    .Defer(inner) => {
+      inner_r := rewrite_index_loop_continue(inner, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .Defer(inner_r.expr), ty: expr.ty, span: expr.span }, ctx: inner_r.ctx }
+    },
+    .Record(tid, fields) => {
+      new_fields: Vector<FieldInit> = []
+      cur := ctx
+      for field in fields {
+        value_r := rewrite_index_loop_continue(field.value, before_continue, cur)
+        new_fields = new_fields.append(FieldInit.{ field: field.field, value: value_r.expr })
+        cur = value_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Record(tid, new_fields), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .RecordGet(target, fid) => {
+      target_r := rewrite_index_loop_continue(target, before_continue, ctx)
+      .{ expr: CoreExpr.{ kind: .RecordGet(target_r.expr, fid), ty: expr.ty, span: expr.span }, ctx: target_r.ctx }
+    },
+    .RecordUpdate(target, fid, value) => {
+      target_r := rewrite_index_loop_continue(target, before_continue, ctx)
+      value_r := rewrite_index_loop_continue(value, before_continue, target_r.ctx)
+      .{ expr: CoreExpr.{ kind: .RecordUpdate(target_r.expr, fid, value_r.expr), ty: expr.ty, span: expr.span }, ctx: value_r.ctx }
+    },
+    .Variant(tid, vid, args) => {
+      new_args: Vector<CoreExpr> = []
+      cur := ctx
+      for arg in args {
+        arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
+        new_args = new_args.append(arg_r.expr)
+        cur = arg_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .Variant(tid, vid, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .ArrayLit(items) => {
+      new_items: Vector<CoreExpr> = []
+      cur := ctx
+      for item in items {
+        item_r := rewrite_index_loop_continue(item, before_continue, cur)
+        new_items = new_items.append(item_r.expr)
+        cur = item_r.ctx
+      }
+      .{ expr: CoreExpr.{ kind: .ArrayLit(new_items), ty: expr.ty, span: expr.span }, ctx: cur }
+    },
+    .Index(base, index) => {
+      base_r := rewrite_index_loop_continue(base, before_continue, ctx)
+      index_r := rewrite_index_loop_continue(index, before_continue, base_r.ctx)
+      .{ expr: CoreExpr.{ kind: .Index(base_r.expr, index_r.expr), ty: expr.ty, span: expr.span }, ctx: index_r.ctx }
+    },
+    .Loop(_) => .{ expr, ctx },
+    _ => .{ expr, ctx },
+  }
+}
+
+pub fn lower_try(ctx: LowerCtx, operand: Expr, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  r := lower_expr_fn(ctx, operand)
+  operand_ty := r.ctx.expr_type(operand)
+
+  // TypeId(0) = Option, TypeId(1) = Result
+  option_tid := TypeId.{ id: 0 }
+  result_tid := TypeId.{ id: 1 }
+
+  case operand_ty {
+    .Result(ok_ty, err_ty) => {
+      // try on Result<T, E> → match { .Ok(val) => val, .Err(e) => return .Err(e) }
+      ok_local_out := r.ctx.alloc_anon_local()
+      ctx = ok_local_out.ctx
+      err_local_out := ctx.alloc_anon_local()
+      ctx = err_local_out.ctx
+
+      ret_ty := case ctx.current_fn_return_type {
+        .Some(t) => t,
+        .None => operand_ty,
+      }
+
+      ok_pattern := variant_pattern(result_tid, 0, [CorePattern.Var(ok_local_out.local)])
+      ok_body := local_expr(ok_local_out.local, ok_ty, s)
+      ok_arm := MatchArm.{
+        pattern: ok_pattern,
+        body: ok_body,
+      }
+      err_pattern := variant_pattern(result_tid, 1, [CorePattern.Var(err_local_out.local)])
+      err_value := variant_expr(result_tid, 1, [local_expr(err_local_out.local, err_ty, s)], ret_ty, s)
+      err_arm := MatchArm.{
+        pattern: err_pattern,
+        body: return_expr(.Some(err_value), s),
+      }
+
+      .{
+        expr: .{ kind: .Match(r.expr, [ok_arm, err_arm]), ty: ok_ty, span: s },
+        ctx,
+      }
+    },
+    .Optional(inner_ty) => {
+      // try on Option<T> → match { .Some(val) => val, .None => return .None }
+      some_local_out := r.ctx.alloc_anon_local()
+      ctx = some_local_out.ctx
+
+      ret_ty := case ctx.current_fn_return_type {
+        .Some(t) => t,
+        .None => operand_ty,
+      }
+
+      some_pattern := variant_pattern(option_tid, 1, [CorePattern.Var(some_local_out.local)])
+      some_body := local_expr(some_local_out.local, inner_ty, s)
+      some_arm := MatchArm.{
+        pattern: some_pattern,
+        body: some_body,
+      }
+      none_pattern := variant_pattern(option_tid, 0, [])
+      none_value := variant_expr(option_tid, 0, [], ret_ty, s)
+      none_arm := MatchArm.{
+        pattern: none_pattern,
+        body: return_expr(.Some(none_value), s),
+      }
+
+      .{
+        expr: .{ kind: .Match(r.expr, [some_arm, none_arm]), ty: inner_ty, span: s },
+        ctx,
+      }
+    },
+    _ => {
+      ctx = r.ctx.emit_error(s, "try requires Result or Option type")
+      .{ expr: void_expr(s), ctx }
+    },
+  }
+}

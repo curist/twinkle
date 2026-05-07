@@ -1,0 +1,292 @@
+// Operator mapping and unit-variant equality helpers for Core lowering.
+
+use lib.source.span.{Span}
+use compiler.ast.{Expr, BinOp as AstBinOp, UnOp as AstUnOp}
+use compiler.resolver.{MonoType, ResolvedEnv, TypeId}
+use compiler.core_ir.{CoreExpr, CoreExprKind, MatchArm, BinOp, UnOp, FuncId}
+use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.lower_core.helpers.{void_expr, global_func_expr, variant_pattern}
+use compiler.lower_core.lvalues.{lower_lvalue_assign}
+use compiler.lower_core.control_flow.{lower_try}
+use compiler.lower_core.types.{type_id_from_mono}
+
+pub fn map_binop(op: AstBinOp) BinOp {
+  case op {
+    .Add => .Add,
+    .Sub => .Sub,
+    .Mul => .Mul,
+    .Div => .Div,
+    .Mod => .Mod,
+    .Eq => .Eq,
+    .Ne => .Ne,
+    .Lt => .Lt,
+    .Le => .Le,
+    .Gt => .Gt,
+    .Ge => .Ge,
+    .LogicalAnd => .And,
+    .LogicalOr => .Or,
+    .BitAnd => .BitAnd,
+    .BitOr => .BitOr,
+    .BitXor => .BitXor,
+    .Shl => .Shl,
+    .Shr => .Shr,
+    .Range => .Add,   // placeholder — Range handled separately
+    .Assign => .Add,  // placeholder — Assign handled separately
+  }
+}
+
+pub fn map_unop(op: AstUnOp) UnOp {
+  case op {
+    .Neg => .Neg,
+    .Not => .Not,
+    .BitNot => .Not,  // placeholder — BitNot maps to Not for now
+    .Try => .Not,     // placeholder — Try handled separately
+  }
+}
+
+pub fn uses_runtime_eq(ty: MonoType) Bool {
+  case ty {
+    .Int => false,
+    .Byte => false,
+    .Float => false,
+    .Bool => false,
+    .String => false,
+    _ => true,
+  }
+}
+
+pub fn lower_runtime_eq_call(core_eq_id: FuncId, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExpr {
+  call_expr := CoreExpr.{
+    kind: .Call(global_func_expr(core_eq_id, s), [left, right]),
+    ty: MonoType.Bool,
+    span: s,
+  }
+  case ast_op {
+    .Eq => call_expr,
+    .Ne => CoreExpr.{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
+    _ => error("lower_runtime_eq_call: expected Eq/Ne"),
+  }
+}
+
+type UnitVariantTag = .{ tid: TypeId, vid: Int }
+
+fn unit_variant_tag(expr: CoreExpr) UnitVariantTag? {
+  case expr.kind {
+    .Variant(tid, vid, args) => {
+      if args.len() == 0 {
+        .Some(.{ tid, vid: vid.id })
+      } else {
+        .None
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId, vid: Int, s: Span) CoreExprKind {
+  on_match := if ast_op == .Eq { true } else { false }
+  on_other := !on_match
+  .Match(scrutinee, [
+    MatchArm.{
+      pattern: variant_pattern(tid, vid, []),
+      body: CoreExpr.{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
+    },
+    MatchArm.{
+      pattern: .Wildcard,
+      body: CoreExpr.{ kind: .LitBool(on_other), ty: MonoType.Bool, span: s },
+    },
+  ])
+}
+
+fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
+  case env.lookup_type_def(tid) {
+    .Some(def) => {
+      case def {
+        .Sum(_, _, variants) => {
+          ids: Vector<Int> = []
+          for i in 0..variants.len() {
+            if variants[i].fields.len() != 0 {
+              return .None
+            }
+            ids = ids.append(i)
+          }
+          .Some(ids)
+        },
+        _ => .None,
+      }
+    },
+    .None => .None,
+  }
+}
+
+fn build_unit_sum_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, tid: TypeId, variants: Vector<Int>, s: Span) CoreExprKind {
+  arms: Vector<MatchArm> = []
+  for vid in variants {
+    arms = arms.append(MatchArm.{
+      pattern: variant_pattern(tid, vid, []),
+      body: CoreExpr.{ kind: build_unit_variant_compare(ast_op, right, tid, vid, s), ty: MonoType.Bool, span: s },
+    })
+  }
+  fallback := if ast_op == .Eq { false } else { true }
+  arms = arms.append(MatchArm.{
+    pattern: .Wildcard,
+    body: CoreExpr.{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s },
+  })
+  .Match(left, arms)
+}
+
+pub fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExprKind? {
+  if ast_op != .Eq and ast_op != .Ne { return .None }
+
+  case unit_variant_tag(right) {
+    .Some(tag) => {
+      case type_id_from_mono(left.ty) {
+        .Some(lhs_tid) => {
+          if lhs_tid.id == tag.tid.id {
+            return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
+          }
+        },
+        .None => {},
+      }
+    },
+    .None => {},
+  }
+
+  case unit_variant_tag(left) {
+    .Some(tag) => {
+      case type_id_from_mono(right.ty) {
+        .Some(rhs_tid) => {
+          if rhs_tid.id == tag.tid.id {
+            return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
+          }
+        },
+        .None => {},
+      }
+    },
+    .None => {},
+  }
+
+  case left.ty {
+    .Named(lhs_tid, _) => {
+      case right.ty {
+        .Named(rhs_tid, _) => {
+          if lhs_tid.id == rhs_tid.id {
+            case unit_sum_variant_ids(env, lhs_tid) {
+              .Some(variants) => {
+                return .Some(build_unit_sum_compare(ast_op, left, right, lhs_tid, variants, s))
+              },
+              .None => {},
+            }
+          }
+        },
+        _ => {},
+      }
+    },
+    _ => {},
+  }
+
+  .None
+}
+
+pub fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  // Short-circuit: a && b => If(a, b, false)
+  case ast_op {
+    .Assign => {
+      case lhs.kind {
+        .Ident(name) => {
+          rr := lower_expr_fn(ctx, rhs)
+          case rr.ctx.lookup_local_or_global(name) {
+            .Some(target) => {
+              return .{
+                expr: .{ kind: .Assign(target, rr.expr), ty, span: s },
+                ctx: rr.ctx,
+              }
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+      rr := lower_expr_fn(ctx, rhs)
+      case lower_lvalue_assign(rr.ctx, lhs, rr.expr, s, lower_expr_fn) {
+        .Some(lv) => {
+          .{
+            expr: .{ kind: .Assign(lv.root, lv.update), ty, span: s },
+            ctx: lv.ctx,
+          }
+        },
+        .None => {
+          bad_ctx := rr.ctx.emit_error(s, "invalid assignment target")
+          .{ expr: void_expr(s), ctx: bad_ctx }
+        },
+      }
+    },
+    .Range => {
+      lr := lower_expr_fn(ctx, lhs)
+      rr := lower_expr_fn(lr.ctx, rhs)
+      .{
+        expr: .{
+          kind: .Call(global_func_expr(rr.ctx.builtins.id("range_from"), s), [lr.expr, rr.expr]),
+          ty,
+          span: s,
+        },
+        ctx: rr.ctx,
+      }
+    },
+    .LogicalAnd => {
+      lr := lower_expr_fn(ctx, lhs)
+      rr := lower_expr_fn(lr.ctx, rhs)
+      .{
+        expr: .{
+          kind: .If(lr.expr, rr.expr, .{ kind: .LitBool(false), ty: .Bool, span: s }),
+          ty,
+          span: s,
+        },
+        ctx: rr.ctx,
+      }
+    },
+    .LogicalOr => {
+      lr := lower_expr_fn(ctx, lhs)
+      rr := lower_expr_fn(lr.ctx, rhs)
+      .{
+        expr: .{
+          kind: .If(lr.expr, .{ kind: .LitBool(true), ty: .Bool, span: s }, rr.expr),
+          ty,
+          span: s,
+        },
+        ctx: rr.ctx,
+      }
+    },
+    _ => {
+      lr := lower_expr_fn(ctx, lhs)
+      rr := lower_expr_fn(lr.ctx, rhs)
+      case lower_unit_variant_compare(rr.ctx.env, ast_op, lr.expr, rr.expr, s) {
+        .Some(kind) => {
+          .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
+        },
+        .None => {
+          if (ast_op == .Eq or ast_op == .Ne) and uses_runtime_eq(lr.expr.ty) {
+            return .{ expr: lower_runtime_eq_call(rr.ctx.builtins.id("core_eq"), ast_op, lr.expr, rr.expr, s), ctx: rr.ctx }
+          }
+          .{
+            expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
+            ctx: rr.ctx,
+          }
+        },
+      }
+    },
+  }
+}
+
+pub fn lower_unary(ctx: LowerCtx, ast_op: AstUnOp, operand: Expr, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  case ast_op {
+    .Try => lower_try(ctx, operand, ty, s, lower_expr_fn),
+    _ => {
+      r := lower_expr_fn(ctx, operand)
+      .{
+        expr: .{ kind: .UnOp(map_unop(ast_op), r.expr), ty, span: s },
+        ctx: r.ctx,
+      }
+    },
+  }
+}

@@ -1,0 +1,25 @@
+// Helpers for lowering collect comprehensions.
+
+use lib.source.span.{Span}
+use compiler.resolver.{MonoType}
+use compiler.builder_family.{BuilderConfig}
+use compiler.core_ir.{CoreExpr, CoreExprKind, LocalId, FuncId}
+
+pub fn global_func_call(func_id: FuncId, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
+  CoreExpr.{
+    kind: .Call(
+      .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
+      args,
+    ),
+    ty: ty,
+    span: s,
+  }
+}
+
+pub fn collect_builder_push(builder: BuilderConfig, builder_local: LocalId, value: CoreExpr, s: Span) CoreExpr {
+  void_ty := MonoType.Void
+  global_func_call(builder.builder_push_id, [
+    CoreExpr.{ kind: CoreExprKind.Local(builder_local), ty: void_ty, span: s },
+    value,
+  ], void_ty, s)
+}

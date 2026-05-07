@@ -1,0 +1,77 @@
+// Variant, match, array, and index lowering helpers.
+
+use lib.source.span.{Span}
+use compiler.ast as ast
+use compiler.ast.{Expr}
+use compiler.resolver.{MonoType}
+use compiler.core_ir.{CoreExpr, MatchArm}
+use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.lower_core.helpers.{void_expr}
+use compiler.lower_core.patterns.{lower_pattern}
+use compiler.lower_core.types.{type_id_from_mono, variant_index}
+
+pub fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  tid := case type_id_from_mono(ty) {
+    .Some(id) => id,
+    .None => {
+      ctx = ctx.emit_error(s, "cannot determine variant type")
+      return .{ expr: void_expr(s), ctx }
+    },
+  }
+  vid_idx := variant_index(ty, name, ctx.env)
+  lowered_args: Vector<CoreExpr> = []
+  cur_ctx := ctx
+  for arg in args {
+    r := lower_expr_fn(cur_ctx, arg)
+    lowered_args = lowered_args.append(r.expr)
+    cur_ctx = r.ctx
+  }
+  .{
+    expr: .{ kind: .Variant(tid, .{ id: vid_idx }, lowered_args), ty, span: s },
+    ctx: cur_ctx,
+  }
+}
+
+pub fn lower_case(ctx: LowerCtx, scrut: Expr, arms: Vector<ast.CaseArm>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  sr := lower_expr_fn(ctx, scrut)
+  scrut_ty := sr.ctx.expr_type(scrut)
+
+  lowered_arms: Vector<MatchArm> = []
+  cur_ctx := sr.ctx
+  for arm in arms {
+    cur_ctx = cur_ctx.push_scope()
+    pat_r := lower_pattern(cur_ctx, arm.pattern, scrut_ty)
+    cur_ctx = pat_r.ctx
+    body_r := lower_expr_fn(cur_ctx, arm.expr)
+    cur_ctx = body_r.ctx
+    cur_ctx = cur_ctx.pop_scope()
+    lowered_arms = lowered_arms.append(.{ pattern: pat_r.pattern, body: body_r.expr })
+  }
+  .{
+    expr: .{ kind: .Match(sr.expr, lowered_arms), ty, span: s },
+    ctx: cur_ctx,
+  }
+}
+
+pub fn lower_array(ctx: LowerCtx, elems: Vector<Expr>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  lowered: Vector<CoreExpr> = []
+  cur_ctx := ctx
+  for e in elems {
+    r := lower_expr_fn(cur_ctx, e)
+    lowered = lowered.append(r.expr)
+    cur_ctx = r.ctx
+  }
+  .{
+    expr: .{ kind: .ArrayLit(lowered), ty, span: s },
+    ctx: cur_ctx,
+  }
+}
+
+pub fn lower_index(ctx: LowerCtx, base_expr: Expr, idx_expr: Expr, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+  br := lower_expr_fn(ctx, base_expr)
+  ir := lower_expr_fn(br.ctx, idx_expr)
+  .{
+    expr: .{ kind: .Index(br.expr, ir.expr), ty, span: s },
+    ctx: ir.ctx,
+  }
+}

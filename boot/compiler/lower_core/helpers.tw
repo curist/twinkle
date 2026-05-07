@@ -1,0 +1,54 @@
+// Shared Core lowering expression/pattern constructors.
+
+use lib.source.span.{Span}
+use compiler.ast.{Expr}
+use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{CoreExpr, CorePattern, LocalId, FuncId, FieldId}
+
+pub fn void_expr(s: Span) CoreExpr {
+  .{ kind: .LitVoid, ty: .Void, span: s }
+}
+
+pub fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
+  .{ kind: .Local(local), ty, span: s }
+}
+
+pub fn global_func_expr(func_id: FuncId, s: Span) CoreExpr {
+  .{ kind: .GlobalFunc(func_id), ty: .Void, span: s }
+}
+
+pub fn record_get_expr(base: CoreExpr, field: FieldId, ty: MonoType, s: Span) CoreExpr {
+  .{ kind: .RecordGet(base, field), ty, span: s }
+}
+
+pub fn variant_expr(tid: TypeId, vid: Int, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
+  .{ kind: .Variant(tid, .{ id: vid }, args), ty, span: s }
+}
+
+pub fn variant_pattern(tid: TypeId, vid: Int, args: Vector<CorePattern>) CorePattern {
+  .Variant(tid, .{ id: vid }, args)
+}
+
+pub fn return_expr(value: CoreExpr?, s: Span) CoreExpr {
+  .{ kind: .Return(value), ty: .Void, span: s }
+}
+
+pub fn is_terminal(expr: CoreExpr) Bool {
+  case expr.kind {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    _ => false,
+  }
+}
+
+pub fn extract_type_name_expr(expr: Expr) String? {
+  case expr.kind {
+    .Ident(name) => .Some(name),
+    .Field(base, field_name) => {
+      prefix := try extract_type_name_expr(base)
+      .Some("${prefix}.${field_name}")
+    },
+    _ => .None,
+  }
+}

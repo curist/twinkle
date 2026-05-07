@@ -1,0 +1,134 @@
+// Lvalue assignment lowering.
+
+use lib.source.span.{Span}
+use compiler.ast.{Expr}
+use compiler.core_ir.{CoreExpr, CoreExprKind, LocalId, FieldId}
+use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.lower_core.types.{find_field_index_in_type, type_id_from_mono}
+
+// ── Lvalue chain lowering ────────────────────────────────────────────
+
+pub type LvalueOut = .{ root: LocalId, update: CoreExpr, ctx: LowerCtx }
+
+// Recursively lower an lvalue assignment: r.field = v, xs[i] = v, m[k] = v
+// Returns the root local and the update expression to assign to it.
+pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) LvalueOut? {
+  case lhs.kind {
+    .Ident(name) => {
+      case ctx.lookup_local_or_global(name) {
+        .Some(root_local) => .Some(.{ root: root_local, update: rhs_core, ctx }),
+        .None => .None,
+      }
+    },
+    .Field(base, field_name) => {
+      // r.field = val → Assign(r_local, RecordUpdate(Local(r), field_id, val))
+      case base.kind {
+        .Ident(name) => {
+          case ctx.lookup_local_or_global(name) {
+            .Some(root_local) => {
+              base_ty := ctx.expr_type(base)
+              tid := case type_id_from_mono(base_ty) {
+                .Some(id) => id,
+                .None => { return .None },
+              }
+              fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
+              fid := FieldId.{ id: fid_idx }
+              // Use GlobalLocal for module globals, Local for function locals
+              base_kind: CoreExprKind = case ctx.module_globals[name] {
+                .Some(_) => .GlobalLocal(root_local),
+                .None => .Local(root_local),
+              }
+              update := CoreExpr.{
+                kind: .RecordUpdate(
+                  .{ kind: base_kind, ty: base_ty, span: s },
+                  fid,
+                  rhs_core,
+                ),
+                ty: base_ty,
+                span: s,
+              }
+              .Some(.{ root: root_local, update, ctx })
+            },
+            .None => .None,
+          }
+        },
+        _ => {
+          // Nested: a.b.field = v → recursively build update
+          // lower the inner lvalue with RecordUpdate as the rhs
+          base_ty := ctx.expr_type(base)
+          tid := case type_id_from_mono(base_ty) {
+            .Some(id) => id,
+            .None => { return .None },
+          }
+          fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
+          fid := FieldId.{ id: fid_idx }
+          // We need to read the current base value to build the update.
+          // For nested chains, we lower_lvalue_assign on `base` with
+          // RecordUpdate(base_lowered, field, rhs_core) as the new rhs.
+          // But we need the current base value first. Use a temp approach:
+          // lower base as expr, wrap in RecordUpdate, recurse.
+          br := lower_expr_fn(ctx, base)
+          inner_update := CoreExpr.{
+            kind: .RecordUpdate(br.expr, fid, rhs_core),
+            ty: base_ty,
+            span: s,
+          }
+          lower_lvalue_assign(br.ctx, base, inner_update, s, lower_expr_fn)
+        },
+      }
+    },
+    .Index(base, index) => {
+      // xs[i] = val → Assign(xs_local, Call(VECTOR_SET_UNSAFE, [xs, i, val]))
+      // m[k] = val  → Assign(m_local, Call(DICT_SET, [m, k, val]))
+      case base.kind {
+        .Ident(name) => {
+          case ctx.lookup_local_or_global(name) {
+            .Some(root_local) => {
+              base_ty := ctx.expr_type(base)
+              ir := lower_expr_fn(ctx, index)
+              // Dispatch on base type: Vector vs Dict
+              func_id := case base_ty {
+                .Dict(_, _) => ctx.builtins.id("dict_set"),
+                _ => ctx.builtins.id("vector_set_unsafe"),
+              }
+              base_kind: CoreExprKind = case ctx.module_globals[name] {
+                .Some(_) => .GlobalLocal(root_local),
+                .None => .Local(root_local),
+              }
+              update := CoreExpr.{
+                kind: .Call(
+                  .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
+                  [CoreExpr.{ kind: base_kind, ty: base_ty, span: s }, ir.expr, rhs_core],
+                ),
+                ty: base_ty,
+                span: s,
+              }
+              .Some(LvalueOut.{ root: root_local, update, ctx: ir.ctx })
+            },
+            .None => .None,
+          }
+        },
+        _ => {
+          base_ty := ctx.expr_type(base)
+          br := lower_expr_fn(ctx, base)
+          ir := lower_expr_fn(br.ctx, index)
+          func_id := case base_ty {
+            .Dict(_, _) => ctx.builtins.id("dict_set"),
+            _ => ctx.builtins.id("vector_set_unsafe"),
+          }
+          inner_update := CoreExpr.{
+            kind: .Call(
+              .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
+              [br.expr, ir.expr, rhs_core],
+            ),
+            ty: base_ty,
+            span: s,
+          }
+          lower_lvalue_assign(ir.ctx, base, inner_update, s, lower_expr_fn)
+        },
+      }
+    },
+    _ => .None,
+  }
+}
+

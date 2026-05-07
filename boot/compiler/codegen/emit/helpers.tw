@@ -1,0 +1,126 @@
+// Small general helpers for Wasm emission.
+
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.type_util.{subst_type_params}
+use compiler.core_ir.{VariantId}
+use compiler.codegen.wasm_ir.{Instr}
+use compiler.codegen.wasm_layout.{WasmSumLayout, WasmVariantLayout, layout_of, mono_to_key}
+use compiler.backend.prepared_ir.{ReprKind, PreparedExpr, PreparedMatchArm, PreparedPattern}
+
+pub fn sanitize_name(name: String) String {
+  // Replace non-alphanumeric chars with _
+  collect b in name {
+    c := b.to_int()
+    if (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 {
+      b.to_string()
+    } else {
+      "_"
+    }
+  }.join("")
+}
+
+pub fn repr_name(repr: ReprKind) String {
+  case repr {
+    .I64 => "I64",
+    .F64 => "F64",
+    .I32 => "I32",
+    .TypedRef(_) => "TypedRef",
+    .TypedSum(_) => "TypedSum",
+    .ClosureRef => "ClosureRef",
+    .ErasedSum => "ErasedSum",
+    .OpaqueAnyref => "OpaqueAnyref",
+    .DeadValue => "DeadValue",
+  }
+}
+
+pub fn expr_always_diverges(expr: PreparedExpr) Bool {
+  case expr {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue => true,
+    .Atom(_) => false,
+    .Let(_, _, body) => expr_always_diverges(body),
+  }
+}
+
+pub fn all_arms_diverge(arms: Vector<PreparedMatchArm>) Bool {
+  if arms.len() == 0 { return true }
+  for arm in arms {
+    if !expr_always_diverges(arm.body) { return false }
+  }
+  true
+}
+
+pub fn pattern_is_trivial(p: PreparedPattern) Bool {
+  case p {
+    .Wildcard => true,
+    .Var(_) => true,
+    _ => false,
+  }
+}
+
+pub fn get_sum_layout(mono: MonoType, env: ResolvedEnv) WasmSumLayout {
+  layout := layout_of(mono, env)
+  case layout {
+    .Sum(s) => s,
+    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
+  }
+}
+
+pub fn find_variant_layout(sum: WasmSumLayout, vid: VariantId) WasmVariantLayout {
+  for v in sum.variants {
+    if v.variant_id.id == vid.id { return v }
+  }
+  error("find_variant_layout: VariantId ${vid.id} not found in ${sum.sym}")
+}
+
+pub fn variant_field_mono(scrutinee_mono: MonoType, vid: VariantId, field_idx: Int, env: ResolvedEnv) MonoType {
+  case scrutinee_mono {
+    .Optional(inner) => {
+      if vid.id == 1 and field_idx == 0 { return inner }
+      .Void
+    },
+    .Result(ok, err) => {
+      if vid.id == 0 and field_idx == 0 { return ok }
+      if vid.id == 1 and field_idx == 0 { return err }
+      .Void
+    },
+    .Named(tid, args) => {
+      case env.lookup_type_def(tid) {
+        .Some(.Alias(_, type_params, target)) => {
+          variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env)
+        },
+        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      }
+    },
+    .Void => .Void,
+    _ => error("variant_field_mono: unexpected scrutinee type ${mono_to_key(scrutinee_mono)} for variant ${vid.id} field ${field_idx}"),
+  }
+}
+
+fn resolve_named_variant_field(tid: TypeId, args: Vector<MonoType>, vid: VariantId, field_idx: Int, env: ResolvedEnv) MonoType {
+  def := case env.lookup_type_def(tid) {
+    .Some(d) => d,
+    .None => { return .Void },
+  }
+  case def {
+    .Sum(_, type_params, variants) => {
+      v := variants[vid.id]
+      field_ty := v.fields[field_idx]
+      subst_type_params(field_ty, type_params, args)
+    },
+    _ => .Void,
+  }
+}
+
+pub fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
+  if checks.len() == 0 { return [.I32Const(1)] }
+  if checks.len() == 1 { return checks[0] }
+  out := checks[0]
+  idx := 1
+  for idx < checks.len() {
+    out = out.append(.If(.Some(.I32), checks[idx], [.I32Const(0)]))
+    idx = idx + 1
+  }
+  out
+}

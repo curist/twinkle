@@ -1,0 +1,45 @@
+// Variant construction emission helpers.
+
+use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{VariantId}
+use compiler.backend.prepared_ir.{PreparedAtom}
+use compiler.codegen.wasm_ir.{ValType, Instr}
+use compiler.codegen.emit.context.{EmitCtx}
+use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.emit.layout_helpers.{cached_layout_of}
+use compiler.codegen.emit.coercions.{emit_coerce_stack}
+
+pub type VariantEmitFns = .{
+  emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
+  atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
+  atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
+}
+
+pub fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: VariantEmitFns) Vector<Instr> {
+  // All variants → typed sum struct
+  layout := cached_layout_of(result_mono, ctx)
+  sum := case layout {
+    .Sum(s) => s,
+    _ => error("emit_variant_literal: expected Sum layout for type"),
+  }
+
+  // Emit tag
+  out := buf.append(.I32Const(vid.id))
+
+  // Emit all payload fields for ALL variants (typed struct has slots for all)
+  for v in sum.variants {
+    if v.variant_id.id == vid.id {
+      // This variant — emit actual args, coerced to expected payload slot types
+      for a,i in args {
+        out = fns.emit_atom(a, ctx, out)
+        out = emit_coerce_stack(fns.atom_val_type(a, ctx), v.payload_types[i], fns.atom_mono(a, ctx), ctx, out)
+      }
+    } else {
+      // Other variant — emit default values for its payload slots
+      for pt in v.payload_types {
+        out = emit_default_value(pt, out)
+      }
+    }
+  }
+  out.append(.StructNew(sum.sym))
+}

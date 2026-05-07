@@ -57,6 +57,7 @@ Related historical context outside this folder:
 | [boot-optimizer-pass-refactor.md](boot-optimizer-pass-refactor.md) | Made optimizer context, pass ordering, fixed-point policy, and timing aggregation explicit while preserving existing optimization semantics |
 | [boot-backend-verifier-refactor.md](boot-backend-verifier-refactor.md) | Split backend verification into slot, expression, and shared-helper modules with explicit basic/full verification levels |
 | [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | Split frontend analysis around module interfaces, dependency-interface fingerprints, and lower-churn import environment construction |
+| [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Decomposed the core lowerer and Wasm emitter into focused helper modules while preserving public entrypoints; parser split remains intentionally conservative and checker decomposition deferred |
 
 ---
 
