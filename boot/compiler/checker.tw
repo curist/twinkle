@@ -2257,7 +2257,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
         .Some("Range") => .{ elem_ty: MonoType.Int, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
         .Some("Iterator") => {
           if args.len() > 0 {
-            .{ elem_ty: args[0], secondary_ty: .None, secondary_allowed: false, diags }
+            .{ elem_ty: args[0], secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
           } else {
             .{
               elem_ty: MonoType.Int,

@@ -5,6 +5,10 @@ STAGE2_WASM ?= target/boot.wasm
 STAGE3_WASM ?= /tmp/twinkle-selfhost/stage3.wasm
 TWK_CLI     ?= node tools/twk_cli_sea.cjs
 
+# Source file sets — used for dependency tracking.
+RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
+BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*')
+
 help:
 	@printf 'Twinkle development targets:\n'
 	@printf '  make test              Run Rust and boot compiler tests\n'
@@ -13,7 +17,6 @@ help:
 	@printf '  make stage0            Build the Rust stage0 compiler\n'
 	@printf '  make stage2            Rebuild target/boot.wasm via self-host loop\n'
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Node SEA target/twk\n'
-	@printf '  make quick-bundle-cli  Build Node SEA target/twk from existing target/boot.wasm\n'
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
@@ -28,12 +31,17 @@ rust-test:
 test: rust-test boot-test
 
 # Build the Rust stage0 compiler used to bootstrap the self-hosted compiler.
-stage0:
+# File target so downstream rules rebuild only when Rust sources change.
+stage0: target/release/twk
+
+target/release/twk: $(RUST_SRCS)
 	cargo build --release
 
 # Refresh target/boot.wasm from current boot sources and verify the fixed point.
 # Stage0 (Rust) → stage1, stage1 → stage2, stage2 → stage3, then compare stage2 == stage3.
-stage2: stage0
+stage2: $(STAGE2_WASM)
+
+$(STAGE2_WASM): $(BOOT_SRCS) target/release/twk
 	@printf '\n==> Build bridge module for Node runner\n'
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'
@@ -52,7 +60,7 @@ stage2: stage0
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Node SEA standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM)
+target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/twk_cli_sea.cjs
 	tools/build_node_sea_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Node SEA.
@@ -70,7 +78,7 @@ quick-bundle-cli:
 # ---------------------------------------------------------------------------
 
 # Bridge module used by the JS runners
-tools/bridge.wasm: boot/tests/gen_bridge_wasm.tw
+tools/bridge.wasm: boot/tests/gen_bridge_wasm.tw target/release/twk
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 
 # Tree-sitter grammar wasm (rebuild when grammar.js changes)

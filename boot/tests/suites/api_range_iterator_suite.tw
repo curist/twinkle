@@ -110,6 +110,40 @@ pub fn suite() runner.Suite {
       try assert.int_eq(sum, 10)
       .Ok({})
     })
+    .test("indexed for over iterator", fn() {
+      it := Iterator.unfold(0, fn(s: Int) {
+        if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 10, s + 1) }
+      })
+      indices := 0
+      values := 0
+      for x, idx in it {
+        indices = indices + idx
+        values = values + x
+      }
+      try assert.int_eq(indices, 3)   // 0 + 1 + 2
+      try assert.int_eq(values, 30)   // 0 + 10 + 20
+      .Ok({})
+    })
+    .test("indexed collect over iterator", fn() {
+      it := Iterator.unfold(10, fn(s: Int) {
+        if s >= 13 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+      })
+      result := collect val, idx in it { idx * 100 + val }
+      try assert.int_eq(result.len(), 3)
+      try assert.int_eq(result[0], 10)    // 0*100 + 10
+      try assert.int_eq(result[1], 111)   // 1*100 + 11
+      try assert.int_eq(result[2], 212)   // 2*100 + 12
+      .Ok({})
+    })
+    .test("indexed for over empty iterator", fn() {
+      it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
+      count := 0
+      for _, idx in it {
+        count = count + 1
+      }
+      try assert.int_eq(count, 0)
+      .Ok({})
+    })
     .test("iterator is persistent (non-consuming)", fn() {
       it := Iterator.unfold(0, fn(s: Int) {
         if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }

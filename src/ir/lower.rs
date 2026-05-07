@@ -993,8 +993,15 @@ impl Lowerer {
                 }
                 if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == ITERATOR_TYPE_ID)
                 {
-                    return self
-                        .lower_iterator_for_stmt(pattern, iter, body, rest, cont_span, for_span);
+                    return self.lower_iterator_for_stmt(
+                        pattern,
+                        index_pattern.as_ref(),
+                        iter,
+                        body,
+                        rest,
+                        cont_span,
+                        for_span,
+                    );
                 }
                 if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == RANGE_TYPE_ID)
                 {
@@ -1587,6 +1594,7 @@ impl Lowerer {
     fn lower_iterator_for_stmt(
         &mut self,
         pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
         iter: &Expr,
         body: &Block,
         rest: &[Stmt],
@@ -1618,6 +1626,10 @@ impl Lowerer {
         // loop_it: mutable local holding the current iterator state
         let loop_it = self.local_allocator.alloc_and_bind("__it".to_string());
 
+        // idx_counter: mutable local for the iteration index (allocated if index_pattern present)
+        let idx_counter =
+            index_pattern.map(|_| self.local_allocator.alloc_and_bind("__idx".to_string()));
+
         // Loop scope
         self.local_allocator.push_scope();
 
@@ -1628,6 +1640,14 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+
+        let idx_user = index_pattern.and_then(|ip| {
+            if let Pattern::Ident(name, _) = ip {
+                Some(self.local_allocator.alloc_and_bind(name.clone()))
+            } else {
+                None
+            }
+        });
 
         let body_expr = self.lower_block(body)?;
         self.local_allocator.pop_scope();
@@ -1693,31 +1713,102 @@ impl Lowerer {
             ty: MonoType::Void,
             span: iter_span,
         };
-        // Let(_, advance_it, Let(_, body, Continue))
-        let body_then_continue = CoreExpr {
-            kind: CoreExprKind::Let {
-                local: self.local_allocator.alloc(),
-                value: Box::new(body_expr),
-                body: Box::new(continue_expr),
-            },
-            ty: MonoType::Void,
-            span: iter_span,
+
+        // Build the tail: idx_increment → body → continue
+        let tail = if let Some(idx_ctr) = idx_counter {
+            // Let(_, Assign(idx_counter, idx_counter + 1), Continue)
+            let idx_inc = CoreExpr {
+                kind: CoreExprKind::Assign {
+                    local: idx_ctr,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::BinOp {
+                            op: BinOp::Add,
+                            left: Box::new(CoreExpr {
+                                kind: CoreExprKind::Local(idx_ctr),
+                                ty: MonoType::Int,
+                                span: iter_span,
+                            }),
+                            right: Box::new(CoreExpr {
+                                kind: CoreExprKind::LitInt(1),
+                                ty: MonoType::Int,
+                                span: iter_span,
+                            }),
+                        },
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    }),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            };
+            let inc_then_cont = CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: self.local_allocator.alloc(),
+                    value: Box::new(idx_inc),
+                    body: Box::new(continue_expr),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            };
+            let body_then_inc = CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: self.local_allocator.alloc(),
+                    value: Box::new(body_expr),
+                    body: Box::new(inc_then_cont),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            };
+            body_then_inc
+        } else {
+            // No index: body → continue
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: self.local_allocator.alloc(),
+                    value: Box::new(body_expr),
+                    body: Box::new(continue_expr),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            }
         };
+
+        // Wrap with advance_it before the tail
         let with_advance = CoreExpr {
             kind: CoreExprKind::Let {
                 local: self.local_allocator.alloc(),
                 value: Box::new(advance_it),
-                body: Box::new(body_then_continue),
+                body: Box::new(tail),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
-        // Let(x, value_get, with_advance)
+
+        // Optionally bind user index local
+        let with_idx = if let Some(idx_u) = idx_user {
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: idx_u,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::Local(idx_counter.unwrap()),
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    }),
+                    body: Box::new(with_advance),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            }
+        } else {
+            with_advance
+        };
+
+        // Let(x, value_get, with_idx)
         let with_elem = CoreExpr {
             kind: CoreExprKind::Let {
                 local: elem_local,
                 value: Box::new(value_get),
-                body: Box::new(with_advance),
+                body: Box::new(with_idx),
             },
             ty: MonoType::Void,
             span: iter_span,
@@ -1796,16 +1887,35 @@ impl Lowerer {
             span: for_span,
         };
 
-        // Let(loop_it, iter_expr, loop_then_cont)
-        Some(CoreExpr {
+        // Let(loop_it, iter_expr, ...)
+        let with_iter = CoreExpr {
             kind: CoreExprKind::Let {
                 local: loop_it,
                 value: Box::new(iter_expr),
                 body: Box::new(loop_then_cont),
             },
-            ty: cont_ty,
+            ty: cont_ty.clone(),
             span: for_span,
-        })
+        };
+
+        // Optionally wrap with Let(idx_counter, 0, ...)
+        if let Some(idx_ctr) = idx_counter {
+            Some(CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: idx_ctr,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::LitInt(0),
+                        ty: MonoType::Int,
+                        span: for_span,
+                    }),
+                    body: Box::new(with_iter),
+                },
+                ty: cont_ty,
+                span: for_span,
+            })
+        } else {
+            Some(with_iter)
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -3931,6 +4041,7 @@ impl Lowerer {
     fn lower_iterator_collect(
         &mut self,
         pattern: &Pattern,
+        index_pattern: Option<&Pattern>,
         iter: &Expr,
         body: &Expr,
         result_ty: &MonoType,
@@ -3958,6 +4069,8 @@ impl Lowerer {
         // builder: Cell<Array<T>> — interior-mutable accumulator
         let builder_local = self.local_allocator.alloc_and_bind("__builder".to_string());
         let loop_it = self.local_allocator.alloc_and_bind("__it".to_string());
+        let idx_counter =
+            index_pattern.map(|_| self.local_allocator.alloc_and_bind("__idx".to_string()));
 
         // Loop scope
         self.local_allocator.push_scope();
@@ -3968,6 +4081,13 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        let idx_user = index_pattern.and_then(|ip| {
+            if let Pattern::Ident(name, _) = ip {
+                Some(self.local_allocator.alloc_and_bind(name.clone()))
+            } else {
+                None
+            }
+        });
         let body_val_local = self.local_allocator.alloc_and_bind("__c_val".to_string());
 
         let body_expr = self.lower_expr(body)?;
@@ -4004,18 +4124,54 @@ impl Lowerer {
             span: iter_span,
         };
 
-        // Let(_, push_call, Continue)
+        // Build tail: push → (optional idx increment) → continue
+        let after_push = if let Some(idx_ctr) = idx_counter {
+            let idx_inc = CoreExpr {
+                kind: CoreExprKind::Assign {
+                    local: idx_ctr,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::BinOp {
+                            op: BinOp::Add,
+                            left: Box::new(CoreExpr {
+                                kind: CoreExprKind::Local(idx_ctr),
+                                ty: MonoType::Int,
+                                span: iter_span,
+                            }),
+                            right: Box::new(CoreExpr {
+                                kind: CoreExprKind::LitInt(1),
+                                ty: MonoType::Int,
+                                span: iter_span,
+                            }),
+                        },
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    }),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            };
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: self.local_allocator.alloc(),
+                    value: Box::new(idx_inc),
+                    body: Box::new(continue_expr),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            }
+        } else {
+            continue_expr
+        };
         let push_then_cont = CoreExpr {
             kind: CoreExprKind::Let {
                 local: self.local_allocator.alloc(),
                 value: Box::new(push_call),
-                body: Box::new(continue_expr),
+                body: Box::new(after_push),
             },
             ty: MonoType::Void,
             span: iter_span,
         };
         // Let(body_val, body_expr, push_then_cont)
-        // If body produces Continue, push is skipped (element filtered out)
         let with_body = CoreExpr {
             kind: CoreExprKind::Let {
                 local: body_val_local,
@@ -4070,11 +4226,29 @@ impl Lowerer {
             ty: elem_ty,
             span: iter_span,
         };
+        // Optionally bind user index local
+        let after_elem = if let Some(idx_u) = idx_user {
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: idx_u,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::Local(idx_counter.unwrap()),
+                        ty: MonoType::Int,
+                        span: iter_span,
+                    }),
+                    body: Box::new(with_advance),
+                },
+                ty: MonoType::Void,
+                span: iter_span,
+            }
+        } else {
+            with_advance
+        };
         let with_elem = CoreExpr {
             kind: CoreExprKind::Let {
                 local: elem_local,
                 value: Box::new(value_get),
-                body: Box::new(with_advance),
+                body: Box::new(after_elem),
             },
             ty: MonoType::Void,
             span: iter_span,
@@ -4182,12 +4356,31 @@ impl Lowerer {
             span,
         };
 
-        // Let(loop_it, iter_expr, loop_expr)
+        // Optionally wrap with Let(idx_counter, 0, loop)
+        let with_idx_init = if let Some(idx_ctr) = idx_counter {
+            CoreExpr {
+                kind: CoreExprKind::Let {
+                    local: idx_ctr,
+                    value: Box::new(CoreExpr {
+                        kind: CoreExprKind::LitInt(0),
+                        ty: MonoType::Int,
+                        span,
+                    }),
+                    body: Box::new(loop_expr),
+                },
+                ty: result_ty.clone(),
+                span,
+            }
+        } else {
+            loop_expr
+        };
+
+        // Let(loop_it, iter_expr, with_idx_init)
         let with_it = CoreExpr {
             kind: CoreExprKind::Let {
                 local: loop_it,
                 value: Box::new(iter_expr),
-                body: Box::new(loop_expr),
+                body: Box::new(with_idx_init),
             },
             ty: result_ty.clone(),
             span,
@@ -4697,14 +4890,14 @@ impl Lowerer {
             return self.lower_range_collect(pattern, index_pattern, iter, body, result_ty, span);
         }
         if matches!(iter_ty, Some(MonoType::Named { type_id, .. }) if type_id == ITERATOR_TYPE_ID) {
-            if index_pattern.is_some() {
-                self.errors.push(LowerError::UnsupportedFeature {
-                    feature: "indexed collect over Iterator",
-                    span,
-                });
-                return None;
-            }
-            return self.lower_iterator_collect(pattern, iter, body, result_ty, span);
+            return self.lower_iterator_collect(
+                pattern,
+                index_pattern,
+                iter,
+                body,
+                result_ty,
+                span,
+            );
         }
         if matches!(iter_ty, Some(MonoType::Dict(_, _))) {
             return self.lower_dict_collect(pattern, index_pattern, iter, body, result_ty, span);

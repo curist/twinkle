@@ -3542,12 +3542,10 @@ impl TypeChecker {
                         });
                     }
                 }
-                if index_pattern.is_some() {
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "indexed for loop over Iterator",
-                        span: iter.span,
-                        note: "Iterator<T> does not support the 'for x, i in' form".to_string(),
-                    });
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
                 }
             }
             MonoType::Dict(key_ty, val_ty) => {
@@ -3709,13 +3707,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if index_pattern.is_some() {
-                    self.errors.push(TypeError::UnsupportedFeature {
-                        feature: "indexed collect over Iterator",
-                        span: iter.span,
-                        note: "Iterator<T> does not support the 'collect x, i in' form".to_string(),
-                    });
-                    had_error = true;
+                if let Some(idx_pat) = index_pattern {
+                    if let Pattern::Ident(name, _) = idx_pat {
+                        self.local_env.bind(name.clone(), MonoType::Int);
+                    }
                 }
             }
             MonoType::Dict(key_ty, val_ty) => {

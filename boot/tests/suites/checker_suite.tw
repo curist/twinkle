@@ -1290,25 +1290,14 @@ pub fn suite() runner.Suite {
       r := try check_ok(src)
       .Ok({})
     })
-    .test("P4 indexed for over Iterator is rejected", fn() {
-      // Use the builtin Iterator type (already in checker's env)
+    .test("P4 indexed for over Iterator is accepted", fn() {
       src := "fn f(it: Iterator<Int>) Void { for x, i in it { x } }"
-      msgs := try check_errs_builtins(src)
-      found := false
-      for m in msgs {
-        if m.contains("Iterator") or m.contains("indexed") { found = true }
-      }
-      try assert.is_true(found)
+      _ := try check_ok_builtins(src)
       .Ok({})
     })
-    .test("P4 indexed collect over Iterator is rejected", fn() {
+    .test("P4 indexed collect over Iterator is accepted", fn() {
       src := "fn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
-      msgs := try check_errs_builtins(src)
-      found := false
-      for m in msgs {
-        if m.contains("Iterator") or m.contains("indexed") { found = true }
-      }
-      try assert.is_true(found)
+      _ := try check_ok_builtins(src)
       .Ok({})
     })
     .test("P5 functions can read later top-level lets", fn() {

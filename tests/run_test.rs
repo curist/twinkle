@@ -241,6 +241,16 @@ fn iterator_for_loop() {
 }
 
 #[test]
+fn iterator_indexed_for() {
+    check("tests/run/iterator_indexed_for.tw");
+}
+
+#[test]
+fn iterator_indexed_collect() {
+    check("tests/run/iterator_indexed_collect.tw");
+}
+
+#[test]
 fn iterator_rebind_shape_change() {
     check("tests/run/iterator_rebind_shape_change.tw");
 }
