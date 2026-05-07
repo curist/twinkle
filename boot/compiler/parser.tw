@@ -8,7 +8,7 @@ use .cursor
 use .cursor.{Cursor}
 use .parser.literals.{parse_int_literal, parse_float_literal}
 use .ast.{
-  Item, UseDecl, FunctionDecl, Param, TypeDecl, Module,
+  Item, UseDecl, FunctionDecl, ExternFunctionDecl, Param, TypeDecl, Module,
   ImportItem, ImportValueItem, ImportTypeItem,
   Expr, ExprKind, Stmt, Block, Pattern, TypeExpr, TypePath,
   BinOp, UnOp, TypeDef, CaseArm, RecordEntry, RecordField,
@@ -23,6 +23,7 @@ type Parse<T> = .{
 }
 
 type ItemParse = Parse<Item>
+type ItemsParse = Parse<Vector<Item>>
 type StmtParse = Parse<Stmt>
 type ExprParse = Parse<Expr>
 type TypeParse = Parse<TypeExpr>
@@ -76,6 +77,7 @@ fn is_item_start(kind: TokenKind) Bool {
     .Use => true,
     .Type => true,
     .Fn => true,
+    .Extern => true,
     .Pub => true,
     _ => false,
   }
@@ -1074,6 +1076,131 @@ fn parse_function(c: Cursor) ItemParse {
   }
 
   .{ value: .Function(decl), cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_extern(c: Cursor) ItemsParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  is_pub := false
+  start_pos := c.pos
+  start_span := c.span()
+
+  if c.kind() == .Pub {
+    is_pub = true
+    c = c.advance()
+    if c.kind() != .Extern {
+      diagnostics_out = diagnostics_out.append(diagnostic.error(
+        start_span,
+        "expected 'extern' after 'pub'",
+      ))
+      recovered := recover_to_next_item(c)
+      if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+      return .{ value: [.ErrorItem(start_span)], cursor: recovered, diagnostics: diagnostics_out }
+    }
+  }
+
+  extern_span := c.span()
+  c = c.advance()
+  if c.kind() != .StringLit {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(
+      extern_span,
+      "expected import module string after 'extern'",
+    ))
+    recovered := recover_to_next_item(c)
+    if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+    return .{ value: [.ErrorItem(extern_span)], cursor: recovered, diagnostics: diagnostics_out }
+  }
+
+  module_name := c.text()
+  c = c.advance()
+
+  if c.kind() == .LBrace {
+    c = c.advance()
+    items: Vector<Item> = []
+    for c.kind() != .RBrace and c.kind() != .Eof {
+      parsed := parse_extern_sig(c, is_pub, module_name, start_span)
+      diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+      items = items.append(parsed.value)
+      c = parsed.cursor
+    }
+    end_span := c.span()
+    if c.kind() == .RBrace {
+      c = c.advance()
+    } else {
+      diagnostics_out = diagnostics_out.append(diagnostic.error(c.span(), "expected '}' after extern block"))
+    }
+    if items.len() == 0 {
+      items = items.append(.ErrorItem(start_span.merge(end_span)))
+    }
+    return .{ value: items, cursor: c, diagnostics: diagnostics_out }
+  }
+
+  parsed := parse_extern_sig(c, is_pub, module_name, start_span)
+  diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+  .{ value: [parsed.value], cursor: parsed.cursor, diagnostics: diagnostics_out }
+}
+
+fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: span.Span) ItemParse {
+  diagnostics_out: Vector<Diagnostic> = []
+  start_pos := c.pos
+  if c.kind() != .Fn {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(c.span(), "expected 'fn' in extern declaration"))
+    recovered := recover_to_next_item(c)
+    if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+    return .{ value: .ErrorItem(c.span()), cursor: recovered, diagnostics: diagnostics_out }
+  }
+
+  fn_span := c.span()
+  c = c.advance()
+  if c.kind() != .Ident {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(fn_span, "expected function name after 'fn'"))
+    recovered := recover_to_next_item(c)
+    if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+    return .{ value: .ErrorItem(fn_span), cursor: recovered, diagnostics: diagnostics_out }
+  }
+
+  name := c.text()
+  name_span := c.span()
+  if is_upper_ascii_name(name) {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(name_span, "function name must start with a lowercase letter"))
+  }
+  c = c.advance()
+
+  if c.kind() != .LParen {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(c.span(), "expected '(' after extern function name"))
+    recovered := recover_to_next_item(c)
+    if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+    return .{ value: .ErrorItem(c.span()), cursor: recovered, diagnostics: diagnostics_out }
+  }
+
+  c = c.advance()
+  parsed_params := parse_param_list(c, TokenKind.RParen, "expected ',' or ')' in extern function parameter list")
+  params := parsed_params.value
+  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  c = parsed_params.cursor
+
+  if c.kind() == .RParen {
+    c = c.advance()
+  } else {
+    diagnostics_out = diagnostics_out.append(diagnostic.error(c.span(), "expected ')' after extern function parameters"))
+  }
+
+  return_type: TypeExpr? = .None
+  if c.kind() != .Eof and c.kind() != .Fn and c.kind() != .RBrace and c.kind() != .Pub and c.kind() != .Extern and !c.preceded_by_newline() {
+    parsed_ret := parse_type_expr(c)
+    diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
+    return_type = .Some(parsed_ret.value)
+    c = parsed_ret.cursor
+  }
+
+  decl := ExternFunctionDecl.{
+    is_pub,
+    module: module_name,
+    name,
+    params,
+    return_type,
+    span: start_span.merge(c.span()),
+  }
+  .{ value: .ExternFunction(decl), cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_type(c: Cursor) ItemParse {
@@ -2362,12 +2489,27 @@ fn parse_item_at(c: Cursor) ItemParse {
     .Use => parse_use(c),
     .Type => parse_type(c),
     .Fn => parse_function(c),
+    .Extern => {
+      parsed := parse_extern(c)
+      if parsed.value.len() > 0 {
+        .{ value: parsed.value[0], cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+      } else {
+        .{ value: .ErrorItem(c.span()), cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+      }
+    },
     .Pub => {
       k1 := c.at(1).kind()
       if k1 == .Type {
         parse_type(c)
       } else if k1 == .Fn {
         parse_function(c)
+      } else if k1 == .Extern {
+        parsed := parse_extern(c)
+        if parsed.value.len() > 0 {
+          .{ value: parsed.value[0], cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+        } else {
+          .{ value: .ErrorItem(c.span()), cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+        }
       } else if k1 == .Ident {
         // pub x := value — consume pub, parse as pub binding
         pub_c := c.advance()
@@ -2382,6 +2524,20 @@ fn parse_item_at(c: Cursor) ItemParse {
 
 fn step(self: ParseState) ParseState {
   prev_pos := self.cursor.pos
+
+  if self.cursor.kind() == .Extern or (self.cursor.kind() == .Pub and self.cursor.at(1).kind() == .Extern) {
+    parsed_items := parse_extern(self.cursor)
+    next_cursor := parsed_items.cursor
+    if next_cursor.pos <= prev_pos {
+      next_cursor = self.cursor.advance()
+    }
+    return .{
+      cursor: next_cursor,
+      items: self.items.concat(parsed_items.value),
+      diagnostics: self.diagnostics.concat(parsed_items.diagnostics),
+    }
+  }
+
   parsed_item := parse_item_at(self.cursor)
   next_cursor := parsed_item.cursor
   // Force progress: if parse_item_at didn't advance, skip one token

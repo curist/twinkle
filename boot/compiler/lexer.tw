@@ -19,6 +19,7 @@ fn keyword_or_ident(text: String) TokenKind {
     "fn" => .Fn,
     "pub" => .Pub,
     "type" => .Type,
+    "extern" => .Extern,
     "if" => .If,
     "else" => .Else,
     "case" => .Case,

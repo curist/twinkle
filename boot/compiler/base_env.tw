@@ -23,7 +23,7 @@ fn builtin_doc_sig(
   ret: MonoType?,
   doc: String?,
 ) FunctionSig {
-  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret, doc }
+  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret, doc, extern_module: .None }
 }
 
 

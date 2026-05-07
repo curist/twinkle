@@ -618,6 +618,7 @@ fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) Fu
     params,
     ret,
     doc: sig.doc,
+    extern_module: sig.extern_module,
   }
 }
 

@@ -9,6 +9,7 @@ pub type Item = {
   Use(UseDecl),
   Type(TypeDecl),
   Function(FunctionDecl),
+  ExternFunction(ExternFunctionDecl),
   Stmt(Stmt),
   ErrorItem(span.Span),
 }
@@ -58,6 +59,15 @@ pub type FunctionDecl = .{
   params: Vector<Param>,
   return_type: TypeExpr?,
   body: Block,
+  span: span.Span,
+}
+
+pub type ExternFunctionDecl = .{
+  is_pub: Bool,
+  module: String,
+  name: String,
+  params: Vector<Param>,
+  return_type: TypeExpr?,
   span: span.Span,
 }
 

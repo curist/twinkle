@@ -9,7 +9,7 @@ use lib.source.span
 use lib.source.diagnostic.{Diagnostic, StageResult}
 use lib.source.diagnostic as diag
 use .ast.{
-  Module, Item, TypeDecl, FunctionDecl, Param,
+  Module, Item, TypeDecl, FunctionDecl, ExternFunctionDecl, Param,
   TypeDef, TypeExpr, TypeExprKind, TypePath,
   RecordField, VariantDecl,
   ImportItem, TypeParam, type_param_names,
@@ -92,6 +92,7 @@ pub type FunctionSig = .{
   params: Vector<MonoType>,
   ret: MonoType?,
   doc: String?,
+  extern_module: String?,
 }
 
 /// Canonical defining-site identity for an imported function.
@@ -682,6 +683,23 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
           .None => {},
         }
       },
+      .ExternFunction(decl) => {
+        if !decl.is_pub { continue }
+        case env.lookup_function(decl.name) {
+          .Some(sig) => {
+            exported_functions = exported_functions.append(.{
+              name: sig.name,
+              sig,
+              source_name: sig.name,
+              origin: .None,
+            })
+            visible_function_names[sig.name] = true
+            visible_function_sources[sig.name] = true
+            interface_function_sources[sig.name] = true
+          },
+          .None => {},
+        }
+      },
       _ => {},
     }
   }
@@ -1137,6 +1155,13 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
           seen_fns[decl.name] = true
         }
       },
+      .ExternFunction(decl) => {
+        if seen_fns.has(decl.name) {
+          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
+        } else {
+          seen_fns[decl.name] = true
+        }
+      },
       // Use/Stmt items: imports deferred to multi-module Phase E;
       // top-level statements don't need name resolution.
       // Note: seen_fns is local; user functions intentionally shadow prelude functions.
@@ -1175,6 +1200,14 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
         if !seen_fns.has(decl.name) {
           seen_fns[decl.name] = true
           r := resolve_function_decl(cur, decl)
+          cur = r.env
+          result_diags = result_diags.concat(r.diagnostics)
+        }
+      },
+      .ExternFunction(decl) => {
+        if !seen_fns.has(decl.name) {
+          seen_fns[decl.name] = true
+          r := resolve_extern_function_decl(cur, decl)
           cur = r.env
           result_diags = result_diags.concat(r.diagnostics)
         }
@@ -1363,6 +1396,76 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
   env.with_types(new_types, env.type_names)
 }
 
+fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .String => true,
+    .Void => allow_void,
+    _ => false,
+  }
+}
+
+fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) ResolveResult {
+  diags: Vector<Diagnostic> = []
+
+  param_names := collect param in decl.params { param.name }
+  diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
+  param_types: Vector<MonoType> = collect param in decl.params {
+    case param.ty {
+      .Some(ty_expr) => {
+        r := env.resolve_type_expr(ty_expr, [])
+        diags = diags.concat(r.diagnostics)
+        case r.ty {
+          .Some(ty) => {
+            if !is_extern_safe_type(ty, false) {
+              diags = diags.append(diag.error(ty_expr.span, "extern functions only support primitive boundary types"))
+              .ErrorType
+            } else {
+              ty
+            }
+          },
+          .None => .ErrorType,
+        }
+      },
+      .None => {
+        diags = diags.append(diag.error(param.span, "extern function parameters must have type annotations"))
+        .ErrorType
+      },
+    }
+  }
+
+  ret_ty: MonoType? = case decl.return_type {
+    .Some(ty_expr) => {
+      r := env.resolve_type_expr(ty_expr, [])
+      diags = diags.concat(r.diagnostics)
+      case r.ty {
+        .Some(ty) => {
+          if !is_extern_safe_type(ty, true) {
+            diags = diags.append(diag.error(ty_expr.span, "extern functions only support primitive boundary types"))
+          }
+          .Some(ty)
+        },
+        .None => .None,
+      }
+    },
+    .None => .None,
+  }
+
+  new_env := env.add_function(.{
+    name: decl.name,
+    type_params: [],
+    param_names: param_names,
+    params: param_types,
+    ret: ret_ty,
+    doc: .None,
+    extern_module: .Some(decl.module),
+  })
+
+  .{ env: new_env, diagnostics: diags }
+}
+
 fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   r := resolve_ast_type_params(decl.type_params, decl.span)
   type_params := r.params
@@ -1404,6 +1507,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
     params: param_types,
     ret: ret_ty,
     doc: .None,
+    extern_module: .None,
   })
 
   .{ env: new_env, diagnostics: diags }
@@ -1706,6 +1810,7 @@ fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, Ty
     params,
     ret,
     doc: sig.doc,
+    extern_module: sig.extern_module,
   }
 }
 

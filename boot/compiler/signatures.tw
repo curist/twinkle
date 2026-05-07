@@ -94,6 +94,7 @@ pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
         params: sig.params,
         ret: sig.ret,
         doc: sig.doc,
+        extern_module: .None,
       })
     }
   }
@@ -243,6 +244,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
           params: param_tys,
           ret: ret,
           doc: extract_doc_comment(src, decl.span.start),
+          extern_module: .None,
         }
         sigs = sigs.append(sig)
       },
