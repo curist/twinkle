@@ -49,6 +49,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
 | LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
+| Unused import cleanup | Shared lib for detection + removal, LSP code action | Planned | [unused-import-cleanup.md](unused-import-cleanup.md) |
 
 ### Language Features
 
