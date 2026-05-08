@@ -13,6 +13,7 @@ use compiler.resolver.{
   merge_prelude_exports, extend_types_from,
 }
 use compiler.checker
+use compiler.unused_imports
 use compiler.query.cache
 use compiler.query.fingerprint
 use compiler.query.stage_runner
@@ -184,7 +185,17 @@ pub fn analyze_module(
 
   cur = publish_interface(local.state, canonical, parsed_load.parsed, local.checked, local_type_start, loaded.source_hash, hashes.deps_hash)
 
-  .{ env: local.checked.env, state: cur, diagnostics: deps.diagnostics, ok: true }
+  // Emit unused import warnings for non-internal modules
+  all_diags := deps.diagnostics
+  if !dep_plan.is_internal {
+    import_warnings := unused_imports.check_unused_imports(parsed_load.parsed.module)
+    if import_warnings.len() > 0 {
+      warn_diags := convert_source_diags(loaded.source, "import", import_warnings)
+      all_diags = all_diags.concat(warn_diags)
+    }
+  }
+
+  .{ env: local.checked.env, state: cur, diagnostics: all_diags, ok: true }
 }
 
 // ── Analysis helpers ────────────────────────────────────────────────

@@ -28,17 +28,28 @@ pub fn stage_result<T>(value: T, diagnostics: Vector<Diagnostic>) StageResult<T>
   .{ value, diagnostics }
 }
 
+fn severity_label(s: Severity) String {
+  case s {
+    .Error => "error",
+    .Warning => "warning",
+    .Hint => "hint",
+    .Info => "info",
+  }
+}
+
 pub fn format_diagnostic(reg: registry.FileRegistry, d: Diagnostic) String {
+  label := severity_label(d.severity)
   case registry.line_col(reg, d.span) {
-    .Some(lc) => "${lc.line}:${lc.column}: ${d.message}",
-    .None => "?:?: ${d.message}",
+    .Some(lc) => "${lc.line}:${lc.column}: ${label}: ${d.message}",
+    .None => "?:?: ${label}: ${d.message}",
   }
 }
 
 pub fn format_diagnostic_with_path(path: String, reg: registry.FileRegistry, d: Diagnostic) String {
+  label := severity_label(d.severity)
   case registry.line_col(reg, d.span) {
-    .Some(lc) => "${path}:${lc.line}:${lc.column}: ${d.message}",
-    .None => "${path}:?:?: ${d.message}",
+    .Some(lc) => "${path}:${lc.line}:${lc.column}: ${label}: ${d.message}",
+    .None => "${path}:?:?: ${label}: ${d.message}",
   }
 }
 

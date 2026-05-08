@@ -20,6 +20,7 @@ use compiler.artifacts.{PipelineArtifacts}
 use compiler.imports
 use compiler.core_linker
 use compiler.base_env.{builtin_env}
+use compiler.unused_imports
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
@@ -57,6 +58,22 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
       return .Err(format_analysis_errors(a_result.diagnostics))
     }
     return .Err("analysis failed")
+  }
+
+  // Emit unused import warnings for user modules
+  for module_path in a_result.state.module_order {
+    parsed := case query_cache.latest_parsed(a_result.state.cache, module_path) {
+      .Some(p) => p,
+      .None => { continue },
+    }
+    import_warnings := unused_imports.check_unused_imports(parsed.module)
+    if import_warnings.len() > 0 {
+      source := case fs.read_text(module_path) {
+        .Ok(text) => text,
+        .Err(_) => "",
+      }
+      eprintln(format_source_diagnostics(module_path, source, import_warnings))
+    }
   }
 
   // Phase 2: Lower each analyzed module to Core IR
