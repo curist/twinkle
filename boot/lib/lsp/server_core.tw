@@ -74,8 +74,8 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/definition" => handle_definition(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "shutdown" => {
-      next := with_shutdown_requested(state, true)
-      .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] }
+      state.shutdown_requested = true
+      .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
     },
     _ => {
       err := protocol.RpcError.{ code: -32601, message: "method not found", data: .None }
@@ -87,12 +87,12 @@ fn handle_request(state: State, req: protocol.Request) Step {
 fn handle_notification(state: State, note: protocol.Notification) Step {
   case note.method {
     "initialized" => {
-      next := with_initialized(state, true)
-      .{ state: next, outgoing: [] }
+      state.initialized = true
+      .{ state, outgoing: [] }
     },
     "exit" => {
-      next := with_should_exit(state, true)
-      .{ state: next, outgoing: [] }
+      state.should_exit = true
+      .{ state, outgoing: [] }
     },
     "textDocument/didOpen" => handle_did_open(state, note),
     "textDocument/didChange" => handle_did_change(state, note),
@@ -105,9 +105,8 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
   case params.decode_did_open(note.params) {
     .Ok(open) => {
       doc := open.text_document
-      store := document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
-      next := with_documents(state, store)
-      publish_workspace_diagnostics(next)
+      state.documents = document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
+      publish_workspace_diagnostics(state)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -121,9 +120,8 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
       }
       full := change.content_changes[change.content_changes.len() - 1]
       doc := change.text_document
-      store := document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
-      next := with_documents(state, store)
-      publish_workspace_diagnostics(next)
+      state.documents = document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
+      publish_workspace_diagnostics(state)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -137,9 +135,8 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
         .Some(doc) => doc.version,
         .None => .None,
       }
-      store := document_store.close(state.documents, uri)
-      next := with_documents(state, store)
-      .{ state: next, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
+      state.documents = document_store.close(state.documents, uri)
+      .{ state, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -176,12 +173,12 @@ fn handle_hover(state: State, req: protocol.Request) Step {
             .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
           }
           snap := workspace_snapshot(state, doc)
-          next := with_query_cache(state, snap.cache)
+          state.query_cache = snap.cache
           case query_hover.hover(snap, offset, doc.text) {
             .Some(result) => {
-              .{ state: next, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
+              .{ state, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
             },
-            .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
+            .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
           }
         },
         .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
@@ -202,13 +199,13 @@ fn handle_definition(state: State, req: protocol.Request) Step {
             .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
           }
           snap := workspace_snapshot(state, doc)
-          next := with_query_cache(state, snap.cache)
+          state.query_cache = snap.cache
           case query_definition.definition(snap, offset) {
             .Some(result) => {
-              target_index := definition_target_index(next.documents, result.uri, doc.index)
-              .{ state: next, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
+              target_index := definition_target_index(state.documents, result.uri, doc.index)
+              .{ state, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
             },
-            .None => .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] },
+            .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
           }
         },
         .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
@@ -231,56 +228,6 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
       }
     },
     .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
-  }
-}
-
-fn with_initialized(state: State, initialized: Bool) State {
-  .{
-    initialized,
-    shutdown_requested: state.shutdown_requested,
-    should_exit: state.should_exit,
-    documents: state.documents,
-    query_cache: state.query_cache,
-  }
-}
-
-fn with_shutdown_requested(state: State, shutdown_requested: Bool) State {
-  .{
-    initialized: state.initialized,
-    shutdown_requested,
-    should_exit: state.should_exit,
-    documents: state.documents,
-    query_cache: state.query_cache,
-  }
-}
-
-fn with_should_exit(state: State, should_exit: Bool) State {
-  .{
-    initialized: state.initialized,
-    shutdown_requested: state.shutdown_requested,
-    should_exit,
-    documents: state.documents,
-    query_cache: state.query_cache,
-  }
-}
-
-fn with_documents(state: State, documents: document_store.Store) State {
-  .{
-    initialized: state.initialized,
-    shutdown_requested: state.shutdown_requested,
-    should_exit: state.should_exit,
-    documents,
-    query_cache: state.query_cache,
-  }
-}
-
-fn with_query_cache(state: State, cache: query_cache.Store) State {
-  .{
-    initialized: state.initialized,
-    shutdown_requested: state.shutdown_requested,
-    should_exit: state.should_exit,
-    documents: state.documents,
-    query_cache: cache,
   }
 }
 
@@ -331,8 +278,8 @@ fn publish_workspace_diagnostics(state: State) Step {
     }
   }
 
-  next := with_query_cache(state, cur_cache)
-  .{ state: next, outgoing }
+  state.query_cache = cur_cache
+  .{ state, outgoing }
 }
 
 fn document_by_identity_uri(store: document_store.Store, identity_uri: String) document_store.Document? {
