@@ -19,16 +19,16 @@
 //   3. params (checked first in resolve_local_mono fallback)
 //   Fallback: .Void (indicates a missing type; should not occur for live locals)
 
-use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedVariant, lookup_type_def}
+use compiler.core_ir.{LocalId, CorePattern, VariantId}
+
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
+
 use compiler.type_util.{subst_type_params}
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, Atom}
-use compiler.backend.prepared_ir.{
-  CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc, ReprKind,
-  PreparedExpr, PreparedOp, PreparedAtom, PreparedFieldAtom, PreparedMatchArm,
-  PreparedPattern,
-}
-use compiler.codegen.wasm_ir.{ValType}
+use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, Atom}
+
+use compiler.backend.prepared_ir.{CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc, PreparedExpr, PreparedOp, PreparedAtom, PreparedFieldAtom, PreparedMatchArm, PreparedPattern}
+
+
 
 // assign_slots_for_module builds a PreparedFunc for every function in the
 // module, using precomputed_captures for closure ABI ordering.

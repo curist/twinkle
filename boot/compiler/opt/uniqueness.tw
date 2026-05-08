@@ -6,14 +6,17 @@
 // Phase 2 — Forward rewrite: track ownership, rewrite COW ops to in-place
 // Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
 
-use compiler.core_ir.{LocalId, FuncId, FieldId}
+use compiler.core_ir.{LocalId, FieldId}
+
 use compiler.resolver.{MonoType}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{set_has}
 use compiler.opt.analysis.{base_reusable_after_binding_with_live, collect_tainted_and_live, next_local_id}
 use compiler.opt.liveness.{live_after}
-use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
-use compiler.opt.semantics.{OptimizerSemantics, CowConfig, ReusableUpdateKind, optimizer_semantics_from_cow_config, reusable_update_site, call_info}
+use compiler.opt.loop_builder.{LoopRewrite}
+
+use compiler.opt.semantics.{OptimizerSemantics, CowConfig, optimizer_semantics_from_cow_config, reusable_update_site, call_info}
+
 
 // ── pre-check: does this function contain any reusable update site? ──
 

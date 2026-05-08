@@ -2,7 +2,7 @@ use tests.runner
 use tests.assert
 use compiler.lexer
 use compiler.parser
-use compiler.tokens
+
 use compiler.ast
 use lib.source.registry
 use lib.source.diagnostic

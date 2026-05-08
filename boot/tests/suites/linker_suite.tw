@@ -4,7 +4,8 @@ use compiler.codegen.wasm_ir.{
   ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
   GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
 }
-use compiler.codegen.linker.{LinkedModule, LinkError, link}
+use compiler.codegen.linker.{LinkedModule, link}
+
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

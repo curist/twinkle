@@ -6,11 +6,8 @@
 // Uses an explicit let-accumulator pattern: bindings are collected into
 // a Vector<LetBinding>, then wrapped around a tail expression via build_lets.
 
-use .core_ir.{
-  LocalId, FuncId, FieldId, VariantId,
-  CoreExpr, CoreExprKind, CoreModule, CorePattern, FunctionDef, MatchArm,
-  Param, BinOp, UnOp, FieldInit,
-}
+use .core_ir.{LocalId, CoreExpr, CoreModule, CorePattern, FunctionDef}
+
 use .resolver.{MonoType, TypeId, ty_to_string}
 use .anf.{
   Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm,

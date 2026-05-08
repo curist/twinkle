@@ -1,7 +1,9 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
+
+use compiler.resolver.{TypeId}
+
 use compiler.anf.{
   OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
   AnfFunctionDef, AnfModule,

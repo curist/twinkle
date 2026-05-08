@@ -4,7 +4,8 @@
 // emission both consume the same dependency-before-dependent SCC order so their
 // recursive type grouping cannot drift apart.
 
-use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef}
+use compiler.codegen.wasm_ir.{ValType, TypeDef}
+
 
 pub fn type_def_name(td: TypeDef) String {
   case td {

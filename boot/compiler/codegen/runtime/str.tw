@@ -2,10 +2,8 @@
 //
 // Mirrors stage0 src/runtime/str.rs.
 
-use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
-  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ValType, HeapType, FuncDef, ImportDef, ExportDef, WasmModule}
+
 
 // Cross-module qualified names (already linked form)
 fn str_null() ValType { .Ref(true, HeapType.Named("rt_types__String")) }

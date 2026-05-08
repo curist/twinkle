@@ -3,7 +3,8 @@
 //
 // Also provides subst_atom for general atom substitution.
 
-use compiler.core_ir.{LocalId, FuncId}
+use compiler.core_ir.{LocalId}
+
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
 use compiler.opt.use_count.{count_uses_and_free_var_flags}

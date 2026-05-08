@@ -11,7 +11,8 @@
 // without a closure wrapper) still receive empty capture lists in wasm_plan.tw —
 // that path remains transitional and should be absorbed here later.
 
-use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, FieldId, VariantId, BinOp, UnOp}
+use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
+
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
 use compiler.type_util.{subst_type_params}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm, Atom, FieldAtom}

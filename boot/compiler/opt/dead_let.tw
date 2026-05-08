@@ -1,6 +1,7 @@
 // Dead let elimination: remove Let(t, pure_op, body) where t is never used.
 
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
+
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}

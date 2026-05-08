@@ -7,7 +7,8 @@
 use tests.runner
 use tests.assert
 use compiler.base_env.{builtin_env}
-use compiler.resolver.{lookup_function, lookup_registered_function, lookup_function_origin, lookup_method, MonoType, FunctionSig, ty_to_string}
+use compiler.resolver.{lookup_function, lookup_registered_function, lookup_function_origin, lookup_method, FunctionSig}
+
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

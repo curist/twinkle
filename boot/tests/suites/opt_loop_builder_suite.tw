@@ -1,7 +1,8 @@
 use tests.runner
 use tests.assert
 use compiler.core_ir.{LocalId, FuncId}
-use compiler.anf.{Atom, AnfExpr, AnfOp}
+use compiler.anf.{AnfExpr}
+
 use compiler.builder_family.{BuilderConfig}
 use compiler.opt.loop_builder.{rewrite_loop_region}
 

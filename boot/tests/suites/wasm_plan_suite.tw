@@ -2,20 +2,19 @@ use tests.runner
 use tests.assert
 use lib.source.span
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
+use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, TypeEntry}
+
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{
-  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
-  AnfFunctionDef, AnfModule,
-}
-use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, ImportDef}
-use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, mono_to_key}
+use compiler.anf.{AnfExpr, FieldAtom, AnfFunctionDef, AnfModule}
+
+
+use compiler.codegen.wasm_layout.{mono_to_key}
+
 use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.wasm_plan_types.{
-  WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
-}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry}
+
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.backend.prepare.{prepare_backend, PreparedModule}
 use compiler.backend.closure_convert.{convert_closures}

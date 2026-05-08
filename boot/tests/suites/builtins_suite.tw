@@ -1,8 +1,10 @@
 use tests.runner
 use tests.assert
-use compiler.builtins.{BuiltinRegistry, BuiltinKind, make_builtin_registry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+
 use compiler.core_ir.{FuncId}
-use compiler.codegen.wasm_ir.{ValType, AbiContract}
+use compiler.codegen.wasm_ir.{AbiContract}
+
 
 fn empty_registry() BuiltinRegistry {
   BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }

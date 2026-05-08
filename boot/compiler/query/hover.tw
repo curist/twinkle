@@ -1,12 +1,10 @@
 // Hover query: find the type of the expression at a given byte offset.
 
-use compiler.ast.{
-  Module, Item, Block, Stmt, Expr, ExprKind, StringPart,
-  RecordEntry, CaseArm, CollectExpr, FunctionDecl, TypeDecl,
-  TypeExpr, TypeExprKind, TypePath, TypeDef, Pattern, PatternKind,
-}
+use compiler.ast.{Item, Block, Stmt, Expr, RecordEntry, CollectExpr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern}
+
 use compiler.checker.{CheckResult}
-use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeId, ResolvedTypeDef, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
+use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeId, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
+
 use compiler.query.semantic.{SemanticSnapshot}
 use lib.source.span
 

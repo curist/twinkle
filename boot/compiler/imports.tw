@@ -9,7 +9,8 @@
 use @std.fs
 use @std.path
 use lib.module.loader
-use .ast.{Module, Item, UseDecl, ImportItem}
+use .ast.{Module, UseDecl, ImportItem}
+
 
 // ── Types ───────────────────────────────────────────────────────────
 

@@ -9,7 +9,8 @@
 use tests.runner
 use tests.assert
 use compiler.signatures.{load_signatures, SignatureGroup}
-use compiler.resolver.{FunctionSig, MonoType}
+use compiler.resolver.{FunctionSig}
+
 use compiler.base_env.{builtin_type_env}
 use lib.module.loader
 use @std.path

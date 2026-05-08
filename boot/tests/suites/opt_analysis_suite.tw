@@ -3,7 +3,8 @@ use tests.assert
 use compiler.core_ir.{LocalId, FuncId, VariantId, Param}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm}
 use compiler.anf_analysis.{set_has}
-use compiler.builder_family.{BuilderConfig, empty_builder_config}
+use compiler.builder_family.{empty_builder_config}
+
 use compiler.resolver.{TypeId}
 use compiler.opt.semantics.{OptimizerSemantics, CallSemantics}
 use compiler.opt.analysis.{analyze_loop_push_sites, base_reusable_after_binding, collect_tainted, loop_push_reassign_elem, op_uses_local_non_recursive, count_global_call_sites, next_local_id}

@@ -4,17 +4,17 @@ use compiler.resolver
 use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry, ResolvedTypeDef, ResolvedField, ResolvedVariant}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry, BuiltinKind, RuntimeInfo, make_builtin_registry}
-use compiler.anf.{
-  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
-  AnfFunctionDef, AnfModule,
-}
-use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
-use compiler.codegen.wasm_layout.{WasmLayout, WasmValType, layout_of, val_type_of, mono_to_key}
-use compiler.codegen.wasm_plan_types.{
-  WasmTypeRegistry, FuncSigEntry, StringPoolEntry,
-}
-use compiler.backend.prepared_ir.{CaptureParam}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+
+use compiler.anf.{AnfExpr, AnfOp, FieldAtom, AnfFunctionDef, AnfModule}
+
+use compiler.codegen.wasm_ir.{ValType, AbiContract}
+
+use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
+
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+
+
 use compiler.codegen.insert_boundaries.{insert_boundaries}
 
 // ── Helpers ─────────────────────────────────────────────────────────

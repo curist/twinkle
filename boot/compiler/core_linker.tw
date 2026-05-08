@@ -9,12 +9,8 @@
 //
 // Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
 
-use compiler.core_ir.{
-  CoreModule, CoreExpr, CoreExprKind, FunctionDef, Param,
-  LocalId, FuncId, FieldId, VariantId,
-  BinOp, UnOp, FieldInit, MatchArm, CorePattern,
-  CompiledModule, ExternalRef, ExternImport,
-}
+use compiler.core_ir.{CoreModule, CoreExpr, CoreExprKind, FunctionDef, LocalId, FuncId, FieldInit, MatchArm, CompiledModule, ExternImport}
+
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.contracts.{BuiltinContract}
 use lib.source.span.{Span}

@@ -1,9 +1,12 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, BinOp, Param}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm, FieldAtom, OpKind}
+use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
+
+use compiler.anf.{AnfExpr, AnfFunctionDef}
+
 use compiler.anf_analysis.{set_has}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.resolver.{TypeId}
+
 use compiler.opt.liveness.{live_after, annotate_in_place}
 
 // ── Helpers ─────────────────────────────────────────────────────────

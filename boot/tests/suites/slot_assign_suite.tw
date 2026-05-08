@@ -7,14 +7,16 @@
 use tests.runner
 use tests.assert
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry}
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param, CorePattern}
-use compiler.anf.{
-  AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule, Atom,
-}
-use compiler.backend.prepared_ir.{CaptureParam, SlotId, SlotRole, SlotInfo, PreparedFunc}
+use compiler.resolver.{MonoType, TypeId}
+
+use compiler.core_ir.{LocalId, FuncId, VariantId, Param}
+
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfFunctionDef}
+
+use compiler.backend.prepared_ir.{CaptureParam, SlotRole, SlotInfo, PreparedFunc}
+
 use compiler.backend.slot_assign.{assign_slots}
-use lib.source.span
+
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

@@ -1,7 +1,8 @@
 // Shared optimizer-oriented ANF analysis helpers.
 
 use compiler.core_ir.{LocalId, FuncId, CorePattern}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm}
+use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
+
 use compiler.anf_analysis.{set_has, collect_pattern_bindings}
 use compiler.opt.liveness.{live_after, live_in_op_with_live_out}
 use compiler.opt.semantics.{OptimizerSemantics, call_info}

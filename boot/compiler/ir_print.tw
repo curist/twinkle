@@ -1,14 +1,10 @@
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, MonoType, TypeId}
-use compiler.core_ir.{
-  CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param,
-  LocalId, FieldId, VariantId, BinOp, UnOp, FieldInit, MatchArm, CorePattern,
-}
+use compiler.core_ir.{CoreExpr, CoreModule, Param, FieldId, VariantId, BinOp, UnOp, CorePattern}
+
 use compiler.contracts.{BuiltinContract, contract_spec}
-use compiler.anf.{
-  OpKind, IndexKind, Atom, AnfExpr, AnfOp, FieldAtom, AnfMatchArm,
-  AnfFunctionDef, AnfModule,
-}
+use compiler.anf.{OpKind, IndexKind, Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
+
 use compiler.codegen.wasm_ir.{WasmModule}
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.wat.{emit_wat, emit_wat_unlinked_for_test}

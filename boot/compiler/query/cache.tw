@@ -20,7 +20,8 @@ use compiler.lower_core
 use compiler.resolver
 use compiler.query.type_registry
 use lib.graph.dependency
-use lib.source.diagnostic.{Diagnostic, StageResult}
+use lib.source.diagnostic.{Diagnostic}
+
 
 pub type ParsedModule = .{
   module: ast.Module,

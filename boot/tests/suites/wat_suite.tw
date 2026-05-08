@@ -1,9 +1,7 @@
 use tests.runner
 use tests.assert
-use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
-  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef, GlobalDef, ExportDef, DataSegment, WasmModule}
+
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 
 // ── Helpers ─────────────────────────────────────────────────────────

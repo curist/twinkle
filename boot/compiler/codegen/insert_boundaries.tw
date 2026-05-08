@@ -4,14 +4,18 @@
 //
 // Phase D, Milestone 4.
 
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeDef, lookup_type_def}
+use compiler.resolver.{MonoType, ResolvedEnv, TypeId, lookup_type_def}
+
 use compiler.type_util.{subst_type_params}
-use compiler.core_ir.{FuncId, LocalId, Param, FieldId, VariantId}
+use compiler.core_ir.{FuncId, LocalId, FieldId, VariantId}
+
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.backend.callable_targets as callable_targets
-use compiler.codegen.wasm_ir.{ValType, HeapType, AbiContract}
-use compiler.codegen.wasm_layout.{layout_of, val_type_of, val_type_of_mono, mono_to_key}
+use compiler.codegen.wasm_ir.{ValType, AbiContract}
+
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.anf.{
   Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom,

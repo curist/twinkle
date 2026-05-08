@@ -4,7 +4,8 @@
 // If two fingerprints are equal, downstream dependents don't need recomputation.
 // Fingerprints intentionally ignore spans, ordering, and internal details.
 
-use compiler.resolver.{ModuleExports, ExportedType, ExportedFunction, FunctionSig, MonoType, ResolvedTypeDef, ResolvedTypeParam, ResolvedField, ResolvedVariant, TypeId}
+use compiler.resolver.{ModuleExports, ExportedType, ExportedFunction, FunctionSig, MonoType, ResolvedTypeDef}
+
 use lib.query.keys
 
 /// Fingerprint a module's exports — the critical early cutoff boundary.

@@ -6,12 +6,8 @@
 
 use lib.source.diagnostic.{Diagnostic, warning}
 use lib.source.span
-use .ast.{
-  Module, FunctionDecl, TypeDecl,
-  Block, Stmt, Expr, Pattern,
-  TypeExpr, TypePath,
-  UseDecl, ImportItem,
-}
+use .ast.{Module, FunctionDecl, TypeDecl, Block, Stmt, Expr, Pattern, TypeExpr, TypePath, UseDecl}
+
 
 // ── Edit types ─────────────────────────────────────────────────────
 
@@ -426,8 +422,12 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>, aliases: 
       }
     },
     .NamedRecord(name, entries) => {
-      // The type name is being used as a constructor
-      mark(used, name)
+      // The type name is being used as a constructor.
+      // For qualified names like "span.Span", mark the module alias (first segment).
+      parts := name.split(".")
+      for part in parts {
+        mark(used, part)
+      }
       for entry in entries {
         case entry.value {
           .Some(v) => collect_used_names_expr(v, used, aliases),

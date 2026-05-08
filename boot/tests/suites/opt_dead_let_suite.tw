@@ -1,8 +1,11 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern}
-use compiler.resolver.{MonoType, TypeId}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, OpKind, IndexKind, FieldAtom}
+use compiler.core_ir.{LocalId, FuncId, VariantId}
+
+use compiler.resolver.{TypeId}
+
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
+
 use compiler.builtins.{make_builtin_registry}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}

@@ -1,10 +1,12 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, BinOp, Param}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, OpKind}
-use compiler.anf_analysis.{set_has}
+use compiler.core_ir.{LocalId, FuncId, Param}
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+
+
 use compiler.builtins.{make_builtin_registry}
-use compiler.resolver.{MonoType}
+
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.pipeline.{optimize_module, optimize_module_with_semantics}
 

@@ -16,6 +16,13 @@ use lib.lsp.server_core
 use compiler.parser
 use compiler.pipeline
 use compiler.ir_print
+use lib.module.loader
+use compiler.base_env.{builtin_env}
+use compiler.imports
+use compiler.query.analyze
+use compiler.query.cache as query_cache
+use lib.source.identity
+use lib.source.overlay
 
 fn file_command(name: String, help: String) Command {
   command.make(name, help).add_required_positional("file", "Path to the .tw source file")
@@ -27,6 +34,7 @@ fn parse_cmd() Command {
 
 fn check_cmd() Command {
   file_command("check", "Type-check source")
+    .add_flag("fix-unused-imports", "Automatically remove unused imports")
 }
 
 fn ir_cmd() Command {
@@ -277,14 +285,18 @@ fn run_check_command(parsed: ParseResult) {
     .Err(msg) => { exit_usage_error(msg) },
   }
 
-  case pipeline.check_entry_path(file) {
-    .Ok(_) => {
-      println("Type checking succeeded: ${file}")
-    },
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
+  if app.has_flag(parsed, "fix-unused-imports") {
+    fix_unused_imports(file)
+  } else {
+    case pipeline.check_entry_path(file) {
+      .Ok(_) => {
+        println("Type checking succeeded: ${file}")
+      },
+      .Err(msg) => {
+        eprintln(msg)
+        proc.exit(1)
+      },
+    }
   }
 }
 
@@ -406,6 +418,108 @@ fn run_build_command(parsed: ParseResult) {
         eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
         proc.exit(1)
       },
+    }
+  }
+}
+
+type ImportFix = .{
+  use_start: Int,
+  use_end: Int,
+  replacement: String,
+}
+
+fn fix_unused_imports(file: String) {
+  dir := path.dirname(file)
+  project_root := loader.find_project_root(dir)
+  canonical_roots := imports.make_canonical_roots(project_root)
+  canonical_entry := imports.canonical_module_path(file, canonical_roots)
+
+  base_env := builtin_env()
+  entry_id := identity.from_path(canonical_entry)
+  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
+
+  // Collect edits from analysis diagnostics, grouped by file path
+  edits_by_file: Dict<String, Vector<ImportFix>> = Dict.new()
+  for d in a_result.diagnostics {
+    case d.data {
+      .Some(data) => {
+        kind := case json.decode(data, json.field("kind", json.string())) {
+          .Ok(k) => k,
+          .Err(_) => { continue },
+        }
+        if kind != "unused_import" { continue }
+        use_start := case json.decode(data, json.field("use_start", json.int())) {
+          .Ok(s) => s,
+          .Err(_) => { continue },
+        }
+        use_end := case json.decode(data, json.field("use_end", json.int())) {
+          .Ok(e) => e,
+          .Err(_) => { continue },
+        }
+        replacement := case json.decode(data, json.field("replacement", json.string())) {
+          .Ok(r) => r,
+          .Err(_) => { continue },
+        }
+
+        fix := ImportFix.{ use_start, use_end, replacement }
+        file_path := d.identity.path
+        case edits_by_file[file_path] {
+          .Some(existing) => {
+            // Dedup by span — multiple unused names in the same use stmt share the same edit
+            found := false
+            for e in existing {
+              if e.use_start == fix.use_start and e.use_end == fix.use_end {
+                found = true
+                break
+              }
+            }
+            if !found {
+              edits_by_file[file_path] = existing.append(fix)
+            }
+          },
+          .None => { edits_by_file[file_path] = [fix] },
+        }
+      },
+      .None => {},
+    }
+  }
+
+  if edits_by_file.len() == 0 {
+    println("No unused imports found.")
+  }
+
+  // Apply edits to each file
+  for file_path in edits_by_file.keys() {
+    fixes := case edits_by_file[file_path] {
+      .Some(f) => f,
+      .None => { continue },
+    }
+
+    source := case fs.read_text(file_path) {
+      .Ok(text) => text,
+      .Err(_) => {
+        eprintln("warning: could not read '${file_path}', skipping")
+        continue
+      },
+    }
+
+    // Sort edits by use_start descending so we can apply from end to start
+    // without invalidating earlier byte offsets
+    sorted := fixes.sort_by(fn(a: ImportFix, b: ImportFix) Order {
+      if b.use_start < a.use_start { .Lt } else if b.use_start > a.use_start { .Gt } else { .Eq }
+    })
+
+    result := source
+    for fix in sorted {
+      before := result.slice(0, fix.use_start)
+      after := result.slice(fix.use_end, result.len())
+      result = before.concat(fix.replacement).concat(after)
+    }
+
+    case fs.write_text(file_path, result) {
+      .Ok(_) => println("Fixed: ${file_path} (${fixes.len()} edit(s))"),
+      .Err(_) => eprintln("error: could not write '${file_path}'"),
     }
   }
 }

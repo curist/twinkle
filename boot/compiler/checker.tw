@@ -4,23 +4,14 @@
 // InferCtx is threaded functionally through every call; updates use COW field mutation.
 
 use lib.source.span.{Span}
-use lib.source.diagnostic.{Diagnostic, StageResult}
+use lib.source.diagnostic.{Diagnostic}
+
 use lib.source.diagnostic as diag
-use .resolver.{
-  MonoType, ResolvedEnv, FunctionSig, ResolvedTypeDef,
-  TypeId, TypeEntry, ResolvedField, ResolvedVariant,
-  ResolvedTypeParam, resolved_type_param_names,
-  ty_to_string,
-}
+use .resolver.{MonoType, ResolvedEnv, FunctionSig, TypeId, ResolvedField, ResolvedTypeParam, resolved_type_param_names}
+
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape, contract_methods, contract_spec}
-use .ast.{
-  Module, Item, FunctionDecl, Param,
-  Block, Stmt, LetStmt, ReturnStmt, ForStmt,
-  Expr, ExprKind,
-  TypeExpr, TypeExprKind, BinOp, UnOp, StringPart,
-  RecordEntry, CaseArm, Pattern, PatternKind,
-  CollectExpr,
-}
+use .ast.{Module, FunctionDecl, Param, Block, Stmt, LetStmt, ReturnStmt, ForStmt, Expr, TypeExpr, BinOp, UnOp, StringPart, RecordEntry, CaseArm, Pattern, CollectExpr}
+
 
 // ── Types ───────────────────────────────────────────────────────────
 

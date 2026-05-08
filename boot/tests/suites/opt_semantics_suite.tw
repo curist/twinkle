@@ -1,10 +1,12 @@
 use tests.runner
 use tests.assert
 use compiler.core_ir.{LocalId}
-use compiler.anf.{Atom, AnfOp}
+use compiler.anf.{AnfOp}
+
 use compiler.builder_family.{vector_builder_config}
 use compiler.builtins.{make_builtin_registry}
-use compiler.opt.semantics.{EffectKind, make_prelude_optimizer_semantics, op_effect, op_has_fresh_result, is_pure_with_semantics, reusable_update_site}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics, op_effect, op_has_fresh_result, is_pure_with_semantics, reusable_update_site}
+
 
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
 

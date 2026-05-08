@@ -1,6 +1,7 @@
 use tests.runner
 use tests.assert
-use compiler.unused_imports.{reconstruct_use_decl, check_unused_imports, ImportEdit, UnusedImportDiag, UnusedImportResult}
+use compiler.unused_imports.{reconstruct_use_decl, check_unused_imports}
+
 use compiler.ast.{Module, Item, UseDecl, ImportItem, ImportValueItem, ImportTypeItem, Stmt, ExprStmt, Expr, ExprKind}
 use lib.source.span
 

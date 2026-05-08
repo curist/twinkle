@@ -3,7 +3,7 @@
 // This module exposes parsed/resolved/typed artifacts and lightweight source
 // lookup helpers without lowering or codegen.
 
-use compiler.ast
+
 use compiler.base_env
 use compiler.checker.{CheckResult}
 use compiler.imports

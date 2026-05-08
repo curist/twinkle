@@ -1,8 +1,10 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, Param}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm, FieldAtom, OpKind}
-use compiler.anf_analysis.{set_has}
+use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, FieldAtom}
+
+
 use compiler.builder_family.{BuilderConfig}
 use compiler.resolver.{MonoType, TypeId}
 use compiler.opt.semantics.{OptimizerSemantics, CallSemantics}

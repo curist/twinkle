@@ -3,12 +3,13 @@ use tests.assert
 use compiler.parser
 use compiler.resolver
 use compiler.checker
-use compiler.core_ir.{LocalId, FuncId, FieldId, CoreExpr, CoreExprKind, CoreModule}
-use compiler.resolver.{MonoType, TypeId}
+
+
 use compiler.lower_core
 use compiler.monomorphize
 use compiler.builtins.{make_builtin_registry}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, OpKind, IndexKind}
+use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
+
 use compiler.lower_anf
 
 // ── Pipeline helpers ────────────────────────────────────────────────

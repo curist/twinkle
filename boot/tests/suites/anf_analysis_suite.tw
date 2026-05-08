@@ -1,8 +1,11 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, CorePattern}
-use compiler.resolver.{MonoType, TypeId}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, OpKind, IndexKind, FieldAtom}
+use compiler.core_ir.{LocalId, FuncId, VariantId, CorePattern}
+
+use compiler.resolver.{TypeId}
+
+use compiler.anf.{AnfExpr, AnfMatchArm}
+
 use compiler.anf_analysis.{
   set_has, collect_free_locals, collect_bound_locals, collect_assigned_locals,
   collect_pattern_bindings, expr_always_diverges,

@@ -22,7 +22,8 @@
 use compiler.resolver.{MonoType, ResolvedEnv}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{WasmLayout, layout_of, val_type_of_mono, mono_to_key}
-use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp, PreparedAtom}
+use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp}
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId}
 use compiler.builtins as bi

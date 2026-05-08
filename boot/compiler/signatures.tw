@@ -9,11 +9,10 @@
 use @std.fs
 use @std.path
 use compiler.parser
-use compiler.ast.{Item, Param, TypeExpr, TypeParam, type_param_names}
-use compiler.resolver.{
-  FunctionSig, MethodEntry, MonoType, ResolvedEnv,
-  resolve_type_expr, TypeResolveResult, ResolvedTypeParam, ResolvedContractRef,
-}
+use compiler.ast.{Param, TypeExpr, TypeParam, type_param_names}
+
+use compiler.resolver.{FunctionSig, MethodEntry, MonoType, ResolvedEnv, resolve_type_expr, ResolvedTypeParam, ResolvedContractRef}
+
 use compiler.contracts.{resolve_builtin_contract_name}
 
 /// One file's worth of resolved signatures, tagged with an optional receiver

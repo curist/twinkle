@@ -5,7 +5,8 @@
 // continuation body is unreachable and dropped.
 
 use compiler.core_ir.{LocalId}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
+
 
 pub type SimpResult = .{ expr: AnfExpr, changed: Bool }
 

@@ -9,7 +9,8 @@
 //
 // Dict is COW in Twinkle, so every function threads and returns the updated dict.
 
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use compiler.anf.{Atom, AnfExpr, AnfOp}
+
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics, is_pure_with_semantics}
 
 fn inc(uses: Dict<Int, Int>, id: Int) Dict<Int, Int> {

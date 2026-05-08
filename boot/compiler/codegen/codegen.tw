@@ -13,10 +13,12 @@ use @std.proc
 use compiler.resolver.{ResolvedEnv}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.anf.{AnfModule}
-use compiler.codegen.wasm_ir.{WasmModule, AbiContract}
+use compiler.codegen.wasm_ir.{WasmModule}
+
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.emit.{emit_module}
-use compiler.codegen.linker.{link, LinkedModule, LinkError}
+use compiler.codegen.linker.{link, LinkedModule}
+
 use compiler.codegen.wat.{emit_wat}
 use compiler.codegen.wasm.{emit_linked_wasm}
 use compiler.codegen.runtime.types as rt_types

@@ -1,7 +1,7 @@
 use tests.runner
 use tests.assert
 use compiler.core_ir.{LocalId, FuncId}
-use compiler.anf.{AnfExpr, AnfOp}
+
 use compiler.builder_family.{BuilderConfig}
 use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
 

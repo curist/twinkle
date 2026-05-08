@@ -1,8 +1,10 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, Param}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm, FieldAtom, OpKind}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.core_ir.{LocalId, FuncId, Param}
+
+use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef}
+
+
 use compiler.opt.defer_elim.{eliminate_defers}
 
 // ── Helpers ─────────────────────────────────────────────────────────

@@ -17,9 +17,8 @@ use compiler.codegen.wasm_ir.{
   ValType, Instr, TypeDef, FuncDef, ImportDef, GlobalDef, DataSegment,
   WasmModule,
 }
-use compiler.codegen.wasm_layout.{
-  layout_of, val_type_of, val_type_of_mono, mono_to_key,
-}
+use compiler.codegen.wasm_layout.{val_type_of_mono, mono_to_key}
+
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{
   PreparedFunc, SlotId, ReprKind, PreparedAtom, PreparedExpr, PreparedOp,
@@ -30,10 +29,8 @@ use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.facts as facts
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.module_globals.{emit_module_globals}
-use compiler.codegen.emit.helpers.{
-  sanitize_name, repr_name, pattern_is_trivial, get_sum_layout,
-  find_variant_layout, variant_field_mono, combine_and_checks,
-}
+use compiler.codegen.emit.helpers.{sanitize_name, repr_name, pattern_is_trivial, find_variant_layout, variant_field_mono, combine_and_checks}
+
 use compiler.codegen.emit.string_pool.{emit_string_pool_globals, emit_string_pool_getters, emit_string_data_segment}
 use compiler.codegen.emit.anyref.{
   emit_box_to_anyref, emit_unbox_from_anyref, emit_erased_container_egress,

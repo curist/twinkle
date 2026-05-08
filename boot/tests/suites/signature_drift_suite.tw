@@ -16,7 +16,8 @@
 
 use tests.runner
 use tests.assert
-use compiler.signatures.{load_signatures, to_internal_name, SignatureGroup}
+use compiler.signatures.{load_signatures, to_internal_name}
+
 use compiler.base_env.{builtin_env, builtin_type_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.resolver.{lookup_function, lookup_method, lookup_registered_function}

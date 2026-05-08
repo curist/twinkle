@@ -2,8 +2,10 @@
 //
 // Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
 
-use .core_ir.{LocalId, CorePattern}
-use .anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
+use .core_ir.{CorePattern}
+
+use .anf.{Atom, AnfExpr, AnfOp}
+
 
 // ── Set helpers (Dict<Int, Bool> as set) ────────────────────────────
 

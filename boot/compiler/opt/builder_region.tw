@@ -1,7 +1,8 @@
 // Optimizer-facing transient builder region representation.
 
 use compiler.core_ir.{LocalId}
-use compiler.anf.{Atom, AnfExpr, AnfOp}
+use compiler.anf.{AnfExpr, AnfOp}
+
 use compiler.builder_family.{BuilderConfig}
 
 pub type BuilderInit = {

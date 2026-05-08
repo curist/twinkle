@@ -6,16 +6,13 @@
 // through resolver origins rather than name-only matching.
 
 use @std.fs
-use compiler.ast.{
-  Item, Block, Stmt, Expr, ExprKind, StringPart,
-  RecordEntry, CollectExpr, FunctionDecl, Param,
-  TypeExpr, TypeExprKind, TypePath, Pattern, PatternKind,
-  ImportItem, TypeDecl, TypeDef,
-}
+use compiler.ast.{Item, Block, Stmt, Expr, RecordEntry, CollectExpr, FunctionDecl, TypeExpr, TypePath, Pattern, TypeDecl, TypeDef}
+
 use compiler.imports
 use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.resolver.{TypeId, ResolvedEnv}
+
 use lib.source.identity
 use lib.source.span
 

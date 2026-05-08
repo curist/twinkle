@@ -10,7 +10,8 @@ use compiler.codegen.wasm_ir.{ValType, HeapType, TypeDef, FieldDef, ImportDef}
 use compiler.codegen.wasm_plan_types.{
   WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry, ModuleGlobalEntry,
 }
-use compiler.backend.prepared_ir.{PreparedFunc, SlotId}
+use compiler.backend.prepared_ir.{PreparedFunc}
+
 use compiler.backend.prepare.{PreparedModule}
 use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
 use compiler.backend.callable_targets as callable_targets

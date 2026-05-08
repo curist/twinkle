@@ -1,16 +1,18 @@
 // Fixed-point optimization pipeline: wire dead_let, copy_prop, const_fold,
 // branch_simp into a loop, with module-level orchestration and pinned locals.
 
-use compiler.core_ir.{LocalId, FuncId}
+
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
 use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
-use compiler.opt.copy_prop.{copy_propagate, copy_propagate_with_pinned}
+use compiler.opt.copy_prop.{copy_propagate_with_pinned}
+
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.semantics.{OptimizerSemantics, CowConfig, make_prelude_optimizer_semantics, cow_config_from_semantics, optimizer_semantics_from_cow_config}
-use compiler.opt.uniqueness.{collect_fresh_record_helpers, uniqueness_rewrite, uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed, uniqueness_rewrite_with_semantics_and_consumed_and_fresh}
+use compiler.opt.uniqueness.{collect_fresh_record_helpers, uniqueness_rewrite, uniqueness_rewrite_with_semantics_and_consumed_and_fresh}
+
 use compiler.opt.analysis.{collect_consumed_params}
 use compiler.opt.defer_elim.{eliminate_defers}
 use @std.date

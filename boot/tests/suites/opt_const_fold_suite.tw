@@ -1,7 +1,9 @@
 use tests.runner
 use tests.assert
-use compiler.core_ir.{LocalId, FuncId, BinOp, UnOp}
-use compiler.anf.{Atom, AnfExpr, AnfOp, OpKind}
+use compiler.core_ir.{LocalId}
+
+use compiler.anf.{AnfExpr}
+
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.branch_simp.{branch_simplify}
 

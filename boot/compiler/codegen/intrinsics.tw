@@ -4,9 +4,8 @@
 // of the public runtime module surface. Keeping them here lets emit.tw lower to
 // helper calls without also owning the helper implementations.
 
-use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, FuncDef, ImportDef, ExportDef, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ValType, Instr, FuncDef, ImportDef, ExportDef, WasmModule}
+
 
 fn str_null() ValType { .Ref(true, .Named("rt_types__String")) }
 fn str_ref() ValType { .Ref(false, .Named("rt_types__String")) }

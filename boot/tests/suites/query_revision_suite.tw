@@ -3,7 +3,7 @@ use tests.assert
 use compiler.base_env
 use compiler.checker
 use compiler.parser
-use compiler.resolver
+
 use compiler.query.cache
 use lib.query.keys
 
