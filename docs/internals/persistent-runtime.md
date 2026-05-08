@@ -14,6 +14,26 @@ defines the contract any backend must satisfy.
 - Allow per-target implementations behind a shared contract.
 - Keep desugarings (`for`/`collect`, field/index updates) target-agnostic.
 
+## Influences
+
+The persistent data structures used by Twinkle's runtime draw heavily from
+Clojure's pioneering work on immutable collections:
+
+- **Vector (PVec)**: a 32-branch persistent trie with a tail buffer, modeled
+  after Clojure's `PersistentVector` (designed by Rich Hickey, based on Phil
+  Bagwell's ideal hash trees). O(log₃₂ n) access, O(1) amortized append.
+- **Dict (HAMT)**: a Hash Array Mapped Trie with insertion-order tracking,
+  modeled after Clojure's `PersistentHashMap` (also based on Bagwell's HAMT
+  paper).
+- **Cell\<T\>**: an explicit mutable reference cell, analogous to Clojure's
+  `atom` — the designated escape hatch for shared mutable state in an
+  otherwise immutable world.
+
+The core philosophy — immutable values as the default, structural sharing for
+efficiency, and explicit opt-in mutation — is directly inherited from Clojure's
+value-oriented programming model, adapted here for a statically typed language
+on Wasm GC.
+
 ---
 
 ## Semantic Surface
