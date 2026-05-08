@@ -1,2 +1,2 @@
-1:16: expected expression
-2:1: expected '}' to close block
+1:16: error: expected expression
+2:1: error: expected '}' to close block

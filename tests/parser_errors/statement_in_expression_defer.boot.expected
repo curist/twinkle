@@ -1,6 +1,6 @@
-3:10: 'defer' is a statement and cannot be used where an expression is expected in case arm body
+3:10: error: 'defer' is a statement and cannot be used where an expression is expected in case arm body
 hint: wrap it in a block expression, e.g. `=> { defer ... }`
-3:16: Expected ,
-3:23: expected '=>' in case arm
-3:24: expected expression
-3:25: expected ')'
+3:16: error: Expected ,
+3:23: error: expected '=>' in case arm
+3:24: error: expected expression
+3:25: error: expected ')'

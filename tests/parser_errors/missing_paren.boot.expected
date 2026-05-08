@@ -1,2 +1,2 @@
-1:15: expected ',' or ')' in function parameter list
-1:15: expected ')' after function parameters
+1:15: error: expected ',' or ')' in function parameter list
+1:15: error: expected ')' after function parameters
