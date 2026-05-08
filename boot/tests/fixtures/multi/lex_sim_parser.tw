@@ -1,4 +1,4 @@
-use .lex_sim_tokens.{Token, TokenKind}
+use .lex_sim_tokens.{Token}
 use .lex_sim_lexer
 
 fn is_ident(t: Token) Bool {

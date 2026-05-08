@@ -1,4 +1,3 @@
-use .type_flow_noise
 use .lex_sim_tokens
 
 pub fn first_token(src: String) lex_sim_tokens.Token {

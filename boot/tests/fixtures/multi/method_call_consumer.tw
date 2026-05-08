@@ -3,7 +3,7 @@ use .method_call_bridge
 use .method_call_src.{Point}
 
 fn main() {
-  p := method_call_bridge.origin()
+  p: Point = method_call_bridge.origin()
   p2 := p.add_x(5)
   p2.sum()
 }
