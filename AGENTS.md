@@ -80,6 +80,46 @@ make rust-test                      # Rust tests only
 - **Primitives (unboxed):** `Int` (i64), `Float` (f64), `Bool` (i32), `Void`
 - **References (GC):** `String`, `array<T>`, records, `dict<K,V>`, closures
 
+### Immutability and Rebinding
+All values are immutable. Assignment syntax (`=`) is **rebinding**, not mutation.
+Record field updates, array index updates, and dict updates are sugar for
+"build a new value and rebind the name":
+
+```tw
+// These are equivalent:
+p.x = 1                    // sugar: rebinds p to a new record
+p = RecordUpdate(p, x, 1)  // desugared form
+
+arr[i] = v                 // sugar: rebinds arr
+arr = Vector.set(arr, i, v)
+
+m[k] = v                   // sugar: rebinds m
+m = Dict.set(m, k, v)
+```
+
+**Do NOT write `with_*` helper functions** that copy all record fields just to
+update one or two. Use field rebinding directly:
+
+```tw
+// ❌ Don't write this:
+fn with_documents(state: State, documents: Store) State {
+  .{
+    initialized: state.initialized,
+    shutdown_requested: state.shutdown_requested,
+    documents,
+    query_cache: state.query_cache,
+  }
+}
+next := with_documents(state, new_store)
+
+// ✅ Write this instead:
+state.documents = new_store
+```
+
+This applies to any record type. The only exception is functions that do
+non-trivial work beyond field assignment (e.g. rebuilding indexes, filtering,
+merging collections).
+
 ### Type System
 - Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking
 - Parametric polymorphism: `fn map<A, B>(xs: array<A>, f: fn(A) B) array<B>`
