@@ -158,86 +158,34 @@ fn with_metadata_from(st: RwState, other: RwState) RwState {
   // Loop rewrites are the only path that adds new monos entries, and they
   // always advance next_local by 3.  When next_local is unchanged the two
   // monos maps are identical, so skip the expensive merge.
-  next := if other.next_local > st.next_local { other.next_local } else { st.next_local }
-  monos := if other.next_local > st.next_local {
-    merge_mono_maps(st.monos, other.monos)
-  } else {
-    st.monos
+  if other.next_local > st.next_local {
+    st.next_local = other.next_local
+    st.monos = merge_mono_maps(st.monos, other.monos)
   }
-  RwState.{
-    tainted: st.tainted,
-    ownership: st.ownership,
-    known_empty: st.known_empty,
-    refreshed: st.refreshed,
-    fresh_records: st.fresh_records,
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: next,
-    monos: monos,
-  }
+  st
 }
 
 fn with_local_ownership(st: RwState, local: LocalId, ownership: Ownership) RwState {
-  owned := st.ownership
-  owned[local.id] = ownership
-  RwState.{
-    tainted: st.tainted,
-    ownership: owned,
-    known_empty: st.known_empty,
-    refreshed: st.refreshed,
-    fresh_records: st.fresh_records,
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
-  }
+  st.ownership[local.id] = ownership
+  st
 }
 
 fn with_known_empty_local(st: RwState, local: LocalId) RwState {
-  RwState.{
-    tainted: st.tainted,
-    ownership: st.ownership,
-    known_empty: st.known_empty.set(local.id, true),
-    refreshed: st.refreshed,
-    fresh_records: st.fresh_records,
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
-  }
+  st.known_empty[local.id] = true
+  st
 }
 
 fn without_local_ownership(st: RwState, local: LocalId) RwState {
-  RwState.{
-    tainted: st.tainted,
-    ownership: st.ownership.remove(local.id),
-    known_empty: st.known_empty.remove(local.id),
-    refreshed: st.refreshed.remove(local.id),
-    fresh_records: st.fresh_records.remove(local.id),
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
-  }
+  st.ownership = st.ownership.remove(local.id)
+  st.known_empty = st.known_empty.remove(local.id)
+  st.refreshed = st.refreshed.remove(local.id)
+  st.fresh_records = st.fresh_records.remove(local.id)
+  st
 }
 
 fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
-  RwState.{
-    tainted: st.tainted,
-    ownership: st.ownership,
-    known_empty: st.known_empty,
-    refreshed: st.refreshed,
-    fresh_records: st.fresh_records.set(local.id, true),
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
-  }
+  st.fresh_records[local.id] = true
+  st
 }
 
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
@@ -250,64 +198,31 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
 
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)
-  owned := st.ownership
-  owned = owned.remove(source.id)
-  owned[target.id] = moved
-  refreshed := st.refreshed.remove(source.id)
+  st.ownership = st.ownership.remove(source.id)
+  st.ownership[target.id] = moved
+  st.refreshed = st.refreshed.remove(source.id)
   if set_has(st.tainted, target.id) {
-    refreshed[target.id] = true
+    st.refreshed[target.id] = true
   }
-  fresh_records := st.fresh_records.remove(source.id)
+  st.fresh_records = st.fresh_records.remove(source.id)
   if source_was_fresh_record {
-    fresh_records[target.id] = true
-  }
-  st = RwState.{
-    tainted: st.tainted,
-    ownership: owned,
-    known_empty: st.known_empty,
-    refreshed: refreshed,
-    fresh_records: fresh_records,
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
+    st.fresh_records[target.id] = true
   }
   if set_has(st.known_empty, source.id) {
-    st = RwState.{
-      tainted: st.tainted,
-      ownership: st.ownership,
-      known_empty: st.known_empty.remove(source.id).set(target.id, true),
-      refreshed: st.refreshed,
-      fresh_records: st.fresh_records,
-      live_after_by_binding: st.live_after_by_binding,
-      config: st.config,
-      fresh_helper_ids: st.fresh_helper_ids,
-      next_local: st.next_local,
-      monos: st.monos,
-    }
+    st.known_empty = st.known_empty.remove(source.id)
+    st.known_empty[target.id] = true
   }
   st
 }
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   st = with_local_ownership(st, local, .Deep)
-  refreshed := st.refreshed
   if set_has(st.tainted, local.id) {
-    refreshed[local.id] = true
+    st.refreshed[local.id] = true
   }
-  RwState.{
-    tainted: st.tainted,
-    ownership: st.ownership,
-    known_empty: st.known_empty.remove(local.id),
-    refreshed: refreshed,
-    fresh_records: st.fresh_records.remove(local.id),
-    live_after_by_binding: st.live_after_by_binding,
-    config: st.config,
-    fresh_helper_ids: st.fresh_helper_ids,
-    next_local: st.next_local,
-    monos: st.monos,
-  }
+  st.known_empty = st.known_empty.remove(local.id)
+  st.fresh_records = st.fresh_records.remove(local.id)
+  st
 }
 
 fn tail_returns_local(expr: AnfExpr, current: LocalId) Bool {
