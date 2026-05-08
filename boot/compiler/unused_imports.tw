@@ -5,43 +5,113 @@
 // that introduce no used names.
 
 use lib.source.diagnostic.{Diagnostic, warning}
+use lib.source.span
 use .ast.{
   Module, FunctionDecl, TypeDecl,
   Block, Stmt, Expr, Pattern,
   TypeExpr, TypePath,
+  UseDecl, ImportItem,
+}
+
+// ── Edit types ─────────────────────────────────────────────────────
+
+/// Byte span of the entire `use` statement + replacement text.
+pub type ImportEdit = .{
+  use_span: span.Span,
+  replacement: String,
+}
+
+/// Pairs a warning diagnostic with its corresponding edit.
+pub type UnusedImportDiag = .{
+  diagnostic: Diagnostic,
+  edit: ImportEdit,
+}
+
+/// Result of unused import analysis — diagnostics with actionable edits.
+pub type UnusedImportResult = .{
+  items: Vector<UnusedImportDiag>,
 }
 
 // ── Public API ──────────────────────────────────────────────────────
 
-/// Check a module for unused imports and return warning diagnostics.
-pub fn check_unused_imports(module: Module) Vector<Diagnostic> {
+/// Check a module for unused imports and return diagnostics with edit info.
+pub fn check_unused_imports(module: Module) UnusedImportResult {
+  // Collect module aliases from full module imports so we can distinguish
+  // module-qualified field access (dep.func) from UFCS (x.func).
+  module_aliases: Dict<String, Bool> = Dict.new()
+  for item in module.items {
+    case item {
+      .Use(decl) => case decl.items {
+        .None => {
+          alias := case decl.alias {
+            .Some(a) => a,
+            .None => if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else { "" },
+          }
+          if alias != "" { module_aliases[alias] = true }
+        },
+        .Some(_) => {},
+      },
+      _ => {},
+    }
+  }
+
   // Collect all referenced names from the module body
   used: Cell<Dict<String, Bool>> = Cell.new(Dict.new())
-  collect_used_names_module(module, used)
+  collect_used_names_module(module, used, module_aliases)
 
   // Check each use declaration
   final_used := used.get()
-  warnings: Vector<Diagnostic> = []
+  result_items: Vector<UnusedImportDiag> = []
   for item in module.items {
     case item {
       .Use(decl) => {
         case decl.items {
           .Some(items) => {
             // Selective import: check each item individually
+            // Collect unused names for this decl to compute the edit
+            unused_in_decl: Vector<String> = []
             for imp in items {
               case imp {
                 .Value(v) => {
                   binding := case v.alias { .Some(a) => a, .None => v.name }
                   if !final_used.has(binding) {
-                    warnings = warnings.append(warning(v.span, "unused import: ${binding}"))
+                    unused_in_decl = unused_in_decl.append(binding)
                   }
                 },
                 .Type(t) => {
                   binding := case t.alias { .Some(a) => a, .None => t.name }
                   if !final_used.has(binding) {
-                    warnings = warnings.append(warning(t.span, "unused import: ${binding}"))
+                    unused_in_decl = unused_in_decl.append(binding)
                   }
                 },
+              }
+            }
+            // If any unused, compute edit for the whole use statement
+            if unused_in_decl.len() > 0 {
+              replacement := reconstruct_use_decl(decl, unused_in_decl)
+              edit := ImportEdit.{ use_span: decl.span, replacement }
+              // Emit one diagnostic per unused name
+              for imp in items {
+                case imp {
+                  .Value(v) => {
+                    binding := case v.alias { .Some(a) => a, .None => v.name }
+                    if !final_used.has(binding) {
+                      result_items = result_items.append(UnusedImportDiag.{
+                        diagnostic: warning(v.span, "unused import: ${binding}"),
+                        edit,
+                      })
+                    }
+                  },
+                  .Type(t) => {
+                    binding := case t.alias { .Some(a) => a, .None => t.name }
+                    if !final_used.has(binding) {
+                      result_items = result_items.append(UnusedImportDiag.{
+                        diagnostic: warning(t.span, "unused import: ${binding}"),
+                        edit,
+                      })
+                    }
+                  },
+                }
               }
             }
           },
@@ -56,7 +126,11 @@ pub fn check_unused_imports(module: Module) Vector<Diagnostic> {
               },
             }
             if alias != "" and !final_used.has(alias) {
-              warnings = warnings.append(warning(decl.span, "unused import: ${alias}"))
+              edit := ImportEdit.{ use_span: decl.span, replacement: "" }
+              result_items = result_items.append(UnusedImportDiag.{
+                diagnostic: warning(decl.span, "unused import: ${alias}"),
+                edit,
+              })
             }
           },
         }
@@ -64,7 +138,64 @@ pub fn check_unused_imports(module: Module) Vector<Diagnostic> {
       _ => {},
     }
   }
-  warnings
+  UnusedImportResult.{ items: result_items }
+}
+
+/// Extract just the diagnostics from an UnusedImportResult (for callers
+/// that only need warnings without edit info).
+pub fn diagnostics_only(result: UnusedImportResult) Vector<Diagnostic> {
+  collect item in result.items { item.diagnostic }
+}
+
+// ── Reconstruction ──────────────────────────────────────────────────
+
+/// Reconstruct a `use` statement with only the used items retained.
+/// For selective imports (`use foo.{A, B, C}`), rebuilds with unused
+/// items filtered out. Returns the full `use` line including trailing newline.
+pub fn reconstruct_use_decl(decl: UseDecl, unused_names: Vector<String>) String {
+  path_str := decl.path.join(".")
+  prefix := if decl.is_stdlib { "@std." } else if decl.is_relative { "." } else { "" }
+
+  case decl.items {
+    .Some(items) => {
+      // Filter to only used items
+      kept: Vector<String> = []
+      for item in items {
+        name := case item {
+          .Value(v) => case v.alias { .Some(a) => a, .None => v.name },
+          .Type(t) => case t.alias { .Some(a) => a, .None => t.name },
+        }
+        is_unused := false
+        for u in unused_names {
+          if u == name { is_unused = true }
+        }
+        if !is_unused {
+          item_str := case item {
+            .Value(v) => case v.alias {
+              .Some(a) => "${v.name} as ${a}",
+              .None => v.name,
+            },
+            .Type(t) => case t.alias {
+              .Some(a) => "${t.name} as ${a}",
+              .None => t.name,
+            },
+          }
+          kept = kept.append(item_str)
+        }
+      }
+      if kept.len() == 0 {
+        ""
+      } else {
+        sep := ", "
+        items_str := kept.join(sep)
+        "use ${prefix}${path_str}.{${items_str}}\n"
+      }
+    },
+    .None => {
+      // Full module import — if unused, delete entirely
+      ""
+    },
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -77,20 +208,20 @@ fn mark(used: Cell<Dict<String, Bool>>, name: String) {
 
 // ── Name collection ─────────────────────────────────────────────────
 
-fn collect_used_names_module(module: Module, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_module(module: Module, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   for item in module.items {
     case item {
-      .Function(decl) => collect_used_names_function(decl, used),
+      .Function(decl) => collect_used_names_function(decl, used, aliases),
       .ExternFunction(_) => {},
       .Type(decl) => collect_used_names_type_decl(decl, used),
-      .Stmt(stmt) => collect_used_names_stmt(stmt, used),
+      .Stmt(stmt) => collect_used_names_stmt(stmt, used, aliases),
       .Use(_) => {},
       .ErrorItem(_) => {},
     }
   }
 }
 
-fn collect_used_names_function(decl: FunctionDecl, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_function(decl: FunctionDecl, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   for p in decl.params {
     case p.ty {
       .Some(te) => collect_used_names_type_expr(te, used),
@@ -101,7 +232,7 @@ fn collect_used_names_function(decl: FunctionDecl, used: Cell<Dict<String, Bool>
     .Some(te) => collect_used_names_type_expr(te, used),
     .None => {},
   }
-  collect_used_names_block(decl.body, used)
+  collect_used_names_block(decl.body, used, aliases)
 }
 
 fn collect_used_names_type_decl(decl: TypeDecl, used: Cell<Dict<String, Bool>>) {
@@ -167,56 +298,56 @@ fn collect_used_names_type_path(path: TypePath, used: Cell<Dict<String, Bool>>) 
   }
 }
 
-fn collect_used_names_block(block: Block, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_block(block: Block, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   for stmt in block.stmts {
-    collect_used_names_stmt(stmt, used)
+    collect_used_names_stmt(stmt, used, aliases)
   }
   case block.tail {
-    .Some(expr) => collect_used_names_expr(expr, used),
+    .Some(expr) => collect_used_names_expr(expr, used, aliases),
     .None => {},
   }
 }
 
-fn collect_used_names_stmt(stmt: Stmt, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_stmt(stmt: Stmt, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   case stmt {
     .Let(ls) => {
       case ls.ty {
         .Some(te) => collect_used_names_type_expr(te, used),
         .None => {},
       }
-      collect_used_names_expr(ls.value, used)
+      collect_used_names_expr(ls.value, used, aliases)
     },
     .For(fs) => {
       case fs.iter {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
       case fs.condition {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
-      collect_used_names_block(fs.body, used)
+      collect_used_names_block(fs.body, used, aliases)
     },
     .Return(rs) => {
       case rs.value {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
     },
     .Break(bs) => {
       case bs.value {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
     },
     .Continue(_) => {},
-    .Defer(ds) => collect_used_names_expr(ds.expr, used),
-    .Expr(es) => collect_used_names_expr(es.expr, used),
+    .Defer(ds) => collect_used_names_expr(ds.expr, used, aliases),
+    .Expr(es) => collect_used_names_expr(es.expr, used, aliases),
     .ErrorStmt(_) => {},
   }
 }
 
-fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   case expr.kind {
     .Ident(name) => mark(used, name),
     .IntLit(_) => {},
@@ -228,59 +359,68 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
       for part in parts {
         case part {
           .Literal(_) => {},
-          .Interpolation(e) => collect_used_names_expr(e, used),
+          .Interpolation(e) => collect_used_names_expr(e, used, aliases),
         }
       }
     },
-    .Unary(_, e) => collect_used_names_expr(e, used),
+    .Unary(_, e) => collect_used_names_expr(e, used, aliases),
     .Binary(_, l, r) => {
-      collect_used_names_expr(l, used)
-      collect_used_names_expr(r, used)
+      collect_used_names_expr(l, used, aliases)
+      collect_used_names_expr(r, used, aliases)
     },
     .Call(callee, args) => {
-      collect_used_names_expr(callee, used)
+      collect_used_names_expr(callee, used, aliases)
       for a in args {
-        collect_used_names_expr(a, used)
+        collect_used_names_expr(a, used, aliases)
       }
     },
     .Field(base, field) => {
-      // Mark both the base (for module-qualified access like `alias.func`)
-      // and the field name (for UFCS calls like `env.merge_module_exports(...)`)
-      mark(used, field)
+      // For module-qualified access like `dep.func`, the base is the module
+      // alias and the field is accessed through it — only the alias is an
+      // import binding. For non-module bases like `x.transform`, the field
+      // may be a UFCS call to a selectively imported function, so mark it.
       case base.kind {
-        .Ident(name) => mark(used, name),
-        _ => collect_used_names_expr(base, used),
+        .Ident(name) => {
+          mark(used, name)
+          if !aliases.has(name) {
+            mark(used, field)
+          }
+        },
+        _ => {
+          collect_used_names_expr(base, used, aliases)
+          mark(used, field)
+        },
       }
     },
     .Index(base, idx) => {
-      collect_used_names_expr(base, used)
-      collect_used_names_expr(idx, used)
+      collect_used_names_expr(base, used, aliases)
+      collect_used_names_expr(idx, used, aliases)
     },
-    .BlockExpr(block) => collect_used_names_block(block, used),
+    .BlockExpr(block) => collect_used_names_block(block, used, aliases),
     .If(cond, then_block, else_expr) => {
-      collect_used_names_expr(cond, used)
-      collect_used_names_block(then_block, used)
+      collect_used_names_expr(cond, used, aliases)
+      collect_used_names_block(then_block, used, aliases)
       case else_expr {
-        .Some(e) => collect_used_names_expr(e, used),
+        .Some(e) => collect_used_names_expr(e, used, aliases),
         .None => {},
       }
     },
     .Case(scrutinee, arms) => {
-      collect_used_names_expr(scrutinee, used)
+      collect_used_names_expr(scrutinee, used, aliases)
       for arm in arms {
-        collect_used_names_pattern(arm.pattern, used)
-        collect_used_names_expr(arm.expr, used)
+        collect_used_names_pattern(arm.pattern, used, aliases)
+        collect_used_names_expr(arm.expr, used, aliases)
       }
     },
     .Array(elems) => {
       for e in elems {
-        collect_used_names_expr(e, used)
+        collect_used_names_expr(e, used, aliases)
       }
     },
     .Record(entries) => {
       for entry in entries {
         case entry.value {
-          .Some(v) => collect_used_names_expr(v, used),
+          .Some(v) => collect_used_names_expr(v, used, aliases),
           .None => {},
         }
       }
@@ -290,14 +430,14 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
       mark(used, name)
       for entry in entries {
         case entry.value {
-          .Some(v) => collect_used_names_expr(v, used),
+          .Some(v) => collect_used_names_expr(v, used, aliases),
           .None => {},
         }
       }
     },
     .Variant(_, args) => {
       for a in args {
-        collect_used_names_expr(a, used)
+        collect_used_names_expr(a, used, aliases)
       }
     },
     .Closure(params, ret_type, body) => {
@@ -311,30 +451,30 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
         .Some(te) => collect_used_names_type_expr(te, used),
         .None => {},
       }
-      collect_used_names_block(body, used)
+      collect_used_names_block(body, used, aliases)
     },
     .Collect(ce) => {
       case ce.iter {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
       case ce.condition {
-        .Some(expr) => collect_used_names_expr(expr, used),
+        .Some(expr) => collect_used_names_expr(expr, used, aliases),
         .None => {},
       }
-      collect_used_names_block(ce.body, used)
+      collect_used_names_block(ce.body, used, aliases)
     },
   }
 }
 
-fn collect_used_names_pattern(pat: Pattern, used: Cell<Dict<String, Bool>>) {
+fn collect_used_names_pattern(pat: Pattern, used: Cell<Dict<String, Bool>>, aliases: Dict<String, Bool>) {
   case pat.kind {
     .Wildcard => {},
     .Ident(_) => {},
-    .Literal(e) => collect_used_names_expr(e, used),
+    .Literal(e) => collect_used_names_expr(e, used, aliases),
     .Variant(_, sub_pats) => {
       for p in sub_pats {
-        collect_used_names_pattern(p, used)
+        collect_used_names_pattern(p, used, aliases)
       }
     },
     .QualifiedVariant(qualifier, _, sub_pats) => {
@@ -343,7 +483,7 @@ fn collect_used_names_pattern(pat: Pattern, used: Cell<Dict<String, Bool>>) {
         mark(used, qualifier[0])
       }
       for p in sub_pats {
-        collect_used_names_pattern(p, used)
+        collect_used_names_pattern(p, used, aliases)
       }
     },
     .ErrorPattern => {},

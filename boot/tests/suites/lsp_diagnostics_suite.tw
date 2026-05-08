@@ -18,6 +18,7 @@ pub fn suite() runner.Suite {
         severity: source_diag.Severity.Error,
         message: "bad",
         stage: "check",
+        data: .None,
       }
       out := diagnostics.publish_diagnostics("file:///a.tw", .Some(2), index, [diag])
       try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
@@ -37,6 +38,57 @@ pub fn suite() runner.Suite {
       try assert.int_eq(try json.decode(start, json.field("character", json.int())), 1)
       try assert.int_eq(try json.decode(end, json.field("character", json.int())), 3)
       .Ok({})
+    })
+    .test("diagnostic with data field includes data in JSON", fn() {
+      index := line_index.new("use foo.{A, B}\nx := A\n")
+      data := json.object([
+        json.kv("kind", .Str("unused_import")),
+        json.kv("use_start", .Int(0)),
+        json.kv("use_end", .Int(15)),
+        json.kv("replacement", .Str("use foo.{A}\n")),
+      ])
+      diag := query_diagnostics.Diagnostic.{
+        uri: "file:///a.tw",
+        version: .Some(1),
+        span: .Some(span.Span.{ file_id: 0, start: 12, end: 13 }),
+        severity: source_diag.Severity.Warning,
+        message: "unused import: B",
+        stage: "import",
+        data: .Some(data),
+      }
+      out := diagnostics.publish_diagnostics("file:///a.tw", .Some(1), index, [diag])
+      params := try json.decode(out, json.field("params", json.raw()))
+      items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+      try assert.int_eq(items.len(), 1)
+      item := items[0]
+      try assert.int_eq(try json.decode(item, json.field("severity", json.int())), 2)
+      item_data := try json.decode(item, json.field("data", json.raw()))
+      try assert.str_eq(try json.decode(item_data, json.field("kind", json.string())), "unused_import")
+      try assert.int_eq(try json.decode(item_data, json.field("use_start", json.int())), 0)
+      try assert.int_eq(try json.decode(item_data, json.field("use_end", json.int())), 15)
+      try assert.str_eq(try json.decode(item_data, json.field("replacement", json.string())), "use foo.{A}\n")
+      .Ok({})
+    })
+    .test("diagnostic without data omits data field", fn() {
+      index := line_index.new("x := 1\n")
+      diag := query_diagnostics.Diagnostic.{
+        uri: "file:///a.tw",
+        version: .Some(1),
+        span: .Some(span.Span.{ file_id: 0, start: 0, end: 1 }),
+        severity: source_diag.Severity.Error,
+        message: "bad",
+        stage: "check",
+        data: .None,
+      }
+      out := diagnostics.publish_diagnostics("file:///a.tw", .Some(1), index, [diag])
+      params := try json.decode(out, json.field("params", json.raw()))
+      items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+      item := items[0]
+      // data field should not be present — decoding it should fail
+      case json.decode(item, json.field("data", json.raw())) {
+        .Ok(_) => assert.fail("expected no data field"),
+        .Err(_) => .Ok({}),
+      }
     })
     .test("clear diagnostics publishes empty list", fn() {
       out := diagnostics.clear_diagnostics("file:///a.tw", .None)

@@ -1,0 +1,197 @@
+use tests.runner
+use tests.assert
+use compiler.unused_imports.{reconstruct_use_decl, check_unused_imports, ImportEdit, UnusedImportDiag, UnusedImportResult}
+use compiler.ast.{Module, Item, UseDecl, ImportItem, ImportValueItem, ImportTypeItem, Stmt, ExprStmt, Expr, ExprKind}
+use lib.source.span
+
+fn dummy_span() span.Span {
+  span.Span.{ file_id: 0, start: 0, end: 0 }
+}
+
+fn dummy_expr(kind: ExprKind) Expr {
+  Expr.{ id: 0, kind, span: dummy_span() }
+}
+
+fn make_value_item(name: String) ImportItem {
+  .Value(ImportValueItem.{ name, alias: .None, span: dummy_span() })
+}
+
+fn make_value_item_aliased(name: String, alias: String) ImportItem {
+  .Value(ImportValueItem.{ name, alias: .Some(alias), span: dummy_span() })
+}
+
+fn make_type_item(name: String) ImportItem {
+  .Type(ImportTypeItem.{ name, alias: .None, span: dummy_span() })
+}
+
+fn make_use_decl(path: Vector<String>, items: Vector<ImportItem>?) UseDecl {
+  UseDecl.{
+    is_stdlib: false,
+    is_relative: false,
+    path,
+    alias: .None,
+    items,
+    span: dummy_span(),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("unused imports")
+    // ── reconstruct_use_decl ──
+    .test("reconstruct_use_decl: filters out single unused item from selective import", fn() {
+      decl := make_use_decl(["foo"], .Some([
+        make_value_item("A"),
+        make_value_item("B"),
+        make_value_item("C"),
+      ]))
+      result := reconstruct_use_decl(decl, ["B"])
+      try assert.str_eq(result, "use foo.{A, C}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: all items unused produces empty string", fn() {
+      decl := make_use_decl(["foo"], .Some([
+        make_value_item("A"),
+        make_value_item("B"),
+      ]))
+      result := reconstruct_use_decl(decl, ["A", "B"])
+      try assert.str_eq(result, "")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: single item kept uses brace syntax", fn() {
+      decl := make_use_decl(["foo", "bar"], .Some([
+        make_value_item("X"),
+        make_value_item("Y"),
+      ]))
+      result := reconstruct_use_decl(decl, ["Y"])
+      try assert.str_eq(result, "use foo.bar.{X}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: preserves aliases", fn() {
+      decl := make_use_decl(["lib", "math"], .Some([
+        make_value_item_aliased("add", "plus"),
+        make_value_item("sub"),
+      ]))
+      result := reconstruct_use_decl(decl, ["sub"])
+      try assert.str_eq(result, "use lib.math.{add as plus}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: handles type items", fn() {
+      decl := make_use_decl(["models"], .Some([
+        make_type_item("Foo"),
+        make_type_item("Bar"),
+        make_value_item("baz"),
+      ]))
+      result := reconstruct_use_decl(decl, ["Bar"])
+      try assert.str_eq(result, "use models.{Foo, baz}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: stdlib prefix", fn() {
+      decl := UseDecl.{
+        is_stdlib: true,
+        is_relative: false,
+        path: ["fs"],
+        alias: .None,
+        items: .Some([make_value_item("read"), make_value_item("write")]),
+        span: dummy_span(),
+      }
+      result := reconstruct_use_decl(decl, ["write"])
+      try assert.str_eq(result, "use @std.fs.{read}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: relative prefix", fn() {
+      decl := UseDecl.{
+        is_stdlib: false,
+        is_relative: true,
+        path: ["utils"],
+        alias: .None,
+        items: .Some([make_value_item("helper"), make_value_item("unused_fn")]),
+        span: dummy_span(),
+      }
+      result := reconstruct_use_decl(decl, ["unused_fn"])
+      try assert.str_eq(result, "use .utils.{helper}\n")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: full module import produces empty string", fn() {
+      decl := make_use_decl(["foo", "bar"], .None)
+      result := reconstruct_use_decl(decl, ["bar"])
+      try assert.str_eq(result, "")
+      .Ok({})
+    })
+    .test("reconstruct_use_decl: no items unused keeps all", fn() {
+      decl := make_use_decl(["foo"], .Some([
+        make_value_item("A"),
+        make_value_item("B"),
+      ]))
+      result := reconstruct_use_decl(decl, [])
+      try assert.str_eq(result, "use foo.{A, B}\n")
+      .Ok({})
+    })
+    // ── check_unused_imports ──
+    .test("check_unused_imports: field access through module alias does not suppress selective import", fn() {
+      // `use bar` (module import) + `use foo.{remove}` (selective import)
+      // Code: `bar.remove(x)` — accesses remove through module bar, not the selective import
+      bar_decl := make_use_decl(["bar"], .None)
+      foo_decl := UseDecl.{
+        is_stdlib: false, is_relative: false,
+        path: ["foo"],
+        alias: .None,
+        items: .Some([make_value_item("remove")]),
+        span: span.Span.{ file_id: 0, start: 0, end: 20 },
+      }
+      call_expr := dummy_expr(.Call(
+        dummy_expr(.Field(dummy_expr(.Ident("bar")), "remove")),
+        [dummy_expr(.Ident("x"))],
+      ))
+      module := Module.{
+        items: [
+          Item.Use(bar_decl),
+          Item.Use(foo_decl),
+          Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
+        ],
+        span: dummy_span(),
+      }
+      result := check_unused_imports(module)
+      // "remove" from `use foo.{remove}` should be flagged as unused
+      try assert.int_eq(result.items.len(), 1)
+      try assert.str_contains(result.items[0].diagnostic.message, "remove")
+      .Ok({})
+    })
+    .test("check_unused_imports: empty module returns empty result", fn() {
+      module := Module.{ items: [], span: dummy_span() }
+      result := check_unused_imports(module)
+      try assert.int_eq(result.items.len(), 0)
+      .Ok({})
+    })
+    .test("check_unused_imports: unused selective item returns edit info", fn() {
+      use_span := span.Span.{ file_id: 0, start: 0, end: 25 }
+      decl := UseDecl.{
+        is_stdlib: false, is_relative: false,
+        path: ["foo"],
+        alias: .None,
+        items: .Some([
+          make_value_item("used_fn"),
+          ImportItem.Value(ImportValueItem.{ name: "unused_fn", alias: .None, span: span.Span.{ file_id: 0, start: 15, end: 24 } }),
+        ]),
+        span: use_span,
+      }
+      // Module that uses `used_fn` but not `unused_fn`
+      call_expr := dummy_expr(.Call(dummy_expr(.Ident("used_fn")), []))
+      module := Module.{
+        items: [
+          Item.Use(decl),
+          Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
+        ],
+        span: dummy_span(),
+      }
+      result := check_unused_imports(module)
+      try assert.int_eq(result.items.len(), 1)
+      diag := result.items[0]
+      try assert.str_contains(diag.diagnostic.message, "unused_fn")
+      // Edit should span the whole use statement
+      try assert.int_eq(diag.edit.use_span.start, 0)
+      try assert.int_eq(diag.edit.use_span.end, 25)
+      // Replacement should reconstruct with only used_fn
+      try assert.str_eq(diag.edit.replacement, "use foo.{used_fn}\n")
+      .Ok({})
+    })
+}

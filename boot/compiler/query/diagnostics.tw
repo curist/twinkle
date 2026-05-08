@@ -16,6 +16,7 @@ use lib.query.keys
 use lib.source.identity
 use lib.source.overlay
 use lib.source.span
+use lib.json
 use lib.source.diagnostic as source_diag
 
 pub type Diagnostic = .{
@@ -25,6 +26,8 @@ pub type Diagnostic = .{
   severity: source_diag.Severity,
   message: String,
   stage: String,
+  /// Optional data payload (roundtripped by LSP clients in code action requests).
+  data: json.Json?,
 }
 
 pub type DocumentInput = .{
@@ -127,6 +130,7 @@ fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic
       severity: d.severity,
       message: d.message,
       stage: d.stage,
+      data: d.data,
     }
   }
 }
@@ -169,7 +173,7 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
 }
 
 fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: String) Diagnostic {
-  .{ uri, version, span: .None, severity: .Error, message, stage }
+  .{ uri, version, span: .None, severity: .Error, message, stage, data: .None }
 }
 
 pub fn convert_diagnostics(
@@ -185,6 +189,7 @@ pub fn convert_diagnostics(
       severity: d.severity,
       message: d.message,
       stage,
+      data: .None,
     }
   }
 }

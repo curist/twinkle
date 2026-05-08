@@ -13,6 +13,7 @@ use compiler.query.semantic
 use lib.json
 use lib.module.loader
 use lib.source.identity
+use lib.lsp.code_action as lsp_code_action
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
 use lib.lsp.definition as lsp_definition
@@ -61,6 +62,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
           json.kv("textDocumentSync", .Int(1)),
           json.kv("hoverProvider", .Bool(true)),
           json.kv("definitionProvider", .Bool(true)),
+          json.kv("codeActionProvider", .Bool(true)),
         ])),
         json.kv("serverInfo", json.object([
           json.kv("name", .Str("twinkle-lsp")),
@@ -70,6 +72,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     },
     "textDocument/hover" => handle_hover(state, req),
     "textDocument/definition" => handle_definition(state, req),
+    "textDocument/codeAction" => handle_code_action(state, req),
     "shutdown" => {
       next := with_shutdown_requested(state, true)
       .{ state: next, outgoing: [protocol.success_response(req.id, .Null)] }
@@ -215,6 +218,22 @@ fn handle_definition(state: State, req: protocol.Request) Step {
   }
 }
 
+fn handle_code_action(state: State, req: protocol.Request) Step {
+  case params.decode_code_action(req.params) {
+    .Ok(action_params) => {
+      uri := action_params.text_document.uri
+      case document_store.get(state.documents, uri) {
+        .Some(doc) => {
+          actions := lsp_code_action.unused_import_actions(doc.uri, doc.index, action_params.context_diagnostics)
+          .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+        },
+        .None => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
+      }
+    },
+    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
+  }
+}
+
 fn with_initialized(state: State, initialized: Bool) State {
   .{
     initialized,
@@ -294,6 +313,12 @@ fn publish_workspace_diagnostics(state: State) Step {
     cur_cache = result.cache
 
     for group in result.diagnostics_by_uri {
+      // Only publish groups that have diagnostics or belong to the current entry.
+      // Empty placeholder groups for unrelated open docs should not prevent
+      // those docs from being analyzed as their own entry later.
+      if group.diagnostics.len() == 0 and group.uri != doc.identity.uri {
+        continue
+      }
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => {
           if !published.has(group.uri) {

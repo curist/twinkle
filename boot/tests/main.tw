@@ -72,6 +72,7 @@ use .suites.base_env_guardrail_suite
 use .suites.signature_loader_suite
 use .suites.builtins_canonical_suite
 use .suites.signature_drift_suite
+use .suites.unused_imports_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -147,4 +148,5 @@ runner.run_all([
   signature_loader_suite.suite(),
   builtins_canonical_suite.suite(),
   signature_drift_suite.suite(),
+  unused_imports_suite.suite(),
 ])

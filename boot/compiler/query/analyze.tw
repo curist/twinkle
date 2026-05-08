@@ -22,6 +22,7 @@ use lib.query.keys
 use lib.source.identity
 use lib.source.overlay
 use lib.source.span
+use lib.json
 use lib.source.diagnostic as source_diag
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -34,6 +35,8 @@ pub type AnalysisDiag = .{
   severity: source_diag.Severity,
   message: String,
   stage: String,
+  /// Optional data payload for LSP roundtripping (e.g., unused import edits).
+  data: json.Json?,
 }
 
 /// Accumulated state during recursive module-graph analysis.
@@ -188,9 +191,9 @@ pub fn analyze_module(
   // Emit unused import warnings for non-internal modules
   all_diags := deps.diagnostics
   if !dep_plan.is_internal {
-    import_warnings := unused_imports.check_unused_imports(parsed_load.parsed.module)
-    if import_warnings.len() > 0 {
-      warn_diags := convert_source_diags(loaded.source, "import", import_warnings)
+    import_result := unused_imports.check_unused_imports(parsed_load.parsed.module)
+    if import_result.items.len() > 0 {
+      warn_diags := convert_unused_import_diags(loaded.source, import_result)
       all_diags = all_diags.concat(warn_diags)
     }
   }
@@ -460,7 +463,30 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn synthetic_diag(id: identity.SourceIdentity, version: Int?, stage: String, message: String) AnalysisDiag {
-  .{ identity: id, version, span: .None, severity: .Error, message, stage }
+  .{ identity: id, version, span: .None, severity: .Error, message, stage, data: .None }
+}
+
+fn convert_unused_import_diags(
+  source: overlay.SourceText,
+  result: unused_imports.UnusedImportResult,
+) Vector<AnalysisDiag> {
+  collect item in result.items {
+    data := json.object([
+      json.kv("kind", .Str("unused_import")),
+      json.kv("use_start", .Int(item.edit.use_span.start)),
+      json.kv("use_end", .Int(item.edit.use_span.end)),
+      json.kv("replacement", .Str(item.edit.replacement)),
+    ])
+    AnalysisDiag.{
+      identity: source.identity,
+      version: source.version,
+      span: .Some(item.diagnostic.span),
+      severity: item.diagnostic.severity,
+      message: item.diagnostic.message,
+      stage: "import",
+      data: .Some(data),
+    }
+  }
 }
 
 fn convert_source_diags(
@@ -476,6 +502,7 @@ fn convert_source_diags(
       severity: d.severity,
       message: d.message,
       stage,
+      data: .None,
     }
   }
 }

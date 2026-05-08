@@ -4,6 +4,7 @@ use tests.assert
 use compiler.query.cache
 use compiler.query.diagnostics
 use compiler.query.semantic
+use lib.json
 
 fn input(text: String) diagnostics.DocumentInput {
   .{ uri: "file:///main.tw", text, version: .Some(1) }
@@ -311,6 +312,37 @@ pub fn suite() runner.Suite {
       stats := cache.get_stats(second.cache)
       try assert.is_true(stats.resolve_hits > 0)
       try assert.is_true(stats.typecheck_hits > 0)
+      .Ok({})
+    })
+    .test("workspace diagnostics include unused import data for selective imports", fn() {
+      entry := "file:///tmp/twinkle-query-main.tw"
+      dep := "file:///tmp/dep.tw"
+      result := diagnostics.analyze_workspace(cache.empty(), .{
+        entry_uri: entry,
+        project_root: "/tmp",
+        open_documents: [
+          doc(entry, "use dep.{used_fn, unused_fn}\nx := used_fn()\n", 1),
+          doc(dep, "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n", 1),
+        ],
+      })
+      // Should have an unused import diagnostic for unused_fn
+      found := false
+      for d in result.diagnostics {
+        if d.message.contains("unused_fn") {
+          found = true
+          try assert.str_eq(d.stage, "import")
+          case d.data {
+            .Some(data) => {
+              kind := try json.decode(data, json.field("kind", json.string()))
+              try assert.str_eq(kind, "unused_import")
+              replacement := try json.decode(data, json.field("replacement", json.string()))
+              try assert.str_contains(replacement, "used_fn")
+            },
+            .None => { return .Err("expected data on unused import diagnostic") },
+          }
+        }
+      }
+      try assert.is_true(found)
       .Ok({})
     })
 }

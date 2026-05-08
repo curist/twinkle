@@ -33,12 +33,17 @@ pub fn clear_diagnostics(uri: String, version: Int?) json.Json {
 }
 
 fn diagnostic_to_json(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) json.Json {
-  json.object([
+  fields: Vector<json.Field> = [
     json.kv("range", range_to_json(diagnostic_range(index, d))),
     json.kv("severity", .Int(severity_to_lsp(d.severity))),
     json.kv("source", .Str("twinkle")),
     json.kv("message", .Str(d.message)),
-  ])
+  ]
+  case d.data {
+    .Some(data) => { fields = fields.append(json.kv("data", data)) },
+    .None => {},
+  }
+  json.object(fields)
 }
 
 fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) line_index.TextRange {

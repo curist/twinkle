@@ -20,7 +20,6 @@ use compiler.artifacts.{PipelineArtifacts}
 use compiler.imports
 use compiler.core_linker
 use compiler.base_env.{builtin_env}
-use compiler.unused_imports
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
@@ -60,20 +59,19 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     return .Err("analysis failed")
   }
 
-  // Emit unused import warnings for user modules
-  for module_path in a_result.state.module_order {
-    parsed := case query_cache.latest_parsed(a_result.state.cache, module_path) {
-      .Some(p) => p,
-      .None => { continue },
+  // Emit unused import warnings from analysis diagnostics
+  for d in a_result.diagnostics {
+    if d.severity != .Warning { continue }
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
     }
-    import_warnings := unused_imports.check_unused_imports(parsed.module)
-    if import_warnings.len() > 0 {
-      source := case fs.read_text(module_path) {
-        .Ok(text) => text,
-        .Err(_) => "",
-      }
-      eprintln(format_source_diagnostics(module_path, source, import_warnings))
+    raw_span := case d.span {
+      .Some(s) => span.new(0, s.start, s.end),
+      .None => span.new(0, 0, 0),
     }
+    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
+    eprintln(format_source_diagnostics(d.identity.path, source, raw))
   }
 
   // Phase 2: Lower each analyzed module to Core IR

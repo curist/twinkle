@@ -54,6 +54,12 @@ pub type DidCloseTextDocumentParams = .{
   text_document: TextDocumentIdentifier,
 }
 
+pub type CodeActionParams = .{
+  text_document: TextDocumentIdentifier,
+  range: json.Json,
+  context_diagnostics: Vector<json.Json>,
+}
+
 pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
   value := try required_params(params)
   text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
@@ -85,6 +91,15 @@ pub fn decode_did_close(params: json.Json?) Result<DidCloseTextDocumentParams, S
   value := try required_params(params)
   text_document := try json.decode(value, json.field("textDocument", text_document_identifier_decoder()))
   .Ok(.{ text_document })
+}
+
+pub fn decode_code_action(params: json.Json?) Result<CodeActionParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(value, json.field("textDocument", text_document_identifier_decoder()))
+  range := try json.decode(value, json.field("range", json.raw()))
+  context := try json.decode(value, json.field("context", json.raw()))
+  context_diagnostics := try json.decode(context, json.field("diagnostics", json.list(json.raw())))
+  .Ok(.{ text_document, range, context_diagnostics })
 }
 
 fn required_params(params: json.Json?) Result<json.Json, String> {

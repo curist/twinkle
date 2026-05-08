@@ -1,0 +1,128 @@
+// LSP code action JSON builders.
+//
+// Builds CodeAction, TextEdit, and WorkspaceEdit JSON objects for the
+// textDocument/codeAction response.
+
+use lib.json
+use lib.text.line_index
+
+/// Build a TextEdit JSON object.
+pub fn text_edit(range: json.Json, new_text: String) json.Json {
+  json.object([
+    json.kv("range", range),
+    json.kv("newText", .Str(new_text)),
+  ])
+}
+
+/// Build a range JSON object from byte offsets using line index.
+pub fn byte_range_to_lsp_range(index: line_index.LineIndex, start: Int, end: Int) json.Json {
+  range := line_index.byte_range_to_range(index, start, end, .Utf16)
+  json.object([
+    json.kv("start", json.object([
+      json.kv("line", .Int(range.start.line)),
+      json.kv("character", .Int(range.start.character)),
+    ])),
+    json.kv("end", json.object([
+      json.kv("line", .Int(range.end.line)),
+      json.kv("character", .Int(range.end.character)),
+    ])),
+  ])
+}
+
+/// Build a WorkspaceEdit with changes for a single file.
+pub fn workspace_edit(uri: String, edits: Vector<json.Json>) json.Json {
+  json.object([
+    json.kv("changes", json.object([
+      json.kv(uri, json.array(edits)),
+    ])),
+  ])
+}
+
+/// Build a CodeAction JSON object.
+pub fn code_action(
+  title: String,
+  kind: String,
+  edit: json.Json,
+  diagnostics: Vector<json.Json>,
+) json.Json {
+  json.object([
+    json.kv("title", .Str(title)),
+    json.kv("kind", .Str(kind)),
+    json.kv("edit", edit),
+    json.kv("diagnostics", json.array(diagnostics)),
+  ])
+}
+
+/// Build code actions from unused import diagnostics in a codeAction request.
+///
+/// Each diagnostic with `data.kind == "unused_import"` produces a quickfix action.
+/// Diagnostics sharing the same use_span are deduped into a single edit.
+/// When multiple actions exist, a bulk "Remove all unused imports" is appended.
+pub fn unused_import_actions(
+  uri: String,
+  index: line_index.LineIndex,
+  context_diagnostics: Vector<json.Json>,
+) Vector<json.Json> {
+  actions: Vector<json.Json> = []
+  // Track use_spans we've already seen for dedup
+  seen_spans: Dict<String, Bool> = Dict.new()
+  // Collect all edits for the bulk action
+  bulk_edits: Vector<json.Json> = []
+  bulk_diags: Vector<json.Json> = []
+
+  for diag in context_diagnostics {
+    data := case json.decode(diag, json.field("data", json.raw())) {
+      .Ok(d) => d,
+      .Err(_) => { continue },
+    }
+    kind := case json.decode(data, json.field("kind", json.string())) {
+      .Ok(k) => k,
+      .Err(_) => { continue },
+    }
+    if kind != "unused_import" { continue }
+
+    use_start := case json.decode(data, json.field("use_start", json.int())) {
+      .Ok(s) => s,
+      .Err(_) => { continue },
+    }
+    use_end := case json.decode(data, json.field("use_end", json.int())) {
+      .Ok(e) => e,
+      .Err(_) => { continue },
+    }
+    replacement := case json.decode(data, json.field("replacement", json.string())) {
+      .Ok(r) => r,
+      .Err(_) => { continue },
+    }
+    message := case json.decode(diag, json.field("message", json.string())) {
+      .Ok(m) => m,
+      .Err(_) => "Remove unused import",
+    }
+
+    span_key := "${use_start}:${use_end}"
+    if !seen_spans.has(span_key) {
+      seen_spans[span_key] = true
+      range := byte_range_to_lsp_range(index, use_start, use_end)
+      edit_json := text_edit(range, replacement)
+      ws_edit := workspace_edit(uri, [edit_json])
+      // Strip the "unused import: " prefix to get the bare name for the title
+      import_name := if message.starts_with("unused import: ") {
+        message.substr(15, message.len())
+      } else {
+        message
+      }
+      action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
+      actions = actions.append(action)
+      bulk_edits = bulk_edits.append(edit_json)
+      bulk_diags = bulk_diags.append(diag)
+    }
+  }
+
+  // Bulk action when more than one
+  if actions.len() > 1 {
+    bulk_ws_edit := workspace_edit(uri, bulk_edits)
+    bulk := code_action("Remove all unused imports", "quickfix", bulk_ws_edit, bulk_diags)
+    actions = actions.append(bulk)
+  }
+
+  actions
+}
