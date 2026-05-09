@@ -278,22 +278,21 @@ fn build_ctx(
 
   // Global indices.
   global_idx: Dict<String, Int> = Dict.new()
-  for i in 0..globals.len() {
-    global_idx[globals[i].name] = i
+  for global, i in globals {
+    global_idx[global.name] = i
   }
 
   // Table indices.
   table_idx: Dict<String, Int> = Dict.new()
-  for i in 0..tables.len() {
-    table_idx[tables[i].name] = i
+  for table, i in tables {
+    table_idx[table.name] = i
   }
 
   // Data segment indices.
   data_idx: Dict<String, Int> = Dict.new()
-  for i in 0..data.len() {
-    data_idx[data[i].name] = i
+  for d, i in data {
+    data_idx[d.name] = i
   }
-
   .{
     type_idx,
     anon_ft,
