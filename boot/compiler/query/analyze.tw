@@ -170,10 +170,10 @@ pub fn analyze_module(
   if !deps.ok {
     return .{ env: deps.env, state: deps.state, diagnostics: deps.diagnostics, ok: false }
   }
-
-  hashes := dependency_hashes(deps.state.cache, dep_plan)
-  runner := stage_runner.new(canonical, loaded.source_hash, hashes.deps_hash, hashes.context_hash, dep_plan.is_internal)
   cur := deps.state
+
+  hashes := dependency_hashes(cur.cache, dep_plan)
+  runner := stage_runner.new(canonical, loaded.source_hash, hashes.deps_hash, hashes.context_hash, dep_plan.is_internal)
   cur.module_runners[canonical] = runner
   env := deps.env
   if dep_plan.is_internal {
@@ -263,12 +263,16 @@ fn analyze_dependencies(
 ) DependencyAnalysis {
   env := base.extend_types_from(state.shared_types, state.shared_type_names, state.shared_type_origins)
   cur := state
+  // Track how far dep_base has been extended to avoid re-extending from scratch.
+  dep_base := env
+  dep_base_upto := cur.shared_types.len()
   all_diags: Vector<AnalysisDiag> = []
   deps_ok := true
   for dep in dep_plan.dependencies {
     dep_id := identity.from_path(dep.canonical_path)
     shared_type_start := cur.shared_types.len()
-    dep_base := base.extend_types_from(cur.shared_types, cur.shared_type_names, cur.shared_type_origins)
+    dep_base = extend_new_shared_types_from(dep_base, cur, dep_base_upto)
+    dep_base_upto = cur.shared_types.len()
     dep_result := analyze_module(dep_id, dep.alias, dep_base, cur, stack)
     cur = dep_result.state
     all_diags = all_diags.concat(dep_result.diagnostics)
